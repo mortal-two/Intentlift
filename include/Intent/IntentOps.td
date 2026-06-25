@@ -1,0 +1,120 @@
+#ifndef INTENT_OPS
+#define INTENT_OPS
+
+include "IntentDialect.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
+//===----------------------------------------------------------------------===//
+// Tensor-level atomic ops (Layer A semantics, Layer B constraints as attrs).
+// Starter set: map_binary / reduce / contraction. More ops (scan, gather,
+// scatter, loop, ...) follow the same pattern (see spec/ir/atomic-ops.md).
+//===----------------------------------------------------------------------===//
+
+def Intent_MapBinaryOp : Intent_Op<"map_binary"> {
+  let summary = "Elementwise binary map (Layer A).";
+  let description = [{
+    Elementwise binary op over two ranked tensors. `fn` selects the
+    pointwise operation (add/sub/mul/div/max/min/pow/cmp).
+  }];
+  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs, StrAttr:$fn);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_MapUnaryOp : Intent_Op<"map_unary"> {
+  let summary = "Elementwise unary map (Layer A).";
+  let description = [{
+    Elementwise unary op over one ranked tensor. `fn` selects the pointwise
+    operation (exp/log/neg/abs/sqrt/rsqrt/recip). Shape-preserving; the result
+    has the same shape and element type as the input.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_ReduceOp : Intent_Op<"reduce"> {
+  let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
+  let description = [{
+    Reduce `input` along `axes` with `fn` (sum/max/min/prod/any/all).
+    `assoc` records reduction associativity for verification:
+    `associative` (bit-exact) or `float_nondeterministic` (tolerance).
+  }];
+  let arguments = (ins AnyRankedTensor:$input,
+                       StrAttr:$fn,
+                       I64ArrayAttr:$axes,
+                       StrAttr:$assoc);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_ContractionOp : Intent_Op<"contraction"> {
+  let summary = "Einsum-style contraction (Layer A).";
+  let description = [{
+    General tensor contraction with einsum-style `subscripts`
+    (e.g. "bhqd,bhkd->bhqk"). Covers matmul / batched-matmul / dot.
+  }];
+  let arguments = (ins AnyRankedTensor:$a, AnyRankedTensor:$b, StrAttr:$subscripts);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$a `,` $b attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Structured loop with loop-carried state (Layer A recurrence + Layer C tiling).
+// FlashAttention's K-loop: carries the online-softmax state (running max, sum,
+// accumulator) while scanning K/V tiles. See spec/ir/structured-loop.md.
+//===----------------------------------------------------------------------===//
+
+def Intent_YieldOp : Intent_Op<"yield",
+    [Pure, Terminator, HasParent<"LoopOp">]> {
+  let summary = "Terminator of an intent.loop body; yields the next carries.";
+  let description = [{
+    Yields the loop-carried values for the next trip iteration (and, after the
+    last iteration, the loop results). Operand count/types match the parent
+    `intent.loop` carries.
+  }];
+  let arguments = (ins Variadic<AnyType>:$results);
+  let assemblyFormat = "($results^ `:` type($results))? attr-dict";
+  // No-operand builder so SingleBlockImplicitTerminator can materialize the
+  // implicit terminator (mirrors scf.yield).
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
+}
+
+def Intent_LoopOp : Intent_Op<"loop",
+    [AttrSizedOperandSegments, SingleBlockImplicitTerminator<"YieldOp">,
+     RecursiveMemoryEffects]> {
+  let summary = "Structured loop with loop-carried state and scanned inputs.";
+  let description = [{
+    A structured loop (an explicit induction variable, loop-carried `inits`, and
+    a single-block body region) that scans `scan_inputs` tile-by-tile along their
+    `scan_axes` while threading carried state. This is the IntentIR primitive for
+    FlashAttention's K-loop: `inits` = (running max m, running sum l, accumulator
+    Oacc); each trip slices a tile (`tile_hint` rows, Layer C) of K and V; the
+    body recomputes the online-softmax update and `intent.yield`s the new carries.
+
+    Body block arguments are the per-trip scan slices (one per `scan_inputs`, in
+    order) followed by the current carries (one per `inits`). Results are the
+    final carries; result types equal `inits` types (carry types are invariant).
+
+    Layer attribution: the recurrence is Layer A (algorithmic intent); `tile_hint`
+    is a non-binding Layer C schedule hint (the back-end may retune it).
+  }];
+  let arguments = (ins Variadic<AnyRankedTensor>:$scan_inputs,
+                       Variadic<AnyType>:$inits,
+                       I64ArrayAttr:$scan_axes,
+                       OptionalAttr<I64Attr>:$tile_hint);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$body);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `scan` `(` ($scan_inputs^ `:` type($scan_inputs))? `)`
+    `init` `(` ($inits^ `:` type($inits))? `)`
+    attr-dict (`->` type($results)^)? `do` $body
+  }];
+}
+
+#endif // INTENT_OPS

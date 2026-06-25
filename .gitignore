@@ -1,0 +1,16 @@
+# Build
+/build/
+*.o
+*.a
+
+# Secrets / local config
+llm_providers.local.json
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# Dataset (lives outside repo)
+/Dataset/

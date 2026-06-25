@@ -1,0 +1,18 @@
+[project]
+name = "intentir"
+version = "0.0.1"
+description = "IntentIR: certified semantic lifting — LLM extraction and verification side"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# Heavier deps (numpy for the reference interpreter, http client for the LLM
+# provider) are opt-in so the core model stays import-light.
+verify = ["numpy"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["python"]
