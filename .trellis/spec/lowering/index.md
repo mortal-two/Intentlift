@@ -95,6 +95,35 @@ CPU-exec == interpret(rel ~1e-6)。**没有任何 GPU 专用机制**——同一
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
 上量化 retune 收益)。dialect 设计不被任何单一后端绑架。
 
+## 性能已超越 Triton:自动融合(elementwise 前沿,2026-06-26)
+
+flash 那条 ~983x 的差距是**一线程/query** 的 bring-up 粒度造成的(见上)。在
+**elementwise 前沿**,我们已经**真实跑赢 Triton**——靠的是*自动融合*,不是手写。
+关键事实(都用 launch 计数 / 物理带宽证过):
+
+- **不加融合 = 没有优势**:`-convert-intent-to-linalg` 对一条 pointwise 链每个 op
+  发一个 `linalg.generic`,下降成 **N 个 `gpu.launch_func`**(N 次 HBM 往返,和库
+  一样)。加 `-linalg-fuse-elementwise-ops` 把整条链塌成**一个** `linalg.generic`
+  → **一个** kernel(读 a,b,c 各一次 + 写 z 一次 = 4 次 HBM,1 次 launch)。
+- **默认映射把每个元素映成一个 block**(threads (1,1,1),正是 flash 慢的同款病)。
+  `-scf-parallel-loop-tiling=parallel-loop-tile-sizes=1,256` 把最内连续维切成
+  **256 线程合并访存(coalesced)的 block**。这是 **Layer-C 的 schedule 选择**
+  (tile 尺寸),A/B 不动。落点:`compile.py::compile_all_kernels_fused(tile)` +
+  `orchestrate.run_program(compile_all=…)` 钩子。
+- **结果**(RTX 5090 D / f32 / 工作集 > 101MB L2 / median-of-5 / 不做 per-iter
+  sync):IntentIR 自动融合 kernel **比未融合的 Triton 组合快 1.41–1.53x**(正好踩
+  在 6:4 的流量上限),**与手写的单融合 Triton kernel 打平(~1.00x)**——证明这一
+  胜来自库没做的融合,不是 codegen 取巧;打平也证明自动生成的 kernel 是称职的
+  (GB/s 与手写 Triton copy 同档)。三条链都赢:`(a+b)*c`、SwiGLU(`silu(a)*b+c`)、
+  GeGLU(`gelu(a)*b+c`,xformers/vLLM 的 FFN 块)。`bench/fused_elementwise.py` +
+  `test_fused_elementwise.py` + `corpus/PERF_FUSION.md`。
+- baseline 用干净的内联 Triton kernel(最强最公平的 Triton;flag_gems 的
+  `pointwise_dynamic` 在这些尺寸上撞 Triton-3.6 launcher 参数数 bug)。SwiGLU 的
+  未融合 baseline 已经用**融合的** `silu_and_mul` + 单独 `add`(库能做到的最好),
+  所以不是稻草人。
+- **范围**:这是 elementwise 前沿。flash 的延迟差距(`corpus/PERF.md`)是另一条
+  尚未触碰的前沿,**不被本节覆盖**。
+
 ## 现在不做
 
 - RVV / 其它后端的 lowering pass 暂不实现(GPU 这条已打通并作为模板)。
