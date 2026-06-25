@@ -1,0 +1,13 @@
+{
+  "name": "exp",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/exp.py",
+  "model": "gpt-5.5",
+  "prompt_sha256": "dd48869a3ea8c8fedaba1a031c5d6f41ed7e645f39c0c57945fe2fa0fff59880",
+  "attempts": 1,
+  "repairs": [],
+  "verified_rel_err": 1.5621518110064678e-07,
+  "verified_against": "flag_gems.exp",
+  "lowered_residual_intent": 0,
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

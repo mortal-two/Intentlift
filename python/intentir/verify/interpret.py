@@ -37,7 +37,7 @@ _UNARY = {
 
 _REDUCE = {
     "sum": np.sum, "max": np.max, "min": np.min, "prod": np.prod,
-    "any": np.any, "all": np.all,
+    "mean": np.mean, "any": np.any, "all": np.all,
 }
 
 
@@ -48,6 +48,13 @@ class InterpError(Exception):
 def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
     o = op.op
     a = op.attrs
+
+    if o == "const":
+        # A literal value (scalar or filled tensor). Not "intent" to be lowered;
+        # the emitter turns it into arith.constant. shape [] -> scalar.
+        shape = tuple(a.get("shape", []))
+        val = np.full(shape, a["value"], dtype=_DTYPE.get(a.get("dtype", "f32")))
+        return val if shape else _DTYPE.get(a.get("dtype", "f32"))(a["value"])
 
     if o == "map_binary":
         fn = a["fn"]

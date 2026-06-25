@@ -1,0 +1,13 @@
+{
+  "name": "sigmoid",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/sigmoid.py",
+  "model": "gpt-5.5",
+  "prompt_sha256": "e09f57496930ca9808a4531faa07d2ad231847bab5f729f3c9bc5beb4aa46875",
+  "attempts": 1,
+  "repairs": [],
+  "verified_rel_err": 1.2132451182795484e-07,
+  "verified_against": "flag_gems.sigmoid",
+  "lowered_residual_intent": 0,
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

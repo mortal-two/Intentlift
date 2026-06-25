@@ -56,6 +56,8 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     return b.create<arith::MaximumFOp>(loc, a, c);
   if (fn == "min")
     return b.create<arith::MinimumFOp>(loc, a, c);
+  if (fn == "pow")
+    return b.create<math::PowFOp>(loc, a, c);
   return nullptr;
 }
 
@@ -77,6 +79,16 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
   if (fn == "recip") {
     Value one = b.create<arith::ConstantOp>(loc, b.getFloatAttr(x.getType(), 1.0));
     return b.create<arith::DivFOp>(loc, one, x);
+  }
+  if (fn == "tanh")
+    return b.create<math::TanhOp>(loc, x);
+  if (fn == "sigmoid") {
+    // 1 / (1 + exp(-x))
+    Value one = b.create<arith::ConstantOp>(loc, b.getFloatAttr(x.getType(), 1.0));
+    Value negx = b.create<arith::NegFOp>(loc, x);
+    Value e = b.create<math::ExpOp>(loc, negx);
+    Value den = b.create<arith::AddFOp>(loc, one, e);
+    return b.create<arith::DivFOp>(loc, one, den);
   }
   return nullptr;
 }
@@ -171,7 +183,7 @@ struct MapBinaryLowering : OpRewritePattern<MapBinaryOp> {
 /// Scalar combiner + identity element for a `reduce` fn.
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
                                Value c) {
-  if (fn == "sum")
+  if (fn == "sum" || fn == "mean")
     return b.create<arith::AddFOp>(loc, a, c);
   if (fn == "max")
     return b.create<arith::MaximumFOp>(loc, a, c);
@@ -183,7 +195,7 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
 }
 
 static std::optional<double> reduceIdentity(StringRef fn) {
-  if (fn == "sum")
+  if (fn == "sum" || fn == "mean")
     return 0.0;
   if (fn == "prod")
     return 1.0;
@@ -262,6 +274,33 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
           b.create<linalg::YieldOp>(l, emitReduceCombine(b, l, fn, args[1], args[0]));
         });
     Value reduced = generic.getResult(0);
+
+    // mean = sum / count, where count = product of the reduced extents (static).
+    if (fn == "mean") {
+      int64_t count = 1;
+      for (unsigned d = 0; d < R; ++d) {
+        if (!isReduced[d])
+          continue;
+        if (inTy.isDynamicDim(d))
+          return rewriter.notifyMatchFailure(op, "mean over dynamic extent");
+        count *= inTy.getDimSize(d);
+      }
+      Value inv = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getFloatAttr(elemTy, 1.0 / (double)count));
+      Value empty2 = rewriter.create<tensor::EmptyOp>(loc, reducedShape, elemTy);
+      SmallVector<AffineMap> smaps(2, rewriter.getMultiDimIdentityMap(r));
+      SmallVector<utils::IteratorType> siters(r, utils::IteratorType::parallel);
+      reduced = rewriter
+                    .create<linalg::GenericOp>(
+                        loc, TypeRange{reducedTy}, ValueRange{reduced},
+                        ValueRange{empty2}, smaps, siters,
+                        [&](OpBuilder &b, Location l, ValueRange args) {
+                          Value scaled =
+                              b.create<arith::MulFOp>(l, args[0], inv);
+                          b.create<linalg::YieldOp>(l, scaled);
+                        })
+                    .getResult(0);
+    }
 
     // keepdims: result rank == input rank, reduced axes are size-1. Expand back.
     if (resTy.getRank() == (int64_t)R) {

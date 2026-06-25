@@ -1,0 +1,13 @@
+{
+  "name": "relu",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/relu.py",
+  "model": "gpt-5.5",
+  "prompt_sha256": "4fc35fa79ad0a1810b156a7792c4d4f4fa96a93754c5ce8b32fc0d7b8ff5f65e",
+  "attempts": 1,
+  "repairs": [],
+  "verified_rel_err": 0.0,
+  "verified_against": "flag_gems.relu",
+  "lowered_residual_intent": 0,
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

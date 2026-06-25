@@ -1,0 +1,48 @@
+{
+  "intent_function": {
+    "name": "log",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_unary",
+        "result": "X_abs",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "abs"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "Y",
+        "operands": [
+          "X_abs"
+        ],
+        "attrs": {
+          "fn": "log"
+        },
+        "out": "Y"
+      }
+    ]
+  }
+}

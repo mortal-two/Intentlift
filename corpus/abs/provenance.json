@@ -1,0 +1,13 @@
+{
+  "name": "abs",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/abs.py",
+  "model": "gpt-5.5",
+  "prompt_sha256": "fac3373994d9f924b59e943545160f90cf35dcdbf7de0a65b991c1058e60cd75",
+  "attempts": 1,
+  "repairs": [],
+  "verified_rel_err": 0.0,
+  "verified_against": "flag_gems.abs",
+  "lowered_residual_intent": 0,
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

@@ -29,7 +29,7 @@ LogicalResult MapBinaryOp::verify() {
 
 LogicalResult MapUnaryOp::verify() {
   static constexpr llvm::StringRef kFns[] = {
-      "exp", "log", "neg", "abs", "sqrt", "rsqrt", "recip"};
+      "exp", "log", "neg", "abs", "sqrt", "rsqrt", "recip", "tanh", "sigmoid"};
   bool ok = false;
   for (llvm::StringRef f : kFns)
     if (getFn() == f)
@@ -43,7 +43,7 @@ LogicalResult MapUnaryOp::verify() {
 }
 
 LogicalResult ReduceOp::verify() {
-  static constexpr llvm::StringRef kFns[] = {"sum", "max", "min",
+  static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};
   bool ok = false;
   for (llvm::StringRef f : kFns)

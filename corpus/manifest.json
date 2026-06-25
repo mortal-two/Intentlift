@@ -1,0 +1,250 @@
+{
+  "summary": {
+    "total": 15,
+    "fully_passing": 15,
+    "verified": 15,
+    "lowered": 15
+  },
+  "kernels": [
+    {
+      "name": "softmax",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 6.091184545299314e-08,
+      "attempts": 0,
+      "ops": [
+        "reduce:max",
+        "map_binary:sub",
+        "map_unary:exp",
+        "reduce:sum",
+        "map_binary:div"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "log_softmax",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 9.292756203610818e-08,
+      "attempts": 0,
+      "ops": [
+        "reduce:max",
+        "map_binary:sub",
+        "map_unary:exp",
+        "reduce:sum",
+        "map_unary:log",
+        "map_binary:sub"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "silu",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.1711745369787871e-07,
+      "attempts": 0,
+      "ops": [
+        "map_unary:sigmoid",
+        "map_binary:mul"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "gelu_tanh",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 6.235138936040496e-08,
+      "attempts": 0,
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "map_binary:pow",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_unary:tanh",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "relu",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 0.0,
+      "attempts": 0,
+      "ops": [
+        "const",
+        "map_binary:max"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "rms_norm",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.9142034855728706e-07,
+      "attempts": 0,
+      "ops": [
+        "map_binary:mul",
+        "reduce:mean",
+        "map_binary:add",
+        "map_unary:sqrt",
+        "map_unary:recip",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "matmul",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.8214030522707633e-07,
+      "attempts": 0,
+      "ops": [
+        "contraction"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "sigmoid",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.224189644603023e-07,
+      "attempts": 0,
+      "ops": [
+        "map_unary:sigmoid"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "tanh",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.19274254330043e-07,
+      "attempts": 0,
+      "ops": [
+        "map_unary:tanh"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "exp",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 1.4634270554296037e-07,
+      "attempts": 0,
+      "ops": [
+        "map_unary:exp"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "abs",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 0.0,
+      "attempts": 0,
+      "ops": [
+        "map_unary:abs"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "log",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 8.600234442378491e-08,
+      "attempts": 0,
+      "ops": [
+        "map_unary:abs",
+        "map_unary:log"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "add",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 0.0,
+      "attempts": 0,
+      "ops": [
+        "map_binary:add"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "mul",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 0.0,
+      "attempts": 0,
+      "ops": [
+        "map_binary:mul"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    },
+    {
+      "name": "maximum",
+      "library": "flag_gems",
+      "extracted": true,
+      "verified": true,
+      "lowered": true,
+      "rel_err": 0.0,
+      "attempts": 0,
+      "ops": [
+        "map_binary:max"
+      ],
+      "residual_intent": 0,
+      "error": ""
+    }
+  ]
+}
