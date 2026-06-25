@@ -1,0 +1,117 @@
+{
+  "intent_function": {
+    "name": "cuda_rmsnorm",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "W",
+        "dtype": "f32",
+        "shape": [
+          "N"
+        ]
+      },
+      {
+        "name": "eps",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "X_sq",
+        "operands": [
+          "X",
+          "X"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "mean_sq",
+        "operands": [
+          "X_sq"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "mean_sq_eps",
+        "operands": [
+          "mean_sq",
+          "eps"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "rms",
+        "operands": [
+          "mean_sq_eps"
+        ],
+        "attrs": {
+          "fn": "sqrt"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "inv_rms",
+        "operands": [
+          "rms"
+        ],
+        "attrs": {
+          "fn": "recip"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "X_norm",
+        "operands": [
+          "X",
+          "inv_rms"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "X_norm",
+          "W"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      }
+    ]
+  }
+}

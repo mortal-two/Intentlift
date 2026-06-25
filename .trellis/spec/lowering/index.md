@@ -81,6 +81,20 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 `bench/flash_emit.py` 发射,尚未由 loop lowering 产出。需要 interchange + carry
 privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query 私有化)。
 
+## 多后端余量已验证(2026-06-26):同一 IntentIR 也在 CPU 上执行
+
+`intent → linalg` 这一段是**后端中立**的;只有 device 尾巴(此处 GPU 的
+`gpu/nvvm/ptxas`)是特化的。为证明这不是嘴上说说,`python/intentir/backend/cpu.py`
+把**同一份提取出来的 intent dialect** 走 `intent → linalg →`(one-shot-bufferize
+→ linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**,读回结果
+与解释器一致:add / silu / softmax / rms_norm / gelu_tanh / matmul 六个内核
+CPU-exec == interpret(rel ~1e-6)。**没有任何 GPU 专用机制**——同一条 IntentIR、
+两个后端。`test_cpu_backend.py`(确定性,无 GPU)。
+
+这就是"多后端余量":换后端 = 换 `linalg → <target>` 尾巴(CPU 已通,RVV 是下一个
+——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
+上量化 retune 收益)。dialect 设计不被任何单一后端绑架。
+
 ## 现在不做
 
 - RVV / 其它后端的 lowering pass 暂不实现(GPU 这条已打通并作为模板)。

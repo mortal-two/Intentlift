@@ -1,0 +1,9 @@
+{
+  "name": "cuda_softmax",
+  "language": "CUDA C++",
+  "model": "gpt-5.5",
+  "prompt_sha256": "d49e4f06f17de8c5b88d6708e2aa856b65211f2a5278f9b616aba242fb6ab9e7",
+  "verified_rel_err": 9.48463257137845e-08,
+  "verified_against": "torch reference op (nvcc absent: language demo)",
+  "generated_by": "intentir.extraction (live provider)"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "cuda_silu",
+  "language": "CUDA C++",
+  "model": "gpt-5.5",
+  "prompt_sha256": "2406b6e2baefc74bfde44d6b9a78326624fe0699cc8965e26f6c6aada7b1bdd3",
+  "verified_rel_err": 7.247803788613279e-08,
+  "verified_against": "torch reference op (nvcc absent: language demo)",
+  "generated_by": "intentir.extraction (live provider)"
+}

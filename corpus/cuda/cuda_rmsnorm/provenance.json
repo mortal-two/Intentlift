@@ -1,0 +1,9 @@
+{
+  "name": "cuda_rmsnorm",
+  "language": "CUDA C++",
+  "model": "gpt-5.5",
+  "prompt_sha256": "384f2b0bf3e262f5b1139bb34fae282afbbed3ea155bac04b23048d1bb569fa6",
+  "verified_rel_err": 1.0245882743247938e-07,
+  "verified_against": "torch reference op (nvcc absent: language demo)",
+  "generated_by": "intentir.extraction (live provider)"
+}
