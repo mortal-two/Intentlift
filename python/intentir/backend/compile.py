@@ -115,6 +115,72 @@ def lower_to_binary_mlir(intent_mlir: str | os.PathLike) -> str:
     return _run([MLIR_OPT, _device_pipeline()], stdin=prepped)
 
 
+# --------------------------------------------------------------------------- #
+# Fused + tiled elementwise path (the "beat Triton via fusion" lowering).      #
+# --------------------------------------------------------------------------- #
+# The default `_FRONT_PASSES` emits one `linalg.generic` per intent op and maps
+# every parallel iteration to its own *block* with a single thread (threads in
+# (1,1,1)) — the same one-element-per-block granularity that makes the flash
+# kernel slow. For a pointwise *chain* we instead:
+#   1. `-linalg-fuse-elementwise-ops`  — collapse the whole chain to ONE
+#      linalg.generic (one kernel, one HBM read of each input + one write),
+#      which is the actual source of the win over a library that ships the chain
+#      as separate kernels (each paying a full HBM round-trip).
+#   2. `-scf-parallel-loop-tiling=...` — tile the innermost (contiguous) parallel
+#      dim into a thread block, so the kernel is a coalesced ~256-thread grid
+#      instead of one-thread-per-block. This is a Layer-C schedule choice (the
+#      tile size); Layer A/B are untouched.
+# tile=(1,256): rows -> grid.x, 256 contiguous columns -> threadIdx.y (coalesced).
+def _fused_front_passes(tile: tuple[int, ...]) -> list[str]:
+    ts = ",".join(str(t) for t in tile)
+    return [
+        "-linalg-fuse-elementwise-ops",
+        "-one-shot-bufferize=bufferize-function-boundaries=true "
+        "function-boundary-type-conversion=identity-layout-map",
+        "-convert-linalg-to-parallel-loops",
+        f"-scf-parallel-loop-tiling=parallel-loop-tile-sizes={ts}",
+        "-gpu-map-parallel-loops",
+        "-convert-parallel-loops-to-gpu",
+        "-gpu-kernel-outlining",
+        "-canonicalize",
+    ]
+
+
+def lower_to_binary_mlir_fused(
+    intent_mlir: str | os.PathLike, tile: tuple[int, ...] = (1, 256)
+) -> str:
+    """Like ``lower_to_binary_mlir`` but fuses the pointwise chain into ONE tiled
+    GPU kernel (see ``_fused_front_passes``)."""
+    src = Path(intent_mlir).read_text()
+    linalg = _run([INTENT_OPT, "-convert-intent-to-linalg"], stdin=src)
+    front = _run([MLIR_OPT, *_fused_front_passes(tile)], stdin=linalg)
+    prepped = _run([INTENT_OPT, *_DEVICE_PREP_PASSES], stdin=front)
+    return _run([MLIR_OPT, _device_pipeline()], stdin=prepped)
+
+
+@functools.lru_cache(maxsize=None)
+def _compile_fused_cached(
+    path: str, mtime: float, tile: tuple[int, ...]
+) -> tuple[CompiledKernel, ...]:
+    return tuple(_extract_kernels(lower_to_binary_mlir_fused(path, tile)))
+
+
+def compile_all_kernels_fused(
+    intent_mlir: str | os.PathLike, tile: tuple[int, ...] = (1, 256)
+) -> list[CompiledKernel]:
+    """All kernels of an intent module compiled through the fused+tiled pipeline.
+
+    Memoized on (path, mtime, tile) so a warm launch reuses the cubin. For a
+    pointwise chain this returns exactly ONE kernel (the fusion collapses the
+    whole chain); the caller may assert ``len(...) == 1`` to certify fusion.
+    """
+    p = Path(intent_mlir)
+    try:
+        return list(_compile_fused_cached(str(p), p.stat().st_mtime, tuple(tile)))
+    except OSError:
+        return _extract_kernels(lower_to_binary_mlir_fused(intent_mlir, tuple(tile)))
+
+
 # Device-side leg only (scf.parallel + scf.for + memref already in hand): maps
 # the query parallel loop to the GPU grid, outlines, applies the exp peephole,
 # and serializes. This is the back-end target the fused-flash `loop` lowering

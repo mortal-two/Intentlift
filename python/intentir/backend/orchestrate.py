@@ -692,7 +692,7 @@ def _resolve_const_index(host: _HostModule, ssa: str) -> int:
     return int(host.constants[ssa][0])
 
 
-def run_program(intent_mlir_path, inputs):
+def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
     """Compile *intent_mlir_path* and execute its whole kernel graph on the GPU.
 
     Parameters
@@ -703,6 +703,11 @@ def run_program(intent_mlir_path, inputs):
         Maps each intent function input *name* (from the ``func.func`` signature,
         e.g. ``"a"``, ``"b"``) to a CUDA torch tensor. If a name is missing, the
         positional key ``"arg{i}"`` (0-based) is accepted as a fallback.
+    compile_all : callable, optional
+        The ``intent_mlir_path -> list[CompiledKernel]`` compiler. Defaults to the
+        per-op pipeline; pass ``compile_all_kernels_fused`` (the fused+tiled
+        pipeline) to execute a pointwise chain as one fused kernel. The host module
+        is parsed generically, so a fused single-kernel graph runs unchanged.
 
     Returns
     -------
@@ -716,7 +721,7 @@ def run_program(intent_mlir_path, inputs):
     intent_src = Path(intent_mlir_path).read_text()
     intent_inputs = _parse_intent_signature(intent_src)
 
-    kernels = compile_all_kernels(intent_mlir_path)
+    kernels = compile_all(intent_mlir_path)
     if not kernels:
         raise RuntimeError("orchestrate: compile_all_kernels produced no kernels")
     binary_mlir = kernels[0].binary_mlir
