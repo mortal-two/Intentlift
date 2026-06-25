@@ -15,12 +15,15 @@ per-iter); working sets > the 101 MB L2 so timing is genuinely HBM-bound.
 
 | chain | shape | IIR us | Triton unfused us | Triton fused us | **x vs unfused** | x vs hand-fused | IIR GB/s | cert |
 |---|---|---|---|---|---|---|---|---|
-| add_mul | 32768x512 | 660 | 930 | 660 | **1.41x** | 1.00x | 407 | True |
-| add_mul | 65536x512 | 1406 | 2148 | 1404 | **1.53x** | 1.00x | 382 | True |
-| add_mul | 32768x1024 | 1410 | 2147 | 1405 | **1.52x** | 1.00x | 381 | True |
-| silu_mul_add | 32768x512 | 660 | 929 | 660 | **1.41x** | 1.00x | 407 | True |
-| silu_mul_add | 65536x512 | 1407 | 2148 | 1405 | **1.53x** | 1.00x | 381 | True |
-| silu_mul_add | 32768x1024 | 1410 | 2148 | 1405 | **1.52x** | 1.00x | 381 | True |
+| add_mul | 32768x512 | 659 | 929 | 660 | **1.41x** | 1.00x | 407 | True |
+| add_mul | 65536x512 | 1405 | 2146 | 1404 | **1.53x** | 1.00x | 382 | True |
+| add_mul | 32768x1024 | 1409 | 2147 | 1404 | **1.52x** | 1.00x | 381 | True |
+| silu_mul_add | 32768x512 | 660 | 928 | 659 | **1.41x** | 1.00x | 407 | True |
+| silu_mul_add | 65536x512 | 1406 | 2147 | 1405 | **1.53x** | 1.00x | 382 | True |
+| silu_mul_add | 32768x1024 | 1408 | 2147 | 1405 | **1.52x** | 1.00x | 381 | True |
+| gelu_mul_add | 32768x512 | 660 | 928 | 660 | **1.41x** | 1.00x | 407 | True |
+| gelu_mul_add | 65536x512 | 1407 | 2147 | 1405 | **1.53x** | 1.00x | 382 | True |
+| gelu_mul_add | 32768x1024 | 1409 | 2147 | 1405 | **1.52x** | 1.00x | 381 | True |
 
 ## Honest reading
 

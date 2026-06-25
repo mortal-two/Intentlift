@@ -105,9 +105,33 @@ def _triton_ops():
         z = tl.load(c + off, mask=m)
         tl.store(o + off, x * (1.0 / (1.0 + tl.exp(-x))) * y + z, mask=m)
 
+    @triton.jit
+    def _gelu_tanh(x):  # GeGLU activation, tanh approximation (exp-expressed tanh)
+        inner = 0.7978845608 * (x + 0.044715 * x * x * x)
+        t = 2.0 / (1.0 + tl.exp(-2.0 * inner)) - 1.0
+        return 0.5 * x * (1.0 + t)
+
+    @triton.jit
+    def _gelu_mul_k(a, b, o, n, BLOCK: tl.constexpr):  # gelu(a)*b
+        off = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        m = off < n
+        x = tl.load(a + off, mask=m)
+        y = tl.load(b + off, mask=m)
+        tl.store(o + off, _gelu_tanh(x) * y, mask=m)
+
+    @triton.jit
+    def _fused_gelu_k(a, b, c, o, n, BLOCK: tl.constexpr):  # gelu(a)*b+c
+        off = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        m = off < n
+        x = tl.load(a + off, mask=m)
+        y = tl.load(b + off, mask=m)
+        z = tl.load(c + off, mask=m)
+        tl.store(o + off, _gelu_tanh(x) * y + z, mask=m)
+
     return {
         "add": _add_k, "mul": _mul_k, "silu_mul": _silu_mul_k,
         "fused_abc": _fused_abc_k, "fused_silu": _fused_silu_k,
+        "gelu_mul": _gelu_mul_k, "fused_gelu": _fused_gelu_k,
     }
 
 
@@ -161,6 +185,43 @@ def _silu_chain_mlir(rows, cols):
     )
 
 
+def _gelu_chain_mlir(rows, cols):
+    # z = gelu_tanh(a)*b + c (GeGLU + residual, the transformer FFN block). gelu's
+    # tanh is expressed via sigmoid (2*sigmoid(2y)-1) so the device kernel uses only
+    # the GPU-safe exp path; the splat coefficient constants fold into the fused body.
+    T = _t(rows, cols)
+
+    def b2(o, x, y, fn):
+        return (f"  %{o} = intent.map_binary %{x}, %{y} {{fn = \"{fn}\"}} : "
+                f"({T}, {T}) -> {T}\n")
+
+    body = (
+        f"  %half = arith.constant dense<5.000000e-01> : {T}\n"
+        f"  %coef = arith.constant dense<4.471500e-02> : {T}\n"
+        f"  %sq = arith.constant dense<7.978846e-01> : {T}\n"
+        f"  %two = arith.constant dense<2.000000e+00> : {T}\n"
+        f"  %one = arith.constant dense<1.000000e+00> : {T}\n"
+        + b2("a2", "a", "a", "mul")
+        + b2("a3", "a2", "a", "mul")
+        + b2("t1", "a3", "coef", "mul")
+        + b2("inner", "a", "t1", "add")
+        + b2("g", "inner", "sq", "mul")
+        + b2("g2", "g", "two", "mul")
+        + f"  %sig = intent.map_unary %g2 {{fn = \"sigmoid\"}} : ({T}) -> {T}\n"
+        + b2("sig2", "sig", "two", "mul")
+        + b2("tanh", "sig2", "one", "sub")
+        + b2("tp1", "tanh", "one", "add")
+        + b2("ha", "a", "half", "mul")
+        + b2("gelu", "ha", "tp1", "mul")
+        + b2("geglu", "gelu", "b", "mul")
+        + b2("z", "geglu", "c", "add")
+    )
+    return (
+        f"func.func @geglu(%a: {T}, %b: {T}, %c: {T}) -> {T} {{\n"
+        f"{body}  return %z : {T}\n}}\n"
+    )
+
+
 def _chains():
     import torch
 
@@ -192,6 +253,19 @@ def _chains():
         k["fused_silu"][_grid(n, BLOCK)](a, b, c, o, n, BLOCK=BLOCK)
         return o
 
+    def gelu_unfused(a, b, c, t, o):  # 2 launches: gelu_and_mul then add
+        k = _triton_ops()
+        n = a.numel()
+        k["gelu_mul"][_grid(n, BLOCK)](a, b, t, n, BLOCK=BLOCK)
+        k["add"][_grid(n, BLOCK)](t, c, o, n, BLOCK=BLOCK)
+        return o
+
+    def gelu_fused(a, b, c, o):  # 1 hand-fused Triton launch
+        k = _triton_ops()
+        n = a.numel()
+        k["fused_gelu"][_grid(n, BLOCK)](a, b, c, o, n, BLOCK=BLOCK)
+        return o
+
     return [
         Chain(
             name="add_mul",
@@ -212,6 +286,17 @@ def _chains():
             unfused=silu_unfused,
             hand_fused=silu_fused,
             unfused_desc="Triton silu_and_mul then add (2 kernels)",
+            n_transfers_fused=4,
+            n_transfers_unfused=6,
+        ),
+        Chain(
+            name="gelu_mul_add",  # z = gelu_tanh(a)*b + c  (GeGLU FFN block)
+            inputs=("a", "b", "c"),
+            intent_mlir=_gelu_chain_mlir,
+            ref=lambda a, b, c: torch.nn.functional.gelu(a, approximate="tanh") * b + c,
+            unfused=gelu_unfused,
+            hand_fused=gelu_fused,
+            unfused_desc="Triton gelu_and_mul then add (2 kernels)",
             n_transfers_fused=4,
             n_transfers_unfused=6,
         ),

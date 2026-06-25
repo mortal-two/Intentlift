@@ -15,7 +15,7 @@ _HAS_GPU = torch.cuda.is_available()
 pytestmark = pytest.mark.skipif(not _HAS_GPU, reason="needs CUDA GPU")
 
 
-@pytest.mark.parametrize("chain_name", ["add_mul", "silu_mul_add"])
+@pytest.mark.parametrize("chain_name", ["add_mul", "silu_mul_add", "gelu_mul_add"])
 def test_chain_fuses_to_one_kernel_and_matches(chain_name, tmp_path):
     from intentir.backend.compile import compile_all_kernels_fused
     from intentir.bench.fused_elementwise import _chains, _build_plan, _launch_nosync
