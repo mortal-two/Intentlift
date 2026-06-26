@@ -194,12 +194,28 @@ _DEVICE_FRONT_PASSES = [
 ]
 
 
-def lower_memref_module_to_kernels(mlir: str | os.PathLike) -> list[CompiledKernel]:
-    """A module already in scf.parallel+scf.for+memref form -> loadable cubins."""
+def lower_memref_module_to_kernels(
+    mlir: str | os.PathLike, scf_to_cf: bool = False
+) -> list[CompiledKernel]:
+    """A module already in scf.parallel+scf.for+memref form -> loadable cubins.
+
+    ``scf_to_cf`` runs ``-convert-scf-to-cf`` just before the integrated NVVM
+    pipeline. The default ``--gpu-lower-to-nvvm-pipeline`` lowers gpu->nvvm
+    BEFORE its internal scf->cf, so an ``scf.for`` carrying ``!gpu.mma_matrix``
+    iter_args (the tiled-K tensor-core accumulator of
+    ``convert-intent-contraction-to-gpu``) fails to legalize — the gpu type
+    converter never reaches the scf op. Pre-lowering scf to cf routes the
+    fragment values through ``cf.br`` block args, which the gpu->nvvm type
+    converter DOES convert. Off by default so the M1-M6 row-reduction/elementwise
+    paths (scf.for with f32/index iter_args, handled fine by the composite) are
+    byte-for-byte unchanged.
+    """
     src = Path(mlir).read_text() if os.path.exists(str(mlir)) else str(mlir)
     front = _run([MLIR_OPT, *_DEVICE_FRONT_PASSES], stdin=src)
     prepped = _run([INTENT_OPT, *_DEVICE_PREP_PASSES], stdin=front)
-    return _extract_kernels(_run([MLIR_OPT, _device_pipeline()], stdin=prepped))
+    pipeline = (["-convert-scf-to-cf", _device_pipeline()] if scf_to_cf
+                else [_device_pipeline()])
+    return _extract_kernels(_run([MLIR_OPT, *pipeline], stdin=prepped))
 
 
 def _ptxas(ptx: bytes) -> bytes:

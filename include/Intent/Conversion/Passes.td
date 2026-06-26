@@ -110,4 +110,36 @@ def ConvertIntentElementwiseToGPU
   ];
 }
 
+def ConvertIntentContractionToGPU
+    : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.contraction matmul to one tiled-K "
+                "tensor-core gpu.launch.";
+  let description = [{
+    Recognizes a `func.func` whose body is exactly one
+    `intent.contraction{"mk,nk->mn"}` (A[M,K] f16, W[N,K] f16 -> Y[M,N] f32) and
+    rewrites it in place to ONE tiled-K tensor-core `gpu.launch`: BM=BN=64,
+    BK=16, a 4x4 grid of m16n16k16 WMMA tiles over 4 warps, with the per-warp
+    fp32 accumulator fragments carried across the K loop as `scf.for` iter_args
+    and the A/W sub-tiles staged through `gpu.dynamic_shared_memory`. The
+    contraction is realized by NVIDIA WMMA (`gpu.subgroup_mma_*` ->
+    wmma.mma.sync on sm_120a), NOT scalarized to a `linalg.generic` MAC.
+
+    The B operand (W[N,K]) is loaded transposed so "mk,nk->mn" is exact:
+    C[m,n] += sum_k A[m,k]*W[n,k]. Static shapes only, M%64==N%64==K%16==0
+    (non-divisible tail-mask is a documented follow-up). Run BEFORE
+    `convert-intent-to-linalg` (which would otherwise scalarize the contraction
+    for the CPU/oracle leg). The resulting memref+gpu.launch module goes to the
+    device pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`, so
+    the gpu->nvvm conversion can legalize an scf.for carrying !gpu.mma_matrix
+    iter_args).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
 #endif // INTENT_CONVERSION_PASSES

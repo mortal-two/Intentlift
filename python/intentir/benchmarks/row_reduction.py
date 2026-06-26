@@ -146,3 +146,80 @@ class RowReductionKernel:
                                 shared, stream, addr, 0)
 
         return go
+
+
+class MatmulKernel:
+    """A compiled tensor-core matmul kernel + its resolved bare-ptr launch plan.
+
+    Drives ``-convert-intent-contraction-to-gpu`` on a raw intent-MLIR module
+    (one ``intent.contraction{"mk,nk->mn"}``, A/W f16 -> Y f32) and compiles the
+    resulting tiled-K tensor-core ``gpu.launch`` to an sm_120a cubin. Unlike the
+    row-reduction pass this pass has no ``block-threads`` option (the WMMA tile
+    geometry is fixed: BM=BN=64, BK=16, 4 warps), and it needs ``scf_to_cf=True``
+    so the gpu->nvvm pipeline can legalize the ``scf.for`` carrying
+    ``!gpu.mma_matrix`` iter_args (the K-loop accumulator fragments).
+
+    ``thunk(tensors)`` returns a zero-arg NO-SYNC launch closure ready for
+    ``do_bench``; ``tensors`` are [A, W, Y] (A[M,K] f16, W[N,K] f16, Y[M,N] f32,
+    all contiguous CUDA).
+    """
+
+    def __init__(self, mlir_text: str):
+        rr = _run([INTENT_OPT, "-convert-intent-contraction-to-gpu"],
+                  stdin=mlir_text)
+        kernels = lower_memref_module_to_kernels(rr, scf_to_cf=True)
+        if len(kernels) != 1:
+            raise RuntimeError(
+                f"matmul: expected one kernel, got {len(kernels)}")
+        ck = kernels[0]
+        self.func = load_module(ck.cubin).function(ck.kernel_name)
+
+        _n, ftext = _host_func_text(ck.binary_mlir)
+        _s, _o, ptr_blockargs = _parse_signature_blockargs(ftext)
+        aligned = _map_input_aligned_ptrs(ptr_blockargs)
+        consts = _parse_constants(ftext)
+        sites = _parse_launches(ftext)
+        if len(sites) != 1:
+            raise RuntimeError(
+                f"matmul: expected one gpu.launch_func, got {len(sites)}")
+        site = sites[0]
+
+        class _Shim:
+            constants = consts
+
+        self.grid = tuple(_resolve_const_index(_Shim, s) for s in site.grid_ssa)
+        self.block = tuple(_resolve_const_index(_Shim, s) for s in site.block_ssa)
+        self.shared = 0
+        if site.dynamic_shared_ssa is not None:
+            self.shared = int(consts[site.dynamic_shared_ssa][0])
+            cuda = _driver()
+            attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+            cuda.cuFuncSetAttribute(self.func, attr, self.shared)
+        self.plan = []
+        for op in site.args:
+            if op.ty.startswith("!llvm.ptr"):
+                self.plan.append(("ptr", aligned[op.ssa]))
+            elif op.ty in ("i64", "index"):
+                self.plan.append(("i64", int(consts[op.ssa][0])))
+            else:
+                raise RuntimeError(f"matmul: unhandled launch-arg {op.ty}")
+        self._cuda = _driver()
+
+    def thunk(self, tensors):
+        """A zero-arg NO-SYNC launch closure binding `tensors` (kept alive)."""
+        import torch
+
+        args = [PtrArg(tensors[i].data_ptr()) if kind == "ptr" else I64Arg(i)
+                for kind, i in self.plan]
+        keep, argp = _marshal(args)
+        cuda, func, grid, block = self._cuda, self.func, self.grid, self.block
+        shared = self.shared
+        addr = int(ctypes.addressof(argp))
+        stream = int(torch.cuda.current_stream().cuda_stream)
+
+        def go(_keep=keep, _argp=argp):  # keep the marshaled buffer alive
+            cuda.cuLaunchKernel(func, grid[0], grid[1], grid[2],
+                                block[0], block[1], block[2],
+                                shared, stream, addr, 0)
+
+        return go
