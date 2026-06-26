@@ -30,7 +30,8 @@ from .extract import extract_intent
 from .provider import REPO_ROOT
 
 FG_OPS = Path("/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops")
-CORPUS_DIR = REPO_ROOT / "corpus"
+CORPUS_DIR = REPO_ROOT / "corpus" / "kernels"
+REPORTS_DIR = REPO_ROOT / "corpus" / "reports"
 INTENT_OPT = REPO_ROOT / "build" / "tools" / "intent-opt" / "intent-opt"
 
 

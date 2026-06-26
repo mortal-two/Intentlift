@@ -493,7 +493,7 @@ def run_fused_bench(shapes=((32768, 512), (65536, 512), (32768, 1024)),
     return out
 
 
-def write_perf_report(path="corpus/PERF_FUSION.md", **kw) -> list[dict]:
+def write_perf_report(path="corpus/reports/PERF_FUSION.md", **kw) -> list[dict]:
     """Run the benchmark and write the markdown report; returns the rows."""
     rows = run_fused_bench(**kw)
     lo = min(r["speedup_vs_unfused"] for r in rows)

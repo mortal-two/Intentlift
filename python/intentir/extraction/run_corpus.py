@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .corpus import CORPUS_DIR, run_kernel, verify_saved
+from .corpus import CORPUS_DIR, REPORTS_DIR, run_kernel, verify_saved
 from .corpus_specs import kernel_specs
 
 
@@ -76,8 +76,9 @@ def main() -> int:
         lines.append(f"| {r.name} | {r.library} | {mk(r.extracted)} | "
                      f"{mk(r.verified)} | {mk(r.lowered)} | {rel} | {len(r.op_kinds)} |")
     lines += ["", f"**{npass}/{len(results)} kernels** pass all three stages.", ""]
-    (CORPUS_DIR / "REPORT.md").write_text("\n".join(lines))
-    print(f"wrote {CORPUS_DIR}/REPORT.md + manifest.json")
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    (REPORTS_DIR / "REPORT.md").write_text("\n".join(lines))
+    print(f"wrote {REPORTS_DIR}/REPORT.md + {CORPUS_DIR}/manifest.json")
     return 0 if npass >= 10 else 1
 
 

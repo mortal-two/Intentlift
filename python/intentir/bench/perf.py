@@ -178,8 +178,10 @@ def main() -> int:
     from pathlib import Path
 
     from ..extraction.provider import REPO_ROOT
-    Path(REPO_ROOT / "corpus" / "PERF.md").write_text(report + "\n")
-    print("\nwrote corpus/PERF.md")
+    out_md = REPO_ROOT / "corpus" / "reports" / "PERF.md"
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+    out_md.write_text(report + "\n")
+    print("\nwrote corpus/reports/PERF.md")
     return 0
 
 
