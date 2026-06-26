@@ -102,6 +102,19 @@ class RowReductionKernel:
 
         self.grid = tuple(_resolve_const_index(_Shim, s) for s in site.grid_ssa)
         self.block = tuple(_resolve_const_index(_Shim, s) for s in site.block_ssa)
+        # M5 tiled+smem path: a workgroup (dynamic shared) row cache. Resolve the
+        # dynamic_shared_memory_size constant and, when it exceeds the 48 KiB
+        # default static cap, opt the kernel into a larger dynamic-shared budget.
+        self.shared = 0
+        if site.dynamic_shared_ssa is not None:
+            self.shared = int(consts[site.dynamic_shared_ssa][0])
+            # Opt the kernel into the larger dynamic-shared budget: the 48 KiB
+            # default cap is for static shared, and the gpu.all_reduce already
+            # uses a little static shared, so even a 48 KiB cache needs the
+            # opt-in (max-dynamic-shared up to the sm_120 ~100 KiB ceiling).
+            cuda = _driver()
+            attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+            cuda.cuFuncSetAttribute(self.func, attr, self.shared)
         # plan: per launch arg, ("ptr", input_index) | ("i64", literal value).
         # An i64 arg appears when -canonicalize hoists a constant out of the
         # launch region so the outliner captures it (e.g. a folded `1`).
@@ -123,12 +136,13 @@ class RowReductionKernel:
                 for kind, i in self.plan]
         keep, argp = _marshal(args)
         cuda, func, grid, block = self._cuda, self.func, self.grid, self.block
+        shared = self.shared
         addr = int(ctypes.addressof(argp))
         stream = int(torch.cuda.current_stream().cuda_stream)
 
         def go(_keep=keep, _argp=argp):  # keep the marshaled buffer alive
             cuda.cuLaunchKernel(func, grid[0], grid[1], grid[2],
                                 block[0], block[1], block[2],
-                                0, stream, addr, 0)
+                                shared, stream, addr, 0)
 
         return go

@@ -230,6 +230,7 @@ class _LaunchSite:
     grid_ssa: tuple[str, str, str]
     block_ssa: tuple[str, str, str]
     args: list[_LaunchOperand]
+    dynamic_shared_ssa: str | None = None  # dynamic_shared_memory_size operand ssa
 
 
 @dataclass
@@ -547,13 +548,15 @@ def _parse_launches(func_text: str) -> list[_LaunchSite]:
         r"blocks\s+in\s+\((%\w+),\s*(%\w+),\s*(%\w+)\)\s+"
         r"threads\s+in\s+\((%\w+),\s*(%\w+),\s*(%\w+)\)\s*"
         r"(?::\s*\S+\s*)?"
+        r"(?:dynamic_shared_memory_size\s+(%\w+)\s*)?"  # M5 tiled smem cache
         r"args\(([^)]*)\)"
     )
     for m in pat.finditer(func_text):
         binmod, fsym = m.group(1), m.group(2)
         grid = (m.group(3), m.group(4), m.group(5))
         block = (m.group(6), m.group(7), m.group(8))
-        argstr = m.group(9)
+        dyn_shared = m.group(9)
+        argstr = m.group(10)
         operands: list[_LaunchOperand] = []
         for piece in _split_top_level(argstr):
             piece = piece.strip()
@@ -565,7 +568,7 @@ def _parse_launches(func_text: str) -> list[_LaunchSite]:
                     f"orchestrate: unparsable launch operand {piece!r}"
                 )
             operands.append(_LaunchOperand(om.group(1), om.group(2).strip()))
-        sites.append(_LaunchSite(binmod, fsym, grid, block, operands))
+        sites.append(_LaunchSite(binmod, fsym, grid, block, operands, dyn_shared))
     return sites
 
 

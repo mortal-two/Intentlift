@@ -58,6 +58,15 @@ def ConvertIntentRowReductionToGPU
            "Threads per block (block size over the feature dim); 0 = auto "
            "(largest power-of-two <= min(N,256) dividing N). The PK harness "
            "passes the library kernel's geometry (e.g. 128 / 256).">,
+    Option<"tileCols", "tile-cols", "unsigned", "32",
+           "Max f32 columns held in registers per thread (register budget). "
+           "When N/T exceeds this, the per-thread feature strip is split into "
+           "num_tiles tiles of <= tile-cols each: each reduce becomes an "
+           "scf.for over tiles accumulating a per-thread partial with ONE "
+           "gpu.all_reduce AFTER the loop, and the row is cached in a "
+           "workgroup (dynamic shared) buffer so the normalize epilogue does "
+           "not re-read it from HBM. num_tiles==1 (N/T <= tile-cols) keeps the "
+           "M1 register-tile path byte-identical.">,
   ];
 }
 

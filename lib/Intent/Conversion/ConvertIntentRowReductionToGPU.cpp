@@ -42,6 +42,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <limits>
@@ -107,9 +108,14 @@ enum class ResultRole { RowOut, PerRowOut, AtomicOut };
 struct RowReductionLowering {
   func::FuncOp fn;
   unsigned blockThreads;
+  unsigned tileColsMax;
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
+  // Tiling: the per-thread feature strip of K columns is split into `numTiles`
+  // tiles of `Kpt` columns each (K == Kpt * numTiles). numTiles==1 (K <=
+  // tileColsMax) is the M1 register-tile path, emitted byte-identically.
+  int64_t Kpt = 0, numTiles = 1;
   Type f32;
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
@@ -117,7 +123,8 @@ struct RowReductionLowering {
   SmallVector<Value> outputVals;     // the returned values (>=1, topo order)
   SmallVector<ResultRole> outRoles;  // RowOut / PerRowOut / AtomicOut per result
 
-  RowReductionLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
+  RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc)
+      : fn(fn), blockThreads(bt), tileColsMax(tc) {}
 
   /// Is `v` a compile-time-uniform (rank-0 scalar) value? A Scalar arg, or a map
   /// subtree of only Scalar args. A reduce result is per-row uniform but NOT a
@@ -316,6 +323,36 @@ struct RowReductionLowering {
     if (T <= 0 || N % T != 0)
       return failure(); // tail-mask (non-divisible) is a documented M1 follow-up
     K = N / T;
+    // Register budget: if the per-thread strip K exceeds tileColsMax, split it
+    // into numTiles tiles of Kpt <= tileColsMax columns each (Kpt must divide K,
+    // smallest such numTiles). numTiles==1 is the M1 register-tile path.
+    Kpt = K;
+    numTiles = 1;
+    if (tileColsMax > 0 && K > (int64_t)tileColsMax) {
+      for (int64_t nt = 2; nt <= K; ++nt) {
+        if (K % nt == 0 && K / nt <= (int64_t)tileColsMax) {
+          numTiles = nt;
+          Kpt = K / nt;
+          break;
+        }
+      }
+    }
+    // Multi-tile (tiled + smem-cached) path scope: exactly one per-row reduce,
+    // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. The general
+    // tiled multi-reduce case is out of M5 scope (its kernels are small-N /
+    // single-tile). The single-tile path is unrestricted (M1/M2/M5a).
+    if (numTiles > 1) {
+      if (reduces.size() != 1 || !crossReduces.empty())
+        return failure();
+      for (ResultRole rr : outRoles)
+        if (rr == ResultRole::AtomicOut)
+          return failure();
+      // The tiled block reduction is a power-of-two shared-memory tree (so it
+      // never emits a gpu.all_reduce static buffer that would overlap the
+      // dynamic-shared cache). Every real geometry (num_warps*32) is pow2.
+      if ((T & (T - 1)) != 0)
+        return failure();
+    }
     return success();
   }
 
@@ -328,6 +365,7 @@ struct RowReductionLowering {
   DenseMap<Value, Value> argMemref;              // Row/Col/Scalar arg -> memref arg
   DenseMap<Value, SmallVector<Value>> rowVals;   // Row arg -> K loaded SSA values
   SmallVector<Value> cols;                       // K column indices (tx + k*T)
+  DenseMap<Value, Value> frontierBuf;            // cached row value -> smem memref
 
   /// Evaluate an original value for the thread's k-th column (fully unrolled).
   /// Row inputs resolve to the once-loaded register value; uniforms to their
@@ -399,7 +437,319 @@ struct RowReductionLowering {
     return MemRefType::get({}, f32);
   }
 
+  // ---- tiled + smem-cached path (numTiles > 1) --------------------------- //
+  // A value is "row-varying" if it transitively depends on a Row[M,N] arg. A
+  // Col[N] or Scalar[] arg is NOT row-varying (Cols are re-loaded cheaply in the
+  // epilogue; Scalars are uniform). A reduce result is per-row uniform.
+  bool isRowVarying(Value v) {
+    if (auto ba = dyn_cast<BlockArgument>(v))
+      return argRoles[ba.getArgNumber()] == Role::Row;
+    Operation *d = v.getDefiningOp();
+    if (!d)
+      return false;
+    if (auto mu = dyn_cast<MapUnaryOp>(d))
+      return isRowVarying(mu.getInput());
+    if (auto mb = dyn_cast<MapBinaryOp>(d))
+      return isRowVarying(mb.getLhs()) || isRowVarying(mb.getRhs());
+    return false; // a reduce result is per-row uniform, not row-varying
+  }
+
+  // The "row frontier" of an output is the maximal row-varying subexpression(s)
+  // that must be cached so the normalize epilogue recomputes only uniform/Col
+  // ops on top (never re-reading a Row arg). Walk down from `v`: stop (cache `v`)
+  // at a Row arg, or at a map_binary whose BOTH operands are row-varying (an
+  // intermediate like A = X + residual that is reused — cache the combined value,
+  // one buffer, not its two operands); descend through unary ops and through the
+  // single row-varying operand of a uniform/Col combine. This yields {X} for
+  // rms_norm and {A} for rms_norm_add — exactly one buffer each.
+  void markFrontier(Value v, llvm::SetVector<Value> &fset) {
+    if (!isRowVarying(v))
+      return;
+    if (isa<BlockArgument>(v)) {
+      fset.insert(v);
+      return;
+    }
+    Operation *d = v.getDefiningOp();
+    if (auto mu = dyn_cast<MapUnaryOp>(d)) {
+      markFrontier(mu.getInput(), fset);
+      return;
+    }
+    if (auto mb = dyn_cast<MapBinaryOp>(d)) {
+      bool l = isRowVarying(mb.getLhs()), r = isRowVarying(mb.getRhs());
+      if (l && r) {
+        fset.insert(v);
+        return;
+      }
+      markFrontier(l ? mb.getLhs() : mb.getRhs(), fset);
+      return;
+    }
+    fset.insert(v); // defensive: an unexpected row-varying producer
+  }
+
+  // Evaluate an original value at a dynamic column `col` (loading Row/Col args
+  // fresh, memoized per-column in `cur`). When `fromSmem`, a frontier value is
+  // read from its workgroup cache instead of recomputed from Row args (the
+  // read-once epilogue: the row was cached during the reduction pass).
+  Value emitAtCol(OpBuilder &b, Location loc, Value v, Value col, Value bx,
+                  DenseMap<Value, Value> &cur, bool fromSmem) {
+    if (Value c = cur.lookup(v))
+      return c;
+    if (Value u = uniform.lookup(v))
+      return u;
+    if (fromSmem) {
+      if (Value buf = frontierBuf.lookup(v)) {
+        Value ld = b.create<memref::LoadOp>(loc, buf, ValueRange{col});
+        cur[v] = ld;
+        return ld;
+      }
+    }
+    Value res;
+    if (auto ba = dyn_cast<BlockArgument>(v)) {
+      Role role = argRoles[ba.getArgNumber()];
+      if (role == Role::Row)
+        res = b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{bx, col});
+      else if (role == Role::Col)
+        res = b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{col});
+      else
+        res = uniform.lookup(v); // scalar already loaded once at launch top
+    } else {
+      Operation *d = v.getDefiningOp();
+      if (auto mu = dyn_cast<MapUnaryOp>(d))
+        res = emitScalarUnary(b, loc, mu.getFn(),
+                              emitAtCol(b, loc, mu.getInput(), col, bx, cur,
+                                        fromSmem));
+      else if (auto mb = dyn_cast<MapBinaryOp>(d))
+        res = emitScalarBinary(
+            b, loc, mb.getFn(),
+            emitAtCol(b, loc, mb.getLhs(), col, bx, cur, fromSmem),
+            emitAtCol(b, loc, mb.getRhs(), col, bx, cur, fromSmem));
+      else
+        res = nullptr;
+    }
+    cur[v] = res;
+    return res;
+  }
+
+  LogicalResult rewriteTiled() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+
+    // Frontier set: the row-varying values to cache in workgroup shared memory.
+    llvm::SetVector<Value> frontierSet;
+    for (Value o : outputVals)
+      markFrontier(o, frontierSet);
+    SmallVector<Value> frontiers(frontierSet.begin(), frontierSet.end());
+
+    // New signature: original args (as memrefs) ++ one output memref per result.
+    SmallVector<Type> inTys;
+    for (Role r : argRoles)
+      inTys.push_back(memrefOf(r));
+    for (ResultRole rr : outRoles) {
+      if (rr == ResultRole::RowOut)
+        inTys.push_back(MemRefType::get({M, N}, f32));
+      else // PerRowOut (AtomicOut rejected for the tiled path in match())
+        inTys.push_back(MemRefType::get({M}, f32));
+    }
+    auto newFty = FunctionType::get(ctx, inTys, {});
+
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+
+    b.setInsertionPoint(fn);
+    auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    Block *entry = gpuFn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+
+    Block &srcBlock = fn.getBody().front();
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
+    SmallVector<Value> outMems;
+    for (unsigned j = 0; j < outRoles.size(); ++j)
+      outMems.push_back(entry->getArgument(argRoles.size() + j));
+
+    Value cM = b.create<arith::ConstantIndexOp>(loc, M);
+    Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+    Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+    // Dynamic shared memory: one [N] f32 row cache per frontier, plus a [T] f32
+    // scratch for the block reduction tree. We do NOT use gpu.all_reduce here:
+    // its lowering emits a *separate static* `.shared` buffer that ptxas packs
+    // INSIDE our (demoted) dynamic-shared cache region, clobbering it. Keeping
+    // the only `.shared` symbol the single dynamic buffer (the G1-proven config)
+    // sidesteps that overlap entirely.
+    int64_t cacheBytes = (int64_t)N * (int64_t)frontiers.size() * 4;
+    int64_t shBytes = cacheBytes + (int64_t)T * 4;
+    Value shBytesV =
+        b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shBytes));
+
+    auto launch =
+        b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1, shBytesV);
+    b.setInsertionPointToStart(&launch.getBody().front());
+
+    Value bx = launch.getBlockIds().x;
+    Value tx = launch.getThreadIds().x;
+
+    // Carve the dynamic shared region into one memref<Nxf32, workgroup> per
+    // frontier at byte offset f*N*4, then a memref<Txf32, workgroup> reduction
+    // scratch right after the caches.
+    auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
+                                 wgSpace);
+    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
+    auto bufTy = MemRefType::get({N}, f32, nullptr, wgSpace);
+    for (size_t f = 0; f < frontiers.size(); ++f) {
+      Value off = b.create<arith::ConstantIndexOp>(loc, (int64_t)f * N * 4);
+      Value buf = b.create<memref::ViewOp>(loc, bufTy, raw, off, ValueRange{});
+      frontierBuf[frontiers[f]] = buf;
+    }
+    auto scratchTy = MemRefType::get({T}, f32, nullptr, wgSpace);
+    Value scratchOff = b.create<arith::ConstantIndexOp>(loc, cacheBytes);
+    Value scratch =
+        b.create<memref::ViewOp>(loc, scratchTy, raw, scratchOff, ValueRange{});
+
+    // Scalar args -> uniform (loaded once). NO upfront register tile (the strip
+    // is too large for registers — that is why we tile + cache).
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      Value arg = srcBlock.getArgument(i);
+      if (argRoles[i] == Role::Scalar)
+        uniform[arg] = b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+    }
+    hoistUniforms(b, loc);
+
+    Value nF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr((double)N));
+
+    // Per-thread base columns of tile 0: baseCol[k] = tx + k*T. The k_tile offset
+    // (k_tile * Kpt * T) is added INSIDE the loop (it depends on the trip index).
+    SmallVector<Value> baseCol;
+    for (int64_t k = 0; k < Kpt; ++k) {
+      Value o = b.create<arith::ConstantIndexOp>(loc, k * T);
+      baseCol.push_back(b.create<arith::AddIOp>(loc, tx, o));
+    }
+    Value c0i = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value cNT = b.create<arith::ConstantIndexOp>(loc, numTiles);
+    Value cKptT = b.create<arith::ConstantIndexOp>(loc, Kpt * T);
+
+    // The single per-row reduce, tiled: one scf.for over feature tiles building
+    // a per-thread partial (iter_arg), the frontier row cached to smem on the
+    // way, then ONE gpu.all_reduce AFTER the loop.
+    ReduceOp red = reduces[0];
+    ReduceInfo info = *reduceInfoFor(red.getFn());
+    Value ident =
+        b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
+    auto forOp = b.create<scf::ForOp>(
+        loc, c0i, cNT, c1, ValueRange{ident},
+        [&](OpBuilder &nb, Location nl, Value kt, ValueRange iter) {
+          Value ktOff = nb.create<arith::MulIOp>(nl, kt, cKptT);
+          Value acc = iter[0];
+          for (int64_t k = 0; k < Kpt; ++k) {
+            Value col = nb.create<arith::AddIOp>(nl, baseCol[k], ktOff);
+            DenseMap<Value, Value> cur;
+            // cache each frontier (computed from the fresh Row loads) to smem
+            for (Value F : frontiers) {
+              Value fv = emitAtCol(nb, nl, F, col, bx, cur, /*fromSmem=*/false);
+              nb.create<memref::StoreOp>(nl, fv, frontierBuf[F],
+                                         ValueRange{col});
+            }
+            // reduce input reuses the same fresh loads (read-once of X per col)
+            Value rin =
+                emitAtCol(nb, nl, red.getInput(), col, bx, cur, false);
+            acc = combineScalar(nb, nl, info.op, acc, rin);
+          }
+          nb.create<scf::YieldOp>(nl, acc);
+        });
+    // Block reduction: a power-of-two shared-memory tree over `scratch[tx]`
+    // (fully unrolled; T static). scratch[0] holds the block result, broadcast
+    // by every thread re-loading it.
+    b.create<memref::StoreOp>(loc, forOp.getResult(0), scratch, ValueRange{tx});
+    b.create<gpu::BarrierOp>(loc);
+    for (int64_t stride = T / 2; stride >= 1; stride >>= 1) {
+      Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
+      Value active =
+          b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, tx, cStride);
+      auto ifOp = b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
+      {
+        OpBuilder::InsertionGuard g(b);
+        b.setInsertionPointToStart(ifOp.thenBlock());
+        Value a = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+        Value other = b.create<arith::AddIOp>(loc, tx, cStride);
+        Value bb = b.create<memref::LoadOp>(loc, scratch, ValueRange{other});
+        Value c = combineScalar(b, loc, info.op, a, bb);
+        b.create<memref::StoreOp>(loc, c, scratch, ValueRange{tx});
+      }
+      b.create<gpu::BarrierOp>(loc);
+    }
+    Value c0r = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value scalar = b.create<memref::LoadOp>(loc, scratch, ValueRange{c0r});
+    if (info.isMean)
+      scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+    uniform[red.getResult()] = scalar;
+    hoistUniforms(b, loc); // rstd = rsqrt(mean+eps), etc. become available
+
+    // Barrier between the cache pass and the normalize epilogue. Each thread
+    // reads back only its OWN cached columns (col = tx + ...), so this is a
+    // safety fence (the all_reduce already synced the block); it also documents
+    // the cache->use boundary and keeps in-place X writes after all X reads.
+    b.create<gpu::BarrierOp>(loc);
+
+    // PerRowOut (e.g. a stat) is a per-row uniform written once by thread 0.
+    bool anyLead = false;
+    for (ResultRole r : outRoles)
+      anyLead |= (r == ResultRole::PerRowOut);
+    if (anyLead) {
+      Value isLead =
+          b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tx, c0i);
+      auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(ifOp.thenBlock());
+      DenseMap<Value, Value> cur;
+      for (unsigned j = 0; j < outputVals.size(); ++j) {
+        if (outRoles[j] != ResultRole::PerRowOut)
+          continue;
+        Value s = emitAtCol(b, loc, outputVals[j], c0i, bx, cur, /*fromSmem=*/true);
+        b.create<memref::StoreOp>(loc, s, outMems[j], ValueRange{bx});
+      }
+    }
+
+    // RowOut epilogue: one scf.for over the same feature tiles, reading each
+    // frontier back from its smem cache (NOT a 2nd HBM read of X) and writing
+    // every RowOut from it. For rms_norm_add the in-place A output is a frontier
+    // read from smem and stored back into the X memref (read-after-write across
+    // the barrier makes the alias safe).
+    bool anyRow = false;
+    for (ResultRole r : outRoles)
+      anyRow |= (r == ResultRole::RowOut);
+    if (anyRow) {
+      b.create<scf::ForOp>(
+          loc, c0i, cNT, c1, ValueRange{},
+          [&](OpBuilder &nb, Location nl, Value kt, ValueRange) {
+            Value ktOff = nb.create<arith::MulIOp>(nl, kt, cKptT);
+            for (int64_t k = 0; k < Kpt; ++k) {
+              Value col = nb.create<arith::AddIOp>(nl, baseCol[k], ktOff);
+              DenseMap<Value, Value> cur;
+              for (unsigned j = 0; j < outputVals.size(); ++j) {
+                if (outRoles[j] != ResultRole::RowOut)
+                  continue;
+                Value o = emitAtCol(nb, nl, outputVals[j], col, bx, cur,
+                                    /*fromSmem=*/true);
+                nb.create<memref::StoreOp>(nl, o, outMems[j],
+                                           ValueRange{bx, col});
+              }
+            }
+            nb.create<scf::YieldOp>(nl);
+          });
+    }
+
+    b.create<gpu::TerminatorOp>(loc);
+    b.setInsertionPointAfter(launch);
+    b.create<func::ReturnOp>(loc);
+
+    fn.erase();
+    return success();
+  }
+
   LogicalResult rewrite() {
+    if (numTiles > 1)
+      return rewriteTiled();
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
@@ -551,12 +901,12 @@ struct ConvertIntentRowReductionToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      RowReductionLowering probe(fn, blockThreads);
+      RowReductionLowering probe(fn, blockThreads, tileCols);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      RowReductionLowering low(fn, blockThreads);
+      RowReductionLowering low(fn, blockThreads, tileCols);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();
