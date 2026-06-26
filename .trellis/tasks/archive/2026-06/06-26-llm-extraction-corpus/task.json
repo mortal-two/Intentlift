@@ -1,0 +1,33 @@
+{
+  "id": "llm-extraction-corpus",
+  "name": "llm-extraction-corpus",
+  "title": "Live LLM extraction of >=10 high-perf-library Triton kernels (extract->IR->verify->lower)",
+  "description": "Make the JSON provider-agent-generated (gpt-5.5 responses API), not hand-authored. Build extraction client+prompt+driver; lift >=10 real FlagGems/Triton kernels to IntentIR; verify interpret(JSON)==the actual library kernel; emit intent dialect MLIR and lower to linalg clean. DoD: corpus/REPORT.md status matrix with >=10 kernels extracted+verified+lowered, provenance.json per kernel.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "kingdom",
+  "assignee": "kingdom",
+  "createdAt": "2026-06-26",
+  "completedAt": "2026-06-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/intentir/extraction/client.py",
+    "python/intentir/extraction/prompt.py",
+    "python/intentir/extraction/extract.py",
+    "python/intentir/extraction/corpus.py",
+    "python/intentir/extraction/corpus_specs.py",
+    "python/intentir/extraction/run_corpus.py"
+  ],
+  "notes": "DONE 15/15 (extract+verify+lower). Pivoted source to FlagGems (real named library, runnable on sm_120 for the dynamic check). Extended dialect lowering+verifiers: tanh/sigmoid (unary), pow (binary), mean (reduce); added a const op (emitted as arith.constant, no new C++ op). General flat-graph emit_module added. BONUS beyond DoD: multi-backend (backend/cpu.py: 6 kernels JIT-execute on CPU via mlir-runner == interpret) + multi-frontend (cuda_frontend.py: 3 hand-written CUDA kernels lift to the SAME IntentIR, verified vs torch). corpus/REPORT.md + corpus/PERF.md + corpus/cuda/. See child concerns: vs-triton-report (perf table now exists).",
+  "meta": {}
+}
