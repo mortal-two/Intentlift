@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "06-26-m2-layer-norm"
+    "06-26-m2-layer-norm",
+    "06-26-m3-elementwise"
   ],
   "parent": null,
   "relatedFiles": [],
