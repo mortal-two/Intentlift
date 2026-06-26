@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-26-rowreduce-codegen-from-intent/prd.md", "reason": "from-intent codegen requirements + A/B decision"}
+{"file": ".trellis/tasks/06-26-rowreduce-codegen-from-intent/research/option-b-viability-probe.md", "reason": "PROVEN Option-B prototype: recognizer + emit from IntentFunction"}
+{"file": ".trellis/tasks/06-26-rms-norm-pk/research/verified-rmsnorm-mlir.md", "reason": "the proven kernel template + gotchas"}

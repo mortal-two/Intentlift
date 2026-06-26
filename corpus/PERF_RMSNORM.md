@@ -51,14 +51,18 @@ both sides to the same level, so it masks the kernel comparison. Kept for comple
   liger's own block geometry, so both move the same bytes and there is no fusion/traffic or
   geometry edge to exploit -- parity (~1.0x) is the ceiling, not a loss. At (32768,1024) the
   ratio is variance-dominated (swings ~0.97x-1.12x across runs on this throttling card); at
-  (16384,4096) it is stable parity (~1.00x). Both sit in the same ~337-367 GB/s band.
-  We do NOT claim a win; a beat must be explainable and never from a weakened baseline.
-- **Vectorization (v4): tried, lowers correctly, but no speedup.** Emitting `vector.load`/
-  `vector.store` as `vector<4xf32>` (with `memref.assume_alignment ..., 16` inside the
-  `gpu.launch` region, Triton layout) DOES lower to `ld.global.v4.f32` / `st.global.v4.f32`
-  (verified: 4 v4 loads + 2 v4 stores, 0 scalar global loads). But kernel-only it is
-  neutral-to-slightly-slower than the scalar kernel -- the op is HBM-bandwidth-bound, not
-  issue-bound, so relieving instruction pressure buys nothing. **The scalar kernel is retained.**
+  (16384,4096) it is stable parity (~1.00x). Both sit in the same ~337-367 GB/s band. The
+  result is robust to the metric choice: the secondary alloc-inclusive table lands at parity
+  too (~1.03x / ~1.00x), so kernel-only was not picked to flatter. We do NOT claim a win; a
+  beat must be explainable and never from a weakened baseline.
+- **Scalar kernel retained; vectorization cannot help here.** The op is HBM-bandwidth-bound,
+  not issue-bound (measured: clocks pinned at 2985 MHz / 187 W of 600 W, parity regardless of
+  geometry), so wider loads relieve instruction issue -- which a bandwidth-bound kernel does
+  not need. A separate probe (NOT reproduced in this deliverable) tried emitting `vector<4xf32>`
+  `vector.load`/`vector.store` (Triton layout, `memref.assume_alignment ..., 16` inside the
+  `gpu.launch` region): it reported correct lowering to `ld.global.v4.f32` / `st.global.v4.f32`
+  but neutral-to-slightly-slower kernel-only time -- consistent with the bandwidth-bound
+  conclusion above. The scalar kernel is the deliverable.
 - **Correctness is the primary DoD bar and is met cleanly:** every output is bit-faithful to
   the fp32 reference AND to liger at rel ~1e-7 (Y and RSTD), including the non-power-of-2
   tail-mask path. The result is bandwidth parity, not a reduced-work shortcut.

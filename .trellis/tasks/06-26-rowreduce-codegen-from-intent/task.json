@@ -3,7 +3,7 @@
   "name": "rowreduce-codegen-from-intent",
   "title": "From-intent high-perf row-reduction codegen: backend GENERATES the proven kernel from intent (not hand-emit)",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
