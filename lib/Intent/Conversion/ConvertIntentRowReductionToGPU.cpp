@@ -239,35 +239,36 @@ struct RowReductionLowering {
   }
 
   // ---- emission ---------------------------------------------------------- //
-  // Map: original value -> uniform (per-row scalar / rank-0) new Value, hoisted
-  // once at the top of the launch region.
-  DenseMap<Value, Value> uniform;
-  // Map: original Row/Col func arg -> new memref arg (+ per-Row cache alloca).
-  DenseMap<Value, Value> argMemref;
-  DenseMap<Value, Value> rowCache;
+  // The feature tile is held in REGISTERS, not a memref cache: K is static and
+  // small, so we fully unroll over k and keep each Row input's K loaded values
+  // as SSA (exactly liger's register tile). A dynamically-indexed memref.alloca
+  // would land in local memory (no mem2reg) and cap bandwidth ~40x below peak.
+  DenseMap<Value, Value> uniform;                // value -> hoisted per-row scalar
+  DenseMap<Value, Value> argMemref;              // Row/Col/Scalar arg -> memref arg
+  DenseMap<Value, SmallVector<Value>> rowVals;   // Row arg -> K loaded SSA values
+  SmallVector<Value> cols;                       // K column indices (tx + k*T)
 
-  /// Evaluate an original value at column `col` (k = cache index), in the
-  /// per-thread context. Uniform values resolve to their hoisted scalar.
-  Value emitAt(OpBuilder &b, Location loc, Value v, Value k, Value col) {
+  /// Evaluate an original value for the thread's k-th column (fully unrolled).
+  /// Row inputs resolve to the once-loaded register value; uniforms to their
+  /// hoisted per-row scalar; Col inputs (W) are loaded at col[k].
+  Value emitAt(OpBuilder &b, Location loc, Value v, unsigned k) {
     if (Value u = uniform.lookup(v))
       return u;
     if (auto barg = dyn_cast<BlockArgument>(v)) {
-      Value mem = argMemref.lookup(v);
       Role role = argRoles[barg.getArgNumber()];
       if (role == Role::Row)
-        return b.create<memref::LoadOp>(loc, rowCache.lookup(v), ValueRange{k});
+        return rowVals[v][k];
       if (role == Role::Col)
-        return b.create<memref::LoadOp>(loc, mem, ValueRange{col});
-      return b.create<memref::LoadOp>(loc, mem, ValueRange{}); // scalar
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{cols[k]});
+      return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{}); // scalar
     }
     Operation *def = v.getDefiningOp();
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitScalarUnary(b, loc, mu.getFn(),
-                             emitAt(b, loc, mu.getInput(), k, col));
+                             emitAt(b, loc, mu.getInput(), k));
     if (auto mb = dyn_cast<MapBinaryOp>(def))
-      return emitScalarBinary(b, loc, mb.getFn(),
-                              emitAt(b, loc, mb.getLhs(), k, col),
-                              emitAt(b, loc, mb.getRhs(), k, col));
+      return emitScalarBinary(b, loc, mb.getFn(), emitAt(b, loc, mb.getLhs(), k),
+                              emitAt(b, loc, mb.getRhs(), k));
     return nullptr; // a reduce result not yet hoisted: impossible in topo order
   }
 
@@ -281,7 +282,8 @@ struct RowReductionLowering {
   }
 
   /// Hoist every map op whose operands are all uniform into `uniform` (once),
-  /// at the current (top-of-launch) insertion point. Fixpoint.
+  /// at the current (top-of-launch) insertion point. Fixpoint. Uniform subtrees
+  /// never index a column, so the `k` passed to emitAt is unused (0).
   void hoistUniforms(OpBuilder &b, Location loc) {
     bool changed = true;
     while (changed) {
@@ -293,14 +295,14 @@ struct RowReductionLowering {
         if (auto mu = dyn_cast<MapUnaryOp>(&op)) {
           if (isUniform(mu.getInput())) {
             uniform[res] = emitScalarUnary(b, loc, mu.getFn(),
-                                           emitAt(b, loc, mu.getInput(), {}, {}));
+                                           emitAt(b, loc, mu.getInput(), 0));
             changed = true;
           }
         } else if (auto mb = dyn_cast<MapBinaryOp>(&op)) {
           if (isUniform(mb.getLhs()) && isUniform(mb.getRhs())) {
-            uniform[res] = emitScalarBinary(
-                b, loc, mb.getFn(), emitAt(b, loc, mb.getLhs(), {}, {}),
-                emitAt(b, loc, mb.getRhs(), {}, {}));
+            uniform[res] = emitScalarBinary(b, loc, mb.getFn(),
+                                            emitAt(b, loc, mb.getLhs(), 0),
+                                            emitAt(b, loc, mb.getRhs(), 0));
             changed = true;
           }
         }
@@ -350,56 +352,44 @@ struct RowReductionLowering {
 
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
-    Value cK = b.create<arith::ConstantIndexOp>(loc, K);
-    Value cTi = b.create<arith::ConstantIndexOp>(loc, T);
 
-    // Per-thread row cache + hoisted scalar args.
+    // Column indices col[k] = tx + k*T (k*T is a compile-time constant), and the
+    // read-once register tile: each Row input's K values loaded ONCE into SSA.
+    cols.clear();
+    for (int64_t k = 0; k < K; ++k) {
+      Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
+      cols.push_back(b.create<arith::AddIOp>(loc, tx, off));
+    }
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
-      if (argRoles[i] == Role::Row)
-        rowCache[arg] =
-            b.create<memref::AllocaOp>(loc, MemRefType::get({K}, f32));
-      else if (argRoles[i] == Role::Scalar)
-        uniform[arg] = b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+      if (argRoles[i] == Role::Row) {
+        SmallVector<Value> vals;
+        for (int64_t k = 0; k < K; ++k)
+          vals.push_back(b.create<memref::LoadOp>(loc, argMemref[arg],
+                                                  ValueRange{bx, cols[k]}));
+        rowVals[arg] = vals;
+      } else if (argRoles[i] == Role::Scalar) {
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+      }
     }
     hoistUniforms(b, loc);
 
-    Value nF =
-        b.create<arith::ConstantOp>(loc, b.getF32FloatAttr((double)N));
+    Value nF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr((double)N));
 
-    // One cooperative pass per reduce (program order = topo order).
+    // One cooperative pass per reduce (program order = topo order): the per-
+    // thread partial is an unrolled reduction over the K register-tile values,
+    // then a standalone gpu.all_reduce across the block.
     for (size_t idx = 0; idx < reduces.size(); ++idx) {
       ReduceOp red = reduces[idx];
       ReduceInfo info = *reduceInfoFor(red.getFn());
-      bool loadingPass = (idx == 0);
-      Value ident =
+      Value acc =
           b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-
-      auto forOp = b.create<scf::ForOp>(
-          loc, c0, cK, c1, ValueRange{ident},
-          [&](OpBuilder &nb, Location nl, Value k, ValueRange acc) {
-            Value kt = nb.create<arith::MulIOp>(nl, k, cTi);
-            Value col = nb.create<arith::AddIOp>(nl, tx, kt);
-            if (loadingPass) {
-              for (unsigned i = 0; i < argRoles.size(); ++i) {
-                if (argRoles[i] != Role::Row)
-                  continue;
-                Value arg = srcBlock.getArgument(i);
-                Value v = nb.create<memref::LoadOp>(nl, argMemref[arg],
-                                                    ValueRange{bx, col});
-                nb.create<memref::StoreOp>(nl, v, rowCache[arg], ValueRange{k});
-              }
-            }
-            Value in = emitAt(nb, nl, red.getInput(), k, col);
-            Value next = combineScalar(nb, nl, info.op, acc[0], in);
-            nb.create<scf::YieldOp>(nl, next);
-          });
-
-      Value partial = forOp.getResult(0);
+      for (int64_t k = 0; k < K; ++k)
+        acc = combineScalar(b, loc, info.op, acc,
+                            emitAt(b, loc, red.getInput(), k));
       auto allRed = b.create<gpu::AllReduceOp>(
-          loc, partial,
-          gpu::AllReduceOperationAttr::get(ctx, info.op),
+          loc, acc, gpu::AllReduceOperationAttr::get(ctx, info.op),
           /*uniform=*/UnitAttr::get(ctx));
       Value scalar = allRed.getResult();
       if (info.isMean)
@@ -408,16 +398,11 @@ struct RowReductionLowering {
       hoistUniforms(b, loc); // +eps, sqrt, recip, ... become available now
     }
 
-    // Epilogue: write the output row from the cache (read-once).
-    b.create<scf::ForOp>(
-        loc, c0, cK, c1, ValueRange{},
-        [&](OpBuilder &nb, Location nl, Value k, ValueRange) {
-          Value kt = nb.create<arith::MulIOp>(nl, k, cTi);
-          Value col = nb.create<arith::AddIOp>(nl, tx, kt);
-          Value out = emitAt(nb, nl, outputVal, k, col);
-          nb.create<memref::StoreOp>(nl, out, yMem, ValueRange{bx, col});
-          nb.create<scf::YieldOp>(nl);
-        });
+    // Epilogue: write the output row from the register tile (read-once).
+    for (int64_t k = 0; k < K; ++k) {
+      Value out = emitAt(b, loc, outputVal, k);
+      b.create<memref::StoreOp>(loc, out, yMem, ValueRange{bx, cols[k]});
+    }
 
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);

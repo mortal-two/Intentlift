@@ -2,13 +2,15 @@
 
 // softmax: two sequential last-axis reduces (max then sum) with a max-shift exp
 // between them, lowered to ONE read-once gpu.launch. Two cooperative passes ->
-// two gpu.all_reduce ops (maxnumf, then add); exp(x - max) is recomputed from
-// the cache in the epilogue (matching the hand oracle). Same pass, same DAG
-// scheduler as rms_norm — the second reduce is the only structural difference.
+// two gpu.all_reduce ops (maxnumf, then add); the register tile is loaded once
+// and exp(x - max) is recomputed from it in the epilogue (matching the hand
+// oracle). Same pass, same DAG scheduler as rms_norm — the second reduce is the
+// only structural difference.
 // CHECK-LABEL: func.func @softmax(
 // CHECK-SAME:    %{{.*}}: memref<4x8xf32>, %{{.*}}: memref<4x8xf32>)
 // CHECK:         gpu.launch
-// CHECK:         memref.alloca() : memref<2xf32>
+// CHECK-NOT:     memref.alloca
+// CHECK-NOT:     scf.for
 // CHECK:         gpu.all_reduce{{.*}}maxnumf
 // CHECK:         math.exp
 // CHECK:         gpu.all_reduce{{.*}}add
