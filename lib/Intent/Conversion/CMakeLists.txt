@@ -1,5 +1,6 @@
 add_mlir_library(MLIRIntentConversion
   ConvertIntentToLinalg.cpp
+  ConvertIntentRowReductionToGPU.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
@@ -18,4 +19,7 @@ add_mlir_library(MLIRIntentConversion
   MLIRArithDialect
   MLIRMathDialect
   MLIRSCFDialect
+  MLIRGPUDialect
+  MLIRMemRefDialect
+  MLIRFuncDialect
 )

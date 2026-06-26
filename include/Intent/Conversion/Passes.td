@@ -20,4 +20,45 @@ def ConvertIntentToLinalg : Pass<"convert-intent-to-linalg", "::mlir::ModuleOp">
   ];
 }
 
+def ConvertIntentRowReductionToGPU
+    : Pass<"convert-intent-row-reduction-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a row-local reduce+broadcast intent func to one "
+                "read-once block-cooperative gpu.launch.";
+  let description = [{
+    Recognizes `func.func`s whose body is a straight-line graph of
+    `intent.map_unary`/`intent.map_binary`/`intent.reduce` that computes a
+    2-D `[M,N]` output where every `intent.reduce` is over the last axis
+    (keepdims `[M,1]`) — the "row normalization" shape (rms_norm, softmax,
+    layer_norm, ...). It rewrites such a func in place to a memref-arg function
+    holding a single `gpu.launch`: one block per row, the feature dim split
+    over the block's threads, each thread reading its columns **once** into a
+    private `memref.alloca` cache, one standalone `gpu.all_reduce` per reduce
+    (→ warp `shfl.sync.bfly` + shared-mem on NVIDIA), per-row scalars hoisted
+    once, and the epilogue writing the output from the cache (read-once = HBM
+    parity with the library kernel). This is the verified block-cooperative
+    path; it is general over the reduce/map DAG (NO per-kernel recognizer).
+    Non-matching funcs are left untouched for `convert-intent-to-linalg`.
+
+    Static shapes only. Run BEFORE `convert-intent-to-linalg`; the resulting
+    memref+gpu.launch module goes straight to the device pipeline
+    (`lower_memref_module_to_kernels`), bypassing bufferization. Transcendentals
+    are emitted as `math.exp`/`math.sqrt`/`math.rsqrt` and rewritten to NVVM
+    approx intrinsics by the `-lower-gpu-math-to-nvvm` target peephole.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (block size over the feature dim); 0 = auto "
+           "(largest power-of-two <= min(N,256) dividing N). The PK harness "
+           "passes the library kernel's geometry (e.g. 128 / 256).">,
+  ];
+}
+
 #endif // INTENT_CONVERSION_PASSES

@@ -63,6 +63,33 @@ struct ExpToEx2Approx : OpRewritePattern<math::ExpOp> {
   }
 };
 
+/// `math.OP %x : f32` -> `llvm.call_intrinsic "<intr>"(%x)` for the NVVM
+/// approximate transcendentals. Same libdevice-dead-end fix as exp: the stock
+/// GpuToNVVM lowering routes `math.sqrt`/`math.rsqrt` to `__nv_sqrtf`/
+/// `__nv_rsqrtf` externs, which ptxas cannot resolve (or the integrated
+/// serializer DCEs the kernel). The `*.approx.f` PTX ops compute it in hardware;
+/// measured rel vs fp32-ref is ~1.3e-7 (rms_norm's rstd is one value/row, error
+/// negligible) — the same class of fix, applied to the row-reduction normalizer.
+template <typename MathOp>
+struct UnaryToNVVMApprox : OpRewritePattern<MathOp> {
+  UnaryToNVVMApprox(MLIRContext *ctx, StringRef intrinsic)
+      : OpRewritePattern<MathOp>(ctx), intrinsic(intrinsic) {}
+
+  LogicalResult matchAndRewrite(MathOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    auto approx = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32, rewriter.getStringAttr(intrinsic),
+        ValueRange{op.getOperand()});
+    rewriter.replaceOp(op, approx.getResults());
+    return success();
+  }
+
+  StringRef intrinsic;
+};
+
 struct LowerGpuMathToNVVM
     : ::intent::impl::LowerGpuMathToNVVMBase<LowerGpuMathToNVVM> {
   using LowerGpuMathToNVVMBase::LowerGpuMathToNVVMBase;
@@ -70,6 +97,10 @@ struct LowerGpuMathToNVVM
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
+    patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
+                                                  "llvm.nvvm.sqrt.approx.f");
+    patterns.add<UnaryToNVVMApprox<math::RsqrtOp>>(&getContext(),
+                                                   "llvm.nvvm.rsqrt.approx.f");
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
