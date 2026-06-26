@@ -29,11 +29,13 @@ Pattern recognized (the generalizable row-reduction family)::
     -> reduce over the last axis   # mean (rms); max+sum (softmax); mean+var (ln)
     -> broadcast + post-elementwise # (x*rsqrt(mean+eps))*w (rms); (x-max).exp()/sum
 
-Only **rms_norm** (one ``reduce{mean}`` + ``+eps`` + ``sqrt`` + ``recip`` +
-``X*inv_rms`` + ``*W``) is recognized AND codegen-supported *now*; the dataclass
-is deliberately general (a list of reductions + optional weight/bias) so softmax
-(max+sum) and layer_norm (mean+var) slot in later behind the marked extension
-points. See the TODOs at :data:`_SOFTMAX_TODO` / :data:`_LAYERNORM_TODO`.
+**rms_norm** (one ``reduce{mean}`` + ``+eps`` + ``sqrt`` + ``recip`` +
+``X*inv_rms`` + ``*W``) AND **softmax** (``reduce{max}`` -> ``sub`` -> ``exp`` ->
+``reduce{sum}`` -> ``div``, no weight/bias) are both recognized AND
+codegen-supported -- softmax proves the dataclass (a list of reductions + optional
+weight/bias) generalizes from ONE reduction to TWO. layer_norm (mean+var) is the
+remaining slot behind the marked extension point. See :data:`_SOFTMAX_DONE` /
+:data:`_LAYERNORM_TODO`.
 """
 
 from __future__ import annotations
@@ -102,11 +104,12 @@ class RowReductionPlan:
 # --------------------------------------------------------------------------- #
 # Extension-point notes (kept as data so they show up in tooling / docs).      #
 # --------------------------------------------------------------------------- #
-_SOFTMAX_TODO = (
-    "softmax: pre = identity; reductions = [max, sum-of-exp(x-max)]; "
+_SOFTMAX_DONE = (
+    "softmax (IMPLEMENTED): pre = identity; reductions = [max, sum-of-exp(x-max)]; "
     "post = exp(x-max)/sum. Recognizer: two reduces (max then sum) with an "
-    "exp+sub between them; codegen: two gpu.all_reduce passes (max then add), "
-    "exp via the ex2.approx peephole, no weight/bias."
+    "exp+sub between them (_recognize_softmax); codegen: two gpu.all_reduce passes "
+    "(maxnumf then add), exp via the ex2.approx peephole, -inf tail mask, no "
+    "weight/bias -> bench.softmax_emit.emit_softmax."
 )
 _LAYERNORM_TODO = (
     "layer_norm: pre = identity; reductions = [mean, var]; "
@@ -169,8 +172,9 @@ def recognize_row_reduction(fn: IntentFunction) -> RowReductionPlan | None:
 
     The op is identified by *role*, not SSA name: the [rows, cols] data tensor is
     the 2-D input, the weight is the 1-D input, the reduction axis is the last.
-    softmax (max+sum) and layer_norm (mean+var) are NOT recognized yet -- see
-    :data:`_SOFTMAX_TODO` / :data:`_LAYERNORM_TODO`.
+    **softmax** (max+sum, no weight) is ALSO recognized (``_recognize_softmax``);
+    layer_norm (mean+var) is the remaining slot -- see :data:`_SOFTMAX_DONE` /
+    :data:`_LAYERNORM_TODO`.
     """
     if not fn.body:
         return None
@@ -190,12 +194,18 @@ def recognize_row_reduction(fn: IntentFunction) -> RowReductionPlan | None:
     if not all(_is_last_axis_reduce(op, data_rank) for op in reduces):
         return None  # a non-last-axis reduce is out of this family
 
-    # --- dispatch to the per-op recognizer (only rms_norm today) ----------- #
+    # --- dispatch to the per-op recognizer --------------------------------- #
+    # rms_norm has ONE reduction (mean); softmax has TWO (max then sum). The
+    # reduce-count + fns are the clean discriminator, so the rms recognizer
+    # returns None on a softmax body and vice-versa.
     plan = _recognize_rms_norm(fn, data_input, data_rank, reduces)
     if plan is not None:
         return plan
 
-    # TODO(softmax): _recognize_softmax -- see _SOFTMAX_TODO.
+    plan = _recognize_softmax(fn, data_input, data_rank, reduces)
+    if plan is not None:
+        return plan
+
     # TODO(layer_norm): _recognize_layer_norm -- see _LAYERNORM_TODO.
     return None
 
@@ -307,6 +317,117 @@ def _recognize_rms_norm(
     )
 
 
+def _recognize_softmax(
+    fn: IntentFunction,
+    data_input: str,
+    data_rank: int,
+    reduces: list[IntentOp],
+) -> RowReductionPlan | None:
+    """Recognize the (numerically-stable) softmax body shape; plan or ``None``.
+
+    Softmax body shape (in order), the GENERALIZATION of rms_norm to TWO
+    reductions over the last axis::
+
+        m         = reduce{max, axes=[last]}(X)   (reduction 1 -- numerical shift)
+        x_shifted = X - m                         (map_binary sub, broadcast m)
+        e         = exp(x_shifted)                (map_unary exp)
+        z         = reduce{sum, axes=[last]}(e)   (reduction 2 -- denominator)
+        Y         = e / z                         (map_binary div, broadcast z)
+
+    Checks (role-based):
+
+    * exactly TWO reductions: the first ``fn == "max"`` over the data input, the
+      second ``fn == "sum"`` over ``e``;
+    * a ``sub`` (``X - m``) and a ``map_unary exp`` between the two reduces, with
+      the sum reducing the exp result;
+    * the output is a ``map_binary div`` of ``e`` by the sum;
+    * NO weight (1-D) and NO eps (0-D) inputs -- softmax is unparameterized.
+
+    Returns ``None`` (so the rms_norm recognizer / naive fallback win) on any
+    mismatch -- in particular it returns ``None`` on the rms_norm body (one mean
+    reduction, not max+sum).
+    """
+    if len(reduces) != 2:
+        return None
+    red_max, red_sum = reduces[0], reduces[1]
+    if _fn_attr(red_max) != "max" or _fn_attr(red_sum) != "sum":
+        return None
+    # reduction 1 (max) is over the data input X.
+    if not red_max.operands or red_max.operands[0] != data_input:
+        return None
+
+    by_result: dict[str, IntentOp] = {}
+    for op in fn.body:
+        if isinstance(op.result, str):
+            by_result[op.result] = op
+        if op.out is not None:
+            by_result[op.out] = op
+
+    m_name = red_max.result if isinstance(red_max.result, str) else None
+    if m_name is None:
+        return None
+
+    # x_shifted = X - m (broadcast sub of the data input with the row max).
+    shifted_name = None
+    for op in fn.body:
+        if op.op == "map_binary" and _fn_attr(op) == "sub":
+            if list(op.operands) == [data_input, m_name]:
+                shifted_name = op.result if isinstance(op.result, str) else None
+                break
+    if shifted_name is None:
+        return None
+
+    # e = exp(x_shifted) (the only map_unary; feeds the sum).
+    e_op = None
+    for op in fn.body:
+        if op.op == "map_unary" and _fn_attr(op) == "exp":
+            if op.operands and op.operands[0] == shifted_name:
+                e_op = op
+                break
+    if e_op is None:
+        return None
+    e_name = e_op.result if isinstance(e_op.result, str) else None
+    if e_name is None:
+        return None
+
+    # reduction 2 (sum) is over e.
+    if not red_sum.operands or red_sum.operands[0] != e_name:
+        return None
+    z_name = red_sum.result if isinstance(red_sum.result, str) else None
+    if z_name is None:
+        return None
+
+    # output: Y = e / z (broadcast div).
+    out_name = fn.outputs[0].name if fn.outputs else None
+    if out_name is None:
+        return None
+    out_op = by_result.get(out_name)
+    if out_op is None or out_op.op != "map_binary" or _fn_attr(out_op) != "div":
+        return None
+    if list(out_op.operands) != [e_name, z_name]:
+        return None
+
+    # softmax has NO weight (1-D) and NO eps (0-D) inputs.
+    if any(len(t.shape) != 2 for t in fn.inputs):
+        return None
+
+    data_shape = _input_shape(fn, data_input)
+    return RowReductionPlan(
+        kind="softmax",
+        data_input=data_input,
+        row_dim=data_shape[0],
+        col_dim=data_shape[1],
+        reductions=[
+            Reduction(fn="max", source=data_input, axis=data_rank - 1),
+            Reduction(fn="sum", source=e_name, axis=data_rank - 1),
+        ],
+        weight_input=None,   # softmax is unparameterized -- no weight
+        bias_input=None,     # ... and no bias
+        eps_input=None,      # ... and no eps
+        output=out_name,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Dim resolution.                                                             #
 # --------------------------------------------------------------------------- #
@@ -328,8 +449,9 @@ def _resolve_dim(dim, dims: dict) -> int:
 class CompiledRowReduction:
     """A generated row-reduction kernel + everything needed to launch it.
 
-    ``lowered`` is the proven emitter's ``_LoweredRMS`` (func + grid + block +
-    resolved launch plan); ``rows``/``cols``/``threads`` are the resolved geometry;
+    ``lowered`` is the proven emitter's compiled+resolved kernel object
+    (``_LoweredRMS`` for rms_norm, ``_LoweredSoftmax`` for softmax: func + grid +
+    block + resolved launch plan); ``rows``/``cols``/``threads`` are the geometry;
     ``plan`` is the recognized op. ``n_kernels`` is the number of gpu kernels the
     lowering produced -- it is **1** (the whole point: one fused kernel, not 8).
     """
@@ -353,11 +475,17 @@ def codegen_row_reduction(
     lower -> launch-plan path (``rmsnorm_emit._get_lowered``). The lowering is
     asserted to yield exactly ONE kernel.
 
+    Routes the recognized plan to the matching proven emitter: ``rms_norm`` ->
+    ``rmsnorm_emit`` (one mean reduction; ``[X, W, Y, RSTD]``), ``softmax`` ->
+    ``softmax_emit`` (max+sum reductions; ``[X, Y]``). The same read-once
+    block-cooperative row-kernel skeleton backs both -- this routing is the
+    generalization point.
+
     Raises ``ValueError`` if ``fn`` is not a recognized row-reduction, and
     ``NotImplementedError`` if the recognized plan is not yet codegen-supported
-    (anything other than the rms_norm 1-reduction-mean shape -- the softmax /
-    layer_norm slots). Raises ``ValueError`` if ``eps`` differs from the value the
-    proven emitter bakes (see :data:`_EPS_NOTE`).
+    (currently anything other than ``rms_norm`` / ``softmax`` -- the layer_norm
+    slot). For rms_norm, raises ``ValueError`` if ``eps`` differs from the value
+    the proven emitter bakes (see :data:`_EPS_NOTE`); softmax has no eps.
     """
     plan = recognize_row_reduction(fn)
     if plan is None:
@@ -366,30 +494,42 @@ def codegen_row_reduction(
             "(no plan); the caller should fall back to the naive "
             "-convert-intent-to-linalg path"
         )
-    if plan.kind != "rms_norm":
-        # Extension points: softmax / layer_norm recognize-but-not-codegen yet.
-        raise NotImplementedError(
-            f"codegen_row_reduction: recognized plan kind {plan.kind!r} is not yet "
-            f"supported by codegen (only 'rms_norm' is). "
-            f"softmax: {_SOFTMAX_TODO} layer_norm: {_LAYERNORM_TODO}"
-        )
-    if len(plan.reductions) != 1 or plan.reductions[0].fn != "mean":
-        raise NotImplementedError(
-            "codegen_row_reduction: rms_norm codegen expects exactly one mean "
-            f"reduction, got {[(r.fn) for r in plan.reductions]}"
-        )
-    if abs(eps - _BAKED_EPS) > 0.0:
-        raise ValueError(
-            f"codegen_row_reduction: eps={eps} but the proven emitter bakes "
-            f"eps={_BAKED_EPS}. {_EPS_NOTE}"
-        )
 
     rows = _resolve_dim(plan.row_dim, dims)
     cols = _resolve_dim(plan.col_dim, dims)
 
     # Lazy imports: keep the recognizer pure-Python (no compile toolchain at
-    # module import). _threads_for mirrors liger's calculate_settings (Layer-C).
-    from intentir.bench.rmsnorm_emit import _get_lowered, _threads_for
+    # module import). _threads_for mirrors liger's calculate_settings (Layer-C);
+    # both emitters share it.
+    from intentir.bench.rmsnorm_emit import _threads_for
+
+    if plan.kind == "rms_norm":
+        if len(plan.reductions) != 1 or plan.reductions[0].fn != "mean":
+            raise NotImplementedError(
+                "codegen_row_reduction: rms_norm codegen expects exactly one mean "
+                f"reduction, got {[(r.fn) for r in plan.reductions]}"
+            )
+        if abs(eps - _BAKED_EPS) > 0.0:
+            raise ValueError(
+                f"codegen_row_reduction: eps={eps} but the proven emitter bakes "
+                f"eps={_BAKED_EPS}. {_EPS_NOTE}"
+            )
+        from intentir.bench.rmsnorm_emit import _get_lowered
+    elif plan.kind == "softmax":
+        # softmax: two reductions (max then sum), no weight / bias / eps.
+        if [r.fn for r in plan.reductions] != ["max", "sum"]:
+            raise NotImplementedError(
+                "codegen_row_reduction: softmax codegen expects [max, sum] "
+                f"reductions, got {[r.fn for r in plan.reductions]}"
+            )
+        from intentir.bench.softmax_emit import _get_lowered
+    else:
+        # Extension point: layer_norm recognize-but-not-codegen yet.
+        raise NotImplementedError(
+            f"codegen_row_reduction: recognized plan kind {plan.kind!r} is not yet "
+            f"supported by codegen (only 'rms_norm' / 'softmax' are). "
+            f"layer_norm: {_LAYERNORM_TODO}"
+        )
 
     threads = _threads_for(cols)
     lowered = _get_lowered(rows, cols, threads)
@@ -417,21 +557,43 @@ def run_from_intent(
     """Recognize ``fn`` -> generate the kernel -> launch it -> return the output.
 
     ``inputs`` maps each intent input *name* (e.g. ``"X"``, ``"W"``) to a CUDA f32
-    tensor; only the data + weight tensors are consumed (eps is baked, see
-    :data:`_EPS_NOTE`). Allocates the output ``Y`` (and the rms_norm ``RSTD`` side
-    output) fresh, launches the single generated kernel on torch's current stream,
+    tensor. For rms_norm the data + weight tensors are consumed (eps is baked, see
+    :data:`_EPS_NOTE`) and the func-signature is ``[X, W, Y, RSTD]``; for softmax
+    only the data tensor is consumed (no weight / eps) and the signature is
+    ``[X, Y]``. Allocates the output ``Y`` (and the rms_norm ``RSTD`` side output)
+    fresh, launches the single generated kernel on torch's current stream,
     synchronizes, and returns ``Y``.
 
     This deliberately drives its OWN ``codegen_row_reduction`` + launch (it does
-    NOT delegate to ``run_rmsnorm``) so a test proves the *from-intent codegen
-    entry*, not just the standalone emitter.
+    NOT delegate to the standalone ``run_rmsnorm`` / ``run_softmax``) so a test
+    proves the *from-intent codegen entry*, not just the standalone emitter.
     """
     import torch
 
-    from intentir.bench.rmsnorm_emit import _launch_nosync
-
     compiled = codegen_row_reduction(fn, dims, eps=eps)
     plan = compiled.plan
+
+    x = inputs[plan.data_input]
+    if not x.is_cuda:
+        raise ValueError("run_from_intent: X must be a CUDA tensor")
+    x = x.contiguous()
+    if tuple(x.shape) != (compiled.rows, compiled.cols):
+        raise ValueError(
+            f"run_from_intent: X shape {tuple(x.shape)} != resolved "
+            f"({compiled.rows}, {compiled.cols})"
+        )
+    y = torch.empty(compiled.rows, compiled.cols, device="cuda", dtype=torch.float32)
+
+    if plan.kind == "softmax":
+        # softmax: no weight, no eps, no RSTD side output; signature [X, Y].
+        from intentir.bench.softmax_emit import _launch_nosync
+
+        _launch_nosync(compiled.lowered, [x, y])
+        torch.cuda.synchronize()
+        return y
+
+    # rms_norm path: weight + (baked) eps + RSTD side output; signature [X, W, Y, RSTD].
+    from intentir.bench.rmsnorm_emit import _launch_nosync
 
     # If the intent carries a runtime eps and the caller supplied it, validate it
     # against the baked value rather than silently ignoring it (see _EPS_NOTE).
@@ -444,23 +606,15 @@ def run_from_intent(
                 f"proven emitter bakes eps={_BAKED_EPS}. {_EPS_NOTE}"
             )
 
-    x = inputs[plan.data_input]
     if plan.weight_input is None:
         raise NotImplementedError(
             "run_from_intent: rms_norm path requires a weight input"
         )
     w = inputs[plan.weight_input]
-    if not x.is_cuda or not w.is_cuda:
-        raise ValueError("run_from_intent: X and W must be CUDA tensors")
-    x = x.contiguous()
+    if not w.is_cuda:
+        raise ValueError("run_from_intent: W must be a CUDA tensor")
     w = w.contiguous()
-    if tuple(x.shape) != (compiled.rows, compiled.cols):
-        raise ValueError(
-            f"run_from_intent: X shape {tuple(x.shape)} != resolved "
-            f"({compiled.rows}, {compiled.cols})"
-        )
 
-    y = torch.empty(compiled.rows, compiled.cols, device="cuda", dtype=torch.float32)
     rstd = torch.empty(compiled.rows, device="cuda", dtype=torch.float32)
     # func-signature order for the rms_norm emitter is [X, W, Y, RSTD]; the
     # launch plan resolves first-use capture order generically.

@@ -63,6 +63,40 @@ def test_recognize_rms_norm_returns_plan():
     assert (plan.row_dim, plan.col_dim) == ("M", "N")
 
 
+def test_recognize_softmax_returns_two_reduction_plan():
+    """The real softmax intent is recognized as a 2-reduction (max, sum) plan.
+
+    This is the GENERALIZATION check: the same recognizer that returns a
+    1-reduction (mean) plan for rms_norm returns a 2-reduction (max then sum) plan
+    for softmax, with NO weight / bias / eps.
+    """
+    fn = _load("softmax")
+    plan = recognize_row_reduction(fn)
+    assert isinstance(plan, RowReductionPlan)
+    assert plan.kind == "softmax"
+    assert plan.data_input == "X"
+    assert plan.weight_input is None        # softmax is unparameterized
+    assert plan.bias_input is None
+    assert plan.eps_input is None
+    assert plan.output == "Y"
+    # exactly two reductions over the last axis, in body order: max then sum.
+    assert len(plan.reductions) == 2
+    assert [r.fn for r in plan.reductions] == ["max", "sum"]
+    assert [r.axis for r in plan.reductions] == [1, 1]   # last axis of [M, N]
+    assert plan.reductions[0].source == "X"              # max reduces X
+    assert plan.reductions[1].source == "e"              # sum reduces exp(x-m)
+    assert (plan.row_dim, plan.col_dim) == ("M", "N")
+
+
+def test_softmax_and_rms_norm_dispatch_disjointly():
+    """The recognizer routes softmax->softmax and rms_norm->rms_norm, not crossed.
+
+    Reduce count (1 mean vs 2 max+sum) is the discriminator; both stay intact.
+    """
+    assert recognize_row_reduction(_load("rms_norm")).kind == "rms_norm"
+    assert recognize_row_reduction(_load("softmax")).kind == "softmax"
+
+
 @pytest.mark.parametrize("name", ["silu", "gelu_tanh"])
 def test_recognize_pointwise_returns_none(name):
     """A pure pointwise chain (no reduce) is NOT a row-reduction -> None.
@@ -149,3 +183,60 @@ def test_from_intent_one_kernel_and_correct(rows, cols):
         torch.cuda.synchronize()
         rel_lig = rel(y, y_lig)
         assert rel_lig < 1e-3, f"({rows},{cols}) from-intent Y vs liger rel={rel_lig}"
+
+
+@pytest.mark.parametrize("rows,cols", [(4096, 1024), (4096, 1000)])
+def test_from_intent_softmax_one_kernel_and_correct(rows, cols):
+    """softmax intent in -> ONE generated kernel out -> correct vs torch + liger.
+
+    The GENERALIZATION DoD item: the same from-intent codegen entry that produced
+    the rms_norm kernel now produces a softmax kernel (max+sum reductions, no
+    weight) from the softmax IntentFunction -- still ONE fused gpu kernel, not the
+    naive multi-kernel path. (4096,1000) exercises the non-pow2 -inf tail mask.
+    """
+    torch = _gpu_or_skip()
+    fn = _load("softmax")
+    dims = {"M": rows, "N": cols}
+
+    # GENERATION: the backend emits/lowers ONE kernel from the softmax intent.
+    compiled = codegen_row_reduction(fn, dims)
+    assert compiled.plan.kind == "softmax"
+    assert (compiled.rows, compiled.cols) == (rows, cols)
+    assert compiled.n_kernels == 1
+
+    # Measure the "ONE kernel" claim at the MLIR level on the generated text.
+    from intentir.backend.compile import lower_memref_module_to_kernels
+    from intentir.bench.softmax_emit import emit_softmax
+
+    n_kernels = len(
+        lower_memref_module_to_kernels(emit_softmax(rows, cols, compiled.threads))
+    )
+    assert n_kernels == 1, f"expected ONE generated kernel, got {n_kernels}"
+
+    torch.manual_seed(0)
+    x = torch.randn(rows, cols, device="cuda", dtype=torch.float32)
+
+    # softmax intent has only the data input X (no weight, no eps).
+    y = run_from_intent(fn, {"X": x}, dims)
+    assert tuple(y.shape) == (rows, cols)
+
+    y_ref = torch.softmax(x.float(), dim=-1)
+
+    def rel(a, b):
+        return (a - b).abs().max().item() / (b.abs().max().item() + 1e-12)
+
+    rel_ref = rel(y, y_ref)
+    assert rel_ref < 1e-3, f"({rows},{cols}) from-intent softmax vs torch rel={rel_ref}"
+    rowsum_err = (y.sum(dim=-1) - 1.0).abs().max().item()
+    assert rowsum_err < 1e-3, f"({rows},{cols}) from-intent softmax row-sum={rowsum_err}"
+
+    # If the real liger softmax kernel is importable, certify against it too.
+    try:
+        from liger_kernel.ops.softmax import _softmax_forward
+    except Exception:  # pragma: no cover - liger optional
+        _softmax_forward = None
+    if _softmax_forward is not None:
+        y_lig, *_ = _softmax_forward(x)
+        torch.cuda.synchronize()
+        rel_lig = rel(y, y_lig)
+        assert rel_lig < 1e-3, f"({rows},{cols}) from-intent softmax vs liger rel={rel_lig}"
