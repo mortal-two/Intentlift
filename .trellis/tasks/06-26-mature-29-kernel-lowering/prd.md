@@ -57,7 +57,7 @@
 
 | M | 新 lowering 能力 | kernels | perf-bar |
 |---|---|---|---|
-| **M1** | 行归约→block-cooperative GPU + broadcast-affine epilogue(**锚点,已交付**) | rms_norm, softmax | 基线已 read-once → parity 诚实 |
+| **M1** | 行归约→block-cooperative GPU + broadcast-affine epilogue(**✅ 已交付 `b74b0ab`**:成熟 C++ `convert-intent-row-reduction-to-gpu`,register-tile,通用 DAG 无 per-kernel 分支) | rms_norm, softmax | **实测 1.00× / 0.97×** vs 真实 liger,1507 GB/s(peak HBM),bit-exact rel 4-8e-8 — parity 是诚实天花板(liger 已 read-once) |
 | **M2** | 双相关归约(mean&var)+ fp32 累加纪律 + 多输出(RSTD/MEAN)+ masked-lane | layer_norm(liger + flash 1pass) | 查 HBM passes headroom;否则 parity |
 | **M3** | 纯 elementwise:in-place 别名、constexpr 分支 DCE、fp32-cast 边界、三平面加性融合 | dyt, geglu, swiglu, rope, qwen2vl_mrope, llama4_rope, tvd, bwd_preprocess | qwen2vl 免临时量 → beat 机会 |
 | **M4** | max-shift exp 稳定 + constexpr 公式分派 + **块内 `tl.cumsum` scan(新原语)** | kl_div, jsd, sparsemax | sparsemax 是门 |
