@@ -61,4 +61,44 @@ def ConvertIntentRowReductionToGPU
   ];
 }
 
+def ConvertIntentElementwiseToGPU
+    : Pass<"convert-intent-elementwise-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a pure-elementwise intent func to one read-once "
+                "block-cooperative gpu.launch.";
+  let description = [{
+    The sibling of `convert-intent-row-reduction-to-gpu` for funcs whose body is
+    a straight-line graph of `intent.map_unary`/`intent.map_binary` with NO
+    `intent.reduce` — pure elementwise activations (dyt = tanh(alpha*x)*gamma,
+    swiglu = (a*sigmoid(a))*b, geglu = the tanh-approx GELU gate * b). It
+    rewrites such a func in place to a memref-arg function holding a single
+    `gpu.launch`: one block per row, the feature dim split over the block's
+    threads, each thread reading its columns **once** into SSA registers
+    (read-once = HBM parity with the library kernel), per-row scalars hoisted
+    once, and a multi-output epilogue writing each result from the register tile.
+    There is NO `gpu.all_reduce` — nothing is reduced. General over the map DAG
+    (NO per-kernel recognizer); the two passes' match() predicates are disjoint
+    (this pass returns failure on ANY reduce; row-reduction returns failure with
+    no reduce), so they compose in either order.
+
+    Static shapes only. The resulting memref+gpu.launch module goes straight to
+    the device pipeline (`lower_memref_module_to_kernels`), bypassing
+    bufferization. Transcendentals (`math.exp`/`math.tanh`/...) are rewritten to
+    NVVM approx intrinsics by the `-lower-gpu-math-to-nvvm` target peephole.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (block size over the feature dim); 0 = auto "
+           "(largest power-of-two <= min(N,256) dividing N). The PK harness "
+           "passes the library kernel's geometry.">,
+  ];
+}
+
 #endif // INTENT_CONVERSION_PASSES

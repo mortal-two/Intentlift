@@ -29,6 +29,7 @@
 
 #include "Intent/Conversion/Passes.h"
 
+#include "MapEmit.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
 
@@ -55,56 +56,6 @@ using namespace mlir;
 using namespace intent;
 
 namespace {
-
-/// Scalar arith/math op for one `map_unary` fn. nullptr = unsupported here.
-static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) {
-  if (fn == "exp")
-    return b.create<math::ExpOp>(loc, x);
-  if (fn == "log")
-    return b.create<math::LogOp>(loc, x);
-  if (fn == "sqrt")
-    return b.create<math::SqrtOp>(loc, x);
-  if (fn == "rsqrt")
-    return b.create<math::RsqrtOp>(loc, x);
-  if (fn == "abs")
-    return b.create<math::AbsFOp>(loc, x);
-  if (fn == "neg")
-    return b.create<arith::NegFOp>(loc, x);
-  if (fn == "tanh")
-    return b.create<math::TanhOp>(loc, x);
-  if (fn == "recip") {
-    Value one =
-        b.create<arith::ConstantOp>(loc, b.getFloatAttr(x.getType(), 1.0));
-    return b.create<arith::DivFOp>(loc, one, x);
-  }
-  if (fn == "sigmoid") {
-    Value one =
-        b.create<arith::ConstantOp>(loc, b.getFloatAttr(x.getType(), 1.0));
-    Value e = b.create<math::ExpOp>(loc, b.create<arith::NegFOp>(loc, x));
-    return b.create<arith::DivFOp>(loc, one, b.create<arith::AddFOp>(loc, one, e));
-  }
-  return nullptr;
-}
-
-/// Scalar arith op for one `map_binary` fn. nullptr = unsupported here.
-static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
-                              Value c) {
-  if (fn == "add")
-    return b.create<arith::AddFOp>(loc, a, c);
-  if (fn == "sub")
-    return b.create<arith::SubFOp>(loc, a, c);
-  if (fn == "mul")
-    return b.create<arith::MulFOp>(loc, a, c);
-  if (fn == "div")
-    return b.create<arith::DivFOp>(loc, a, c);
-  if (fn == "max")
-    return b.create<arith::MaxNumFOp>(loc, a, c);
-  if (fn == "min")
-    return b.create<arith::MinNumFOp>(loc, a, c);
-  if (fn == "pow")
-    return b.create<math::PowFOp>(loc, a, c);
-  return nullptr;
-}
 
 /// Block reduction op + per-thread identity for a `reduce` fn.
 struct ReduceInfo {
@@ -143,9 +94,6 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
     return nullptr;
   }
 }
-
-/// Per-arg semantic role, inferred purely from static shape vs (M,N).
-enum class Role { Row, Col, Scalar };
 
 /// Per-result role: a full [M,N] row output (written from the register tile),
 /// or a per-row [M,1] scalar output (a stat like Mean/RSTD, written once/block).
@@ -262,13 +210,6 @@ struct RowReductionLowering {
       return failure(); // tail-mask (non-divisible) is a documented M1 follow-up
     K = N / T;
     return success();
-  }
-
-  static int64_t autoThreads(int64_t N) {
-    int64_t t = 1;
-    while (t * 2 <= N && t * 2 <= 256)
-      t *= 2;
-    return t;
   }
 
   // ---- emission ---------------------------------------------------------- //

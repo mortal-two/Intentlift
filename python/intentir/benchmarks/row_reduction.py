@@ -61,11 +61,22 @@ class RowReductionKernel:
     is a 0-d / 1-elem tensor).
     """
 
-    def __init__(self, name: str, dims: dict, block_threads: int):
+    def __init__(self, name: str, dims: dict, block_threads: int,
+                 pass_name: str = "convert-intent-row-reduction-to-gpu",
+                 mlir_text: str | None = None):
+        """Lower + compile a read-once kernel for PK.
+
+        ``pass_name`` selects the C++ lowering pass to drive (default the
+        row-reduction pass; pass ``"convert-intent-elementwise-to-gpu"`` for the
+        pure-elementwise M3 activations). ``mlir_text`` is a raw intent-MLIR
+        module string (M3 hand-writes the intent the same shape as the lit test,
+        bypassing corpus extraction); when ``None`` the corpus ``intent.json``
+        for ``name`` is emitted instead.
+        """
+        src = mlir_text if mlir_text is not None else _intent_mlir(name, dims)
         rr = _run(
-            [INTENT_OPT,
-             f"-convert-intent-row-reduction-to-gpu=block-threads={block_threads}"],
-            stdin=_intent_mlir(name, dims),
+            [INTENT_OPT, f"-{pass_name}=block-threads={block_threads}"],
+            stdin=src,
         )
         kernels = lower_memref_module_to_kernels(rr)
         if len(kernels) != 1:
