@@ -27,3 +27,40 @@ func.func @matmul(%A: tensor<128x64xf16>, %W: tensor<256x64xf16>) -> tensor<128x
       : (tensor<128x64xf16>, tensor<256x64xf16>) -> tensor<128x256xf32>
   return %Y : tensor<128x256xf32>
 }
+
+// M7b fused epilogue: contraction + bias-add (Col[N]) + squared_relu
+// (relu(x)=select(x>=0,x,0); square = mul(relu,relu)) applied to the COp
+// accumulator fragments via an extract-to-shared-then-scalar-arith round trip.
+// The 4 fragments spill to a [BM,BN] f32 staging tile, the block reloads each
+// element, and the bias-add (arith.addf with a Col gather) + activation
+// (arith.cmpf oge / arith.select / arith.mulf) is evaluated before the store.
+// CHECK-LABEL: func.func @linear_sqrelu(
+// CHECK-SAME:    %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<256x64xf16>, %{{.*}}: memref<256xf32>, %{{.*}}: memref<128x256xf32>)
+// CHECK:         gpu.launch
+// CHECK:         scf.for
+// CHECK-SAME:      iter_args
+// CHECK:           gpu.subgroup_mma_compute
+// CHECK:         gpu.subgroup_mma_store_matrix %{{.*}}, %{{.*}} {leadDimension = 64
+// CHECK:         gpu.barrier
+// CHECK:         arith.addf
+// CHECK:         arith.cmpf oge
+// CHECK:         arith.select
+// CHECK:         arith.mulf
+// CHECK:         memref.store
+// CHECK-NOT:     linalg.generic
+// CHECK-NOT:     intent.
+func.func @linear_sqrelu(%A: tensor<128x64xf16>, %W: tensor<256x64xf16>,
+                         %bias: tensor<256xf32>) -> tensor<128x256xf32> {
+  %Y = intent.contraction %A, %W {subscripts = "mk,nk->mn"}
+      : (tensor<128x64xf16>, tensor<256x64xf16>) -> tensor<128x256xf32>
+  %b = intent.map_binary %Y, %bias {fn = "add"}
+      : (tensor<128x256xf32>, tensor<256xf32>) -> tensor<128x256xf32>
+  %z = arith.constant dense<0.0> : tensor<128x256xf32>
+  %c = intent.map_binary %b, %z {fn = "ge"}
+      : (tensor<128x256xf32>, tensor<128x256xf32>) -> tensor<128x256xi1>
+  %r = intent.select %c, %b, %z
+      : (tensor<128x256xi1>, tensor<128x256xf32>, tensor<128x256xf32>) -> tensor<128x256xf32>
+  %sq = intent.map_binary %r, %r {fn = "mul"}
+      : (tensor<128x256xf32>, tensor<128x256xf32>) -> tensor<128x256xf32>
+  return %sq : tensor<128x256xf32>
+}

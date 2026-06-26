@@ -1,28 +1,41 @@
 //===- ConvertIntentContractionToGPU.cpp - matmul -> tensor-core gpu.launch ===//
 //
-// Lowers a func whose body is exactly one `intent.contraction{"mk,nk->mn"}`
-// (A[M,K] f16, W[N,K] f16 -> Y[M,N] f32) to ONE tiled-K tensor-core
+// Lowers a func whose body is one `intent.contraction{"mk,nk->mn"}`
+// (A[M,K] f16, W[N,K] f16 -> Y[M,N] f32) -- optionally followed by a pointwise
+// epilogue chain (bias-add + activation) -- to ONE tiled-K tensor-core
 // `gpu.launch`. This is the first CUDA-core-free path: the contraction is
 // realized by NVIDIA WMMA (`gpu.subgroup_mma_*` -> wmma.mma.sync.aligned
 // .row.row.m16n16k16.f32.f32 on sm_120a), NOT scalarized to a `linalg.generic`
 // MAC (that leg is left in ConvertIntentToLinalg for the CPU/oracle path).
 //
-// Schedule (BM=BN=64, BK=16; a 4x4 grid of m16n16k16 C tiles, 4 warps/block):
+// M7b fused epilogue (the linear.kernel_fwd structure activation(A@W^T+bias)):
+// when the contraction result feeds a straight-line {map_unary, map_binary,
+// select} chain (bias-add against a Col[N] arg + an activation expressed in the
+// scalar vocab -- squared_relu = mul(select(x>=0,x,0), x), gelu_approx = the
+// 0.5*x*(1+tanh(...)) tanh form), the chain is applied to the COp accumulator
+// fragments BEFORE the store: each fragment is spilled to a dynamic-shared
+// staging tile, then the block cooperatively reloads every element, evaluates
+// the epilogue scalar DAG (reusing MapEmit.h emitScalar{Unary,Binary,Cmp} +
+// arith.select), and writes Y. The id case (return == contraction) keeps the
+// direct subgroup_mma_store_matrix path byte-identical to M7a.
+//
+// Schedule (BM=BN=64, BK=32 = 2 m16n16k16 k-subtiles; a 4x4 grid of m16n16k16 C tiles, 4 warps/block):
 //   grid  = (cdiv(M,BM)*cdiv(N,BN), 1, 1)  flat pid -> (pid_m, pid_n)
 //   block = (128, 1, 1)                    warp w = tx/32 owns C rows [w*16,+16)
 // Per block:
 //   4 fp32 COp accumulator fragments (one per the warp's 4 column tiles), init 0
 //   scf.for kt = 0..K step BK iter_args(the 4 COp fragments):
 //     cooperatively copy A[BM,BK] and W[BN,BK] sub-tiles global->dynamic-shared
-//       (coalesced, BM*BK/128 = 8 elems/thread), gpu.barrier
-//     load the warp's A row tile (AOp) from A_sh; for j in 0..3 load the W
-//       column tile (BOp, transposed so "nk" -> the k-major B operand) from W_sh
-//       and subgroup_mma_compute COp_j += A * B_j; gpu.barrier; yield
+//       (coalesced, BM*BK/128 = 16 elems/thread), gpu.barrier
+//     for ks in 0..BK/16: load the warp's A row sub-tile (AOp) from A_sh; for j
+//       in 0..3 load the W column tile (BOp, transposed so "nk" -> the k-major B
+//       operand) from W_sh and subgroup_mma_compute COp_j += A * B_j;
+//     gpu.barrier; yield
 //   epilogue: subgroup_mma_store_matrix each COp_j to Y[w*16, j*16]
 //
 // The transposed B load makes "mk,nk->mn" exact: B[k,n] = W[n,k], so the MMA
 // computes C[m,n] += sum_k A[m,k]*W[n,k] (verified rel ~1e-7 vs torch.matmul).
-// Static shapes, M%64==N%64==K%16==0 (tail-mask is a documented follow-up).
+// Static shapes, M%64==N%64==K%32==0 (tail-mask is a documented follow-up).
 // Bare-ptr ABI; the lowered module goes to lower_memref_module_to_kernels with
 // scf_to_cf=True (the gpu->nvvm pipeline needs scf->cf BEFORE it to legalize an
 // scf.for carrying !gpu.mma_matrix iter_args).
@@ -31,6 +44,7 @@
 
 #include "Intent/Conversion/Passes.h"
 
+#include "MapEmit.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
 
@@ -40,7 +54,9 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace intent {
@@ -53,9 +69,14 @@ using namespace intent;
 
 namespace {
 
-// Tensor-core tile geometry. BM/BN = the block's C tile (64x64), BK = the MMA
-// K-step (16). Four warps each own a 16x64 C strip = 4 m16n16k16 tiles.
-static constexpr int64_t BM = 64, BN = 64, BK = 16, kWMMA = 16, kBlock = 128;
+// Tensor-core tile geometry. BM/BN = the block's C tile (64x64), BK = the K
+// staging step (32 = 2 m16n16k16 sub-tiles). Four warps each own a 16x64 C
+// strip = 4 m16n16k16 tiles.
+static constexpr int64_t BM = 64, BN = 64, BK = 32, kWMMA = 16, kBlock = 128;
+// L2-swizzle group width (matches tl.dot's GROUP_M=8): consecutive program ids
+// walk a GROUP_M-tall column of C blocks so neighbours reuse the same A rows /
+// W columns in L2. Decisive on large K-bound shapes (4096^3 was L2-thrashing).
+static constexpr int64_t GROUP_M = 8;
 
 /// One contraction func's tensor-core lowering. Reads the original (tensor)
 /// func body (exactly one intent.contraction), builds a new memref+gpu.launch
@@ -68,6 +89,12 @@ struct ContractionLowering {
   unsigned aArgIdx = 0, wArgIdx = 0; // which func args are A[M,K] / W[N,K]
   ContractionOp con;
   Type f16, f32;
+  // M7b epilogue: the returned value (== con result for the id case), whether a
+  // pointwise epilogue is present, and the per-arg role (Col bias / Scalar).
+  Value retVal;
+  bool hasEpilogue = false;
+  SmallVector<Role> argRoles;       // per func arg (A/W = Row, bias = Col, ...)
+  DenseMap<Value, Value> argMemref; // src block arg -> new memref arg
 
   explicit ContractionLowering(func::FuncOp fn) : fn(fn) {}
 
@@ -80,22 +107,29 @@ struct ContractionLowering {
       return failure();
     Block &body = fn.getBody().front();
 
-    // Body: exactly one intent.contraction, returned as the sole result.
+    // Body: exactly one intent.contraction, followed by an OPTIONAL straight-line
+    // pointwise epilogue ({map_unary, map_binary, select}) -- the bias-add +
+    // activation chain of linear.kernel_fwd. Anything else (a second
+    // contraction, a reduce, a loop) is out of scope.
     ContractionOp c;
     for (Operation &op : body.without_terminator()) {
       if (auto cc = dyn_cast<ContractionOp>(&op)) {
         if (c)
           return failure(); // more than one contraction
         c = cc;
-      } else {
-        return failure(); // any other op (epilogue) is M7b, not M7a
+      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, arith::ConstantOp>(
+                     &op)) {
+        return failure();
       }
     }
     if (!c)
       return failure();
+    con = c;
     auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
-    if (!ret || ret.getNumOperands() != 1 || ret.getOperand(0) != c.getResult())
+    if (!ret || ret.getNumOperands() != 1)
       return failure();
+    retVal = ret.getOperand(0);
+    hasEpilogue = retVal != c.getResult();
     if (c.getSubscripts() != "mk,nk->mn")
       return failure();
 
@@ -132,7 +166,80 @@ struct ContractionLowering {
     // Divisibility: full tiles only (non-divisible tail-mask is a follow-up).
     if (M % BM != 0 || N % BN != 0 || K % BK != 0)
       return failure();
+
+    // Classify every func arg by role for the epilogue evaluator: A/W are the
+    // contraction operands (Row, never read in the epilogue); a rank-1 [N] f32
+    // is a Col bias; a rank-0 f32 is a Scalar. Anything else is out of scope.
+    auto inputs = fty.getInputs();
+    argRoles.assign(inputs.size(), Role::Row);
+    for (unsigned i = 0; i < inputs.size(); ++i) {
+      if (i == aArgIdx || i == wArgIdx) {
+        argRoles[i] = Role::Row;
+        continue;
+      }
+      auto t = dyn_cast<RankedTensorType>(inputs[i]);
+      if (!t || !t.hasStaticShape() || !isa<Float32Type>(t.getElementType()))
+        return failure();
+      if (t.getRank() == 1 && t.getDimSize(0) == N)
+        argRoles[i] = Role::Col;
+      else if (t.getRank() == 0)
+        argRoles[i] = Role::Scalar;
+      else
+        return failure();
+    }
     return success();
+  }
+
+  // ---- epilogue scalar evaluator ----------------------------------------- //
+  // Evaluate an epilogue value at one output element: `cScalar` is the
+  // contraction's accumulated f32 (reloaded from the staging tile), `gcol` is
+  // the element's GLOBAL output column (for the Col bias gather). Mirrors the
+  // elementwise pass's emitAt, reusing the shared MapEmit.h scalar emitters.
+  Value emitEpilogue(OpBuilder &b, Location loc, Value v, Value cScalar,
+                     Value gcol) {
+    if (v == con.getResult())
+      return cScalar;
+    if (auto barg = dyn_cast<BlockArgument>(v)) {
+      Role role = argRoles[barg.getArgNumber()];
+      if (role == Role::Col)
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{gcol});
+      if (role == Role::Scalar)
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
+      return nullptr; // Row (A/W) must not appear in the epilogue
+    }
+    Operation *def = v.getDefiningOp();
+    if (!def)
+      return nullptr;
+    if (auto cst = dyn_cast<arith::ConstantOp>(def)) {
+      // Splat (or rank-0) constant tensor -> the scalar f32 constant.
+      if (auto dense = dyn_cast<DenseElementsAttr>(cst.getValue()))
+        if (dense.isSplat())
+          return b.create<arith::ConstantOp>(
+              loc, b.getF32FloatAttr(
+                       dense.getSplatValue<APFloat>().convertToDouble()));
+      return nullptr;
+    }
+    if (auto mu = dyn_cast<MapUnaryOp>(def))
+      return emitScalarUnary(b, loc, mu.getFn(),
+                             emitEpilogue(b, loc, mu.getInput(), cScalar, gcol));
+    if (auto mb = dyn_cast<MapBinaryOp>(def)) {
+      Value lhs = emitEpilogue(b, loc, mb.getLhs(), cScalar, gcol);
+      Value rhs = emitEpilogue(b, loc, mb.getRhs(), cScalar, gcol);
+      if (!lhs || !rhs)
+        return nullptr;
+      if (isCmpFn(mb.getFn()))
+        return emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+      return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+    }
+    if (auto sel = dyn_cast<SelectOp>(def)) {
+      Value cnd = emitEpilogue(b, loc, sel.getCond(), cScalar, gcol);
+      Value x = emitEpilogue(b, loc, sel.getX(), cScalar, gcol);
+      Value y = emitEpilogue(b, loc, sel.getY(), cScalar, gcol);
+      if (!cnd || !x || !y)
+        return nullptr;
+      return b.create<arith::SelectOp>(loc, cnd, x, y);
+    }
+    return nullptr;
   }
 
   // ---- emission ---------------------------------------------------------- //
@@ -163,14 +270,22 @@ struct ContractionLowering {
     Value wMem = entry->getArgument(wArgIdx);
     Value yMem = entry->getArgument(fn.getFunctionType().getNumInputs());
 
+    // Map the original tensor block args to the new memref args (the epilogue
+    // evaluator gathers Col bias / Scalar args through this map).
+    Block &srcBlock = fn.getBody().front();
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
+
     int64_t gridN = N / BN, gridM = M / BM;
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    // Dynamic shared: A staging [BM,BK] f16 ++ W staging [BN,BK] f16.
+    // Dynamic shared: A staging [BM,BK] f16 ++ W staging [BN,BK] f16 ++ (for the
+    // fused-epilogue path) the [BM,BN] f32 accumulator-spill tile.
     int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;
+    int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
-        loc, b.getI32IntegerAttr((int32_t)(aBytes + wBytes)));
+        loc, b.getI32IntegerAttr((int32_t)(aBytes + wBytes + cBytes)));
 
     auto launch =
         b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
@@ -178,16 +293,29 @@ struct ContractionLowering {
 
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value cGridN = b.create<arith::ConstantIndexOp>(loc, gridN);
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value cBK = b.create<arith::ConstantIndexOp>(loc, BK);
     Value cK = b.create<arith::ConstantIndexOp>(loc, K);
     Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
     Value cWMMA = b.create<arith::ConstantIndexOp>(loc, kWMMA);
 
-    // Flat pid -> (pid_m, pid_n) -> this block's C tile origin (rowBlk, colBlk).
-    Value pidM = b.create<arith::DivUIOp>(loc, bx, cGridN);
-    Value pidN = b.create<arith::RemUIOp>(loc, bx, cGridN);
+    // Flat pid -> (pid_m, pid_n) with the GROUP_M L2 swizzle (tl.dot's decode):
+    //   width = GROUP_M*gridN; group_id = pid/width
+    //   group_size = min(gridM - group_id*GROUP_M, GROUP_M)
+    //   pid_m = group_id*GROUP_M + pid%group_size
+    //   pid_n = (pid%width)/group_size
+    Value cGroupM = b.create<arith::ConstantIndexOp>(loc, GROUP_M);
+    Value cGridM = b.create<arith::ConstantIndexOp>(loc, gridM);
+    Value cWidth = b.create<arith::ConstantIndexOp>(loc, GROUP_M * gridN);
+    Value groupId = b.create<arith::DivUIOp>(loc, bx, cWidth);
+    Value pidInW = b.create<arith::RemUIOp>(loc, bx, cWidth);
+    Value gmStart = b.create<arith::MulIOp>(loc, groupId, cGroupM);
+    Value remM = b.create<arith::SubIOp>(loc, cGridM, gmStart);
+    Value groupSz = b.create<arith::MinUIOp>(loc, remM, cGroupM);
+    Value pidM =
+        b.create<arith::AddIOp>(loc, gmStart,
+                                b.create<arith::RemUIOp>(loc, bx, groupSz));
+    Value pidN = b.create<arith::DivUIOp>(loc, pidInW, groupSz);
     Value cBMv = b.create<arith::ConstantIndexOp>(loc, BM);
     Value cBNv = b.create<arith::ConstantIndexOp>(loc, BN);
     Value rowBlk = b.create<arith::MulIOp>(loc, pidM, cBMv);
@@ -207,6 +335,12 @@ struct ContractionLowering {
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
+    Value cSh; // [BM,BN] f32 accumulator-spill tile (fused-epilogue path only)
+    if (hasEpilogue) {
+      auto cShTy = MemRefType::get({BM, BN}, f32, nullptr, wgSpace);
+      Value cOff = b.create<arith::ConstantIndexOp>(loc, aBytes + wBytes);
+      cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
+    }
 
     auto copTy = gpu::MMAMatrixType::get({kWMMA, kWMMA}, f32, "COp");
     auto aopTy = gpu::MMAMatrixType::get({kWMMA, kWMMA}, f16, "AOp");
@@ -246,30 +380,65 @@ struct ContractionLowering {
           }
           nb.create<gpu::BarrierOp>(nl);
 
-          // Load this warp's A row tile once; for each of the 4 column tiles load
-          // the (transposed) W tile and accumulate COp_j += A * B_j.
-          Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
-              nl, aopTy, aSh, ValueRange{warpRow, c0}, ldA, /*transpose=*/nullptr);
-          SmallVector<Value> next;
-          for (int j = 0; j < 4; ++j) {
-            Value cj = nb.create<arith::ConstantIndexOp>(nl, j * kWMMA);
-            Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
-                nl, bopTy, wSh, ValueRange{cj, c0}, ldW, transpose);
-            next.push_back(nb.create<gpu::SubgroupMmaComputeOp>(
-                nl, copTy, aFrag, bFrag, acc[j], /*a_transpose=*/nullptr,
-                /*b_transpose=*/nullptr));
+          // For each 16-wide k sub-tile within this BK trip, load the warp's A
+          // row tile once and accumulate COp_j += A * B_j over the 4 column
+          // tiles (BK=32 = 2 sub-tiles halves the trip/barrier count vs BK=16).
+          SmallVector<Value> cur(acc.begin(), acc.end());
+          for (int64_t ks = 0; ks < BK / kWMMA; ++ks) {
+            Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * kWMMA);
+            Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
+                nl, aopTy, aSh, ValueRange{warpRow, ksc}, ldA,
+                /*transpose=*/nullptr);
+            for (int j = 0; j < 4; ++j) {
+              Value cj = nb.create<arith::ConstantIndexOp>(nl, j * kWMMA);
+              Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
+                  nl, bopTy, wSh, ValueRange{cj, ksc}, ldW, transpose);
+              cur[j] = nb.create<gpu::SubgroupMmaComputeOp>(
+                  nl, copTy, aFrag, bFrag, cur[j], /*a_transpose=*/nullptr,
+                  /*b_transpose=*/nullptr);
+            }
           }
           nb.create<gpu::BarrierOp>(nl); // before next trip overwrites staging
-          nb.create<scf::YieldOp>(nl, next);
+          nb.create<scf::YieldOp>(nl, cur);
         });
 
-    // Epilogue: store each accumulator to Y[myRow, colBlk + j*16].
-    for (int j = 0; j < 4; ++j) {
-      Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
-      Value yCol = b.create<arith::AddIOp>(loc, colBlk, cj);
-      b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, forOp.getResult(j), yMem,
-                                              ValueRange{myRow, yCol}, ldY,
-                                              /*transpose=*/nullptr);
+    if (!hasEpilogue) {
+      // id: store each accumulator fragment directly to Y[myRow, colBlk+j*16]
+      // (byte-identical to M7a -- no shared round-trip, no scalar epilogue).
+      for (int j = 0; j < 4; ++j) {
+        Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
+        Value yCol = b.create<arith::AddIOp>(loc, colBlk, cj);
+        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, forOp.getResult(j), yMem,
+                                                ValueRange{myRow, yCol}, ldY,
+                                                /*transpose=*/nullptr);
+      }
+    } else {
+      // Fused epilogue: spill the 4 COp fragments to the [BM,BN] staging tile,
+      // then the block cooperatively reloads every element, evaluates the
+      // bias-add + activation scalar DAG, and writes Y.
+      IntegerAttr ldC = b.getIndexAttr(BN);
+      for (int j = 0; j < 4; ++j) {
+        Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
+        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, forOp.getResult(j), cSh,
+                                                ValueRange{warpRow, cj}, ldC,
+                                                /*transpose=*/nullptr);
+      }
+      b.create<gpu::BarrierOp>(loc);
+      Value cBN = b.create<arith::ConstantIndexOp>(loc, BN);
+      int64_t epIters = (BM * BN) / kBlock; // 4096/128 = 32 elems/thread
+      for (int64_t it = 0; it < epIters; ++it) {
+        Value base = b.create<arith::ConstantIndexOp>(loc, it * kBlock);
+        Value i = b.create<arith::AddIOp>(loc, tx, base);
+        Value r = b.create<arith::DivUIOp>(loc, i, cBN);
+        Value cc = b.create<arith::RemUIOp>(loc, i, cBN);
+        Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
+        Value gcol = b.create<arith::AddIOp>(loc, colBlk, cc);
+        Value grow = b.create<arith::AddIOp>(loc, rowBlk, r);
+        Value out = emitEpilogue(b, loc, retVal, cScalar, gcol);
+        if (!out)
+          return failure(); // an unsupported epilogue fn slipped past match()
+        b.create<memref::StoreOp>(loc, out, yMem, ValueRange{grow, gcol});
+      }
     }
 
     b.create<gpu::TerminatorOp>(loc);

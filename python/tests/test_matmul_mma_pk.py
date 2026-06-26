@@ -59,7 +59,7 @@ def _bench(fn):
 
 
 @pytest.mark.parametrize("M,N,K", [
-    (64, 64, 16),       # one block, one K-trip (the smoke case)
+    (64, 64, 32),       # one block, one K-trip (the smoke case; BK=32)
     (128, 128, 64),     # multi-block, multi-trip
     (512, 512, 512),
     (1024, 1024, 1024),
