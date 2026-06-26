@@ -1,23 +1,31 @@
 // RUN: intent-opt -convert-intent-contraction-to-gpu %s | FileCheck %s
 
 // A single intent.contraction{"mk,nk->mn"} (A[M,K] f16, W[N,K] f16 -> Y[M,N]
-// f32) lowered to ONE tiled-K tensor-core gpu.launch: BM=BN=64, BK=16, a 4x4
+// f32) lowered to ONE tiled-K tensor-core gpu.launch: BM=BN=64, BK=32, a 4x4
 // grid of m16n16k16 WMMA tiles over 4 warps. The per-warp fp32 accumulator
-// fragments are carried across the K loop as scf.for iter_args; the A/W sub-tiles
-// are staged through gpu.dynamic_shared_memory; the contraction is realized by
-// gpu.subgroup_mma_compute (-> wmma.mma.sync on sm_120a), NOT a linalg.generic
+// fragments are carried across the K loop as scf.for iter_args; the A/W tiles are
+// streamed global->shared by an N-stage cp.async pipeline (nvgpu.device_async_*
+// into rotating dynamic-shared buffers, prologue prefetch + steady-state
+// prefetch-K+N-1-while-compute-K + epilogue drain); the contraction is realized
+// by gpu.subgroup_mma_compute (-> wmma.mma.sync on sm_120a), NOT a linalg.generic
 // scalar MAC. The B operand is loaded transposed so "mk,nk->mn" is exact.
 // CHECK-LABEL: func.func @matmul(
 // CHECK-SAME:    %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<256x64xf16>, %{{.*}}: memref<128x256xf32>)
 // CHECK:         gpu.launch
 // CHECK:         gpu.dynamic_shared_memory
 // CHECK:         gpu.subgroup_mma_constant_matrix
+// CHECK:         nvgpu.device_async_copy
+// CHECK:         nvgpu.device_async_create_group
 // CHECK:         scf.for
 // CHECK-SAME:      iter_args
+// CHECK:           nvgpu.device_async_copy
+// CHECK:           nvgpu.device_async_create_group
+// CHECK:           nvgpu.device_async_wait
 // CHECK:           gpu.barrier
 // CHECK:           gpu.subgroup_mma_load_matrix
 // CHECK:           gpu.subgroup_mma_compute
 // CHECK:           scf.yield
+// CHECK:         nvgpu.device_async_wait
 // CHECK:         gpu.subgroup_mma_store_matrix
 // CHECK:         gpu.terminator
 // CHECK-NOT:     linalg.generic

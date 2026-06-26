@@ -22,6 +22,7 @@ add_mlir_library(MLIRIntentConversion
   MLIRMathDialect
   MLIRSCFDialect
   MLIRGPUDialect
+  MLIRNVGPUDialect
   MLIRMemRefDialect
   MLIRFuncDialect
 )

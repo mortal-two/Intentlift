@@ -22,16 +22,29 @@
 // Schedule (BM=BN=64, BK=32 = 2 m16n16k16 k-subtiles; a 4x4 grid of m16n16k16 C tiles, 4 warps/block):
 //   grid  = (cdiv(M,BM)*cdiv(N,BN), 1, 1)  flat pid -> (pid_m, pid_n)
 //   block = (128, 1, 1)                    warp w = tx/32 owns C rows [w*16,+16)
+// M7c cp.async multistage pipeline: the K loop is software-pipelined over N
+// (default 3) rotating dynamic-shared buffers so the global->shared loads of
+// tiles K+1..K+N-1 overlap the WMMA compute of tile K (the old scalar
+// memref.load/store cooperative copy serialized staging behind compute and left
+// the kernel DRAM-bound -- 4096^3 plateaued at ~17 TFLOP/s). Each A/W tile is
+// streamed by nvgpu.device_async_copy (-> cp.async.cg.shared.global, 16-byte/8-
+// f16 vectors, L1 bypassed), grouped by device_async_create_group, synchronized
+// by device_async_wait{numGroups}. N is clamped to the K-tile count (a 1-/2-trip
+// smoke shape degenerates to N=1/N=2 through the same code path).
 // Per block:
 //   4 fp32 COp accumulator fragments (one per the warp's 4 column tiles), init 0
-//   scf.for kt = 0..K step BK iter_args(the 4 COp fragments):
-//     cooperatively copy A[BM,BK] and W[BN,BK] sub-tiles global->dynamic-shared
-//       (coalesced, BM*BK/128 = 16 elems/thread), gpu.barrier
-//     for ks in 0..BK/16: load the warp's A row sub-tile (AOp) from A_sh; for j
-//       in 0..3 load the W column tile (BOp, transposed so "nk" -> the k-major B
-//       operand) from W_sh and subgroup_mma_compute COp_j += A * B_j;
-//     gpu.barrier; yield
-//   epilogue: subgroup_mma_store_matrix each COp_j to Y[w*16, j*16]
+//   PROLOGUE: issue cp.async for tiles 0..N-2 into buffers 0..N-2 (keep the last
+//     group token live -- it dominates + is the numGroups-driven epilogue wait)
+//   scf.for ki = 0..numK-N iter_args(the 4 COp fragments):  // STEADY STATE
+//     prefetch tile ki+N-1 -> buffer (ki+N-1)%N (cp.async), device_async_wait
+//       {numGroups=N-1} (tile ki ready, N-1 groups still in flight), gpu.barrier
+//     compute tile ki from buffer ki%N: for ks in 0..BK/16 load the warp's A row
+//       sub-tile (AOp); for j in 0..3 load the W column tile (BOp, transposed so
+//       "nk" -> the k-major B operand) and subgroup_mma_compute COp_j += A * B_j
+//     gpu.barrier (reads done before the buffer is reused N iters later); yield
+//   EPILOGUE: compute the last N-1 (already-prefetched) tiles, draining one
+//     in-flight group each via a decreasing static numGroups
+//   store: subgroup_mma_store_matrix each COp_j to Y[w*16, j*16]
 //
 // The transposed B load makes "mk,nk->mn" exact: B[k,n] = W[n,k], so the MMA
 // computes C[m,n] += sum_k A[m,k]*W[n,k] (verified rel ~1e-7 vs torch.matmul).
@@ -52,6 +65,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -83,6 +97,7 @@ static constexpr int64_t GROUP_M = 8;
 /// func with the same name, erases the old.
 struct ContractionLowering {
   func::FuncOp fn;
+  int numStages; // requested cp.async pipeline depth (clamped to the K-tile count)
 
   // populated by match()
   int64_t M = 0, N = 0, K = 0;
@@ -96,7 +111,8 @@ struct ContractionLowering {
   SmallVector<Role> argRoles;       // per func arg (A/W = Row, bias = Col, ...)
   DenseMap<Value, Value> argMemref; // src block arg -> new memref arg
 
-  explicit ContractionLowering(func::FuncOp fn) : fn(fn) {}
+  ContractionLowering(func::FuncOp fn, int numStages)
+      : fn(fn), numStages(numStages) {}
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
@@ -280,12 +296,22 @@ struct ContractionLowering {
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    // Dynamic shared: A staging [BM,BK] f16 ++ W staging [BN,BK] f16 ++ (for the
-    // fused-epilogue path) the [BM,BN] f32 accumulator-spill tile.
-    int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;
+    // cp.async multistage pipeline depth: N rotating shared buffers double/
+    // triple-buffer the K loop so global->shared loads of tiles K+1..K+N-1
+    // overlap the WMMA compute of tile K. Clamp N to the K-tile count (a 1- or
+    // 2-trip smoke shape degenerates to N=1/N=2 through the SAME code path).
+    int64_t numK = K / BK;
+    int nStages = std::min<int64_t>((int64_t)numStages, numK);
+    if (nStages < 1)
+      nStages = 1;
+
+    // Dynamic shared: N staged A tiles [BM,BK] f16 ++ N staged W tiles [BN,BK]
+    // f16 ++ (fused-epilogue path) the [BM,BN] f32 accumulator-spill tile.
+    int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;          // one stage
+    int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
     int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
-        loc, b.getI32IntegerAttr((int32_t)(aBytes + wBytes + cBytes)));
+        loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
 
     auto launch =
         b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
@@ -295,7 +321,6 @@ struct ContractionLowering {
     Value tx = launch.getThreadIds().x;
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value cBK = b.create<arith::ConstantIndexOp>(loc, BK);
-    Value cK = b.create<arith::ConstantIndexOp>(loc, K);
     Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
     Value cWMMA = b.create<arith::ConstantIndexOp>(loc, kWMMA);
 
@@ -326,19 +351,22 @@ struct ContractionLowering {
     Value myRow = b.create<arith::AddIOp>(loc, rowBlk, warpRow);
 
     // Dynamic-shared staging buffers (the G1-proven config: dynamic_shared +
-    // memref.view, not a workgroup memref.alloca).
+    // memref.view, not a workgroup memref.alloca). The A/W tiles are rank-3
+    // [N,BM,BK] so the rotating stage is a plain index operand on the async-copy
+    // dst and the WMMA load src (probed: a rank-3 shared src lowers through
+    // wmma.load.{a,b}...shared.f16 -- no fragile arith.select-on-memref needed).
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy = MemRefType::get({BM, BK}, f16, nullptr, wgSpace);
-    auto wShTy = MemRefType::get({BN, BK}, f16, nullptr, wgSpace);
+    auto aShTy = MemRefType::get({nStages, BM, BK}, f16, nullptr, wgSpace);
+    auto wShTy = MemRefType::get({nStages, BN, BK}, f16, nullptr, wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
-    Value wOff = b.create<arith::ConstantIndexOp>(loc, aBytes);
+    Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
     Value cSh; // [BM,BN] f32 accumulator-spill tile (fused-epilogue path only)
     if (hasEpilogue) {
       auto cShTy = MemRefType::get({BM, BN}, f32, nullptr, wgSpace);
-      Value cOff = b.create<arith::ConstantIndexOp>(loc, aBytes + wBytes);
+      Value cOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes + wAllBytes);
       cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
     }
 
@@ -357,50 +385,112 @@ struct ContractionLowering {
       accInit.push_back(
           b.create<gpu::SubgroupMmaConstantMatrixOp>(loc, copTy, zeroF32));
 
-    // Cooperative copy geometry: BM*BK elements over kBlock threads.
-    int64_t copyIters = (BM * BK) / kBlock; // == 8 for 64x16 / 128
+    // -- cp.async multistage pipeline ------------------------------------- //
+    // Each K-tile of A[BM,BK] and W[BN,BK] is streamed global->shared by
+    // nvgpu.device_async_copy (-> cp.async.cg, 16-byte/8-f16 vectors, L1
+    // bypassed for the stream-once tiles), grouped + waited by
+    // device_async_create_group / device_async_wait. N rotating shared buffers
+    // let the loads of tiles K+1..K+N-1 overlap the WMMA compute of tile K.
+    auto tokTy = nvgpu::DeviceAsyncTokenType::get(ctx);
+    IntegerAttr dstElems = b.getIndexAttr(8);     // 8 f16 = 16 bytes per copy
+    UnitAttr bypassL1 = b.getUnitAttr();          // cp.async.cg (skip L1)
+    int64_t colsPerRow = BK / 8;                  // 4 vector-cols per 32-wide row
+    int64_t vPerThread = (BM * BK) / 8 / kBlock;  // 256/128 = 2 copies/thread
+    Value cCPR = b.create<arith::ConstantIndexOp>(loc, colsPerRow);
+    Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
+    Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
+    Value cNm1 = b.create<arith::ConstantIndexOp>(loc, nStages - 1);
 
+    // Issue the A+W async copies for K-offset `ktVal` into buffer `stageVal`;
+    // return the group token. Vectorized 8-wide along K (contiguous in both A/W
+    // global rows and the BK-wide shared rows -> 16-byte aligned cp.async).
+    auto loadTile = [&](OpBuilder &nb, Location nl, Value ktVal,
+                        Value stageVal) -> Value {
+      SmallVector<Value> toks;
+      for (int64_t it = 0; it < vPerThread; ++it) {
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
+        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
+        Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
+        Value cc = nb.create<arith::MulIOp>(nl, colg, c8);
+        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value ar = nb.create<arith::AddIOp>(nl, rowBlk, r);
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, aSh, ValueRange{stageVal, r, cc}, aMem,
+            ValueRange{ar, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+        Value wr = nb.create<arith::AddIOp>(nl, colBlk, r);
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, wSh, ValueRange{stageVal, r, cc}, wMem,
+            ValueRange{wr, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+      }
+      return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
+    };
+
+    // Accumulate COp_j += A(stage) * B_j(stage) over the BK/16 k-subtiles of one
+    // staged tile (rank-3 shared src indexed by the rotating `stageVal`).
+    auto computeTile = [&](OpBuilder &nb, Location nl, Value stageVal,
+                           ValueRange acc) -> SmallVector<Value> {
+      SmallVector<Value> cur(acc.begin(), acc.end());
+      for (int64_t ks = 0; ks < BK / kWMMA; ++ks) {
+        Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * kWMMA);
+        Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
+            nl, aopTy, aSh, ValueRange{stageVal, warpRow, ksc}, ldA,
+            /*transpose=*/nullptr);
+        for (int j = 0; j < 4; ++j) {
+          Value cj = nb.create<arith::ConstantIndexOp>(nl, j * kWMMA);
+          Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
+              nl, bopTy, wSh, ValueRange{stageVal, cj, ksc}, ldW, transpose);
+          cur[j] = nb.create<gpu::SubgroupMmaComputeOp>(
+              nl, copTy, aFrag, bFrag, cur[j], /*a_transpose=*/nullptr,
+              /*b_transpose=*/nullptr);
+        }
+      }
+      return cur;
+    };
+
+    // PROLOGUE: prefetch tiles 0..N-2 (none when N==1). Keep the last group's
+    // token live -- it dominates the epilogue and is the (numGroups-driven) wait
+    // dependency there (no token needs to be carried across the loop).
+    Value prologTok;
+    for (int s = 0; s < nStages - 1; ++s) {
+      Value ktVal = b.create<arith::ConstantIndexOp>(loc, s * BK);
+      Value stage = b.create<arith::ConstantIndexOp>(loc, s);
+      prologTok = loadTile(b, loc, ktVal, stage);
+    }
+
+    // STEADY STATE: ki = 0..numK-N. Prefetch tile ki+N-1 into buffer
+    // (ki+N-1)%N, wait for tile ki's group (keep N-1 groups in flight), compute
+    // tile ki from buffer ki%N. The 4 accumulators ride the loop as iter_args.
+    int64_t steadyTrips = numK - nStages + 1; // >= 1 (nStages <= numK)
+    Value cSteady = b.create<arith::ConstantIndexOp>(loc, steadyTrips);
+    IntegerAttr waitNm1 = b.getI32IntegerAttr(nStages - 1);
     auto forOp = b.create<scf::ForOp>(
-        loc, c0, cK, cBK, accInit,
-        [&](OpBuilder &nb, Location nl, Value kt, ValueRange acc) {
-          // Cooperative coalesced copy: A[rowBlk+r, kt+c] -> A_sh[r,c],
-          // W[colBlk+r, kt+c] -> W_sh[r,c]. Unrolled (copyIters static).
-          for (int64_t it = 0; it < copyIters; ++it) {
-            Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
-            Value i = nb.create<arith::AddIOp>(nl, tx, base);
-            Value r = nb.create<arith::DivUIOp>(nl, i, cBK);
-            Value cc = nb.create<arith::RemUIOp>(nl, i, cBK);
-            Value gk = nb.create<arith::AddIOp>(nl, kt, cc);
-            Value ar = nb.create<arith::AddIOp>(nl, rowBlk, r);
-            Value av = nb.create<memref::LoadOp>(nl, aMem, ValueRange{ar, gk});
-            nb.create<memref::StoreOp>(nl, av, aSh, ValueRange{r, cc});
-            Value wr = nb.create<arith::AddIOp>(nl, colBlk, r);
-            Value wv = nb.create<memref::LoadOp>(nl, wMem, ValueRange{wr, gk});
-            nb.create<memref::StoreOp>(nl, wv, wSh, ValueRange{r, cc});
-          }
-          nb.create<gpu::BarrierOp>(nl);
-
-          // For each 16-wide k sub-tile within this BK trip, load the warp's A
-          // row tile once and accumulate COp_j += A * B_j over the 4 column
-          // tiles (BK=32 = 2 sub-tiles halves the trip/barrier count vs BK=16).
-          SmallVector<Value> cur(acc.begin(), acc.end());
-          for (int64_t ks = 0; ks < BK / kWMMA; ++ks) {
-            Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * kWMMA);
-            Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
-                nl, aopTy, aSh, ValueRange{warpRow, ksc}, ldA,
-                /*transpose=*/nullptr);
-            for (int j = 0; j < 4; ++j) {
-              Value cj = nb.create<arith::ConstantIndexOp>(nl, j * kWMMA);
-              Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
-                  nl, bopTy, wSh, ValueRange{cj, ksc}, ldW, transpose);
-              cur[j] = nb.create<gpu::SubgroupMmaComputeOp>(
-                  nl, copTy, aFrag, bFrag, cur[j], /*a_transpose=*/nullptr,
-                  /*b_transpose=*/nullptr);
-            }
-          }
-          nb.create<gpu::BarrierOp>(nl); // before next trip overwrites staging
+        loc, c0, cSteady, c1, accInit,
+        [&](OpBuilder &nb, Location nl, Value ki, ValueRange acc) {
+          Value nextTile = nb.create<arith::AddIOp>(nl, ki, cNm1);
+          Value ktNext = nb.create<arith::MulIOp>(nl, nextTile, cBK);
+          Value stageW = nb.create<arith::RemUIOp>(nl, nextTile, cNStages);
+          Value grp = loadTile(nb, nl, ktNext, stageW);
+          nb.create<nvgpu::DeviceAsyncWaitOp>(nl, grp, waitNm1);
+          nb.create<gpu::BarrierOp>(nl); // async tile ki visible to all warps
+          Value stageR = nb.create<arith::RemUIOp>(nl, ki, cNStages);
+          SmallVector<Value> cur = computeTile(nb, nl, stageR, acc);
+          nb.create<gpu::BarrierOp>(nl); // all reads done before buffer reuse
           nb.create<scf::YieldOp>(nl, cur);
         });
+
+    // EPILOGUE: compute the last N-1 tiles (already prefetched), draining one
+    // in-flight group per tile via a decreasing static numGroups. Static stage.
+    SmallVector<Value> finalAcc(forOp.getResults().begin(),
+                                forOp.getResults().end());
+    for (int j = 0; j < nStages - 1; ++j) {
+      int64_t tile = numK - nStages + 1 + j;
+      Value stageR = b.create<arith::ConstantIndexOp>(loc, tile % nStages);
+      b.create<nvgpu::DeviceAsyncWaitOp>(loc, prologTok,
+                                         b.getI32IntegerAttr(nStages - 2 - j));
+      b.create<gpu::BarrierOp>(loc);
+      finalAcc = computeTile(b, loc, stageR, finalAcc);
+    }
 
     if (!hasEpilogue) {
       // id: store each accumulator fragment directly to Y[myRow, colBlk+j*16]
@@ -408,7 +498,7 @@ struct ContractionLowering {
       for (int j = 0; j < 4; ++j) {
         Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
         Value yCol = b.create<arith::AddIOp>(loc, colBlk, cj);
-        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, forOp.getResult(j), yMem,
+        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, finalAcc[j], yMem,
                                                 ValueRange{myRow, yCol}, ldY,
                                                 /*transpose=*/nullptr);
       }
@@ -419,7 +509,7 @@ struct ContractionLowering {
       IntegerAttr ldC = b.getIndexAttr(BN);
       for (int j = 0; j < 4; ++j) {
         Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
-        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, forOp.getResult(j), cSh,
+        b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, finalAcc[j], cSh,
                                                 ValueRange{warpRow, cj}, ldC,
                                                 /*transpose=*/nullptr);
       }
@@ -460,12 +550,12 @@ struct ConvertIntentContractionToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      ContractionLowering probe(fn);
+      ContractionLowering probe(fn, (int)numStages);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      ContractionLowering low(fn);
+      ContractionLowering low(fn, (int)numStages);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("contraction lowering failed after match");
         return signalPassFailure();

@@ -135,11 +135,17 @@ def ConvertIntentContractionToGPU
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
     "::mlir::memref::MemRefDialect",
     "::mlir::scf::SCFDialect",
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"numStages", "num-stages", "unsigned", /*default=*/"3",
+           "cp.async multistage pipeline depth (N buffers; effective N is "
+           "clamped to the K-tile count). N=1 disables prefetch overlap.">,
   ];
 }
 
