@@ -38,6 +38,8 @@ namespace {
 
 /// log2(e) as an f32 — the change-of-base constant for exp(x) = 2^(x*log2e).
 static constexpr double kLog2E = 1.4426950408889634;
+/// ln(2) as an f32 — the change-of-base constant for log(x) = log2(x)*ln2.
+static constexpr double kLn2 = 0.6931471805599453;
 
 /// `math.exp %x : f32`  ->  `ex2.approx.ftz.f32 (%x * log2e)`.
 struct ExpToEx2Approx : OpRewritePattern<math::ExpOp> {
@@ -59,6 +61,32 @@ struct ExpToEx2Approx : OpRewritePattern<math::ExpOp> {
         loc, f32, rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
         ValueRange{scaled});
     rewriter.replaceOp(op, approx.getResults());
+    return success();
+  }
+};
+
+/// `math.log %x : f32`  ->  `lg2.approx.f32(%x) * ln2`. The stock GpuToNVVM
+/// lowering routes `math.log` to a `__nv_logf` libdevice extern (verified on
+/// this path: ptxas dead end / DCE'd kernel, same failure mode as exp/sqrt).
+/// `lg2.approx.f32` is the native PTX hardware op, emitted here as the
+/// `llvm.nvvm.lg2.approx.f` intrinsic; log(x) = log2(x)*ln2 is the change of
+/// base. kl_div/jsd's loss is a per-element log on log-probabilities, so the
+/// approx rel err (~2^-23-class mantissa) is far inside the 1e-3 PK tolerance.
+struct LogToLg2Approx : OpRewritePattern<math::LogOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::LogOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    Location loc = op.getLoc();
+    auto lg2 = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.nvvm.lg2.approx.f"),
+        ValueRange{op.getOperand()});
+    Value ln2 =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(kLn2));
+    rewriter.replaceOpWithNewOp<arith::MulFOp>(op, lg2.getResult(0), ln2);
     return success();
   }
 };
@@ -97,6 +125,7 @@ struct LowerGpuMathToNVVM
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
+    patterns.add<LogToLg2Approx>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
     patterns.add<UnaryToNVVMApprox<math::RsqrtOp>>(&getContext(),

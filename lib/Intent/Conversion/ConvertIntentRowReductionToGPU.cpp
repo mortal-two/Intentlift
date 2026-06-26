@@ -95,9 +95,12 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
   }
 }
 
-/// Per-result role: a full [M,N] row output (written from the register tile),
-/// or a per-row [M,1] scalar output (a stat like Mean/RSTD, written once/block).
-enum class ResultRole { RowOut, PerRowOut };
+/// Per-result role: a full [M,N] row output (written from the register tile);
+/// a per-row [M,1]/[M] scalar output (a stat like Mean/RSTD, written once/block);
+/// or a rank-0 [] cross-row scalar (a loss total) accumulated across blocks via a
+/// thread-0 `memref.atomic_rmw addf` — the "AtomicOut" fold that fuses the host
+/// `.sum()` the library leaves separate.
+enum class ResultRole { RowOut, PerRowOut, AtomicOut };
 
 /// One func's row-reduction lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
@@ -109,11 +112,58 @@ struct RowReductionLowering {
   int64_t M = 0, N = 0, T = 0, K = 0;
   Type f32;
   SmallVector<Role> argRoles;        // per func arg
-  SmallVector<ReduceOp> reduces;     // in program order
+  SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
+  SmallVector<ReduceOp> crossReduces; // cross-row (axis-0 sum) reduces -> AtomicOut
   SmallVector<Value> outputVals;     // the returned values (>=1, topo order)
-  SmallVector<ResultRole> outRoles;  // RowOut [M,N] / PerRowOut [M,1] per result
+  SmallVector<ResultRole> outRoles;  // RowOut / PerRowOut / AtomicOut per result
 
   RowReductionLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
+
+  /// Is `v` a compile-time-uniform (rank-0 scalar) value? A Scalar arg, or a map
+  /// subtree of only Scalar args. A reduce result is per-row uniform but NOT a
+  /// scalar constant, so it returns false (it is the cross-row reduce's input,
+  /// never its scaling factor).
+  bool isStaticUniform(Value v) {
+    if (auto ba = dyn_cast<BlockArgument>(v))
+      return argRoles[ba.getArgNumber()] == Role::Scalar;
+    Operation *d = v.getDefiningOp();
+    if (!d)
+      return false;
+    if (auto mu = dyn_cast<MapUnaryOp>(d))
+      return isStaticUniform(mu.getInput());
+    if (auto mb = dyn_cast<MapBinaryOp>(d))
+      return isStaticUniform(mb.getLhs()) && isStaticUniform(mb.getRhs());
+    return false;
+  }
+
+  /// Walk from an AtomicOut value back to its cross-row reduce, allowing only
+  /// uniform-scalar mul/div scaling on the path (linear ops that distribute over
+  /// the cross-row sum). Returns the axis-0 `sum` ReduceOp, or null if the chain
+  /// is anything else (non-linear add/sub, or a non-uniform second operand).
+  ReduceOp atomicSource(Value v) {
+    while (true) {
+      if (auto r = v.getDefiningOp<ReduceOp>())
+        return r; // the axis-0 sum cross-row reduce (already shape-checked)
+      auto mb = v.getDefiningOp<MapBinaryOp>();
+      if (!mb)
+        return nullptr;
+      StringRef fn = mb.getFn();
+      if (fn == "div") {
+        if (!isStaticUniform(mb.getRhs())) // x / uniform
+          return nullptr;
+        v = mb.getLhs();
+      } else if (fn == "mul") {
+        if (isStaticUniform(mb.getRhs()))
+          v = mb.getLhs();
+        else if (isStaticUniform(mb.getLhs()))
+          v = mb.getRhs();
+        else
+          return nullptr;
+      } else {
+        return nullptr;
+      }
+    }
+  }
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
@@ -136,8 +186,10 @@ struct RowReductionLowering {
         return failure();
       f32 = t.getElementType();
       int64_t rank = t.getRank();
-      if (rank != 1 && rank != 2)
+      if (rank > 2)
         return failure();
+      if (rank == 0)
+        continue; // a rank-0 AtomicOut (cross-row scalar): does not anchor M/N
       int64_t m = t.getDimSize(0);
       if (anchorM < 0)
         anchorM = m;
@@ -151,23 +203,31 @@ struct RowReductionLowering {
       }
     }
     M = anchorM;
-    // No RowOut: derive N from the first Row-shaped input ([M, X] static f32).
+    // No RowOut / no per-row result (an all-AtomicOut func, e.g. kl_div
+    // batchmean returns only the scalar): derive M (if still unknown) and N
+    // from the first Row-shaped input ([M, X] static f32).
     if (anchorN < 0) {
       for (Type at : fty.getInputs()) {
         auto t = dyn_cast<RankedTensorType>(at);
         if (t && t.hasStaticShape() && isa<Float32Type>(t.getElementType()) &&
-            t.getRank() == 2 && t.getDimSize(0) == M) {
-          anchorN = t.getDimSize(1);
-          break;
+            t.getRank() == 2) {
+          if (M < 0)
+            M = t.getDimSize(0);
+          if (t.getDimSize(0) == M) {
+            anchorN = t.getDimSize(1);
+            break;
+          }
         }
       }
     }
-    if (anchorN < 0)
+    if (M < 0 || anchorN < 0)
       return failure(); // nothing to tile the feature dim over
     N = anchorN;
     for (Type rt : fty.getResults()) {
       auto t = cast<RankedTensorType>(rt);
-      if (t.getRank() == 2 && t.getDimSize(1) == N)
+      if (t.getRank() == 0)
+        outRoles.push_back(ResultRole::AtomicOut);
+      else if (t.getRank() == 2 && t.getDimSize(1) == N)
         outRoles.push_back(ResultRole::RowOut);
       else // rank-2 [M,1] or rank-1 [M]
         outRoles.push_back(ResultRole::PerRowOut);
@@ -198,16 +258,28 @@ struct RowReductionLowering {
         return failure(); // [M,1] etc. as an *input* not supported in M1
     }
 
-    // Body ops: only map_unary/map_binary/reduce; reduces last-axis keepdims.
+    // Body ops: only map_unary/map_binary/reduce. A reduce is either a per-row
+    // last-axis reduce (axis 1, result [M,1]/[M] -> a per-row uniform scalar) or
+    // a cross-row fold (axis 0 over a per-row [M] vector -> a rank-0 scalar that
+    // becomes an AtomicOut: one atomicAdd/block, host pre-zeroes).
     for (Operation &op : body.without_terminator()) {
       if (auto r = dyn_cast<ReduceOp>(&op)) {
         auto inTy = cast<RankedTensorType>(r.getInput().getType());
         auto rTy = cast<RankedTensorType>(r.getResult().getType());
-        if (inTy.getRank() != 2)
-          return failure();
         if (r.getAxes().size() != 1)
           return failure();
         int64_t ax = cast<IntegerAttr>(r.getAxes()[0]).getInt();
+        if (ax == 0) {
+          // Cross-row fold: [M] per-row vector -> rank-0 scalar, sum only (the
+          // atomicAdd identity is +). The input is a per-row uniform scalar.
+          if (inTy.getRank() != 1 || inTy.getDimSize(0) != M ||
+              rTy.getRank() != 0 || r.getFn() != "sum")
+            return failure();
+          crossReduces.push_back(r);
+          continue;
+        }
+        if (inTy.getRank() != 2)
+          return failure();
         // Per-row last-axis reduce: result is [M,1] (keepdims) or [M] (collapsed,
         // flash's delta layout). Both are treated as a per-row uniform scalar.
         bool okRes =
@@ -225,6 +297,19 @@ struct RowReductionLowering {
     }
     if (reduces.empty())
       return failure(); // pure elementwise -> not our pass
+
+    // Validate every AtomicOut: its value must reach a cross-row reduce through
+    // only uniform mul/div scaling (linear ops distribute over the cross-row
+    // sum, so the scale folds into each block's atomicAdd contribution), and
+    // that cross-row reduce result must be single-use (the uniform-injection in
+    // rewrite() would otherwise lie to any other consumer).
+    for (unsigned j = 0; j < outRoles.size(); ++j) {
+      if (outRoles[j] != ResultRole::AtomicOut)
+        continue;
+      ReduceOp cr = atomicSource(outputVals[j]);
+      if (!cr || !cr.getResult().hasOneUse())
+        return failure();
+    }
 
     // Geometry: T threads over the feature dim, K columns per thread.
     T = blockThreads ? (int64_t)blockThreads : autoThreads(N);
@@ -323,9 +408,14 @@ struct RowReductionLowering {
     SmallVector<Type> inTys;
     for (Role r : argRoles)
       inTys.push_back(memrefOf(r));
-    for (ResultRole rr : outRoles) // destination-passing: one memref per result
-      inTys.push_back(rr == ResultRole::RowOut ? MemRefType::get({M, N}, f32)
-                                               : MemRefType::get({M}, f32));
+    for (ResultRole rr : outRoles) { // destination-passing: one memref per result
+      if (rr == ResultRole::RowOut)
+        inTys.push_back(MemRefType::get({M, N}, f32));
+      else if (rr == ResultRole::PerRowOut)
+        inTys.push_back(MemRefType::get({M}, f32));
+      else // AtomicOut: a rank-0 scalar accumulated across blocks (host pre-zeroes)
+        inTys.push_back(MemRefType::get({}, f32));
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -398,14 +488,22 @@ struct RowReductionLowering {
       hoistUniforms(b, loc); // +eps, sqrt, recip, ... become available now
     }
 
+    // Cross-row fold: each cross-row (axis-0 sum) reduce passes THIS block's
+    // per-row scalar through as if it were the whole-tensor sum; the per-row
+    // uniform scale (e.g. /(BT*V), /BT) then hoists onto it. Summing every
+    // block's contribution via the atomicAdd below reconstructs the true total.
+    for (ReduceOp cr : crossReduces)
+      uniform[cr.getResult()] = uniform.lookup(cr.getInput());
+    hoistUniforms(b, loc);
+
     // Epilogue: each RowOut written from the register tile (read-once); each
     // PerRowOut (Mean/RSTD) is a per-row uniform written ONCE by thread 0
     // (single-writer guard — M*N stores for Y vs M scalar stores for a stat).
-    bool anyPerRow = false;
+    bool anyLead = false; // a single-writer/block store (PerRowOut or AtomicOut)
     for (ResultRole r : outRoles)
-      anyPerRow |= (r == ResultRole::PerRowOut);
+      anyLead |= (r != ResultRole::RowOut);
     Value isLead;
-    if (anyPerRow) {
+    if (anyLead) {
       Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
       isLead = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tx, c0);
     }
@@ -416,12 +514,21 @@ struct RowReductionLowering {
           b.create<memref::StoreOp>(loc, out, outMems[j],
                                     ValueRange{bx, cols[k]});
         }
-      } else {
+      } else if (outRoles[j] == ResultRole::PerRowOut) {
         Value scalar = emitAt(b, loc, outputVals[j], 0); // per-row uniform
         auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
         OpBuilder::InsertionGuard guard(b);
         b.setInsertionPointToStart(ifOp.thenBlock());
         b.create<memref::StoreOp>(loc, scalar, outMems[j], ValueRange{bx});
+      } else { // AtomicOut: thread 0 atomic-adds this block's scaled contribution
+        Value contrib = uniform.lookup(outputVals[j]); // folded per-block scalar
+        if (!contrib)
+          return failure(); // scale chain failed to hoist to a uniform (unreached)
+        auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
+        OpBuilder::InsertionGuard guard(b);
+        b.setInsertionPointToStart(ifOp.thenBlock());
+        b.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::addf, contrib,
+                                      outMems[j], ValueRange{});
       }
     }
 
