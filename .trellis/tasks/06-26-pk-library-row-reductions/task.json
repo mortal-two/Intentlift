@@ -1,0 +1,28 @@
+{
+  "id": "pk-library-row-reductions",
+  "name": "pk-library-row-reductions",
+  "title": "PK the library: high-perf MLIR row-reduction codegen vs real liger/xformers Triton kernels",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "kingdom",
+  "assignee": "kingdom",
+  "createdAt": "2026-06-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-26-rms-norm-pk"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
