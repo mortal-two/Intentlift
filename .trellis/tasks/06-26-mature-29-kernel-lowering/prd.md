@@ -85,7 +85,7 @@
 > **M5c(延后)**:group_norm。W/B 按 channel = group*cpg + col//ps 仿射索引(BroadcastSegment Col),flatten (B,G)→M 行后 W 仍随 group 变 → 需仿射 Col 索引 + group_norm intent lift(corpus 无)。与 rope/cross_entropy 同属"需索引/IR-表示设计"的一类。
 > **G1 已解(M5b)**:`gpu.dynamic_shared_memory`(非 `memref.alloca`)+ 手写 shared 树归约(非 `gpu.all_reduce`,避免 static-shared 覆盖)→ M6/M8/M9 复用。
 | **M6** | iota + RowInt 整数目标 + select-in-row-reduction + in-place 梯度(**✅ 已交付 `dd446de`**;moderate V 走 register-tile,**无需 loop**——loop 仅 V>32768 spill 时需要) | cross_entropy | **实测 1.00×/0.99×** @ 1524-1528 GB/s,loss/grad rel ~1e-8 — pass2 X-reload L2-served → parity 诚实地板 |
-| **M7** | **首个 tiled tensor-core matmul**:`intent.contraction`→`gpu.subgroup_mma_*` 片段累加 + scf.for over BK + 融合 epilogue(**perf-bar 转折**) | linear.kernel_fwd | 诚实地板 parity(无 cp.async 多级流水 → 重调 tl.dot 已贴顶);beat = 已命名的 cp.async follow-up |
+| **M7** | **首个 tiled tensor-core matmul**:`intent.contraction`→`gpu.subgroup_mma_*` 片段累加 + scf.for over BK + 融合 epilogue(**✅ M7a `040a329` 正确性已交付**:plain matmul f16→f32 wmma.mma.sync sm_120a 正确 rel ~1e-6;**MMA trunk 已解锁 M8/M9**;scf_to_cf=True 修复 mma_matrix iter_args 合法化) | linear.kernel_fwd | **M7a correctness done**;perf 5-6× off cuBLAS(plain WMMA 无 cp.async)→ **M7b**:bias/activation epilogue + vs 真实 Triton linear PK + cp.async 闭合 perf gap |
 | **M8** | **融合在线 softmax + 双 contraction**(QKᵀ→PV)+ MMA 累加片段 carry + per-row α 片段重缩放(**消 spill cliff**)+ split-K + LSE reduce | flash _fwd_kernel, xformers splitK fwd + reduce | 先消 spill cliff 达实测 ≥;TMP 免物化 + mask-DCE 为命名 beat 机制 |
 | **M9** | 多 matmul 反向(5 交错 contraction + recompute-P-from-LSE)+ DQ 双模(serial/atomic 等价)+ varargs split | flash bwd 栈, xformers splitK bwd | A:库留 5-13× headroom(去 barrier 节流)但需 MMA 不 spill;B:HBM 已贴顶 → parity(Forge remote 1.06) |
 
