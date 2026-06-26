@@ -100,7 +100,7 @@ def test_fused_emitter_matches_interpreter(sq, sk, d, scale, bk, seed) -> None:
     """interpret(JSON IR) == execute(independent fused emitter). A cross-
     implementation correctness + tile-invariance check; NOT a lowering certificate
     (the emitter bypasses the intent dialect — see module docstring)."""
-    from intentir.bench.flash_emit import run_fused_flash
+    from intentir.emitters.flash_emit import run_fused_flash
     from intentir.verify.interpret import interpret
 
     fn = _flash_fn()

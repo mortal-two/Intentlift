@@ -5,9 +5,9 @@ core; see .trellis/spec/extraction/llm-extraction.md). This package owns the
 provider client, prompts, re-roll, and evidence-as-hint plumbing.
 """
 
-from .client import LLMReply, ProviderError, call_responses
-from .extract import Extraction, Provenance, extract_intent, smoke_interpret
-from .provider import ProviderConfig, get_provider, load_providers
+from .providers.client import LLMReply, ProviderError, call_responses
+from .lifters.extract import Extraction, Provenance, extract_intent, smoke_interpret
+from .providers.provider import ProviderConfig, get_provider, load_providers
 
 __all__ = [
     "ProviderConfig",

@@ -26,13 +26,13 @@ pytestmark = pytest.mark.skipif(not _HAS_GPU, reason="needs CUDA + flag_gems")
 
 
 def _specs():
-    from intentir.extraction.corpus_specs import kernel_specs
+    from intentir.extraction.data.corpus_specs import kernel_specs
     return kernel_specs()
 
 
 def test_corpus_artifacts_verify_and_lower():
     """All committed extractions interpret==real-kernel and lower clean."""
-    from intentir.extraction.corpus import verify_saved
+    from intentir.extraction.data.corpus import verify_saved
 
     results = [verify_saved(s) for s in _specs()]
     full = [r for r in results if r.extracted and r.verified and r.lowered]
@@ -50,7 +50,7 @@ def test_corpus_artifacts_verify_and_lower():
                     reason="set IIR_LIVE_LLM=1 to call the live provider")
 def test_live_extraction_is_provider_generated():
     """The JSON is produced by the live provider agent (not hand-authored)."""
-    from intentir.extraction.corpus import run_kernel
+    from intentir.extraction.data.corpus import run_kernel
 
     spec = {s.name: s for s in _specs()}["softmax"]
     r = run_kernel(spec, save=False)

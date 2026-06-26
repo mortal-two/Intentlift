@@ -58,7 +58,7 @@ def compare_attention(intent_mlir: str, sq: int = 4, sk: int = 8, d: int = 16,
     the raw Q with the explicit scale.
     """
     from intentir.backend.orchestrate import run_program
-    from intentir.bench.triton_flash import triton_flash_attention
+    from intentir.benchmarks.triton_flash import triton_flash_attention
 
     g = torch.Generator(device="cuda").manual_seed(seed)
     q = torch.randn(sq, d, device="cuda", generator=g).contiguous()

@@ -48,7 +48,7 @@ def test_kernel_runs_on_cpu(name, shapes, dims):
     rng = np.random.default_rng(0)
     arrs = [rng.standard_normal(s).astype(np.float32) for s in shapes]
     fn = IntentFunction.from_json(
-        json.loads((ROOT / "corpus" / name / "intent.json").read_text()))
+        json.loads((ROOT / "corpus" / "kernels" / name / "intent.json").read_text()))
     y_cpu = run_on_cpu(fn, dims, arrs)
     y_ref = _np_ref(name, arrs)
     rel = np.abs(y_cpu - y_ref).max() / (np.abs(y_ref).max() + 1e-9)

@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(not _HAS_GPU, reason="needs CUDA GPU")
 @pytest.mark.parametrize("chain_name", ["add_mul", "silu_mul_add", "gelu_mul_add"])
 def test_chain_fuses_to_one_kernel_and_matches(chain_name, tmp_path):
     from intentir.backend.compile import compile_all_kernels_fused
-    from intentir.bench.fused_elementwise import _chains, _build_plan, _launch_nosync
+    from intentir.benchmarks.fused_elementwise import _chains, _build_plan, _launch_nosync
 
     chain = next(c for c in _chains() if c.name == chain_name)
     rows, cols = 4096, 512
@@ -43,7 +43,7 @@ def test_chain_fuses_to_one_kernel_and_matches(chain_name, tmp_path):
 
 def test_fused_beats_unfused_triton():
     """End-to-end: the auto-fused kernel beats the unfused Triton composition."""
-    from intentir.bench.fused_elementwise import _chains, bench_chain
+    from intentir.benchmarks.fused_elementwise import _chains, bench_chain
 
     chain = next(c for c in _chains() if c.name == "add_mul")
     # HBM-bound shape (working set ~268MB > 101MB L2); short windows for test speed.

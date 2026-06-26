@@ -20,11 +20,11 @@ from typing import Any
 
 import numpy as np
 
-from ..ir.model import IntentFunction
-from ..verify.interpret import interpret
+from intentir.ir.model import IntentFunction
+from intentir.verify.interpret import interpret
 from . import prompt as _prompt
-from .client import call_responses
-from .provider import ProviderConfig
+from intentir.extraction.providers.client import call_responses
+from intentir.extraction.providers.provider import ProviderConfig
 
 
 @dataclass

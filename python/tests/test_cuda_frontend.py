@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "corpus" / "cuda"
+CUDA_DIR = ROOT / "corpus" / "kernels" / "cuda"
 
 
 def _np_ref(name, arrs):
@@ -65,7 +65,7 @@ def test_cuda_extraction_matches_reference(name, shapes, dims):
 @pytest.mark.skipif(os.environ.get("IIR_LIVE_LLM") != "1",
                     reason="set IIR_LIVE_LLM=1 to lift CUDA live")
 def test_live_cuda_frontend():
-    from intentir.extraction.cuda_frontend import run_cuda_frontend
+    from intentir.extraction.lifters.cuda_frontend import run_cuda_frontend
 
     rows = run_cuda_frontend(save=False)
     assert rows, "no CUDA kernels"

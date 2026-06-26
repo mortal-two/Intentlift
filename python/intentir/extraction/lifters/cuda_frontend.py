@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from .corpus import CORPUS_DIR, _relerr
+from intentir.extraction.data.corpus import CORPUS_DIR, _relerr
 from .extract import extract_intent
 
 # --- faithful CUDA kernels (the kind a kernel library ships) ----------------- #
@@ -123,7 +123,7 @@ def cuda_specs():
 
 def run_cuda_frontend(save: bool = True):
     """Lift each CUDA kernel and check interpret(JSON) vs the torch reference."""
-    from ..verify.interpret import interpret
+    from intentir.verify.interpret import interpret
 
     rows = []
     for name, src, hint, ti, ref in cuda_specs():

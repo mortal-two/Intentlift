@@ -36,7 +36,7 @@ def flash_perf(shapes=((128, 128, 64), (256, 256, 64), (512, 512, 64)),
                bk: int = 16):
     import torch
 
-    from .flash_emit import run_fused_flash
+    from intentir.emitters.flash_emit import run_fused_flash
     from .triton_flash import triton_flash_attention
 
     rows = []
@@ -156,7 +156,7 @@ def _fmt_corpus(rows):
 
 
 def main() -> int:
-    from .flash_emit import _KERNEL_CACHE  # noqa: F401  (ensure module import)
+    from intentir.emitters.flash_emit import _KERNEL_CACHE  # noqa: F401  (ensure module import)
 
     fl = flash_perf()
     co = corpus_perf()
@@ -173,11 +173,11 @@ def main() -> int:
         "- Correctness parity IS established: IntentIR == Triton == torch to "
         "rel ~1e-7 (see corpus + flash tests). This table is the latency half.",
     ])
-    from .flash_emit import emit_fused_flash  # noqa: F401
+    from intentir.emitters.flash_emit import emit_fused_flash  # noqa: F401
     print(report)
     from pathlib import Path
 
-    from ..extraction.provider import REPO_ROOT
+    from intentir.extraction.providers.provider import REPO_ROOT
     out_md = REPO_ROOT / "corpus" / "reports" / "PERF.md"
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_md.write_text(report + "\n")

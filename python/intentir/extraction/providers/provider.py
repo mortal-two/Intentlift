@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # provider.py -> extraction -> intentir -> python -> <repo root>
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_PROVIDERS_PATH = REPO_ROOT / "llm_providers.local.json"
 
 

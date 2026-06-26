@@ -9,7 +9,7 @@ one kernel is:
     JSON --emit--> intent dialect MLIR --convert-intent-to-linalg--> linalg
         [lower; no residual intent.*]
 
-The committed artifact is corpus/<name>/{intent.json, provenance.json}. The JSON
+The committed artifact is corpus/kernels/<name>/{intent.json, provenance.json}. The JSON
 is produced by the live provider, NOT hand-authored -- provenance records that.
 """
 
@@ -23,11 +23,11 @@ from typing import Callable
 
 import numpy as np
 
-from ..frontend.emit_mlir import emit_loop_module, emit_module
-from ..ir.model import IntentFunction
-from ..verify.interpret import interpret
-from .extract import extract_intent
-from .provider import REPO_ROOT
+from intentir.frontend.emit_mlir import emit_loop_module, emit_module
+from intentir.ir.model import IntentFunction
+from intentir.verify.interpret import interpret
+from intentir.extraction.lifters.extract import extract_intent
+from intentir.extraction.providers.provider import REPO_ROOT
 
 FG_OPS = Path("/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops")
 CORPUS_DIR = REPO_ROOT / "corpus" / "kernels"
