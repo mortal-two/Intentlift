@@ -1,24 +1,7 @@
-#ifndef INTENT_PASSES
-#define INTENT_PASSES
+#ifndef INTENT_TARGET_PASSES
+#define INTENT_TARGET_PASSES
 
 include "mlir/Pass/PassBase.td"
-
-def ConvertIntentToLinalg : Pass<"convert-intent-to-linalg", "::mlir::ModuleOp"> {
-  let summary = "Lower intent atomic ops to linalg/tensor/arith on tensors.";
-  let description = [{
-    Lowers Layer-A atomic ops of the `intent` dialect to standard MLIR
-    (linalg/tensor/arith), the first leg of the back-end spine
-    intent -> linalg -> {scf,vector} -> gpu -> nvvm -> cubin. Starts with the
-    elementwise `intent.map_binary` (equal-shape, no broadcast); reduce /
-    contraction / broadcast follow.
-  }];
-  let dependentDialects = [
-    "::mlir::linalg::LinalgDialect",
-    "::mlir::tensor::TensorDialect",
-    "::mlir::arith::ArithDialect",
-    "::mlir::scf::SCFDialect",
-  ];
-}
 
 def LowerGpuMathToNVVM : Pass<"lower-gpu-math-to-nvvm", "::mlir::ModuleOp"> {
   let summary = "Rewrite scalar math transcendentals to native NVVM intrinsics.";
@@ -36,6 +19,10 @@ def LowerGpuMathToNVVM : Pass<"lower-gpu-math-to-nvvm", "::mlir::ModuleOp"> {
     cubin with no `.text` (driver load error 200). The `ex2.approx` form needs
     no libdevice and is exact to ~1e-7 here, which is well inside the softmax
     tolerance. Run this after `gpu-kernel-outlining`, before device lowering.
+
+    This is a generic NVIDIA-backend peephole on `math.*`/LLVM ops; it is
+    deliberately NOT part of the `intent` dialect library (it never touches
+    `intent.*` ops), hence it lives under lib/Target.
   }];
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
@@ -43,4 +30,4 @@ def LowerGpuMathToNVVM : Pass<"lower-gpu-math-to-nvvm", "::mlir::ModuleOp"> {
   ];
 }
 
-#endif // INTENT_PASSES
+#endif // INTENT_TARGET_PASSES

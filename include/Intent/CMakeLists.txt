@@ -5,6 +5,4 @@ mlir_tablegen(IntentDialect.h.inc -gen-dialect-decls -dialect=intent)
 mlir_tablegen(IntentDialect.cpp.inc -gen-dialect-defs -dialect=intent)
 add_public_tablegen_target(IntentIncGen)
 
-set(LLVM_TARGET_DEFINITIONS Passes.td)
-mlir_tablegen(Passes.h.inc -gen-pass-decls -name Intent)
-add_public_tablegen_target(IntentPassIncGen)
+add_subdirectory(Conversion)

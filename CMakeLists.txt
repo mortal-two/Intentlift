@@ -29,6 +29,8 @@ include_directories(${PROJECT_BINARY_DIR}/include)
 add_definitions(${LLVM_DEFINITIONS})
 
 add_subdirectory(include/Intent)
+add_subdirectory(include/Target)
 add_subdirectory(lib/Intent)
+add_subdirectory(lib/Target)
 add_subdirectory(tools/intent-opt)
 add_subdirectory(test)

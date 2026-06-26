@@ -8,6 +8,8 @@ target_link_libraries(intent-opt PRIVATE
   ${dialect_libs}
   ${conversion_libs}
   MLIRIntent
+  MLIRIntentConversion
+  MLIRIntentTarget
   MLIROptLib
 )
 

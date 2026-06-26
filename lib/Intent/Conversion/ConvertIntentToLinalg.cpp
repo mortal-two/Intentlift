@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Intent/Passes.h"
+#include "Intent/Conversion/Passes.h"
 
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
@@ -32,7 +32,7 @@
 
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTTOLINALG
-#include "Intent/Passes.h.inc"
+#include "Intent/Conversion/Passes.h.inc"
 } // namespace intent
 
 using namespace mlir;

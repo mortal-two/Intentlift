@@ -11,11 +11,13 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 #include "Intent/IntentDialect.h"
-#include "Intent/Passes.h"
+#include "Intent/Conversion/Passes.h"
+#include "Target/Passes.h"
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
-  intent::registerIntentPasses();
+  intent::registerIntentConversionPasses();
+  intent::registerIntentTargetPasses();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
