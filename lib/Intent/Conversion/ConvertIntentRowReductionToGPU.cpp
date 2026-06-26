@@ -117,6 +117,7 @@ struct RowReductionLowering {
   // tileColsMax) is the M1 register-tile path, emitted byte-identically.
   int64_t Kpt = 0, numTiles = 1;
   Type f32;
+  Type rowIntTy;                     // element type of a RowInt [M] arg (Y), if any
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
   SmallVector<ReduceOp> crossReduces; // cross-row (axis-0 sum) reduces -> AtomicOut
@@ -249,12 +250,21 @@ struct RowReductionLowering {
       return failure();
     outputVals.assign(ret.getOperands().begin(), ret.getOperands().end());
 
-    // Args: classify each by shape; only Row/Col/Scalar f32 tensors allowed.
+    // Args: classify each by shape. f32 tensors are Row[M,N]/Col[N]/Scalar[];
+    // a rank-1 [M] INTEGER tensor is a RowInt (cross_entropy's target class Y),
+    // loaded once per block as Y[bx].
     for (Type at : fty.getInputs()) {
       auto t = dyn_cast<RankedTensorType>(at);
-      if (!t || !t.hasStaticShape() || t.getElementType() != f32)
+      if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
+      if (s.size() == 1 && s[0] == M && t.getElementType().isInteger()) {
+        rowIntTy = t.getElementType();
+        argRoles.push_back(Role::RowInt);
+        continue;
+      }
+      if (t.getElementType() != f32)
+        return failure();
       if (s.size() == 2 && s[0] == M && s[1] == N)
         argRoles.push_back(Role::Row);
       else if (s.size() == 1 && s[0] == N)
@@ -298,7 +308,11 @@ struct RowReductionLowering {
         if (!reduceInfoFor(r.getFn()))
           return failure();
         reduces.push_back(r);
-      } else if (!isa<MapUnaryOp, MapBinaryOp>(&op)) {
+      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op)) {
+        // SelectOp + comparison map_binary (-> i1) + IotaOp are the M6 residual:
+        // cross_entropy's target gather/one-hot (`select(iota == Y, X, 0)`). The
+        // ops are general (owned by M3/M6); this just teaches emitAt to evaluate
+        // them inside the row-reduction register tile.
         return failure();
       }
     }
@@ -382,12 +396,28 @@ struct RowReductionLowering {
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{}); // scalar
     }
     Operation *def = v.getDefiningOp();
+    if (auto io = dyn_cast<IotaOp>(def)) {
+      // iota at column col[k] is the column index itself, cast to the op's
+      // integer width (no materialized vector). Feeds `iota == Y` (a cmpi).
+      Type elt = cast<RankedTensorType>(io.getResult().getType()).getElementType();
+      return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
+    }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitScalarUnary(b, loc, mu.getFn(),
                              emitAt(b, loc, mu.getInput(), k));
-    if (auto mb = dyn_cast<MapBinaryOp>(def))
-      return emitScalarBinary(b, loc, mb.getFn(), emitAt(b, loc, mb.getLhs(), k),
-                              emitAt(b, loc, mb.getRhs(), k));
+    if (auto mb = dyn_cast<MapBinaryOp>(def)) {
+      Value lhs = emitAt(b, loc, mb.getLhs(), k);
+      Value rhs = emitAt(b, loc, mb.getRhs(), k);
+      if (isCmpFn(mb.getFn())) // i1 condition for a select
+        return isa<IntegerType>(lhs.getType())
+                   ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
+                   : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+      return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+    }
+    if (auto sel = dyn_cast<SelectOp>(def))
+      return b.create<arith::SelectOp>(loc, emitAt(b, loc, sel.getCond(), k),
+                                       emitAt(b, loc, sel.getX(), k),
+                                       emitAt(b, loc, sel.getY(), k));
     return nullptr; // a reduce result not yet hoisted: impossible in topo order
   }
 
@@ -434,6 +464,8 @@ struct RowReductionLowering {
       return MemRefType::get({M, N}, f32);
     if (role == Role::Col)
       return MemRefType::get({N}, f32);
+    if (role == Role::RowInt)
+      return MemRefType::get({M}, rowIntTy);
     return MemRefType::get({}, f32);
   }
 
@@ -811,6 +843,10 @@ struct RowReductionLowering {
       } else if (argRoles[i] == Role::Scalar) {
         uniform[arg] =
             b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+      } else if (argRoles[i] == Role::RowInt) {
+        // Y[bx] is uniform across the block's threads: load once per block.
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{bx});
       }
     }
     hoistUniforms(b, loc);

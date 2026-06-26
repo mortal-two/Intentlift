@@ -123,11 +123,37 @@ inline mlir::Value emitScalarCmp(mlir::OpBuilder &b, mlir::Location loc,
   return b.create<arith::CmpFOp>(loc, p, a, c);
 }
 
+/// Scalar arith.cmpi for one `map_binary` comparison fn over INTEGER operands
+/// (-> i1). Used by cross_entropy's `iota == target` one-hot condition (column
+/// index vs the per-row target class), where the operands are integers and the
+/// float `arith.cmpf` form does not apply. Signed predicates.
+inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
+                                  llvm::StringRef fn, mlir::Value a,
+                                  mlir::Value c) {
+  using namespace mlir;
+  arith::CmpIPredicate p;
+  if (fn == "gt")
+    p = arith::CmpIPredicate::sgt;
+  else if (fn == "ge")
+    p = arith::CmpIPredicate::sge;
+  else if (fn == "lt")
+    p = arith::CmpIPredicate::slt;
+  else if (fn == "le")
+    p = arith::CmpIPredicate::sle;
+  else if (fn == "eq")
+    p = arith::CmpIPredicate::eq;
+  else
+    return nullptr;
+  return b.create<arith::CmpIOp>(loc, p, a, c);
+}
+
 /// Per-arg semantic role, inferred purely from static shape vs (M,N):
 ///   Row[M,N]  — a full feature row, register-tiled read-once per thread;
 ///   Col[N]    — a per-column vector (gamma/W), loaded at col[k];
-///   Scalar[]  — a rank-0 uniform (alpha/eps/constant), loaded once per block.
-enum class Role { Row, Col, Scalar };
+///   Scalar[]  — a rank-0 uniform (alpha/eps/constant), loaded once per block;
+///   RowInt[M] — a per-row INTEGER (cross_entropy's target class Y), loaded
+///               once per block (uniform across the block's threads) as Y[bx].
+enum class Role { Row, Col, Scalar, RowInt };
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

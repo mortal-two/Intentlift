@@ -84,6 +84,12 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
         sub = a["subscripts"]
         return np.einsum(sub, env[op.operands[0]], env[op.operands[1]])
 
+    if o == "iota":
+        # Column-index vector [0, 1, ..., n-1] (numpy arange). `n` is the static
+        # extent; the optional `dtype` selects the integer width (default i32).
+        n = int(a["n"])
+        return np.arange(n, dtype=_DTYPE.get(a.get("dtype", "i32"), np.int32))
+
     if o == "select":
         c, x, y = (env[n] for n in op.operands)
         return np.where(c, x, y)

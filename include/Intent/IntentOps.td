@@ -42,6 +42,24 @@ def Intent_SelectOp : Intent_Op<"select"> {
   let hasVerifier = 1;
 }
 
+def Intent_IotaOp : Intent_Op<"iota", [Pure]> {
+  let summary = "Column-index vector (Layer A): [0, 1, ..., N-1].";
+  let description = [{
+    Materializes the rank-1 integer index vector `0,1,...,N-1` (numpy
+    `arange`), where `N` is the static extent of the result tensor. The
+    canonical source of a per-column position used to build a one-hot / gather
+    condition (`iota == target`) for cross_entropy's target-logit pick. No
+    operands; the result type encodes both `N` and the integer width. In a
+    block-cooperative lowering the value for column `col` resolves to `col`
+    itself (an `arith.index_cast` of the thread's column index) — there is no
+    materialized vector. Owned by M6; reused wherever a column index is needed.
+  }];
+  let arguments = (ins);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Intent_MapUnaryOp : Intent_Op<"map_unary"> {
   let summary = "Elementwise unary map (Layer A).";
   let description = [{

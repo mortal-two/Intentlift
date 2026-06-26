@@ -57,6 +57,15 @@ LogicalResult SelectOp::verify() {
   return success();
 }
 
+LogicalResult IotaOp::verify() {
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (rTy.getRank() != 1 || !rTy.hasStaticShape())
+    return emitOpError("result must be a rank-1 static-shape tensor");
+  if (!rTy.getElementType().isIntOrIndex())
+    return emitOpError("result element type must be integer/index");
+  return success();
+}
+
 LogicalResult MapUnaryOp::verify() {
   static constexpr llvm::StringRef kFns[] = {
       "exp", "log", "neg", "abs", "sqrt", "rsqrt", "recip", "tanh", "sigmoid"};

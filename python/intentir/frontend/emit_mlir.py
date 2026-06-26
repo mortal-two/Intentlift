@@ -80,6 +80,8 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
         for ax in (int(a) - fold for a in op.attrs["axes"]):  # keepdims
             shp[ax] = 1
         return shp
+    if op.op == "iota":
+        return [int(op.attrs["n"])]
     if op.op == "const":
         return list(op.attrs.get("shape", []))
     if op.op == "cast":
@@ -118,15 +120,18 @@ class _Printer:
         self._n = 0
         self.ssa: dict[str, str] = {}   # JSON name -> SSA name
         self.bool_results: set[str] = set()  # JSON names that are i1 (cmp outputs)
+        self.int_results: dict[str, str] = {}  # JSON names that are int (iota)
 
     def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
-        """Tensor type for a JSON value, i1 if it is a comparison result."""
-        if name not in self.bool_results:
+        """Tensor type for a JSON value: i1 if a comparison result, an integer
+        width if an iota result, else the default f32."""
+        elt = "i1" if name in self.bool_results else self.int_results.get(name)
+        if elt is None:
             return _tt(env[name])
         shape = env[name]
         if not shape:
-            return "tensor<i1>"
-        return "tensor<" + "x".join(str(s) for s in shape) + "xi1>"
+            return f"tensor<{elt}>"
+        return "tensor<" + "x".join(str(s) for s in shape) + f"x{elt}>"
 
     def fresh(self, name: str) -> str:
         self._n += 1
@@ -186,6 +191,14 @@ class _Printer:
             self.lines.append(
                 f'{indent}{r} = intent.select {c}, {x}, {y} : '
                 f'({tc}, {tx}, {ty}) -> {self._ttn(op.result, env)}')
+        elif op.op == "iota":
+            # Integer column-index vector; the result is an integer tensor (not
+            # f32), so record it as a non-f32 op and print its int type directly.
+            dt = a.get("dtype", "i32")
+            n = int(a["n"])
+            self.int_results[op.result] = dt
+            self.lines.append(
+                f'{indent}{r} = intent.iota : tensor<{n}x{dt}>')
         elif op.op == "const":
             # A literal value -> standard arith.constant (no intent semantics to
             # lower). Splat dense over the (possibly rank-0) result tensor type.
