@@ -73,7 +73,7 @@
 | M | 新 lowering 能力 | kernels | perf-bar(诚实) |
 |---|---|---|---|
 | **M1** | 行归约→block-cooperative + broadcast-affine(**✅ `b74b0ab`**) | rms_norm, softmax | **1.00×/0.97×**,1507 GB/s,rel 4-8e-8 — parity 地板 |
-| **M2** | 多输出 epilogue(Y + per-row stat)+ 双相关归约 + thread-0 守卫标量写 | layer_norm(liger + flash 1pass) | liger 几何 headroom → beat;flash 已 autotune → parity |
+| **M2** | 多输出 epilogue(Y + per-row stat)+ 双相关归约 + thread-0 守卫标量写(**✅ 已交付**:扩 M1 pass,`ResultRole RowOut/PerRowOut`,`scf.if(tx==0)` 写 `memref<Mxf32>`,无 per-kernel 分支) | layer_norm(liger + flash 1pass) | **实测 0.98×/0.99×** vs 真实 liger(1535-1578 GB/s),Y/Mean/RSTD rel 3e-8~1.7e-7 — read-once 几何匹配 parity 是诚实地板 |
 | **M3** | read-once 纯 elementwise pass:多输出 / in-place 别名 / `intent.select`+`intent.cast` / 索引重映射(transpose/half-split)/ constexpr-DCE-by-construction | dyt, geglu, swiglu, rope×3, tvd, flash bwd_preprocess | qwen2vl 三平面免临时量 / tvd 融合 loss-sum / dyt read-once → beat;swiglu/geglu/rope read-once → parity(≥1500 GB/s 为证) |
 | **M4** | 流式 tile 融合行核 + 块内 cumsum scan(`intent.scan`)+ -inf tail-mask + atomicAdd-to-scalar 跨行折叠 | kl_div, jsd, sparsemax | jsd 免 [BT,V] loss 物化 → beat;sparsemax 是 cumsum 门 |
 | **M5** | 多 pass TILED 归约(scf.for+iter_args + smem 跨 pass 缓存)+ aux 标量输出 + 2D grid + in-place residual + BroadcastSegment Col | group_norm, poly_norm, fused_add_rms_norm, xformers rms_norm×2 | xf rms_norm 实测两趟 → smem 缓存省一趟 read → beat;poly/fused 单 pass → parity |

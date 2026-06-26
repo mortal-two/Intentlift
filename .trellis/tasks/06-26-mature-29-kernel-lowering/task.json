@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-26-m2-layer-norm"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

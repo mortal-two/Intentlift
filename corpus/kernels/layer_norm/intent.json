@@ -38,6 +38,22 @@
           "M",
           "N"
         ]
+      },
+      {
+        "name": "mean",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          1
+        ]
+      },
+      {
+        "name": "rstd",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          1
+        ]
       }
     ],
     "layer_c": {
@@ -109,22 +125,12 @@
       },
       {
         "op": "map_unary",
-        "result": "std",
+        "result": "rstd",
         "operands": [
           "var_eps"
         ],
         "attrs": {
-          "fn": "sqrt"
-        }
-      },
-      {
-        "op": "map_unary",
-        "result": "rstd",
-        "operands": [
-          "std"
-        ],
-        "attrs": {
-          "fn": "recip"
+          "fn": "rsqrt"
         }
       },
       {

@@ -147,6 +147,10 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
 /// Per-arg semantic role, inferred purely from static shape vs (M,N).
 enum class Role { Row, Col, Scalar };
 
+/// Per-result role: a full [M,N] row output (written from the register tile),
+/// or a per-row [M,1] scalar output (a stat like Mean/RSTD, written once/block).
+enum class ResultRole { RowOut, PerRowOut };
+
 /// One func's row-reduction lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
 struct RowReductionLowering {
@@ -158,32 +162,61 @@ struct RowReductionLowering {
   Type f32;
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // in program order
-  Value outputVal;                   // the returned [M,N] value
+  SmallVector<Value> outputVals;     // the returned values (>=1, topo order)
+  SmallVector<ResultRole> outRoles;  // RowOut [M,N] / PerRowOut [M,1] per result
 
   RowReductionLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     auto fty = fn.getFunctionType();
-    if (fty.getNumResults() != 1)
+    unsigned nRes = fty.getNumResults();
+    if (nRes < 1)
       return failure();
-    auto outTy = dyn_cast<RankedTensorType>(fty.getResult(0));
-    if (!outTy || outTy.getRank() != 2 || !outTy.hasStaticShape())
+    // All results are rank-2 static f32. Anchor (M,N) from a RowOut — the
+    // result whose trailing dim != 1 (the full feature row); per-row stat
+    // outputs (Mean/RSTD) are [M,1]. Need >=1 RowOut for the register-tile
+    // epilogue, and any RowOut must agree on (M,N).
+    int64_t anchorM = -1, anchorN = -1;
+    for (Type rt : fty.getResults()) {
+      auto t = dyn_cast<RankedTensorType>(rt);
+      if (!t || t.getRank() != 2 || !t.hasStaticShape())
+        return failure();
+      if (!isa<Float32Type>(t.getElementType()))
+        return failure();
+      f32 = t.getElementType();
+      if (t.getDimSize(1) != 1) {
+        if (anchorN < 0) {
+          anchorM = t.getDimSize(0);
+          anchorN = t.getDimSize(1);
+        } else if (t.getDimSize(0) != anchorM || t.getDimSize(1) != anchorN)
+          return failure();
+      }
+    }
+    if (anchorN < 0)
       return failure();
-    f32 = outTy.getElementType();
-    if (!isa<Float32Type>(f32))
-      return failure();
-    M = outTy.getDimSize(0);
-    N = outTy.getDimSize(1);
+    M = anchorM;
+    N = anchorN;
+    for (Type rt : fty.getResults()) {
+      auto t = cast<RankedTensorType>(rt);
+      if (t.getDimSize(0) != M)
+        return failure();
+      if (t.getDimSize(1) == N)
+        outRoles.push_back(ResultRole::RowOut);
+      else if (t.getDimSize(1) == 1)
+        outRoles.push_back(ResultRole::PerRowOut);
+      else
+        return failure();
+    }
 
-    // Single basic block, terminated by a return of the output value.
+    // Single basic block, terminated by a return of the output values.
     if (!fn.getBody().hasOneBlock())
       return failure();
     Block &body = fn.getBody().front();
     auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
-    if (!ret || ret.getNumOperands() != 1)
+    if (!ret || ret.getNumOperands() != nRes)
       return failure();
-    outputVal = ret.getOperand(0);
+    outputVals.assign(ret.getOperands().begin(), ret.getOperands().end());
 
     // Args: classify each by shape; only Row/Col/Scalar f32 tensors allowed.
     for (Type at : fty.getInputs()) {
@@ -327,7 +360,9 @@ struct RowReductionLowering {
     SmallVector<Type> inTys;
     for (Role r : argRoles)
       inTys.push_back(memrefOf(r));
-    inTys.push_back(MemRefType::get({M, N}, f32)); // Y (destination-passing)
+    for (ResultRole rr : outRoles) // destination-passing: one memref per result
+      inTys.push_back(rr == ResultRole::RowOut ? MemRefType::get({M, N}, f32)
+                                               : MemRefType::get({M}, f32));
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -341,7 +376,9 @@ struct RowReductionLowering {
     Block &srcBlock = fn.getBody().front();
     for (unsigned i = 0; i < argRoles.size(); ++i)
       argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
-    Value yMem = entry->getArgument(argRoles.size());
+    SmallVector<Value> outMems;
+    for (unsigned j = 0; j < outRoles.size(); ++j)
+      outMems.push_back(entry->getArgument(argRoles.size() + j));
 
     Value cM = b.create<arith::ConstantIndexOp>(loc, M);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
@@ -398,10 +435,31 @@ struct RowReductionLowering {
       hoistUniforms(b, loc); // +eps, sqrt, recip, ... become available now
     }
 
-    // Epilogue: write the output row from the register tile (read-once).
-    for (int64_t k = 0; k < K; ++k) {
-      Value out = emitAt(b, loc, outputVal, k);
-      b.create<memref::StoreOp>(loc, out, yMem, ValueRange{bx, cols[k]});
+    // Epilogue: each RowOut written from the register tile (read-once); each
+    // PerRowOut (Mean/RSTD) is a per-row uniform written ONCE by thread 0
+    // (single-writer guard — M*N stores for Y vs M scalar stores for a stat).
+    bool anyPerRow = false;
+    for (ResultRole r : outRoles)
+      anyPerRow |= (r == ResultRole::PerRowOut);
+    Value isLead;
+    if (anyPerRow) {
+      Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+      isLead = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tx, c0);
+    }
+    for (unsigned j = 0; j < outputVals.size(); ++j) {
+      if (outRoles[j] == ResultRole::RowOut) {
+        for (int64_t k = 0; k < K; ++k) {
+          Value out = emitAt(b, loc, outputVals[j], k);
+          b.create<memref::StoreOp>(loc, out, outMems[j],
+                                    ValueRange{bx, cols[k]});
+        }
+      } else {
+        Value scalar = emitAt(b, loc, outputVals[j], 0); // per-row uniform
+        auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
+        OpBuilder::InsertionGuard guard(b);
+        b.setInsertionPointToStart(ifOp.thenBlock());
+        b.create<memref::StoreOp>(loc, scalar, outMems[j], ValueRange{bx});
+      }
     }
 
     b.create<gpu::TerminatorOp>(loc);
