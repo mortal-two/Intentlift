@@ -3,7 +3,7 @@
   "name": "rms-norm-pk",
   "title": "rms_norm: block-reduction row kernel via real MLIR toolchain, PK liger head-to-head",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,16 +11,20 @@
   "creator": "kingdom",
   "assignee": "kingdom",
   "createdAt": "2026-06-26",
-  "completedAt": null,
+  "completedAt": "2026-06-26",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "4afcedd",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": "06-26-pk-library-row-reductions",
-  "relatedFiles": [],
-  "notes": "",
+  "relatedFiles": [
+    "python/intentir/bench/rmsnorm_emit.py",
+    "python/tests/test_rmsnorm_pk.py",
+    "corpus/PERF_RMSNORM.md"
+  ],
+  "notes": "DONE. First real PK of the campaign. MLIR-generated read-once block-cooperative row kernel (one gpu.launch/row, T=num_warps*32 mirroring liger calculate_settings, per-thread alloca caches x once, gpu.all_reduce sum-of-squares fp32, rstd via NVVM rsqrt.approx intrinsic since math.sqrt/rsqrt are libdevice dead-ends, 2nd pass writes y from cache) lowered by the REAL toolchain (mlir-opt->nvvm->ptxas->sm_120a). Kernel-only PK vs REAL liger _rms_norm_forward_kernel: PARITY (1.032x @(32768,1024), 1.000x @(16384,4096); both ~340-365 GB/s). Bit-faithful rel ~1e-7 vs fp32 ref AND liger (Y+RSTD) incl non-pow2 tail-mask. Parity IS the win (memory-bound, identical 128-thread geometry); no win claimed (0.77x probe was a transient-clock artifact, retracted). v4 vectorization lowers (ld.global.v4) but no gain (HBM-bound) -> scalar retained. Gates passed: gpu.all_reduce block reduction lowers to sm_120a + correct; real liger installed/runnable (rms_norm_forward, bypassing the crashing autograd Function). test_rmsnorm_pk 3 passed.",
   "meta": {}
 }
