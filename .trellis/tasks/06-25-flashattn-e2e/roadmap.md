@@ -7,7 +7,7 @@ The epic already exists with the same framing. The synthesis task wants me to pr
 - **Triton baseline runs on sm_120 today:** `flash_attn_triton.py` forward = correct (max abs err 2.0e-4 vs fp32 SDPA golden), 0.308 ms / 13.9 TFLOP/s at B2/H8/S1024/D64. The vs-Triton baseline is **live**. (Caveat: it is one fixed non-autotuned config — BLOCK=128, num_stages=1, num_warps=4 — so all ratios are "vs this fixed config," stated honestly.)
 - **sm_120 codegen + runtime is PROVEN:** an MLIR-20 GPU kernel was lowered to `.target sm_120a` PTX and JIT-launched via the CUDA Driver API (`cuModuleLoadData`/`cuLaunchKernel` through `cuda-python`) to a **numerically correct result on the 5090 D**. No sm_90a fallback needed. `libmlir_cuda_runtime.so` is absent but **deliberately sidestepped** (driver-API launch on torch pointers), not a wall.
 - **A reference design exists:** `/home/aii-works/5090D/intentir_remote_20260302/` already shipped an executable flash-attn PTX (`.version 8.7 / .target sm_120a`) through a full intent→…→PTX pipeline. Port, don't invent.
-- **M1 front-end artifact exists and round-trips:** `/home/kingdom/phdworks/TianchenIR/tianchenir/test/flashattention_fwd.intent.json` (scale-reconciled, 16 ops, validates through `model.py`).
+- **M1 front-end artifact exists and round-trips:** `/home/kingdom/phdworks/TianchenIR/test/flashattention_fwd.intent.json` (scale-reconciled, 16 ops, validates through `model.py`).
 
 So the long-pole risk was never the toolchain. **The long pole is the authoring work between the JSON contract and an executable cubin: the missing dialect ops (`loop`+carry, `map_unary`, broadcast, DPS outs), the `intent→linalg` lowering patterns, and the reference interpreter.**
 
@@ -125,10 +125,10 @@ Why this and not matmul/softmax first: it uses **only today's existing dialect o
 ---
 
 ### Pointers (absolute)
-- Contract artifact (DONE): `/home/kingdom/phdworks/TianchenIR/tianchenir/test/flashattention_fwd.intent.json`
-- Interpreter stub to build (M2/M3): `/home/kingdom/phdworks/TianchenIR/tianchenir/python/intentir/verify/__init__.py`
-- Dialect to extend (M8): `/home/kingdom/phdworks/TianchenIR/tianchenir/include/Intent/IntentOps.td`, `/home/kingdom/phdworks/TianchenIR/tianchenir/lib/Intent/IntentOps.cpp`
+- Contract artifact (DONE): `/home/kingdom/phdworks/TianchenIR/test/flashattention_fwd.intent.json`
+- Interpreter stub to build (M2/M3): `/home/kingdom/phdworks/TianchenIR/python/intentir/verify/__init__.py`
+- Dialect to extend (M8): `/home/kingdom/phdworks/TianchenIR/include/Intent/IntentOps.td`, `/home/kingdom/phdworks/TianchenIR/lib/Intent/IntentOps.cpp`
 - Reference design to port (M4–M9): `/home/aii-works/5090D/intentir_remote_20260302/intent_ir/mlir/pipelines/downstream_cuda_std_llvm.yaml`, `.../backends/cuda/runtime.py`, `.../frontends/cuda/runtime.py`, `.../scripts/cuda_backend_smoke.py`; proven artifact `.../artifacts/full_pipeline_verify/flash_attention2d.intentir.intentdialect.downstream_cuda_std_llvm.kernel.ptx`
 - Triton baseline (import by file path): `/home/kingdom/phdworks/Dataset/flash-attention/flash_attn/flash_attn_triton.py` (fwd `_flash_attn_forward` ~L815)
-- Epic + task.py: `/home/kingdom/phdworks/TianchenIR/tianchenir/.trellis/tasks/06-25-flashattn-e2e/`, `/home/kingdom/phdworks/TianchenIR/tianchenir/.trellis/scripts/task.py`
+- Epic + task.py: `/home/kingdom/phdworks/TianchenIR/.trellis/tasks/06-25-flashattn-e2e/`, `/home/kingdom/phdworks/TianchenIR/.trellis/scripts/task.py`
 - Toolchain: `/usr/lib/llvm-20/bin/` (GPU passes confirmed); ptxas `/usr/local/cuda-12.8/bin/ptxas` (export `PATH=/usr/local/cuda-12.8/bin:$PATH`).

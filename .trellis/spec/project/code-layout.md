@@ -9,12 +9,12 @@
    - 走标准 out-of-tree MLIR dialect 工程:`find_package(MLIR REQUIRED CONFIG)` + 自有 TableGen dialect + 自有 `intent-opt` 工具。
 2. **语言分工**:Intent dialect / lowering = C++ MLIR + TableGen;LLM 提取 / 解释器 / 验证 = Python。
 3. **build**:CMake + Ninja(C++ 侧)+ Python 包管理(Python 侧)。
-4. **LLM provider**:`/home/kingdom/phdworks/TianchenIR/tianchenir/llm_providers.local.json`(当前 `gpt-5.3-codex`,responses API;在 gitignore 内)。
+4. **LLM provider**:`/home/kingdom/phdworks/TianchenIR/llm_providers.local.json`(provider-agent real,responses API;在 gitignore 内)。
 
 ## 工程目录结构
 
 ```
-tianchenir/
+TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上移至此,不再嵌套子文件夹)
   CMakeLists.txt              # 顶层:find_package(MLIR), 加子目录
   include/Intent/             # dialect 头 + TableGen(.td)
     IntentDialect.td/.h
@@ -34,6 +34,7 @@ tianchenir/
 ```
 
 - `Dataset/` 在仓库外 `/home/kingdom/phdworks/Dataset`(见 [../extraction/frontend-inputs.md](../extraction/frontend-inputs.md))。
+- 参考仓库(只读,借鉴用):`/home/kingdom/phdworks/refs/{intentir,IntentIR,TianchenForge}`(2026-06-26 从 `TianchenIR/` 下移出,工作区只留本项目)。
 
 ## 工程纪律(成熟工程,非玩具)
 
