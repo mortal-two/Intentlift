@@ -1,0 +1,166 @@
+{
+  "intent_function": {
+    "name": "layer_norm",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "W",
+        "dtype": "f32",
+        "shape": [
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "N"
+        ]
+      },
+      {
+        "name": "eps",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "N": "BLOCK_SIZE"
+      }
+    },
+    "body": [
+      {
+        "op": "reduce",
+        "result": "mean",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_centered",
+        "operands": [
+          "X",
+          "mean"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_centered_sq",
+        "operands": [
+          "x_centered",
+          "x_centered"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "var",
+        "operands": [
+          "x_centered_sq"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "var_eps",
+        "operands": [
+          "var",
+          "eps"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "std",
+        "operands": [
+          "var_eps"
+        ],
+        "attrs": {
+          "fn": "sqrt"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "rstd",
+        "operands": [
+          "std"
+        ],
+        "attrs": {
+          "fn": "recip"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_norm",
+        "operands": [
+          "x_centered",
+          "rstd"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_scaled",
+        "operands": [
+          "x_norm",
+          "W"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "x_scaled",
+          "B"
+        ],
+        "attrs": {
+          "fn": "add"
+        },
+        "out": "Y"
+      }
+    ]
+  }
+}

@@ -29,13 +29,15 @@ Pattern recognized (the generalizable row-reduction family)::
     -> reduce over the last axis   # mean (rms); max+sum (softmax); mean+var (ln)
     -> broadcast + post-elementwise # (x*rsqrt(mean+eps))*w (rms); (x-max).exp()/sum
 
-**rms_norm** (one ``reduce{mean}`` + ``+eps`` + ``sqrt`` + ``recip`` +
-``X*inv_rms`` + ``*W``) AND **softmax** (``reduce{max}`` -> ``sub`` -> ``exp`` ->
-``reduce{sum}`` -> ``div``, no weight/bias) are both recognized AND
-codegen-supported -- softmax proves the dataclass (a list of reductions + optional
-weight/bias) generalizes from ONE reduction to TWO. layer_norm (mean+var) is the
-remaining slot behind the marked extension point. See :data:`_SOFTMAX_DONE` /
-:data:`_LAYERNORM_TODO`.
+The whole family is recognized AND codegen-supported: **rms_norm** (one
+``reduce{mean}`` + ``+eps`` + ``sqrt`` + ``recip`` + ``X*inv_rms`` + ``*W``),
+**softmax** (``reduce{max}`` -> ``sub`` -> ``exp`` -> ``reduce{sum}`` -> ``div``,
+no weight/bias), and **layer_norm** (``reduce{mean}`` -> ``sub`` -> square ->
+``reduce{mean}`` -> ``+eps`` -> ``sqrt`` -> ``recip`` -> ``(x-mean)*rstd`` -> ``*W``
+-> ``+B``). softmax proves the dataclass (a list of reductions + optional
+weight/bias) generalizes from ONE reduction to TWO; layer_norm adds the second
+parameter (a bias) and the two-sequential-mean (mean-then-variance) shape. See
+:data:`_SOFTMAX_DONE` / :data:`_LAYERNORM_DONE`.
 """
 
 from __future__ import annotations
@@ -111,10 +113,15 @@ _SOFTMAX_DONE = (
     "(maxnumf then add), exp via the ex2.approx peephole, -inf tail mask, no "
     "weight/bias -> bench.softmax_emit.emit_softmax."
 )
-_LAYERNORM_TODO = (
-    "layer_norm: pre = identity; reductions = [mean, var]; "
-    "post = (x-mean)*rstd*w + b. Recognizer: two reduces (mean, then var = "
-    "mean((x-mean)^2)); codegen: two all_reduce-add passes, weight AND bias."
+_LAYERNORM_DONE = (
+    "layer_norm (IMPLEMENTED): pre = identity; reductions = [mean, mean] (the "
+    "second mean is the variance -- mean((x-mean)^2), so its IR fn is 'mean', NOT "
+    "'var'); post = (x-mean)*rstd*w + b. Recognizer: two mean reduces with the "
+    "(x-mean) centering + square between them, a weight (the affine mul operand) "
+    "AND a bias (the final add operand) (_recognize_layer_norm); codegen: two "
+    "gpu.all_reduce-add passes, the tl.where variance tail re-zero, rsqrt via the "
+    "NVVM rsqrt.approx.f intrinsic, full affine *W + B, Mean+RSTD side outputs -> "
+    "bench.layernorm_emit.emit_layernorm."
 )
 _EPS_NOTE = (
     "rms_norm's eps is a runtime input in the intent but the proven emitter bakes "
@@ -125,6 +132,17 @@ _EPS_NOTE = (
 
 # The eps value the proven emitter (bench/rmsnorm_emit.emit_rmsnorm) bakes in.
 _BAKED_EPS = 1e-6
+
+# Per-kind baked eps: rms_norm's emitter bakes 1e-6, layer_norm's bakes 1e-5 (its
+# conventional value). softmax has no eps. ``codegen_row_reduction`` /
+# ``run_from_intent`` default to the kind's baked value when the caller passes no
+# eps, and validate any caller-supplied eps against it (see :data:`_EPS_NOTE`).
+_BAKED_EPS_BY_KIND = {"rms_norm": 1e-6, "layer_norm": 1e-5}
+
+
+def _baked_eps_for(kind: str) -> float:
+    """The eps value the matching emitter bakes for ``kind`` (1e-6 / 1e-5)."""
+    return _BAKED_EPS_BY_KIND.get(kind, _BAKED_EPS)
 
 
 # --------------------------------------------------------------------------- #
@@ -172,9 +190,13 @@ def recognize_row_reduction(fn: IntentFunction) -> RowReductionPlan | None:
 
     The op is identified by *role*, not SSA name: the [rows, cols] data tensor is
     the 2-D input, the weight is the 1-D input, the reduction axis is the last.
-    **softmax** (max+sum, no weight) is ALSO recognized (``_recognize_softmax``);
-    layer_norm (mean+var) is the remaining slot -- see :data:`_SOFTMAX_DONE` /
-    :data:`_LAYERNORM_TODO`.
+    **softmax** (max+sum, no weight) is ALSO recognized (``_recognize_softmax``) and
+    **layer_norm** (two mean reductions + weight AND bias) too
+    (``_recognize_layer_norm``) -- the whole row-reduction family. The three
+    discriminate cleanly: rms_norm = ONE mean reduce; softmax = TWO reduces
+    ``[max, sum]`` with no weight; layer_norm = TWO reduces ``[mean, mean]`` (the
+    second mean is the variance of the centered values) WITH both a weight and a
+    bias. See :data:`_SOFTMAX_DONE` / :data:`_LAYERNORM_DONE`.
     """
     if not fn.body:
         return None
@@ -206,7 +228,10 @@ def recognize_row_reduction(fn: IntentFunction) -> RowReductionPlan | None:
     if plan is not None:
         return plan
 
-    # TODO(layer_norm): _recognize_layer_norm -- see _LAYERNORM_TODO.
+    plan = _recognize_layer_norm(fn, data_input, data_rank, reduces)
+    if plan is not None:
+        return plan
+
     return None
 
 
@@ -428,6 +453,141 @@ def _recognize_softmax(
     )
 
 
+def _recognize_layer_norm(
+    fn: IntentFunction,
+    data_input: str,
+    data_rank: int,
+    reduces: list[IntentOp],
+) -> RowReductionPlan | None:
+    """Recognize the layer_norm body shape; plan or ``None``.
+
+    layer_norm body shape (in order), the row-reduction family member with TWO
+    sequential mean reductions (the second over the *centered, squared* values --
+    i.e. the variance) PLUS a full affine ``*W + B``::
+
+        mean      = reduce{mean, axes=[last]}(X)     (reduction 1)
+        x_cen     = X - mean                         (map_binary sub, broadcast)
+        x_cen_sq  = x_cen * x_cen                    (map_binary mul, self)
+        var       = reduce{mean, axes=[last]}(x_cen_sq)  (reduction 2 -- variance)
+        + eps -> sqrt -> recip                       (the rstd post-stage)
+        x_norm    = x_cen * rstd                     (map_binary mul, broadcast)
+        x_scaled  = x_norm * W                        (map_binary mul -- weight)
+        Y         = x_scaled + B                      (map_binary add -- bias)
+
+    Checks (role-based):
+
+    * exactly TWO reductions, BOTH ``fn == "mean"`` (the second mean over the
+      squared centered values *is* the variance -- the IR fn stays ``"mean"``);
+    * reduction 1 (mean) is over the data input ``X``;
+    * the centering ``X - mean`` (a ``sub``) and its square ``x_cen * x_cen`` feed
+      reduction 2;
+    * a ``sqrt`` and a ``recip`` exist (the rstd post-stage);
+    * the output is ``x_scaled + B`` (final ``add``), whose ``x_scaled`` is
+      ``x_norm * W`` (a ``mul``); W is the 1-D operand of that mul, B is the 1-D
+      operand of the final add -- the two 1-D inputs disambiguated by ROLE.
+
+    Returns ``None`` (so the rms_norm / softmax recognizers / naive fallback win)
+    on any mismatch. The clean 3-way discriminator vs the others: rms_norm has ONE
+    mean reduce; softmax has TWO reduces ``[max, sum]`` and NO weight; layer_norm
+    has TWO mean reduces WITH a weight AND a bias.
+    """
+    if len(reduces) != 2:
+        return None
+    red_mean, red_var = reduces[0], reduces[1]
+    if _fn_attr(red_mean) != "mean" or _fn_attr(red_var) != "mean":
+        return None
+    # reduction 1 (mean) is over the data input X.
+    if not red_mean.operands or red_mean.operands[0] != data_input:
+        return None
+
+    by_result: dict[str, IntentOp] = {}
+    for op in fn.body:
+        if isinstance(op.result, str):
+            by_result[op.result] = op
+        if op.out is not None:
+            by_result[op.out] = op
+
+    mean_name = red_mean.result if isinstance(red_mean.result, str) else None
+    if mean_name is None:
+        return None
+
+    # x_cen = X - mean (broadcast sub of the data input with the row mean).
+    cen_name = None
+    for op in fn.body:
+        if op.op == "map_binary" and _fn_attr(op) == "sub":
+            if list(op.operands) == [data_input, mean_name]:
+                cen_name = op.result if isinstance(op.result, str) else None
+                break
+    if cen_name is None:
+        return None
+
+    # x_cen_sq = x_cen * x_cen (the centered value squared; feeds the var reduce).
+    sq_name = None
+    for op in fn.body:
+        if op.op == "map_binary" and _fn_attr(op) == "mul":
+            if list(op.operands) == [cen_name, cen_name]:
+                sq_name = op.result if isinstance(op.result, str) else None
+                break
+    if sq_name is None:
+        return None
+
+    # reduction 2 (variance) is over x_cen_sq.
+    if not red_var.operands or red_var.operands[0] != sq_name:
+        return None
+
+    # rstd post-stage: a sqrt and a recip must be present.
+    unary_fns = {_fn_attr(op) for op in fn.body if op.op == "map_unary"}
+    if "sqrt" not in unary_fns or "recip" not in unary_fns:
+        return None
+
+    # output: Y = x_scaled + B (final broadcast add). B is the 1-D operand here.
+    out_name = fn.outputs[0].name if fn.outputs else None
+    if out_name is None:
+        return None
+    out_op = by_result.get(out_name)
+    if out_op is None or out_op.op != "map_binary" or _fn_attr(out_op) != "add":
+        return None
+
+    oned_names = {t.name for t in fn.inputs if len(t.shape) == 1}
+    # The bias is the 1-D operand of the final add.
+    bias = next((o for o in out_op.operands if o in oned_names), None)
+    if bias is None:
+        return None
+    # The other operand of the add is x_scaled = x_norm * W.
+    scaled_name = next((o for o in out_op.operands if o != bias), None)
+    if scaled_name is None:
+        return None
+    scaled_op = by_result.get(scaled_name)
+    if scaled_op is None or scaled_op.op != "map_binary" or _fn_attr(scaled_op) != "mul":
+        return None
+    # The weight is the 1-D operand of the affine mul (the OTHER 1-D input).
+    weight = next((o for o in scaled_op.operands if o in oned_names), None)
+    if weight is None or weight == bias:
+        return None
+
+    # eps: a 0-d (scalar) input, if any.
+    zerod = [t for t in fn.inputs if len(t.shape) == 0]
+    eps_input = zerod[0].name if len(zerod) == 1 else None
+
+    data_shape = _input_shape(fn, data_input)
+    return RowReductionPlan(
+        kind="layer_norm",
+        data_input=data_input,
+        row_dim=data_shape[0],
+        col_dim=data_shape[1],
+        reductions=[
+            # Both reduce fns are "mean" in the IR; the second mean (over the
+            # centered, squared values) is semantically the variance.
+            Reduction(fn="mean", source=data_input, axis=data_rank - 1),
+            Reduction(fn="mean", source=sq_name, axis=data_rank - 1),
+        ],
+        weight_input=weight,
+        bias_input=bias,
+        eps_input=eps_input,
+        output=out_name,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Dim resolution.                                                             #
 # --------------------------------------------------------------------------- #
@@ -450,10 +610,11 @@ class CompiledRowReduction:
     """A generated row-reduction kernel + everything needed to launch it.
 
     ``lowered`` is the proven emitter's compiled+resolved kernel object
-    (``_LoweredRMS`` for rms_norm, ``_LoweredSoftmax`` for softmax: func + grid +
-    block + resolved launch plan); ``rows``/``cols``/``threads`` are the geometry;
-    ``plan`` is the recognized op. ``n_kernels`` is the number of gpu kernels the
-    lowering produced -- it is **1** (the whole point: one fused kernel, not 8).
+    (``_LoweredRMS`` for rms_norm, ``_LoweredSoftmax`` for softmax,
+    ``_LoweredLayerNorm`` for layer_norm: func + grid + block + resolved launch
+    plan); ``rows``/``cols``/``threads`` are the geometry; ``plan`` is the
+    recognized op. ``n_kernels`` is the number of gpu kernels the lowering produced
+    -- it is **1** (the whole point: one fused kernel, not 8).
     """
 
     plan: RowReductionPlan
@@ -465,7 +626,7 @@ class CompiledRowReduction:
 
 
 def codegen_row_reduction(
-    fn: IntentFunction, dims: dict, *, eps: float = _BAKED_EPS
+    fn: IntentFunction, dims: dict, *, eps: float | None = None
 ) -> CompiledRowReduction:
     """Recognize ``fn`` and GENERATE the single high-perf row-reduction kernel.
 
@@ -477,15 +638,16 @@ def codegen_row_reduction(
 
     Routes the recognized plan to the matching proven emitter: ``rms_norm`` ->
     ``rmsnorm_emit`` (one mean reduction; ``[X, W, Y, RSTD]``), ``softmax`` ->
-    ``softmax_emit`` (max+sum reductions; ``[X, Y]``). The same read-once
-    block-cooperative row-kernel skeleton backs both -- this routing is the
-    generalization point.
+    ``softmax_emit`` (max+sum reductions; ``[X, Y]``), ``layer_norm`` ->
+    ``layernorm_emit`` (two mean reductions + affine W AND B;
+    ``[X, W, B, Y, Mean, RSTD]``). The same read-once block-cooperative row-kernel
+    skeleton backs all three -- this routing is the generalization point.
 
     Raises ``ValueError`` if ``fn`` is not a recognized row-reduction, and
-    ``NotImplementedError`` if the recognized plan is not yet codegen-supported
-    (currently anything other than ``rms_norm`` / ``softmax`` -- the layer_norm
-    slot). For rms_norm, raises ``ValueError`` if ``eps`` differs from the value
-    the proven emitter bakes (see :data:`_EPS_NOTE`); softmax has no eps.
+    ``NotImplementedError`` if the recognized plan is not yet codegen-supported.
+    For rms_norm and layer_norm, raises ``ValueError`` if ``eps`` differs from the
+    value the matching emitter bakes (rms_norm bakes 1e-6, layer_norm bakes 1e-5);
+    softmax has no eps.
     """
     plan = recognize_row_reduction(fn)
     if plan is None:
@@ -498,9 +660,14 @@ def codegen_row_reduction(
     rows = _resolve_dim(plan.row_dim, dims)
     cols = _resolve_dim(plan.col_dim, dims)
 
+    # eps defaults to the kind's baked value; validate any caller-supplied eps.
+    baked_eps = _baked_eps_for(plan.kind)
+    if eps is None:
+        eps = baked_eps
+
     # Lazy imports: keep the recognizer pure-Python (no compile toolchain at
     # module import). _threads_for mirrors liger's calculate_settings (Layer-C);
-    # both emitters share it.
+    # all emitters share it.
     from intentir.bench.rmsnorm_emit import _threads_for
 
     if plan.kind == "rms_norm":
@@ -509,10 +676,10 @@ def codegen_row_reduction(
                 "codegen_row_reduction: rms_norm codegen expects exactly one mean "
                 f"reduction, got {[(r.fn) for r in plan.reductions]}"
             )
-        if abs(eps - _BAKED_EPS) > 0.0:
+        if abs(eps - baked_eps) > 0.0:
             raise ValueError(
-                f"codegen_row_reduction: eps={eps} but the proven emitter bakes "
-                f"eps={_BAKED_EPS}. {_EPS_NOTE}"
+                f"codegen_row_reduction: eps={eps} but the proven rms_norm emitter "
+                f"bakes eps={baked_eps}. {_EPS_NOTE}"
             )
         from intentir.bench.rmsnorm_emit import _get_lowered
     elif plan.kind == "softmax":
@@ -523,12 +690,28 @@ def codegen_row_reduction(
                 f"reductions, got {[r.fn for r in plan.reductions]}"
             )
         from intentir.bench.softmax_emit import _get_lowered
-    else:
-        # Extension point: layer_norm recognize-but-not-codegen yet.
+    elif plan.kind == "layer_norm":
+        # layer_norm: two mean reductions (mean, then variance), weight AND bias.
+        if [r.fn for r in plan.reductions] != ["mean", "mean"]:
+            raise NotImplementedError(
+                "codegen_row_reduction: layer_norm codegen expects [mean, mean] "
+                f"reductions, got {[r.fn for r in plan.reductions]}"
+            )
+        if plan.weight_input is None or plan.bias_input is None:
+            raise NotImplementedError(
+                "codegen_row_reduction: layer_norm codegen requires both a weight "
+                f"and a bias (got weight={plan.weight_input}, bias={plan.bias_input})"
+            )
+        if abs(eps - baked_eps) > 0.0:
+            raise ValueError(
+                f"codegen_row_reduction: eps={eps} but the proven layer_norm emitter "
+                f"bakes eps={baked_eps}. {_EPS_NOTE}"
+            )
+        from intentir.bench.layernorm_emit import _get_lowered
+    else:  # pragma: no cover - defensive (recognizer only returns the three kinds)
         raise NotImplementedError(
             f"codegen_row_reduction: recognized plan kind {plan.kind!r} is not yet "
-            f"supported by codegen (only 'rms_norm' / 'softmax' are). "
-            f"layer_norm: {_LAYERNORM_TODO}"
+            f"supported by codegen (rms_norm / softmax / layer_norm are)."
         )
 
     threads = _threads_for(cols)
@@ -552,26 +735,30 @@ def run_from_intent(
     inputs: dict[str, "torch.Tensor"],
     dims: dict,
     *,
-    eps: float = _BAKED_EPS,
+    eps: float | None = None,
 ) -> "torch.Tensor":
     """Recognize ``fn`` -> generate the kernel -> launch it -> return the output.
 
-    ``inputs`` maps each intent input *name* (e.g. ``"X"``, ``"W"``) to a CUDA f32
-    tensor. For rms_norm the data + weight tensors are consumed (eps is baked, see
-    :data:`_EPS_NOTE`) and the func-signature is ``[X, W, Y, RSTD]``; for softmax
-    only the data tensor is consumed (no weight / eps) and the signature is
-    ``[X, Y]``. Allocates the output ``Y`` (and the rms_norm ``RSTD`` side output)
-    fresh, launches the single generated kernel on torch's current stream,
-    synchronizes, and returns ``Y``.
+    ``inputs`` maps each intent input *name* (e.g. ``"X"``, ``"W"``, ``"B"``) to a
+    CUDA f32 tensor. For rms_norm the data + weight tensors are consumed (eps is
+    baked at 1e-6) and the func-signature is ``[X, W, Y, RSTD]``; for softmax only
+    the data tensor is consumed (no weight / eps), signature ``[X, Y]``; for
+    layer_norm the data + weight + bias tensors are consumed (eps baked at 1e-5) and
+    the signature is ``[X, W, B, Y, Mean, RSTD]``. Allocates the output ``Y`` (and
+    any side outputs: rms_norm ``RSTD``; layer_norm ``Mean`` + ``RSTD``) fresh,
+    launches the single generated kernel on torch's current stream, synchronizes,
+    and returns ``Y``.
 
     This deliberately drives its OWN ``codegen_row_reduction`` + launch (it does
-    NOT delegate to the standalone ``run_rmsnorm`` / ``run_softmax``) so a test
-    proves the *from-intent codegen entry*, not just the standalone emitter.
+    NOT delegate to the standalone ``run_rmsnorm`` / ``run_softmax`` /
+    ``run_layernorm``) so a test proves the *from-intent codegen entry*, not just
+    the standalone emitter.
     """
     import torch
 
     compiled = codegen_row_reduction(fn, dims, eps=eps)
     plan = compiled.plan
+    baked_eps = _baked_eps_for(plan.kind)
 
     x = inputs[plan.data_input]
     if not x.is_cuda:
@@ -592,28 +779,48 @@ def run_from_intent(
         torch.cuda.synchronize()
         return y
 
-    # rms_norm path: weight + (baked) eps + RSTD side output; signature [X, W, Y, RSTD].
-    from intentir.bench.rmsnorm_emit import _launch_nosync
-
     # If the intent carries a runtime eps and the caller supplied it, validate it
     # against the baked value rather than silently ignoring it (see _EPS_NOTE).
     if plan.eps_input is not None and plan.eps_input in inputs:
         eps_t = inputs[plan.eps_input]
         eps_val = float(eps_t.item()) if hasattr(eps_t, "item") else float(eps_t)
-        if abs(eps_val - _BAKED_EPS) > 1e-12:
+        if abs(eps_val - baked_eps) > 1e-12:
             raise ValueError(
                 f"run_from_intent: inputs[{plan.eps_input!r}]={eps_val} but the "
-                f"proven emitter bakes eps={_BAKED_EPS}. {_EPS_NOTE}"
+                f"proven {plan.kind} emitter bakes eps={baked_eps}. {_EPS_NOTE}"
             )
 
     if plan.weight_input is None:
         raise NotImplementedError(
-            "run_from_intent: rms_norm path requires a weight input"
+            f"run_from_intent: {plan.kind} path requires a weight input"
         )
     w = inputs[plan.weight_input]
     if not w.is_cuda:
         raise ValueError("run_from_intent: W must be a CUDA tensor")
     w = w.contiguous()
+
+    if plan.kind == "layer_norm":
+        # layer_norm path: weight + bias + (baked) eps + Mean/RSTD side outputs;
+        # signature [X, W, B, Y, Mean, RSTD]. The launch plan resolves first-use
+        # capture order generically.
+        from intentir.bench.layernorm_emit import _launch_nosync
+
+        if plan.bias_input is None:
+            raise NotImplementedError(
+                "run_from_intent: layer_norm path requires a bias input"
+            )
+        b = inputs[plan.bias_input]
+        if not b.is_cuda:
+            raise ValueError("run_from_intent: B must be a CUDA tensor")
+        b = b.contiguous()
+        mean = torch.empty(compiled.rows, device="cuda", dtype=torch.float32)
+        rstd = torch.empty(compiled.rows, device="cuda", dtype=torch.float32)
+        _launch_nosync(compiled.lowered, [x, w, b, y, mean, rstd])
+        torch.cuda.synchronize()
+        return y
+
+    # rms_norm path: weight + (baked) eps + RSTD side output; signature [X, W, Y, RSTD].
+    from intentir.bench.rmsnorm_emit import _launch_nosync
 
     rstd = torch.empty(compiled.rows, device="cuda", dtype=torch.float32)
     # func-signature order for the rms_norm emitter is [X, W, Y, RSTD]; the

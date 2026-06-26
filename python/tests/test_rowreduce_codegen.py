@@ -88,13 +88,43 @@ def test_recognize_softmax_returns_two_reduction_plan():
     assert (plan.row_dim, plan.col_dim) == ("M", "N")
 
 
-def test_softmax_and_rms_norm_dispatch_disjointly():
-    """The recognizer routes softmax->softmax and rms_norm->rms_norm, not crossed.
+def test_recognize_layer_norm_returns_two_reduction_bias_plan():
+    """The real layer_norm intent is recognized as a 2-reduce + weight + bias plan.
 
-    Reduce count (1 mean vs 2 max+sum) is the discriminator; both stay intact.
+    This is the LAST codegen shape: the same recognizer that returns a 1-reduction
+    (mean) plan for rms_norm and a 2-reduction (max, sum) plan for softmax returns a
+    2-reduction (mean, mean) plan for layer_norm WITH both a weight and a bias.
+    Note both reduce fns are ``"mean"`` -- the second mean (over the centered,
+    squared values) is semantically the variance, but its IR fn is ``"mean"``.
+    """
+    fn = _load("layer_norm")
+    plan = recognize_row_reduction(fn)
+    assert isinstance(plan, RowReductionPlan)
+    assert plan.kind == "layer_norm"
+    assert plan.data_input == "X"
+    assert plan.weight_input == "W"        # the affine-mul 1-D operand
+    assert plan.bias_input == "B"          # the final-add 1-D operand
+    assert plan.eps_input == "eps"
+    assert plan.output == "Y"
+    # exactly two mean reductions over the last axis, in body order.
+    assert len(plan.reductions) == 2
+    assert [r.fn for r in plan.reductions] == ["mean", "mean"]
+    assert [r.axis for r in plan.reductions] == [1, 1]   # last axis of [M, N]
+    assert plan.reductions[0].source == "X"               # mean reduces X
+    assert plan.reductions[1].source == "x_centered_sq"   # var reduces (x-mean)^2
+    assert (plan.row_dim, plan.col_dim) == ("M", "N")
+
+
+def test_three_way_dispatch_disjointly():
+    """The recognizer routes each corpus intent to its OWN kind, never crossed.
+
+    Mutual exclusivity (the 3-way discriminator): rms_norm = ONE mean reduce;
+    softmax = TWO reduces [max, sum] with NO weight; layer_norm = TWO mean reduces
+    WITH a weight AND a bias + the (x-mean) centering between them.
     """
     assert recognize_row_reduction(_load("rms_norm")).kind == "rms_norm"
     assert recognize_row_reduction(_load("softmax")).kind == "softmax"
+    assert recognize_row_reduction(_load("layer_norm")).kind == "layer_norm"
 
 
 @pytest.mark.parametrize("name", ["silu", "gelu_tanh"])
@@ -240,3 +270,65 @@ def test_from_intent_softmax_one_kernel_and_correct(rows, cols):
         torch.cuda.synchronize()
         rel_lig = rel(y, y_lig)
         assert rel_lig < 1e-3, f"({rows},{cols}) from-intent softmax vs liger rel={rel_lig}"
+
+
+@pytest.mark.parametrize("rows,cols", [(4096, 1024), (4096, 1000)])
+def test_from_intent_layer_norm_one_kernel_and_correct(rows, cols):
+    """layer_norm intent in -> ONE generated kernel out -> correct vs torch + liger.
+
+    Completes the row-reduction codegen family: the same from-intent codegen entry
+    that produced the rms_norm and softmax kernels now produces a layer_norm kernel
+    (two mean reductions + affine W AND B + Mean/RSTD side outputs) from the
+    layer_norm IntentFunction -- still ONE fused gpu kernel, not the naive
+    multi-kernel path. (4096,1000) exercises the non-pow2 variance tail-mask re-zero.
+    """
+    torch = _gpu_or_skip()
+    fn = _load("layer_norm")
+    dims = {"M": rows, "N": cols}
+    eps = 1e-5  # layer_norm's baked eps; must match the emitter for ~1e-7.
+
+    # GENERATION: the backend emits/lowers ONE kernel from the layer_norm intent.
+    compiled = codegen_row_reduction(fn, dims)
+    assert compiled.plan.kind == "layer_norm"
+    assert (compiled.rows, compiled.cols) == (rows, cols)
+    assert compiled.n_kernels == 1
+
+    # Measure the "ONE kernel" claim at the MLIR level on the generated text.
+    from intentir.backend.compile import lower_memref_module_to_kernels
+    from intentir.bench.layernorm_emit import emit_layernorm
+
+    n_kernels = len(
+        lower_memref_module_to_kernels(emit_layernorm(rows, cols, compiled.threads))
+    )
+    assert n_kernels == 1, f"expected ONE generated kernel, got {n_kernels}"
+
+    torch.manual_seed(0)
+    x = torch.randn(rows, cols, device="cuda", dtype=torch.float32)
+    w = torch.randn(cols, device="cuda", dtype=torch.float32)
+    b = torch.randn(cols, device="cuda", dtype=torch.float32)
+    eps_t = torch.tensor(eps, device="cuda", dtype=torch.float32)
+
+    # layer_norm intent takes X, W, B and a runtime eps (validated vs the baked eps).
+    y = run_from_intent(fn, {"X": x, "W": w, "B": b, "eps": eps_t}, dims)
+    assert tuple(y.shape) == (rows, cols)
+
+    import torch.nn.functional as F
+
+    y_ref = F.layer_norm(x.float(), (cols,), w.float(), b.float(), eps)
+
+    def rel(a, bb):
+        return (a - bb).abs().max().item() / (bb.abs().max().item() + 1e-12)
+
+    rel_ref = rel(y, y_ref)
+    assert rel_ref < 1e-3, f"({rows},{cols}) from-intent layer_norm vs torch rel={rel_ref}"
+
+    # If the real liger layer_norm kernel is importable, certify against it too.
+    try:
+        from liger_kernel.ops.layer_norm import layer_norm_forward
+    except Exception:  # pragma: no cover - liger optional
+        layer_norm_forward = None
+    if layer_norm_forward is not None:
+        y_lig, *_ = layer_norm_forward(x, w, b, eps)
+        torch.cuda.synchronize()
+        rel_lig = rel(y, y_lig)
+        assert rel_lig < 1e-3, f"({rows},{cols}) from-intent layer_norm vs liger rel={rel_lig}"

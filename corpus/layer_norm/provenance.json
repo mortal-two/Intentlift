@@ -1,0 +1,13 @@
+{
+  "name": "layer_norm",
+  "library": "liger_kernel",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/liger_kernel/ops/layer_norm.py",
+  "model": "hand-authored",
+  "prompt_sha256": null,
+  "attempts": 0,
+  "repairs": [],
+  "verified_rel_err": null,
+  "verified_against": "torch.nn.functional.layer_norm + liger_kernel.ops.layer_norm.layer_norm_forward",
+  "lowered_residual_intent": 0,
+  "generated_by": "hand-authored (LLM-lift not wired for layer_norm; consistent with the rest of the corpus convention -- the row-reduction codegen recognizes this intent and generates the proven read-once 2-reduction kernel)"
+}
