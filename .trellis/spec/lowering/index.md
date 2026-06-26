@@ -95,11 +95,20 @@ CPU-exec == interpret(rel ~1e-6)。**没有任何 GPU 专用机制**——同一
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
 上量化 retune 收益)。dialect 设计不被任何单一后端绑架。
 
-## 性能已超越 Triton:自动融合(elementwise 前沿,2026-06-26)
+## 自动融合(elementwise 前沿,2026-06-26)——**不是 PK 标准**(自我审查,2026-06-26)
+
+> **重要纠偏(2026-06-26):** 本节原标题"性能已超越 Triton"是**误导**。自动融合
+> 跑赢的是"未融合的 Triton 组合"——这是**另一种比较**(利用库没做的跨 op 融合
+> 空隙),不是 PK 标准。用户明确否定了这个方向("我们是 pk 人家的算子库……人家
+> 不都已经是高性能库了","感觉你又往玩具方向做了")。**真正的 PK 标准**是:对**同
+> 一个算子**、与库**自己的高性能 kernel** 头对头,我们后端**生成**的 MLIR 经真实
+> 工具链下降后要足够高性能(Forge E1:ours/Triton)。融合前沿保留为"我们能做、
+> 库没做的融合"这一事实,但它**不证明 codegen 高性能**(与手写单融合 Triton 打平
+> 才证明 codegen 称职)。真正的 PK 见下一节(row-reduction vs 真实 liger)。
 
 flash 那条 ~983x 的差距是**一线程/query** 的 bring-up 粒度造成的(见上)。在
-**elementwise 前沿**,我们已经**真实跑赢 Triton**——靠的是*自动融合*,不是手写。
-关键事实(都用 launch 计数 / 物理带宽证过):
+**elementwise 前沿**,自动融合 kernel 跑赢**未融合**的 Triton 组合——靠的是*自动
+融合*,不是手写。关键事实(都用 launch 计数 / 物理带宽证过):
 
 - **不加融合 = 没有优势**:`-convert-intent-to-linalg` 对一条 pointwise 链每个 op
   发一个 `linalg.generic`,下降成 **N 个 `gpu.launch_func`**(N 次 HBM 往返,和库
@@ -123,6 +132,48 @@ flash 那条 ~983x 的差距是**一线程/query** 的 bring-up 粒度造成的(
   所以不是稻草人。
 - **范围**:这是 elementwise 前沿。flash 的延迟差距(`corpus/PERF.md`)是另一条
   尚未触碰的前沿,**不被本节覆盖**。
+
+## PK 真实算子库:高性能 row-reduction codegen vs 真实 liger(2026-06-26)
+
+这才是用户要的方向——头对头 PK 库自己的高性能 kernel(Forge 20-kernel 数据集,
+liger/xformers/flash_attn)。`pip install --no-deps liger_kernel`(0.8.0)直接装上,
+其 `@triton.jit` kernel 在 sm_120 上 JIT 真实运行;autograd `Function.apply` 在本
+torch 上撞 `torch.distributed.tensor` 崩,但 forward launcher(`rms_norm_forward`
+等)可直接调,**PK 的是库的真实 kernel,不是稻草人**。
+
+**两道可行性门(都过):**
+1. **block-cooperative reduction 在 MLIR-20 → sm_120a 上能下降且正确**:手写
+   `gpu.all_reduce add` row-sum kernel 经 `lower_memref_module_to_kernels` 下降
+   (cubin 非空 .text)+ 真实跑通(rel 1.5e-7)。这是 20 个 kernel 里多数(row-wise
+   reduction:rms_norm/softmax/layer_norm/losses)所缺的能力——flash 那条只有标量
+   carry,没碰过 barrier/shuffle。
+2. 真实 liger rms_norm 在 5090D 上跑通(rel 1.4e-7)。
+
+**rms_norm 真实 PK(`bench/rmsnorm_emit.py` + `test_rmsnorm_pk.py` +
+`corpus/PERF_RMSNORM.md`):** 我们 MLIR 生成的 **read-once、block-cooperative**
+row kernel(一 block/row;`T=num_warps*32` 镜像 liger `calculate_settings`;每线程
+`memref.alloca<Kxf32>` 缓存,只读一次 x;`gpu.all_reduce` 求平方和;rstd 用 NVVM
+`rsqrt.approx.f` intrinsic——`math.sqrt`/`math.rsqrt` 走 libdevice `__nv_*` 是死路;
+第二趟从缓存写 y)经**真实 mlir 工具链**(mlir-opt → nvvm → ptxas)下降。
+- **结果(kernel-only,两侧预分配,clocks pin,中位):PARITY**——(32768,1024)
+  ours/liger ~0.97–1.12x(亚毫秒高方差),(16384,4096) ~1.00x。memory-bound 算子
+  上,**parity 就是后端的胜利**(同流量、同 geometry);**不声称跑赢**(同 128 线程
+  geometry,没有 geometry 空隙;之前 0.77x 是瞬时高频窗口的假象,已撤回)。
+- correctness 是主 DoD 且稳:rel ~1e-7 vs fp32 ref AND liger(Y+RSTD),含非 2 幂
+  tail-mask。
+- **向量化 v4**:`vector.load`/`store` + region 内 `memref.assume_alignment 16` 能
+  下降成 `ld.global.v4.f32`,但**无加速**(HBM-bound 非 issue-bound)——保留标量。
+- **read-once 是关键**:两趟全局(写时重读 x)= 1.5x 流量 → 慢 ~1.5x。alloca 缓存
+  (K=C/T 小,常量 trip 循环被 unroll + 提升进寄存器,PTX 证无 ld.local 溢出)把
+  流量压到 读x一次+读w+写y = 与 liger 持平。
+
+**真正的"后端生成"(`06-26-rowreduce-codegen-from-intent`):** 手写 emit 是*目标
+规格*,不是后端。当前 `-convert-intent-to-linalg` 对 rms_norm intent 发 **8 个
+linalg.generic → ~8 个朴素 kernel**。已证 **Option B 可行**:从 `IntentFunction`
+识别 row-reduction 形态(elementwise→reduce(末轴)→broadcast→elementwise)+ Layer-C
+`tile.N` hint → **生成那一个高性能 kernel**(1 gpu.launch,rel 1.3e-7)。下一步:把
+识别器从 rms_norm 推广到 softmax(max+sum)、layer_norm(mean+var),做成后端
+codegen 入口(命中走快路,否则回落朴素路)。
 
 ## 现在不做
 
