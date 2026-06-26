@@ -3,7 +3,7 @@
   "name": "pk-library-row-reductions",
   "title": "PK the library: high-perf MLIR row-reduction codegen vs real liger/xformers Triton kernels",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -23,7 +23,13 @@
     "06-26-rowreduce-codegen-from-intent"
   ],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "",
+  "relatedFiles": [
+    "corpus/PERF_PK_SUMMARY.md",
+    "python/intentir/backend/rowreduce_codegen.py",
+    "python/intentir/bench/rmsnorm_emit.py",
+    "python/intentir/bench/softmax_emit.py",
+    "python/intentir/bench/layernorm_emit.py"
+  ],
+  "notes": "Pivot from the off-target fusion direction to the real bar (head-to-head vs the library's OWN kernel, same op, high-perf MLIR from intent via the real toolchain). Machinery built + proven on the row-reduction family: rms_norm (1 reduce), softmax (2: max,sum), layer_norm (2: mean,var +affine). All PK the REAL liger kernel at kernel-only PARITY, bit-faithful ~1e-7, and are GENERATED from the IntentFunction (backend/rowreduce_codegen.py: recognize -> 1 high-perf kernel, vs naive 8-9 kernels that fail ptxas). See corpus/PERF_PK_SUMMARY.md. Remaining 20-kernel dataset (group_norm/poly_norm/losses reuse the reduction codegen; swiglu/geglu = activation/fusion; rope/mrope = position-embedding family; xformers/flash = attention family) is the breadth follow-on now that depth is proven.",
   "meta": {}
 }
