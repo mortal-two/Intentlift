@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "06-26-rms-norm-pk"
+    "06-26-rms-norm-pk",
+    "06-26-rowreduce-codegen-from-intent"
   ],
   "parent": null,
   "relatedFiles": [],

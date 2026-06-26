@@ -80,15 +80,51 @@ threads T = num_warps*32, num_warps from next_pow2(C): C<2048→4 (128), 2048–
 BLOCK_SIZE=next_pow2(C) with a tail mask (col<C) on load(other=0)/store; the two
 PK shapes are pow2 so mask is a no-op.
 
-## VERIFIED PK numbers (fair: both alloc fresh Y+RSTD each call; ours writes RSTD)
+## PK numbers — CORRECTED (the initial 0.77× was a clock artifact; see below)
 
-| shape (rows,cols) | T | ours ms (GB/s) | liger ms (GB/s) | ours/liger | rel vs liger |
-|---|---|---|---|---|---|
-| (32768,1024) | 128 | 0.582 (461) | 0.755 (356) | **0.771× (win 1.30×)** | Y 1.3e-7, RSTD 1.6e-7 |
-| (16384,4096) | 256 | 1.471 (365) | 1.468 (366) | **1.002× (parity)** | Y 1.6e-7, RSTD 1.1e-7 |
+**Primary metric = KERNEL-ONLY** (both sides preallocate Y+RSTD once; the timed
+thunk only launches the kernel; ~1s sustained-clock warmup; interleaved
+`triton.testing.do_bench` windows; per-side median). This is the codegen-quality
+comparison the user's bar ("后端生成的 mlir 足够高性能") actually asks for.
 
-Timed with `triton.testing.do_bench` (warmup + L2 flush + median) for BOTH sides.
-GB/s = (x + y read/write + w) / time. The win at (32768,1024) is HBM-saturation
-(461 GB/s ≈ this card's real copy ceiling; liger's num_warps=4 geometry is
-BW-suboptimal there on sm_120), NOT a weakened baseline — it's the real liger
-kernel, same op, same outputs (Y+RSTD certified equal).
+| shape (rows,cols) | T | ours/liger (kernel-only) | verdict | rel vs liger |
+|---|---|---|---|---|
+| (32768,1024) | 128 | ~0.97–1.12× across runs (variance-bound) | PARITY | Y/RSTD ~1e-7 |
+| (16384,4096) | 256 | ~1.00× (stable) | PARITY | Y/RSTD ~1e-7 |
+
+Both sit in the same ~337–367 GB/s band (this throttled "D" card; sub-ms kernels
+⇒ ±~8% run-to-run). **PARITY is the honest, expected result** for a memory-bound
+op on identical 128-thread geometry — and parity IS the backend win.
+
+### Retraction (honesty)
+An earlier single-shot probe recorded ours at **0.771× / 461 GB/s** at (32768,1024)
+with a "liger num_warps=4 BW-suboptimal" explanation. **This did NOT reproduce**
+and is RETRACTED:
+- Kernel-only, clocks verified pinned (2985/3150 MHz, no throttle), ours is at
+  parity (~0.97–1.12×), not 0.77×. The 461 GB/s was a transient high-clock window.
+- Ours and liger use the **identical 128-thread geometry** at this shape
+  (`calculate_settings(1024) = (1024, 4)` → 128 threads, which ours mirrors), so
+  there is **no geometry edge to exploit** — the win narrative was unfounded.
+- An alloc-inclusive harness (fresh `torch.empty` Y+RSTD per timed call) shows
+  apparent "parity" too, but it flatters us by dragging liger down to our level
+  via allocator churn — that's why kernel-only is the primary metric.
+
+### Vectorization (v4) — tried, lowers, no gain
+Emitting `vector.load`/`vector.store` as `vector<4xf32>` with
+`memref.assume_alignment %X, 16` placed INSIDE the gpu.launch region (Triton
+layout: thread t, group g loads contiguous `[g·4T+4t, +4)`) **does lower to
+`ld.global.v4.f32` / `st.global.v4.f32`** (verified: 4 v4 loads + 2 v4 stores, 0
+scalar global loads). But kernel-only it is **neutral-to-slightly-slower** than
+the scalar kernel — the kernel is **HBM-bandwidth-bound, not issue-bound**, so
+relieving instruction pressure buys nothing. **Scalar kernel retained.**
+(Note: v4 needs `assume_alignment` 16B inside the region + K%4==0; the bare
+`vector.load` without the in-region assume_alignment scalarizes.)
+
+### From-intent gap (the real "backend generates" requirement — follow-on)
+The current `-convert-intent-to-linalg` on the rms_norm intent emits **8 separate
+`linalg.generic` → ~8 naive GPU kernels** (one HBM round-trip each) — NOT this
+single high-perf kernel. The hand-emit above is the *target spec*, not "the
+backend". Bridging intent → this kernel needs a row-reduction codegen path
+(recognize elementwise → reduce-over-last-axis → broadcast → elementwise, emit
+one block-cooperative read-once kernel). Tracked as a follow-on task; this
+generalizes to softmax (max+sum) and layer_norm (mean+var).
