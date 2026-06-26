@@ -14,11 +14,31 @@ def Intent_MapBinaryOp : Intent_Op<"map_binary"> {
   let summary = "Elementwise binary map (Layer A).";
   let description = [{
     Elementwise binary op over two ranked tensors. `fn` selects the
-    pointwise operation (add/sub/mul/div/max/min/pow/cmp).
+    pointwise operation (add/sub/mul/div/max/min/pow/cmp). The comparison fns
+    (gt/ge/lt/le/eq) produce an `i1`-typed result tensor (feeding `intent.select`);
+    every other fn is element-type-preserving.
   }];
   let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs, StrAttr:$fn);
   let results = (outs AnyRankedTensor:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_SelectOp : Intent_Op<"select"> {
+  let summary = "Elementwise select (Layer A): where(cond, x, y).";
+  let description = [{
+    Per-element `cond ? x : y` (numpy `where`). `cond` is an `i1`-typed ranked
+    tensor; `x`/`y`/result share one element type. Shapes broadcast numpy-style
+    (e.g. an `[M,N]` `i1` condition selecting between two rank-0 scalars), so the
+    verifier constrains element types only, not shapes. Owned by M3; reused by
+    M4/M6/M7/M9 (do not re-add). Lowered via `arith.select` over the scalar
+    condition produced by a `map_binary` comparison fn.
+  }];
+  let arguments = (ins AnyRankedTensor:$cond, AnyRankedTensor:$x,
+                       AnyRankedTensor:$y);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$cond `,` $x `,` $y attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
 }
 

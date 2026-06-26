@@ -91,7 +91,13 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
     if op.op == "map_binary":
         a, b = op.operands
         return _broadcast(env.get(a), env.get(b))
+    if op.op == "select":
+        c, x, y = op.operands
+        return _broadcast(_broadcast(env.get(c), env.get(x)), env.get(y))
     raise NotImplementedError(f"emit_mlir: unhandled body op {op.op!r}")
+
+
+_CMP_FNS = {"gt", "ge", "lt", "le", "eq"}
 
 
 def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int) -> None:
@@ -111,6 +117,16 @@ class _Printer:
         self.lines: list[str] = []
         self._n = 0
         self.ssa: dict[str, str] = {}   # JSON name -> SSA name
+        self.bool_results: set[str] = set()  # JSON names that are i1 (cmp outputs)
+
+    def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
+        """Tensor type for a JSON value, i1 if it is a comparison result."""
+        if name not in self.bool_results:
+            return _tt(env[name])
+        shape = env[name]
+        if not shape:
+            return "tensor<i1>"
+        return "tensor<" + "x".join(str(s) for s in shape) + "xi1>"
 
     def fresh(self, name: str) -> str:
         self._n += 1
@@ -157,11 +173,19 @@ class _Printer:
                 f'{indent}{r} = intent.map_unary {x} {{fn = "{a["fn"]}"}} : '
                 f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
         elif op.op == "map_binary":
+            if a["fn"] in _CMP_FNS:
+                self.bool_results.add(op.result)
             x, y = (self.ssa[o] for o in op.operands)
-            tx, ty = _tt(env[op.operands[0]]), _tt(env[op.operands[1]])
+            tx, ty = (self._ttn(o, env) for o in op.operands)
             self.lines.append(
                 f'{indent}{r} = intent.map_binary {x}, {y} {{fn = "{a["fn"]}"}} : '
-                f'({tx}, {ty}) -> {_tt(env[op.result])}')
+                f'({tx}, {ty}) -> {self._ttn(op.result, env)}')
+        elif op.op == "select":
+            c, x, y = (self.ssa[o] for o in op.operands)
+            tc, tx, ty = (self._ttn(o, env) for o in op.operands)
+            self.lines.append(
+                f'{indent}{r} = intent.select {c}, {x}, {y} : '
+                f'({tc}, {tx}, {ty}) -> {self._ttn(op.result, env)}')
         elif op.op == "const":
             # A literal value -> standard arith.constant (no intent semantics to
             # lower). Splat dense over the (possibly rank-0) result tensor type.

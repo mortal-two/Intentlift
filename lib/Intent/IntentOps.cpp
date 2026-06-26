@@ -21,10 +21,40 @@ using namespace intent;
 LogicalResult MapBinaryOp::verify() {
   static constexpr llvm::StringRef kFns[] = {
       "add", "sub", "mul", "div", "max", "min", "pow", "cmp"};
+  // Comparison fns produce an i1-typed result tensor (the boolean condition for
+  // intent.select); every other fn is element-type-preserving.
+  static constexpr llvm::StringRef kCmpFns[] = {"gt", "ge", "lt", "le", "eq"};
+  bool isCmp = false;
+  for (llvm::StringRef f : kCmpFns)
+    if (getFn() == f)
+      isCmp = true;
+  if (isCmp) {
+    auto rTy = cast<RankedTensorType>(getResult().getType());
+    if (!rTy.getElementType().isInteger(1))
+      return emitOpError("comparison fn '")
+             << getFn() << "' must produce an i1-typed result tensor";
+    return success();
+  }
   for (llvm::StringRef f : kFns)
     if (getFn() == f)
       return success();
   return emitOpError("unknown fn '") << getFn() << "'";
+}
+
+LogicalResult SelectOp::verify() {
+  auto cTy = cast<RankedTensorType>(getCond().getType());
+  if (!cTy.getElementType().isInteger(1))
+    return emitOpError("cond must be an i1-typed tensor");
+  auto xTy = cast<RankedTensorType>(getX().getType());
+  auto yTy = cast<RankedTensorType>(getY().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  // Element types only (shapes broadcast numpy-style, e.g. an [M,N] i1 condition
+  // selecting between two rank-0 scalars).
+  if (xTy.getElementType() != yTy.getElementType())
+    return emitOpError("x and y must share one element type");
+  if (rTy.getElementType() != xTy.getElementType())
+    return emitOpError("result element type must equal x/y element type");
+  return success();
 }
 
 LogicalResult MapUnaryOp::verify() {

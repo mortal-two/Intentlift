@@ -27,6 +27,9 @@ _DTYPE = {
 _BINARY = {
     "add": np.add, "sub": np.subtract, "mul": np.multiply, "div": np.divide,
     "max": np.maximum, "min": np.minimum, "pow": np.power,
+    # Comparison fns return an i1 (bool) array (the condition for `select`).
+    "gt": np.greater, "ge": np.greater_equal, "lt": np.less,
+    "le": np.less_equal, "eq": np.equal,
 }
 
 _UNARY = {

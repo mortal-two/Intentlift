@@ -34,8 +34,13 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     return b.create<math::SqrtOp>(loc, x);
   if (fn == "rsqrt")
     return b.create<math::RsqrtOp>(loc, x);
-  if (fn == "abs")
-    return b.create<math::AbsFOp>(loc, x);
+  if (fn == "abs") {
+    // |x| = max(x, -x). math.absf lowers to a `__nv_fabsf` libdevice extern
+    // (ptxas dead end, same failure mode as exp/tanh/sqrt); the arith form is
+    // resolved entirely on-device.
+    Value negx = b.create<arith::NegFOp>(loc, x);
+    return b.create<arith::MaxNumFOp>(loc, x, negx);
+  }
   if (fn == "neg")
     return b.create<arith::NegFOp>(loc, x);
   if (fn == "tanh") {
@@ -89,6 +94,33 @@ inline mlir::Value emitScalarBinary(mlir::OpBuilder &b, mlir::Location loc,
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
   return nullptr;
+}
+
+/// Is `fn` a `map_binary` comparison (gt/ge/lt/le/eq -> i1)?
+inline bool isCmpFn(llvm::StringRef fn) {
+  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq";
+}
+
+/// Scalar arith.cmpf for one `map_binary` comparison fn (-> i1). nullptr if not
+/// a comparison fn. Ordered predicates (NaN-false), matching numpy/triton.
+inline mlir::Value emitScalarCmp(mlir::OpBuilder &b, mlir::Location loc,
+                                 llvm::StringRef fn, mlir::Value a,
+                                 mlir::Value c) {
+  using namespace mlir;
+  arith::CmpFPredicate p;
+  if (fn == "gt")
+    p = arith::CmpFPredicate::OGT;
+  else if (fn == "ge")
+    p = arith::CmpFPredicate::OGE;
+  else if (fn == "lt")
+    p = arith::CmpFPredicate::OLT;
+  else if (fn == "le")
+    p = arith::CmpFPredicate::OLE;
+  else if (fn == "eq")
+    p = arith::CmpFPredicate::OEQ;
+  else
+    return nullptr;
+  return b.create<arith::CmpFOp>(loc, p, a, c);
 }
 
 /// Per-arg semantic role, inferred purely from static shape vs (M,N):

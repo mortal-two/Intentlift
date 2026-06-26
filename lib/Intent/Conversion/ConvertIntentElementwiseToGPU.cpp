@@ -122,10 +122,13 @@ struct ElementwiseLowering {
     // Body ops: only map_unary / map_binary. ANY reduce => not our pass (it
     // belongs to convert-intent-row-reduction-to-gpu). This keeps the two
     // passes' match() predicates strictly disjoint.
+    // map_unary / map_binary (incl. comparison fns -> i1) / select. The i1
+    // comparison tensor is an intermediate only — match constrains arg/result
+    // element types, not intermediates. ANY reduce => not our pass.
     for (Operation &op : body.without_terminator()) {
       if (isa<ReduceOp>(&op))
         return failure();
-      if (!isa<MapUnaryOp, MapBinaryOp>(&op))
+      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp>(&op))
         return failure();
     }
 
@@ -161,9 +164,17 @@ struct ElementwiseLowering {
     Operation *def = v.getDefiningOp();
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitScalarUnary(b, loc, mu.getFn(), emitAt(b, loc, mu.getInput(), k));
-    if (auto mb = dyn_cast<MapBinaryOp>(def))
-      return emitScalarBinary(b, loc, mb.getFn(), emitAt(b, loc, mb.getLhs(), k),
-                              emitAt(b, loc, mb.getRhs(), k));
+    if (auto mb = dyn_cast<MapBinaryOp>(def)) {
+      Value lhs = emitAt(b, loc, mb.getLhs(), k);
+      Value rhs = emitAt(b, loc, mb.getRhs(), k);
+      if (isCmpFn(mb.getFn()))
+        return emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+      return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+    }
+    if (auto sel = dyn_cast<SelectOp>(def))
+      return b.create<arith::SelectOp>(loc, emitAt(b, loc, sel.getCond(), k),
+                                       emitAt(b, loc, sel.getX(), k),
+                                       emitAt(b, loc, sel.getY(), k));
     return nullptr;
   }
 
@@ -192,6 +203,12 @@ struct ElementwiseLowering {
             changed = true;
           }
         } else if (auto mb = dyn_cast<MapBinaryOp>(&op)) {
+          // Comparison fns are never hoisted here: their condition depends on a
+          // Row input (p > q), and emitScalarBinary returns null for a cmp fn.
+          // A fully-uniform cmp/select (rare) is simply recomputed per column in
+          // emitAt — still correct, just not hoisted.
+          if (isCmpFn(mb.getFn()))
+            continue;
           if (isUniform(mb.getLhs()) && isUniform(mb.getRhs())) {
             uniform[res] = emitScalarBinary(b, loc, mb.getFn(),
                                             emitAt(b, loc, mb.getLhs(), 0),

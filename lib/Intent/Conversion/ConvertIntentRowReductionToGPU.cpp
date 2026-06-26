@@ -121,40 +121,56 @@ struct RowReductionLowering {
     unsigned nRes = fty.getNumResults();
     if (nRes < 1)
       return failure();
-    // All results are rank-2 static f32. Anchor (M,N) from a RowOut — the
-    // result whose trailing dim != 1 (the full feature row); per-row stat
-    // outputs (Mean/RSTD) are [M,1]. Need >=1 RowOut for the register-tile
-    // epilogue, and any RowOut must agree on (M,N).
+    // Results are static f32, each per-row in M: a RowOut is rank-2 [M,N] (the
+    // full feature row); a per-row scalar output (Mean/RSTD, or flash's delta)
+    // is rank-2 [M,1] OR rank-1 [M]. Anchor M from every result's leading dim;
+    // anchor N from a RowOut if any. An all-PerRowOut func (e.g. flash
+    // _bwd_preprocess_do_o_dot: delta = sum(o*do, axis=1)) has no RowOut, so N
+    // is derived from a Row-shaped INPUT below.
     int64_t anchorM = -1, anchorN = -1;
     for (Type rt : fty.getResults()) {
       auto t = dyn_cast<RankedTensorType>(rt);
-      if (!t || t.getRank() != 2 || !t.hasStaticShape())
+      if (!t || !t.hasStaticShape())
         return failure();
       if (!isa<Float32Type>(t.getElementType()))
         return failure();
       f32 = t.getElementType();
-      if (t.getDimSize(1) != 1) {
-        if (anchorN < 0) {
-          anchorM = t.getDimSize(0);
+      int64_t rank = t.getRank();
+      if (rank != 1 && rank != 2)
+        return failure();
+      int64_t m = t.getDimSize(0);
+      if (anchorM < 0)
+        anchorM = m;
+      else if (m != anchorM)
+        return failure();
+      if (rank == 2 && t.getDimSize(1) != 1) { // a RowOut
+        if (anchorN < 0)
           anchorN = t.getDimSize(1);
-        } else if (t.getDimSize(0) != anchorM || t.getDimSize(1) != anchorN)
+        else if (t.getDimSize(1) != anchorN)
           return failure();
       }
     }
-    if (anchorN < 0)
-      return failure();
     M = anchorM;
+    // No RowOut: derive N from the first Row-shaped input ([M, X] static f32).
+    if (anchorN < 0) {
+      for (Type at : fty.getInputs()) {
+        auto t = dyn_cast<RankedTensorType>(at);
+        if (t && t.hasStaticShape() && isa<Float32Type>(t.getElementType()) &&
+            t.getRank() == 2 && t.getDimSize(0) == M) {
+          anchorN = t.getDimSize(1);
+          break;
+        }
+      }
+    }
+    if (anchorN < 0)
+      return failure(); // nothing to tile the feature dim over
     N = anchorN;
     for (Type rt : fty.getResults()) {
       auto t = cast<RankedTensorType>(rt);
-      if (t.getDimSize(0) != M)
-        return failure();
-      if (t.getDimSize(1) == N)
+      if (t.getRank() == 2 && t.getDimSize(1) == N)
         outRoles.push_back(ResultRole::RowOut);
-      else if (t.getDimSize(1) == 1)
+      else // rank-2 [M,1] or rank-1 [M]
         outRoles.push_back(ResultRole::PerRowOut);
-      else
-        return failure();
     }
 
     // Single basic block, terminated by a return of the output values.
@@ -187,12 +203,18 @@ struct RowReductionLowering {
       if (auto r = dyn_cast<ReduceOp>(&op)) {
         auto inTy = cast<RankedTensorType>(r.getInput().getType());
         auto rTy = cast<RankedTensorType>(r.getResult().getType());
-        if (inTy.getRank() != 2 || rTy.getRank() != 2)
+        if (inTy.getRank() != 2)
           return failure();
         if (r.getAxes().size() != 1)
           return failure();
         int64_t ax = cast<IntegerAttr>(r.getAxes()[0]).getInt();
-        if (ax != 1 || rTy.getDimSize(0) != M || rTy.getDimSize(1) != 1)
+        // Per-row last-axis reduce: result is [M,1] (keepdims) or [M] (collapsed,
+        // flash's delta layout). Both are treated as a per-row uniform scalar.
+        bool okRes =
+            (rTy.getRank() == 2 && rTy.getDimSize(0) == M &&
+             rTy.getDimSize(1) == 1) ||
+            (rTy.getRank() == 1 && rTy.getDimSize(0) == M);
+        if (ax != 1 || !okRes)
           return failure();
         if (!reduceInfoFor(r.getFn()))
           return failure();
