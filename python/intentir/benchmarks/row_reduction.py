@@ -165,7 +165,12 @@ class MatmulKernel:
     """
 
     def __init__(self, mlir_text: str, num_stages: int | None = None,
-                 block_m: int | None = None, block_n: int | None = None):
+                 block_m: int | None = None, block_n: int | None = None,
+                 mma: bool = False):
+        # mma=True selects the nvgpu.ldmatrix + nvgpu.mma.sync path
+        # (-convert-intent-contraction-to-gpu-mma); the default WMMA
+        # gpu.subgroup_mma_* path (-convert-intent-contraction-to-gpu) is kept
+        # 100% intact and remains the default.
         opts = []
         if num_stages is not None:
             opts.append(f"num-stages={num_stages}")
@@ -173,7 +178,9 @@ class MatmulKernel:
             opts.append(f"block-m={block_m}")
         if block_n is not None:
             opts.append(f"block-n={block_n}")
-        pass_opt = "-convert-intent-contraction-to-gpu"
+        base = ("-convert-intent-contraction-to-gpu-mma" if mma
+                else "-convert-intent-contraction-to-gpu")
+        pass_opt = base
         if opts:
             pass_opt += "=" + " ".join(opts)
         rr = _run([INTENT_OPT, pass_opt], stdin=mlir_text)

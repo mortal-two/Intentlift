@@ -1,0 +1,547 @@
+//===- ConvertIntentContractionToGPUMMA.cpp - matmul -> mma.sync gpu.launch ==//
+//
+// The nvgpu.ldmatrix + nvgpu.mma.sync sibling of ConvertIntentContractionToGPU
+// (the opaque gpu.subgroup_mma_* / !gpu.mma_matrix WMMA path). Same recognizer
+// and the same cp.async multistage staging, but the contraction is realized by
+// the register-level nvgpu.ldmatrix (shared->register warp-cooperative fragment
+// load) + nvgpu.mma.sync (m16n8k16 warp MMA on vector fragments, KNOWN lane
+// layout -> vector<2x2xf32> accumulator). The WMMA pass is left fully intact;
+// this is a separate pass gated by its own name.
+//
+// Fragment recipe (validated end-to-end on sm_120a against MLIR's own
+// --convert-vector-to-gpu use-nvgpu lowering -- the G4 probe):
+//   lane = tid%32, warp = tid/32; each warp owns a 16-row C strip.
+//   A operand : ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]
+//               transpose=false -> vector<4x2xf16>
+//   W operand : ldmatrix wSh[n*8 + lane%8, kOff + (lane/8)*8]
+//               transpose=false -> vector<2x2xf16>  (natural [N,K] layout, the
+//               "nk" transpose folded into the load -- no transpose-on-copy)
+//   mma.sync m16n8k16 -> vector<2x2xf32> accumulator (per warp, one per n8 col
+//   tile), carried across the K loop as scf.for iter_args.
+//   store     : d[i][j] -> row = warp*16 + lane/4 + i*8,
+//                          col = n*8 + (lane%4)*2 + j   (textbook PTX layout)
+//
+// Static shapes, M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
+// lower_memref_module_to_kernels (the scf.for carries vector iter_args).
+//
+//===----------------------------------------------------------------------===//
+
+#include "Intent/Conversion/Passes.h"
+
+#include "MapEmit.h"
+#include "Intent/IntentDialect.h"
+#include "Intent/IntentOps.h"
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+
+namespace intent {
+#define GEN_PASS_DEF_CONVERTINTENTCONTRACTIONTOGPUMMA
+#include "Intent/Conversion/Passes.h.inc"
+} // namespace intent
+
+using namespace mlir;
+using namespace intent;
+
+namespace {
+
+// mma.sync m16n8k16 tile geometry.
+static constexpr int64_t BK = 32;     // K staging step (= 2 k16 mma sub-tiles)
+static constexpr int64_t MMA_M = 16, MMA_N = 8, MMA_K = 16;
+static constexpr int64_t GROUP_M = 8; // L2 swizzle group width (= tl.dot GROUP_M)
+
+struct ContractionMMALowering {
+  func::FuncOp fn;
+  int numStages;
+  int64_t reqBM, reqBN;
+
+  int64_t BM = 64, BN = 128;
+  int64_t M = 0, N = 0, K = 0;
+  unsigned aArgIdx = 0, wArgIdx = 0;
+  ContractionOp con;
+  Type f16, f32;
+  Value retVal;
+  bool hasEpilogue = false;
+  SmallVector<Role> argRoles;
+  DenseMap<Value, Value> argMemref;
+
+  ContractionMMALowering(func::FuncOp fn, int numStages, int64_t reqBM,
+                         int64_t reqBN)
+      : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN) {}
+
+  // ---- recognition (identical to the WMMA pass) -------------------------- //
+  LogicalResult match() {
+    auto fty = fn.getFunctionType();
+    if (fty.getNumResults() != 1)
+      return failure();
+    if (!fn.getBody().hasOneBlock())
+      return failure();
+    Block &body = fn.getBody().front();
+
+    ContractionOp c;
+    for (Operation &op : body.without_terminator()) {
+      if (auto cc = dyn_cast<ContractionOp>(&op)) {
+        if (c)
+          return failure();
+        c = cc;
+      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, arith::ConstantOp>(
+                     &op)) {
+        return failure();
+      }
+    }
+    if (!c)
+      return failure();
+    con = c;
+    auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
+    if (!ret || ret.getNumOperands() != 1)
+      return failure();
+    retVal = ret.getOperand(0);
+    hasEpilogue = retVal != c.getResult();
+    if (c.getSubscripts() != "mk,nk->mn")
+      return failure();
+
+    auto aArg = dyn_cast<BlockArgument>(c.getA());
+    auto wArg = dyn_cast<BlockArgument>(c.getB());
+    if (!aArg || !wArg || aArg.getOwner() != &body || wArg.getOwner() != &body)
+      return failure();
+    aArgIdx = aArg.getArgNumber();
+    wArgIdx = wArg.getArgNumber();
+
+    auto aTy = dyn_cast<RankedTensorType>(c.getA().getType());
+    auto wTy = dyn_cast<RankedTensorType>(c.getB().getType());
+    auto yTy = dyn_cast<RankedTensorType>(c.getResult().getType());
+    if (!aTy || !wTy || !yTy || !aTy.hasStaticShape() ||
+        !wTy.hasStaticShape() || !yTy.hasStaticShape())
+      return failure();
+    if (aTy.getRank() != 2 || wTy.getRank() != 2 || yTy.getRank() != 2)
+      return failure();
+    if (!isa<Float16Type>(aTy.getElementType()) ||
+        !isa<Float16Type>(wTy.getElementType()) ||
+        !isa<Float32Type>(yTy.getElementType()))
+      return failure();
+    f16 = aTy.getElementType();
+    f32 = yTy.getElementType();
+
+    M = aTy.getDimSize(0);
+    K = aTy.getDimSize(1);
+    N = wTy.getDimSize(0);
+    if (wTy.getDimSize(1) != K || yTy.getDimSize(0) != M ||
+        yTy.getDimSize(1) != N)
+      return failure();
+
+    BM = reqBM;
+    BN = reqBN;
+    if (M % BM != 0 || N % BN != 0) {
+      BM = 64;
+      BN = 64;
+    } else if (BN > 64 && N % 64 == 0) {
+      int64_t wideBlocks = (M / BM) * (N / BN);
+      if (wideBlocks < 64)
+        BN = 64;
+    }
+    if (K % BK != 0 || M % BM != 0 || N % BN != 0)
+      return failure();
+    if (BM % MMA_M != 0 || BN % MMA_N != 0)
+      return failure();
+
+    auto inputs = fty.getInputs();
+    argRoles.assign(inputs.size(), Role::Row);
+    for (unsigned i = 0; i < inputs.size(); ++i) {
+      if (i == aArgIdx || i == wArgIdx) {
+        argRoles[i] = Role::Row;
+        continue;
+      }
+      auto t = dyn_cast<RankedTensorType>(inputs[i]);
+      if (!t || !t.hasStaticShape() || !isa<Float32Type>(t.getElementType()))
+        return failure();
+      if (t.getRank() == 1 && t.getDimSize(0) == N)
+        argRoles[i] = Role::Col;
+      else if (t.getRank() == 0)
+        argRoles[i] = Role::Scalar;
+      else
+        return failure();
+    }
+    return success();
+  }
+
+  // ---- epilogue scalar evaluator (identical to the WMMA pass) ------------ //
+  Value emitEpilogue(OpBuilder &b, Location loc, Value v, Value cScalar,
+                     Value gcol) {
+    if (v == con.getResult())
+      return cScalar;
+    if (auto barg = dyn_cast<BlockArgument>(v)) {
+      Role role = argRoles[barg.getArgNumber()];
+      if (role == Role::Col)
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{gcol});
+      if (role == Role::Scalar)
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
+      return nullptr;
+    }
+    Operation *def = v.getDefiningOp();
+    if (!def)
+      return nullptr;
+    if (auto cst = dyn_cast<arith::ConstantOp>(def)) {
+      if (auto dense = dyn_cast<DenseElementsAttr>(cst.getValue()))
+        if (dense.isSplat())
+          return b.create<arith::ConstantOp>(
+              loc, b.getF32FloatAttr(
+                       dense.getSplatValue<APFloat>().convertToDouble()));
+      return nullptr;
+    }
+    if (auto mu = dyn_cast<MapUnaryOp>(def))
+      return emitScalarUnary(b, loc, mu.getFn(),
+                             emitEpilogue(b, loc, mu.getInput(), cScalar, gcol));
+    if (auto mb = dyn_cast<MapBinaryOp>(def)) {
+      Value lhs = emitEpilogue(b, loc, mb.getLhs(), cScalar, gcol);
+      Value rhs = emitEpilogue(b, loc, mb.getRhs(), cScalar, gcol);
+      if (!lhs || !rhs)
+        return nullptr;
+      if (isCmpFn(mb.getFn()))
+        return emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+      return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+    }
+    if (auto sel = dyn_cast<SelectOp>(def)) {
+      Value cnd = emitEpilogue(b, loc, sel.getCond(), cScalar, gcol);
+      Value x = emitEpilogue(b, loc, sel.getX(), cScalar, gcol);
+      Value y = emitEpilogue(b, loc, sel.getY(), cScalar, gcol);
+      if (!cnd || !x || !y)
+        return nullptr;
+      return b.create<arith::SelectOp>(loc, cnd, x, y);
+    }
+    return nullptr;
+  }
+
+  // ---- emission ---------------------------------------------------------- //
+  LogicalResult rewrite() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+
+    SmallVector<Type> inTys;
+    for (Type at : fn.getFunctionType().getInputs()) {
+      auto t = cast<RankedTensorType>(at);
+      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+    }
+    inTys.push_back(MemRefType::get({M, N}, f32));
+    auto newFty = FunctionType::get(ctx, inTys, {});
+
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+
+    b.setInsertionPoint(fn);
+    auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    Block *entry = gpuFn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+
+    Value aMem = entry->getArgument(aArgIdx);
+    Value wMem = entry->getArgument(wArgIdx);
+    Value yMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+
+    Block &srcBlock = fn.getBody().front();
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
+
+    int64_t numWarps = BM / MMA_M;
+    int64_t kBlock = numWarps * 32;
+    int64_t nFrag = BN / MMA_N; // n8 column tiles per warp
+
+    int64_t gridN = N / BN, gridM = M / BM;
+    Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
+    Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
+    Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+
+    int64_t numK = K / BK;
+    int nStages = std::min<int64_t>((int64_t)numStages, numK);
+    if (nStages < 1)
+      nStages = 1;
+
+    int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;
+    int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
+    int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
+    Value shBytes = b.create<arith::ConstantOp>(
+        loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
+
+    auto launch =
+        b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
+    b.setInsertionPointToStart(&launch.getBody().front());
+
+    Value bx = launch.getBlockIds().x;
+    Value tx = launch.getThreadIds().x;
+    Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value cBK = b.create<arith::ConstantIndexOp>(loc, BK);
+    Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
+    Value c16 = b.create<arith::ConstantIndexOp>(loc, 16);
+    Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
+    Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
+    Value c2 = b.create<arith::ConstantIndexOp>(loc, 2);
+
+    // Flat pid -> (pid_m, pid_n) with the GROUP_M L2 swizzle.
+    Value cGroupM = b.create<arith::ConstantIndexOp>(loc, GROUP_M);
+    Value cGridM = b.create<arith::ConstantIndexOp>(loc, gridM);
+    Value cWidth = b.create<arith::ConstantIndexOp>(loc, GROUP_M * gridN);
+    Value groupId = b.create<arith::DivUIOp>(loc, bx, cWidth);
+    Value pidInW = b.create<arith::RemUIOp>(loc, bx, cWidth);
+    Value gmStart = b.create<arith::MulIOp>(loc, groupId, cGroupM);
+    Value remM = b.create<arith::SubIOp>(loc, cGridM, gmStart);
+    Value groupSz = b.create<arith::MinUIOp>(loc, remM, cGroupM);
+    Value pidM = b.create<arith::AddIOp>(
+        loc, gmStart, b.create<arith::RemUIOp>(loc, bx, groupSz));
+    Value pidN = b.create<arith::DivUIOp>(loc, pidInW, groupSz);
+    Value cBMv = b.create<arith::ConstantIndexOp>(loc, BM);
+    Value cBNv = b.create<arith::ConstantIndexOp>(loc, BN);
+    Value rowBlk = b.create<arith::MulIOp>(loc, pidM, cBMv);
+    Value colBlk = b.create<arith::MulIOp>(loc, pidN, cBNv);
+
+    // Per-thread lane/warp decomposition + the ldmatrix/store lane offsets.
+    Value warp = b.create<arith::DivUIOp>(loc, tx, c32);
+    Value lane = b.create<arith::RemUIOp>(loc, tx, c32);
+    Value warpRowBase = b.create<arith::MulIOp>(loc, warp, c16); // 16-row strip
+    Value laneMod16 = b.create<arith::RemUIOp>(loc, lane, c16);
+    Value laneDiv16 = b.create<arith::DivUIOp>(loc, lane, c16);
+    Value aColLane = b.create<arith::MulIOp>(loc, laneDiv16, c8); // (lane/16)*8
+    Value aRow = b.create<arith::AddIOp>(loc, warpRowBase, laneMod16);
+    Value laneMod8 = b.create<arith::RemUIOp>(loc, lane, c8);
+    Value laneDiv8 = b.create<arith::DivUIOp>(loc, lane, c8);
+    Value wColLane = b.create<arith::MulIOp>(loc, laneDiv8, c8); // (lane/8)*8
+    Value laneDiv4 = b.create<arith::DivUIOp>(loc, lane, c4);    // store row grp
+    Value laneMod4 = b.create<arith::RemUIOp>(loc, lane, c4);
+    Value stCol = b.create<arith::MulIOp>(loc, laneMod4, c2); // (lane%4)*2
+
+    // Dynamic-shared staging (rank-3 rotating buffers, as the WMMA pass).
+    auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
+                                 wgSpace);
+    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
+    auto aShTy = MemRefType::get({nStages, BM, BK}, f16, nullptr, wgSpace);
+    auto wShTy = MemRefType::get({nStages, BN, BK}, f16, nullptr, wgSpace);
+    Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
+    Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
+    Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
+    Value cSh;
+    if (hasEpilogue) {
+      auto cShTy = MemRefType::get({BM, BN}, f32, nullptr, wgSpace);
+      Value cOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes + wAllBytes);
+      cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
+    }
+
+    auto aFragTy = VectorType::get({4, 2}, f16);
+    auto wFragTy = VectorType::get({2, 2}, f16);
+    auto accTy = VectorType::get({2, 2}, f32);
+    auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
+
+    // nFrag accumulator vectors, init 0.
+    Value zeroAcc = b.create<arith::ConstantOp>(
+        loc, DenseElementsAttr::get(accTy, b.getF32FloatAttr(0.0).getValue()));
+    SmallVector<Value> accInit(nFrag, zeroAcc);
+
+    // -- cp.async multistage staging (identical schedule to the WMMA pass) -- //
+    auto tokTy = nvgpu::DeviceAsyncTokenType::get(ctx);
+    IntegerAttr dstElems = b.getIndexAttr(8);
+    UnitAttr bypassL1 = b.getUnitAttr();
+    int64_t colsPerRow = BK / 8;
+    int64_t vPerThreadA = (BM * BK) / 8 / kBlock;
+    int64_t vPerThreadW = (BN * BK) / 8 / kBlock;
+    Value cCPR = b.create<arith::ConstantIndexOp>(loc, colsPerRow);
+    Value c8b = c8;
+    Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
+    Value cNm1 = b.create<arith::ConstantIndexOp>(loc, nStages - 1);
+
+    auto loadTile = [&](OpBuilder &nb, Location nl, Value ktVal,
+                        Value stageVal) -> Value {
+      SmallVector<Value> toks;
+      for (int64_t it = 0; it < vPerThreadA; ++it) {
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
+        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
+        Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
+        Value cc = nb.create<arith::MulIOp>(nl, colg, c8b);
+        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value ar = nb.create<arith::AddIOp>(nl, rowBlk, r);
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, aSh, ValueRange{stageVal, r, cc}, aMem,
+            ValueRange{ar, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+      }
+      for (int64_t it = 0; it < vPerThreadW; ++it) {
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
+        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
+        Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
+        Value cc = nb.create<arith::MulIOp>(nl, colg, c8b);
+        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value wr = nb.create<arith::AddIOp>(nl, colBlk, r);
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, wSh, ValueRange{stageVal, r, cc}, wMem,
+            ValueRange{wr, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+      }
+      return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
+    };
+
+    // Accumulate acc[nt] += A(stage) * W_nt(stage) over the BK/16 k-subtiles.
+    auto computeTile = [&](OpBuilder &nb, Location nl, Value stageVal,
+                           ValueRange acc) -> SmallVector<Value> {
+      SmallVector<Value> cur(acc.begin(), acc.end());
+      for (int64_t ks = 0; ks < BK / MMA_K; ++ks) {
+        Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * MMA_K);
+        Value aKcol = nb.create<arith::AddIOp>(nl, ksc, aColLane);
+        Value aFrag = nb.create<nvgpu::LdMatrixOp>(
+            nl, aFragTy, aSh, ValueRange{stageVal, aRow, aKcol},
+            /*transpose=*/false, /*numTiles=*/4);
+        Value wKcol = nb.create<arith::AddIOp>(nl, ksc, wColLane);
+        for (int j = 0; j < nFrag; ++j) {
+          Value nbase = nb.create<arith::ConstantIndexOp>(nl, j * MMA_N);
+          Value wRow = nb.create<arith::AddIOp>(nl, nbase, laneMod8);
+          Value wFrag = nb.create<nvgpu::LdMatrixOp>(
+              nl, wFragTy, wSh, ValueRange{stageVal, wRow, wKcol},
+              /*transpose=*/false, /*numTiles=*/2);
+          cur[j] = nb.create<nvgpu::MmaSyncOp>(nl, aFrag, wFrag, cur[j],
+                                               mmaShape);
+        }
+      }
+      return cur;
+    };
+
+    // PROLOGUE.
+    Value prologTok;
+    for (int s = 0; s < nStages - 1; ++s) {
+      Value ktVal = b.create<arith::ConstantIndexOp>(loc, s * BK);
+      Value stage = b.create<arith::ConstantIndexOp>(loc, s);
+      prologTok = loadTile(b, loc, ktVal, stage);
+    }
+
+    // STEADY STATE.
+    int64_t steadyTrips = numK - nStages + 1;
+    Value cSteady = b.create<arith::ConstantIndexOp>(loc, steadyTrips);
+    IntegerAttr waitNm1 = b.getI32IntegerAttr(nStages - 1);
+    auto forOp = b.create<scf::ForOp>(
+        loc, c0, cSteady, c1, accInit,
+        [&](OpBuilder &nb, Location nl, Value ki, ValueRange acc) {
+          Value nextTile = nb.create<arith::AddIOp>(nl, ki, cNm1);
+          Value ktNext = nb.create<arith::MulIOp>(nl, nextTile, cBK);
+          Value stageW = nb.create<arith::RemUIOp>(nl, nextTile, cNStages);
+          Value grp = loadTile(nb, nl, ktNext, stageW);
+          nb.create<nvgpu::DeviceAsyncWaitOp>(nl, grp, waitNm1);
+          nb.create<gpu::BarrierOp>(nl);
+          Value stageR = nb.create<arith::RemUIOp>(nl, ki, cNStages);
+          SmallVector<Value> cur = computeTile(nb, nl, stageR, acc);
+          nb.create<gpu::BarrierOp>(nl);
+          nb.create<scf::YieldOp>(nl, cur);
+        });
+
+    // EPILOGUE of the pipeline: the last nStages-1 (already prefetched) tiles.
+    SmallVector<Value> finalAcc(forOp.getResults().begin(),
+                                forOp.getResults().end());
+    for (int j = 0; j < nStages - 1; ++j) {
+      int64_t tile = numK - nStages + 1 + j;
+      Value stageR = b.create<arith::ConstantIndexOp>(loc, tile % nStages);
+      b.create<nvgpu::DeviceAsyncWaitOp>(loc, prologTok,
+                                         b.getI32IntegerAttr(nStages - 2 - j));
+      b.create<gpu::BarrierOp>(loc);
+      finalAcc = computeTile(b, loc, stageR, finalAcc);
+    }
+
+    // Store. Textbook m16n8 accumulator layout:
+    //   d[i][j] -> row = rowBlk + warp*16 + lane/4 + i*8,
+    //              col = colBlk + nt*8 + (lane%4)*2 + j
+    auto storeAcc = [&](OpBuilder &nb, Location nl, Value accVal, Value rowBase,
+                        Value colBase, auto sink) {
+      for (int i = 0; i < 2; ++i) {
+        Value ic = nb.create<arith::ConstantIndexOp>(nl, i * 8);
+        Value row =
+            nb.create<arith::AddIOp>(nl, rowBase,
+                                     nb.create<arith::AddIOp>(nl, laneDiv4, ic));
+        for (int j = 0; j < 2; ++j) {
+          Value jc = nb.create<arith::ConstantIndexOp>(nl, j);
+          Value col = nb.create<arith::AddIOp>(
+              nl, colBase, nb.create<arith::AddIOp>(nl, stCol, jc));
+          Value v = nb.create<vector::ExtractOp>(
+              nl, accVal, ArrayRef<int64_t>{(int64_t)i, (int64_t)j});
+          sink(nb, nl, v, row, col);
+        }
+      }
+    };
+
+    Value warpRowGlobal = b.create<arith::AddIOp>(loc, rowBlk, warpRowBase);
+    if (!hasEpilogue) {
+      for (int j = 0; j < nFrag; ++j) {
+        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        Value colBase = b.create<arith::AddIOp>(loc, colBlk, nbase);
+        storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
+                 [&](OpBuilder &nb, Location nl, Value v, Value row, Value col) {
+                   nb.create<memref::StoreOp>(nl, v, yMem, ValueRange{row, col});
+                 });
+      }
+    } else {
+      // Spill the accumulators to the [BM,BN] shared tile, then cooperatively
+      // reload + evaluate the bias/activation epilogue + write Y.
+      Value warpRowLocal = warpRowBase; // block-local row
+      for (int j = 0; j < nFrag; ++j) {
+        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        storeAcc(b, loc, finalAcc[j], warpRowLocal, nbase,
+                 [&](OpBuilder &nb, Location nl, Value v, Value row, Value col) {
+                   nb.create<memref::StoreOp>(nl, v, cSh, ValueRange{row, col});
+                 });
+      }
+      b.create<gpu::BarrierOp>(loc);
+      Value cBN = b.create<arith::ConstantIndexOp>(loc, BN);
+      int64_t epIters = (BM * BN) / kBlock;
+      for (int64_t it = 0; it < epIters; ++it) {
+        Value base = b.create<arith::ConstantIndexOp>(loc, it * kBlock);
+        Value i = b.create<arith::AddIOp>(loc, tx, base);
+        Value r = b.create<arith::DivUIOp>(loc, i, cBN);
+        Value cc = b.create<arith::RemUIOp>(loc, i, cBN);
+        Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
+        Value gcol = b.create<arith::AddIOp>(loc, colBlk, cc);
+        Value grow = b.create<arith::AddIOp>(loc, rowBlk, r);
+        Value out = emitEpilogue(b, loc, retVal, cScalar, gcol);
+        if (!out)
+          return failure();
+        b.create<memref::StoreOp>(loc, out, yMem, ValueRange{grow, gcol});
+      }
+    }
+
+    b.create<gpu::TerminatorOp>(loc);
+    b.setInsertionPointAfter(launch);
+    b.create<func::ReturnOp>(loc);
+
+    fn.erase();
+    return success();
+  }
+};
+
+struct ConvertIntentContractionToGPUMMAPass
+    : ::intent::impl::ConvertIntentContractionToGPUMMABase<
+          ConvertIntentContractionToGPUMMAPass> {
+  using ConvertIntentContractionToGPUMMABase::
+      ConvertIntentContractionToGPUMMABase;
+
+  void runOnOperation() override {
+    ModuleOp mod = getOperation();
+    SmallVector<func::FuncOp> targets;
+    for (auto fn : mod.getOps<func::FuncOp>()) {
+      ContractionMMALowering probe(fn, (int)numStages, (int64_t)blockM,
+                                   (int64_t)blockN);
+      if (succeeded(probe.match()))
+        targets.push_back(fn);
+    }
+    for (func::FuncOp fn : targets) {
+      ContractionMMALowering low(fn, (int)numStages, (int64_t)blockM,
+                                 (int64_t)blockN);
+      if (failed(low.match()) || failed(low.rewrite())) {
+        fn.emitError("contraction-mma lowering failed after match");
+        return signalPassFailure();
+      }
+    }
+  }
+};
+
+} // namespace

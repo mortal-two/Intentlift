@@ -3,6 +3,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentRowReductionToGPU.cpp
   ConvertIntentElementwiseToGPU.cpp
   ConvertIntentContractionToGPU.cpp
+  ConvertIntentContractionToGPUMMA.cpp
   ConvertIntentLoopContractionToGPU.cpp
   ConvertIntentAttentionBackwardToGPU.cpp
   ConvertIntentSplitKReduceToGPU.cpp
@@ -27,6 +28,7 @@ add_mlir_library(MLIRIntentConversion
   MLIRSCFDialect
   MLIRGPUDialect
   MLIRNVGPUDialect
+  MLIRVectorDialect
   MLIRMemRefDialect
   MLIRFuncDialect
 )

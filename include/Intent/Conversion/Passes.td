@@ -155,6 +155,55 @@ def ConvertIntentContractionToGPU
   ];
 }
 
+def ConvertIntentContractionToGPUMMA
+    : Pass<"convert-intent-contraction-to-gpu-mma", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.contraction matmul to one tiled-K "
+                "tensor-core gpu.launch via nvgpu.ldmatrix + nvgpu.mma.sync.";
+  let description = [{
+    The `nvgpu.mma.sync` sibling of `convert-intent-contraction-to-gpu` (which
+    uses the opaque `gpu.subgroup_mma_*` / `!gpu.mma_matrix` WMMA path). Same
+    recognizer (one `intent.contraction{"mk,nk->mn"}`, A[M,K] f16, W[N,K] f16 ->
+    Y[M,N] f32, optional bias+activation epilogue) and the SAME cp.async
+    multistage staging, but the contraction is realized by the register-level
+    `nvgpu.ldmatrix` (shared->register warp-cooperative fragment load) +
+    `nvgpu.mma.sync` (m16n8k16 warp MMA on `vector<...>` fragments with a KNOWN
+    lane layout -> `vector<2x2xf32>` accumulator) primitive, NOT the opaque
+    fragment. This is the parallel path explored for full compute-bound parity;
+    the `gpu.mma_matrix` pass is left 100% intact as the default / fallback.
+
+    Fragment recipe (validated against the MLIR --convert-vector-to-gpu
+    use-nvgpu lowering on sm_120a): lane = tid%32, warp = tid/32, each warp owns
+    a 16-row strip; A operand `ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]`
+    transpose=false -> vector<4x2xf16>; W operand (natural [N,K] layout, the
+    "nk" transpose folded into the load) `ldmatrix wSh[n*8 + lane%8, kOff +
+    (lane/8)*8]` transpose=false -> vector<2x2xf16>; the m16n8 f32 accumulator
+    stores back with the textbook layout d[i][j] -> row = lane/4 + i*8,
+    col = (lane%4)*2 + j. Per-warp accumulator vectors ride the K loop as
+    `scf.for` iter_args. Static shapes, M%BM==N%BN==K%BK==0. Run BEFORE
+    `convert-intent-to-linalg`; the result goes to the device pipeline
+    (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"numStages", "num-stages", "unsigned", /*default=*/"3",
+           "cp.async multistage pipeline depth (N buffers; clamped to the "
+           "K-tile count). N=1 disables prefetch overlap.">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "block C-tile rows BM (numWarps = BM/16 warps tile the M axis).">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"128",
+           "block C-tile cols BN (each warp owns BN/8 n8 mma column tiles).">,
+  ];
+}
+
 def ConvertIntentLoopContractionToGPU
     : Pass<"convert-intent-loop-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a fused FlashAttention-forward intent.loop (online "
