@@ -191,6 +191,61 @@ def ConvertIntentLoopContractionToGPU
   ];
 }
 
+def ConvertIntentAttentionBackwardToGPU
+    : Pass<"convert-intent-attention-backward-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower the fused FlashAttention BACKWARD (one intent.loop over "
+                "the query axis carrying dk/dv + 5 contractions + recompute-P) "
+                "to one tensor-core gpu.launch (serial-DQ).";
+  let description = [{
+    Recognizes a `func.func` whose body is the FlashAttention backward as ONE
+    `intent.loop` scanning the QUERY axis (scan inputs Q, dO, LSE, Delta; carries
+    the per-key-row gradients `dk[Sk,D]`, `dv[Sk,D]`, init zeros). The body is the
+    flash bwd inner block: recompute `P = exp(scale*S - LSE)` from the saved
+    log-sum-exp, then FIVE contractions
+
+        S  = Q@K^T        (`"qd,kd->qk"`)        recompute the scores
+        dV += P^T@dO      (`"qk,qd->kd"`)        accumulate into the dv carry
+        dP =  dO@V^T      (`"qd,kd->qk"`)
+        dS =  P*(dP - Delta)*scale               (elementwise)
+        dK += dS^T@Q      (`"qk,qd->kd"`)        accumulate into the dk carry
+        dQ =  dS@K        (`"qk,kd->qd"`)        scatter-accumulate into DQ[start_m]
+
+    The match is STRUCTURAL (the 5 contraction subscripts + the recompute-P
+    subtree + the carry shapes), NOT a kernel-name match -- it just happens to be
+    attention-backward-shaped (hence the pass name).
+
+    It rewrites the func in place to ONE tiled tensor-core `gpu.launch`, modeled
+    on `convert-intent-loop-contraction-to-gpu` (M8 flash fwd): the matmuls run on
+    WMMA (`gpu.subgroup_mma_*`, reusing the M7 tiled-K primitive), while the
+    recompute-P / dS elementwise transforms and the dk/dv accumulators live
+    RESIDENT IN DYNAMIC SHARED MEMORY (the M8 cooperative-shared design). The
+    schedule is ONE block per (b,h): an OUTER `scf.for` over key tiles (BN=64,
+    dk/dv reset per key tile in shared) wrapping an INNER `scf.for` over query
+    tiles (BM=64, the intent.loop's scan). dQ uses the SERIAL accumulation mode
+    (SEQUENCE_PARALLEL=false): one block owns the whole head and read-modify-
+    writes the pre-zeroed global `DQ` deterministically across the outer key loop
+    (the cross-program atomic_add mode + its serial==atomic gate are M9b).
+
+    Q/K/V/dO are f16 (WMMA operands), LSE/Delta/scale and all accumulators are
+    f32. The `dV=P^T@dO` and `dK=dS^T@Q` contractions reduce over the query axis,
+    so their `[q,*]` operands are loaded TRANSPOSED on the WMMA A operand (probed:
+    AOp-transpose lowers through `wmma.load.a...col.f16` on sm_120a). Static
+    shapes, BM=BN=64, D%16==0, Sq%64==0, Sk%64==0 (non-causal, no bias; tail-mask
+    / causal / atomic-DQ / split-K are documented follow-ups). The pass appends
+    three destination-passing outputs `dQ`, `dK`, `dV` (host pre-zeros DQ). Run
+    BEFORE `convert-intent-to-linalg`; the result goes to the device pipeline
+    (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
 def ConvertIntentSplitKReduceToGPU
     : Pass<"convert-intent-splitk-reduce-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower the split-K attention reduce (online-LSE merge across "
