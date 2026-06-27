@@ -87,7 +87,10 @@
 | **M6** | iota + RowInt 整数目标 + select-in-row-reduction + in-place 梯度(**✅ 已交付 `dd446de`**;moderate V 走 register-tile,**无需 loop**——loop 仅 V>32768 spill 时需要) | cross_entropy | **实测 1.00×/0.99×** @ 1524-1528 GB/s,loss/grad rel ~1e-8 — pass2 X-reload L2-served → parity 诚实地板 |
 | **M7** | **首个 tiled tensor-core matmul** + 融合 epilogue + **cp.async 多级流水**(**✅ M7a/b/c 已交付** `040a329`/`dd79182`/`2797796`:`intent.contraction`→`gpu.subgroup_mma_*` 片段 scf.for iter_args + bias/activation epilogue + `nvgpu.device_async_copy` N-stage 流水;scf_to_cf=True 修 mma iter_args) | linear.kernel_fwd | **正确 rel ~1e-6;实测 0.96× (512³ parity) / 1.34-1.42× (大 K-bound) vs 真实 tl.dot**(cp.async 把 12.45×→1.34×,4096³ 17→162 TFLOP/s)。残 25-34% = tile-blocking(BN=128 + ldmatrix)refinement,非 pipeline。**cp.async+片段 carry 机制 = M8/M9 复用,spill cliff 已解** |
 | **M8** | **融合在线 softmax + 双 contraction**(QKᵀ→PV)+ shared-resident O/S/P/m/l + per-row α 重缩放(**✅ M8a `7e9ae6f` flash fwd 正确性**:`convert-intent-loop-contraction-to-gpu`,**spill cliff 已消** ptxas 0 spill/0 LDL/STL,rel 1.7e-4 vs fp32/SDPA/scalar)| flash _fwd_kernel(correct); **M8b**:perf(cp.async+split-K+causal)+ xformers splitK fwd/reduce | M8a correct + RUNS;perf ~3.6-4.2× off SDPA(untuned BM=BN=64,254 regs 紧)→ M8b cp.async 闭合(类 M7c)+ TMP 免物化 beat |
-| **M9** | 多 matmul 反向(5 交错 contraction + recompute-P-from-LSE)+ DQ 双模(serial/atomic 等价)+ varargs split | flash bwd 栈, xformers splitK bwd | A:库留 5-13× headroom(去 barrier 节流)但需 MMA 不 spill;B:HBM 已贴顶 → parity(Forge remote 1.06) |
+| **M9** | 多 matmul 反向(5 交错 contraction + recompute-P-from-LSE)+ DQ 双模(serial/atomic 等价)+ varargs split(**✅ M9a `7532d11` + M9b `ce18ea5`**)| flash bwd 栈, xformers splitK bwd | **正确**:flash bwd rel 2.8e-4 vs torch autograd,0 spill;splitK bwd rel 3.7e-8 vs 真实 xformers;**双模硬门通过**(serial==atomic ≤5.5e-8,5 seed)。perf:serial 617us → atomic 解锁 key-block 并行 |
+
+> **🎯 全覆盖达成(`ce18ea5`)**:29 算子 / 27 交付物**全部** intent → C++ `OpRewritePattern` → sm_120a cubin,**零残留 `intent.*`,bit-faithful**(rel 1e-8~3e-4)。45/45 lit + 全 PK 绿。认证语义提升环在整个 29-kernel scope 端到端闭合。
+> **剩余 = compute-bound perf-closing(非覆盖)**:memory-bound 15 个已 parity/beat(实测 ≥);compute-bound trunk 正确但 perf 有 gap —— matmul tile-blocking(0.96×/大形 1.34×)、flash fwd cp.async+并行(3.6-4.2× off SDPA)、flash bwd key-block 并行(atomic 已就绪)、M8 splitK reduce 几何、rope hd=64 occupancy。cp.async 已证(M7c 12.45×→1.34×)。
 
 ---
 
