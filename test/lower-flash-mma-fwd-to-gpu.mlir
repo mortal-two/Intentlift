@@ -7,13 +7,17 @@
 // per-warp vector<2x2xf32> accumulator, the per-row rowmax/rowsum are quad
 // gpu.shuffle xor, P is assembled into the PV A operand straight from the S
 // accumulators, and the O accumulators ride the key loop as scf.for iter_args.
-// No intent.* survives.
+// No intent.* survives. M8d: the K/V staging is a cp.async multistage pipeline
+// (nvgpu.device_async_copy/create_group/wait, default num-stages=2).
 //
 // CHECK-LABEL: func.func @flash_fwd(
 // CHECK-SAME:    %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x64xf16>, %{{.*}}: f32, %{{.*}}: memref<128x64xf32>)
 // CHECK:         gpu.launch
 // CHECK:         gpu.dynamic_shared_memory
+// CHECK:         nvgpu.device_async_copy
+// CHECK:         nvgpu.device_async_create_group
 // CHECK:         scf.for
+// CHECK:           nvgpu.device_async_wait
 // CHECK:           nvgpu.ldmatrix
 // CHECK:           nvgpu.mma.sync
 // CHECK:           gpu.shuffle xor

@@ -24,6 +24,19 @@
 //   k+(lane/8)*8]). O acc carried across the key loop as scf.for iter_args, rescaled
 //   by alpha (per-row scalar, lane-local) each tile. Epilogue O/l -> global.
 //
+// M8d: the K/V key-tile staging is a cp.async multistage software-pipeline
+// (num-stages option, default 2; port of the M7c/M8b schedule). N rotating
+// dynamic-shared buffers hold K and V NATURAL [BN,D] (16-byte cp.async.cg,
+// nvgpu.device_async_copy); the loads of tile ki+N-1 overlap the mma.sync+
+// softmax of tile ki (device_async_wait{N-1}+barrier). The online-softmax
+// carries (O/m/l) stay register-resident -- only the staging is pipelined;
+// the compute (S=Q@Kj, softmax, O+=P@Vj) is byte-identical to M8c. The PV B
+// operand still needs the TRANSPOSED [D,BN] V (ldmatrix x2 spans K=16=key
+// along the contiguous dim, which natural V's d-contiguous layout cannot
+// provide, and a transposed store cannot be cp.async-vectorized), so V is
+// cp.async'd natural then transposed SHARED->SHARED per tile (cheap; no global
+// latency). N=2 buys ~1.2x at >=512 keys; N>=3 plateaus. rel UNCHANGED (1.66e-4).
+//
 // Q/K/V f16, accumulators f32. Static shapes, BM=BN=64, D%16==0, Sq%64==0,
 // Sk%64==0, non-causal, rank-2 (no batch/LSE/causal -- the M8a path). Bare-ptr
 // ABI; lower_memref_module_to_kernels(scf_to_cf=True). M8a left 100% intact.
@@ -49,6 +62,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace intent {
@@ -72,13 +86,15 @@ static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 
 struct FlashMMALowering {
   func::FuncOp fn;
+  int numStages; // cp.async pipeline depth (clamped to the K-tile count)
 
   int64_t Sq = 0, Sk = 0, D = 0;
   unsigned qArgIdx = 0, kArgIdx = 0, vArgIdx = 0, scaleArgIdx = 0;
   LoopOp loop;
   Type f16, f32;
 
-  explicit FlashMMALowering(func::FuncOp fn) : fn(fn) {}
+  FlashMMALowering(func::FuncOp fn, int numStages)
+      : fn(fn), numStages(numStages) {}
 
   // ---- recognition (a focused subset of the M8a matcher: rank-2, 1 result) -//
   LogicalResult match() {
@@ -231,11 +247,35 @@ struct FlashMMALowering {
     int64_t kSubPV = BN / MMA_K; // k16 subtiles for PV  (contraction = BN)
     int64_t gridM = Sq / BM;
 
-    // Dynamic-shared layout: Q[BM,D], K[BN,D] natural, V[D,BN+VPAD] transposed.
+    // cp.async multistage pipeline depth: N rotating dynamic-shared K/V buffers
+    // let the global loads of tiles ki+1..ki+N-1 overlap the mma.sync+softmax
+    // compute of tile ki. Clamped to the K-tile count; 48KB smem cap (D=64,
+    // BN=64: per stage K+V = 16KB, so N<=2 fits alongside Q). The online-softmax
+    // carries (O/m/l) stay RESIDENT IN REGISTERS (scf.for iter_args) -- only the
+    // K/V staging is pipelined.
+    int64_t nStages = std::min<int64_t>((int64_t)numStages, numKT);
+    if (nStages < 1)
+      nStages = 1;
+
+    // Dynamic-shared layout (cp.async hides the GLOBAL latency of BOTH K and V):
+    //   Q[BM,D]                staged once.
+    //   K[nStages,BN,D]        NATURAL rotating cp.async buffers (read directly
+    //                          for S=Q@Kj^T -- the B operand is [d,key] obtained
+    //                          from natural K via non-transpose ldmatrix).
+    //   V[nStages,BN,D]        NATURAL rotating cp.async buffers.
+    //   Vt[D,BN+VPAD]          TRANSPOSED single buffer. The PV B operand
+    //                          ([D,BN], read non-transpose) REQUIRES the
+    //                          transposed [d,key] storage -- ldmatrix x2 spans
+    //                          K=16=key along the contiguous dim, which natural V
+    //                          (d-contiguous, 8 wide) cannot provide, and a
+    //                          transposed store cannot be cp.async-vectorized.
+    //                          So V is cp.async'd NATURAL then transposed
+    //                          SHARED->SHARED per tile (cheap; no global latency).
     int64_t oQ = 0;
     int64_t oK = align16(oQ + BM * D * 2);
-    int64_t oV = align16(oK + BN * D * 2);
-    int64_t shTotal = align16(oV + D * (BN + VPAD) * 2);
+    int64_t oV = align16(oK + nStages * BN * D * 2);
+    int64_t oVt = align16(oV + nStages * BN * D * 2);
+    int64_t shTotal = align16(oVt + D * (BN + VPAD) * 2);
 
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
@@ -287,8 +327,9 @@ struct FlashMMALowering {
       return b.create<memref::ViewOp>(loc, ty, raw, o, ValueRange{});
     };
     Value qSh = viewF16(oQ, {BM, D});
-    Value kSh = viewF16(oK, {BN, D});
-    Value vSh = viewF16(oV, {D, BN + VPAD});
+    Value kSh = viewF16(oK, {nStages, BN, D});  // rotating cp.async K buffers
+    Value vSh = viewF16(oV, {nStages, BN, D});  // rotating cp.async V buffers
+    Value vtSh = viewF16(oVt, {D, BN + VPAD});  // transposed V (PV B operand)
 
     // Cooperative copy helper: run body(i,r,c) over each linear element of [R,C].
     auto forEachElem = [&](OpBuilder &nb, int64_t R, int64_t C,
@@ -333,6 +374,163 @@ struct FlashMMALowering {
       return v;
     };
 
+    // ---- cp.async machinery (port of the M7c/M8b multistage K-loop pipeline) //
+    // Each key tile K[BN,D] and V[BN,D] is streamed global->shared by
+    // nvgpu.device_async_copy (-> cp.async.cg, 16-byte/8-f16 vectors, L1
+    // bypassed), grouped + waited by device_async_create_group / device_async_
+    // wait. N rotating buffers let the loads of tiles ki+1..ki+N-1 overlap the
+    // mma.sync+softmax compute of tile ki. The online-softmax carries (O/m/l)
+    // stay RESIDENT IN REGISTERS (scf.for iter_args / threaded SSA) -- only the
+    // K/V staging is pipelined.
+    auto tokTy = nvgpu::DeviceAsyncTokenType::get(ctx);
+    IntegerAttr dstElems = b.getIndexAttr(8); // 8 f16 = 16 bytes per copy
+    UnitAttr bypassL1 = b.getUnitAttr();      // cp.async.cg (skip L1)
+    int64_t colsPerRow = D / 8;               // 8-wide vectors along D
+    int64_t vPerThread = (BN * D) / 8 / kBlock;
+    Value cCPR = b.create<arith::ConstantIndexOp>(loc, colsPerRow);
+    Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
+    Value cNm1 = b.create<arith::ConstantIndexOp>(loc, nStages - 1);
+
+    // Issue the K+V async copies for the key tile at row `keyBase` into rotating
+    // buffer `stageVal`; return the group token. Both K and V are NATURAL [BN,D]
+    // (contiguous in global rows and D-wide shared rows) so the 16-byte cp.async
+    // vectorizes cleanly.
+    auto loadKV = [&](OpBuilder &nb, Location nl, Value keyBase,
+                      Value stageVal) -> Value {
+      SmallVector<Value> toks;
+      for (int64_t it = 0; it < vPerThread; ++it) {
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
+        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
+        Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
+        Value cc = nb.create<arith::MulIOp>(nl, colg, c8);
+        Value gr = nb.create<arith::AddIOp>(nl, keyBase, r);
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, kSh, ValueRange{stageVal, r, cc}, kMem,
+            ValueRange{gr, cc}, dstElems, /*srcElements=*/Value(), bypassL1));
+        toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
+            nl, tokTy, vSh, ValueRange{stageVal, r, cc}, vMem,
+            ValueRange{gr, cc}, dstElems, /*srcElements=*/Value(), bypassL1));
+      }
+      return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
+    };
+
+    auto pIdx = [&](int64_t t, int i, int i2) { return (t * 2 + i) * 2 + i2; };
+
+    // Compute one key tile from rotating buffers `stageR`: transpose V (natural
+    // -> vtSh, shared->shared), then S=Q@Kj^T -> register online softmax ->
+    // O+=P@Vj, all via mma.sync. Carries in/out = [oAcc(nColPV), m0,m1,l0,l1].
+    auto computeTile = [&](OpBuilder &nb, Location nl, Value stageR,
+                           ArrayRef<Value> carries) -> SmallVector<Value> {
+      SmallVector<Value> oAcc(carries.begin(), carries.begin() + nColPV);
+      Value mOld[2] = {carries[nColPV], carries[nColPV + 1]};
+      Value lOld[2] = {carries[nColPV + 2], carries[nColPV + 3]};
+
+      // (0) transpose V tile: vtSh[c,r] = vSh[stageR,r,c] (shared->shared).
+      forEachElem(nb, BN, D, [&](OpBuilder &cb, Value r, Value c) {
+        Value vv = cb.create<memref::LoadOp>(nl, vSh, ValueRange{stageR, r, c});
+        cb.create<memref::StoreOp>(nl, vv, vtSh, ValueRange{c, r});
+      });
+      nb.create<gpu::BarrierOp>(nl);
+
+      // (1) S = Q@Kj^T via mma.sync. nColQK acc vectors over kSubQK.
+      SmallVector<Value> sAcc(nColQK, zeroAcc);
+      for (int64_t ks = 0; ks < kSubQK; ++ks) {
+        Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * MMA_K);
+        Value aKcol = nb.create<arith::AddIOp>(nl, ksc, aColLane);
+        Value aFrag = nb.create<nvgpu::LdMatrixOp>(
+            nl, aFragTy, qSh, ValueRange{aRow, aKcol},
+            /*transpose=*/false, /*numTiles=*/4);
+        Value bKcol = nb.create<arith::AddIOp>(nl, ksc, bColLane);
+        for (int64_t j = 0; j < nColQK; ++j) {
+          Value nb8 = nb.create<arith::ConstantIndexOp>(nl, j * MMA_N);
+          Value bRow = nb.create<arith::AddIOp>(nl, nb8, laneMod8);
+          Value bFrag = nb.create<nvgpu::LdMatrixOp>(
+              nl, bFragTy, kSh, ValueRange{stageR, bRow, bKcol},
+              /*transpose=*/false, /*numTiles=*/2);
+          sAcc[j] =
+              nb.create<nvgpu::MmaSyncOp>(nl, aFrag, bFrag, sAcc[j], mmaShape);
+        }
+      }
+
+      // (2) online softmax in registers. Each lane owns rows i=0,1.
+      Value mNew[2], alpha[2], lNew[2];
+      SmallVector<Value> Pf(nColQK * 2 * 2);
+      for (int i = 0; i < 2; ++i) {
+        Value lmax = ninf;
+        for (int64_t t = 0; t < nColQK; ++t)
+          for (int i2 = 0; i2 < 2; ++i2) {
+            Value s = nb.create<vector::ExtractOp>(
+                nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
+            Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+            lmax = nb.create<arith::MaxNumFOp>(nl, lmax, ss);
+          }
+        Value rowmax = quadReduce(nb, lmax, /*isMax=*/true);
+        mNew[i] = nb.create<arith::MaxNumFOp>(nl, mOld[i], rowmax);
+        Value md = nb.create<arith::SubFOp>(nl, mOld[i], mNew[i]);
+        alpha[i] = nb.create<math::ExpOp>(nl, md);
+        Value lsum = zeroF;
+        for (int64_t t = 0; t < nColQK; ++t)
+          for (int i2 = 0; i2 < 2; ++i2) {
+            Value s = nb.create<vector::ExtractOp>(
+                nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
+            Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+            Value sd = nb.create<arith::SubFOp>(nl, ss, mNew[i]);
+            Value p = nb.create<math::ExpOp>(nl, sd);
+            lsum = nb.create<arith::AddFOp>(nl, lsum, p);
+            Pf[pIdx(t, i, i2)] = nb.create<arith::TruncFOp>(nl, f16, p);
+          }
+        Value rsum = quadReduce(nb, lsum, /*isMax=*/false);
+        Value ls = nb.create<arith::MulFOp>(nl, lOld[i], alpha[i]);
+        lNew[i] = nb.create<arith::AddFOp>(nl, ls, rsum);
+      }
+
+      // (3) rescale O by alpha (per-row, lane-local: O row = groupID+i*8).
+      for (int64_t jo = 0; jo < nColPV; ++jo) {
+        Value v = oAcc[jo];
+        for (int i = 0; i < 2; ++i)
+          for (int i2 = 0; i2 < 2; ++i2) {
+            Value e = nb.create<vector::ExtractOp>(
+                nl, v, ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
+            Value se = nb.create<arith::MulFOp>(nl, e, alpha[i]);
+            v = nb.create<vector::InsertOp>(
+                nl, se, v, ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
+          }
+        oAcc[jo] = v;
+      }
+
+      // (4) O += P@Vj via mma.sync. P A-fragment assembled from S acc.
+      for (int64_t s = 0; s < kSubPV; ++s) {
+        Value pFrag = zeroPFrag;
+        int64_t t0 = 2 * s, t1 = 2 * s + 1;
+        int64_t map[4][2] = {{t0, 0}, {t0, 1}, {t1, 0}, {t1, 1}};
+        for (int r = 0; r < 4; ++r)
+          for (int i2 = 0; i2 < 2; ++i2)
+            pFrag = nb.create<vector::InsertOp>(
+                nl, Pf[pIdx(map[r][0], map[r][1], i2)], pFrag,
+                ArrayRef<int64_t>{(int64_t)r, (int64_t)i2});
+        Value ksc = nb.create<arith::ConstantIndexOp>(nl, s * MMA_K);
+        Value bKcol = nb.create<arith::AddIOp>(nl, ksc, bColLane);
+        for (int64_t jo = 0; jo < nColPV; ++jo) {
+          Value nb8 = nb.create<arith::ConstantIndexOp>(nl, jo * MMA_N);
+          Value bRow = nb.create<arith::AddIOp>(nl, nb8, laneMod8);
+          Value bFrag = nb.create<nvgpu::LdMatrixOp>(
+              nl, bFragTy, vtSh, ValueRange{bRow, bKcol},
+              /*transpose=*/false, /*numTiles=*/2);
+          oAcc[jo] = nb.create<nvgpu::MmaSyncOp>(nl, pFrag, bFrag, oAcc[jo],
+                                                 mmaShape);
+        }
+      }
+      nb.create<gpu::BarrierOp>(nl); // vtSh reads done before next tile reuse
+
+      SmallVector<Value> results(oAcc.begin(), oAcc.end());
+      results.push_back(mNew[0]);
+      results.push_back(mNew[1]);
+      results.push_back(lNew[0]);
+      results.push_back(lNew[1]);
+      return results;
+    };
+
     // iter_args: oAcc[0..nColPV-1], m0, m1, l0, l1.
     SmallVector<Value> iterInit;
     for (int64_t j = 0; j < nColPV; ++j)
@@ -342,140 +540,53 @@ struct FlashMMALowering {
     iterInit.push_back(zeroF); // l (i=0)
     iterInit.push_back(zeroF); // l (i=1)
 
-    Value cNumKT = b.create<arith::ConstantIndexOp>(loc, numKT);
+    // PROLOGUE: prefetch key tiles 0..N-2 (none when N==1). Keep the last
+    // group's token live (the numGroups-driven epilogue wait dependency).
+    Value prologTok;
+    for (int s = 0; s < nStages - 1; ++s) {
+      Value keyBase = b.create<arith::ConstantIndexOp>(loc, s * BN);
+      Value stage = b.create<arith::ConstantIndexOp>(loc, s);
+      prologTok = loadKV(b, loc, keyBase, stage);
+    }
+
+    // STEADY STATE: ki = 0..numKT-N. Prefetch tile ki+N-1 into buffer
+    // (ki+N-1)%N, wait for tile ki's group (keep N-1 groups in flight), barrier,
+    // compute tile ki from buffer ki%N. Carries threaded via scf.for iter_args.
+    int64_t steadyTrips = numKT - nStages + 1; // >= 1 (nStages <= numKT)
+    Value cSteady = b.create<arith::ConstantIndexOp>(loc, steadyTrips);
+    IntegerAttr waitNm1 = b.getI32IntegerAttr(nStages - 1);
     auto forOp = b.create<scf::ForOp>(
-        loc, c0, cNumKT, c1, iterInit,
+        loc, c0, cSteady, c1, iterInit,
         [&](OpBuilder &nb, Location nl, Value ki, ValueRange args) {
-          SmallVector<Value> oAcc(args.begin(), args.begin() + nColPV);
-          Value mOld0 = args[nColPV], mOld1 = args[nColPV + 1];
-          Value lOld0 = args[nColPV + 2], lOld1 = args[nColPV + 3];
-          Value mOld[2] = {mOld0, mOld1};
-          Value lOld[2] = {lOld0, lOld1};
-
-          Value keyBase = nb.create<arith::MulIOp>(nl, ki, cBN);
-
-          // Stage K (natural [BN,D]) and V (transposed -> vSh[D,BN]).
-          forEachElem(nb, BN, D, [&](OpBuilder &cb, Value r, Value c) {
-            Value gr = cb.create<arith::AddIOp>(nl, keyBase, r);
-            Value kv = cb.create<memref::LoadOp>(nl, kMem, ValueRange{gr, c});
-            cb.create<memref::StoreOp>(nl, kv, kSh, ValueRange{r, c});
-            Value vv = cb.create<memref::LoadOp>(nl, vMem, ValueRange{gr, c});
-            cb.create<memref::StoreOp>(nl, vv, vSh, ValueRange{c, r});
-          });
-          nb.create<gpu::BarrierOp>(nl);
-
-          // (1) S = Q@Kj^T via mma.sync. nColQK acc vectors over kSubQK.
-          SmallVector<Value> sAcc(nColQK, zeroAcc);
-          for (int64_t ks = 0; ks < kSubQK; ++ks) {
-            Value ksc = nb.create<arith::ConstantIndexOp>(nl, ks * MMA_K);
-            Value aKcol = nb.create<arith::AddIOp>(nl, ksc, aColLane);
-            Value aFrag = nb.create<nvgpu::LdMatrixOp>(
-                nl, aFragTy, qSh, ValueRange{aRow, aKcol},
-                /*transpose=*/false, /*numTiles=*/4);
-            Value bKcol = nb.create<arith::AddIOp>(nl, ksc, bColLane);
-            for (int64_t j = 0; j < nColQK; ++j) {
-              Value nb8 = nb.create<arith::ConstantIndexOp>(nl, j * MMA_N);
-              Value bRow = nb.create<arith::AddIOp>(nl, nb8, laneMod8);
-              Value bFrag = nb.create<nvgpu::LdMatrixOp>(
-                  nl, bFragTy, kSh, ValueRange{bRow, bKcol},
-                  /*transpose=*/false, /*numTiles=*/2);
-              sAcc[j] = nb.create<nvgpu::MmaSyncOp>(nl, aFrag, bFrag, sAcc[j],
-                                                    mmaShape);
-            }
-          }
-
-          // (2) online softmax in registers. Each lane owns rows i=0,1.
-          //   scaledS[t][i][i2] = scale * sAcc[t][i][i2].
-          Value mNew[2], alpha[2], lNew[2];
-          // Precompute P(t,i,i2) f16 (assembled into the PV A operand later).
-          SmallVector<Value> Pf(nColQK * 2 * 2);
-          auto pIdx = [&](int64_t t, int i, int i2) {
-            return (t * 2 + i) * 2 + i2;
-          };
-          for (int i = 0; i < 2; ++i) {
-            // rowmax.
-            Value lmax = ninf;
-            for (int64_t t = 0; t < nColQK; ++t)
-              for (int i2 = 0; i2 < 2; ++i2) {
-                Value s = nb.create<vector::ExtractOp>(
-                    nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
-                Value ss = nb.create<arith::MulFOp>(nl, s, scale);
-                lmax = nb.create<arith::MaxNumFOp>(nl, lmax, ss);
-              }
-            Value rowmax = quadReduce(nb, lmax, /*isMax=*/true);
-            mNew[i] = nb.create<arith::MaxNumFOp>(nl, mOld[i], rowmax);
-            Value md = nb.create<arith::SubFOp>(nl, mOld[i], mNew[i]);
-            alpha[i] = nb.create<math::ExpOp>(nl, md);
-            // P + rowsum.
-            Value lsum = zeroF;
-            for (int64_t t = 0; t < nColQK; ++t)
-              for (int i2 = 0; i2 < 2; ++i2) {
-                Value s = nb.create<vector::ExtractOp>(
-                    nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
-                Value ss = nb.create<arith::MulFOp>(nl, s, scale);
-                Value sd = nb.create<arith::SubFOp>(nl, ss, mNew[i]);
-                Value p = nb.create<math::ExpOp>(nl, sd);
-                lsum = nb.create<arith::AddFOp>(nl, lsum, p);
-                Pf[pIdx(t, i, i2)] = nb.create<arith::TruncFOp>(nl, f16, p);
-              }
-            Value rsum = quadReduce(nb, lsum, /*isMax=*/false);
-            Value ls = nb.create<arith::MulFOp>(nl, lOld[i], alpha[i]);
-            lNew[i] = nb.create<arith::AddFOp>(nl, ls, rsum);
-          }
-
-          // (3) rescale O by alpha (per-row, lane-local: O row = groupID+i*8).
-          for (int64_t jo = 0; jo < nColPV; ++jo) {
-            Value v = oAcc[jo];
-            for (int i = 0; i < 2; ++i)
-              for (int i2 = 0; i2 < 2; ++i2) {
-                Value e = nb.create<vector::ExtractOp>(
-                    nl, v, ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
-                Value se = nb.create<arith::MulFOp>(nl, e, alpha[i]);
-                v = nb.create<vector::InsertOp>(
-                    nl, se, v, ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
-              }
-            oAcc[jo] = v;
-          }
-
-          // (4) O += P@Vj via mma.sync. P A-fragment assembled from S acc.
-          for (int64_t s = 0; s < kSubPV; ++s) {
-            // k16 subtile s spans S n8-tiles 2s and 2s+1.
-            Value pFrag = zeroPFrag;
-            int64_t t0 = 2 * s, t1 = 2 * s + 1;
-            // aFrag[0]=P(t0,i=0), [1]=P(t0,i=1), [2]=P(t1,i=0), [3]=P(t1,i=1).
-            int64_t map[4][2] = {{t0, 0}, {t0, 1}, {t1, 0}, {t1, 1}};
-            for (int r = 0; r < 4; ++r)
-              for (int i2 = 0; i2 < 2; ++i2)
-                pFrag = nb.create<vector::InsertOp>(
-                    nl, Pf[pIdx(map[r][0], map[r][1], i2)], pFrag,
-                    ArrayRef<int64_t>{(int64_t)r, (int64_t)i2});
-            Value ksc = nb.create<arith::ConstantIndexOp>(nl, s * MMA_K);
-            Value bKcol = nb.create<arith::AddIOp>(nl, ksc, bColLane);
-            for (int64_t jo = 0; jo < nColPV; ++jo) {
-              Value nb8 = nb.create<arith::ConstantIndexOp>(nl, jo * MMA_N);
-              Value bRow = nb.create<arith::AddIOp>(nl, nb8, laneMod8);
-              Value bFrag = nb.create<nvgpu::LdMatrixOp>(
-                  nl, bFragTy, vSh, ValueRange{bRow, bKcol},
-                  /*transpose=*/false, /*numTiles=*/2);
-              oAcc[jo] = nb.create<nvgpu::MmaSyncOp>(nl, pFrag, bFrag, oAcc[jo],
-                                                     mmaShape);
-            }
-          }
-          nb.create<gpu::BarrierOp>(nl); // reads done before shared reuse
-
-          SmallVector<Value> results(oAcc.begin(), oAcc.end());
-          results.push_back(mNew[0]);
-          results.push_back(mNew[1]);
-          results.push_back(lNew[0]);
-          results.push_back(lNew[1]);
-          nb.create<scf::YieldOp>(nl, results);
+          Value nextTile = nb.create<arith::AddIOp>(nl, ki, cNm1);
+          Value keyNext = nb.create<arith::MulIOp>(nl, nextTile, cBN);
+          Value stageW = nb.create<arith::RemUIOp>(nl, nextTile, cNStages);
+          Value grp = loadKV(nb, nl, keyNext, stageW);
+          nb.create<nvgpu::DeviceAsyncWaitOp>(nl, grp, waitNm1);
+          nb.create<gpu::BarrierOp>(nl); // async tile ki visible to all warps
+          Value stageR = nb.create<arith::RemUIOp>(nl, ki, cNStages);
+          SmallVector<Value> cur(args.begin(), args.end());
+          SmallVector<Value> res = computeTile(nb, nl, stageR, cur);
+          nb.create<scf::YieldOp>(nl, res);
         });
 
+    // EPILOGUE of the pipeline: the last N-1 already-prefetched tiles, draining
+    // one in-flight group per tile via a decreasing static numGroups. Carries
+    // threaded as plain SSA.
+    SmallVector<Value> carries(forOp.getResults().begin(),
+                               forOp.getResults().end());
+    for (int j = 0; j < nStages - 1; ++j) {
+      int64_t tile = numKT - nStages + 1 + j;
+      Value stageR = b.create<arith::ConstantIndexOp>(loc, tile % nStages);
+      b.create<nvgpu::DeviceAsyncWaitOp>(loc, prologTok,
+                                         b.getI32IntegerAttr(nStages - 2 - j));
+      b.create<gpu::BarrierOp>(loc);
+      carries = computeTile(b, loc, stageR, carries);
+    }
+
     // Epilogue: O_global[row,col] = oAcc / l, straight from registers.
-    SmallVector<Value> finalAcc(forOp.getResults().begin(),
-                                forOp.getResults().begin() + nColPV);
-    Value lFin[2] = {forOp.getResults()[nColPV + 2],
-                     forOp.getResults()[nColPV + 3]};
+    SmallVector<Value> finalAcc(carries.begin(), carries.begin() + nColPV);
+    Value lFin[2] = {carries[nColPV + 2], carries[nColPV + 3]};
     Value warpRowGlobal = b.create<arith::AddIOp>(loc, rowBlk, warpRow16);
     for (int64_t jo = 0; jo < nColPV; ++jo) {
       Value nb8 = b.create<arith::ConstantIndexOp>(loc, jo * MMA_N);
@@ -513,12 +624,12 @@ struct ConvertIntentFlashMMAToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      FlashMMALowering probe(fn);
+      FlashMMALowering probe(fn, (int)numStages);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      FlashMMALowering low(fn);
+      FlashMMALowering low(fn, (int)numStages);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("flash-mma lowering failed after match");
         return signalPassFailure();

@@ -299,6 +299,14 @@ def ConvertIntentFlashMMAToGPU
     pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`, the scf.for
     carries vector iter_args). M8a is left 100% intact (separate pass).
   }];
+  let options = [
+    Option<"numStages", "num-stages", "unsigned", /*default=*/"2",
+           "cp.async software-pipeline depth for the K/V key-tile loop "
+           "(N rotating dynamic-shared K/V buffers; clamped to the K-tile "
+           "count). 1 = single-buffer (no multistage). N=2 hides the K/V "
+           "global-load latency behind the mma.sync+softmax of the previous "
+           "tile (~1.2x at >=512 keys); N>=3 plateaus and only wastes smem.">,
+  ];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
     "::mlir::nvgpu::NVGPUDialect",
