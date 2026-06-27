@@ -189,11 +189,26 @@ def ConvertIntentLoopContractionToGPU
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
     "::mlir::memref::MemRefDialect",
     "::mlir::scf::SCFDialect",
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"numStages", "num-stages", "unsigned", /*default=*/"1",
+           "cp.async pipeline depth for the K/V key-tile loop (N rotating "
+           "dynamic-shared K/V buffers; with N>1 the global->shared loads of "
+           "tiles ki+1..ki+N-1 prefetch ahead of the WMMA+softmax compute of "
+           "tile ki). Effective N is clamped to the K-tile count. DEFAULT 1: the "
+           "win over M8a's scalar cooperative copy comes from the *vectorized* "
+           "16-byte cp.async.cg staging (N=1, single buffer, ~30% faster), NOT "
+           "from multistage prefetch -- this kernel is softmax/compute-bound, so "
+           "N>=2 only adds async-copy + wait/barrier overhead and (D=64) grows "
+           "shared 82688->99072 B (less L1), measurably REGRESSING latency. "
+           "N=2 is the only depth >1 that still fits the 101376 B optin budget "
+           "for D=64 (each extra stage adds BN*D*2*2 = 16384 B).">,
   ];
 }
 
