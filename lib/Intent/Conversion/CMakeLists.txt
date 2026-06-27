@@ -5,6 +5,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentContractionToGPU.cpp
   ConvertIntentContractionToGPUMMA.cpp
   ConvertIntentLoopContractionToGPU.cpp
+  ConvertIntentFlashMMAToGPU.cpp
   ConvertIntentAttentionBackwardToGPU.cpp
   ConvertIntentSplitKReduceToGPU.cpp
   ConvertIntentSplitKReduceBackwardToGPU.cpp

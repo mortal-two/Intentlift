@@ -261,6 +261,56 @@ def ConvertIntentLoopContractionToGPU
   ];
 }
 
+def ConvertIntentFlashMMAToGPU
+    : Pass<"convert-intent-flash-mma-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower the fused FlashAttention-forward intent.loop to one "
+                "tensor-core gpu.launch with the online-softmax state "
+                "REGISTER-RESIDENT via nvgpu.mma.sync (the M8c sibling of "
+                "convert-intent-loop-contraction-to-gpu).";
+  let description = [{
+    The register-resident `nvgpu.mma.sync` sibling of
+    `convert-intent-loop-contraction-to-gpu` (M8a, which round-trips the
+    online-softmax state O/S/P/m/l through dynamic shared). Same recognizer (one
+    `intent.loop` scanning the key axis: carries `m[Sq,1]`, `l[Sq,1]`,
+    `O[Sq,D]`; body = `S=Q@Kj^T` -> online softmax -> `O+=P@Vj`), but the
+    rewrite keeps O/S/m/l RESIDENT IN REGISTERS so only Q/K/V touch shared:
+
+    Per block (BM=BN=64, 4 warps, each warp a 16-row query strip):
+      S = Q@Kj^T via nvgpu.ldmatrix + nvgpu.mma.sync (m16n8k16 f16->f32). The S
+      accumulators are per-warp `vector<2x2xf32>` fragments with the KNOWN PTX
+      lane layout `d[i][j] -> row = lane/4 + i*8, col = 8*tile + (lane%4)*2 + j`.
+      Each lane therefore owns 2 query rows (lane/4 and lane/4+8); a row's BN key
+      columns are spread across that lane (over the n8 tiles and j) and the 3
+      other lanes of its quad (lane%4). Per-row rowmax/rowsum are computed with a
+      quad `gpu.shuffle xor` (delta 1 then 2, width 32) -- NO shared round-trip.
+      alpha = exp(m_old-m_new) per row; P = exp(scale*S-m_new) cast f16, all in
+      registers. The P A-operand fragment for the PV matmul is assembled DIRECTLY
+      from the S accumulators (the m16n8 acc layout == the m16n8k16 A-operand
+      fragment layout, two consecutive n8 S-tiles -> one k16 A-subtile, NO
+      shuffle, NO shared P). O accumulators (`vector<2x2xf32>`, carried across the
+      key loop as `scf.for` iter_args) are rescaled by alpha (per-row scalar
+      already lane-local) then `O += P@Vj` via mma.sync (V staged transposed in
+      shared as the [D,Sk] B operand). Epilogue: `O/l` straight from registers to
+      global.
+
+    Q/K/V f16, accumulators f32. Static shapes, BM=BN=64, D%16==0, Sq%64==0,
+    Sk%64==0, non-causal, rank-2 (no batch/LSE/causal -- those stay on the M8a
+    path). Run BEFORE `convert-intent-to-linalg`; the result goes to the device
+    pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`, the scf.for
+    carries vector iter_args). M8a is left 100% intact (separate pass).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
 def ConvertIntentAttentionBackwardToGPU
     : Pass<"convert-intent-attention-backward-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower the fused FlashAttention BACKWARD (one intent.loop over "
