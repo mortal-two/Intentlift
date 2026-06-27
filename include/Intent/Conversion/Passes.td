@@ -244,6 +244,19 @@ def ConvertIntentAttentionBackwardToGPU
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
   ];
+  let options = [
+    Option<"dqMode", "dq-mode", "std::string", /*default=*/"\"serial\"",
+           "DQ accumulation mode. 'serial' (SEQUENCE_PARALLEL=false): ONE block "
+           "per (b,h) owns the whole head, an OUTER scf.for over key tiles "
+           "read-modify-writes the pre-zeroed global DQ deterministically. "
+           "'atomic' (SEQUENCE_PARALLEL=true): grid parallel over key blocks "
+           "(grid.x = cdiv(Sk,BN)); each program owns ONE key block and "
+           "accumulates its dQ contribution into pre-zeroed global DQ via "
+           "memref.atomic_rmw addf (-> red.global.add.f32 on sm_120a), unlocking "
+           "parallelism over key blocks. Both modes pre-zero DQ; they compute the "
+           "same value modulo the float reassociation of the cross-program adds "
+           "(the serial==atomic equivalence gate).">,
+  ];
 }
 
 def ConvertIntentSplitKReduceToGPU
@@ -270,6 +283,47 @@ def ConvertIntentSplitKReduceToGPU
     once) -> parity is the honest floor. Run BEFORE `convert-intent-to-linalg`;
     the result goes to the device pipeline (`lower_memref_module_to_kernels`,
     `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
+def ConvertIntentSplitKReduceBackwardToGPU
+    : Pass<"convert-intent-splitk-reduce-backward-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower the split-K attention reduce BACKWARD (gradient of the "
+                "online-LSE merge, no matmul) to one block-cooperative "
+                "gpu.launch.";
+  let description = [{
+    Recognizes a `func.func` whose body is the xformers
+    `_splitK_reduce_varargs_backward` -- the GRADIENT of the online log-sum-exp
+    merge -- as a straight-line map/reduce DAG over the packed split-K partials
+    (Out_splitK[S,Mq,D], LSE_splitK[S,Mq,1]) + the merged-output gradients
+    (Out[Mq,D], LSE[Mq,1], DOut[Mq,D], DLSE[Mq,1]), producing the per-split
+    gradients dOut_splitK[S,Mq,D], dLSE_splitK[S,Mq,1] (the varargs list is
+    normalized to this packed RowList upstream, the SAME contract as the forward
+    reduce). The DAG has exactly two `intent.reduce` -- a `max` over the split
+    axis (lse_max) and a `sum` over the head dim (the corr term) -- and broadcast
+    map ops; NO loop, NO contraction. The match is STRUCTURAL (shapes + the two
+    reduce signatures), NOT a kernel-name match.
+
+    It rewrites the func in place to ONE block-cooperative `gpu.launch`:
+    grid = (Mq,1,1) (one block per output row), block = (D,1,1) (one thread per
+    head-dim element). Two passes over the split axis (`scf.for`): pass 1
+    computes `lse_max = max_s LSE_splitK[s]` (every thread recomputes the per-row
+    scalar); `denom = exp(LSE - lse_max)`. pass 2 per split s computes
+    `w_s = exp(LSE_splitK[s] - lse_max)/denom`, stores `dOut_splitK[s] = w_s*DOut`,
+    and `dLSE_splitK[s] = w_s*DLSE + sum_d((Out_splitK[s]-Out)*w_s*DOut)`, where
+    the head-dim sum is a `gpu.all_reduce` ADD across the block's D threads
+    (inside the split-axis loop). dLSE_splitK is written once by thread 0.
+    Memory-bound (read partials once, write per-split gradients once) -> parity is
+    the honest floor. Run BEFORE `convert-intent-to-linalg`; the result goes to
+    the device pipeline (`lower_memref_module_to_kernels`, `scf_to_cf=True`).
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",

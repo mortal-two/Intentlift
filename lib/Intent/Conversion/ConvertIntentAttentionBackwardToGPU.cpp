@@ -87,6 +87,7 @@ static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 /// memref+gpu.launch func with the same name, erasing the old.
 struct FlashBwdLowering {
   func::FuncOp fn;
+  std::string dqMode = "serial"; // "serial" | "atomic" (set by the pass option)
 
   // populated by match()
   int64_t Sq = 0, Sk = 0, D = 0;
@@ -307,9 +308,14 @@ struct FlashBwdLowering {
     Value shBytes =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shTotal));
 
-    // grid = (1,1,1): ONE block per (b,h) owns the whole head (serial DQ).
+    bool atomicDQ = (dqMode == "atomic");
+
+    // grid.x: serial = 1 (ONE block per (b,h) owns the whole head, the outer key
+    // loop is an scf.for); atomic = numKT (one PROGRAM per key block, parallel
+    // over key tiles, dQ accumulated cross-program via atomic_rmw addf).
+    Value gridX = atomicDQ ? b.create<arith::ConstantIndexOp>(loc, numKT) : c1;
     auto launch =
-        b.create<gpu::LaunchOp>(loc, c1, c1, c1, cBlk, c1, c1, shBytes);
+        b.create<gpu::LaunchOp>(loc, gridX, c1, c1, cBlk, c1, c1, shBytes);
     b.setInsertionPointToStart(&launch.getBody().front());
 
     Value tx = launch.getThreadIds().x;
@@ -406,16 +412,15 @@ struct FlashBwdLowering {
       }
     };
 
-    // ---- OUTER loop over key tiles -------------------------------------- //
-    Value cNumKT = b.create<arith::ConstantIndexOp>(loc, numKT);
+    // ---- per-key-tile body --------------------------------------------- //
+    // Load Kj/Vj -> shared, reset dk/dv, run the inner query loop (steps 1-7),
+    // write dk/dv to DK/DV[keyBase]. In serial mode this runs inside an OUTER
+    // scf.for over key tiles (one block owns all key tiles); in atomic mode it
+    // runs ONCE per program (grid.x = numKT, keyBase = blockIdx.x * BN), with
+    // step 7 using a cross-program atomic_rmw addf into DQ.
     Value cBNv = b.create<arith::ConstantIndexOp>(loc, BN);
     Value cBMv = b.create<arith::ConstantIndexOp>(loc, BM);
-    auto knLoop = b.create<scf::ForOp>(loc, c0, cNumKT, c1);
-    {
-      OpBuilder ob(knLoop.getBody(), knLoop.getBody()->begin());
-      Value kn = knLoop.getInductionVar();
-      Value keyBase = ob.create<arith::MulIOp>(loc, kn, cBNv);
-
+    auto emitKeyTile = [&](OpBuilder &ob, Value keyBase) {
       // Load Kj, Vj -> shared; reset dk/dv = 0.
       forEachElem(ob, BN, D, [&](OpBuilder &nb, Value r, Value c) {
         Value gr = nb.create<arith::AddIOp>(loc, keyBase, r);
@@ -520,22 +525,32 @@ struct FlashBwdLowering {
         });
         lb.create<gpu::BarrierOp>(loc);
 
-        // (7) dQ product = dS@Kj -> Sd ; coop DQ[start_m] += Sd (RMW global).
+        // (7) dQ product = dS@Kj -> Sd ; accumulate into DQ[start_m].
         //     out[q,d]=sum_k dS[q,k]*K[k,d]. A=dS[q,k] normal, B=K[k,d] normal,
-        //     Kext=BN (key).
+        //     Kext=BN (key). SERIAL: deterministic load+add+store (one block, no
+        //     concurrent writers). ATOMIC: memref.atomic_rmw addf (-> red.global.
+        //     add.f32) -- many key-block programs accumulate the same DQ rows.
         emitMMA(lb, pdsSh, ldBN, false, kSh, ldD, false, sdSh, ldD, D, BN);
         lb.create<gpu::BarrierOp>(loc);
         forEachElem(lb, BM, D, [&](OpBuilder &nb, Value r, Value c) {
           Value gr = nb.create<arith::AddIOp>(loc, rowBase, r);
-          Value acc = nb.create<memref::LoadOp>(loc, dqMem, ValueRange{gr, c});
           Value add = nb.create<memref::LoadOp>(loc, sdSh, ValueRange{r, c});
-          Value nq = nb.create<arith::AddFOp>(loc, acc, add);
-          nb.create<memref::StoreOp>(loc, nq, dqMem, ValueRange{gr, c});
+          if (atomicDQ) {
+            nb.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::addf, add,
+                                           dqMem, ValueRange{gr, c});
+          } else {
+            Value acc = nb.create<memref::LoadOp>(loc, dqMem, ValueRange{gr, c});
+            Value nq = nb.create<arith::AddFOp>(loc, acc, add);
+            nb.create<memref::StoreOp>(loc, nq, dqMem, ValueRange{gr, c});
+          }
         });
         lb.create<gpu::BarrierOp>(loc);
       }
 
-      // Write dk/dv shared accumulators -> DK[kn], DV[kn] global.
+      // Write dk/dv shared accumulators -> DK[keyBase], DV[keyBase] global. In
+      // atomic mode each program owns one key block, so this is a plain
+      // partitioned store (no atomics needed); in serial mode the outer scf.for
+      // visits each key tile once.
       forEachElem(ob, BN, D, [&](OpBuilder &nb, Value r, Value c) {
         Value gr = nb.create<arith::AddIOp>(loc, keyBase, r);
         Value dk = nb.create<memref::LoadOp>(loc, dkSh, ValueRange{r, c});
@@ -544,6 +559,20 @@ struct FlashBwdLowering {
         nb.create<memref::StoreOp>(loc, dv, dvMem, ValueRange{gr, c});
       });
       ob.create<gpu::BarrierOp>(loc); // dk/dv written before next key tile reset
+    };
+
+    // ---- dispatch: serial outer scf.for vs atomic one-program-per-key-block //
+    if (atomicDQ) {
+      Value kn = launch.getBlockIds().x; // key tile = this program's block id
+      Value keyBase = b.create<arith::MulIOp>(loc, kn, cBNv);
+      emitKeyTile(b, keyBase);
+    } else {
+      Value cNumKT = b.create<arith::ConstantIndexOp>(loc, numKT);
+      auto knLoop = b.create<scf::ForOp>(loc, c0, cNumKT, c1);
+      OpBuilder ob(knLoop.getBody(), knLoop.getBody()->begin());
+      Value kn = knLoop.getInductionVar();
+      Value keyBase = ob.create<arith::MulIOp>(loc, kn, cBNv);
+      emitKeyTile(ob, keyBase);
     }
 
     b.create<gpu::TerminatorOp>(loc);
@@ -569,8 +598,14 @@ struct ConvertIntentAttentionBackwardToGPUPass
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
+    if (this->dqMode != "serial" && this->dqMode != "atomic") {
+      mod.emitError("flash-bwd dq-mode must be 'serial' or 'atomic', got '")
+          << this->dqMode << "'";
+      return signalPassFailure();
+    }
     for (func::FuncOp fn : targets) {
       FlashBwdLowering low(fn);
+      low.dqMode = this->dqMode;
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("flash-bwd lowering failed after match");
         return signalPassFailure();

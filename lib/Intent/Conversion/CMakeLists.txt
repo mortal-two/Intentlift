@@ -6,6 +6,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentLoopContractionToGPU.cpp
   ConvertIntentAttentionBackwardToGPU.cpp
   ConvertIntentSplitKReduceToGPU.cpp
+  ConvertIntentSplitKReduceBackwardToGPU.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
