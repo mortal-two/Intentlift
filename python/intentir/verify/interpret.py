@@ -80,6 +80,12 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
         # keepdims=True so the reduced result stays broadcastable (rowmax/rowsum).
         return _REDUCE[fn](env[op.operands[0]], axis=axes, keepdims=True)
 
+    if o == "scan":
+        fn = a["fn"]
+        if fn != "sum":
+            raise InterpError(f"scan: unknown fn {fn!r}")
+        return np.cumsum(env[op.operands[0]], axis=int(a["axis"]))
+
     if o == "contraction":
         sub = a["subscripts"]
         return np.einsum(sub, env[op.operands[0]], env[op.operands[1]])

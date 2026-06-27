@@ -73,6 +73,26 @@ def Intent_MapUnaryOp : Intent_Op<"map_unary"> {
   let hasVerifier = 1;
 }
 
+def Intent_ScanOp : Intent_Op<"scan"> {
+  let summary = "Inclusive cumulative scan along one axis (Layer A).";
+  let description = [{
+    Inclusive cumulative scan of `input` along `axis` with `fn` (currently
+    `sum` = cumsum). Shape-preserving: the result has the same shape and element
+    type as the input; `result[..., i, ...] = combine(input[..., 0..i, ...])`.
+    Unlike `intent.reduce` (which collapses the axis to a single value) and
+    `intent.loop` (which yields only the final carry), scan keeps the per-element
+    running value — the primitive sparsemax's `cumsum` of the sorted row needs.
+    Owned by M4. In a block-cooperative lowering it lowers to a single-block
+    inclusive scan over a contiguous column-to-thread tiling (per-thread
+    sequential prefix + a cross-thread exclusive scan of the segment totals
+    through `gpu.dynamic_shared_memory` + `gpu.barrier`).
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn, I64Attr:$axis);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

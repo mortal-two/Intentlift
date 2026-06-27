@@ -181,6 +181,7 @@ struct RowReductionLowering {
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
   SmallVector<ReduceOp> crossReduces; // cross-row (axis-0 sum) reduces -> AtomicOut
+  SmallVector<ScanOp> scans;         // per-row (axis-1) inclusive cumsum scans
   SmallVector<Value> outputVals;     // the returned values (>=1, topo order)
   SmallVector<ResultRole> outRoles;  // RowOut / PerRowOut / AtomicOut per result
   // ColSeg (group_norm W/B) state, indexed by func-arg position. colSegLen[i] is
@@ -401,6 +402,17 @@ struct RowReductionLowering {
         if (!reduceInfoFor(r.getFn()))
           return failure();
         reduces.push_back(r);
+      } else if (auto sc = dyn_cast<ScanOp>(&op)) {
+        // A per-row inclusive cumsum scan (sparsemax's cumsum of the sorted row).
+        // The scan keeps a row-varying per-column value; it forces the contiguous
+        // column-to-thread tiling + dynamic-shared scan path (rewriteScan). Only
+        // axis-1 (the feature axis), [M,N]->[M,N], fn=sum is supported.
+        auto inTy = cast<RankedTensorType>(sc.getInput().getType());
+        if (sc.getAxis() != 1 || inTy.getRank() != 2 ||
+            inTy.getDimSize(0) != M || inTy.getDimSize(1) != N ||
+            sc.getFn() != "sum")
+          return failure();
+        scans.push_back(sc);
       } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op)) {
         // SelectOp + comparison map_binary (-> i1) + IotaOp are the M6 residual:
         // cross_entropy's target gather/one-hot (`select(iota == Y, X, 0)`). The
@@ -409,7 +421,7 @@ struct RowReductionLowering {
         return failure();
       }
     }
-    if (reduces.empty())
+    if (reduces.empty() && scans.empty())
       return failure(); // pure elementwise -> not our pass
 
     // Validate every AtomicOut: its value must reach a cross-row reduce through
@@ -465,6 +477,17 @@ struct RowReductionLowering {
       if ((T & (T - 1)) != 0)
         return failure();
     }
+    // Scan path (sparsemax fwd): the contiguous register tile + dynamic-shared
+    // block scan. Requires a single register tile (K <= tile-cols so each
+    // thread's contiguous segment is in registers), a power-of-two T (the
+    // cross-thread exclusive scan + the manual shared reduction tree), and no
+    // cross-row/atomic fold (the row-local cumsum is the whole game).
+    if (!scans.empty()) {
+      if (numTiles != 1 || !crossReduces.empty() || numGroups != 0)
+        return failure();
+      if ((T & (T - 1)) != 0)
+        return failure();
+    }
     return success();
   }
 
@@ -476,6 +499,7 @@ struct RowReductionLowering {
   DenseMap<Value, Value> uniform;                // value -> hoisted per-row scalar
   DenseMap<Value, Value> argMemref;              // Row/Col/Scalar arg -> memref arg
   DenseMap<Value, SmallVector<Value>> rowVals;   // Row arg -> K loaded SSA values
+  DenseMap<Value, SmallVector<Value>> scanVals;  // scan result -> K cumsum SSA values
   SmallVector<Value> cols;                       // K column indices (tx + k*T)
   DenseMap<Value, Value> frontierBuf;            // cached row value -> smem memref
 
@@ -485,6 +509,13 @@ struct RowReductionLowering {
   Value emitAt(OpBuilder &b, Location loc, Value v, unsigned k) {
     if (Value u = uniform.lookup(v))
       return u;
+    // A scan (cumsum) result resolves to the thread's precomputed inclusive
+    // prefix value for its k-th (contiguous) column.
+    {
+      auto it = scanVals.find(v);
+      if (it != scanVals.end())
+        return it->second[k];
+    }
     if (auto barg = dyn_cast<BlockArgument>(v)) {
       Role role = argRoles[barg.getArgNumber()];
       if (role == Role::Row)
@@ -517,6 +548,13 @@ struct RowReductionLowering {
         return isa<IntegerType>(lhs.getType())
                    ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
                    : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+      // An integer operand in float arithmetic (sparsemax's `iota + 1` for the
+      // k_arange divisor) is coerced to f32 (signed int -> float). The only
+      // integer-typed emitAt source is iota; its only non-comparison use is this.
+      if (isa<IntegerType>(lhs.getType()))
+        lhs = b.create<arith::SIToFPOp>(loc, f32, lhs);
+      if (isa<IntegerType>(rhs.getType()))
+        rhs = b.create<arith::SIToFPOp>(loc, f32, rhs);
       return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
     }
     if (auto sel = dyn_cast<SelectOp>(def))
@@ -887,7 +925,225 @@ struct RowReductionLowering {
     return success();
   }
 
+  // ---- scan path (sparsemax fwd: block-cooperative inclusive cumsum) ------ //
+  // One block per row, T threads, K = N/T CONTIGUOUS columns per thread
+  // (col = tx*K + k, NOT the interleaved tx + k*T) so a thread's values form a
+  // contiguous segment of the row. The full-row inclusive cumsum is:
+  //   (1) each thread sequential-prefixes its K contiguous values, keeping the
+  //       segment total;
+  //   (2) thread 0 sequential-exclusive-scans the T segment totals through a
+  //       dynamic-shared [T] buffer (+ gpu.barrier);
+  //   (3) each thread adds its exclusive prefix to its local prefixes.
+  // The reduces (k-count, s-sum) use the SAME [T] dynamic-shared scratch as a
+  // manual tree (NOT gpu.all_reduce, whose static .shared would overlap the
+  // dynamic buffer). Everything else (iota, select, map, the RowOut epilogue)
+  // is the shared emitAt machinery.
+  LogicalResult rewriteScan() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+
+    SmallVector<Type> inTys;
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inTys.push_back(memrefOf(i));
+    for (ResultRole rr : outRoles) {
+      if (rr == ResultRole::RowOut)
+        inTys.push_back(MemRefType::get({M, N}, f32));
+      else // PerRowOut
+        inTys.push_back(MemRefType::get({M}, f32));
+    }
+    auto newFty = FunctionType::get(ctx, inTys, {});
+
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+
+    b.setInsertionPoint(fn);
+    auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    Block *entry = gpuFn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+
+    Block &srcBlock = fn.getBody().front();
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
+    SmallVector<Value> outMems;
+    for (unsigned j = 0; j < outRoles.size(); ++j)
+      outMems.push_back(entry->getArgument(argRoles.size() + j));
+
+    Value cM = b.create<arith::ConstantIndexOp>(loc, M);
+    Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+    Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+    // Dynamic shared: a single [T] f32 scratch, reused (sequentially, separated
+    // by gpu.barrier) for the cross-thread exclusive scan and each reduce tree.
+    int64_t shBytes = (int64_t)T * 4;
+    Value shBytesV =
+        b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shBytes));
+
+    auto launch =
+        b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1, shBytesV);
+    b.setInsertionPointToStart(&launch.getBody().front());
+
+    Value bx = launch.getBlockIds().x;
+    Value tx = launch.getThreadIds().x;
+
+    auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
+                                 wgSpace);
+    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
+    auto scratchTy = MemRefType::get({T}, f32, nullptr, wgSpace);
+    Value zoff = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value scratch =
+        b.create<memref::ViewOp>(loc, scratchTy, raw, zoff, ValueRange{});
+
+    // Scalars -> uniform (loaded once); then hoist constant-uniform subtrees.
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      Value arg = srcBlock.getArgument(i);
+      if (argRoles[i] == Role::Scalar)
+        uniform[arg] = b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+    }
+    hoistUniforms(b, loc);
+
+    // Contiguous column indices col[k] = tx*K + k, and the read-once register
+    // tile (each Row input's K contiguous values loaded once into SSA).
+    Value cK = b.create<arith::ConstantIndexOp>(loc, K);
+    Value base = b.create<arith::MulIOp>(loc, tx, cK); // tx * K (contiguous)
+    cols.clear();
+    for (int64_t k = 0; k < K; ++k) {
+      Value off = b.create<arith::ConstantIndexOp>(loc, k);
+      cols.push_back(b.create<arith::AddIOp>(loc, base, off));
+    }
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      Value arg = srcBlock.getArgument(i);
+      if (argRoles[i] == Role::Row) {
+        SmallVector<Value> vals;
+        for (int64_t k = 0; k < K; ++k)
+          vals.push_back(b.create<memref::LoadOp>(loc, argMemref[arg],
+                                                  ValueRange{bx, cols[k]}));
+        rowVals[arg] = vals;
+      } else if (argRoles[i] == Role::RowInt) {
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{bx});
+      }
+    }
+    hoistUniforms(b, loc);
+
+    Value c0i = b.create<arith::ConstantIndexOp>(loc, 0);
+
+    // For each scan: build the full-row inclusive cumsum register tile.
+    for (ScanOp sc : scans) {
+      // (1) per-thread sequential inclusive prefix over its K contiguous values.
+      SmallVector<Value> local(K);
+      Value running;
+      for (int64_t k = 0; k < K; ++k) {
+        Value v = emitAt(b, loc, sc.getInput(), k);
+        running = (k == 0) ? v : b.create<arith::AddFOp>(loc, running, v);
+        local[k] = running;
+      }
+      Value segTotal = local[K - 1];
+      // (2) cross-thread INCLUSIVE scan of the T segment totals via a parallel
+      // Hillis-Steele scan over `scratch` (log2(T) steps, fully unrolled; T is
+      // static). Each step reads scratch[tx-stride] into a register, barriers,
+      // then writes scratch[tx] += that (so no read/write hazard on the buffer);
+      // exclusive prefix = inclusive - segTotal.
+      b.create<memref::StoreOp>(loc, segTotal, scratch, ValueRange{tx});
+      b.create<gpu::BarrierOp>(loc);
+      for (int64_t stride = 1; stride < T; stride <<= 1) {
+        Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
+        Value active =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, tx, cStride);
+        // v = (tx >= stride) ? scratch[tx-stride] : 0  (read phase)
+        Value zeroF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
+        auto rdIf = b.create<scf::IfOp>(loc, TypeRange{f32}, active,
+                                        /*withElseRegion=*/true);
+        {
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(rdIf.thenBlock());
+          Value src = b.create<arith::SubIOp>(loc, tx, cStride);
+          Value v = b.create<memref::LoadOp>(loc, scratch, ValueRange{src});
+          b.create<scf::YieldOp>(loc, v);
+          b.setInsertionPointToStart(rdIf.elseBlock());
+          b.create<scf::YieldOp>(loc, zeroF);
+        }
+        b.create<gpu::BarrierOp>(loc);
+        // scratch[tx] += v  (write phase, only active lanes)
+        auto wrIf = b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
+        {
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(wrIf.thenBlock());
+          Value cur = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+          Value nv = b.create<arith::AddFOp>(loc, cur, rdIf.getResult(0));
+          b.create<memref::StoreOp>(loc, nv, scratch, ValueRange{tx});
+        }
+        b.create<gpu::BarrierOp>(loc);
+      }
+      Value incl = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+      Value excl = b.create<arith::SubFOp>(loc, incl, segTotal);
+      // (3) cssv[k] = excl + local[k] (full-row inclusive prefix).
+      SmallVector<Value> vals(K);
+      for (int64_t k = 0; k < K; ++k)
+        vals[k] = b.create<arith::AddFOp>(loc, excl, local[k]);
+      scanVals[sc.getResult()] = vals;
+      // A later reduce may consume scan results; fence the scratch reuse.
+      b.create<gpu::BarrierOp>(loc);
+    }
+
+    Value nF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr((double)N));
+
+    // Per-row reduces via the manual shared tree (reusing `scratch`).
+    for (ReduceOp red : reduces) {
+      ReduceInfo info = *reduceInfoFor(red.getFn());
+      Value acc =
+          b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
+      for (int64_t k = 0; k < K; ++k)
+        acc = combineScalar(b, loc, info.op, acc,
+                            emitAt(b, loc, red.getInput(), k));
+      b.create<memref::StoreOp>(loc, acc, scratch, ValueRange{tx});
+      b.create<gpu::BarrierOp>(loc);
+      for (int64_t stride = T / 2; stride >= 1; stride >>= 1) {
+        Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
+        Value active =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, tx, cStride);
+        auto ifOp = b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
+        {
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(ifOp.thenBlock());
+          Value a = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+          Value other = b.create<arith::AddIOp>(loc, tx, cStride);
+          Value bb = b.create<memref::LoadOp>(loc, scratch, ValueRange{other});
+          Value c = combineScalar(b, loc, info.op, a, bb);
+          b.create<memref::StoreOp>(loc, c, scratch, ValueRange{tx});
+        }
+        b.create<gpu::BarrierOp>(loc);
+      }
+      Value scalar = b.create<memref::LoadOp>(loc, scratch, ValueRange{c0i});
+      if (info.isMean)
+        scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+      uniform[red.getResult()] = scalar;
+      hoistUniforms(b, loc); // tau = (s-1)/max(k,1) etc. become available now
+      b.create<gpu::BarrierOp>(loc); // fence scratch before the next tree
+    }
+
+    // RowOut epilogue: write each output from the register tile (read-once).
+    for (unsigned j = 0; j < outputVals.size(); ++j) {
+      if (outRoles[j] != ResultRole::RowOut)
+        continue;
+      for (int64_t k = 0; k < K; ++k) {
+        Value out = emitAt(b, loc, outputVals[j], k);
+        b.create<memref::StoreOp>(loc, out, outMems[j],
+                                  ValueRange{bx, cols[k]});
+      }
+    }
+
+    b.create<gpu::TerminatorOp>(loc);
+    b.setInsertionPointAfter(launch);
+    b.create<func::ReturnOp>(loc);
+
+    fn.erase();
+    return success();
+  }
+
   LogicalResult rewrite() {
+    if (!scans.empty())
+      return rewriteScan();
     if (numTiles > 1)
       return rewriteTiled();
     MLIRContext *ctx = fn.getContext();

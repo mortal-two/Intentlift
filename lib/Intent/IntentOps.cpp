@@ -81,6 +81,25 @@ LogicalResult MapUnaryOp::verify() {
   return success();
 }
 
+LogicalResult ScanOp::verify() {
+  static constexpr llvm::StringRef kFns[] = {"sum"};
+  bool ok = false;
+  for (llvm::StringRef f : kFns)
+    if (getFn() == f)
+      ok = true;
+  if (!ok)
+    return emitOpError("unknown scan fn '") << getFn() << "'";
+  // Shape-preserving: result type matches the input type.
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("result type must equal input type");
+  auto inTy = cast<RankedTensorType>(getInput().getType());
+  if (getAxis() < 0 || getAxis() >= inTy.getRank())
+    return emitOpError("axis ")
+           << getAxis() << " out of range for rank-" << inTy.getRank()
+           << " input";
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};

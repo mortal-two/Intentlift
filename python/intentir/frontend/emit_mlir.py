@@ -80,6 +80,9 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
         for ax in (int(a) - fold for a in op.attrs["axes"]):  # keepdims
             shp[ax] = 1
         return shp
+    if op.op == "scan":
+        (x,) = op.operands
+        return list(env[x]) if x in env else None
     if op.op == "iota":
         return [int(op.attrs["n"])]
     if op.op == "const":
@@ -171,6 +174,12 @@ class _Printer:
             self.lines.append(
                 f'{indent}{r} = intent.reduce {x} {{fn = "{a["fn"]}", '
                 f'axes = [{axes}], assoc = "{a["assoc"]}"}} : '
+                f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
+        elif op.op == "scan":
+            x = self.ssa[op.operands[0]]
+            self.lines.append(
+                f'{indent}{r} = intent.scan {x} {{fn = "{a["fn"]}", '
+                f'axis = {int(a["axis"]) - fold}}} : '
                 f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
         elif op.op == "map_unary":
             x = self.ssa[op.operands[0]]
