@@ -153,7 +153,14 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
 ///   Scalar[]  — a rank-0 uniform (alpha/eps/constant), loaded once per block;
 ///   RowInt[M] — a per-row INTEGER (cross_entropy's target class Y), loaded
 ///               once per block (uniform across the block's threads) as Y[bx].
-enum class Role { Row, Col, Scalar, RowInt };
+///   ColSeg[C] — a "broadcast-segment" column vector (group_norm's W/B): a 1-D
+///               f32 arg whose value at feature column `col` of a block in group
+///               `g` is loaded at the channel index given by an affine
+///               `intent.col_index_map = affine_map<(group, col) -> channel>`
+///               arg-attr (e.g. col floordiv SPATIAL + group*CPG). A structured
+///               data-independent gather (the index is affine in (group,col)),
+///               general over any affine-broadcast Col — NOT a per-kernel branch.
+enum class Role { Row, Col, Scalar, RowInt, ColSeg };
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

@@ -39,7 +39,10 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
@@ -96,6 +99,63 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
   }
 }
 
+/// Constant-evaluate an affine expr over integer dim values (no symbols). Used
+/// to recover channels-per-group from a ColSeg's affine index map without
+/// parsing coefficients. Floordiv/mod assume non-negative operands (col,group
+/// are non-negative), matching the runtime arith form below.
+static int64_t evalAffineExprConst(AffineExpr e, ArrayRef<int64_t> dims) {
+  if (auto c = dyn_cast<AffineConstantExpr>(e))
+    return c.getValue();
+  if (auto d = dyn_cast<AffineDimExpr>(e))
+    return dims[d.getPosition()];
+  auto bin = cast<AffineBinaryOpExpr>(e);
+  int64_t l = evalAffineExprConst(bin.getLHS(), dims);
+  int64_t r = evalAffineExprConst(bin.getRHS(), dims);
+  switch (bin.getKind()) {
+  case AffineExprKind::Add:
+    return l + r;
+  case AffineExprKind::Mul:
+    return l * r;
+  case AffineExprKind::FloorDiv:
+    return l / r;
+  case AffineExprKind::Mod:
+    return l % r;
+  case AffineExprKind::CeilDiv:
+    return (l + r - 1) / r;
+  default:
+    return 0;
+  }
+}
+
+/// Emit the index arith for an affine expr over `dims` (index-typed SSA values),
+/// producing an index Value. floordiv->divui / mod->remui are valid because the
+/// dim operands (group, col) are always non-negative; a future signed map would
+/// need divsi/remsi. This is the structured affine gather of a ColSeg arg.
+static Value emitAffineExpr(OpBuilder &b, Location loc, AffineExpr e,
+                            ValueRange dims) {
+  if (auto c = dyn_cast<AffineConstantExpr>(e))
+    return b.create<arith::ConstantIndexOp>(loc, c.getValue());
+  if (auto d = dyn_cast<AffineDimExpr>(e))
+    return dims[d.getPosition()];
+  auto bin = cast<AffineBinaryOpExpr>(e);
+  Value l = emitAffineExpr(b, loc, bin.getLHS(), dims);
+  Value r = emitAffineExpr(b, loc, bin.getRHS(), dims);
+  switch (bin.getKind()) {
+  case AffineExprKind::Add:
+    return b.create<arith::AddIOp>(loc, l, r);
+  case AffineExprKind::Mul:
+    return b.create<arith::MulIOp>(loc, l, r);
+  case AffineExprKind::FloorDiv:
+    return b.create<arith::DivUIOp>(loc, l, r);
+  case AffineExprKind::Mod:
+    return b.create<arith::RemUIOp>(loc, l, r);
+  case AffineExprKind::CeilDiv:
+    return b.create<arith::CeilDivUIOp>(loc, l, r);
+  default:
+    return nullptr;
+  }
+}
+
 /// Per-result role: a full [M,N] row output (written from the register tile);
 /// a per-row [M,1]/[M] scalar output (a stat like Mean/RSTD, written once/block);
 /// or a rank-0 [] cross-row scalar (a loss total) accumulated across blocks via a
@@ -123,6 +183,13 @@ struct RowReductionLowering {
   SmallVector<ReduceOp> crossReduces; // cross-row (axis-0 sum) reduces -> AtomicOut
   SmallVector<Value> outputVals;     // the returned values (>=1, topo order)
   SmallVector<ResultRole> outRoles;  // RowOut / PerRowOut / AtomicOut per result
+  // ColSeg (group_norm W/B) state, indexed by func-arg position. colSegLen[i] is
+  // the C extent of the [C] memref; colSegMap[i] is the affine (group,col)->chan
+  // index map. numGroups (G) is recovered from C/CPG so group = bx % G.
+  SmallVector<int64_t> colSegLen;
+  SmallVector<AffineMap> colSegMap;
+  int64_t numGroups = 0;
+  Value groupVal;                    // bx % G (per-block uniform), set in rewrite
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc)
       : fn(fn), blockThreads(bt), tileColsMax(tc) {}
@@ -253,11 +320,37 @@ struct RowReductionLowering {
     // Args: classify each by shape. f32 tensors are Row[M,N]/Col[N]/Scalar[];
     // a rank-1 [M] INTEGER tensor is a RowInt (cross_entropy's target class Y),
     // loaded once per block as Y[bx].
-    for (Type at : fty.getInputs()) {
-      auto t = dyn_cast<RankedTensorType>(at);
+    colSegLen.assign(fty.getNumInputs(), 0);
+    colSegMap.assign(fty.getNumInputs(), AffineMap());
+    for (unsigned ai = 0; ai < fty.getNumInputs(); ++ai) {
+      auto t = dyn_cast<RankedTensorType>(fty.getInput(ai));
       if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
+      // ColSeg (group_norm W/B): a 1-D f32 arg carrying an affine column-index
+      // map. The arg-attr drives the gather (general, no per-kernel branch); the
+      // [C] extent need not equal N. CPG = map(1,col)-map(0,col) (the group
+      // coefficient); G = C / CPG so group = bx % G.
+      if (auto mapAttr = fn.getArgAttrOfType<AffineMapAttr>(
+              ai, "intent.col_index_map")) {
+        AffineMap m = mapAttr.getAffineMap();
+        if (s.size() != 1 || m.getNumDims() != 2 || m.getNumResults() != 1 ||
+            t.getElementType() != f32)
+          return failure();
+        int64_t cpg = evalAffineExprConst(m.getResult(0), {1, 0}) -
+                      evalAffineExprConst(m.getResult(0), {0, 0});
+        if (cpg <= 0 || s[0] % cpg != 0)
+          return failure();
+        int64_t g = s[0] / cpg;
+        if (numGroups == 0)
+          numGroups = g;
+        else if (numGroups != g)
+          return failure();
+        colSegLen[ai] = s[0];
+        colSegMap[ai] = m;
+        argRoles.push_back(Role::ColSeg);
+        continue;
+      }
       if (s.size() == 1 && s[0] == M && t.getElementType().isInteger()) {
         rowIntTy = t.getElementType();
         argRoles.push_back(Role::RowInt);
@@ -358,6 +451,11 @@ struct RowReductionLowering {
     if (numTiles > 1) {
       if (reduces.size() != 1 || !crossReduces.empty())
         return failure();
+      // ColSeg's per-(group,col) gather is only wired in the single-tile epilogue
+      // (group_norm's hidden-per-group is small -> single tile). The tiled +
+      // smem-cached path does not emit the affine channel index.
+      if (numGroups != 0)
+        return failure();
       for (ResultRole rr : outRoles)
         if (rr == ResultRole::AtomicOut)
           return failure();
@@ -393,6 +491,13 @@ struct RowReductionLowering {
         return rowVals[v][k];
       if (role == Role::Col)
         return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{cols[k]});
+      if (role == Role::ColSeg) {
+        // channel = col_index_map(group, col[k]); load W/B[channel].
+        AffineMap m = colSegMap[barg.getArgNumber()];
+        Value ch = emitAffineExpr(b, loc, m.getResult(0),
+                                  ValueRange{groupVal, cols[k]});
+        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{ch});
+      }
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{}); // scalar
     }
     Operation *def = v.getDefiningOp();
@@ -459,11 +564,14 @@ struct RowReductionLowering {
     }
   }
 
-  Type memrefOf(Role role) {
+  Type memrefOf(unsigned argIdx) {
+    Role role = argRoles[argIdx];
     if (role == Role::Row)
       return MemRefType::get({M, N}, f32);
     if (role == Role::Col)
       return MemRefType::get({N}, f32);
+    if (role == Role::ColSeg)
+      return MemRefType::get({colSegLen[argIdx]}, f32);
     if (role == Role::RowInt)
       return MemRefType::get({M}, rowIntTy);
     return MemRefType::get({}, f32);
@@ -576,8 +684,8 @@ struct RowReductionLowering {
 
     // New signature: original args (as memrefs) ++ one output memref per result.
     SmallVector<Type> inTys;
-    for (Role r : argRoles)
-      inTys.push_back(memrefOf(r));
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inTys.push_back(memrefOf(i));
     for (ResultRole rr : outRoles) {
       if (rr == ResultRole::RowOut)
         inTys.push_back(MemRefType::get({M, N}, f32));
@@ -788,8 +896,8 @@ struct RowReductionLowering {
 
     // New signature: original args (as memrefs) ++ one output memref per result.
     SmallVector<Type> inTys;
-    for (Role r : argRoles)
-      inTys.push_back(memrefOf(r));
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inTys.push_back(memrefOf(i));
     for (ResultRole rr : outRoles) { // destination-passing: one memref per result
       if (rr == ResultRole::RowOut)
         inTys.push_back(MemRefType::get({M, N}, f32));
@@ -824,6 +932,14 @@ struct RowReductionLowering {
 
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
+
+    // ColSeg (group_norm): the block's group index = bx % G (rows flattened as
+    // batch*G + group). Uniform per block, computed once; the affine channel map
+    // is applied per column in emitAt.
+    if (numGroups != 0) {
+      Value cG = b.create<arith::ConstantIndexOp>(loc, numGroups);
+      groupVal = b.create<arith::RemUIOp>(loc, bx, cG);
+    }
 
     // Column indices col[k] = tx + k*T (k*T is a compile-time constant), and the
     // read-once register tile: each Row input's K values loaded ONCE into SSA.
