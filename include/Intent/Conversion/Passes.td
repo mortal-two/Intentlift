@@ -146,6 +146,12 @@ def ConvertIntentContractionToGPU
     Option<"numStages", "num-stages", "unsigned", /*default=*/"3",
            "cp.async multistage pipeline depth (N buffers; effective N is "
            "clamped to the K-tile count). N=1 disables prefetch overlap.">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "block C-tile rows BM (numWarps = BM/16 warps tile the M axis, one "
+           "16-row strip each). Falls back to 64 for shapes M%BM!=0.">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"128",
+           "block C-tile cols BN (each warp owns BN/16 column fragments; wider "
+           "BN raises A-load reuse). Falls back to 64 for shapes N%BN!=0.">,
   ];
 }
 

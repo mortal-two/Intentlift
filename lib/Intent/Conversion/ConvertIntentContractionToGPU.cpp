@@ -83,10 +83,15 @@ using namespace intent;
 
 namespace {
 
-// Tensor-core tile geometry. BM/BN = the block's C tile (64x64), BK = the K
-// staging step (32 = 2 m16n16k16 sub-tiles). Four warps each own a 16x64 C
-// strip = 4 m16n16k16 tiles.
-static constexpr int64_t BM = 64, BN = 64, BK = 32, kWMMA = 16, kBlock = 128;
+// Tensor-core tile geometry. BM/BN = the block's C tile (a pass option; default
+// BM=64, BN=128 = tl.dot's winning large-shape config). BK = the K staging step
+// (32 = 2 m16n16k16 sub-tiles). Warps tile the M axis: numWarps = BM/16, each
+// warp owns one 16-row strip spanning all BN columns = BN/16 m16n16k16 C tiles.
+// Widening BN (more column fragments per warp) raises A-load reuse: one A
+// fragment feeds BN/16 MMAs (M7d: the 25-34% K-bound residual was this register/
+// tile blocking, not the cp.async pipeline -- which num-stages sweeps confirm is
+// saturated). kBlock = numWarps*32 is derived per config in rewrite().
+static constexpr int64_t BK = 32, kWMMA = 16;
 // L2-swizzle group width (matches tl.dot's GROUP_M=8): consecutive program ids
 // walk a GROUP_M-tall column of C blocks so neighbours reuse the same A rows /
 // W columns in L2. Decisive on large K-bound shapes (4096^3 was L2-thrashing).
@@ -98,8 +103,11 @@ static constexpr int64_t GROUP_M = 8;
 struct ContractionLowering {
   func::FuncOp fn;
   int numStages; // requested cp.async pipeline depth (clamped to the K-tile count)
+  int64_t reqBM, reqBN; // requested block tile (pass option)
 
   // populated by match()
+  int64_t BM = 64, BN = 128; // effective block tile (falls back to 64x64 for
+                             // shapes the requested tile does not divide)
   int64_t M = 0, N = 0, K = 0;
   unsigned aArgIdx = 0, wArgIdx = 0; // which func args are A[M,K] / W[N,K]
   ContractionOp con;
@@ -111,8 +119,9 @@ struct ContractionLowering {
   SmallVector<Role> argRoles;       // per func arg (A/W = Row, bias = Col, ...)
   DenseMap<Value, Value> argMemref; // src block arg -> new memref arg
 
-  ContractionLowering(func::FuncOp fn, int numStages)
-      : fn(fn), numStages(numStages) {}
+  ContractionLowering(func::FuncOp fn, int numStages, int64_t reqBM,
+                      int64_t reqBN)
+      : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN) {}
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
@@ -180,7 +189,26 @@ struct ContractionLowering {
         yTy.getDimSize(1) != N)
       return failure();
     // Divisibility: full tiles only (non-divisible tail-mask is a follow-up).
-    if (M % BM != 0 || N % BN != 0 || K % BK != 0)
+    // Pick the effective block tile: the requested (BM,BN) if it divides, else
+    // fall back to 64x64 (covers the smoke shapes 64x64x32 / 128x128x64 that the
+    // wide default BN=128 would not divide).
+    BM = reqBM;
+    BN = reqBN;
+    if (M % BM != 0 || N % BN != 0) {
+      BM = 64;
+      BN = 64;
+    } else if (BN > 64 && N % 64 == 0) {
+      // Grid-aware narrowing: a wider BN raises per-warp compute reuse but only
+      // pays off when the launch still has enough blocks to fill every SM. Below
+      // ~64 blocks the wide tile under-occupies and LOSES (measured on the 5090D:
+      // 512^3 at BN=128 = 32 blocks regressed mine/tl.dot 0.94 -> 1.27, while
+      // 1024^2x8192 / 4096^3 with 128 / 2048 blocks each gained ~2-6%). Narrow
+      // back to BN=64 when the wide grid would starve.
+      int64_t wideBlocks = (M / BM) * (N / BN);
+      if (wideBlocks < 64)
+        BN = 64;
+    }
+    if (K % BK != 0 || M % BM != 0 || N % BN != 0)
       return failure();
 
     // Classify every func arg by role for the epilogue evaluator: A/W are the
@@ -292,6 +320,12 @@ struct ContractionLowering {
     for (unsigned i = 0; i < argRoles.size(); ++i)
       argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
 
+    // Warp layout: numWarps warps tile the M axis (one 16-row strip each); each
+    // warp owns nFrag = BN/16 column fragments. kBlock = numWarps * 32 threads.
+    int64_t numWarps = BM / kWMMA;
+    int64_t kBlock = numWarps * 32;
+    int64_t nFrag = BN / kWMMA;
+
     int64_t gridN = N / BN, gridM = M / BM;
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
@@ -378,10 +412,10 @@ struct ContractionLowering {
     IntegerAttr ldY = b.getIndexAttr(N);    // Y leading dim
     UnitAttr transpose = b.getUnitAttr();
 
-    // 4 fp32 accumulator fragments (one per the warp's 4 column tiles), init 0.
+    // nFrag fp32 accumulator fragments (one per the warp's column tiles), init 0.
     Value zeroF32 = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
     SmallVector<Value> accInit;
-    for (int j = 0; j < 4; ++j)
+    for (int j = 0; j < nFrag; ++j)
       accInit.push_back(
           b.create<gpu::SubgroupMmaConstantMatrixOp>(loc, copTy, zeroF32));
 
@@ -395,7 +429,11 @@ struct ContractionLowering {
     IntegerAttr dstElems = b.getIndexAttr(8);     // 8 f16 = 16 bytes per copy
     UnitAttr bypassL1 = b.getUnitAttr();          // cp.async.cg (skip L1)
     int64_t colsPerRow = BK / 8;                  // 4 vector-cols per 32-wide row
-    int64_t vPerThread = (BM * BK) / 8 / kBlock;  // 256/128 = 2 copies/thread
+    // A tile is [BM,BK], W tile is [BN,BK]: when BM != BN the two tiles have a
+    // different vector count, so each gets its own copies-per-thread (the old
+    // shared r/cc was only valid for the BM==BN square tile).
+    int64_t vPerThreadA = (BM * BK) / 8 / kBlock;
+    int64_t vPerThreadW = (BN * BK) / 8 / kBlock;
     Value cCPR = b.create<arith::ConstantIndexOp>(loc, colsPerRow);
     Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
     Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
@@ -407,7 +445,8 @@ struct ContractionLowering {
     auto loadTile = [&](OpBuilder &nb, Location nl, Value ktVal,
                         Value stageVal) -> Value {
       SmallVector<Value> toks;
-      for (int64_t it = 0; it < vPerThread; ++it) {
+      // A[BM,BK] tile.
+      for (int64_t it = 0; it < vPerThreadA; ++it) {
         Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
         Value vt = nb.create<arith::AddIOp>(nl, tx, base);
         Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
@@ -418,6 +457,15 @@ struct ContractionLowering {
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, aSh, ValueRange{stageVal, r, cc}, aMem,
             ValueRange{ar, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+      }
+      // W[BN,BK] tile.
+      for (int64_t it = 0; it < vPerThreadW; ++it) {
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
+        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
+        Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
+        Value cc = nb.create<arith::MulIOp>(nl, colg, c8);
+        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
         Value wr = nb.create<arith::AddIOp>(nl, colBlk, r);
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, wSh, ValueRange{stageVal, r, cc}, wMem,
@@ -436,7 +484,7 @@ struct ContractionLowering {
         Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
             nl, aopTy, aSh, ValueRange{stageVal, warpRow, ksc}, ldA,
             /*transpose=*/nullptr);
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < nFrag; ++j) {
           Value cj = nb.create<arith::ConstantIndexOp>(nl, j * kWMMA);
           Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
               nl, bopTy, wSh, ValueRange{stageVal, cj, ksc}, ldW, transpose);
@@ -495,7 +543,7 @@ struct ContractionLowering {
     if (!hasEpilogue) {
       // id: store each accumulator fragment directly to Y[myRow, colBlk+j*16]
       // (byte-identical to M7a -- no shared round-trip, no scalar epilogue).
-      for (int j = 0; j < 4; ++j) {
+      for (int j = 0; j < nFrag; ++j) {
         Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
         Value yCol = b.create<arith::AddIOp>(loc, colBlk, cj);
         b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, finalAcc[j], yMem,
@@ -507,7 +555,7 @@ struct ContractionLowering {
       // then the block cooperatively reloads every element, evaluates the
       // bias-add + activation scalar DAG, and writes Y.
       IntegerAttr ldC = b.getIndexAttr(BN);
-      for (int j = 0; j < 4; ++j) {
+      for (int j = 0; j < nFrag; ++j) {
         Value cj = b.create<arith::ConstantIndexOp>(loc, j * kWMMA);
         b.create<gpu::SubgroupMmaStoreMatrixOp>(loc, finalAcc[j], cSh,
                                                 ValueRange{warpRow, cj}, ldC,
@@ -550,12 +598,14 @@ struct ConvertIntentContractionToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      ContractionLowering probe(fn, (int)numStages);
+      ContractionLowering probe(fn, (int)numStages, (int64_t)blockM,
+                               (int64_t)blockN);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      ContractionLowering low(fn, (int)numStages);
+      ContractionLowering low(fn, (int)numStages, (int64_t)blockM,
+                              (int64_t)blockN);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("contraction lowering failed after match");
         return signalPassFailure();

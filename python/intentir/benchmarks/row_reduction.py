@@ -164,10 +164,18 @@ class MatmulKernel:
     all contiguous CUDA).
     """
 
-    def __init__(self, mlir_text: str, num_stages: int | None = None):
-        pass_opt = "-convert-intent-contraction-to-gpu"
+    def __init__(self, mlir_text: str, num_stages: int | None = None,
+                 block_m: int | None = None, block_n: int | None = None):
+        opts = []
         if num_stages is not None:
-            pass_opt += f"=num-stages={num_stages}"
+            opts.append(f"num-stages={num_stages}")
+        if block_m is not None:
+            opts.append(f"block-m={block_m}")
+        if block_n is not None:
+            opts.append(f"block-n={block_n}")
+        pass_opt = "-convert-intent-contraction-to-gpu"
+        if opts:
+            pass_opt += "=" + " ".join(opts)
         rr = _run([INTENT_OPT, pass_opt], stdin=mlir_text)
         kernels = lower_memref_module_to_kernels(rr, scf_to_cf=True)
         if len(kernels) != 1:
