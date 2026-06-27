@@ -191,4 +191,39 @@ def ConvertIntentLoopContractionToGPU
   ];
 }
 
+def ConvertIntentSplitKReduceToGPU
+    : Pass<"convert-intent-splitk-reduce-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower the split-K attention reduce (online-LSE merge across "
+                "chunks, no matmul) to one block-cooperative gpu.launch.";
+  let description = [{
+    Recognizes a `func.func` whose body is the xformers `_splitK_reduce` /
+    `_splitK_reduce_varargs` merge as ONE `intent.loop` scanning the split axis
+    of a packed partial-output `O[S,Mq,D]` and partial log-sum-exp
+    `LSE[S,Mq,1]` (the varargs list is normalized to this packed form upstream,
+    so both reduce variants lift to the SAME IntentIR). The loop carries the
+    online-merge state (`lse_max[Mq,1]`, `sumexp[Mq,1]`, `O_acc[Mq,D]`); the body
+    is a pure elementwise/broadcast online update (NO contraction, NO reduce):
+    `m_new = max(lse_max, LSE_s)`, `corr = exp(lse_max - m_new)`,
+    `w = exp(LSE_s - m_new)`, `sumexp = sumexp*corr + w`,
+    `O_acc = O_acc*corr + w*O_s`. Epilogue: `O = O_acc / sumexp`.
+
+    Because `lse_max`/`sumexp` depend only on the per-(row) LSE scalars, every
+    thread can recompute them redundantly with no shared memory or barriers: the
+    rewrite emits grid = (Mq, 1, 1) (one block per output row) with one thread
+    per head-dim element owning a single `O_acc[d]` register, scanning the split
+    axis with a plain `scf.for`. Memory-bound (read S partials once, write O
+    once) -> parity is the honest floor. Run BEFORE `convert-intent-to-linalg`;
+    the result goes to the device pipeline (`lower_memref_module_to_kernels`,
+    `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
 #endif // INTENT_CONVERSION_PASSES

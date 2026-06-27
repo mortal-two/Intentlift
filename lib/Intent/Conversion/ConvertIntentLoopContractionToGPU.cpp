@@ -82,6 +82,13 @@ struct FusedAttnLoopLowering {
 
   // populated by match()
   int64_t Sq = 0, Sk = 0, D = 0;
+  // Split-K (batched) support: K/V/O carry a leading split/batch dim Z mapped to
+  // grid.y; Q stays rank-2 (shared across splits). LSE = m + log(l) is an
+  // optional second result (the split-K partial log-sum-exp).
+  bool batched = false;
+  int64_t Z = 1;
+  bool hasLSE = false;
+  unsigned oResultIdx = 0, lseResultIdx = 0;
   unsigned qArgIdx = 0, kArgIdx = 0, vArgIdx = 0, scaleArgIdx = 0;
   LoopOp loop;
   Type f16, f32;
@@ -91,7 +98,8 @@ struct FusedAttnLoopLowering {
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     auto fty = fn.getFunctionType();
-    if (fty.getNumResults() != 1 || !fn.getBody().hasOneBlock())
+    if ((fty.getNumResults() != 1 && fty.getNumResults() != 2) ||
+        !fn.getBody().hasOneBlock())
       return failure();
     Block &body = fn.getBody().front();
 
@@ -131,9 +139,13 @@ struct FusedAttnLoopLowering {
     bool sawMax = false, sawSum = false;
     for (Operation &op : lbody.without_terminator()) {
       if (auto c = dyn_cast<ContractionOp>(&op)) {
-        if (c.getSubscripts() == "qd,kd->qk")
+        // Plain (M8a) or batched-RHS (split-K) subscripts. In the batched form
+        // the key/value tiles carry a leading split dim z (Q stays rank-2 and
+        // is shared): S = Q@Kj^T over each z, PV = P@Vj over each z.
+        StringRef sub = c.getSubscripts();
+        if (sub == "qd,kd->qk" || sub == "qd,zkd->zqk")
           qk = c;
-        else if (c.getSubscripts() == "qk,kd->qd")
+        else if (sub == "qk,kd->qd" || sub == "zqk,zkd->zqd")
           pv = c;
         else
           return failure();
@@ -160,35 +172,86 @@ struct FusedAttnLoopLowering {
     if (qk.getB() != lbody.getArgument(0) || pv.getB() != lbody.getArgument(1))
       return failure();
 
-    // Shapes + element types. Q[Sq,D] f16, K[Sk,D] f16, V[Sk,D] f16, O[Sq,D] f32.
+    // Shapes + element types. Q[Sq,D] f16 (always rank-2, shared across splits);
+    // K/V/O either rank-2 (M8a: [Sk,D]/[Sq,D]) or rank-3 (split-K: a leading
+    // split dim Z -> K/V[Z,Sk,D], O[Z,Sq,D]).
     auto qTy = dyn_cast<RankedTensorType>(qk.getA().getType());
     auto kTy = dyn_cast<RankedTensorType>(kArg.getType());
     auto vTy = dyn_cast<RankedTensorType>(vArg.getType());
-    auto oTy = dyn_cast<RankedTensorType>(fty.getResult(0));
-    if (!qTy || !kTy || !vTy || !oTy)
+    if (!qTy || !kTy || !vTy)
       return failure();
-    if (!qTy.hasStaticShape() || !kTy.hasStaticShape() ||
-        !vTy.hasStaticShape() || !oTy.hasStaticShape())
+    if (!qTy.hasStaticShape() || !kTy.hasStaticShape() || !vTy.hasStaticShape())
       return failure();
-    if (qTy.getRank() != 2 || kTy.getRank() != 2 || vTy.getRank() != 2 ||
-        oTy.getRank() != 2)
+    if (qTy.getRank() != 2)
+      return failure();
+    batched = (kTy.getRank() == 3);
+    int64_t kvRank = batched ? 3 : 2;
+    if (kTy.getRank() != kvRank || vTy.getRank() != kvRank)
       return failure();
     if (!isa<Float16Type>(qTy.getElementType()) ||
         !isa<Float16Type>(kTy.getElementType()) ||
-        !isa<Float16Type>(vTy.getElementType()) ||
-        !isa<Float32Type>(oTy.getElementType()))
+        !isa<Float16Type>(vTy.getElementType()))
       return failure();
     f16 = qTy.getElementType();
-    f32 = oTy.getElementType();
 
     Sq = qTy.getDimSize(0);
     D = qTy.getDimSize(1);
-    Sk = kTy.getDimSize(0);
-    if (kTy.getDimSize(1) != D || vTy.getDimSize(0) != Sk ||
-        vTy.getDimSize(1) != D || oTy.getDimSize(0) != Sq ||
-        oTy.getDimSize(1) != D)
-      return failure();
+    if (batched) {
+      Z = kTy.getDimSize(0);
+      Sk = kTy.getDimSize(1);
+      if (kTy.getDimSize(2) != D || vTy.getDimSize(0) != Z ||
+          vTy.getDimSize(1) != Sk || vTy.getDimSize(2) != D)
+        return failure();
+    } else {
+      Z = 1;
+      Sk = kTy.getDimSize(0);
+      if (kTy.getDimSize(1) != D || vTy.getDimSize(0) != Sk ||
+          vTy.getDimSize(1) != D)
+        return failure();
+    }
     if (Sq % BM != 0 || Sk % BN != 0 || D % kWMMA != 0)
+      return failure();
+
+    // Classify the func results: O is the f32 [.,Sq,D] result; an optional
+    // second result LSE is the f32 [.,Sq,1] split-K log-sum-exp.
+    int64_t oRank = batched ? 3 : 2;
+    hasLSE = false;
+    bool foundO = false;
+    for (unsigned i = 0; i < fty.getNumResults(); ++i) {
+      auto rt = dyn_cast<RankedTensorType>(fty.getResult(i));
+      if (!rt || !rt.hasStaticShape() || !isa<Float32Type>(rt.getElementType()))
+        return failure();
+      int64_t last = rt.getDimSize(rt.getRank() - 1);
+      if (rt.getRank() == oRank && last == D) {
+        if (foundO)
+          return failure();
+        // O[.,Sq,D]
+        if (batched) {
+          if (rt.getDimSize(0) != Z || rt.getDimSize(1) != Sq)
+            return failure();
+        } else if (rt.getDimSize(0) != Sq) {
+          return failure();
+        }
+        oResultIdx = i;
+        foundO = true;
+        f32 = rt.getElementType();
+      } else if (rt.getRank() == oRank && last == 1) {
+        // LSE[.,Sq,1]
+        if (batched) {
+          if (rt.getDimSize(0) != Z || rt.getDimSize(1) != Sq)
+            return failure();
+        } else if (rt.getDimSize(0) != Sq) {
+          return failure();
+        }
+        lseResultIdx = i;
+        hasLSE = true;
+      } else {
+        return failure();
+      }
+    }
+    if (!foundO)
+      return failure();
+    if (fty.getNumResults() == 2 && !hasLSE)
       return failure();
 
     // The scale: the func's lone scalar f32 arg. (The other three ranked f16
@@ -222,7 +285,16 @@ struct FusedAttnLoopLowering {
       else
         inTys.push_back(at); // scale f32 by value
     }
-    inTys.push_back(MemRefType::get({Sq, D}, f32));
+    // Destination-passing outputs appended in a fixed order: O then (optional)
+    // LSE. Shapes carry the leading split dim Z when batched.
+    SmallVector<int64_t> oShape = batched ? SmallVector<int64_t>{Z, Sq, D}
+                                          : SmallVector<int64_t>{Sq, D};
+    inTys.push_back(MemRefType::get(oShape, f32));
+    if (hasLSE) {
+      SmallVector<int64_t> lseShape = batched ? SmallVector<int64_t>{Z, Sq, 1}
+                                              : SmallVector<int64_t>{Sq, 1};
+      inTys.push_back(MemRefType::get(lseShape, f32));
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -237,7 +309,9 @@ struct FusedAttnLoopLowering {
     Value kMem = entry->getArgument(kArgIdx);
     Value vMem = entry->getArgument(vArgIdx);
     Value scale = entry->getArgument(scaleArgIdx);
-    Value oMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+    unsigned numIn = fn.getFunctionType().getNumInputs();
+    Value oMem = entry->getArgument(numIn);
+    Value lseMem = hasLSE ? entry->getArgument(numIn + 1) : Value();
 
     int64_t gridM = Sq / BM;
     int64_t numKT = Sk / BN;
@@ -260,16 +334,20 @@ struct FusedAttnLoopLowering {
     int64_t shTotal = align16(oA + BM * 4);
 
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM);
+    Value cGridY = b.create<arith::ConstantIndexOp>(loc, batched ? Z : 1);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
     Value shBytes =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shTotal));
 
+    // grid = (Sq/BM, Z, 1): blockIdx.x selects the query tile, blockIdx.y the
+    // split-K chunk (== 1 when not batched).
     auto launch =
-        b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
+        b.create<gpu::LaunchOp>(loc, cGrid, cGridY, c1, cBlk, c1, c1, shBytes);
     b.setInsertionPointToStart(&launch.getBody().front());
 
     Value bx = launch.getBlockIds().x;
+    Value by = launch.getBlockIds().y; // split-K chunk index (batched)
     Value tx = launch.getThreadIds().x;
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
@@ -374,9 +452,12 @@ struct FusedAttnLoopLowering {
           Value r = lb.create<arith::DivUIOp>(loc, i, cDl);
           Value c = lb.create<arith::RemUIOp>(loc, i, cDl);
           Value gr = lb.create<arith::AddIOp>(loc, keyBase, r);
-          Value kv = lb.create<memref::LoadOp>(loc, kMem, ValueRange{gr, c});
+          // batched: K/V are [Z,Sk,D]; index the split chunk with blockIdx.y.
+          SmallVector<Value> kvIdx = batched ? SmallVector<Value>{by, gr, c}
+                                             : SmallVector<Value>{gr, c};
+          Value kv = lb.create<memref::LoadOp>(loc, kMem, kvIdx);
           lb.create<memref::StoreOp>(loc, kv, kSh, ValueRange{r, c});
-          Value vv = lb.create<memref::LoadOp>(loc, vMem, ValueRange{gr, c});
+          Value vv = lb.create<memref::LoadOp>(loc, vMem, kvIdx);
           lb.create<memref::StoreOp>(loc, vv, vSh, ValueRange{r, c});
         }
       }
@@ -501,8 +582,29 @@ struct FusedAttnLoopLowering {
       Value l = nb.create<memref::LoadOp>(loc, lSh, ValueRange{r});
       Value out = nb.create<arith::DivFOp>(loc, oo, l);
       Value gr = nb.create<arith::AddIOp>(loc, rowBlk, r);
-      nb.create<memref::StoreOp>(loc, out, oMem, ValueRange{gr, c});
+      SmallVector<Value> oIdx = batched ? SmallVector<Value>{by, gr, c}
+                                        : SmallVector<Value>{gr, c};
+      nb.create<memref::StoreOp>(loc, out, oMem, oIdx);
     });
+
+    // ---- split-K LSE epilogue: LSE[r] = m[r] + log(l[r]) ---------------- //
+    if (hasLSE) {
+      Value isRow = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, tx,
+                                            cBM);
+      b.create<scf::IfOp>(loc, isRow, [&](OpBuilder &nb, Location nl) {
+        Value m = nb.create<memref::LoadOp>(nl, mSh, ValueRange{tx});
+        Value l = nb.create<memref::LoadOp>(nl, lSh, ValueRange{tx});
+        Value logl = nb.create<math::LogOp>(nl, l);
+        Value lse = nb.create<arith::AddFOp>(nl, m, logl);
+        Value gr = nb.create<arith::AddIOp>(nl, rowBlk, tx);
+        Value c0i = nb.create<arith::ConstantIndexOp>(nl, 0);
+        SmallVector<Value> lseIdx = batched
+                                        ? SmallVector<Value>{by, gr, c0i}
+                                        : SmallVector<Value>{gr, c0i};
+        nb.create<memref::StoreOp>(nl, lse, lseMem, lseIdx);
+        nb.create<scf::YieldOp>(nl);
+      });
+    }
 
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
