@@ -41,6 +41,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -61,13 +62,41 @@ struct ElementwiseLowering {
   func::FuncOp fn;
   unsigned blockThreads;
 
+  // The 2-D logical layout of one register-tile access. A Row/result arg is
+  // accessed at element (row*rowStride + col*colStride) of its bare pointer; the
+  // strides come from an `intent.strides = [row, col]` arg-attr (default the
+  // contiguous [N, 1]). A NON-default stride means the arg is a strided VIEW of a
+  // larger buffer (rope's q_lo/q_hi half-views have rowStride = hd = 2N; llama4's
+  // even/odd views have colStride = 2): the index-remap that makes rope a pure
+  // elementwise op at matching logical column instead of a cross-column rotation.
+  struct Strides {
+    int64_t row, col;
+    bool isDefault(int64_t N) const { return row == N && col == 1; }
+  };
+
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
   Type f32;
-  SmallVector<Role> argRoles;     // per func arg
-  SmallVector<Value> outputVals;  // the returned values (>=1, all [M,N])
+  SmallVector<Role> argRoles;        // per func arg
+  SmallVector<int64_t> argRowDiv;    // per arg: 1, or M/d0 for a broadcast Row
+  SmallVector<Strides> argStrides;   // per arg: [row,col] (Row only; else unused)
+  SmallVector<Strides> resStrides;   // per result: [row,col]
+  SmallVector<int64_t> inplaceArg;   // per result: aliased input arg idx, or -1
+  SmallVector<Value> outputVals;     // the returned values (>=1, all [M,N])
 
   ElementwiseLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
+
+  /// memref type for a Row/result view: `memref<d0 x N x f32>` (identity layout
+  /// when contiguous, so dyt/swiglu/geglu stay byte-identical) or a strided
+  /// `memref<d0 x N x f32, strided<[row, col], offset: 0>>`. Offset is 0: the
+  /// bare pointer the harness passes is the strided torch view's data_ptr, which
+  /// already folds in any base offset (q[:, hd/2:].data_ptr()).
+  MemRefType rowMemref(MLIRContext *ctx, int64_t d0, Strides s) {
+    if (s.isDefault(N))
+      return MemRefType::get({d0, N}, f32);
+    return MemRefType::get({d0, N}, f32,
+                           StridedLayoutAttr::get(ctx, 0, {s.row, s.col}));
+  }
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
@@ -103,20 +132,66 @@ struct ElementwiseLowering {
       return failure();
     outputVals.assign(ret.getOperands().begin(), ret.getOperands().end());
 
+    // Per-result strides (default contiguous). `intent.result_strides` is a flat
+    // [row0,col0, row1,col1, ...] of length 2*nRes — rope's outputs are strided
+    // half-views of a fresh [M,hd] buffer (rowStride hd = 2N).
+    resStrides.assign(nRes, Strides{N, 1});
+    if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.result_strides")) {
+      if ((unsigned)a.size() != 2 * nRes)
+        return failure();
+      for (unsigned j = 0; j < nRes; ++j)
+        resStrides[j] = {a[2 * j], a[2 * j + 1]};
+    }
+
+    // In-place aliasing: `intent.inplace = [a0, a1, ...]` (length nRes) maps each
+    // result to the input arg whose buffer it overwrites (-1 = a fresh
+    // destination memref). rope/llama4/qwen2vl rotate q/k IN PLACE: y_lo aliases
+    // q_lo, y_hi aliases q_hi. The read-once register tile loads every input
+    // before any store, so writing back through an input view is safe.
+    inplaceArg.assign(nRes, -1);
+    if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.inplace")) {
+      if ((unsigned)a.size() != nRes)
+        return failure();
+      for (unsigned j = 0; j < nRes; ++j)
+        inplaceArg[j] = a[j];
+    }
+
     // Args: classify each by shape; only Row/Col/Scalar f32 tensors allowed.
-    for (Type at : fty.getInputs()) {
-      auto t = dyn_cast<RankedTensorType>(at);
+    // A 2-D arg whose first dim d0 < M but DIVIDES M is a "broadcast Row": one
+    // row is shared by M/d0 consecutive blocks (rope's cos/sin: one per token,
+    // shared by the token's n_head blocks). An `intent.strides` arg-attr makes
+    // the Row a strided view of a larger buffer (half / even-odd partner views).
+    for (unsigned i = 0; i < fty.getNumInputs(); ++i) {
+      auto t = dyn_cast<RankedTensorType>(fty.getInput(i));
       if (!t || !t.hasStaticShape() || t.getElementType() != f32)
         return failure();
       ArrayRef<int64_t> s = t.getShape();
-      if (s.size() == 2 && s[0] == M && s[1] == N)
-        argRoles.push_back(Role::Row);
-      else if (s.size() == 1 && s[0] == N)
-        argRoles.push_back(Role::Col);
-      else if (s.size() == 0)
-        argRoles.push_back(Role::Scalar);
-      else
+      Strides st{N, 1};
+      if (auto a = fn.getArgAttrOfType<DenseI64ArrayAttr>(i, "intent.strides")) {
+        if (a.size() != 2)
+          return failure();
+        st = {a[0], a[1]};
+      }
+      int64_t div = 1;
+      Role role;
+      if (s.size() == 2 && s[1] == N) {
+        if (s[0] == M)
+          div = 1;
+        else if (s[0] > 0 && M % s[0] == 0)
+          div = M / s[0];
+        else
+          return failure();
+        role = Role::Row;
+      } else if (s.size() == 1 && s[0] == N) {
+        role = Role::Col;
+      } else if (s.size() == 0) {
+        role = Role::Scalar;
+      } else {
         return failure();
+      }
+      argRoles.push_back(role);
+      argRowDiv.push_back(div);
+      argStrides.push_back(st);
     }
 
     // Body ops: only map_unary / map_binary. ANY reduce => not our pass (it
@@ -128,7 +203,7 @@ struct ElementwiseLowering {
     for (Operation &op : body.without_terminator()) {
       if (isa<ReduceOp>(&op))
         return failure();
-      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp>(&op))
+      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op))
         return failure();
     }
 
@@ -162,13 +237,22 @@ struct ElementwiseLowering {
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{}); // scalar
     }
     Operation *def = v.getDefiningOp();
+    if (auto io = dyn_cast<IotaOp>(def)) {
+      // iota at column col[k] is the column index itself, cast to the op's
+      // integer width (no materialized vector).
+      Type elt =
+          cast<RankedTensorType>(io.getResult().getType()).getElementType();
+      return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
+    }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitScalarUnary(b, loc, mu.getFn(), emitAt(b, loc, mu.getInput(), k));
     if (auto mb = dyn_cast<MapBinaryOp>(def)) {
       Value lhs = emitAt(b, loc, mb.getLhs(), k);
       Value rhs = emitAt(b, loc, mb.getRhs(), k);
       if (isCmpFn(mb.getFn()))
-        return emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+        return isa<IntegerType>(lhs.getType())
+                   ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
+                   : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
       return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
     }
     if (auto sel = dyn_cast<SelectOp>(def))
@@ -220,9 +304,10 @@ struct ElementwiseLowering {
     }
   }
 
-  Type memrefOf(Role role) {
+  Type memrefOfArg(MLIRContext *ctx, unsigned i) {
+    Role role = argRoles[i];
     if (role == Role::Row)
-      return MemRefType::get({M, N}, f32);
+      return rowMemref(ctx, M / argRowDiv[i], argStrides[i]);
     if (role == Role::Col)
       return MemRefType::get({N}, f32);
     return MemRefType::get({}, f32);
@@ -236,10 +321,11 @@ struct ElementwiseLowering {
     // New signature: original args (as memrefs) ++ one [M,N] output memref per
     // result (destination-passing).
     SmallVector<Type> inTys;
-    for (Role r : argRoles)
-      inTys.push_back(memrefOf(r));
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inTys.push_back(memrefOfArg(ctx, i));
     for (unsigned j = 0; j < outputVals.size(); ++j)
-      inTys.push_back(MemRefType::get({M, N}, f32));
+      if (inplaceArg[j] < 0) // fresh destination; in-place reuses an input arg
+        inTys.push_back(rowMemref(ctx, M, resStrides[j]));
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -253,9 +339,12 @@ struct ElementwiseLowering {
     Block &srcBlock = fn.getBody().front();
     for (unsigned i = 0; i < argRoles.size(); ++i)
       argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
-    SmallVector<Value> outMems;
+    SmallVector<Value> outMems(outputVals.size());
+    unsigned freshIdx = argRoles.size();
     for (unsigned j = 0; j < outputVals.size(); ++j)
-      outMems.push_back(entry->getArgument(argRoles.size() + j));
+      outMems[j] = inplaceArg[j] >= 0
+                       ? entry->getArgument(inplaceArg[j])
+                       : entry->getArgument(freshIdx++);
 
     Value cM = b.create<arith::ConstantIndexOp>(loc, M);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
@@ -277,10 +366,17 @@ struct ElementwiseLowering {
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Row) {
+        // Broadcast Row (div>1): one source row shared by `div` consecutive
+        // blocks -> source row index = bx / div (rope cos: token = bx/n_head).
+        Value ridx = bx;
+        if (argRowDiv[i] != 1) {
+          Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
+          ridx = b.create<arith::DivUIOp>(loc, bx, d);
+        }
         SmallVector<Value> vals;
         for (int64_t k = 0; k < K; ++k)
           vals.push_back(b.create<memref::LoadOp>(loc, argMemref[arg],
-                                                  ValueRange{bx, cols[k]}));
+                                                  ValueRange{ridx, cols[k]}));
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
         uniform[arg] =
