@@ -149,4 +149,46 @@ def ConvertIntentContractionToGPU
   ];
 }
 
+def ConvertIntentLoopContractionToGPU
+    : Pass<"convert-intent-loop-contraction-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a fused FlashAttention-forward intent.loop (online "
+                "softmax + two contractions) to one tensor-core gpu.launch.";
+  let description = [{
+    Recognizes a `func.func` whose body is the FlashAttention forward as ONE
+    `intent.loop` scanning the key axis: carries (running max `m[Sq,1]`, running
+    sum `l[Sq,1]`, accumulator `O[Sq,D]`); the body computes `S = Q@Kj^T`
+    (`intent.contraction{"qd,kd->qk"}`), a row-wise online softmax
+    (`reduce{max}` -> `exp` -> `reduce{sum}`), and `O += P@Vj`
+    (`intent.contraction{"qk,kd->qd"}`). It rewrites the func in place to ONE
+    tiled tensor-core `gpu.launch`.
+
+    The fusion SIDESTEPS the opaque-fragment rowmax/rescale problem by keeping
+    the online-softmax state RESIDENT IN DYNAMIC SHARED MEMORY (S, P, O, m, l,
+    alpha tiles) and the two matmuls on tensor cores: each K-tile does
+    `S = Q@Kj^T` via WMMA (`gpu.subgroup_mma_*`) stored to a shared `[BM,BN]`
+    f32 tile, a COOPERATIVE row-wise online softmax over that shared tile (per
+    row: m_new = max(m, rowmax(scale*S)), alpha = exp(m-m_new), P = exp(S-m_new)
+    cast to f16, l = l*alpha + rowsum), then `PV = P@Vj` via WMMA into a shared
+    f32 tile and the cooperative update `O = O*alpha + PV`. The per-row alpha
+    rescale and the rowmax/rowsum are plain cooperative shared-memory arithmetic
+    over the BM rows -- NOT fragment-lane indexing. The scf.for over key tiles
+    carries no iter_args (m/l/O live in shared, made visible across trips by
+    `gpu.barrier`). Epilogue: `O/l` to global.
+
+    Q/K/V are f16 (WMMA operands), the accumulator/softmax state is f32. Static
+    shapes, BM=BN=64, D%16==0, Sq%64==0, Sk%64==0 (non-causal, no bias; tail-mask
+    / causal / split-K are documented follow-ups). Run BEFORE
+    `convert-intent-to-linalg`. The resulting memref+gpu.launch module goes to the
+    device pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+}
+
 #endif // INTENT_CONVERSION_PASSES

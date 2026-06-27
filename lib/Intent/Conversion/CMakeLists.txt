@@ -3,6 +3,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentRowReductionToGPU.cpp
   ConvertIntentElementwiseToGPU.cpp
   ConvertIntentContractionToGPU.cpp
+  ConvertIntentLoopContractionToGPU.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
