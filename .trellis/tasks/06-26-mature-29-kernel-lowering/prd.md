@@ -90,7 +90,12 @@
 | **M9** | 多 matmul 反向(5 交错 contraction + recompute-P-from-LSE)+ DQ 双模(serial/atomic 等价)+ varargs split(**✅ M9a `7532d11` + M9b `ce18ea5`**)| flash bwd 栈, xformers splitK bwd | **正确**:flash bwd rel 2.8e-4 vs torch autograd,0 spill;splitK bwd rel 3.7e-8 vs 真实 xformers;**双模硬门通过**(serial==atomic ≤5.5e-8,5 seed)。perf:serial 617us → atomic 解锁 key-block 并行 |
 
 > **🎯 全覆盖达成(`ce18ea5`)**:29 算子 / 27 交付物**全部** intent → C++ `OpRewritePattern` → sm_120a cubin,**零残留 `intent.*`,bit-faithful**(rel 1e-8~3e-4)。45/45 lit + 全 PK 绿。认证语义提升环在整个 29-kernel scope 端到端闭合。
-> **剩余 = compute-bound perf-closing(非覆盖)**:memory-bound 15 个已 parity/beat(实测 ≥);compute-bound trunk 正确但 perf 有 gap —— matmul tile-blocking(0.96×/大形 1.34×)、flash fwd cp.async+并行(3.6-4.2× off SDPA)、flash bwd key-block 并行(atomic 已就绪)、M8 splitK reduce 几何、rope hd=64 occupancy。cp.async 已证(M7c 12.45×→1.34×)。
+> **最终 perf 状态(compute-bound trunk 收尾完成,机械+原语杠杆已穷尽)**:
+> - **memory-bound 15**:实测 ≥(parity/beat,jsd 1.8×)—— 完全达标。
+> - **matmul**:wmma `2797796`(cp.async,12.45×→1.34×)+ tile-blocking `cf28263`(→1.25×)+ **mma.sync 路径 `90faefe`**(0.94× 小 / 1.19-1.30× 大 vs tl.dot)。
+> - **flash fwd**:M8a 正确(spill cliff 消)→ cp.async `c31e882` → **mma.sync register-resident `8f90915`(gap 减半)** → cp.async multistage `2629ef9`(**~parity 小 / 1.38-1.43× 大 vs Triton flash**)。
+> - **flash bwd**:atomic key-block 并行 `8dbcf45`(serial 14.3× → **1.4-1.9× off Triton bwd**)。
+> - **不可约残差(已实测确认)**:全 compute-bound kernel 的剩余 ~1.2-1.4× 是 **mma.sync 调度 / warp-specialization gap**(M7e 证 wmma 同 gap;M7f 证 mma.sync 同 gap;M8d 证 staging 穷尽)。闭合它需 warp-specialization / async-mma 流水(CUTLASS/cuBLAS 级),是下一个数量级的工程。**已建 wmma + mma.sync 两条 codegen trunk;G0-G4 全过。**
 
 ---
 
