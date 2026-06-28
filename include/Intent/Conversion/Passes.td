@@ -204,6 +204,50 @@ def ConvertIntentContractionToGPUMMA
   ];
 }
 
+def ConvertIntentContractionToGPUMMAWS
+    : Pass<"convert-intent-contraction-to-gpu-mma-ws", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.contraction matmul to a WARP-SPECIALIZED "
+                "(producer/consumer) tiled-K nvgpu.mma.sync gpu.launch.";
+  let description = [{
+    M7g: the warp-specialized sibling of `convert-intent-contraction-to-gpu-mma`.
+    Same recognizer and the same register-level `nvgpu.ldmatrix` +
+    `nvgpu.mma.sync` (m16n8k16) contraction, but the block's warps are split into
+    PRODUCER warps (the high warp ids -- loop the K-tiles issuing cp.async loads
+    into an N-stage shared buffer, signal a per-stage `full` mbarrier, wait the
+    matching `empty` mbarrier) and CONSUMER warps (the low warp ids, each owning
+    a 16-row C strip as in M7f -- wait `full`, run ldmatrix + mma.sync into the
+    register accumulator carried as scf.for iter_args, signal `empty`). The
+    handshake uses the nvgpu.mbarrier primitives (init/arrive/try_wait.parity),
+    which lower to mbarrier.*.shared.b64 on sm_120a. Phase parity is computed
+    directly from the loop index ((ki/nStages)%2), no phase iter_args. The M7f
+    pass is left 100% intact; this is gated by its own name. Static shapes,
+    M%BM==N%BN==K%BK==0. Run BEFORE `convert-intent-to-linalg`; the result goes
+    to the device pipeline (`lower_memref_module_to_kernels`, `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"numStages", "num-stages", "unsigned", /*default=*/"4",
+           "cp.async multistage pipeline depth (N shared buffers; clamped to "
+           "the K-tile count).">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "block C-tile rows BM (numConsumerWarps = BM/16).">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"64",
+           "block C-tile cols BN (each consumer warp owns BN/8 n8 tiles).">,
+    Option<"numProducerWarps", "num-producer-warps", "unsigned",
+           /*default=*/"1",
+           "warps dedicated to issuing cp.async loads (the rest are consumers).">,
+  ];
+}
+
 def ConvertIntentLoopContractionToGPU
     : Pass<"convert-intent-loop-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a fused FlashAttention-forward intent.loop (online "

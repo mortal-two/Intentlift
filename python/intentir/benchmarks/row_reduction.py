@@ -166,9 +166,12 @@ class MatmulKernel:
 
     def __init__(self, mlir_text: str, num_stages: int | None = None,
                  block_m: int | None = None, block_n: int | None = None,
-                 mma: bool = False):
+                 mma: bool = False, warp_spec: bool = False,
+                 num_producer_warps: int | None = None):
         # mma=True selects the nvgpu.ldmatrix + nvgpu.mma.sync path
-        # (-convert-intent-contraction-to-gpu-mma); the default WMMA
+        # (-convert-intent-contraction-to-gpu-mma); warp_spec=True selects the
+        # M7g warp-specialized (producer/consumer) mma.sync path
+        # (-convert-intent-contraction-to-gpu-mma-ws). The default WMMA
         # gpu.subgroup_mma_* path (-convert-intent-contraction-to-gpu) is kept
         # 100% intact and remains the default.
         opts = []
@@ -178,8 +181,13 @@ class MatmulKernel:
             opts.append(f"block-m={block_m}")
         if block_n is not None:
             opts.append(f"block-n={block_n}")
-        base = ("-convert-intent-contraction-to-gpu-mma" if mma
-                else "-convert-intent-contraction-to-gpu")
+        if warp_spec and num_producer_warps is not None:
+            opts.append(f"num-producer-warps={num_producer_warps}")
+        if warp_spec:
+            base = "-convert-intent-contraction-to-gpu-mma-ws"
+        else:
+            base = ("-convert-intent-contraction-to-gpu-mma" if mma
+                    else "-convert-intent-contraction-to-gpu")
         pass_opt = base
         if opts:
             pass_opt += "=" + " ".join(opts)
