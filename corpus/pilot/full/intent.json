@@ -1,0 +1,26 @@
+{
+  "intent_function": {
+    "name": "full",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "Y",
+        "attrs": {
+          "value": 3.0,
+          "dtype": "f32"
+        }
+      }
+    ]
+  }
+}

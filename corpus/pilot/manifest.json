@@ -1,0 +1,404 @@
+{
+  "summary": {
+    "total": 24,
+    "extracted": 22,
+    "lowered": 14,
+    "verified": 20,
+    "ok": 12,
+    "extraction_fail": 2,
+    "lowering_fail": 8,
+    "verify_fail": 2,
+    "extraction_success_pct": 91.7,
+    "composability_fail_pct": 36.4,
+    "verify_pass_pct": 83.3
+  },
+  "ops": [
+    {
+      "op": "cos",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 5.9604644775331015e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "cast",
+        "map_unary:cos"
+      ],
+      "error": ""
+    },
+    {
+      "op": "sin",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 5.9604644775331015e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:sin"
+      ],
+      "error": ""
+    },
+    {
+      "op": "erf",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 5.653280477074704e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:erf"
+      ],
+      "error": ""
+    },
+    {
+      "op": "elu",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 3.167752382117272e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "map_binary:max",
+        "map_unary:exp",
+        "map_binary:sub",
+        "map_binary:min",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "softplus",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 6.639791005936448e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:exp",
+        "const",
+        "map_binary:add",
+        "map_unary:log"
+      ],
+      "error": ""
+    },
+    {
+      "op": "addcdiv",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 9.915670199650949e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:div",
+        "const",
+        "map_binary:mul",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "addcmul",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 9.41484834562099e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:mul",
+        "const",
+        "map_binary:mul",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "mse_loss",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 5.989982712307885e-08,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:sub",
+        "map_binary:mul",
+        "reduce:mean"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "eq",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:eq"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:5:12: error: use of value '%OUT_1' expects different type than prior uses: 'tensor<64x256xf32"
+    },
+    {
+      "op": "amax",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "reduce:max"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "vector_norm",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 1.1888464800930537e-07,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:mul",
+        "reduce:sum",
+        "map_unary:sqrt"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "std",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 2,
+      "attempts": 2,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "reduce:mean",
+        "map_binary:mul",
+        "reduce:mean",
+        "map_binary:mul",
+        "map_binary:sub",
+        "const",
+        "map_binary:max",
+        "map_unary:sqrt"
+      ],
+      "error": "lower: 2 residual intent.* op(s)"
+    },
+    {
+      "op": "var_mean",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 6.106402291663083e-05,
+      "residual_intent": 3,
+      "attempts": 2,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "reduce:mean",
+        "map_binary:sub",
+        "map_binary:mul",
+        "reduce:sum",
+        "const",
+        "const",
+        "map_binary:mul",
+        "map_binary:add",
+        "reduce:sum",
+        "map_binary:sub",
+        "map_binary:div"
+      ],
+      "error": "lower: 3 residual intent.* op(s)"
+    },
+    {
+      "op": "count_nonzero",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "cast",
+        "cast",
+        "reduce:sum"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "batch_norm",
+      "family": "norm",
+      "extracted": false,
+      "lowered": false,
+      "verified": false,
+      "rel": null,
+      "residual_intent": null,
+      "attempts": 0,
+      "failure_class": "extraction_fail",
+      "ops": [],
+      "error": "extract: RuntimeError: extraction failed after 4 tries; last: ValueError: output 'Y' not finite on random inputs"
+    },
+    {
+      "op": "weight_norm",
+      "family": "norm",
+      "extracted": true,
+      "lowered": true,
+      "verified": false,
+      "rel": 1.9458389033345849,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "verify_fail",
+      "ops": [
+        "const",
+        "map_binary:mul",
+        "reduce:sum",
+        "map_binary:add",
+        "map_unary:sqrt",
+        "map_binary:div",
+        "map_binary:mul"
+      ],
+      "error": ""
+    },
+    {
+      "op": "instance_norm",
+      "family": "norm",
+      "extracted": false,
+      "lowered": false,
+      "verified": false,
+      "rel": null,
+      "residual_intent": null,
+      "attempts": 0,
+      "failure_class": "extraction_fail",
+      "ops": [],
+      "error": "extract: RuntimeError: extraction failed after 4 tries; last: ValueError: output 'Y' not finite on random inputs"
+    },
+    {
+      "op": "arange",
+      "family": "init",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const"
+      ],
+      "error": "lower: TypeError: float() argument must be a string or a real number, not 'list'"
+    },
+    {
+      "op": "full",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 2,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "silu_and_mul",
+      "family": "fused",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.0528667561321483e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:sigmoid",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "error": ""
+    },
+    {
+      "op": "gelu_and_mul",
+      "family": "fused",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 6.350411014646994e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "map_binary:mul",
+        "map_unary:erf",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "error": ""
+    },
+    {
+      "op": "reglu",
+      "family": "fused",
+      "extracted": true,
+      "lowered": true,
+      "verified": false,
+      "rel": null,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "verify_fail",
+      "ops": [
+        "const",
+        "map_binary:max",
+        "map_binary:mul"
+      ],
+      "error": "verify: RuntimeError: arity: provided 1 inputs, LLM declared 2"
+    }
+  ],
+  "extraction_success_pct": 90.9,
+  "composability_fail_pct": 40.0,
+  "verify_pass_pct": 81.8,
+  "note": "softmax/log_softmax dropped from the pilot (corpus-overlapping; the 15-kernel corpus already verifies them, and re-running flag_gems.softmax twice/process hits the known Triton-3.6 launcher arg-count bug). Pilot samples the untested universe."
+}

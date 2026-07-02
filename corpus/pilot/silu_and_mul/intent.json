@@ -1,0 +1,67 @@
+{
+  "intent_function": {
+    "name": "silu_and_mul",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_unary",
+        "result": "sig",
+        "operands": [
+          "A"
+        ],
+        "attrs": {
+          "fn": "sigmoid"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "silu",
+        "operands": [
+          "A",
+          "sig"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "silu",
+          "B"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      }
+    ]
+  }
+}

@@ -46,6 +46,7 @@ class KernelSpec:
     # run the actual library kernel on those inputs -> torch.Tensor
     run: Callable[[list], object]
     note: str = ""
+    family: str = ""  # coverage-family tag (unary/binary/reduce/norm/... ) for C1
 
 
 def _src(spec: KernelSpec) -> str:

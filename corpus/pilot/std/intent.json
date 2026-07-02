@@ -1,0 +1,117 @@
+{
+  "intent_function": {
+    "name": "std",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Out",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "body": [
+      {
+        "op": "reduce",
+        "result": "mean",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_sq",
+        "operands": [
+          "X",
+          "X"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "mean_sq",
+        "operands": [
+          "x_sq"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "mean_times_mean",
+        "operands": [
+          "mean",
+          "mean"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "var",
+        "operands": [
+          "mean_sq",
+          "mean_times_mean"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "safe_var",
+        "operands": [
+          "var",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "max"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "Out",
+        "operands": [
+          "safe_var"
+        ],
+        "attrs": {
+          "fn": "sqrt"
+        }
+      }
+    ]
+  }
+}

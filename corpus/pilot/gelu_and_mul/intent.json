@@ -1,0 +1,127 @@
+{
+  "intent_function": {
+    "name": "gelu_and_mul",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "C",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "c_half",
+        "attrs": {
+          "value": 0.5,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_one",
+        "attrs": {
+          "value": 1.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_rcp_sqrt_2",
+        "attrs": {
+          "value": 0.7071067811,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "A_scaled",
+        "operands": [
+          "A",
+          "c_rcp_sqrt_2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "erf_A_scaled",
+        "operands": [
+          "A_scaled"
+        ],
+        "attrs": {
+          "fn": "erf"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "one_plus_erf",
+        "operands": [
+          "c_one",
+          "erf_A_scaled"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "half_A",
+        "operands": [
+          "c_half",
+          "A"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "gelu_A",
+        "operands": [
+          "half_A",
+          "one_plus_erf"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "C",
+        "operands": [
+          "gelu_A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      }
+    ]
+  }
+}

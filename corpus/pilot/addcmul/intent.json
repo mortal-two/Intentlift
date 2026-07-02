@@ -1,0 +1,85 @@
+{
+  "intent_function": {
+    "name": "addcmul",
+    "inputs": [
+      {
+        "name": "INP",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "T1",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "T2",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "OUT",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "t1_t2",
+        "operands": [
+          "T1",
+          "T2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "const",
+        "result": "value",
+        "attrs": {
+          "value": 0.5,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "scaled",
+        "operands": [
+          "value",
+          "t1_t2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "OUT",
+        "operands": [
+          "INP",
+          "scaled"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      }
+    ]
+  }
+}
