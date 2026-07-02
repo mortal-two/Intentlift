@@ -32,10 +32,18 @@ _BINARY = {
     "le": np.less_equal, "eq": np.equal,
 }
 
+try:  # accurate double-precision erf reference; fall back to the stdlib scalar.
+    from scipy.special import erf as _erf  # type: ignore
+except Exception:  # pragma: no cover - scipy usually present
+    import math as _math
+    _erf = np.vectorize(_math.erf)
+
 _UNARY = {
     "exp": np.exp, "log": np.log, "sqrt": np.sqrt, "neg": np.negative,
     "recip": np.reciprocal, "abs": np.abs, "tanh": np.tanh,
     "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-x)),
+    "cos": np.cos, "sin": np.sin, "tan": np.tan, "exp2": np.exp2,
+    "erf": _erf, "isnan": np.isnan, "logical_not": np.logical_not,
 }
 
 _REDUCE = {

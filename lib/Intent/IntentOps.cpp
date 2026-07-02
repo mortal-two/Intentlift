@@ -67,8 +67,26 @@ LogicalResult IotaOp::verify() {
 }
 
 LogicalResult MapUnaryOp::verify() {
+  // Element-type-preserving fns: result type == input type.
   static constexpr llvm::StringRef kFns[] = {
-      "exp", "log", "neg", "abs", "sqrt", "rsqrt", "recip", "tanh", "sigmoid"};
+      "exp",  "log", "neg",  "abs", "sqrt", "rsqrt",   "recip",
+      "tanh", "sigmoid", "cos", "sin", "tan",  "exp2", "erf",
+      // logical_not is i1->i1, still element-type-preserving.
+      "logical_not"};
+  // Predicate fns produce an i1-typed result tensor (the boolean condition for
+  // intent.select), mirroring the map_binary comparison fns.
+  static constexpr llvm::StringRef kToI1Fns[] = {"isnan"};
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  for (llvm::StringRef f : kToI1Fns)
+    if (getFn() == f) {
+      if (!rTy.getElementType().isInteger(1))
+        return emitOpError("predicate fn '")
+               << getFn() << "' must produce an i1-typed result tensor";
+      auto iTy = cast<RankedTensorType>(getInput().getType());
+      if (iTy.getShape() != rTy.getShape())
+        return emitOpError("result shape must equal input shape");
+      return success();
+    }
   bool ok = false;
   for (llvm::StringRef f : kFns)
     if (getFn() == f)
@@ -78,6 +96,16 @@ LogicalResult MapUnaryOp::verify() {
   // Shape-preserving: result type matches the input type.
   if (getInput().getType() != getResult().getType())
     return emitOpError("result type must equal input type");
+  return success();
+}
+
+LogicalResult CastOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  // Shape-preserving: only the element type may differ.
+  if (iTy.getShape() != rTy.getShape())
+    return emitOpError("cast is shape-preserving: result shape ")
+           << rTy.getShape() << " != input shape " << iTy.getShape();
   return success();
 }
 

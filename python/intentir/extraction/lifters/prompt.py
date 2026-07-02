@@ -39,7 +39,10 @@ Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
                {add,sub,mul,div,max,min,pow}.
      {"op":"map_binary","result":R,"operands":[A,B],"attrs":{"fn":F}}
-  map_unary  : elementwise. fn in {exp,log,sqrt,neg,recip,abs,tanh,sigmoid}.
+  map_unary  : elementwise. fn in
+               {exp,log,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
+                cos,sin,tan,exp2,erf,isnan,logical_not}.
+               (isnan produces an i1 tensor -> feeds select; logical_not is i1->i1.)
      {"op":"map_unary","result":R,"operands":[A],"attrs":{"fn":F}}
   reduce     : along axes, KEEPDIMS (result keeps reduced dims as size 1 so it
                stays broadcastable). fn in {sum,mean,max,min,prod,any,all}.
@@ -69,7 +72,14 @@ Structured loop (loop-carried recurrence, e.g. online softmax / scans):
 Hard rules:
 - Do NOT invent ops or fns outside the lists above. If the kernel needs one,
   express it with the primitives (e.g. rsqrt = recip(sqrt(x)); a literal number
-  is a "const" op; mean over an axis is reduce fn "mean").
+  is a "const" op; mean over an axis is reduce fn "mean"). Common compositions:
+    softplus(x)    = log(1 + exp(x))                    (exp, add const 1, log)
+    log_sigmoid(x) = neg(softplus(neg(x)))
+    elu(x,a)       = select(x>0, x, a*(exp(x)-1))       (map_binary gt, select)
+    celu(x,a)      = select(x>0, x, a*(exp(x/a)-1))
+    clamp(x,lo,hi) = min(max(x, lo), hi)                (map_binary max then min)
+    threshold(x,t,v)= select(x>t, x, v)
+    nan_to_num(x)  = select(isnan(x), 0, x)             (map_unary isnan, select)
 - Numerical-stability shifts (subtract row-max before exp) ARE part of the
   algorithm -- keep them.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\

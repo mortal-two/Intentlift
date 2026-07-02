@@ -64,10 +64,32 @@ def Intent_MapUnaryOp : Intent_Op<"map_unary"> {
   let summary = "Elementwise unary map (Layer A).";
   let description = [{
     Elementwise unary op over one ranked tensor. `fn` selects the pointwise
-    operation (exp/log/neg/abs/sqrt/rsqrt/recip). Shape-preserving; the result
-    has the same shape and element type as the input.
+    operation. Most fns are shape- AND element-type-preserving
+    (exp/log/neg/abs/sqrt/rsqrt/recip/tanh/sigmoid/cos/sin/tan/exp2/erf), the same
+    class the transcendental peephole turns into NVVM approx intrinsics.
+    Predicate fns (`isnan`) instead produce an `i1`-typed result tensor (the
+    boolean condition for `intent.select`, mirroring the `map_binary` comparison
+    fns); `logical_not` is the `i1`->`i1` complement. Shape-preserving throughout.
   }];
   let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_CastOp : Intent_Op<"cast"> {
+  let summary = "Elementwise dtype cast (Layer A).";
+  let description = [{
+    Element-type conversion (numpy `astype`) of one ranked tensor to `to_dtype`.
+    Shape-preserving; only the element type changes. Lowers to the matching
+    `arith` conversion for the (source, target) pair — `truncf`/`extf` between
+    float widths, `fptosi`/`sitofp` across the float/int boundary, `trunci`/
+    `extsi` between integer widths — and folds to an identity alias when source
+    and target element types are already equal (the f32-only corpus case).
+    The M3b-deferred op, landed by C0 so the dtype-convert (`cast`/`to`) family
+    extracts + lowers.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$to_dtype);
   let results = (outs AnyRankedTensor:$result);
   let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;

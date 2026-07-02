@@ -71,6 +71,71 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     return b.create<arith::DivFOp>(loc, one,
                                    b.create<arith::AddFOp>(loc, one, e));
   }
+  // cos/sin route through math.cos/math.sin, which the `-lower-gpu-math-to-nvvm`
+  // peephole turns into the `cos.approx.f`/`sin.approx.f` PTX hardware ops
+  // (the stock GpuToNVVM path emits `__nv_cosf`/`__nv_sinf` libdevice externs =
+  // ptxas dead end, the same failure mode as exp/tanh/sqrt).
+  if (fn == "cos")
+    return b.create<math::CosOp>(loc, x);
+  if (fn == "sin")
+    return b.create<math::SinOp>(loc, x);
+  if (fn == "tan") {
+    // tan(x) = sin(x)/cos(x): stay off `__nv_tanf` by composing the two approx
+    // hardware ops the peephole already provides.
+    Value s = b.create<math::SinOp>(loc, x);
+    Value c = b.create<math::CosOp>(loc, x);
+    return b.create<arith::DivFOp>(loc, s, c);
+  }
+  if (fn == "exp2")
+    // 2^x directly on the `ex2.approx.ftz.f` hardware op (no log2(e) prescale,
+    // unlike exp) via the math.exp2 peephole.
+    return b.create<math::Exp2Op>(loc, x);
+  if (fn == "erf") {
+    // Abramowitz & Stegun 7.1.26: erf(|x|) = 1 - poly(t)*exp(-x^2),
+    // t = 1/(1+p|x|), max abs err ~1.5e-7 — far inside the 1e-3 tolerance. Uses
+    // math.exp (-> ex2.approx peephole) + arith only; NVVM has no erf approx and
+    // math.erf would lower to a `__nv_erff` libdevice extern (ptxas dead end).
+    Type ty = x.getType();
+    auto cst = [&](double v) {
+      return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
+    };
+    Value one = cst(1.0), zero = cst(0.0);
+    Value negx = b.create<arith::NegFOp>(loc, x);
+    Value absx = b.create<arith::MaxNumFOp>(loc, x, negx);
+    Value t = b.create<arith::DivFOp>(
+        loc, one,
+        b.create<arith::AddFOp>(loc, one,
+                                b.create<arith::MulFOp>(loc, cst(0.3275911), absx)));
+    // Horner: t*(a1 + t*(a2 + t*(a3 + t*(a4 + t*a5))))
+    Value poly = cst(1.061405429);
+    poly = b.create<arith::AddFOp>(loc, cst(-1.453152027),
+                                   b.create<arith::MulFOp>(loc, t, poly));
+    poly = b.create<arith::AddFOp>(loc, cst(1.421413741),
+                                   b.create<arith::MulFOp>(loc, t, poly));
+    poly = b.create<arith::AddFOp>(loc, cst(-0.284496736),
+                                   b.create<arith::MulFOp>(loc, t, poly));
+    poly = b.create<arith::AddFOp>(loc, cst(0.254829592),
+                                   b.create<arith::MulFOp>(loc, t, poly));
+    poly = b.create<arith::MulFOp>(loc, t, poly);
+    Value ex = b.create<math::ExpOp>(
+        loc, b.create<arith::NegFOp>(loc,
+                                     b.create<arith::MulFOp>(loc, absx, absx)));
+    Value y = b.create<arith::SubFOp>(
+        loc, one, b.create<arith::MulFOp>(loc, poly, ex));
+    // erf(-x) = -erf(x): flip the sign for negative inputs.
+    Value isneg = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
+    return b.create<arith::SelectOp>(loc, isneg, b.create<arith::NegFOp>(loc, y),
+                                     y);
+  }
+  if (fn == "isnan")
+    // NaN is the only value unordered with itself. -> i1 (feeds intent.select,
+    // e.g. nan_to_num = select(isnan(x), 0, x)). No libdevice.
+    return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::UNO, x, x);
+  if (fn == "logical_not") {
+    // i1 complement: x XOR true.
+    Value t = b.create<arith::ConstantOp>(loc, b.getBoolAttr(true));
+    return b.create<arith::XOrIOp>(loc, x, t);
+  }
   return nullptr;
 }
 

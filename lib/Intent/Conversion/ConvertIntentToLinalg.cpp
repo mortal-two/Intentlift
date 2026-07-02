@@ -82,6 +82,19 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
   }
   if (fn == "tanh")
     return b.create<math::TanhOp>(loc, x);
+  // CPU/linalg path: raw math.* transcendentals (libdevice concerns are the GPU
+  // pass's problem; the NVVM approx peephole lives in MapEmit.h's emitter).
+  if (fn == "cos")
+    return b.create<math::CosOp>(loc, x);
+  if (fn == "sin")
+    return b.create<math::SinOp>(loc, x);
+  if (fn == "tan")
+    return b.create<arith::DivFOp>(loc, b.create<math::SinOp>(loc, x),
+                                   b.create<math::CosOp>(loc, x));
+  if (fn == "exp2")
+    return b.create<math::Exp2Op>(loc, x);
+  if (fn == "erf")
+    return b.create<math::ErfOp>(loc, x);
   if (fn == "sigmoid") {
     // 1 / (1 + exp(-x))
     Value one = b.create<arith::ConstantOp>(loc, b.getFloatAttr(x.getType(), 1.0));
@@ -462,6 +475,61 @@ struct LoopLowering : OpRewritePattern<LoopOp> {
   }
 };
 
+/// Emit the scalar arith conversion for a (src -> dst) element-type pair.
+/// Identity when equal; the natural arith op otherwise.
+static Value emitScalarCast(OpBuilder &b, Location loc, Type dst, Value v) {
+  Type src = v.getType();
+  if (src == dst)
+    return v;
+  auto sf = dyn_cast<FloatType>(src);
+  auto df = dyn_cast<FloatType>(dst);
+  auto si = dyn_cast<IntegerType>(src);
+  auto di = dyn_cast<IntegerType>(dst);
+  if (sf && df)
+    return sf.getWidth() < df.getWidth()
+               ? b.create<arith::ExtFOp>(loc, dst, v).getResult()
+               : b.create<arith::TruncFOp>(loc, dst, v).getResult();
+  if (sf && di)
+    return b.create<arith::FPToSIOp>(loc, dst, v);
+  if (si && df)
+    return b.create<arith::SIToFPOp>(loc, dst, v);
+  if (si && di)
+    return si.getWidth() < di.getWidth()
+               ? b.create<arith::ExtSIOp>(loc, dst, v).getResult()
+               : b.create<arith::TruncIOp>(loc, dst, v).getResult();
+  return nullptr;
+}
+
+struct CastLowering : OpRewritePattern<CastOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CastOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    auto inTy = cast<RankedTensorType>(op.getInput().getType());
+    // Same element type -> identity alias (the f32-only corpus path).
+    if (inTy.getElementType() == resTy.getElementType()) {
+      rewriter.replaceOp(op, op.getInput());
+      return success();
+    }
+    Location loc = op.getLoc();
+    Value init = rewriter.create<tensor::EmptyOp>(loc, resTy.getShape(),
+                                                  resTy.getElementType());
+    unsigned rank = resTy.getRank();
+    SmallVector<AffineMap> maps(2, rewriter.getMultiDimIdentityMap(rank));
+    SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
+    Type dstElt = resTy.getElementType();
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resTy}, ValueRange{op.getInput()}, ValueRange{init}, maps,
+        iters, [&](OpBuilder &b, Location l, ValueRange args) {
+          Value c = emitScalarCast(b, l, dstElt, args[0]);
+          b.create<linalg::YieldOp>(l, c);
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
 struct ConvertIntentToLinalgPass
     : ::intent::impl::ConvertIntentToLinalgBase<ConvertIntentToLinalgPass> {
   using ConvertIntentToLinalgBase::ConvertIntentToLinalgBase;
@@ -469,7 +537,7 @@ struct ConvertIntentToLinalgPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<MapUnaryLowering, MapBinaryLowering, ReduceLowering,
-                 ContractionLowering, LoopLowering>(&getContext());
+                 ContractionLowering, LoopLowering, CastLowering>(&getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

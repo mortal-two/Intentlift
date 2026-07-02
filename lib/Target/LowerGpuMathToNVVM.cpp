@@ -118,6 +118,27 @@ struct UnaryToNVVMApprox : OpRewritePattern<MathOp> {
   StringRef intrinsic;
 };
 
+/// `math.exp2 %x : f32` -> `ex2.approx.ftz.f32(%x)`. exp2 IS the native 2^x
+/// hardware op with NO change-of-base prescale (unlike exp, which multiplies by
+/// log2(e) first). The stock GpuToNVVM path routes math.exp2 to a `__nv_exp2f`
+/// libdevice extern (ptxas dead end, same failure mode as exp/log/sqrt).
+struct Exp2ToEx2Approx : OpRewritePattern<math::Exp2Op> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::Exp2Op op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    auto approx = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32,
+        rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
+        ValueRange{op.getOperand()});
+    rewriter.replaceOp(op, approx.getResults());
+    return success();
+  }
+};
+
 struct LowerGpuMathToNVVM
     : ::intent::impl::LowerGpuMathToNVVMBase<LowerGpuMathToNVVM> {
   using LowerGpuMathToNVVMBase::LowerGpuMathToNVVMBase;
@@ -126,10 +147,17 @@ struct LowerGpuMathToNVVM
     RewritePatternSet patterns(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
     patterns.add<LogToLg2Approx>(&getContext());
+    patterns.add<Exp2ToEx2Approx>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
     patterns.add<UnaryToNVVMApprox<math::RsqrtOp>>(&getContext(),
                                                    "llvm.nvvm.rsqrt.approx.f");
+    // sin/cos: the `sin.approx.f`/`cos.approx.f` PTX hardware ops (math.sin /
+    // math.cos would otherwise become `__nv_sinf`/`__nv_cosf` libdevice externs).
+    patterns.add<UnaryToNVVMApprox<math::SinOp>>(&getContext(),
+                                                 "llvm.nvvm.sin.approx.f");
+    patterns.add<UnaryToNVVMApprox<math::CosOp>>(&getContext(),
+                                                 "llvm.nvvm.cos.approx.f");
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
