@@ -35,27 +35,57 @@ into MEASURED coverage, isolating the genuinely-new lowering mechanisms from the
 - Verification standard at scale: numeric vs the real `flag_gems.<op>` (as today) for all, and how to handle RNG (seed) + dynamic-shape outputs?
 - Definition of "supported": extracted+verified (interpret==real kernel) enough, or must it also lower to sm_120a cubin (the full loop)?
 
-## Requirements (evolving)
+## Requirements
 
-- [ ] An automated harness: op module → LLM extract IntentIR → run the pass pipeline → verify vs the reference. Batchable over the flaggems+triton universe.
-- [ ] MEASURED coverage: a manifest of {op, extracted?, lowered?, verified?, rel-err, failure-class} across the universe.
-- [ ] Failure triage that distinguishes extraction-failure from lowering-failure (composability gap).
+- [ ] **Automated extraction+lowering+verify harness**: op module → LLM extract IntentIR → run the C++ pass pipeline → sm_120a cubin → **per-category verify** vs the real kernel. Batchable + resumable over the full universe; emits a coverage manifest {op, family, extracted?, lowered?, verified?, rel/stat, failure-class}.
+- [ ] **Per-category verification** (user decision): deterministic → numeric rel<1e-3 vs the real `flag_gems.<op>`/triton kernel; RNG → matched-seed/philox bit-exact where feasible, else statistical (mean/var/moments + distribution); dynamic-shape (nonzero/unique/masked_select) → value-set / sorted comparison.
+- [ ] **Failure triage**: distinguish extraction-failure (bad/incomplete lift) from lowering-failure (pass can't handle the op-graph = a composability gap needing new dispatch).
+- [ ] **All 9 new-mechanism clusters** delivered end-to-end (new IntentIR op + verifier + emit_mlir + interpret + the GPU lowering pass + verify), in leverage order.
+- [ ] Full universe (191 FlagGems + 38 Triton) extracted + lowered + verified; coverage manifest ≈100% (or every miss explicitly classified + tracked).
 
-## Acceptance Criteria (evolving)
+## Acceptance Criteria
 
-- [ ] Sprint 0 unblockers landed (cast fn + the ~22 scalar-fn/NVVM entries), each with a lit/interp check.
-- [ ] Phase-1 stratified pilot (20–30 ops across families) run; composability-failure rate MEASURED + reported.
-- [ ] Coverage manifest committed; the "≈150 extraction-only" hypothesis confirmed or corrected with real numbers.
+- [ ] **C0** unblockers: `cast`/`to` fn + the ~22 scalar-fn/NVVM entries landed, each lit/interp-checked; the ~22 unary ops verify.
+- [ ] **C1** harness + stratified pilot (20–30 ops across families) run; composability-failure rate MEASURED (extraction-fail vs lowering-fail split); manifest schema committed.
+- [ ] **C2** the ~150 extraction-only bulk extracted+lowered+verified; the "≈150 lower-for-free" hypothesis confirmed/corrected with real numbers.
+- [ ] **C3–C8** each new-mechanism cluster: the op/pass built, its ops verified per-category, manifest updated. (C3 gather/scatter · C4 layout · C5 RNG · C6 sort/topk/arg · C7 conv/complex/interp/pool · C8 dynamic-shape.)
+- [ ] Final: coverage manifest committed; 191+38 all accounted (verified or explicitly-classified-miss); no per-kernel recognizer in lowering; Dataset/site-packages/refs stay read-only.
+
+## Milestone plan (C0 → C8, difficulty-ordered, M1→M9-style)
+
+| C | new capability | ops unlocked | verify |
+|---|---|---|---|
+| **C0** | `cast`/`to` fn + ~22 scalar-fn/NVVM unary entries (near-free) | ~23 unary | numeric |
+| **C1** | automated extract→lower→verify harness + coverage manifest + failure triage; stratified pilot + measure composability-fail rate | infra (20-30 pilot) | numeric |
+| **C2** | scale the harness over the extraction-only bulk | ~150 (elementwise/reduce/norm/softmax/blas/init/fused) | numeric |
+| **C3** | gather/scatter/data-dependent addressing (new op+pass) | ~15 (gather,scatter,index_*,embedding,nllloss,kv-cache,moe_sum) | numeric |
+| **C4** | structural layout concat/pad/tile (new op+pass) | ~14 (cat,stack,pad,repeat,tile,diag,triu,flip) | numeric |
+| **C5** | RNG/philox (new op+pass, stateful seed) | ~11 (dropout,rand(n),normal,uniform,multinomial) | matched-seed / statistical |
+| **C6** | order-stats sort/topk/arg-reduce (arg* reduce, scan max/min, sort) | ~9 (sort,topk,argmax/min,quantile,cummax/min) | numeric / value-set |
+| **C7** | conv/im2col + complex dtype + interpolation + pooling | ~13 | numeric |
+| **C8** | dynamic-shape output | ~3 (nonzero,unique,masked_select) | value-set |
 
 ## Definition of Done
 
 - Tests added (extraction + verify per op batch; lit for new fns); lint/CI green; coverage manifest + provenance committed; no per-kernel recognizer in lowering; Dataset/site-packages stay read-only.
 
+## Decision (ADR-lite) — MVP scope
+
+**Context**: the ~150 extraction-only vs ~56 new-mechanism split offered a phased "measure-first, defer new-mechanism" MVP.
+**Decision (user, 2026-07-02)**: **全都做,端到端** — full scope, NOT phased-defer. The task delivers the WHOLE universe
+(191 FlagGems + 38 Triton), end-to-end (extract → lower → sm_120a cubin → verify), INCLUDING all 9 new-mechanism clusters.
+Focus is **coverage breadth** ("只要做覆盖面的增加"), so per-op **correctness/bit-faithful is the gate, NOT 实测 ≥ perf**
+(compute-bound perf is already at the established sm_120a hardware ceiling; new memory-bound ops ride the proven parity path).
+**Consequences**: this is a big multi-phase task (like the 29-kernel one). Structure it phased-by-difficulty like M1→M9:
+Sprint 0 (cast fn + ~22 scalar-fn/NVVM entries) → automated extraction pipeline over the extraction-only bulk (~150) →
+the 9 new-mechanism clusters in leverage order (gather/scatter → layout → RNG → sort/topk → conv → complex → interp →
+pooling → dynamic-shape). Each phase: new op/mechanism (if any) + batch-extract + verify + coverage-manifest update.
+
 ## Out of Scope (explicit)
 
-- The 9 new-mechanism clusters as full deliverables (tracked as follow-up subtasks; MVP may land only cluster #1 if chosen).
-- Compute-bound perf-closing (established as an sm_120a hardware ceiling last task).
+- Compute-bound perf-closing (established as an sm_120a hardware ceiling last task; this task is coverage/correctness, not perf).
 - The LLM→JSON lift authorship for loop/flash kernels beyond what the pipeline auto-produces.
+- Non-GPU backends / multi-GPU.
 
 ## Technical Notes
 
