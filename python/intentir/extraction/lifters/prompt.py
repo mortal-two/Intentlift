@@ -37,7 +37,9 @@ Top-level JSON:
 
 Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
-               {add,sub,mul,div,max,min,pow}.
+               {add,sub,mul,div,max,min,pow,gt,ge,lt,le,eq,ne}.
+               (the comparison fns gt/ge/lt/le/eq/ne produce an i1 tensor ->
+                feeds select; count_nonzero = sum(cast(x!=0, i64)).)
      {"op":"map_binary","result":R,"operands":[A,B],"attrs":{"fn":F}}
   map_unary  : elementwise. fn in
                {exp,log,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,

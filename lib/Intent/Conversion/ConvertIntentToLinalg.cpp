@@ -58,7 +58,31 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     return b.create<arith::MinimumFOp>(loc, a, c);
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
+  // Comparison fns: float operands -> an i1 scalar (the boolean condition for
+  // intent.select). eq/ne use ordered-equal / unordered-not-equal so NaN
+  // handling matches numpy (np.equal(nan,nan)=False, np.not_equal(nan,nan)=True).
+  auto cmp = [&](arith::CmpFPredicate p) -> Value {
+    return b.create<arith::CmpFOp>(loc, p, a, c);
+  };
+  if (fn == "gt")
+    return cmp(arith::CmpFPredicate::OGT);
+  if (fn == "ge")
+    return cmp(arith::CmpFPredicate::OGE);
+  if (fn == "lt")
+    return cmp(arith::CmpFPredicate::OLT);
+  if (fn == "le")
+    return cmp(arith::CmpFPredicate::OLE);
+  if (fn == "eq")
+    return cmp(arith::CmpFPredicate::OEQ);
+  if (fn == "ne")
+    return cmp(arith::CmpFPredicate::UNE);
   return nullptr;
+}
+
+/// True for the map_binary comparison fns (float operands -> i1 result).
+static bool isCmpFn(StringRef fn) {
+  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
+         fn == "ne";
 }
 
 /// Emit the scalar op for one `map_unary` fn over a scalar operand.
@@ -162,9 +186,18 @@ struct MapBinaryLowering : OpRewritePattern<MapBinaryOp> {
     auto lhsTy = cast<RankedTensorType>(op.getLhs().getType());
     auto rhsTy = cast<RankedTensorType>(op.getRhs().getType());
 
-    if (!isa<FloatType>(resTy.getElementType()))
+    StringRef fnName = op.getFn();
+    bool isCmp = isCmpFn(fnName);
+    // Comparison fns take float operands and yield an i1 result; every other fn
+    // is element-type-preserving over floats.
+    if (isCmp) {
+      if (!isa<FloatType>(lhsTy.getElementType()) ||
+          !isa<FloatType>(rhsTy.getElementType()))
+        return rewriter.notifyMatchFailure(op, "comparison needs float operands");
+    } else if (!isa<FloatType>(resTy.getElementType())) {
       return rewriter.notifyMatchFailure(op, "non-float elementwise not implemented");
-    if (!emitScalarBinary(rewriter, op.getLoc(), op.getFn(),
+    }
+    if (!emitScalarBinary(rewriter, op.getLoc(), fnName,
                           op.getLhs(), op.getRhs()))
       return rewriter.notifyMatchFailure(op, "fn has no scalar lowering");
 
@@ -256,11 +289,74 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
         reducedShape.push_back(inTy.getDimSize(d));
     auto reducedTy = RankedTensorType::get(reducedShape, elemTy);
     unsigned r = reducedShape.size();
-    if (r == 0)
-      return rewriter.notifyMatchFailure(op, "full reduction not implemented");
 
     Location loc = op.getLoc();
     MLIRContext *ctx = op.getContext();
+
+    // Full reduction (every axis reduced -> no surviving dims). The result is a
+    // rank-0 scalar, or an all-size-1 tensor when keepdims kept the input rank.
+    // A single linalg.generic over ALL-reduction iterators handles both: the
+    // output map is empty (rank-0) or constant-0 in each dim (keepdims [1,..,1]).
+    // This is the multi-axis / all-axis case (amax/mse_loss/vector_norm/std/
+    // var_mean/count_nonzero) that a single-axis lowering left as residual.
+    if (r == 0) {
+      bool keepdims = resTy.getRank() == (int64_t)R;
+      SmallVector<int64_t> outShape(keepdims ? R : 0, 1);
+      SmallVector<AffineExpr> outExprs;
+      if (keepdims)
+        for (unsigned d = 0; d < R; ++d)
+          outExprs.push_back(getAffineConstantExpr(0, ctx));
+      auto outTy = RankedTensorType::get(outShape, elemTy);
+      SmallVector<utils::IteratorType> iters(R, utils::IteratorType::reduction);
+      SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(R),
+                                     AffineMap::get(R, 0, outExprs, ctx)};
+
+      Value identVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getFloatAttr(elemTy, *ident));
+      Value empty = rewriter.create<tensor::EmptyOp>(loc, outShape, elemTy);
+      Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
+                                                   ValueRange{empty}).getResult(0);
+      Value reduced =
+          rewriter
+              .create<linalg::GenericOp>(
+                  loc, TypeRange{outTy}, ValueRange{op.getInput()},
+                  ValueRange{init}, maps, iters,
+                  [&](OpBuilder &b, Location l, ValueRange args) {
+                    b.create<linalg::YieldOp>(
+                        l, emitReduceCombine(b, l, fn, args[1], args[0]));
+                  })
+              .getResult(0);
+
+      // mean = sum / (product of all extents), computed over the (rank-0 or
+      // all-1) result with an elementwise scale.
+      if (fn == "mean") {
+        int64_t count = 1;
+        for (unsigned d = 0; d < R; ++d) {
+          if (inTy.isDynamicDim(d))
+            return rewriter.notifyMatchFailure(op, "mean over dynamic extent");
+          count *= inTy.getDimSize(d);
+        }
+        Value inv = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getFloatAttr(elemTy, 1.0 / (double)count));
+        unsigned or_ = outShape.size();
+        Value empty2 = rewriter.create<tensor::EmptyOp>(loc, outShape, elemTy);
+        SmallVector<AffineMap> smaps(2, rewriter.getMultiDimIdentityMap(or_));
+        SmallVector<utils::IteratorType> siters(or_,
+                                                utils::IteratorType::parallel);
+        reduced = rewriter
+                      .create<linalg::GenericOp>(
+                          loc, TypeRange{outTy}, ValueRange{reduced},
+                          ValueRange{empty2}, smaps, siters,
+                          [&](OpBuilder &b, Location l, ValueRange args) {
+                            Value scaled =
+                                b.create<arith::MulFOp>(l, args[0], inv);
+                            b.create<linalg::YieldOp>(l, scaled);
+                          })
+                      .getResult(0);
+      }
+      rewriter.replaceOp(op, reduced);
+      return success();
+    }
 
     // Iteration domain = all input dims. Input map = identity; output map keeps
     // only non-reduced dims (in order).

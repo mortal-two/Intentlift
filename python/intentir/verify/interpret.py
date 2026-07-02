@@ -29,7 +29,7 @@ _BINARY = {
     "max": np.maximum, "min": np.minimum, "pow": np.power,
     # Comparison fns return an i1 (bool) array (the condition for `select`).
     "gt": np.greater, "ge": np.greater_equal, "lt": np.less,
-    "le": np.less_equal, "eq": np.equal,
+    "le": np.less_equal, "eq": np.equal, "ne": np.not_equal,
 }
 
 try:  # accurate double-precision erf reference; fall back to the stdlib scalar.

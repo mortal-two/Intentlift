@@ -15,7 +15,7 @@ def Intent_MapBinaryOp : Intent_Op<"map_binary"> {
   let description = [{
     Elementwise binary op over two ranked tensors. `fn` selects the
     pointwise operation (add/sub/mul/div/max/min/pow/cmp). The comparison fns
-    (gt/ge/lt/le/eq) produce an `i1`-typed result tensor (feeding `intent.select`);
+    (gt/ge/lt/le/eq/ne) produce an `i1`-typed result tensor (feeding `intent.select`);
     every other fn is element-type-preserving.
   }];
   let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs, StrAttr:$fn);

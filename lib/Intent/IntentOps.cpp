@@ -23,7 +23,8 @@ LogicalResult MapBinaryOp::verify() {
       "add", "sub", "mul", "div", "max", "min", "pow", "cmp"};
   // Comparison fns produce an i1-typed result tensor (the boolean condition for
   // intent.select); every other fn is element-type-preserving.
-  static constexpr llvm::StringRef kCmpFns[] = {"gt", "ge", "lt", "le", "eq"};
+  static constexpr llvm::StringRef kCmpFns[] = {"gt", "ge", "lt",
+                                                "le", "eq", "ne"};
   bool isCmp = false;
   for (llvm::StringRef f : kCmpFns)
     if (getFn() == f)
