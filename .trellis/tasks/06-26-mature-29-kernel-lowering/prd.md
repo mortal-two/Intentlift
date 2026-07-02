@@ -93,7 +93,7 @@
 > **最终 perf 状态(compute-bound trunk 收尾完成,机械+原语杠杆已穷尽)**:
 > - **memory-bound 15**:实测 ≥(parity/beat,jsd 1.8×)—— 完全达标。
 > - **matmul**:wmma `2797796`(cp.async,12.45×→1.34×)+ tile-blocking `cf28263`(→1.25×)+ **mma.sync 路径 `90faefe`**(0.94× 小 / 1.19-1.30× 大 vs tl.dot)。
-> - **flash fwd**:M8a 正确(spill cliff 消)→ cp.async `c31e882` → **mma.sync register-resident `8f90915`(gap 减半)** → cp.async multistage `2629ef9`(**~parity 小 / 1.38-1.43× 大 vs Triton flash**)。
+> - **flash fwd**:M8a 正确(spill cliff 消)→ cp.async `c31e882` → **mma.sync register-resident `8f90915`(gap 减半)** → cp.async multistage `2629ef9`。**实测订正(2026-07-02,`test_flash_fwd_perf.py` 回填)**:大形 **near-parity(1.0-1.2× @1024)** vs Triton flash;小形 2-3× 是 per-call Python launch overhead(非 kernel 效率),故只 gate 大形。早先的 1.38-1.43× 是过时的 throwaway-bench 数,已废。
 > - **flash bwd**:atomic key-block 并行 `8dbcf45`(serial 14.3× → **1.4-1.9× off Triton bwd**)。
 > - **不可约残差(已实测确认)**:全 compute-bound kernel 的剩余 ~1.2-1.4× 是 **mma.sync 调度 / warp-specialization gap**(M7e 证 wmma 同 gap;M7f 证 mma.sync 同 gap;M8d 证 staging 穷尽)。闭合它需 warp-specialization / async-mma 流水(CUTLASS/cuBLAS 级),是下一个数量级的工程。**已建 wmma + mma.sync 两条 codegen trunk;G0-G4 全过。**
 
