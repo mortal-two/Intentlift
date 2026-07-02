@@ -90,9 +90,11 @@ class _FlashKernel:
     lower_memref_module_to_kernels(scf_to_cf=True). Inputs order: Q,K,V,scale,O.
     """
 
-    def __init__(self, mlir_text: str):
-        rr = _run([INTENT_OPT, "-convert-intent-flash-mma-to-gpu"],
-                  stdin=mlir_text)
+    def __init__(self, mlir_text: str, num_stages: int | None = None):
+        flash_pass = "-convert-intent-flash-mma-to-gpu"
+        if num_stages is not None:
+            flash_pass += f"=num-stages={num_stages}"
+        rr = _run([INTENT_OPT, flash_pass], stdin=mlir_text)
         kernels = lower_memref_module_to_kernels(rr, scf_to_cf=True)
         if len(kernels) != 1:
             raise RuntimeError(f"flash: expected one kernel, got {len(kernels)}")
