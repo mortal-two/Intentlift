@@ -28,15 +28,17 @@ An adversarial audit re-ran gather / pad / dropout / masked_select and confirmed
 | C7 | upsample_near ×2 | [32,64,56,56] | 107 | 94 | 1.14 | ⚪ parity |
 | C7 | **conv2d** k3s1p1 | [32,64,56,56]→64 | 1118 | 110 | **10.2** | 🔴 LOSE (no tensor-core vs cuDNN) |
 | C7 | polar | [4096,4096] | 180 | 176 | 1.02 | ⚪ parity |
-| C8 | **masked_select** | [2048,2048] ~50% | 110303 | 74 | **~1400** | 🔴 LOSE (grid(1,1,1) single-block) |
-| C8 | masked_select | [4096,4096] ~50% | 439932 | 325 | ~1360 | 🔴 LOSE (single-block) |
+| C8 | **masked_select** | [2048,2048] ~50% | 185 | 71 | **2.6** | 🟡 near (multi-block, was ~1400×) |
+| C8 | masked_select | [4096,4096] ~50% | 1001 | 326 | 3.1 | 🟡 near (multi-block, was ~1360×) |
+| C8 | nonzero | [2048,2048] ~50% | 142 | 59 | 2.4 | 🟡 near (multi-block) |
+| C8 | nonzero | [4096,4096] ~50% | 704 | 272 | 2.6 | 🟡 near (multi-block) |
 
 ## Honest answer
 
 **Yes — where physics allows.** On memory-bound movers we **win or match**: genuine wins gather 0.76× / pad 0.85× / dropout 0.88× (fused mask = fewer passes), and parity across embedding, scatter_add, concat, tile, flip, rand, upsample, polar (≈1.0×). That's **11 of 20 at parity-or-win**, several at ≥96% of the GDDR7 spec bandwidth. This is the regime the design targets, and it holds up against ATen under CUDA graph.
 
 **No — where the codegen is naive or the op is compute-bound:**
-- **`masked_select` ~1400× (worst).** The compaction pass emits `grid(1,1,1)` — a single block does the whole serial prefix-scan. Architectural, not a constant factor. **Biggest, clearest tuning win available** (multi-block prefix-sum → near-parity). → P2.
+- **`masked_select` ~1400× → 2.6× (P2a FIXED).** The compaction pass emitted `grid(1,1,1)` — a single block did the whole serial prefix-scan (phase-1 base count re-scanned `[0,t*seg)` per thread = O(Ntotal·T) on one SM). Rewritten as a 3-phase multi-block parallel stream compaction (count → parallel two-level scan → scatter, B contiguous chunks across all SMs, shared-memory Hillis-Steele scan), preserving EXACT row-major order. Now 2.4–3.1× vs torch (≈500× faster than before). Remaining gap is the 1-thread-per-block uncoalesced chunk read; closing it needs a block-cooperative coalesced mover.
 - **`conv2d` 10×.** Naive windowed accumulation, no tensor cores, ~6% of f32 peak, vs cuDNN's tensor-core kernel. Closing it needs im2col + wmma — a large effort (PRD out-of-scope, but a candidate).
 - **`sort` 1.3×.** Bitonic O(N log²N) single-block vs CUB radix. Algorithmic; hard to fully close.
 - **`triu` 2.0×, `argmax` 2.25×, `pool` 2.0–2.7×.** Memory-bound but under-tiled — one-block-per-row leaves the SMs underutilized on small/awkward shapes. **Tunable toward parity** (tail-mask, wider tiles, more blocks). → P2.

@@ -54,11 +54,11 @@ _PASS = "convert-intent-compact-to-gpu"
 
 
 def _kernel(name, T, mlir_text):
-    # M,N here are unused by this pass (it flattens); reuse the RowReductionKernel
-    # harness only for its lower+compile+launch-plan machinery.
-    from intentir.benchmarks.row_reduction import RowReductionKernel
-    return RowReductionKernel(name, {"M": 1, "N": 1}, T,
-                              pass_name=_PASS, mlir_text=mlir_text)
+    # The compact pass now emits THREE gpu.launches (count, scan, scatter) that
+    # share a device scratch; CompactKernel loads all three cubins, allocates the
+    # scratch, and launches them in stream order.
+    from intentir.benchmarks.row_reduction import CompactKernel
+    return CompactKernel(name, T, mlir_text)
 
 
 def _flag_gems():

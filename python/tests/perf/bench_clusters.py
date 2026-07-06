@@ -634,16 +634,17 @@ def c7_polar():
 
 
 # ======================================================================== #
-# C8  compact (nonzero / masked_select) -- single-block prefix sum          #
+# C8  compact (nonzero / masked_select) -- MULTI-BLOCK parallel compaction   #
 # ======================================================================== #
 def c8_compact():
-    print("\n[C8] compact (nonzero / masked_select, single-block prefix-sum)")
+    print("\n[C8] compact (nonzero / masked_select, multi-block stream compaction)")
+    from intentir.benchmarks.row_reduction import CompactKernel
     # data-dependent output extent -> ref not graph-capturable; use do_bench.
     for R, Cc in [(2048, 2048), (4096, 4096)]:
         T = 256
         Nt = R * Cc
         F = f"tensor<{R}x{Cc}xf32>"
-        # masked_select (simplest compact)
+        # ---- masked_select ------------------------------------------------- #
         mlir = f"""
 func.func @ms(%data: {F}, %mask: {F}) -> tensor<?xf32> {{
   %r = intent.masked_select %data, %mask : ({F}, {F}) -> tensor<?xf32>
@@ -656,24 +657,54 @@ func.func @ms(%data: {F}, %mask: {F}) -> tensor<?xf32> {{
         sel = torch.zeros(Nt, device="cuda")
         count = torch.zeros(1, device="cuda", dtype=torch.int64)
         try:
-            k = _mk("convert-intent-compact-to-gpu", mlir, T)
-            go = our_launcher(k, [data, maskf, sel, count])
+            k = CompactKernel("ms", T, mlir)
+            go = k.thunk([data, maskf, sel, count])
             go(); torch.cuda.synchronize()
             nnz = int(maskb.sum())
             ok = torch.equal(sel[:nnz], torch.masked_select(data, maskb))
         except Exception as e:
             print(f"  masked_select [{R},{Cc}] FAILED: {e}")
             del data, maskb, maskf, sel, count; _cleanup(); continue
-        # our kernel is deterministic & writes fixed max buffer -> graph-safe
-        our, gg = bench(go, want_graph=False)  # avoid over-counting; single-block
+        # deterministic, fixed max buffer -> CUDA-graph safe (3 launches captured).
+        our, gg = bench(go, want_graph=True)
         refs = {}
         tt, _ = _fg_time(lambda: torch.masked_select(data, maskb), want_graph=False); refs["torch"] = tt
         refs["flag_gems"] = fg_us({"op": "masked_select", "R": R, "C": Cc})
         nb = R * Cc * (4 + 4)  # mask + data read
         record("C8", "masked_select", f"[{R},{Cc}] ~50%", our, refs, nbytes=nb,
-               cls="serial", note=f"grid(1,1,1) single-block; exact={ok}",
-               graph_ours=False, graph_ref=False)
+               cls="mem", note=f"3-launch multi-block compaction; exact={ok}",
+               graph_ours=gg, graph_ref=False)
         del data, maskb, maskf, sel, count; _cleanup()
+
+        # ---- nonzero ------------------------------------------------------- #
+        mlirn = f"""
+func.func @nz(%cond: {F}) -> tensor<?x2xi64> {{
+  %r = intent.nonzero %cond : ({F}) -> tensor<?x2xi64>
+  return %r : tensor<?x2xi64>
+}}"""
+        torch.manual_seed(3)
+        cond = torch.where(torch.rand(R, Cc, device="cuda") < 0.5,
+                           torch.randn(R, Cc, device="cuda"),
+                           torch.zeros(R, Cc, device="cuda")).contiguous()
+        out = torch.zeros(Nt, 2, device="cuda", dtype=torch.int64)
+        countn = torch.zeros(1, device="cuda", dtype=torch.int64)
+        try:
+            kn = CompactKernel("nz", T, mlirn)
+            gon = kn.thunk([cond, out, countn])
+            gon(); torch.cuda.synchronize()
+            nnzn = int((cond != 0).sum())
+            okn = torch.equal(out[:nnzn], torch.nonzero(cond))
+        except Exception as e:
+            print(f"  nonzero [{R},{Cc}] FAILED: {e}")
+            del cond, out, countn; _cleanup(); continue
+        ourn, ggn = bench(gon, want_graph=True)
+        refsn = {}
+        ttn, _ = _fg_time(lambda: torch.nonzero(cond), want_graph=False); refsn["torch"] = ttn
+        refsn["flag_gems"] = fg_us({"op": "nonzero", "R": R, "C": Cc})
+        record("C8", "nonzero", f"[{R},{Cc}] ~50%", ourn, refsn, nbytes=R * Cc * 4,
+               cls="mem", note=f"3-launch multi-block compaction; exact={okn}",
+               graph_ours=ggn, graph_ref=False)
+        del cond, out, countn; _cleanup()
 
 
 def main():

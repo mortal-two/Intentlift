@@ -148,6 +148,141 @@ class RowReductionKernel:
         return go
 
 
+class CompactKernel:
+    """A compiled MULTI-LAUNCH stream-compaction kernel (C8 dynamic-shape output).
+
+    ``-convert-intent-compact-to-gpu`` lowers ``intent.nonzero`` /
+    ``masked_select`` / ``masked_scatter`` to THREE ``gpu.launch``es (count, scan,
+    scatter) that share a device scratch ``memref<[B]xi64>`` (a ``memref.alloc``
+    that lowers to a host ``malloc``, passed to the count/scan/scatter kernels as a
+    bare pointer). This driver loads the three outlined cubins, allocates the
+    scratch buffer, and launches the three in order on the current stream (no sync
+    between — stream order is a correct barrier).
+
+    ``thunk(tensors)`` binds the func-signature tensors (inputs + destination
+    buffers, same order as ``RowReductionKernel``) and returns a NO-SYNC closure.
+    """
+
+    def __init__(self, name: str, block_threads: int, mlir_text: str):
+        import re
+
+        rr = _run(
+            [INTENT_OPT,
+             f"-convert-intent-compact-to-gpu=block-threads={block_threads}"],
+            stdin=mlir_text,
+        )
+        kernels = lower_memref_module_to_kernels(rr)
+        by_binary = {k.binary_name: k for k in kernels}
+        _n, ftext = _host_func_text(kernels[0].binary_mlir)
+        _s, _o, ptr_blockargs = _parse_signature_blockargs(ftext)
+        aligned = _map_input_aligned_ptrs(ptr_blockargs)  # ptr ssa -> input index
+        consts = _parse_constants(ftext)
+        sites = _parse_launches(ftext)
+
+        class _Shim:
+            constants = consts
+
+        # Discover the scratch malloc buffer(s): a bare `%r = llvm.call @malloc(%s)`
+        # whose size operand traces to a `getelementptr %p[N] ..., <elem>`.
+        defs: dict[str, str] = {}
+        for m in re.finditer(r"(%\w+)\s*=\s*([^\n]+)", ftext):
+            defs.setdefault(m.group(1), m.group(2).strip())
+
+        def _trace_size(ssa: str):
+            cur, seen = ssa, set()
+            while cur in defs and cur not in seen:
+                seen.add(cur)
+                rhs = defs[cur]
+                gm = re.match(
+                    r"llvm\.getelementptr\s+%\w+\[(\d+)\][^,]*,\s*([A-Za-z0-9_]+)",
+                    rhs)
+                if gm:
+                    return int(gm.group(1)), gm.group(2)
+                pm = re.match(r"llvm\.ptrtoint\s+(%\w+)", rhs)
+                if pm:
+                    cur = pm.group(1)
+                    continue
+                break
+            return None
+
+        import torch
+
+        _dtype = {"i64": torch.int64, "i32": torch.int32, "f32": torch.float32}
+        self._scratch: dict[str, "torch.Tensor"] = {}
+        for m in re.finditer(r"(%\w+)\s*=\s*llvm\.call\s+@malloc\((%\w+)\)", ftext):
+            res, size_ssa = m.group(1), m.group(2)
+            info = _trace_size(size_ssa)
+            if info is None:
+                raise RuntimeError(
+                    f"compact: cannot size scratch malloc {res}")
+            n_elems, elem = info
+            self._scratch[res] = torch.empty(
+                (n_elems,), dtype=_dtype.get(elem, torch.int64), device="cuda")
+
+        # Build one launch plan per site (in stream order).
+        self._sites = []
+        for site in sites:
+            ck = by_binary.get(site.binary_module)
+            if ck is None:
+                raise RuntimeError(
+                    f"compact: no cubin for @{site.binary_module}")
+            func = load_module(ck.cubin).function(site.func_symbol)
+            grid = tuple(_resolve_const_index(_Shim, s) for s in site.grid_ssa)
+            block = tuple(_resolve_const_index(_Shim, s) for s in site.block_ssa)
+            shared = (int(consts[site.dynamic_shared_ssa][0])
+                      if site.dynamic_shared_ssa is not None else 0)
+            plan = []
+            for op in site.args:
+                if op.ty.startswith("!llvm.ptr"):
+                    if op.ssa in aligned:
+                        plan.append(("in", aligned[op.ssa]))
+                    elif op.ssa in self._scratch:
+                        plan.append(("scratch", op.ssa))
+                    else:
+                        raise RuntimeError(
+                            f"compact: ptr operand {op.ssa} is neither input "
+                            f"nor scratch")
+                elif op.ty in ("i64", "index"):
+                    plan.append(("i64", int(consts[op.ssa][0])))
+                else:
+                    raise RuntimeError(f"compact: unhandled launch-arg {op.ty}")
+            self._sites.append((func, grid, block, shared, plan))
+        self._cuda = _driver()
+
+    def thunk(self, tensors):
+        """A zero-arg NO-SYNC closure launching all three phases in stream order.
+
+        The current stream is read INSIDE ``go`` (not baked here) so a CUDA-graph
+        capture on ``do_bench_cudagraph``'s capture stream records all three
+        launches — baking it would send them to the default stream, uncaptured.
+        """
+        cuda = self._cuda
+        packed = []
+        for func, grid, block, shared, plan in self._sites:
+            args = []
+            for kind, v in plan:
+                if kind == "in":
+                    args.append(PtrArg(tensors[v].data_ptr()))
+                elif kind == "scratch":
+                    args.append(PtrArg(self._scratch[v].data_ptr()))
+                else:
+                    args.append(I64Arg(v))
+            keep, argp = _marshal(args)
+            packed.append((func, grid, block, shared, keep, argp,
+                           int(ctypes.addressof(argp))))
+
+        def go(_p=packed):  # keep marshaled buffers alive
+            import torch
+
+            stream = int(torch.cuda.current_stream().cuda_stream)
+            for func, grid, block, shared, _keep, _argp, addr in _p:
+                cuda.cuLaunchKernel(func, grid[0], grid[1], grid[2],
+                                    block[0], block[1], block[2],
+                                    shared, stream, addr, 0)
+
+        return go
+
+
 class MatmulKernel:
     """A compiled tensor-core matmul kernel + its resolved bare-ptr launch plan.
 
