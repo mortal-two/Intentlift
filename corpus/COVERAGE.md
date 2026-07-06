@@ -28,16 +28,16 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 130 | 25 |
+| verified-e2e | 134 | 25 |
 | extraction-only-proven | 45 | 10 |
-| classified-miss | 18 | 3 |
+| classified-miss | 14 | 3 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (130)
+### verified-e2e (134)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -125,6 +125,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `mm` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `mse_loss` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `mul` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `multinomial` | ops | P7 op-graph: inverse-CDF categorical = cumsum C6 scan -> tile -> searchsorted(count cdf<u) -> reduce; test_tail_pk empirical distribution matches p (L1<0.04) + determinism (statistical, ADR) |
 | `mv` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `nan_to_num` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `ne` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -139,6 +140,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `quantile` | ops | op-graph dispatch: sort->gather->lerp (3-stage sort C6b + gather C3 + reduce); test_opgraph_pk vs torch (exact), flag_gems where its kernel works |
 | `rand` | ops | C5 RNG/philox PK (test_rng_pk.py) |
 | `randn` | ops | C5 RNG/philox PK (test_rng_pk.py) |
+| `randperm` | ops | P7 op-graph: argsort C6b of n philox C5 keys; test_tail_pk VALID permutation + positional-uniformity (statistical, ADR: philox != torch RNG) + determinism |
 | `reciprocal` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `relu` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `resolve_conj` | ops | P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real) |
@@ -164,6 +166,8 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `trace` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `triu` | ops | C4 layout PK (test_layout_pk.py) |
 | `uniform` | ops | C5 RNG/philox PK (test_rng_pk.py) |
+| `unique` | ops | P7 op-graph: sort(asc) C6b -> adjacent-dedup map (eq/select/max neighbor compare) -> C8 masked_select compaction (dynamic extent = #distinct); test_tail_pk EXACT sorted-unique value set vs torch.unique |
+| `upsample_bicubic2d_aa` | ops | P7: bicubic 4x4 cubic-convolution neighborhood (a=-0.75) extending C7a nearest upsample; test_tail_pk rel<1e-3 vs interpolate(bicubic) on the ENLARGING path (antialias is a no-op there, so == the _aa kernel); the variable-support aa DOWNSAMPLE kernel is the deferred remainder |
 | `upsample_nearest2d` | ops | C7a pool/interp PK (test_pool_interp_pk.py) |
 | `var_mean` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `vdot` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -222,7 +226,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (18)
+### classified-miss (14)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -238,12 +242,8 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `flash_api` | ops | flash-attention host API glue (multi-kernel, not one op-graph) |
 | `flash_kernel` | ops | flash-attention inner loop kernel (loop authorship, PRD out-of-scope) |
 | `get_scheduler_metadata` | ops | scheduler-metadata helper (not a numeric op) |
-| `multinomial` | ops | order-dependent RNG: cumulative-CDF categorical sampling |
 | `per_token_group_quant_fp8` | ops | multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping) |
-| `randperm` | ops | order-dependent RNG: Fisher-Yates permutation (sequence-dependent) |
 | `scaled_softmax` | ops | attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path) |
-| `unique` | ops | multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction) |
-| `upsample_bicubic2d_aa` | ops | bicubic/anti-aliased interpolation (deferred; nearest verified C7a) |
 
 ## Triton refs (refs/…/kernels/triton/ops, read-only)
 

@@ -464,16 +464,26 @@ def Intent_PoolOp : Intent_Op<"pool"> {
 }
 
 def Intent_UpsampleOp : Intent_Op<"upsample"> {
-  let summary = "2-D nearest-neighbor upsample over NCHW (Layer A).";
+  let summary = "2-D upsample (nearest / bicubic) over NCHW (Layer A).";
   let description = [{
-    Nearest-neighbor resize of a rank-4 `[N,C,H,W]` `input` to `[N,C,OH,OW]`
-    (torch.upsample_nearest2d / F.interpolate mode="nearest"). Pure index-remap:
-    `out[n,c,oh,ow] = input[n,c, min(floor(oh*IH/OH), IH-1),
-    min(floor(ow*IW/OW), IW-1)]` — the source coord is an affine `floor` of the
-    output coord with the reciprocal scale `IH/OH` (matching flag_gems'
-    `(oh*IH/OH).to(int32)` truncation). C4-layout-like: a `memref.load` at the
-    floored source coord, no arithmetic on the loaded value. `mode` is
-    `"nearest"` (bilinear/bicubic are documented follow-ups).
+    Resize a rank-4 `[N,C,H,W]` `input` to `[N,C,OH,OW]` under `mode`:
+
+    * `"nearest"` (torch.upsample_nearest2d / F.interpolate mode="nearest") —
+      pure index-remap: `out[n,c,oh,ow] = input[n,c, min(floor(oh*IH/OH), IH-1),
+      min(floor(ow*IW/OW), IW-1)]`, the affine `floor` of the output coord with
+      the reciprocal scale `IH/OH` (matching flag_gems' `(oh*IH/OH).to(int32)`
+      truncation). C4-layout-like: a `memref.load`, no arithmetic on the value.
+
+    * `"bicubic"` (torch.upsample_bicubic2d / F.interpolate mode="bicubic",
+      align_corners=False) — a 4x4 cubic-convolution neighborhood (`a=-0.75`, the
+      torch/PIL kernel) at the mapped source coord
+      `r = (o + 0.5)*IN/OUT - 0.5`: `out = sum_{p,q} wy[p]*wx[q]*
+      input[n,c, clamp(floor(ry)-1+p), clamp(floor(rx)-1+q)]` with the four
+      per-axis cubic weights from the fraction `t = r - floor(r)` (edges
+      clamped). Extends the C7a nearest gather with a per-tap weighted
+      accumulation. On the ENLARGING path antialias is a no-op, so this matches
+      `upsample_bicubic2d_aa`; the variable-support aa DOWNSAMPLE kernel is a
+      follow-up. Bilinear is a documented follow-up.
   }];
   let arguments = (ins AnyRankedTensor:$input, StrAttr:$mode);
   let results = (outs AnyRankedTensor:$result);

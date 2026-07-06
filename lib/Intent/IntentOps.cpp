@@ -449,8 +449,8 @@ LogicalResult UpsampleOp::verify() {
     return emitOpError("upsample operates on rank-4 NCHW tensors");
   if (iTy.getElementType() != rTy.getElementType())
     return emitOpError("upsample is element-type-preserving");
-  if (getMode() != "nearest")
-    return emitOpError("upsample mode must be 'nearest'");
+  if (getMode() != "nearest" && getMode() != "bicubic")
+    return emitOpError("upsample mode must be 'nearest' or 'bicubic'");
   if (!iTy.hasStaticShape() || !rTy.hasStaticShape())
     return success();
   if (iTy.getDimSize(0) != rTy.getDimSize(0) ||

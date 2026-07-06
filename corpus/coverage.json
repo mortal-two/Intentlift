@@ -8,13 +8,13 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 130,
-    "classified-miss": 15,
+    "verified-e2e": 134,
+    "classified-miss": 11,
     "extraction-only-proven": 45
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 130,
-    "classified-miss": 18,
+    "verified-e2e": 134,
+    "classified-miss": 14,
     "extraction-only-proven": 45
   },
   "triton_refs_total": 38,
@@ -651,8 +651,8 @@
     {
       "module": "multinomial",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "order-dependent RNG: cumulative-CDF categorical sampling"
+      "bucket": "verified-e2e",
+      "evidence": "P7 op-graph: inverse-CDF categorical = cumsum C6 scan -> tile -> searchsorted(count cdf<u) -> reduce; test_tail_pk empirical distribution matches p (L1<0.04) + determinism (statistical, ADR)"
     },
     {
       "module": "mv",
@@ -771,8 +771,8 @@
     {
       "module": "randperm",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "order-dependent RNG: Fisher-Yates permutation (sequence-dependent)"
+      "bucket": "verified-e2e",
+      "evidence": "P7 op-graph: argsort C6b of n philox C5 keys; test_tail_pk VALID permutation + positional-uniformity (statistical, ADR: philox != torch RNG) + determinism"
     },
     {
       "module": "reciprocal",
@@ -975,14 +975,14 @@
     {
       "module": "unique",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction)"
+      "bucket": "verified-e2e",
+      "evidence": "P7 op-graph: sort(asc) C6b -> adjacent-dedup map (eq/select/max neighbor compare) -> C8 masked_select compaction (dynamic extent = #distinct); test_tail_pk EXACT sorted-unique value set vs torch.unique"
     },
     {
       "module": "upsample_bicubic2d_aa",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "bicubic/anti-aliased interpolation (deferred; nearest verified C7a)"
+      "bucket": "verified-e2e",
+      "evidence": "P7: bicubic 4x4 cubic-convolution neighborhood (a=-0.75) extending C7a nearest upsample; test_tail_pk rel<1e-3 vs interpolate(bicubic) on the ENLARGING path (antialias is a no-op there, so == the _aa kernel); the variable-support aa DOWNSAMPLE kernel is the deferred remainder"
     },
     {
       "module": "upsample_nearest2d",

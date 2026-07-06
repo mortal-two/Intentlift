@@ -302,7 +302,244 @@ func.func @cross_entropy(%X: {R}, %Y: {YI}, %zero: {S}, %one: {S}, %ninv: {S})
     return OpGraphProgram([stage])
 
 
+def randperm_plan(n: int, seed: int) -> OpGraphProgram:
+    """randperm(n) = argsort of n philox random keys (RNG C5 -> sort C6b).
+
+    A random permutation of ``0..n-1`` is the argsort of ``n`` i.i.d. uniform
+    keys: distinct keys w.h.p., and even under a tie the bitonic argsort emits
+    each source index exactly once, so the index result is ALWAYS a valid
+    permutation. Two outlined stages, no program inputs (the RNG func takes zero
+    tensor args — the philox counter is seed+linear-index only):
+
+      1. rand keys[1,n]  (``convert-intent-rng-to-gpu``, seeded philox)
+      2. argsort ascending -> perm[1,n] i32  (``convert-intent-sort-to-gpu``)
+
+    Verify: perm is a valid permutation (sorted == arange), STATISTICALLY uniform
+    per position over many seeds, and DETERMINISTIC (same seed reproducible).
+    Matched-seed parity vs torch is NOT expected (philox != torch's RNG).
+    """
+    Tr = _div_threads(n)
+    Ts = _threads_pow2(n)
+    rng_stage = Stage(
+        name="rp_rng", pass_name="convert-intent-rng-to-gpu",
+        mlir_text=f"""
+func.func @rp_rng() -> tensor<1x{n}xf32> {{
+  %r = intent.rand {{seed = {seed} : i64}} : tensor<1x{n}xf32>
+  return %r : tensor<1x{n}xf32>
+}}
+""",
+        block_threads=Tr, inputs=[],
+        outputs=[Buf("keys", (1, n), "f32")],
+    )
+    sort_stage = Stage(
+        name="rp_sort", pass_name="convert-intent-sort-to-gpu",
+        mlir_text=f"""
+func.func @rp_sort(%x: tensor<1x{n}xf32>)
+    -> (tensor<1x{n}xf32>, tensor<1x{n}xi32>) {{
+  %v, %i = intent.sort %x {{descending = false, axis = 1 : i64}}
+      : (tensor<1x{n}xf32>) -> (tensor<1x{n}xf32>, tensor<1x{n}xi32>)
+  return %v, %i : tensor<1x{n}xf32>, tensor<1x{n}xi32>
+}}
+""",
+        block_threads=Ts, inputs=["keys"],
+        outputs=[Buf("sorted", (1, n), "f32"), Buf("perm", (1, n), "i32")],
+    )
+    return OpGraphProgram([rng_stage, sort_stage])
+
+
+def multinomial_plan(N: int, k: int, seed: int) -> OpGraphProgram:
+    """multinomial(p[N], k) = inverse-CDF categorical sampling (scan C6 + RNG C5).
+
+    Draw ``k`` category indices from a discrete distribution ``p`` (normalized) by
+    the textbook inverse-CDF method: build the cumulative distribution once, draw
+    ``k`` uniforms, and for each map ``u`` to the first category whose CDF crosses
+    it. ``searchsorted(cdf, u)`` is realized as a COUNT reduction —
+    ``idx = #{ j : cdf[j] < u }`` — the exclusive rank of ``u`` in the CDF. Four
+    outlined stages, each an already-verified single-op / single-chain lowering:
+
+      1. cumsum(p)          -> cdf[1,N]     (scan, ``row-reduction`` pass)
+      2. tile cdf to [k,N]  -> cdfk[k,N]    (``layout`` pass; one CDF row per draw)
+      3. rand u[k,1]        (seeded philox, ``rng`` pass)
+      4. tile u to [k,N]    -> uk[k,N]      (``layout``; the draw broadcast over N)
+      5. searchsorted (row-reduction chain): cmp = (cdfk < uk) elementwise ->
+         select(cmp,1,0) -> reduce sum over N -> counts[k,1] = the drawn indices.
+
+    Verify: the empirical category frequencies over a large ``k`` match ``p``
+    (large-sample / chi-square within tolerance) + DETERMINISM. Statistical, not
+    matched-seed (philox != torch's RNG).
+    """
+    Tc = _div_threads(N)
+    Tt = _div_threads(N)
+    Tr = 1  # rng over [k,1]: one column, one thread
+    Ts = _div_threads(N)
+    cumsum_stage = Stage(
+        name="mn_cumsum", pass_name="convert-intent-row-reduction-to-gpu",
+        mlir_text=f"""
+func.func @mn_cumsum(%p: tensor<1x{N}xf32>) -> tensor<1x{N}xf32> {{
+  %c = intent.scan %p {{fn = "sum", axis = 1 : i64}}
+      : (tensor<1x{N}xf32>) -> tensor<1x{N}xf32>
+  return %c : tensor<1x{N}xf32>
+}}
+""",
+        block_threads=Tc, inputs=["p"],
+        outputs=[Buf("cdf", (1, N), "f32")],
+    )
+    tile_stage = Stage(
+        name="mn_tile", pass_name="convert-intent-layout-to-gpu",
+        mlir_text=f"""
+func.func @mn_tile(%c: tensor<1x{N}xf32>) -> tensor<{k}x{N}xf32> {{
+  %t = intent.tile %c {{reps = [{k}, 1]}}
+      : (tensor<1x{N}xf32>) -> tensor<{k}x{N}xf32>
+  return %t : tensor<{k}x{N}xf32>
+}}
+""",
+        block_threads=Tt, inputs=["cdf"],
+        outputs=[Buf("cdfk", (k, N), "f32")],
+    )
+    rng_stage = Stage(
+        name="mn_rng", pass_name="convert-intent-rng-to-gpu",
+        mlir_text=f"""
+func.func @mn_rng() -> tensor<{k}x1xf32> {{
+  %u = intent.rand {{seed = {seed} : i64}} : tensor<{k}x1xf32>
+  return %u : tensor<{k}x1xf32>
+}}
+""",
+        block_threads=Tr, inputs=[],
+        outputs=[Buf("u", (k, 1), "f32")],
+    )
+    utile_stage = Stage(
+        name="mn_utile", pass_name="convert-intent-layout-to-gpu",
+        mlir_text=f"""
+func.func @mn_utile(%u: tensor<{k}x1xf32>) -> tensor<{k}x{N}xf32> {{
+  %t = intent.tile %u {{reps = [1, {N}]}}
+      : (tensor<{k}x1xf32>) -> tensor<{k}x{N}xf32>
+  return %t : tensor<{k}x{N}xf32>
+}}
+""",
+        block_threads=Tt, inputs=["u"],
+        outputs=[Buf("uk", (k, N), "f32")],
+    )
+    search_stage = Stage(
+        name="mn_search", pass_name="convert-intent-row-reduction-to-gpu",
+        mlir_text=f"""
+func.func @mn_search(%cdfk: tensor<{k}x{N}xf32>, %uk: tensor<{k}x{N}xf32>,
+    %zero: tensor<f32>, %one: tensor<f32>) -> tensor<{k}x1xf32> {{
+  %lt = intent.map_binary %cdfk, %uk {{fn = "lt"}}
+      : (tensor<{k}x{N}xf32>, tensor<{k}x{N}xf32>) -> tensor<{k}x{N}xi1>
+  %f = intent.select %lt, %one, %zero
+      : (tensor<{k}x{N}xi1>, tensor<f32>, tensor<f32>) -> tensor<{k}x{N}xf32>
+  %idx = intent.reduce %f {{fn = "sum", axes = [1], assoc = "float_nondeterministic"}}
+      : (tensor<{k}x{N}xf32>) -> tensor<{k}x1xf32>
+  return %idx : tensor<{k}x1xf32>
+}}
+""",
+        block_threads=Ts, inputs=["cdfk", "uk", "zero", "one"],
+        outputs=[Buf("counts", (k, 1), "f32")],
+    )
+    return OpGraphProgram(
+        [cumsum_stage, tile_stage, rng_stage, utile_stage, search_stage])
+
+
+def unique_run(x, block_threads: int | None = None):
+    """unique(x) = sort(asc) -> adjacent-dedup -> C8 compaction (sort+dedup graph).
+
+    The op-graph the coverage task named: a data-dependent output extent (# of
+    distinct values). ``x`` is a 1-D CUDA f32 tensor; returns the sorted distinct
+    values (== ``torch.unique(x, sorted=True)``). Four hand-authored stages wired
+    by device buffers (the last is the C8 multi-launch compaction, so this is
+    driven directly rather than through :class:`OpGraphProgram`):
+
+      1. sort ascending                          -> sorted[1,N]   (sort C6b)
+      2. gather prev[j] = sorted[max(j-1,0)]     -> prev[1,N]     (gather C3)
+      3. keep[j] = max(sorted[j]!=prev[j], j==0) -> keep[1,N] f32 (elementwise:
+         eq + select + max with a host [1,0,..] boundary mask — the neighbor
+         compare dedup map; j==0 is always kept, being the row-major boundary)
+      4. masked_select(sorted, keep)             -> distinct[nnz] (C8 compaction)
+    """
+    import torch
+
+    from intentir.benchmarks.row_reduction import CompactKernel, RowReductionKernel
+
+    N = int(x.numel())
+    row = x.reshape(1, N).contiguous().float()
+    Ts = _threads_pow2(N)
+    Tg = _div_threads(N)
+    Tk = _div_threads(N)
+    Tc = _div_threads(N)
+
+    sort_k = RowReductionKernel(
+        "uq_sort", {}, Ts, pass_name="convert-intent-sort-to-gpu",
+        mlir_text=f"""
+func.func @uq_sort(%x: tensor<1x{N}xf32>)
+    -> (tensor<1x{N}xf32>, tensor<1x{N}xi32>) {{
+  %v, %i = intent.sort %x {{descending = false, axis = 1 : i64}}
+      : (tensor<1x{N}xf32>) -> (tensor<1x{N}xf32>, tensor<1x{N}xi32>)
+  return %v, %i : tensor<1x{N}xf32>, tensor<1x{N}xi32>
+}}
+""")
+    gather_k = RowReductionKernel(
+        "uq_gather", {}, Tg, pass_name="convert-intent-gather-to-gpu",
+        mlir_text=f"""
+func.func @uq_gather(%data: tensor<1x{N}xf32>, %index: tensor<1x{N}xi64>)
+    -> tensor<1x{N}xf32> {{
+  %g = intent.gather %data, %index {{axis = 1 : i64, mode = "along_axis"}}
+      : (tensor<1x{N}xf32>, tensor<1x{N}xi64>) -> tensor<1x{N}xf32>
+  return %g : tensor<1x{N}xf32>
+}}
+""")
+    keep_k = RowReductionKernel(
+        "uq_keep", {}, Tk, pass_name="convert-intent-elementwise-to-gpu",
+        mlir_text=f"""
+func.func @uq_keep(%sorted: tensor<1x{N}xf32>, %prev: tensor<1x{N}xf32>,
+    %first: tensor<1x{N}xf32>, %zero: tensor<f32>, %one: tensor<f32>)
+    -> tensor<1x{N}xf32> {{
+  %eqp = intent.map_binary %sorted, %prev {{fn = "eq"}}
+      : (tensor<1x{N}xf32>, tensor<1x{N}xf32>) -> tensor<1x{N}xi1>
+  %neqf = intent.select %eqp, %zero, %one
+      : (tensor<1x{N}xi1>, tensor<f32>, tensor<f32>) -> tensor<1x{N}xf32>
+  %keep = intent.map_binary %neqf, %first {{fn = "max"}}
+      : (tensor<1x{N}xf32>, tensor<1x{N}xf32>) -> tensor<1x{N}xf32>
+  return %keep : tensor<1x{N}xf32>
+}}
+""")
+    sel_k = CompactKernel(
+        "uq_sel", Tc,
+        mlir_text=f"""
+func.func @uq_sel(%data: tensor<1x{N}xf32>, %mask: tensor<1x{N}xf32>)
+    -> tensor<?xf32> {{
+  %r = intent.masked_select %data, %mask
+      : (tensor<1x{N}xf32>, tensor<1x{N}xf32>) -> tensor<?xf32>
+  return %r : tensor<?xf32>
+}}
+""")
+
+    sorted_v = torch.empty(1, N, device="cuda", dtype=torch.float32).contiguous()
+    perm = torch.empty(1, N, device="cuda", dtype=torch.int32).contiguous()
+    sort_k.thunk([row, sorted_v, perm])()
+
+    previdx = torch.arange(-1, N - 1, device="cuda", dtype=torch.int64)
+    previdx.clamp_(min=0)
+    previdx = previdx.reshape(1, N).contiguous()
+    prev = torch.empty(1, N, device="cuda", dtype=torch.float32).contiguous()
+    gather_k.thunk([sorted_v, previdx, prev])()
+
+    first = torch.zeros(1, N, device="cuda", dtype=torch.float32).contiguous()
+    first[0, 0] = 1.0  # the row-major boundary element is always distinct
+    zero = torch.zeros((), device="cuda", dtype=torch.float32)
+    one = torch.ones((), device="cuda", dtype=torch.float32)
+    keep = torch.empty(1, N, device="cuda", dtype=torch.float32).contiguous()
+    keep_k.thunk([sorted_v, prev, first, zero, one, keep])()
+
+    out = torch.zeros(N, device="cuda", dtype=torch.float32).contiguous()
+    count = torch.zeros(1, device="cuda", dtype=torch.int64).contiguous()
+    sel_k.thunk([sorted_v, keep, out, count])()
+    torch.cuda.synchronize()
+    nnz = int(count.item())
+    return out[:nnz]
+
+
 __all__ = [
     "Buf", "Stage", "OpGraphProgram",
     "quantile_plan", "topk_softmax_plan", "cross_entropy_plan",
+    "randperm_plan", "multinomial_plan", "unique_run",
 ]

@@ -91,6 +91,25 @@ CLUSTER = {
     "nonzero": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
     "masked_select": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
     "masked_scatter": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
+    # P7 deferred-tail op-graphs (07-06) — each a composition of already-verified
+    # cluster mechanisms, no new recognizer; test_tail_pk.py.
+    "unique": ("P7 op-graph: sort(asc) C6b -> adjacent-dedup map (eq/select/max "
+               "neighbor compare) -> C8 masked_select compaction (dynamic extent "
+               "= #distinct); test_tail_pk EXACT sorted-unique value set vs "
+               "torch.unique"),
+    "randperm": ("P7 op-graph: argsort C6b of n philox C5 keys; test_tail_pk "
+                 "VALID permutation + positional-uniformity (statistical, ADR: "
+                 "philox != torch RNG) + determinism"),
+    "multinomial": ("P7 op-graph: inverse-CDF categorical = cumsum C6 scan -> "
+                    "tile -> searchsorted(count cdf<u) -> reduce; test_tail_pk "
+                    "empirical distribution matches p (L1<0.04) + determinism "
+                    "(statistical, ADR)"),
+    "upsample_bicubic2d_aa": ("P7: bicubic 4x4 cubic-convolution neighborhood "
+                              "(a=-0.75) extending C7a nearest upsample; "
+                              "test_tail_pk rel<1e-3 vs interpolate(bicubic) on "
+                              "the ENLARGING path (antialias is a no-op there, so "
+                              "== the _aa kernel); the variable-support aa "
+                              "DOWNSAMPLE kernel is the deferred remainder"),
     # P5 complex dtype — real/imag PLANES (no complex element type). angle is the
     # libdevice-safe minimax atan2; conj/neg are plane negations; add/mul are
     # plane compositions. test_complex_pk.py vs torch (view_as_real) + flag_gems.
@@ -154,17 +173,13 @@ BACKWARD = {
 
 # ---- classified-miss (deferred mechanism + named reason) -------------------
 MISS = {
-    # multi-op-graph compositions (quantile/topk_softmax/cross_entropy_loss now
-    # land via the op-graph dispatch — see CLUSTER above); unique defers on
-    # dynamic extent (adjacent-dedup output size is data-dependent).
-    "unique": "multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction)",
+    # multi-op-graph compositions (quantile/topk_softmax/cross_entropy_loss land
+    # via the op-graph dispatch; unique/randperm/multinomial/bicubic land P7 —
+    # all in CLUSTER above). The fp8-quant remainder defers on the fp8 dtype.
     "per_token_group_quant_fp8": "multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping)",
-    # order-dependent / stateful RNG (sequence semantics, not per-element philox)
-    "multinomial": "order-dependent RNG: cumulative-CDF categorical sampling",
-    "randperm": "order-dependent RNG: Fisher-Yates permutation (sequence-dependent)",
+    # (order-dependent RNG multinomial/randperm landed P7 -> CLUSTER)
     # (native complex dtype angle/resolve_conj/resolve_neg landed P5 -> CLUSTER)
-    # deferred interpolation kernels (nearest done C7a)
-    "upsample_bicubic2d_aa": "bicubic/anti-aliased interpolation (deferred; nearest verified C7a)",
+    # (bicubic upsampling landed P7 -> CLUSTER; the aa DOWNSAMPLE kernel remains)
     # loop/flash kernel authorship — explicit PRD out-of-scope
     "attention": "flash/attention loop-kernel authorship beyond pipeline auto-lift (PRD out-of-scope)",
     "flash_api": "flash-attention host API glue (multi-kernel, not one op-graph)",

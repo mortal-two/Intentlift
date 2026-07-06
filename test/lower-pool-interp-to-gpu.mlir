@@ -1,5 +1,6 @@
 // RUN: intent-opt -convert-intent-pool-to-gpu=block-threads=4 %s | FileCheck %s --check-prefix=POOL
 // RUN: intent-opt -convert-intent-upsample-to-gpu=block-threads=8 %s | FileCheck %s --check-prefix=UP
+// RUN: intent-opt -convert-intent-upsample-to-gpu=block-threads=8 %s | FileCheck %s --check-prefix=UPB
 // RUN: intent-opt -convert-intent-polar-to-gpu=block-threads=8 %s | FileCheck %s --check-prefix=POLAR
 
 // C7 windowed-reduce / interpolation / complex. Each op lowered to ONE
@@ -56,6 +57,27 @@ func.func @maxp(%a: tensor<1x2x8x8xf32>) -> (tensor<1x2x4x4xf32>, tensor<1x2x4x4
 // UP:         gpu.terminator
 func.func @up(%a: tensor<1x2x4x4xf32>) -> tensor<1x2x8x8xf32> {
   %o = intent.upsample %a {mode = "nearest"}
+      : (tensor<1x2x4x4xf32>) -> tensor<1x2x8x8xf32>
+  return %o : tensor<1x2x8x8xf32>
+}
+
+// -----
+
+// upsample_bicubic2d(_aa): 4x4 cubic-convolution neighborhood (a=-0.75). floor
+// base + fraction, four weights per axis, 16 weighted loads accumulated.
+// UPB-LABEL: func.func @upb(
+// UPB-SAME:    %{{.*}}: memref<1x2x4x4xf32>, %{{.*}}: memref<1x2x8x8xf32>)
+// UPB:         gpu.launch
+// UPB:         arith.fptosi
+// UPB:         arith.sitofp
+// UPB:         arith.select
+// UPB:         memref.load
+// UPB:         arith.mulf
+// UPB:         arith.addf
+// UPB:         memref.store
+// UPB:         gpu.terminator
+func.func @upb(%a: tensor<1x2x4x4xf32>) -> tensor<1x2x8x8xf32> {
+  %o = intent.upsample %a {mode = "bicubic"}
       : (tensor<1x2x4x4xf32>) -> tensor<1x2x8x8xf32>
   return %o : tensor<1x2x8x8xf32>
 }
