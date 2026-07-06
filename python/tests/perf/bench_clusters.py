@@ -1,23 +1,37 @@
 """CUDA-graph steady-state PK: our C3-C8 cluster cubins vs the REAL flag_gems +
-torch kernels.
+torch kernels — all three in-process on the same path.
 
 The sharp question this answers: *under CUDA-graph capture (launch overhead
-removed for BOTH sides), can our generated cluster kernels BEAT the real
+removed for ALL sides), can our generated cluster kernels BEAT the real
 flag_gems / torch kernels?* The answer is honest and roofline-grounded — win
 where physics allows (memory-bound movers + fusion), lose where the sm_120a
 compute ceiling or the naive-untuned single-block gap is real.
+
+flag_gems is the REAL Triton target. It is now timed IN-PROCESS on the same
+``do_bench_cudagraph`` path as ours + torch, thanks to
+``intentir.backend.flaggems_shim`` (routes flag_gems' cached libentry launcher
+through its constexpr-inclusive path so triton 3.6 no longer drops the constexpr
+placeholder slot — see the shim module / research/r2-flaggems-fix.md). The old
+FG_BENCH subprocess escape hatch is retired.
 
 HARNESS (fair by construction):
   * Our kernel: the SAME lower->cubin path the PKs use (RowReductionKernel with
     the cluster pass), launched via the CUDA Driver API on the *current* stream
     (read at call time, so it is captured on the graph's capture stream).
-  * Reference: the REAL ``flag_gems.<op>`` triton kernel AND ``torch.<op>``.
-  * BOTH sides timed with ``triton.testing.do_bench_cudagraph`` — it warms up on
+  * References: the REAL ``flag_gems.<op>`` triton kernel AND ``torch.<op>``,
+    BOTH in-process.
+  * All sides timed with ``triton.testing.do_bench_cudagraph`` — it warms up on
     a side stream, captures N unrolled calls into ONE cuda graph, and times
     ``g.replay()``. This is the explicit CUDA-graph steady-state kernel-time PK:
     per-call host launch overhead is amortized to ~0 for every contender.
-  * When an op cannot be graph-captured (dynamic output extent, host sync inside
-    the ref) we fall back to plain ``do_bench`` and TAG it (graph=no).
+  * When an op cannot be graph-captured (dynamic output extent, in-place mutate,
+    host sync inside the ref) we fall back to plain ``do_bench`` and TAG it.
+
+flag_gems dtype note: flag_gems follows torch's default dtype for these ops, so
+at the f32 shapes here it moves the SAME bytes as torch/ours (no free fp16/bf16
+halving). Where a real deployment would run fp16/bf16 flag_gems (norm/softmax/
+attention epilogues) it would move ~2x fewer bytes — noted per-op where it
+applies.
 
 REALISTIC f32 shapes (our kernels are f32 — a fp16/bf16 flag_gems path would be
 ~2x fewer bytes and is noted where it applies).
@@ -32,10 +46,6 @@ from __future__ import annotations
 import ctypes
 import gc
 import json
-import math
-import os
-import subprocess
-import sys
 import traceback
 from pathlib import Path
 
@@ -56,43 +66,38 @@ PEAK_TFLOPS_F32 = 105.0  # 5090D non-tensor-core f32 peak (~105 TFLOP/s)
 
 
 def _flag_gems():
+    """Import flag_gems and apply the triton-3.6 launcher shim (idempotent) so
+    its cached libentry dispatch works in-process under CUDA-graph capture."""
     try:
         import flag_gems
+        from intentir.backend.flaggems_shim import apply_flaggems_launch_shim
+        apply_flaggems_launch_shim()
         return flag_gems
     except Exception:
         return None
 
 
 FG = _flag_gems()
-_FG_REF = str(Path(__file__).resolve().parent / "fg_ref.py")
 
 
-# flag_gems steady-state timing is UNAVAILABLE on this sm_120a + triton-3.6 env:
-# its cached-dispatch libentry launcher passes 31 kernel args where triton 3.6's
-# driver expects 32 (the new launch_pdl param) -> "function takes exactly 32
-# arguments (31 given)". Only the FIRST (autotuning) call per process succeeds,
-# so no steady-state number can be measured (the committed correctness PKs pass
-# precisely because they call flag_gems exactly ONCE). Set FG_BENCH=1 to attempt
-# the isolated first-call subprocess anyway (returns None/SKIP here).
-FG_BENCH = os.environ.get("FG_BENCH", "0") == "1"
-
-
-def fg_us(spec):
-    """Time a flag_gems op in an ISOLATED subprocess. Returns median us or None.
-    Disabled by default (triton-3.6/sm_120a launcher ABI bug, see FG_BENCH)."""
-    if FG is None or not FG_BENCH:
+def fg_time(fn, want_graph=True, verify=None):
+    """Time a flag_gems callable IN-PROCESS on the same do_bench_cudagraph path
+    as ours/torch. Returns median us, or None if flag_gems is absent / the op
+    is unavailable / it raises. ``verify(result) -> bool`` asserts correctness
+    at the benched shape (nothing a no-op)."""
+    if FG is None or fn is None:
         return None
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "python")
     try:
-        r = subprocess.run([sys.executable, _FG_REF, json.dumps(spec)],
-                           capture_output=True, text=True, timeout=300, env=env)
-    except subprocess.TimeoutExpired:
+        r = fn()
+        torch.cuda.synchronize()
+        if verify is not None and not verify(r):
+            print("    [fg] correctness MISMATCH — dropping flag_gems number")
+            return None
+    except Exception as e:  # noqa: BLE001
+        print(f"    [fg] SKIP: {type(e).__name__}: {str(e)[:80]}")
         return None
-    for line in r.stdout.splitlines():
-        if line.startswith("US "):
-            return float(line.split()[1])
-    return None
+    us, _ = bench(fn, want_graph=want_graph)
+    return us
 
 
 # --------------------------------------------------------------------------- #
@@ -227,7 +232,9 @@ func.func @g(%d: {R}, %i: tensor<{M}x{N}xi64>) -> {R} {{
     our, go_g = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.gather(data, 1, idx)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "gather", "M": M, "N": N})
+    ref_g = torch.gather(data, 1, idx)
+    refs["flag_gems"] = fg_time(lambda: FG.gather(data, 1, idx),
+                                verify=lambda r: torch.equal(r, ref_g))
     nb = M * N * (8 + 4 + 4)  # idx read + data gathered + out
     record("C3", "gather ax1", f"[{M},{N}]", our, refs, nbytes=nb,
            note="idx i64 read-heavy", graph_ours=go_g)
@@ -251,7 +258,9 @@ func.func @e(%w: {W}, %i: tensor<{Ni}xi64>) -> {O} {{
     our, go_g = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.embedding(idx, weight)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "embedding", "V": V, "D": D, "Ni": Ni})
+    ref_e = torch.nn.functional.embedding(idx, weight)
+    refs["flag_gems"] = fg_time(lambda: FG.embedding(weight, idx),
+                                verify=lambda r: torch.equal(r, ref_e))
     nb = Ni * D * (4 + 4)  # read row + write row
     record("C3", "embedding", f"[{V},{D}] idx {Ni}", our, refs, nbytes=nb,
            graph_ours=go_g)
@@ -279,7 +288,10 @@ func.func @s(%d: {Dt}, %i: tensor<{M}x{K}xi64>, %s: {St}) -> {Dt} {{
     refs = {}
     d2 = base.clone()
     tt, _ = _fg_time(lambda: d2.scatter_add_(1, idx, src), want_graph=False); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "scatter_add", "M": M, "N": N, "K": K})
+    ref_sa = base.scatter_add(1, idx, src)
+    refs["flag_gems"] = fg_time(
+        lambda: FG.scatter_add_(base.clone(), 1, idx, src), want_graph=False,
+        verify=lambda r: torch.allclose(r, ref_sa, atol=1e-3))
     nb = M * K * (8 + 4 + 4)  # idx + src + atomic rmw
     record("C3", "scatter_add ax1", f"[{M},{N}] k{K}", our, refs, nbytes=nb,
            note="atomic rmw; in-place -> do_bench (no graph)", graph_ours=False)
@@ -293,7 +305,8 @@ def c4_layout():
     print("\n[C4] layout (structural data movement)")
     M, N, T = 4096, 4096, 256
 
-    def one(op, mlir, tensors, verify, ref_torch, fg_op, nb, shape=None, note=""):
+    def one(op, mlir, tensors, verify, ref_torch, fg_call, nb, shape=None,
+            note="", fg_verify=None):
         try:
             k = _mk("convert-intent-layout-to-gpu", mlir, T, tensors[-1].shape[0],
                     tensors[-1].shape[1])
@@ -307,8 +320,8 @@ def c4_layout():
         refs = {}
         if ref_torch is not None:
             tt, _ = _fg_time(ref_torch); refs["torch"] = tt
-        if fg_op is not None:
-            refs["flag_gems"] = fg_us({"op": fg_op, "M": M, "N": N})
+        if fg_call is not None:
+            refs["flag_gems"] = fg_time(fg_call, verify=fg_verify)
         record("C4", op, shape or f"[{M},{N}]", our, refs, nbytes=nb, note=note,
                graph_ours=gg)
 
@@ -324,8 +337,9 @@ def c4_layout():
     one("concat ax1", mlir, [a, b, out],
         lambda: torch.equal(out, torch.cat([a, b], 1)),
         lambda: torch.cat([a, b], 1),
-        "cat",
-        2 * M * N * 4 * 2)
+        (lambda: FG.cat([a, b], dim=1)) if FG else None,
+        2 * M * N * 4 * 2,
+        fg_verify=lambda r: torch.equal(r, torch.cat([a, b], 1)))
     del out; _cleanup()
 
     # pad lo/hi 2: output width must be divisible by T=256, so pad 4092 -> 4096.
@@ -348,8 +362,9 @@ def c4_layout():
     one("tile [2,2]", mlir, [a, out],
         lambda: torch.equal(out, a.repeat(2, 2)),
         lambda: a.repeat(2, 2),
-        "tile",
-        4 * M * N * 4 * 2)
+        (lambda: FG.tile(a, [2, 2])) if FG else None,
+        4 * M * N * 4 * 2,
+        fg_verify=lambda r: torch.equal(r, a.repeat(2, 2)))
     del out; _cleanup()
 
     # flip cols
@@ -358,8 +373,9 @@ def c4_layout():
     one("flip ax1", mlir, [a, out],
         lambda: torch.equal(out, torch.flip(a, [1])),
         lambda: torch.flip(a, [1]),
-        "flip",
-        M * N * 4 * 2)
+        (lambda: FG.flip(a, [1])) if FG else None,
+        M * N * 4 * 2,
+        fg_verify=lambda r: torch.equal(r, torch.flip(a, [1])))
     del out; _cleanup()
 
     # triu k=0
@@ -368,8 +384,9 @@ def c4_layout():
     one("triu k0", mlir, [a, out],
         lambda: torch.equal(out, torch.triu(a)),
         lambda: torch.triu(a),
-        "triu",
-        M * N * 4 * 2)
+        (lambda: FG.triu(a, 0)) if FG else None,
+        M * N * 4 * 2,
+        fg_verify=lambda r: torch.equal(r, torch.triu(a)))
     del out, a, b; _cleanup()
 
 
@@ -418,7 +435,12 @@ func.func @dp(%x: {O}) -> {O} {{
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.dropout(x, p, training=True)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "dropout", "M": M, "N": N})
+    # dropout output is random per-call; verify shape/finiteness only.
+    def _drop_ok(r):
+        o = r[0] if isinstance(r, tuple) else r
+        return o.shape == x.shape and torch.isfinite(o).all()
+    refs["flag_gems"] = fg_time(
+        lambda: FG.dropout(x, 0.25, train=True), verify=_drop_ok)
     record("C5", "dropout p=.25", f"[{M},{N}]", our, refs, nbytes=M * N * 4 * 2,
            note="read x + write; fused mask", graph_ours=gg)
     del x, out, din; _cleanup()
@@ -457,7 +479,10 @@ func.func @am(%x: tensor<{M}x{N}xf32>) -> tensor<{M}xi32> {{
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.argmax(x, 1)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "argmax", "M": M, "N": N})
+    ref_am = torch.argmax(x, 1)
+    refs["flag_gems"] = fg_time(
+        lambda: FG.argmax(x, dim=1),
+        verify=lambda r: torch.equal(r.to(torch.int64), ref_am))
     record("C6", "argmax ax1", f"[{M},{N}] T={T}", our, refs,
            nbytes=M * N * 4, note="read-once reduce", graph_ours=gg)
     del x, out; _cleanup()
@@ -498,7 +523,10 @@ func.func @so(%x: tensor<{M}x{N}xf32>) -> tensor<{M}x{N}xf32> {{
         our, gg = bench(go)
         refs = {}
         tt, _ = _fg_time(lambda: torch.sort(x, 1).values); refs["torch"] = tt
-        refs["flag_gems"] = fg_us({"op": "sort", "M": M, "N": N})
+        ref_sv = torch.sort(x, 1).values
+        refs["flag_gems"] = fg_time(
+            lambda: FG.sort(x, dim=1)[0],
+            verify=lambda r: torch.equal(r, ref_sv))
         record("C6", "sort ax1", f"[{M},{N}] T={T}", our, refs,
                nbytes=M * N * 4 * 2, cls="serial",
                note=f"O(N log^2 N) single-block; exact={ok}", graph_ours=gg)
@@ -527,7 +555,10 @@ def c7_pool():
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.avg_pool2d(a, 2, 2, 0)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "avg_pool2d", "N": N, "C": C, "H": H, "W": W})
+    ref_avg = torch.nn.functional.avg_pool2d(a, 2, 2, 0)
+    refs["flag_gems"] = fg_time(
+        lambda: FG.avg_pool2d(a, 2, stride=2, padding=0),
+        verify=lambda r: float((r - ref_avg).norm() / ref_avg.norm()) < 1e-3)
     nb = N * C * H * W * 4 + N * C * OH * OW * 4
     record("C7", "avg_pool2d k2s2", f"[{N},{C},{H},{W}]", our, refs, nbytes=nb,
            graph_ours=gg)
@@ -546,7 +577,10 @@ def c7_pool():
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.max_pool2d_with_indices(a, 2, 2, 0)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "max_pool2d", "N": N, "C": C, "H": H, "W": W})
+    ref_mv, _ref_mi = torch.nn.functional.max_pool2d_with_indices(a, 2, 2, 0)
+    refs["flag_gems"] = fg_time(
+        lambda: FG.max_pool2d_with_indices(a, 2, stride=2, padding=0),
+        verify=lambda r: torch.equal(r[0], ref_mv))
     nb = N * C * H * W * 4 + N * C * OH * OW * (4 + 8)
     record("C7", "max_pool2d+idx", f"[{N},{C},{H},{W}]", our, refs, nbytes=nb,
            graph_ours=gg)
@@ -565,7 +599,10 @@ def c7_pool():
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.interpolate(a, scale_factor=2, mode="nearest")); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "upsample", "N": N, "C": C, "H": H, "W": W})
+    ref_up = torch.nn.functional.interpolate(a, scale_factor=2, mode="nearest")
+    refs["flag_gems"] = fg_time(
+        lambda: FG.upsample_nearest2d(a, (2 * H, 2 * W), None, None),
+        verify=lambda r: torch.equal(r, ref_up))
     nb = N * C * H * W * 4 + N * C * OH * OW * 4
     record("C7", "upsample_near x2", f"[{N},{C},{H},{W}]", our, refs, nbytes=nb,
            graph_ours=gg)
@@ -601,7 +638,11 @@ func.func @cv(%x: {I}, %w: {Wt}) -> {O} {{
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.nn.functional.conv2d(x, w, None, 1, 1)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "conv2d", "N": N, "Cin": Cin, "Cout": Cout, "H": H, "W": W})
+    ref_cv = torch.nn.functional.conv2d(x, w, None, 1, 1)
+    refs["flag_gems"] = fg_time(
+        lambda: FG.conv2d(x, w, None, stride=(1, 1), padding=(1, 1),
+                          dilation=(1, 1), groups=1),
+        verify=lambda r: float((r - ref_cv).norm() / ref_cv.norm()) < 1e-2)
     flop = 2.0 * N * Cout * OH * OW * Cin * 3 * 3
     record("C7", "conv2d k3 s1 p1", f"[{N},{Cin},{H},{W}]->{Cout}", our, refs,
            flop=flop, cls="compute", note=f"rel={rel:.1e}; cuDNN=tensor-core ref",
@@ -627,7 +668,11 @@ def c7_polar():
     our, gg = bench(go)
     refs = {}
     tt, _ = _fg_time(lambda: torch.polar(absv, ang)); refs["torch"] = tt
-    refs["flag_gems"] = fg_us({"op": "polar", "M": M, "N": Nc})
+    ref_po = torch.view_as_real(torch.polar(absv, ang))
+    refs["flag_gems"] = fg_time(
+        lambda: FG.polar(absv, ang),
+        verify=lambda r: float((torch.view_as_real(r)[..., 0] - ref_po[..., 0]).norm()
+                               / ref_po[..., 0].norm()) < 1e-3)
     nb = M * Nc * 4 * (2 + 2)
     record("C7", "polar", f"[{M},{Nc}]", our, refs, nbytes=nb, graph_ours=gg)
     del absv, ang, re, im; _cleanup()
@@ -669,7 +714,10 @@ func.func @ms(%data: {F}, %mask: {F}) -> tensor<?xf32> {{
         our, gg = bench(go, want_graph=True)
         refs = {}
         tt, _ = _fg_time(lambda: torch.masked_select(data, maskb), want_graph=False); refs["torch"] = tt
-        refs["flag_gems"] = fg_us({"op": "masked_select", "R": R, "C": Cc})
+        ref_ms = torch.masked_select(data, maskb)
+        refs["flag_gems"] = fg_time(
+            lambda: FG.masked_select(data, maskb), want_graph=False,
+            verify=lambda r: torch.equal(r, ref_ms))
         nb = R * Cc * (4 + 4)  # mask + data read
         record("C8", "masked_select", f"[{R},{Cc}] ~50%", our, refs, nbytes=nb,
                cls="mem", note=f"3-launch multi-block compaction; exact={ok}",
@@ -700,7 +748,12 @@ func.func @nz(%cond: {F}) -> tensor<?x2xi64> {{
         ourn, ggn = bench(gon, want_graph=True)
         refsn = {}
         ttn, _ = _fg_time(lambda: torch.nonzero(cond), want_graph=False); refsn["torch"] = ttn
-        refsn["flag_gems"] = fg_us({"op": "nonzero", "R": R, "C": Cc})
+        # R-BENCH-4: fg.nonzero must exist with a matching signature before use.
+        ref_nz = torch.nonzero(cond)
+        refsn["flag_gems"] = (
+            fg_time(lambda: FG.nonzero(cond), want_graph=False,
+                    verify=lambda r: torch.equal(r, ref_nz))
+            if (FG is not None and hasattr(FG, "nonzero")) else None)
         record("C8", "nonzero", f"[{R},{Cc}] ~50%", ourn, refsn, nbytes=R * Cc * 4,
                cls="mem", note=f"3-launch multi-block compaction; exact={okn}",
                graph_ours=ggn, graph_ref=False)

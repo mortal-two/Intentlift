@@ -1,52 +1,69 @@
-# P1 perf study — can our C3–C8 cluster kernels beat CUDA-graph baselines?
+# M0 perf study — 3-way: ours vs torch vs **flag_gems** (the real Triton target)
 
-**Question (user):** under CUDA graph (launch overhead removed for both sides), can our generated cluster kernels beat the real flag_gems / torch kernels?
+**Question:** under CUDA graph (launch overhead removed for every side), can our generated cluster kernels beat the real flag_gems / torch kernels?
 
-**Method (audited SOUND).** `bench_clusters.py` times both our lowered sm_120a cubin and the reference under `triton.testing.do_bench_cudagraph` — warmup on a side stream, N calls captured into one CUDA graph, time `g.replay()`. Per-call host launch overhead → ~0 for every contender; correctness is asserted at the benched shape (nothing is a no-op). flag_gems was **unbenchable for steady state** (its cached-dispatch launcher passes 31 args but triton-3.6 expects 32 / `launch_pdl` on sm_120a — only the first call/process works; the PKs pass because they call once), so the reference is **torch = ATen / cuDNN / CUB**, the tuned real library. f32 both sides.
+**M0 change (this task).** flag_gems is now benched **in-process**, on the SAME `triton.testing.do_bench_cudagraph` steady-state path as ours + torch. The triton-3.6 launcher bug that made flag_gems unbenchable is fixed by a runtime monkeypatch shim in our code — `intentir.backend.flaggems_shim` (`apply_flaggems_launch_shim()`): flag_gems' cached `libentry` launcher has a version gate (`major==3 and 3<=minor<=5`) that on triton 3.6 falls through and DROPS every constexpr placeholder from the launch arg list, so the launcher got 31 args where 32 were wanted ("function takes exactly 32 arguments (31 given)") on every call after the first. The shim sets `flag_gems.utils.libentry.minor_version = 5`, routing triton 3.6 through flag_gems' own constexpr-inclusive launch branch. Only the imported module object is mutated; site-packages stay read-only. Validated: 120 in-process calls + `do_bench_cudagraph` on gather/softmax/argmax with correct output. The old `FG_BENCH` subprocess escape hatch (`fg_ref.py`) is deleted.
 
-An adversarial audit re-ran gather / pad / dropout / masked_select and confirmed the CUDA-graph capture is real & symmetric and **all 20 ratios stand**. The only correction: the GB/s / %HBM labels are optimistic vanity (1500 denominator + logical-byte overcount) — **the our/torch ratio is the load-bearing number**, not bandwidth %.
+**Method (audited SOUND).** `bench_clusters.py` times our lowered sm_120a cubin, `torch.<op>` (ATen/cuDNN/CUB), and `flag_gems.<op>` — all under `do_bench_cudagraph`. Per-call host launch overhead → ~0 for every contender; correctness is asserted at the benched shape for **all three** (nothing is a no-op). Ops with dynamic output extent / in-place mutation (scatter_add, masked_select, nonzero) fall back to plain `do_bench`, tagged. f32 all sides. **ratio = our_us / faster-of(torch, flag_gems)** — the honest "beat the better library" number. GB/s / %HBM are indicative vanity (1500 denominator + logical-byte overcount); the ratio is the load-bearing metric.
 
-## Result (ratio = our_us / best-torch_us; <1 = we win)
+**flag_gems dtype note:** flag_gems follows torch's default dtype for these ops, so at these f32 shapes it moves the SAME bytes as ours/torch — no free fp16/bf16 halving. A real fp16/bf16 deployment (norm/softmax/attention epilogues) would move ~2× fewer bytes; that lever is not exercised here. flag_gems `dropout` returns `(out, mask)`; sort/argmax/pool match torch semantics.
 
-| cluster | op | shape | our µs | torch µs | ratio | verdict |
-|---|---|---|--:|--:|--:|---|
-| C3 | **gather** ax1 | [8192,4096] | 343 | 464 | **0.76** | 🟢 WIN |
-| C3 | embedding | [8192,4096] idx8192 | 156 | 148 | 1.06 | ⚪ parity |
-| C3 | scatter_add ax1 | [8192,4096] k4096 | 738 | 709 | 1.04 | ⚪ parity |
-| C4 | concat ax1 | [4096,4096] | 180 | 178 | 1.01 | ⚪ parity |
-| C4 | **pad** | [4092²]→[4096²] | 81 | 95 | **0.85** | 🟢 WIN |
-| C4 | tile [2,2] | [4096,4096] | 274 | 278 | 0.99 | ⚪ parity |
-| C4 | flip ax1 | [4096,4096] | 75 | 72 | 1.05 | ⚪ parity |
-| C4 | triu k0 | [4096,4096] | 76 | 39 | 1.98 | 🔴 lose (tunable) |
-| C5 | rand | [8192,8192] | 164 | 167 | 0.99 | ⚪ parity |
-| C5 | **dropout** p=.25 | [8192,8192] | 358 | 408 | **0.88** | 🟢 WIN (fused mask) |
-| C6 | argmax ax1 | [4096,4096] | 27 | 12 | 2.25 | 🔴 lose (tunable) |
-| C6 | sort ax1 | [4096,2048] | 297 | 230 | 1.29 | 🔴 lose (bitonic vs radix) |
-| C6 | sort ax1 | [4096,4096] | 703 | 518 | 1.36 | 🔴 lose (bitonic vs radix) |
-| C7 | avg_pool2d k2s2 | [32,64,56,56] | 27 | 14 | 1.96 | 🔴 lose (tunable) |
-| C7 | max_pool2d+idx | [32,64,56,56] | 27 | 10 | 2.72 | 🔴 lose (tunable) |
-| C7 | upsample_near ×2 | [32,64,56,56] | 107 | 94 | 1.14 | ⚪ parity |
-| C7 | **conv2d** k3s1p1 | [32,64,56,56]→64 | 1118 | 110 | **10.2** | 🔴 LOSE (no tensor-core vs cuDNN) |
-| C7 | polar | [4096,4096] | 180 | 176 | 1.02 | ⚪ parity |
-| C8 | **masked_select** | [2048,2048] ~50% | 185 | 71 | **2.6** | 🟡 near (multi-block, was ~1400×) |
-| C8 | masked_select | [4096,4096] ~50% | 1001 | 326 | 3.1 | 🟡 near (multi-block, was ~1360×) |
-| C8 | nonzero | [2048,2048] ~50% | 142 | 59 | 2.4 | 🟡 near (multi-block) |
-| C8 | nonzero | [4096,4096] ~50% | 704 | 272 | 2.6 | 🟡 near (multi-block) |
+## Result (3-way; ratio = our_us / faster reference; <1 = we win)
 
-## Honest answer
+| cluster | op | shape | our µs | torch µs | **fg µs** | best-ref | ratio | verdict |
+|---|---|---|--:|--:|--:|:--|--:|---|
+| C3 | gather ax1 | [8192,4096] | 343 | 477 | **339** | flag_gems | 1.01 | ⚪ parity |
+| C3 | embedding | [8192,4096] idx8192 | 156 | 147 | 156 | torch | 1.06 | ⚪ parity |
+| C3 | scatter_add ax1 | [8192,4096] k4096 | 737 | 712 | 872 | torch | 1.04 | ⚪ parity |
+| C4 | concat ax1 | [4096,4096] | 180 | 178 | **177** | flag_gems | 1.02 | ⚪ parity |
+| C4 | pad | [4092²]→[4096²] | 79 | 95 | — | torch | **0.83** | 🟢 WIN |
+| C4 | tile [2,2] | [4096,4096] | 274 | 278 | **258** | flag_gems | 1.06 | ⚪ parity |
+| C4 | flip ax1 | [4096,4096] | 76 | 72 | **70** | flag_gems | 1.09 | ⚪ parity |
+| C4 | triu k0 | [4096,4096] | 75 | 39 | 70 | torch | 1.95 | 🔴 lose (tunable) |
+| C5 | rand | [8192,8192] | 165 | 168 | — | torch | 0.98 | ⚪ parity |
+| C5 | dropout p=.25 | [8192,8192] | 358 | 408 | 401 | flag_gems | **0.89** | 🟢 WIN (fused mask) |
+| C6 | argmax ax1 | [4096,4096] | 27 | 12 | **11** | flag_gems | 2.45 | 🔴 lose (tunable) |
+| C6 | sort ax1 | [4096,2048] | 299 | **231** | 2586 | torch | 1.29 | 🔴 lose (bitonic vs radix) |
+| C6 | sort ax1 | [4096,4096] | 708 | **519** | 4976 | torch | 1.37 | 🔴 lose (bitonic vs radix) |
+| C7 | avg_pool2d k2s2 | [32,64,56,56] | 27 | 14 | **9** | flag_gems | 2.90 | 🔴 LOSE (tunable) |
+| C7 | max_pool2d+idx | [32,64,56,56] | 27 | **10** | 18 | torch | 2.70 | 🔴 LOSE (tunable) |
+| C7 | upsample_near ×2 | [32,64,56,56] | 108 | 93 | **91** | flag_gems | 1.18 | 🔴 lose |
+| C7 | conv2d k3s1p1 | [32,64,56,56]→64 | 1124 | **111** | 276 | torch | 10.14 | 🔴 LOSE (no tensor-core) |
+| C7 | polar | [4096,4096] | 180 | 176 | **176** | flag_gems | 1.02 | ⚪ parity |
+| C8 | masked_select | [2048,2048] ~50% | 187 | 74 | **63** | flag_gems | 2.94 | 🔴 LOSE (multi-block) |
+| C8 | masked_select | [4096,4096] ~50% | 1006 | 325 | **129** | flag_gems | 7.79 | 🔴 LOSE (multi-block) |
+| C8 | nonzero | [2048,2048] ~50% | 142 | **63** | 111 | torch | 2.24 | 🔴 lose (multi-block) |
+| C8 | nonzero | [4096,4096] ~50% | 709 | **275** | 553 | torch | 2.57 | 🔴 LOSE (multi-block) |
 
-**Yes — where physics allows.** On memory-bound movers we **win or match**: genuine wins gather 0.76× / pad 0.85× / dropout 0.88× (fused mask = fewer passes), and parity across embedding, scatter_add, concat, tile, flip, rand, upsample, polar (≈1.0×). That's **11 of 20 at parity-or-win**, several at ≥96% of the GDDR7 spec bandwidth. This is the regime the design targets, and it holds up against ATen under CUDA graph.
+best-ref split: flag_gems is the faster reference on 10/22 rows, torch on 12/22.
 
-**No — where the codegen is naive or the op is compute-bound:**
-- **`masked_select` ~1400× → 2.6× (P2a FIXED).** The compaction pass emitted `grid(1,1,1)` — a single block did the whole serial prefix-scan (phase-1 base count re-scanned `[0,t*seg)` per thread = O(Ntotal·T) on one SM). Rewritten as a 3-phase multi-block parallel stream compaction (count → parallel two-level scan → scatter, B contiguous chunks across all SMs, shared-memory Hillis-Steele scan), preserving EXACT row-major order. Now 2.4–3.1× vs torch (≈500× faster than before). Remaining gap is the 1-thread-per-block uncoalesced chunk read; closing it needs a block-cooperative coalesced mover.
-- **`conv2d` 10×.** Naive windowed accumulation, no tensor cores, ~6% of f32 peak, vs cuDNN's tensor-core kernel. Closing it needs im2col + wmma — a large effort (PRD out-of-scope, but a candidate).
-- **`sort` 1.3×.** Bitonic O(N log²N) single-block vs CUB radix. Algorithmic; hard to fully close.
-- **`triu` 2.0×, `argmax` 2.25×, `pool` 2.0–2.7×.** Memory-bound but under-tiled — one-block-per-row leaves the SMs underutilized on small/awkward shapes. **Tunable toward parity** (tail-mask, wider tiles, more blocks). → P2.
+## What changed vs the torch-only report
 
-**Caveat.** Absolute GB/s and %HBM in the raw JSON are indicative only (see the note in `bench_clusters.py`); the ratios above are the fair, audited truth. flag_gems could not be steady-state-benched on this stack (torch is the stand-in tuned reference).
+Adding flag_gems as a real contender **tightens several gates** — the ratio is now vs the *faster* of the two libraries, not torch alone:
+- **avg_pool2d 1.96×→2.90×**: flag_gems' Triton pool (9 µs) is faster than torch (14 µs), so the true gap is larger than the old torch-only number showed.
+- **argmax 2.25×→2.45×**; **flip/tile/gather/concat/polar** best-ref flips to flag_gems (all still parity).
+- **masked_select [4096²] 3.1×→7.8×**: flag_gems compaction (129 µs) is ~2.5× faster than torch (325 µs) — our single-thread-per-block chunk read is the real loser, and flag_gems is the bar to beat, not torch.
+- Where flag_gems is a naive/immature kernel it **loses to torch** and does NOT tighten the gate: **sort** (flag_gems 2586/4976 µs ≈10× slower than torch's CUB radix — torch stays the target), **scatter_add** (flag_gems 872 vs torch 712 µs).
 
-## P2 tuning targets (leverage order)
-1. **masked_select / compact: multi-block prefix-sum** (≈1400× → parity) — the single biggest win.
-2. **pool / argmax / triu: better tiling + more blocks** (≈2× → parity).
-3. **sort: multi-block merge / radix** (algorithmic; partial).
-4. **conv: im2col + tensor-core** (large; likely a separate effort).
+## Honest gaps vs flag_gems (may differ from the torch gaps)
+
+| op | vs torch | vs flag_gems | real target |
+|---|--:|--:|---|
+| avg_pool2d | 1.96× | **2.90×** | flag_gems (Triton 9 µs) — tighter |
+| masked_select[4096²] | 3.1× | **7.8×** | flag_gems (compaction 129 µs) — much tighter |
+| argmax | 2.25× | **2.45×** | flag_gems (11 µs) |
+| upsample | 1.14× | **1.18×** | flag_gems (91 µs) |
+| conv2d | **10.1×** | 4.1× | torch/cuDNN (flag_gems conv itself 2.5× off cuDNN) |
+| max_pool2d+idx | **2.70×** | 1.55× | torch |
+| nonzero | **2.24–2.57×** | ~1.3× | torch (flag_gems nonzero slower) |
+| sort | **1.29–1.37×** | 0.11–0.14× | torch (flag_gems sort ~10× slower) |
+
+**Parity-or-win holds on the memory-bound movers** even against the faster library: pad 0.83× and dropout 0.89× are genuine wins; gather, embedding, scatter_add, concat, tile, flip, rand, polar sit at parity (≤1.09×) — **10 of 22 rows at parity-or-win**, most near the GDDR7 spec. The naive-codegen losses (conv 10×, compaction 2.2–7.8×, pool/argmax/triu 1.95–2.90×, sort 1.3×) are now measured against the real Triton target and feed the M1–M7 milestones.
+
+**Gate 0 (4.1) MET:** flag_gems runs ≥100× in-process under `do_bench_cudagraph` with the shim; the 3-way table is produced with correctness asserted per contender; `FG_BENCH`/subprocess path removed; results in `bench_clusters_results.json`.
+
+## Downstream targets (unchanged milestone order)
+1. **M1** pool/argmax/triu: flat grid-stride + vector<4> + tail-mask → parity.
+2. **M2** compaction: block-cooperative coalesced mover → beat flag_gems' 129 µs.
+3. **M3** conv2d: implicit-GEMM on mma.sync + TF32/fp16 → ≤2× cuDNN.
+4. **M7** sort: W-aware top-k (torch/CUB stays the target).
