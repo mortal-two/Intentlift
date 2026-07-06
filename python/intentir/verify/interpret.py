@@ -267,6 +267,69 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
         # Upper triangle above the k-th diagonal, rest zeroed (numpy/torch triu).
         return np.triu(env[op.operands[0]], k=int(a.get("k", 0)))
 
+    if o == "pool":
+        # Windowed pooling (C7). avg = window mean with torch's default
+        # count_include_pad=True (divisor = kH*kW); max = window max + (for
+        # max_pool2d_with_indices) the argmax FLAT index ih*W+iw within the (H,W)
+        # plane, first-index tie-break (strict `>` scan in kh,kw order).
+        x = env[op.operands[0]]
+        fn = a["fn"]
+        kH, kW = int(a["kH"]), int(a["kW"])
+        sH, sW = int(a["sH"]), int(a["sW"])
+        padH, padW = int(a["padH"]), int(a["padW"])
+        N, C, H, W = x.shape
+        OH = (H + 2 * padH - kH) // sH + 1
+        OW = (W + 2 * padW - kW) // sW + 1
+        sumacc = np.zeros((N, C, OH, OW), np.float32)
+        maxacc = np.full((N, C, OH, OW), -np.inf, np.float32)
+        idxacc = np.full((N, C, OH, OW), -1, np.int64)
+        oh_i = np.arange(OH)
+        ow_i = np.arange(OW)
+        for kh in range(kH):
+            ih = oh_i * sH - padH + kh                    # (OH,)
+            hvalid = (ih >= 0) & (ih < H)
+            ihc = np.clip(ih, 0, H - 1)
+            for kw in range(kW):
+                iw = ow_i * sW - padW + kw                # (OW,)
+                wvalid = (iw >= 0) & (iw < W)
+                iwc = np.clip(iw, 0, W - 1)
+                valid = hvalid[:, None] & wvalid[None, :]  # (OH,OW)
+                patch = x[:, :, ihc[:, None], iwc[None, :]]  # (N,C,OH,OW)
+                if fn == "avg":
+                    sumacc += np.where(valid, patch, 0.0)
+                elif fn == "max":
+                    flat = ih[:, None] * W + iw[None, :]   # (OH,OW)
+                    better = valid[None, None] & (patch > maxacc)
+                    maxacc = np.where(better, patch, maxacc)
+                    idxacc = np.where(better,
+                                      np.broadcast_to(flat, (N, C, OH, OW)), idxacc)
+                else:
+                    raise InterpError(f"pool: unknown fn {fn!r}")
+        if fn == "avg":
+            return (sumacc / np.float32(kH * kW)).astype(x.dtype)
+        vals = maxacc.astype(x.dtype)
+        if isinstance(op.result, list):     # max_pool2d_with_indices
+            return (vals, idxacc.astype(np.int64))
+        return vals
+
+    if o == "upsample":
+        # Nearest-neighbor resize (C7): out[.,oh,ow] = in[.,floor(oh*IH/OH),
+        # floor(ow*IW/OW)] with reciprocal scale IH/OH (matches flag_gems /
+        # torch.upsample_nearest2d). `scale` = [sh, sw] integer upscale factors.
+        x = env[op.operands[0]]
+        N, C, H, W = x.shape
+        sh, sw = (int(v) for v in a["scale"])
+        OH, OW = H * sh, W * sw
+        ih = np.minimum((np.arange(OH) * (H / OH)).astype(np.int64), H - 1)
+        iw = np.minimum((np.arange(OW) * (W / OW)).astype(np.int64), W - 1)
+        return x[:, :, ih[:, None], iw[None, :]]
+
+    if o == "polar":
+        # Complex build (C7): real = abs*cos(angle), imag = abs*sin(angle). The
+        # complex result is the trailing real/imag PAIR (two real results).
+        absv, ang = env[op.operands[0]], env[op.operands[1]]
+        return (absv * np.cos(ang), absv * np.sin(ang))
+
     if o == "transpose":
         return np.transpose(env[op.operands[0]], axes=a.get("perm"))
 

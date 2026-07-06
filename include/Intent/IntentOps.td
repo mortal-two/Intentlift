@@ -342,6 +342,90 @@ def Intent_RandOp : Intent_Op<"rand"> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Windowed-reduce / interpolation / complex (Layer A). The C7 cluster: three
+// distinct memory-bound mechanisms over NCHW tensors.
+//   pool     — windowed reduction (max/avg) over a kHxkW window at stride s with
+//              padding; max_pool2d_with_indices ALSO returns the argmax FLAT index
+//              (ih*W + iw within the (H,W) plane) as an i64.
+//   upsample — nearest-neighbor gather: out[.,oh,ow] = in[.,floor(oh*IH/OH),
+//              floor(ow*IW/OW)] (an affine/floor index-remap, C4-layout-like).
+//   polar    — elementwise abs*(cos angle, sin angle): a complex tensor
+//              represented as a trailing real/imag PAIR (two real results),
+//              reusing the C0 cos/sin scalar emitters.
+// Lowered by convert-intent-{pool,upsample,polar}-to-gpu. See spec/ir (C7).
+//===----------------------------------------------------------------------===//
+
+def Intent_PoolOp : Intent_Op<"pool"> {
+  let summary = "2-D windowed pooling reduce (max/avg) over NCHW (Layer A).";
+  let description = [{
+    Pool a rank-4 `[N,C,H,W]` `input` to `[N,C,OH,OW]` by reducing over each
+    `kH x kW` window at stride `(sH,sW)` with zero-padding `(padH,padW)`
+    (torch.avg_pool2d / torch.max_pool2d). For output cell `(n,c,oh,ow)` the
+    window source coord is `(ih,iw) = (oh*sH - padH + kh, ow*sW - padW + kw)` for
+    `kh in [0,kH)`, `kw in [0,kW)`; out-of-bounds coords are skipped:
+
+    * `fn = "max"` — the window maximum (out-of-bounds = -inf, so ignored). When
+      the optional `indices` result is present (torch.max_pool2d_with_indices) it
+      carries the argmax FLAT index `ih*W + iw` (the position WITHIN the (H,W)
+      plane) as i64; ties keep the first (row-major window scan) index, matching
+      torch/flag_gems (strict `>` update).
+    * `fn = "avg"` — the window sum divided by `kH*kW` (torch's default
+      `count_include_pad=True`: padded cells count as 0 in the sum but the divisor
+      is the full window size).
+
+    The C7 windowed-reduce mechanism: one block per `(n,c)` channel-plane row (or
+    per output row), each thread reduces the kHxkW window for its output columns —
+    a bounded per-cell reduce, NOT a full-axis `intent.reduce`. `indices` is only
+    valid for `fn = "max"`.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn,
+                       I64Attr:$kH, I64Attr:$kW, I64Attr:$sH, I64Attr:$sW,
+                       I64Attr:$padH, I64Attr:$padW);
+  let results = (outs AnyRankedTensor:$output,
+                      Optional<AnyRankedTensor>:$indices);
+  let assemblyFormat =
+      "$input attr-dict `:` functional-type($input, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_UpsampleOp : Intent_Op<"upsample"> {
+  let summary = "2-D nearest-neighbor upsample over NCHW (Layer A).";
+  let description = [{
+    Nearest-neighbor resize of a rank-4 `[N,C,H,W]` `input` to `[N,C,OH,OW]`
+    (torch.upsample_nearest2d / F.interpolate mode="nearest"). Pure index-remap:
+    `out[n,c,oh,ow] = input[n,c, min(floor(oh*IH/OH), IH-1),
+    min(floor(ow*IW/OW), IW-1)]` — the source coord is an affine `floor` of the
+    output coord with the reciprocal scale `IH/OH` (matching flag_gems'
+    `(oh*IH/OH).to(int32)` truncation). C4-layout-like: a `memref.load` at the
+    floored source coord, no arithmetic on the loaded value. `mode` is
+    `"nearest"` (bilinear/bicubic are documented follow-ups).
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$mode);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` functional-type($input, $result)";
+  let hasVerifier = 1;
+}
+
+def Intent_PolarOp : Intent_Op<"polar"> {
+  let summary = "Complex construction from magnitude+angle (Layer A).";
+  let description = [{
+    Build a complex tensor from a magnitude `abs` and a phase `angle`
+    (torch.polar): `real = abs*cos(angle)`, `imag = abs*sin(angle)`. The complex
+    result is represented as a trailing real/imag PAIR — two real-typed results
+    `real` and `imag` of the same shape/element type as `abs` — so a caller
+    compares against `torch.view_as_real(torch.polar(abs, angle))[..., 0]` and
+    `[..., 1]`. Elementwise, reusing the C0 `cos`/`sin` scalar emitters (the NVVM
+    `cos.approx`/`sin.approx` hardware ops) + `mul`; verified rel < 1e-3.
+  }];
+  let arguments = (ins AnyRankedTensor:$abs, AnyRankedTensor:$angle);
+  let results = (outs AnyRankedTensor:$real, AnyRankedTensor:$imag);
+  let assemblyFormat =
+      "$abs `,` $angle attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

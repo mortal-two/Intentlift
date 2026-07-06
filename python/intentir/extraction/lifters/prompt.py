@@ -108,6 +108,19 @@ Atomic ops (each is one JSON object in a "body" list):
      {"op":"sort","result":[V,IDX],"operands":[A],"attrs":{"descending":false,"axis":i}}
      {"op":"sort","result":IDX,"operands":[A],"attrs":{"descending":false,"axis":i,"return":"indices"}}   // argsort
      {"op":"sort","result":[V,IDX],"operands":[A],"attrs":{"descending":true,"axis":i,"k":<int>}}          // topk
+  pool       : 2-D windowed pooling over NCHW [N,C,H,W] -> [N,C,OH,OW]. `fn` "avg"
+               (mean, torch count_include_pad divisor kH*kW) or "max". For
+               max_pool2d_with_indices name BOTH results (list) — the 2nd is the
+               argmax FLAT index ih*W+iw (i64).
+     {"op":"pool","result":O,"operands":[A],"attrs":{"fn":"avg","kH":k,"kW":k,"sH":s,"sW":s,"padH":p,"padW":p}}
+     {"op":"pool","result":[O,IDX],"operands":[A],"attrs":{"fn":"max","kH":k,"kW":k,"sH":s,"sW":s,"padH":p,"padW":p}}
+  upsample   : nearest-neighbor resize over NCHW. out[.,oh,ow]=in[.,floor(oh*IH/OH),
+               floor(ow*IW/OW)]. `scale`=[sh,sw] integer upscale factors.
+     {"op":"upsample","result":O,"operands":[A],"attrs":{"mode":"nearest","scale":[sh,sw]}}
+  polar      : complex build from magnitude+angle (torch.polar). The complex result
+               is the trailing real/imag PAIR — name BOTH results (list):
+               real=abs*cos(angle), imag=abs*sin(angle).
+     {"op":"polar","result":[RE,IM],"operands":[ABS,ANGLE],"attrs":{}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

@@ -366,6 +366,58 @@ LogicalResult RandOp::verify() {
   return success();
 }
 
+LogicalResult PoolOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto oTy = cast<RankedTensorType>(getOutput().getType());
+  if (iTy.getRank() != 4 || oTy.getRank() != 4)
+    return emitOpError("pool operates on rank-4 NCHW tensors");
+  if (iTy.getElementType() != oTy.getElementType())
+    return emitOpError("pool output element type must equal input");
+  if (getFn() != "max" && getFn() != "avg")
+    return emitOpError("pool fn must be 'max' or 'avg'");
+  if (getIndices()) {
+    if (getFn() != "max")
+      return emitOpError("pool indices result is only valid for fn = 'max'");
+    auto xTy = cast<RankedTensorType>(getIndices().getType());
+    if (xTy.getShape() != oTy.getShape())
+      return emitOpError("pool indices must share the output shape");
+    if (!xTy.getElementType().isInteger(64) && !xTy.getElementType().isInteger(32))
+      return emitOpError("pool indices must be an integer (i64/i32) tensor");
+  }
+  return success();
+}
+
+LogicalResult UpsampleOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (iTy.getRank() != 4 || rTy.getRank() != 4)
+    return emitOpError("upsample operates on rank-4 NCHW tensors");
+  if (iTy.getElementType() != rTy.getElementType())
+    return emitOpError("upsample is element-type-preserving");
+  if (getMode() != "nearest")
+    return emitOpError("upsample mode must be 'nearest'");
+  if (!iTy.hasStaticShape() || !rTy.hasStaticShape())
+    return success();
+  if (iTy.getDimSize(0) != rTy.getDimSize(0) ||
+      iTy.getDimSize(1) != rTy.getDimSize(1))
+    return emitOpError("upsample preserves the N and C extents");
+  return success();
+}
+
+LogicalResult PolarOp::verify() {
+  auto aTy = cast<RankedTensorType>(getAbs().getType());
+  auto gTy = cast<RankedTensorType>(getAngle().getType());
+  if (aTy != gTy)
+    return emitOpError("polar abs and angle must have the same type");
+  for (Value r : {getReal(), getImag()}) {
+    auto rTy = cast<RankedTensorType>(r.getType());
+    if (rTy.getShape() != aTy.getShape() ||
+        rTy.getElementType() != aTy.getElementType())
+      return emitOpError("polar real/imag must match the abs shape+element type");
+  }
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};

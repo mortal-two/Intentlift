@@ -324,6 +324,114 @@ def ConvertIntentSortToGPU
   ];
 }
 
+def ConvertIntentPoolToGPU
+    : Pass<"convert-intent-pool-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.pool (avg / max[+indices]) over NCHW to "
+                "one block-cooperative gpu.launch (windowed reduce).";
+  let description = [{
+    The C7 windowed-reduce pass. Recognizes a `func.func` whose body is exactly
+    one `intent.pool` over a rank-4 `[N,C,H,W]` f32 input producing `[N,C,OH,OW]`
+    (avg) or `[N,C,OH,OW]` + an i64 argmax-index `[N,C,OH,OW]` (max_pool2d_with_
+    indices), and rewrites it in place to ONE block-cooperative `gpu.launch`:
+    grid = (N*C, OH, 1) (one block per channel-plane row of the output), block =
+    (T,1,1) threads over the OW output columns (K = OW/T columns each, unrolled).
+
+    The new mechanism vs. `intent.reduce` (a full-axis tree/all_reduce) is a
+    BOUNDED per-output-cell reduction over the `kH x kW` window: each thread walks
+    the static window `(ih,iw) = (oh*sH - padH + kh, ow*sW - padW + kw)`, guards
+    each source coord with an in-bounds `scf.if` (out-of-bounds = skip), and
+    accumulates. `avg` sums (padded cells contribute 0) and divides by `kH*kW`
+    (torch's default count_include_pad). `max` keeps the running max and — when the
+    `indices` output is present — the argmax FLAT index `ih*W + iw` carried as an
+    i64 PAIR alongside the value (strict `>` update = first-index tie-break,
+    matching torch/flag_gems). Destination-passing: the appended output memref(s)
+    (`[N,C,OH,OW]` f32, then the i64 index memref for max-with-indices) are
+    written; the input is passed as a rank-4 memref.
+
+    Correctness-only (bit-faithful vs torch + flag_gems: rel < 1e-3 values,
+    exact indices). Static shapes, OW % T == 0. Run BEFORE
+    `convert-intent-to-linalg`; the memref+gpu.launch module goes straight to the
+    device pipeline, bypassing bufferization.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the OW output-column axis; 0 = auto.">,
+  ];
+}
+
+def ConvertIntentUpsampleToGPU
+    : Pass<"convert-intent-upsample-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.upsample (nearest) over NCHW to one "
+                "block-cooperative gpu.launch (affine floor index-remap).";
+  let description = [{
+    The C7 interpolation pass. Recognizes a `func.func` whose body is exactly one
+    `intent.upsample{mode="nearest"}` over a rank-4 `[N,C,H,W]` f32 input producing
+    `[N,C,OH,OW]`, and rewrites it in place to ONE block-cooperative `gpu.launch`:
+    grid = (N*C, OH, 1) (one block per output channel-plane row), block = (T,1,1)
+    threads over the OW output columns (K = OW/T each, unrolled).
+
+    Pure DATA MOVEMENT (C4-layout-like): each output element's SOURCE coord is an
+    affine `floor` of the output coord — `ih = min(floor(oh*IH/OH), IH-1)`,
+    `iw = min(floor(ow*IW/OW), IW-1)` computed with the reciprocal scale `IH/OH`
+    in f32 then truncated to int (matching flag_gems' `(oh*IH/OH).to(int32)`) —
+    followed by a `memref.load` at `(n,c,ih,iw)`. Destination-passing: the appended
+    `[N,C,OH,OW]` output memref is written; the input is a rank-4 memref.
+
+    Correctness-only (bit-EXACT gather vs torch + flag_gems). Static shapes,
+    OW % T == 0. Run BEFORE `convert-intent-to-linalg`.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the OW output-column axis; 0 = auto.">,
+  ];
+}
+
+def ConvertIntentPolarToGPU
+    : Pass<"convert-intent-polar-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.polar (abs,angle -> real,imag) to one "
+                "block-cooperative gpu.launch (elementwise complex build).";
+  let description = [{
+    The C7 complex-dtype pass. Recognizes a `func.func` whose body is exactly one
+    `intent.polar` over rank-2 `[M,N]` f32 `abs`/`angle` producing two `[M,N]` f32
+    results `real`/`imag`, and rewrites it in place to ONE block-cooperative
+    `gpu.launch`: one block per row, the column axis split over T threads
+    (K = N/T columns each, unrolled). Destination-passing: two appended `[M,N]`
+    output memrefs (`real` then `imag`) are written.
+
+    Elementwise: `real = abs*cos(angle)`, `imag = abs*sin(angle)`, reusing the C0
+    `cos`/`sin` scalar emitters (`math.cos`/`math.sin` -> `cos.approx`/`sin.approx`
+    NVVM hardware ops via the `-lower-gpu-math-to-nvvm` peephole). The complex
+    tensor is represented as the trailing real/imag PAIR (two real results),
+    compared against `torch.view_as_real(torch.polar(...))` (rel < 1e-3). Static
+    shapes, N % T == 0. Run BEFORE `convert-intent-to-linalg`.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the column axis; 0 = auto.">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

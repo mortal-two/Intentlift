@@ -154,6 +154,27 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
     if op.op in ("flip", "triu"):
         (x,) = op.operands
         return list(env[x]) if x in env else None
+    if op.op == "pool":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        N, C, H, W = env[x]
+        kH, kW = int(op.attrs["kH"]), int(op.attrs["kW"])
+        sH, sW = int(op.attrs["sH"]), int(op.attrs["sW"])
+        padH, padW = int(op.attrs["padH"]), int(op.attrs["padW"])
+        OH = (H + 2 * padH - kH) // sH + 1
+        OW = (W + 2 * padW - kW) // sW + 1
+        return [N, C, OH, OW]
+    if op.op == "upsample":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        N, C, H, W = env[x]
+        sh, sw = (int(v) for v in op.attrs["scale"])
+        return [N, C, H * sh, W * sw]
+    if op.op == "polar":
+        a0 = op.operands[0]
+        return list(env[a0]) if a0 in env else None
     raise NotImplementedError(f"emit_mlir: unhandled body op {op.op!r}")
 
 
@@ -248,8 +269,51 @@ class _Printer:
                 f'{{descending = {desc}, axis = {axis} : i64}} : '
                 f'({_tt(env[op.operands[0]])}) -> ({vty}, {ity})')
             return
+        if op.op == "pool":
+            # avg -> one f32 output; max may carry a 2nd i64 argmax-index result
+            # (max_pool2d_with_indices). op.result is a list [out, indices] when
+            # indices are named, else a single str.
+            x = self.ssa[op.operands[0]]
+            if isinstance(op.result, list):
+                oname, iname = op.result[0], op.result[1]
+            else:
+                oname, iname = op.result, None
+            oshp = env[oname]
+            ossa = self.fresh(oname)
+            oty = _tt(oshp)
+            attrs = (f'fn = "{a["fn"]}", kH = {int(a["kH"])} : i64, '
+                     f'kW = {int(a["kW"])} : i64, sH = {int(a["sH"])} : i64, '
+                     f'sW = {int(a["sW"])} : i64, padH = {int(a["padH"])} : i64, '
+                     f'padW = {int(a["padW"])} : i64')
+            if iname is not None:
+                self.int_results[iname] = "i64"
+                issa = self.fresh(iname)
+                ity = "tensor<" + "x".join(str(s) for s in oshp) + "xi64>"
+                self.lines.append(
+                    f'{indent}{ossa}, {issa} = intent.pool {x} {{{attrs}}} : '
+                    f'({_tt(env[op.operands[0]])}) -> ({oty}, {ity})')
+            else:
+                self.lines.append(
+                    f'{indent}{ossa} = intent.pool {x} {{{attrs}}} : '
+                    f'({_tt(env[op.operands[0]])}) -> {oty}')
+            return
+        if op.op == "polar":
+            # abs,angle -> (real, imag) real/imag PAIR (two f32 results).
+            absv, ang = (self.ssa[o] for o in op.operands)
+            rname, iname = op.result[0], op.result[1]
+            rssa, issa = self.fresh(rname), self.fresh(iname)
+            ta = _tt(env[op.operands[0]])
+            self.lines.append(
+                f'{indent}{rssa}, {issa} = intent.polar {absv}, {ang} : '
+                f'({ta}, {ta}) -> ({_tt(env[rname])}, {_tt(env[iname])})')
+            return
         r = self.fresh(op.result)
-        if op.op == "contraction":
+        if op.op == "upsample":
+            x = self.ssa[op.operands[0]]
+            self.lines.append(
+                f'{indent}{r} = intent.upsample {x} {{mode = "nearest"}} : '
+                f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
+        elif op.op == "contraction":
             x, y = (self.ssa[o] for o in op.operands)
             tx, ty = _tt(env[op.operands[0]]), _tt(env[op.operands[1]])
             ins, out = a["subscripts"].split("->")
