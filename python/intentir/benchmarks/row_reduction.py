@@ -302,7 +302,8 @@ class MatmulKernel:
     def __init__(self, mlir_text: str, num_stages: int | None = None,
                  block_m: int | None = None, block_n: int | None = None,
                  mma: bool = False, warp_spec: bool = False,
-                 num_producer_warps: int | None = None):
+                 num_producer_warps: int | None = None,
+                 block_k: int | None = None):
         # mma=True selects the nvgpu.ldmatrix + nvgpu.mma.sync path
         # (-convert-intent-contraction-to-gpu-mma); warp_spec=True selects the
         # M7g warp-specialized (producer/consumer) mma.sync path
@@ -316,6 +317,11 @@ class MatmulKernel:
             opts.append(f"block-m={block_m}")
         if block_n is not None:
             opts.append(f"block-n={block_n}")
+        if block_k is not None:
+            # block-k (BK staging step) is only a knob on the nvgpu.mma.sync path.
+            if not mma:
+                raise ValueError("block_k is only supported with mma=True")
+            opts.append(f"block-k={block_k}")
         if warp_spec and num_producer_warps is not None:
             opts.append(f"num-producer-warps={num_producer_warps}")
         if warp_spec:

@@ -672,6 +672,11 @@ def ConvertIntentContractionToGPUMMA
            "block C-tile rows BM (numWarps = BM/16 warps tile the M axis).">,
     Option<"blockN", "block-n", "unsigned", /*default=*/"128",
            "block C-tile cols BN (each warp owns BN/8 n8 mma column tiles).">,
+    Option<"blockK", "block-k", "unsigned", /*default=*/"32",
+           "K staging step BK (must be a multiple of the m16n8k16 MMA_K=16; "
+           "BK/16 mma sub-tiles per stage). Wider BK stages more K per cp.async "
+           "wave; the smem budget caps nStages*(BM+BN)*BK*2 at ~100 KiB. "
+           "Autotuner knob (was a hard constant 32).">,
   ];
 }
 

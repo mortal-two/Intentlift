@@ -56,16 +56,16 @@ using namespace intent;
 namespace {
 
 // mma.sync m16n8k16 tile geometry.
-static constexpr int64_t BK = 32;     // K staging step (= 2 k16 mma sub-tiles)
 static constexpr int64_t MMA_M = 16, MMA_N = 8, MMA_K = 16;
 static constexpr int64_t GROUP_M = 8; // L2 swizzle group width (= tl.dot GROUP_M)
 
 struct ContractionMMALowering {
   func::FuncOp fn;
   int numStages;
-  int64_t reqBM, reqBN;
+  int64_t reqBM, reqBN, reqBK;
 
   int64_t BM = 64, BN = 128;
+  int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles); autotuner knob.
   int64_t M = 0, N = 0, K = 0;
   unsigned aArgIdx = 0, wArgIdx = 0;
   ContractionOp con;
@@ -76,8 +76,9 @@ struct ContractionMMALowering {
   DenseMap<Value, Value> argMemref;
 
   ContractionMMALowering(func::FuncOp fn, int numStages, int64_t reqBM,
-                         int64_t reqBN)
-      : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN) {}
+                         int64_t reqBN, int64_t reqBK)
+      : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN),
+        reqBK(reqBK) {}
 
   // ---- recognition (identical to the WMMA pass) -------------------------- //
   LogicalResult match() {
@@ -139,6 +140,11 @@ struct ContractionMMALowering {
         yTy.getDimSize(1) != N)
       return failure();
 
+    // BK must be a positive multiple of the MMA K step (m16n8k16); reject an
+    // illegal knob value rather than silently mis-tiling.
+    BK = reqBK;
+    if (BK <= 0 || BK % MMA_K != 0)
+      return failure();
     BM = reqBM;
     BN = reqBN;
     if (M % BM != 0 || N % BN != 0) {
@@ -529,13 +535,13 @@ struct ConvertIntentContractionToGPUMMAPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ContractionMMALowering probe(fn, (int)numStages, (int64_t)blockM,
-                                   (int64_t)blockN);
+                                   (int64_t)blockN, (int64_t)blockK);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ContractionMMALowering low(fn, (int)numStages, (int64_t)blockM,
-                                 (int64_t)blockN);
+                                 (int64_t)blockN, (int64_t)blockK);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("contraction-mma lowering failed after match");
         return signalPassFailure();
