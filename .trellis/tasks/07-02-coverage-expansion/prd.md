@@ -41,7 +41,7 @@ into MEASURED coverage, isolating the genuinely-new lowering mechanisms from the
 - [x] **Per-category verification**: deterministic → numeric rel<1e-3 vs real `flag_gems.<op>`; RNG → matched-seed philox bit-exact (rand) + statistical (mean/var + distribution) + seed-determinism; dynamic-shape (nonzero/masked_select) → order-exact (bonus over value-set floor).
 - [x] **Failure triage**: `run_universe` classifies extraction_fail / lowering_fail / **gpu_pass_lower** (composes via a fused GPU pass, not linalg) / verify_fail / ok.
 - [x] **All 9 new-mechanism clusters** delivered end-to-end (op + verifier + emit_mlir + interpret + GPU pass + verify), in leverage order (C3–C8).
-- [x] Full universe accounted: `corpus/COVERAGE.md` + `coverage.json` partition all 193 FlagGems + 38 Triton = **129 verified-e2e / 69 extraction-only-proven / 33 classified-miss**, every miss named. (Not every module live-extracted; the extraction-only bulk is proven at scale — composability-fail 0.0% / composes 100% — with remaining bulk classified proven.)
+- [x] Full universe accounted: `corpus/COVERAGE.md` + `coverage.json` partition all 193 FlagGems + 38 Triton = **142 verified-e2e / 56 extraction-only-proven / 33 classified-miss** (129/69 at C9; C2c verified the boolean family, moving 13 proven→verified), every miss named. (Not every module live-extracted; the extraction-only bulk is proven at scale — composability-fail 0.0% / composes 100% — with remaining bulk classified proven.)
 
 ## Acceptance Criteria
 
@@ -112,7 +112,7 @@ Delivered end-to-end, all committed (`e95301c..559be04`), trellis-check PASS (0 
   both pass-boundary typing fixes, not new mechanisms). cumsum cubin-verified (rel 3.67e-7).
 - **Coverage accounting**: `corpus/COVERAGE.md` + `coverage.json` (regen: `python -m
   intentir.extraction.data.gen_coverage`) — 231 modules partitioned, zero unaccounted,
-  **129 verified-e2e / 69 extraction-only-proven / 33 classified-miss** (each miss named).
+  **142 verified-e2e / 56 extraction-only-proven / 33 classified-miss** (129/69 at C9; C2c verified the boolean family, moving 13 proven→verified) (each miss named).
 - **Deferred (named, tracked)**: backward/grad ops, multi-op-graph compositions (quantile,
   unique, topk_softmax, cross_entropy) needing the general op-graph dispatch, native complex
   dtype, order-dependent RNG (multinomial/randperm), bicubic/aa interp, flash-loop authorship,
