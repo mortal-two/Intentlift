@@ -22,9 +22,11 @@ LogicalResult MapBinaryOp::verify() {
   static constexpr llvm::StringRef kFns[] = {
       "add", "sub", "mul", "div", "max", "min", "pow", "cmp"};
   // Comparison fns produce an i1-typed result tensor (the boolean condition for
-  // intent.select); every other fn is element-type-preserving.
-  static constexpr llvm::StringRef kCmpFns[] = {"gt", "ge", "lt",
-                                                "le", "eq", "ne"};
+  // intent.select); every other fn is element-type-preserving. C2c adds the
+  // logical family (logical_and/or/xor) and isclose, which likewise yield i1.
+  static constexpr llvm::StringRef kCmpFns[] = {
+      "gt",          "ge",         "lt",          "le",      "eq", "ne",
+      "logical_and", "logical_or", "logical_xor", "isclose"};
   bool isCmp = false;
   for (llvm::StringRef f : kCmpFns)
     if (getFn() == f)
@@ -75,8 +77,9 @@ LogicalResult MapUnaryOp::verify() {
       // logical_not is i1->i1, still element-type-preserving.
       "logical_not"};
   // Predicate fns produce an i1-typed result tensor (the boolean condition for
-  // intent.select), mirroring the map_binary comparison fns.
-  static constexpr llvm::StringRef kToI1Fns[] = {"isnan"};
+  // intent.select), mirroring the map_binary comparison fns. C2c adds the rest
+  // of the finiteness family (isinf/isfinite) alongside isnan.
+  static constexpr llvm::StringRef kToI1Fns[] = {"isnan", "isinf", "isfinite"};
   auto rTy = cast<RankedTensorType>(getResult().getType());
   for (llvm::StringRef f : kToI1Fns)
     if (getFn() == f) {

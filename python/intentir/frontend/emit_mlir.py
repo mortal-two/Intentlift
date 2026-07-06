@@ -211,7 +211,26 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
     raise NotImplementedError(f"emit_mlir: unhandled body op {op.op!r}")
 
 
-_CMP_FNS = {"gt", "ge", "lt", "le", "eq", "ne"}
+_CMP_FNS = {"gt", "ge", "lt", "le", "eq", "ne",
+            "logical_and", "logical_or", "logical_xor", "isclose"}
+# map_unary fns whose result is an i1 (finiteness predicates + i1 complement).
+_U_TO_I1 = {"isnan", "isinf", "isfinite", "logical_not"}
+
+
+def _mlir_f(v) -> str:
+    """Format a Python float as an MLIR-parseable float literal. MLIR requires a
+    decimal point before the optional exponent, so bare scientific literals like
+    ``1e-05`` (which ``repr`` emits) must become ``1.0e-05``."""
+    s = repr(float(v))
+    if "e" in s or "E" in s:
+        e = "e" if "e" in s else "E"
+        mant, _, exp = s.partition(e)
+        if "." not in mant:
+            mant += ".0"
+        return f"{mant}e{exp}"
+    if "." not in s and "inf" not in s and "nan" not in s:
+        s += ".0"
+    return s
 
 
 def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int,
@@ -269,9 +288,22 @@ class _Printer:
                 indent: str = "    ") -> None:
         a = op.attrs
         if op.op == "cast":
-            # The corpus runs entirely in f32, so a dtype cast is a value-level
-            # no-op: alias the operand SSA. (A precision-changing cast would need
-            # arith/tensor cast ops; out of scope for the f32 lifting check.)
+            to = a.get("to_dtype", "")
+            if to in ("i1", "bool"):
+                # A boolean cast is a truthiness test (x != 0), NOT a value-level
+                # no-op — emit a real intent.cast so logical_not(x.bool()) & co.
+                # carry a proper i1 through lowering.
+                self.bool_results.add(op.result)
+                rr = self.fresh(op.result)
+                x = self.ssa[op.operands[0]]
+                self.lines.append(
+                    f'{indent}{rr} = intent.cast {x} {{to_dtype = "i1"}} : '
+                    f'({self._ttn(op.operands[0], env)}) -> '
+                    f'{self._ttn(op.result, env)}')
+                return
+            # The corpus otherwise runs entirely in f32, so a dtype cast is a
+            # value-level no-op: alias the operand SSA. (A precision-changing
+            # float cast would need arith/tensor cast ops; out of scope here.)
             self.ssa[op.result] = self.ssa[op.operands[0]]
             return
         if op.op == "sort":
@@ -378,12 +410,16 @@ class _Printer:
                 f'{indent}{r} = intent.contraction {x}, {y} '
                 f'{{subscripts = "{sub}"}} : ({tx}, {ty}) -> {_tt(env[op.result])}')
         elif op.op == "reduce":
+            # all/any are boolean reductions over an i1 input to an i1 result;
+            # _ttn carries the i1 element type on both sides.
+            if a["fn"] in ("all", "any"):
+                self.bool_results.add(op.result)
             x = self.ssa[op.operands[0]]
             axes = ", ".join(str(int(ax) - fold) for ax in a["axes"])
             self.lines.append(
                 f'{indent}{r} = intent.reduce {x} {{fn = "{a["fn"]}", '
                 f'axes = [{axes}], assoc = "{a["assoc"]}"}} : '
-                f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "scan":
             x = self.ssa[op.operands[0]]
             self.lines.append(
@@ -399,10 +435,15 @@ class _Printer:
                 f'axis = {int(a["axis"]) - fold} : i64}} : '
                 f'({_tt(env[op.operands[0]])}) -> {self._ttn(op.result, env)}')
         elif op.op == "map_unary":
+            # Predicate fns (isnan/isinf/isfinite/logical_not) yield an i1; every
+            # other fn is element-type-preserving. Use _ttn so an i1 operand
+            # (e.g. logical_not of an isnan result) prints its true type.
+            if a["fn"] in _U_TO_I1:
+                self.bool_results.add(op.result)
             x = self.ssa[op.operands[0]]
             self.lines.append(
                 f'{indent}{r} = intent.map_unary {x} {{fn = "{a["fn"]}"}} : '
-                f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "map_binary":
             if a["fn"] in _CMP_FNS:
                 self.bool_results.add(op.result)
@@ -412,6 +453,13 @@ class _Printer:
                 f'{indent}{r} = intent.map_binary {x}, {y} {{fn = "{a["fn"]}"}} : '
                 f'({tx}, {ty}) -> {self._ttn(op.result, env)}')
         elif op.op == "select":
+            # The result shares the x/y branch element type (verifier-enforced),
+            # so propagate i1/int-ness of the branches onto the result.
+            xn = op.operands[1]
+            if xn in self.bool_results:
+                self.bool_results.add(op.result)
+            elif xn in self.int_results:
+                self.int_results[op.result] = self.int_results[xn]
             c, x, y = (self.ssa[o] for o in op.operands)
             tc, tx, ty = (self._ttn(o, env) for o in op.operands)
             self.lines.append(
@@ -468,7 +516,7 @@ class _Printer:
             hi = ", ".join(str(int(v)) for v in a["hi"][fold:])
             self.lines.append(
                 f'{indent}{r} = intent.pad {x} {{lo = [{lo}], hi = [{hi}], '
-                f'value = {float(a.get("value", 0.0))!r} : f64}} : '
+                f'value = {_mlir_f(a.get("value", 0.0))} : f64}} : '
                 f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "tile":
             x = self.ssa[op.operands[0]]
@@ -505,15 +553,26 @@ class _Printer:
             # A literal value -> standard arith.constant (no intent semantics to
             # lower). A scalar splats dense over the (possibly rank-0) result
             # tensor; a list value (iota/arange materialized as an explicit
-            # vector) prints as a dense elements array.
+            # vector) prints as a dense elements array. An i1/int-dtyped const
+            # (a boolean sentinel / mask threshold) carries its own element type.
             val = a["value"]
-            if isinstance(val, (list, tuple)):
-                elems = ", ".join(repr(float(v)) for v in val)
-                dense = f"dense<[{elems}]>"
+            dt = a.get("dtype", "f32")
+            if dt in ("i1", "bool"):
+                self.bool_results.add(op.result)
+                truthy = val not in (0, 0.0, False, None)
+                dense = f"dense<{'true' if truthy else 'false'}>"
+            elif dt in ("i8", "i16", "i32", "i64"):
+                self.int_results[op.result] = dt
+                if isinstance(val, (list, tuple)):
+                    dense = "dense<[" + ", ".join(str(int(v)) for v in val) + "]>"
+                else:
+                    dense = f"dense<{int(val)}>"
+            elif isinstance(val, (list, tuple)):
+                dense = "dense<[" + ", ".join(_mlir_f(v) for v in val) + "]>"
             else:
-                dense = f"dense<{float(val)!r}>"
+                dense = f"dense<{_mlir_f(val)}>"
             self.lines.append(
-                f'{indent}{r} = arith.constant {dense} : {_tt(env[op.result])}')
+                f'{indent}{r} = arith.constant {dense} : {self._ttn(op.result, env)}')
         else:
             raise NotImplementedError(f"emit_mlir: unhandled op {op.op!r}")
 

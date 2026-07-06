@@ -30,7 +30,8 @@ from intentir.ir.model import IntentFunction
 from intentir.verify.interpret import interpret
 from intentir.extraction.lifters.extract import extract_intent, _concretize_dims
 from intentir.extraction.providers.provider import REPO_ROOT
-from .corpus import KernelSpec, _dims_from, _relerr, _src, lower_to_linalg
+from .corpus import (GPU_PASS_OPS, KernelSpec, _dims_from, _relerr, _src,
+                     lower_to_linalg)
 from .universe_specs import bulk_specs, pilot_specs
 
 PILOT_DIR = REPO_ROOT / "corpus" / "pilot"
@@ -47,14 +48,21 @@ class OpResult:
     verified: bool = False
     rel: float | None = None
     residual_intent: int | None = None
+    residual_ops: list[str] = field(default_factory=list)
+    gpu_pass_lowered: bool = False
     attempts: int = 0
-    failure_class: str = ""  # ok | extraction_fail | lowering_fail | verify_fail
+    # ok | extraction_fail | lowering_fail | gpu_pass_lower | verify_fail
+    failure_class: str = ""
     ops: list[str] = field(default_factory=list)
     error: str = ""
 
     def classify(self) -> None:
         if not self.extracted:
             self.failure_class = "extraction_fail"
+        elif not self.lowered and self.gpu_pass_lowered:
+            # Composes via a fused GPU pass (iota/scan/layout/... never lower on
+            # the generic linalg leg by design) — NOT a composability failure.
+            self.failure_class = "gpu_pass_lower"
         elif not self.lowered:
             self.failure_class = "lowering_fail"
         elif not self.verified:
@@ -122,11 +130,19 @@ def run_op(spec: KernelSpec, *, saved: bool, max_repairs: int = 3) -> OpResult:
     try:
         dims = _concretize_dims(fn, default=8)
         dims.update(_dims_from(fn, arrays))  # concrete extents win over defaults
-        res.residual_intent, _ = lower_to_linalg(fn, dims)
+        res.residual_intent, _, res.residual_ops = lower_to_linalg(fn, dims)
         res.lowered = res.residual_intent == 0
+        # A non-zero residual made up ENTIRELY of GPU-pass-lowered ops (iota/scan/
+        # layout/gather/...) means the op composes on its fused pass, not the
+        # generic linalg leg — not counted as a composability failure.
+        res.gpu_pass_lowered = (not res.lowered and bool(res.residual_ops)
+                                and all(o in GPU_PASS_OPS
+                                        for o in res.residual_ops))
         if not res.lowered:
+            tag = "gpu-pass composes" if res.gpu_pass_lowered else "residual"
             res.error = (res.error + "; " if res.error else "") + \
-                f"lower: {res.residual_intent} residual intent.* op(s)"
+                f"lower: {res.residual_intent} {tag} intent.* op(s) " \
+                f"{res.residual_ops}"
     except Exception as e:  # noqa: BLE001
         res.error = (res.error + "; " if res.error else "") + \
             f"lower: {type(e).__name__}: {str(e)[:120]}"
@@ -161,17 +177,24 @@ def _write(results: list[OpResult]) -> None:
     n_lower_fail = sum(1 for r in results if r.failure_class == "lowering_fail")
     denom = max(1, len(ext_ok))
     comp_rate = 100.0 * n_lower_fail / denom
+    n_gpu_pass = sum(1 for r in results if r.failure_class == "gpu_pass_lower")
     summary = {
         "total": len(results),
         "extracted": len(ext_ok),
         "lowered": sum(1 for r in results if r.lowered),
+        "gpu_pass_lower": n_gpu_pass,
         "verified": sum(1 for r in results if r.verified),
         "ok": sum(1 for r in results if r.failure_class == "ok"),
         "extraction_fail": sum(1 for r in results if r.failure_class == "extraction_fail"),
         "lowering_fail": n_lower_fail,
         "verify_fail": sum(1 for r in results if r.failure_class == "verify_fail"),
         "extraction_success_pct": round(100.0 * len(ext_ok) / max(1, len(results)), 1),
+        # composability = the fraction of extract-ok ops that FAIL to compose on
+        # the generic linalg leg. GPU-pass-lowered ops (iota/scan/layout/...) DO
+        # compose (on their fused pass) so they are NOT counted here.
         "composability_fail_pct": round(comp_rate, 1),
+        "composes_pct": round(100.0 * (len(ext_ok) - n_lower_fail)
+                              / max(1, len(ext_ok)), 1),
         "verify_pass_pct": round(100.0 * sum(1 for r in results if r.verified)
                                  / max(1, len(results)), 1),
     }
@@ -182,9 +205,12 @@ def _write(results: list[OpResult]) -> None:
         "# C1 universe pilot — composability-measurement gate", "",
         f"- extraction success: **{summary['extraction_success_pct']}%** "
         f"({summary['extracted']}/{summary['total']})",
-        f"- composability-failure rate (extract-ok but lower-fail): "
+        f"- composability-failure rate (extract-ok but linalg-lower-fail): "
         f"**{summary['composability_fail_pct']}%** "
         f"({summary['lowering_fail']}/{summary['extracted']})",
+        f"- composes (linalg leg + GPU-pass): **{summary['composes_pct']}%** "
+        f"(of which {summary['gpu_pass_lower']} ride a fused GPU pass: "
+        f"iota/scan/layout/gather/...)",
         f"- verify pass: **{summary['verify_pass_pct']}%** "
         f"({summary['verified']}/{summary['total']})",
         "",

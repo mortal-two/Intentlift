@@ -12,10 +12,13 @@ read-only refs), not hand-listed. Regenerate with
   (evidence: the 15-kernel certified corpus, the corpus/bulk or corpus/pilot
   extract->lower->verify batch, or a C3-C8 cluster proof-kernel test).
 - **extraction-only-proven** — no new mechanism needed: the op class + an
-  available pass lower it, and the pipeline is MEASURED at 97.3% extraction / 27.8% composability-fail at 74-op
-  scale (corpus/bulk/manifest.json). The composability residual is
-  concentrated in the i1-boolean-result family (isnan/isinf/logical_*,
-  select type-parity) — a pass-boundary typing fix, NOT a new mechanism.
+  available pass lower it, and the pipeline is MEASURED at 97.3% extraction / 0.0% composability-fail at 74-op
+  scale (corpus/bulk/manifest.json). The former composability residual — the
+  i1-boolean-result family (isnan/isinf/isfinite/logical_*, isclose), the
+  boolean reductions all/any, and intent.select type-parity — was a
+  pass-boundary typing fix (C2c), NOT a new mechanism, and now composes to
+  zero residual; the iota/scan ops (eye/linspace/logspace/cumsum) compose via
+  their fused GPU pass (verified: cumsum -> sm_120a cubin), not the linalg leg.
   Not individually re-run here.
 - **classified-miss** — a deferred mechanism, each with a named reason.
 
@@ -25,16 +28,16 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 104 | 25 |
-| extraction-only-proven | 60 | 9 |
+| verified-e2e | 117 | 25 |
+| extraction-only-proven | 47 | 9 |
 | classified-miss | 29 | 4 |
 | **total** | **193** | **38** |
 
-Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **27.8%**, verify **93.2%**.
+Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (104)
+### verified-e2e (117)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -49,10 +52,13 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `addmm` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `addmv` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `addr` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `all` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `amax` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `any` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `arange` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `argmax` | ops | C6 arg-reduce PK (test_order_stats_pk.py) |
 | `argmin` | ops | C6 arg-reduce PK (test_order_stats_pk.py) |
+| `atan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `avg_pool2d` | ops | C7a pool/interp PK (test_pool_interp_pk.py) |
 | `baddbmm` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `bmm` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -84,12 +90,21 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `gelu` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `gt` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `index_select` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
+| `isclose` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `isfinite` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `isinf` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `isnan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `le` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `lerp` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `log` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `log_sigmoid` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `log_softmax` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `logical_and` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `logical_not` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `logical_or` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `logical_xor` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `lt` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `masked_fill` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `masked_scatter` | ops | C8 dynamic-shape PK (test_dynamic_shape_pk.py) |
 | `masked_select` | ops | C8 dynamic-shape PK (test_dynamic_shape_pk.py) |
 | `max` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -102,11 +117,11 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `mse_loss` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `mul` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `mv` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `nan_to_num` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `ne` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `neg` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `nonzero` | ops | C8 dynamic-shape PK (test_dynamic_shape_pk.py) |
 | `ones` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `ones_like` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `pad` | ops | C4 layout PK (test_layout_pk.py) |
 | `polar` | ops | C7a polar PK (test_pool_interp_pk.py) |
 | `pow` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -130,6 +145,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `sum` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `tan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `tanh` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `threshold` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `tile` | ops | C4 layout PK (test_layout_pk.py) |
 | `topk` | ops | C6b bitonic-sort PK (test_sort_pk.py) |
 | `trace` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -143,70 +159,57 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `zeros` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `zeros_like` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 
-### extraction-only-proven (60)
+### extraction-only-proven (47)
 
 | module | group | evidence / reason |
 |---|---|---|
-| `fused_add_rms_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `geglu` | fused | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `instance_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `skip_layernorm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `weight_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `all` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `any` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `atan` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `batch_norm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `bitwise_and` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `bitwise_left_shift` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `bitwise_not` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `bitwise_or` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `bitwise_right_shift` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `contiguous` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `conv_depthwise2d` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `copy` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `cumsum` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `diag` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `diag_embed` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `diagonal` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `exponential_` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `eye` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `eye_m` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `glu` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `groupnorm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `hstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `index` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `index_add` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `index_put` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `isclose` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `isfinite` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `isin` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `isinf` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `isnan` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `kron` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `layernorm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `linspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `logical_and` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `logical_not` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `logical_or` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `logical_xor` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `logspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `masked_fill` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `mm_streamk` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `nan_to_num` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `nllloss` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `normal` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `rand_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `randn_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `repeat` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `repeat_interleave` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `rsqrt` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `select_scatter` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `slice_scatter` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `stack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `threshold` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `to` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `fused_add_rms_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `geglu` | fused | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `instance_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `skip_layernorm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `weight_norm` | fused | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `batch_norm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `bitwise_and` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `bitwise_left_shift` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `bitwise_not` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `bitwise_or` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `bitwise_right_shift` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `contiguous` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `conv_depthwise2d` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `copy` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `cumsum` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `diag` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `diag_embed` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `diagonal` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `exponential_` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `eye` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `eye_m` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `glu` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `groupnorm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `hstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `index` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `index_add` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `index_put` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `isin` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `kron` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `layernorm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `linspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `logspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `mm_streamk` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `nllloss` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `normal` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `ones_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `rand_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `randn_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `repeat` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `repeat_interleave` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `rsqrt` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `select_scatter` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `slice_scatter` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `stack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `to` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
+| `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
 ### classified-miss (29)
 

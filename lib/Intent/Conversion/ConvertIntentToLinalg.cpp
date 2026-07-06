@@ -40,8 +40,61 @@ using namespace intent;
 
 namespace {
 
+/// Coerce a scalar to an i1 truthiness (x != 0), used by the logical fns.
+/// i1 passes through; floats use unordered-not-equal-0; integers use ne-0.
+static Value truthy(OpBuilder &b, Location loc, Value v) {
+  Type t = v.getType();
+  if (t.isInteger(1))
+    return v;
+  if (isa<FloatType>(t)) {
+    Value z = b.create<arith::ConstantOp>(loc, b.getFloatAttr(t, 0.0));
+    return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::UNE, v, z);
+  }
+  Value z = b.create<arith::ConstantOp>(loc, b.getIntegerAttr(t, 0));
+  return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, v, z);
+}
+
+/// Scalar comparison over float OR integer/i1 operands -> an i1. Float uses the
+/// ordered predicates (ne = unordered-not-equal) so NaN handling matches numpy
+/// (np.equal(nan,nan)=False, np.not_equal(nan,nan)=True); integer/i1 use signed.
+static Value emitScalarCmp(OpBuilder &b, Location loc, StringRef fn, Value a,
+                           Value c) {
+  if (isa<FloatType>(a.getType())) {
+    arith::CmpFPredicate p;
+    if (fn == "gt")      p = arith::CmpFPredicate::OGT;
+    else if (fn == "ge") p = arith::CmpFPredicate::OGE;
+    else if (fn == "lt") p = arith::CmpFPredicate::OLT;
+    else if (fn == "le") p = arith::CmpFPredicate::OLE;
+    else if (fn == "eq") p = arith::CmpFPredicate::OEQ;
+    else                 p = arith::CmpFPredicate::UNE; // ne
+    return b.create<arith::CmpFOp>(loc, p, a, c);
+  }
+  arith::CmpIPredicate p;
+  if (fn == "gt")      p = arith::CmpIPredicate::sgt;
+  else if (fn == "ge") p = arith::CmpIPredicate::sge;
+  else if (fn == "lt") p = arith::CmpIPredicate::slt;
+  else if (fn == "le") p = arith::CmpIPredicate::sle;
+  else if (fn == "eq") p = arith::CmpIPredicate::eq;
+  else                 p = arith::CmpIPredicate::ne;
+  return b.create<arith::CmpIOp>(loc, p, a, c);
+}
+
+/// True for the map_binary fns that yield an i1 result: the comparisons plus the
+/// logical family and isclose (C2c). Their operands may be float/int/i1.
+static bool isI1BinaryFn(StringRef fn) {
+  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
+         fn == "ne" || fn == "logical_and" || fn == "logical_or" ||
+         fn == "logical_xor" || fn == "isclose";
+}
+
+/// True iff `emitScalarBinary` can lower `fn` (the guard for MapBinaryLowering).
+static bool hasScalarBinary(StringRef fn) {
+  return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
+         fn == "max" || fn == "min" || fn == "pow" || isI1BinaryFn(fn);
+}
+
 /// Emit the scalar arith op for one `map_binary` fn over two scalar operands.
-/// Returns nullptr for fns that have no float scalar form here yet.
+/// Returns nullptr for fns that have no scalar form here yet.
 static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
                               Value c) {
   if (fn == "add")
@@ -58,35 +111,40 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     return b.create<arith::MinimumFOp>(loc, a, c);
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
-  // Comparison fns: float operands -> an i1 scalar (the boolean condition for
-  // intent.select). eq/ne use ordered-equal / unordered-not-equal so NaN
-  // handling matches numpy (np.equal(nan,nan)=False, np.not_equal(nan,nan)=True).
-  auto cmp = [&](arith::CmpFPredicate p) -> Value {
-    return b.create<arith::CmpFOp>(loc, p, a, c);
-  };
-  if (fn == "gt")
-    return cmp(arith::CmpFPredicate::OGT);
-  if (fn == "ge")
-    return cmp(arith::CmpFPredicate::OGE);
-  if (fn == "lt")
-    return cmp(arith::CmpFPredicate::OLT);
-  if (fn == "le")
-    return cmp(arith::CmpFPredicate::OLE);
-  if (fn == "eq")
-    return cmp(arith::CmpFPredicate::OEQ);
-  if (fn == "ne")
-    return cmp(arith::CmpFPredicate::UNE);
+  if (fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
+      fn == "ne")
+    return emitScalarCmp(b, loc, fn, a, c);
+  // Logical family: truthy-cast each operand to i1, then the bitwise i1 op.
+  if (fn == "logical_and")
+    return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+  if (fn == "logical_or")
+    return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+  if (fn == "logical_xor")
+    return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+  if (fn == "isclose") {
+    // |a-c| <= atol + rtol*|c|  (torch defaults rtol=1e-5, atol=1e-8).
+    Type t = a.getType();
+    Value rtol = b.create<arith::ConstantOp>(loc, b.getFloatAttr(t, 1e-5));
+    Value atol = b.create<arith::ConstantOp>(loc, b.getFloatAttr(t, 1e-8));
+    Value diff = b.create<arith::SubFOp>(loc, a, c);
+    Value ad = b.create<math::AbsFOp>(loc, diff);
+    Value ac = b.create<math::AbsFOp>(loc, c);
+    Value allowed = b.create<arith::AddFOp>(
+        loc, atol, b.create<arith::MulFOp>(loc, rtol, ac));
+    return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLE, ad, allowed);
+  }
   return nullptr;
 }
 
-/// True for the map_binary comparison fns (float operands -> i1 result).
-static bool isCmpFn(StringRef fn) {
-  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
-         fn == "ne";
+/// True for map_unary fns that yield an i1 result: the finiteness predicates and
+/// the i1 complement (C2c), mirroring the map_binary comparison carve-out.
+static bool isToI1UnaryFn(StringRef fn) {
+  return fn == "isnan" || fn == "isinf" || fn == "isfinite" ||
+         fn == "logical_not";
 }
 
 /// Emit the scalar op for one `map_unary` fn over a scalar operand.
-/// Returns nullptr for fns that have no float scalar form here yet.
+/// Returns nullptr for fns that have no scalar form here yet.
 static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) {
   if (fn == "exp")
     return b.create<math::ExpOp>(loc, x);
@@ -127,7 +185,34 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
     Value den = b.create<arith::AddFOp>(loc, one, e);
     return b.create<arith::DivFOp>(loc, one, den);
   }
+  // i1-result predicate fns (C2c). isnan: NaN is the only value unordered with
+  // itself. isinf: |x| == +inf. isfinite: |x| ordered-not-equal +inf (ONE is
+  // false for NaN, so it already excludes NaN). logical_not: the i1 complement.
+  if (fn == "isnan")
+    return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::UNO, x, x);
+  if (fn == "isinf" || fn == "isfinite") {
+    Value inf = b.create<arith::ConstantOp>(
+        loc, b.getFloatAttr(x.getType(),
+                            std::numeric_limits<double>::infinity()));
+    Value ax = b.create<math::AbsFOp>(loc, x);
+    return b.create<arith::CmpFOp>(loc,
+                                   fn == "isinf" ? arith::CmpFPredicate::OEQ
+                                                 : arith::CmpFPredicate::ONE,
+                                   ax, inf);
+  }
+  if (fn == "logical_not") {
+    Value t = b.create<arith::ConstantOp>(loc, b.getBoolAttr(true));
+    return b.create<arith::XOrIOp>(loc, x, t);
+  }
   return nullptr;
+}
+
+/// True iff `emitScalarUnary` can lower `fn` (the guard for MapUnaryLowering).
+static bool hasScalarUnary(StringRef fn) {
+  return fn == "exp" || fn == "log" || fn == "abs" || fn == "sqrt" ||
+         fn == "rsqrt" || fn == "neg" || fn == "recip" || fn == "tanh" ||
+         fn == "cos" || fn == "sin" || fn == "tan" || fn == "exp2" ||
+         fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
 }
 
 struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
@@ -136,10 +221,15 @@ struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
   LogicalResult matchAndRewrite(MapUnaryOp op,
                                 PatternRewriter &rewriter) const override {
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
-    if (!isa<FloatType>(resTy.getElementType()))
-      return rewriter.notifyMatchFailure(op, "non-float unary not implemented");
     StringRef fn = op.getFn();
-    if (!emitScalarUnary(rewriter, op.getLoc(), fn, op.getInput()))
+    bool toI1 = isToI1UnaryFn(fn);
+    if (toI1) {
+      if (!resTy.getElementType().isInteger(1))
+        return rewriter.notifyMatchFailure(op, "i1 predicate needs i1 result");
+    } else if (!isa<FloatType>(resTy.getElementType())) {
+      return rewriter.notifyMatchFailure(op, "non-float unary not implemented");
+    }
+    if (!hasScalarUnary(fn))
       return rewriter.notifyMatchFailure(op, "fn has no scalar lowering");
 
     Location loc = op.getLoc();
@@ -187,18 +277,17 @@ struct MapBinaryLowering : OpRewritePattern<MapBinaryOp> {
     auto rhsTy = cast<RankedTensorType>(op.getRhs().getType());
 
     StringRef fnName = op.getFn();
-    bool isCmp = isCmpFn(fnName);
-    // Comparison fns take float operands and yield an i1 result; every other fn
-    // is element-type-preserving over floats.
-    if (isCmp) {
-      if (!isa<FloatType>(lhsTy.getElementType()) ||
-          !isa<FloatType>(rhsTy.getElementType()))
-        return rewriter.notifyMatchFailure(op, "comparison needs float operands");
+    bool toI1 = isI1BinaryFn(fnName);
+    // The i1-result fns (comparisons / logical / isclose) accept float, integer
+    // or i1 operands and yield an i1; every other fn is element-type-preserving
+    // over floats.
+    if (toI1) {
+      (void)lhsTy;
+      (void)rhsTy;
     } else if (!isa<FloatType>(resTy.getElementType())) {
       return rewriter.notifyMatchFailure(op, "non-float elementwise not implemented");
     }
-    if (!emitScalarBinary(rewriter, op.getLoc(), fnName,
-                          op.getLhs(), op.getRhs()))
+    if (!hasScalarBinary(fnName))
       return rewriter.notifyMatchFailure(op, "fn has no scalar lowering");
 
     Location loc = op.getLoc();
@@ -226,7 +315,46 @@ struct MapBinaryLowering : OpRewritePattern<MapBinaryOp> {
   }
 };
 
-/// Scalar combiner + identity element for a `reduce` fn.
+/// Lower `intent.select` (numpy where) to a linalg.generic over `arith.select`.
+/// cond is i1; cond/x/y broadcast numpy-style into the result shape (so a rank-0
+/// scalar branch or an [M,N] i1 condition over rank-0 x/y both work). C2c: select
+/// now lowers on the general linalg path (was GPU-pass-only), so map+cmp+select
+/// composites (masked_fill / threshold / nan_to_num / logical_*) reach zero
+/// residual.
+struct SelectLowering : OpRewritePattern<SelectOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SelectOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    auto condTy = cast<RankedTensorType>(op.getCond().getType());
+    auto xTy = cast<RankedTensorType>(op.getX().getType());
+    auto yTy = cast<RankedTensorType>(op.getY().getType());
+    Location loc = op.getLoc();
+    MLIRContext *ctx = op.getContext();
+    unsigned rank = resTy.getRank();
+    SmallVector<AffineMap> maps = {
+        broadcastMap(ctx, condTy.getShape(), resTy.getShape()),
+        broadcastMap(ctx, xTy.getShape(), resTy.getShape()),
+        broadcastMap(ctx, yTy.getShape(), resTy.getShape()),
+        rewriter.getMultiDimIdentityMap(rank)};
+    SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
+    Value init = rewriter.create<tensor::EmptyOp>(loc, resTy.getShape(),
+                                                  resTy.getElementType());
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resTy}, ValueRange{op.getCond(), op.getX(), op.getY()},
+        ValueRange{init}, maps, iters,
+        [&](OpBuilder &b, Location l, ValueRange args) {
+          Value sel = b.create<arith::SelectOp>(l, args[0], args[1], args[2]);
+          b.create<linalg::YieldOp>(l, sel);
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
+/// Scalar combiner for a `reduce` fn. Float sum/max/min/prod plus the boolean
+/// reductions all (and) / any (or) over i1 (C2c).
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
                                Value c) {
   if (fn == "sum" || fn == "mean")
@@ -237,8 +365,15 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
     return b.create<arith::MinimumFOp>(loc, a, c);
   if (fn == "prod")
     return b.create<arith::MulFOp>(loc, a, c);
+  if (fn == "all")
+    return b.create<arith::AndIOp>(loc, a, c);
+  if (fn == "any")
+    return b.create<arith::OrIOp>(loc, a, c);
   return nullptr;
 }
+
+/// True for the boolean reductions (i1 input/output).
+static bool isBoolReduce(StringRef fn) { return fn == "all" || fn == "any"; }
 
 static std::optional<double> reduceIdentity(StringRef fn) {
   if (fn == "sum" || fn == "mean")
@@ -249,7 +384,20 @@ static std::optional<double> reduceIdentity(StringRef fn) {
     return -std::numeric_limits<double>::infinity();
   if (fn == "min")
     return std::numeric_limits<double>::infinity();
+  if (fn == "all")
+    return 1.0; // and-identity = true
+  if (fn == "any")
+    return 0.0; // or-identity = false
   return std::nullopt;
+}
+
+/// Build the identity constant for a reduce fn at the given element type (float
+/// or i1). Kept separate so the i1 (all/any) path uses a bool attr, not a float.
+static Value reduceIdentityConst(OpBuilder &b, Location loc, StringRef fn,
+                                 Type elemTy, double ident) {
+  if (elemTy.isInteger(1))
+    return b.create<arith::ConstantOp>(loc, b.getBoolAttr(ident != 0.0));
+  return b.create<arith::ConstantOp>(loc, b.getFloatAttr(elemTy, ident));
 }
 
 /// Lower `intent.reduce` to a linalg.generic reduction. Reduced axes become
@@ -264,9 +412,10 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto inTy = cast<RankedTensorType>(op.getInput().getType());
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
     Type elemTy = inTy.getElementType();
-    if (!isa<FloatType>(elemTy))
-      return rewriter.notifyMatchFailure(op, "non-float reduce not implemented");
     StringRef fn = op.getFn();
+    // Float reductions, plus the boolean reductions all/any over i1 (C2c).
+    if (!isa<FloatType>(elemTy) && !(elemTy.isInteger(1) && isBoolReduce(fn)))
+      return rewriter.notifyMatchFailure(op, "unsupported reduce element type");
     auto ident = reduceIdentity(fn);
     if (!ident)
       return rewriter.notifyMatchFailure(op, "reduce fn has no scalar lowering");
@@ -349,8 +498,7 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
       SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(RE),
                                      AffineMap::get(RE, 0, outExprs, ctx)};
 
-      Value identVal = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getFloatAttr(elemTy, *ident));
+      Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy, *ident);
       Value empty = rewriter.create<tensor::EmptyOp>(loc, redShape, elemTy);
       Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
                                                    ValueRange{empty}).getResult(0);
@@ -415,8 +563,7 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(R),
                                    AffineMap::get(R, 0, outExprs, ctx)};
 
-    Value identVal = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getFloatAttr(elemTy, *ident));
+    Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy, *ident);
     Value empty = rewriter.create<tensor::EmptyOp>(loc, reducedShape, elemTy);
     Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
                                                  ValueRange{empty}).getResult(0);
@@ -621,6 +768,10 @@ static Value emitScalarCast(OpBuilder &b, Location loc, Type dst, Value v) {
   Type src = v.getType();
   if (src == dst)
     return v;
+  // Cast to i1 is a truthiness test (numpy .astype(bool) = x != 0), NOT a
+  // low-bit fptosi/trunci — so `logical_not(x.bool())` and friends are correct.
+  if (dst.isInteger(1))
+    return truthy(b, loc, v);
   auto sf = dyn_cast<FloatType>(src);
   auto df = dyn_cast<FloatType>(dst);
   auto si = dyn_cast<IntegerType>(src);
@@ -676,8 +827,9 @@ struct ConvertIntentToLinalgPass
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<MapUnaryLowering, MapBinaryLowering, ReduceLowering,
-                 ContractionLowering, LoopLowering, CastLowering>(&getContext());
+    patterns.add<MapUnaryLowering, MapBinaryLowering, SelectLowering,
+                 ReduceLowering, ContractionLowering, LoopLowering,
+                 CastLowering>(&getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

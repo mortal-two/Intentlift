@@ -92,9 +92,25 @@ class KernelResult:
                 + (f"  !{self.error}" if self.error else ""))
 
 
-def lower_to_linalg(fn: IntentFunction, dims: dict[str, int]) -> tuple[int, list[str]]:
+# Intent ops that lower ONLY via their fused GPU pass (never the generic
+# -convert-intent-to-linalg leg, by design). A residual made up entirely of these
+# is NOT a composability failure — the op composes, it just rides a downstream
+# GPU pass. See run_universe's classification + the cumsum sm_120a cubin check.
+GPU_PASS_OPS = frozenset({
+    "iota", "scan", "gather", "scatter", "sort", "arg_reduce", "pool",
+    "upsample", "polar", "conv", "rand", "concat", "pad", "tile", "flip",
+    "triu", "nonzero", "masked_select", "masked_scatter",
+})
+
+import re as _re
+_INTENT_OP_RE = _re.compile(r"intent\.([a-z_]+)")
+
+
+def lower_to_linalg(
+    fn: IntentFunction, dims: dict[str, int]
+) -> tuple[int, list[str], list[str]]:
     """Emit dialect MLIR and run convert-intent-to-linalg. Returns
-    (residual intent.* op count, lowered op kinds)."""
+    (residual intent.* op count, lowered std-op kinds, residual intent op names)."""
     has_loop = any(o.op == "loop" for o in fn.body)
     mlir = (emit_loop_module(fn, dims) if has_loop
             else emit_module(fn, dims))
@@ -105,10 +121,13 @@ def lower_to_linalg(fn: IntentFunction, dims: dict[str, int]) -> tuple[int, list
     if proc.returncode != 0:
         raise RuntimeError(f"intent-opt failed: {proc.stderr[:400]}")
     out = proc.stdout
-    residual = sum(1 for line in out.splitlines() if "intent." in line)
+    resid_lines = [line for line in out.splitlines() if "intent." in line]
+    residual = len(resid_lines)
+    residual_ops = sorted({m.group(1) for line in resid_lines
+                           for m in [_INTENT_OP_RE.search(line)] if m})
     kinds = sorted({tok for line in out.splitlines()
                     for tok in _op_tokens(line)})
-    return residual, kinds
+    return residual, kinds, residual_ops
 
 
 def _op_tokens(line: str) -> list[str]:
@@ -144,7 +163,7 @@ def run_kernel(spec: KernelSpec, *, save: bool = True,
         res.verified = res.rel_err < 1e-3
 
         dims = _dims_from(ex.fn, arrays)
-        res.residual_intent, kinds = lower_to_linalg(ex.fn, dims)
+        res.residual_intent, kinds, _ = lower_to_linalg(ex.fn, dims)
         res.lowered = res.residual_intent == 0
         res.op_kinds_lowered = kinds  # type: ignore[attr-defined]
 
@@ -191,7 +210,7 @@ def verify_saved(spec: KernelSpec) -> KernelResult:
         res.rel_err = _relerr(y_interp, y_real)
         res.verified = res.rel_err < 1e-3
         dims = _dims_from(fn, arrays)
-        res.residual_intent, _ = lower_to_linalg(fn, dims)
+        res.residual_intent, _, _ = lower_to_linalg(fn, dims)
         res.lowered = res.residual_intent == 0
     except Exception as e:  # noqa: BLE001
         res.error = f"{type(e).__name__}: {str(e)[:120]}"

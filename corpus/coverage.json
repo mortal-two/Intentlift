@@ -8,14 +8,14 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 104,
-    "extraction-only-proven": 60,
-    "classified-miss": 26
+    "verified-e2e": 117,
+    "classified-miss": 26,
+    "extraction-only-proven": 47
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 104,
-    "extraction-only-proven": 60,
-    "classified-miss": 29
+    "verified-e2e": 117,
+    "classified-miss": 29,
+    "extraction-only-proven": 47
   },
   "triton_refs_total": 38,
   "triton_tally": {
@@ -69,8 +69,8 @@
     {
       "module": "all",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "amax",
@@ -87,8 +87,8 @@
     {
       "module": "any",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "arange",
@@ -111,8 +111,8 @@
     {
       "module": "atan",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "attention",
@@ -136,37 +136,37 @@
       "module": "batch_norm",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bitwise_and",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bitwise_left_shift",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bitwise_not",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bitwise_or",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bitwise_right_shift",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bmm",
@@ -196,7 +196,7 @@
       "module": "contiguous",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "conv1d",
@@ -220,13 +220,13 @@
       "module": "conv_depthwise2d",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "copy",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "cos",
@@ -256,25 +256,25 @@
       "module": "cumsum",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "diag",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "diag_embed",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "diagonal",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "div",
@@ -334,19 +334,19 @@
       "module": "exponential_",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "eye",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "eye_m",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "fill",
@@ -412,13 +412,13 @@
       "module": "glu",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "groupnorm",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "gt",
@@ -430,25 +430,25 @@
       "module": "hstack",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "index",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "index_add",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "index_put",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "index_select",
@@ -459,44 +459,44 @@
     {
       "module": "isclose",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "isfinite",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "isin",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "isinf",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "isnan",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "kron",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "layernorm",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "le",
@@ -514,7 +514,7 @@
       "module": "linspace",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "log",
@@ -537,32 +537,32 @@
     {
       "module": "logical_and",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "logical_not",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "logical_or",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "logical_xor",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "logspace",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "lt",
@@ -573,8 +573,8 @@
     {
       "module": "masked_fill",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "masked_scatter",
@@ -634,7 +634,7 @@
       "module": "mm_streamk",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "mse_loss",
@@ -663,8 +663,8 @@
     {
       "module": "nan_to_num",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "ne",
@@ -682,7 +682,7 @@
       "module": "nllloss",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "nonzero",
@@ -694,7 +694,7 @@
       "module": "normal",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "ones",
@@ -705,8 +705,8 @@
     {
       "module": "ones_like",
       "group": "ops",
-      "bucket": "verified-e2e",
-      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "pad",
@@ -754,7 +754,7 @@
       "module": "rand_like",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "randn",
@@ -766,7 +766,7 @@
       "module": "randn_like",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "randperm",
@@ -790,13 +790,13 @@
       "module": "repeat",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "repeat_interleave",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "resolve_conj",
@@ -820,7 +820,7 @@
       "module": "rsqrt",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "scaled_softmax",
@@ -844,7 +844,7 @@
       "module": "select_scatter",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "sigmoid",
@@ -868,7 +868,7 @@
       "module": "slice_scatter",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "softmax",
@@ -898,7 +898,7 @@
       "module": "stack",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "std",
@@ -933,8 +933,8 @@
     {
       "module": "threshold",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
     },
     {
       "module": "tile",
@@ -946,7 +946,7 @@
       "module": "to",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "topk",
@@ -1012,7 +1012,7 @@
       "module": "vstack",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "weightnorm",
@@ -1024,7 +1024,7 @@
       "module": "where",
       "group": "ops",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "zeros",
@@ -1066,13 +1066,13 @@
       "module": "fused_add_rms_norm",
       "group": "fused",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "geglu",
       "group": "fused",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "gelu_and_mul",
@@ -1084,7 +1084,7 @@
       "module": "instance_norm",
       "group": "fused",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "moe_align_block_size",
@@ -1150,7 +1150,7 @@
       "module": "skip_layernorm",
       "group": "fused",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "topk_softmax",
@@ -1162,7 +1162,7 @@
       "module": "weight_norm",
       "group": "fused",
       "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
     },
     {
       "module": "bin_topk",
