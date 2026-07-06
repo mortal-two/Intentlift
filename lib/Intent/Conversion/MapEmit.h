@@ -22,6 +22,78 @@
 
 namespace intent {
 
+/// Libdevice-safe scalar atan(x) for f32, expanded entirely in arith (no
+/// `math.atan`, which lowers to a `__nv_atanf` libdevice extern = ptxas dead
+/// end, the same failure mode as exp/sin/erf; and NVVM has NO atan.approx
+/// hardware op to peephole to). Reciprocal argument reduction onto |t|<=1 with
+/// atan(t)=pi/2 - atan(1/t) for |t|>1, then a 7-term odd minimax polynomial on
+/// [0,1] (max abs err ~7.7e-7 vs numpy, far inside the 1e-3 PK tolerance):
+///   atan(z) ~ z*(c0 + z2*(c1 + z2*(c2 + ... + z2*c6))),  z2=z*z.
+inline mlir::Value emitAtan(mlir::OpBuilder &b, mlir::Location loc,
+                            mlir::Value x) {
+  using namespace mlir;
+  Type ty = x.getType();
+  auto cst = [&](double v) {
+    return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
+  };
+  // Minimax coefficients (lstsq fit of atan(z)/z on z^2, z in [0,1]).
+  static constexpr double kC[7] = {
+      0.9999965891394812,  -0.33319009688008516, 0.1982329286937468,
+      -0.13294171203737687, 0.08076283609048057, -0.03461290793780861,
+      0.007151299050017444};
+  Value one = cst(1.0), zero = cst(0.0), halfPi = cst(1.5707963267948966);
+  Value negx = b.create<arith::NegFOp>(loc, x);
+  Value t = b.create<arith::MaxNumFOp>(loc, x, negx); // |x|
+  Value gt1 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, t, one);
+  Value recip = b.create<arith::DivFOp>(loc, one, t);
+  Value z = b.create<arith::SelectOp>(loc, gt1, recip, t);
+  Value z2 = b.create<arith::MulFOp>(loc, z, z);
+  // Horner in z2: p = c6; p = p*z2 + c5; ... ; p = p*z2 + c0.
+  Value p = cst(kC[6]);
+  for (int i = 5; i >= 0; --i)
+    p = b.create<arith::AddFOp>(loc, cst(kC[i]),
+                                b.create<arith::MulFOp>(loc, p, z2));
+  Value poly = b.create<arith::MulFOp>(loc, z, p); // atan of |x| (or 1/|x|)
+  // |x|>1: atan(|x|) = pi/2 - atan(1/|x|).
+  Value atanAbs = b.create<arith::SelectOp>(
+      loc, gt1, b.create<arith::SubFOp>(loc, halfPi, poly), poly);
+  // Restore the sign: atan is odd.
+  Value neg = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
+  return b.create<arith::SelectOp>(
+      loc, neg, b.create<arith::NegFOp>(loc, atanAbs), atanAbs);
+}
+
+/// Libdevice-safe scalar atan2(y, x) for f32: emitAtan(y/x) + the quadrant
+/// correction from the signs of (y, x) (add/sub pi for x<0; the ±pi/2 axes for
+/// x==0). Matches numpy/torch.atan2 to ~7.7e-7 abs err across all quadrants.
+/// `angle(z) = atan2(imag, real)` lowers to a `map_binary(imag, real, "atan2")`.
+inline mlir::Value emitAtan2(mlir::OpBuilder &b, mlir::Location loc,
+                             mlir::Value y, mlir::Value x) {
+  using namespace mlir;
+  Type ty = y.getType();
+  auto cst = [&](double v) {
+    return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
+  };
+  Value zero = cst(0.0), pi = cst(3.141592653589793),
+        halfPi = cst(1.5707963267948966), negHalfPi = cst(-1.5707963267948966);
+  Value r = b.create<arith::DivFOp>(loc, y, x);
+  Value a = emitAtan(b, loc, r);
+  Value xlt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
+  Value yge0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGE, y, zero);
+  Value piCorr =
+      b.create<arith::SelectOp>(loc, yge0, pi, b.create<arith::NegFOp>(loc, pi));
+  Value corr = b.create<arith::SelectOp>(loc, xlt0, piCorr, zero);
+  Value res = b.create<arith::AddFOp>(loc, a, corr);
+  // x==0 axes: y>0 -> +pi/2, y<0 -> -pi/2, y==0 -> 0.
+  Value xeq0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OEQ, x, zero);
+  Value ygt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, y, zero);
+  Value ylt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, y, zero);
+  Value axis = b.create<arith::SelectOp>(
+      loc, ygt0, halfPi,
+      b.create<arith::SelectOp>(loc, ylt0, negHalfPi, zero));
+  return b.create<arith::SelectOp>(loc, xeq0, axis, res);
+}
+
 /// Scalar arith/math op for one `map_unary` fn. nullptr = unsupported here.
 inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
                                    llvm::StringRef fn, mlir::Value x) {
@@ -90,6 +162,10 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     // 2^x directly on the `ex2.approx.ftz.f` hardware op (no log2(e) prescale,
     // unlike exp) via the math.exp2 peephole.
     return b.create<math::Exp2Op>(loc, x);
+  if (fn == "atan")
+    // Libdevice-safe: minimax poly + reciprocal reduction, all in arith (no
+    // __nv_atanf extern; NVVM has no atan.approx hardware op).
+    return emitAtan(b, loc, x);
   if (fn == "erf") {
     // Abramowitz & Stegun 7.1.26: erf(|x|) = 1 - poly(t)*exp(-x^2),
     // t = 1/(1+p|x|), max abs err ~1.5e-7 — far inside the 1e-3 tolerance. Uses
@@ -158,6 +234,10 @@ inline mlir::Value emitScalarBinary(mlir::OpBuilder &b, mlir::Location loc,
     return b.create<arith::MinNumFOp>(loc, a, c);
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
+  if (fn == "atan2")
+    // atan2(y=a, x=c): libdevice-safe atan of the ratio + quadrant correction.
+    // angle(z) = atan2(imag, real) lowers to map_binary(imag, real, "atan2").
+    return emitAtan2(b, loc, a, c);
   return nullptr;
 }
 

@@ -20,7 +20,9 @@ using namespace intent;
 
 LogicalResult MapBinaryOp::verify() {
   static constexpr llvm::StringRef kFns[] = {
-      "add", "sub", "mul", "div", "max", "min", "pow", "cmp"};
+      "add", "sub", "mul", "div", "max", "min", "pow", "cmp",
+      // atan2(y, x): the complex angle primitive (angle = atan2(imag, real)).
+      "atan2"};
   // Comparison fns produce an i1-typed result tensor (the boolean condition for
   // intent.select); every other fn is element-type-preserving. C2c adds the
   // logical family (logical_and/or/xor) and isclose, which likewise yield i1.
@@ -73,7 +75,7 @@ LogicalResult MapUnaryOp::verify() {
   // Element-type-preserving fns: result type == input type.
   static constexpr llvm::StringRef kFns[] = {
       "exp",  "log", "neg",  "abs", "sqrt", "rsqrt",   "recip",
-      "tanh", "sigmoid", "cos", "sin", "tan",  "exp2", "erf",
+      "tanh", "sigmoid", "cos", "sin", "tan",  "exp2", "erf", "atan",
       // logical_not is i1->i1, still element-type-preserving.
       "logical_not"};
   // Predicate fns produce an i1-typed result tensor (the boolean condition for

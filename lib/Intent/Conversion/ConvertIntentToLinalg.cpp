@@ -90,7 +90,8 @@ static bool isI1BinaryFn(StringRef fn) {
 /// True iff `emitScalarBinary` can lower `fn` (the guard for MapBinaryLowering).
 static bool hasScalarBinary(StringRef fn) {
   return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
-         fn == "max" || fn == "min" || fn == "pow" || isI1BinaryFn(fn);
+         fn == "max" || fn == "min" || fn == "pow" || fn == "atan2" ||
+         isI1BinaryFn(fn);
 }
 
 /// Emit the scalar arith op for one `map_binary` fn over two scalar operands.
@@ -111,6 +112,10 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     return b.create<arith::MinimumFOp>(loc, a, c);
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
+  // atan2(y=a, x=c): accurate math.atan2 on the CPU/linalg path (the GPU pass
+  // uses the libdevice-safe minimax atan2 in MapEmit.h). angle=atan2(imag,real).
+  if (fn == "atan2")
+    return b.create<math::Atan2Op>(loc, a, c);
   if (fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
       fn == "ne")
     return emitScalarCmp(b, loc, fn, a, c);
@@ -175,6 +180,10 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
                                    b.create<math::CosOp>(loc, x));
   if (fn == "exp2")
     return b.create<math::Exp2Op>(loc, x);
+  // atan: accurate math.atan on the CPU/linalg path (the GPU pass uses the
+  // libdevice-safe minimax atan in MapEmit.h).
+  if (fn == "atan")
+    return b.create<math::AtanOp>(loc, x);
   if (fn == "erf")
     return b.create<math::ErfOp>(loc, x);
   if (fn == "sigmoid") {
@@ -212,7 +221,7 @@ static bool hasScalarUnary(StringRef fn) {
   return fn == "exp" || fn == "log" || fn == "abs" || fn == "sqrt" ||
          fn == "rsqrt" || fn == "neg" || fn == "recip" || fn == "tanh" ||
          fn == "cos" || fn == "sin" || fn == "tan" || fn == "exp2" ||
-         fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
+         fn == "atan" || fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
 }
 
 struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {

@@ -28,16 +28,16 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 122 | 25 |
+| verified-e2e | 125 | 25 |
 | extraction-only-proven | 45 | 9 |
-| classified-miss | 26 | 4 |
+| classified-miss | 23 | 4 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (122)
+### verified-e2e (125)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -56,6 +56,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `addr` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `all` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `amax` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `angle` | ops | P5 complex: angle=atan2(imag,real), libdevice-safe minimax atan2 (test_complex_pk.py vs torch.angle+flag_gems, abs_err~7.7e-7) |
 | `any` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `arange` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `argmax` | ops | C6 arg-reduce PK (test_order_stats_pk.py) |
@@ -135,6 +136,8 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `randn` | ops | C5 RNG/philox PK (test_rng_pk.py) |
 | `reciprocal` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `relu` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `resolve_conj` | ops | P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real) |
+| `resolve_neg` | ops | P5 complex: (-re,-im) plane negation (test_complex_pk.py vs torch view_as_real) |
 | `rms_norm` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: row-reduction dx (recompute inv_rms) (test_backward_pk.py vs autograd+flag_gems) |
 | `scatter` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
 | `scatter_add_` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
@@ -214,7 +217,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (26)
+### classified-miss (23)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -231,7 +234,6 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `bin_topk` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
 | `indexer_k_tiled` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
 | `sparse_mla` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
-| `angle` | ops | native complex dtype: arg(z) of a complex input |
 | `attention` | ops | flash/attention loop-kernel authorship beyond pipeline auto-lift (PRD out-of-scope) |
 | `flash_api` | ops | flash-attention host API glue (multi-kernel, not one op-graph) |
 | `flash_kernel` | ops | flash-attention inner loop kernel (loop authorship, PRD out-of-scope) |
@@ -239,8 +241,6 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `multinomial` | ops | order-dependent RNG: cumulative-CDF categorical sampling |
 | `per_token_group_quant_fp8` | ops | multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping) |
 | `randperm` | ops | order-dependent RNG: Fisher-Yates permutation (sequence-dependent) |
-| `resolve_conj` | ops | native complex dtype: conjugate-flag resolution |
-| `resolve_neg` | ops | native complex dtype: negation-flag resolution |
 | `scaled_softmax` | ops | attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path) |
 | `unique` | ops | multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction) |
 | `upsample_bicubic2d_aa` | ops | bicubic/anti-aliased interpolation (deferred; nearest verified C7a) |

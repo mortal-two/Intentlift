@@ -28,6 +28,8 @@ _DTYPE = {
 _BINARY = {
     "add": np.add, "sub": np.subtract, "mul": np.multiply, "div": np.divide,
     "max": np.maximum, "min": np.minimum, "pow": np.power,
+    # atan2(y, x): the complex angle primitive (angle = atan2(imag, real)).
+    "atan2": np.arctan2,
     # Comparison fns return an i1 (bool) array (the condition for `select`).
     "gt": np.greater, "ge": np.greater_equal, "lt": np.less,
     "le": np.less_equal, "eq": np.equal, "ne": np.not_equal,
@@ -44,6 +46,7 @@ _UNARY = {
     "recip": np.reciprocal, "abs": np.abs, "tanh": np.tanh,
     "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-x)),
     "cos": np.cos, "sin": np.sin, "tan": np.tan, "exp2": np.exp2,
+    "atan": np.arctan,
     "erf": _erf, "isnan": np.isnan, "logical_not": np.logical_not,
 }
 

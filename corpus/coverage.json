@@ -8,13 +8,13 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 122,
-    "classified-miss": 23,
+    "verified-e2e": 125,
+    "classified-miss": 20,
     "extraction-only-proven": 45
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 122,
-    "classified-miss": 26,
+    "verified-e2e": 125,
+    "classified-miss": 23,
     "extraction-only-proven": 45
   },
   "triton_refs_total": 38,
@@ -81,8 +81,8 @@
     {
       "module": "angle",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "native complex dtype: arg(z) of a complex input"
+      "bucket": "verified-e2e",
+      "evidence": "P5 complex: angle=atan2(imag,real), libdevice-safe minimax atan2 (test_complex_pk.py vs torch.angle+flag_gems, abs_err~7.7e-7)"
     },
     {
       "module": "any",
@@ -801,14 +801,14 @@
     {
       "module": "resolve_conj",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "native complex dtype: conjugate-flag resolution"
+      "bucket": "verified-e2e",
+      "evidence": "P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real)"
     },
     {
       "module": "resolve_neg",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "native complex dtype: negation-flag resolution"
+      "bucket": "verified-e2e",
+      "evidence": "P5 complex: (-re,-im) plane negation (test_complex_pk.py vs torch view_as_real)"
     },
     {
       "module": "rms_norm",

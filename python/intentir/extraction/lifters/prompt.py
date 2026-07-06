@@ -37,13 +37,14 @@ Top-level JSON:
 
 Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
-               {add,sub,mul,div,max,min,pow,gt,ge,lt,le,eq,ne}.
-               (the comparison fns gt/ge/lt/le/eq/ne produce an i1 tensor ->
+               {add,sub,mul,div,max,min,pow,atan2,gt,ge,lt,le,eq,ne}.
+               (atan2(y,x): the complex angle primitive, angle=atan2(imag,real);
+                the comparison fns gt/ge/lt/le/eq/ne produce an i1 tensor ->
                 feeds select; count_nonzero = sum(cast(x!=0, i64)).)
      {"op":"map_binary","result":R,"operands":[A,B],"attrs":{"fn":F}}
   map_unary  : elementwise. fn in
                {exp,log,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
-                cos,sin,tan,exp2,erf,isnan,logical_not}.
+                cos,sin,tan,exp2,atan,erf,isnan,logical_not}.
                (isnan produces an i1 tensor -> feeds select; logical_not is i1->i1.)
      {"op":"map_unary","result":R,"operands":[A],"attrs":{"fn":F}}
   reduce     : along axes, KEEPDIMS (result keeps reduced dims as size 1 so it
@@ -171,6 +172,14 @@ Hard rules:
     dropout(x,p)   = select(rand(seed) >= p, x/(1-p), 0)  (rand, map_binary ge, select)
     randn/normal   = sqrt(-2*log(rand(s1)))*cos(2*pi*rand(s2))  (Box-Muller: two
                      rands with DIFFERENT seeds, log/sqrt/cos)
+- Complex tensors have NO element type: represent a complex value as its real
+  and imaginary PLANES (two same-shaped real tensors; torch.view_as_real gives
+  the trailing [...,2] pair). Complex ops are compositions over the planes:
+    angle(re,im)      = atan2(im, re)                    (map_binary atan2)
+    resolve_conj      -> (re, neg(im))                   (map_unary neg on imag)
+    resolve_neg       -> (neg(re), neg(im))
+    complex_add       -> (re1+re2, im1+im2)
+    complex_mul       -> (re1*re2 - im1*im2, re1*im2 + im1*re2)
 - Numerical-stability shifts (subtract row-max before exp) ARE part of the
   algorithm -- keep them.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\

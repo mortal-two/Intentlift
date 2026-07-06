@@ -55,6 +55,27 @@ func.func @uerf(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
+// atan via the accurate math.atan on the CPU/linalg path (the GPU pass uses the
+// libdevice-safe minimax poly in MapEmit.h). Complex angle = atan2(imag, real).
+// CHECK-LABEL: func.func @uatan
+// CHECK: math.atan
+func.func @uatan(%a: tensor<256xf32>) -> tensor<256xf32> {
+  %r = intent.map_unary %a {fn = "atan"} : (tensor<256xf32>) -> tensor<256xf32>
+  return %r : tensor<256xf32>
+}
+
+// -----
+
+// atan2(imag, real) — the complex angle primitive — via math.atan2 on linalg.
+// CHECK-LABEL: func.func @batan2
+// CHECK: math.atan2
+func.func @batan2(%im: tensor<256xf32>, %re: tensor<256xf32>) -> tensor<256xf32> {
+  %r = intent.map_binary %im, %re {fn = "atan2"} : (tensor<256xf32>, tensor<256xf32>) -> tensor<256xf32>
+  return %r : tensor<256xf32>
+}
+
+// -----
+
 // A widening dtype cast lowers to arith.extf; a same-dtype cast is an identity
 // alias (folded away, no linalg.generic).
 // CHECK-LABEL: func.func @ucast_up

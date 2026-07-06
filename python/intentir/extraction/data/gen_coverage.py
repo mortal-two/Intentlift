@@ -91,6 +91,13 @@ CLUSTER = {
     "nonzero": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
     "masked_select": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
     "masked_scatter": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
+    # P5 complex dtype — real/imag PLANES (no complex element type). angle is the
+    # libdevice-safe minimax atan2; conj/neg are plane negations; add/mul are
+    # plane compositions. test_complex_pk.py vs torch (view_as_real) + flag_gems.
+    "angle": ("P5 complex: angle=atan2(imag,real), libdevice-safe minimax atan2 "
+              "(test_complex_pk.py vs torch.angle+flag_gems, abs_err~7.7e-7)"),
+    "resolve_conj": "P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real)",
+    "resolve_neg": "P5 complex: (-re,-im) plane negation (test_complex_pk.py vs torch view_as_real)",
 }
 
 # backward / gradient cluster (07-06 P4) — each *_backward is a composition of
@@ -128,10 +135,7 @@ MISS = {
     # order-dependent / stateful RNG (sequence semantics, not per-element philox)
     "multinomial": "order-dependent RNG: cumulative-CDF categorical sampling",
     "randperm": "order-dependent RNG: Fisher-Yates permutation (sequence-dependent)",
-    # native complex dtype (no complex element type in IntentIR yet)
-    "angle": "native complex dtype: arg(z) of a complex input",
-    "resolve_conj": "native complex dtype: conjugate-flag resolution",
-    "resolve_neg": "native complex dtype: negation-flag resolution",
+    # (native complex dtype angle/resolve_conj/resolve_neg landed P5 -> CLUSTER)
     # deferred interpolation kernels (nearest done C7a)
     "upsample_bicubic2d_aa": "bicubic/anti-aliased interpolation (deferred; nearest verified C7a)",
     # loop/flash kernel authorship — explicit PRD out-of-scope

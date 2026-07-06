@@ -80,6 +80,19 @@ func.func @geglu(%A: tensor<4x8xf32>, %B: tensor<4x8xf32>,
   return %c : tensor<4x8xf32>
 }
 
+// angle(z) = atan2(imag, real): the complex angle primitive lowers to the
+// libdevice-safe minimax atan (arith.divf ratio + arith.select quadrant
+// correction), NEVER a math.atan / __nv_atan2f libdevice extern (ptxas dead end).
+// CHECK-LABEL: func.func @angle(
+// CHECK:         gpu.launch
+// CHECK:         arith.divf
+// CHECK:         arith.select
+// CHECK-NOT:     math.atan
+func.func @angle(%Im: tensor<4x8xf32>, %Re: tensor<4x8xf32>) -> tensor<4x8xf32> {
+  %r = intent.map_binary %Im, %Re {fn = "atan2"} : (tensor<4x8xf32>, tensor<4x8xf32>) -> tensor<4x8xf32>
+  return %r : tensor<4x8xf32>
+}
+
 // CHECK-NOT:     memref.alloca
 // CHECK-NOT:     gpu.all_reduce
 // CHECK-NOT:     scf.for
