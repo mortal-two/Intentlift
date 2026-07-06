@@ -154,6 +154,50 @@ def ConvertIntentGatherToGPU
   ];
 }
 
+def ConvertIntentLayoutToGPU
+    : Pass<"convert-intent-layout-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single structural-layout op (concat/pad/tile/flip/triu) "
+                "to one block-cooperative gpu.launch.";
+  let description = [{
+    The C4 structural-layout pass. Recognizes a `func.func` whose body is exactly
+    one `intent.concat` / `intent.pad` / `intent.tile` / `intent.flip` /
+    `intent.triu` over rank-2 operands producing a rank-2 result, and rewrites it
+    in place to ONE block-cooperative `gpu.launch`: one block per OUTPUT row, the
+    output column axis split over the block's threads (T threads, K = cols/T
+    columns each, unrolled). Destination-passing: the appended `[Ro,Co]` output
+    memref is written; the inputs are passed as memrefs in operand order.
+
+    The new mechanism is pure DATA MOVEMENT — each output element's SOURCE
+    coordinate is a STATIC structural function of the output coord (NOT the
+    data-dependent runtime index of gather), then a `memref.load` (or the pad
+    constant):
+    * concat: piecewise by the cumulative axis offsets — the output coord is owned
+      by one input; a per-input `scf.if(off <= coord < off+extent)` loads that
+      input at the offset-shifted coord and stores.
+    * pad: `scf.if(in-bounds)` yields `input[coord-lo]` else the `value` constant.
+    * tile: `input[coord mod input_extent]` via `arith.remui` (no guard).
+    * flip: `input[N-1-coord]` on the flipped axes (affine remap).
+    * triu: `arith.select(col >= row + k, input[row,col], 0)`.
+
+    Correctness-only (pure movement -> bit-faithful, rel < 1e-3). Static shapes,
+    cols % T == 0 (tail-mask is a follow-up). Run BEFORE
+    `convert-intent-to-linalg`; the memref+gpu.launch module goes straight to the
+    device pipeline, bypassing bufferization.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (block size over the output column axis); 0 = auto "
+           "(largest power-of-two <= min(cols,256) dividing cols).">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

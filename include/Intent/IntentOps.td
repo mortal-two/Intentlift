@@ -172,6 +172,92 @@ def Intent_ScatterOp : Intent_Op<"scatter"> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Structural layout ops (Layer A). Pure DATA MOVEMENT: every output element is a
+// source element chosen by a STATIC structural rule (an affine index / a
+// piecewise-by-offset select) or a pad constant — no arithmetic. Only
+// broadcast/reshape were implicit before; these make concat/pad/tile/flip/triu
+// (cat/stack/hstack/vstack, pad, repeat/tile, flip, triu) first-class. Lowered by
+// `convert-intent-layout-to-gpu`: one block per output row, cols over threads,
+// each output element's SOURCE coord computed by the rule then `memref.load`ed
+// (or set to the pad constant). See spec/ir/atomic-ops.md (C4).
+//===----------------------------------------------------------------------===//
+
+def Intent_ConcatOp : Intent_Op<"concat"> {
+  let summary = "Variadic concatenation along one axis (Layer A).";
+  let description = [{
+    Place `inputs` end-to-end along `axis` at their cumulative offsets
+    (numpy `concatenate` / torch.cat). All inputs share the result's rank and
+    element type and agree on every non-`axis` extent; the result `axis` extent is
+    the sum of the input `axis` extents. `hstack`/`vstack` are concat on axis 1/0;
+    `stack` is concat after an implicit unsqueeze of each input at `axis`.
+
+    The one genuinely-new bit vs. the affine layout ops is the VARIADIC + offset
+    placement: `out[coord]` is owned by exactly one input, selected piecewise by
+    the cumulative offsets, and loaded from that input at the offset-shifted coord.
+  }];
+  let arguments = (ins Variadic<AnyRankedTensor>:$inputs, I64Attr:$axis);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$inputs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_PadOp : Intent_Op<"pad"> {
+  let summary = "Constant pad along every axis (Layer A).";
+  let description = [{
+    Pad `input` with `lo[d]` elements before and `hi[d]` after along each dim `d`,
+    filling the border with the constant `value` (numpy `pad` mode="constant" /
+    torch `constant_pad_nd`). Result extent `= input[d] + lo[d] + hi[d]`.
+    `out[coord] = in-bounds(coord) ? input[coord - lo] : value` — a piecewise
+    select on the per-dim in-bounds predicate plus the pad constant.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, I64ArrayAttr:$lo,
+                       I64ArrayAttr:$hi, F64Attr:$value);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_TileOp : Intent_Op<"tile"> {
+  let summary = "Tile (repeat the whole tensor) along every axis (Layer A).";
+  let description = [{
+    Repeat `input` `reps[d]` times along each dim `d` (numpy `tile` / torch.tile /
+    torch.Tensor.repeat). Result extent `= input[d] * reps[d]` and
+    `out[coord] = input[coord mod input_extent]` — a per-dim affine `remui` back
+    into the source, no guard (every output coord maps to a valid source).
+  }];
+  let arguments = (ins AnyRankedTensor:$input, I64ArrayAttr:$reps);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_FlipOp : Intent_Op<"flip"> {
+  let summary = "Reverse the element order along the given axes (Layer A).";
+  let description = [{
+    Reverse `input` along each dim in `axes` (numpy `flip` / torch.flip).
+    Shape-preserving; `out[.., i, ..] = input[.., N-1-i, ..]` for each flipped
+    axis (extent `N`) — a per-dim affine `N-1-i` remap of the source coord.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, I64ArrayAttr:$axes);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_TriuOp : Intent_Op<"triu"> {
+  let summary = "Upper-triangular mask above the k-th diagonal (Layer A).";
+  let description = [{
+    Zero the elements below the `k`-th diagonal of a rank-2 `input` (numpy `triu` /
+    torch.triu): `out[i,j] = (j >= i + k) ? input[i,j] : 0`. Shape-preserving; a
+    select on the iota-derived (i,j) position over the always-in-bounds load.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, I64Attr:$k);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

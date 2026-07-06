@@ -110,6 +110,29 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
     if op.op == "select":
         c, x, y = op.operands
         return _broadcast(_broadcast(env.get(c), env.get(x)), env.get(y))
+    if op.op == "concat":
+        if any(o not in env for o in op.operands):
+            return None
+        axis = int(op.attrs["axis"]) - fold
+        shp = list(env[op.operands[0]])
+        shp[axis] = sum(env[o][axis] for o in op.operands)
+        return shp
+    if op.op == "pad":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        lo = [int(v) for v in op.attrs["lo"]][fold:]
+        hi = [int(v) for v in op.attrs["hi"]][fold:]
+        return [d + lo[i] + hi[i] for i, d in enumerate(env[x])]
+    if op.op == "tile":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        reps = [int(v) for v in op.attrs["reps"]][fold:]
+        return [d * reps[i] for i, d in enumerate(env[x])]
+    if op.op in ("flip", "triu"):
+        (x,) = op.operands
+        return list(env[x]) if x in env else None
     raise NotImplementedError(f"emit_mlir: unhandled body op {op.op!r}")
 
 
@@ -229,6 +252,38 @@ class _Printer:
                 f'{{axis = {axis} : i64, mode = "{a.get("mode", "along_axis")}", '
                 f'reduce = "{a.get("reduce", "none")}"}} : '
                 f'({td}, {ti}, {ts}) -> {self._ttn(op.result, env)}')
+        elif op.op == "concat":
+            xs = ", ".join(self.ssa[o] for o in op.operands)
+            txs = ", ".join(self._ttn(o, env) for o in op.operands)
+            axis = int(a["axis"]) - fold
+            self.lines.append(
+                f'{indent}{r} = intent.concat {xs} {{axis = {axis} : i64}} : '
+                f'({txs}) -> {self._ttn(op.result, env)}')
+        elif op.op == "pad":
+            x = self.ssa[op.operands[0]]
+            lo = ", ".join(str(int(v)) for v in a["lo"][fold:])
+            hi = ", ".join(str(int(v)) for v in a["hi"][fold:])
+            self.lines.append(
+                f'{indent}{r} = intent.pad {x} {{lo = [{lo}], hi = [{hi}], '
+                f'value = {float(a.get("value", 0.0))!r} : f64}} : '
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
+        elif op.op == "tile":
+            x = self.ssa[op.operands[0]]
+            reps = ", ".join(str(int(v)) for v in a["reps"][fold:])
+            self.lines.append(
+                f'{indent}{r} = intent.tile {x} {{reps = [{reps}]}} : '
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
+        elif op.op == "flip":
+            x = self.ssa[op.operands[0]]
+            axes = ", ".join(str(int(v) - fold) for v in a["axes"])
+            self.lines.append(
+                f'{indent}{r} = intent.flip {x} {{axes = [{axes}]}} : '
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
+        elif op.op == "triu":
+            x = self.ssa[op.operands[0]]
+            self.lines.append(
+                f'{indent}{r} = intent.triu {x} {{k = {int(a.get("k", 0))} : i64}} : '
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "iota":
             # Integer column-index vector; the result is an integer tensor (not
             # f32), so record it as a non-f32 op and print its int type directly.

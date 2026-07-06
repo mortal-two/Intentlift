@@ -145,6 +145,34 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
             raise InterpError(f"scatter: unknown reduce {reduce!r}")
         return out
 
+    if o == "concat":
+        # Structural layout (C4). Variadic inputs placed end-to-end along `axis`
+        # at their cumulative offsets (numpy concatenate / torch.cat; hstack /
+        # vstack = concat on axis 1/0).
+        return np.concatenate([env[n] for n in op.operands], axis=int(a["axis"]))
+
+    if o == "pad":
+        # Constant pad `lo`/`hi` elements before/after each dim, border = `value`
+        # (numpy pad mode="constant" / torch constant_pad_nd).
+        lo = [int(x) for x in a["lo"]]
+        hi = [int(x) for x in a["hi"]]
+        return np.pad(env[op.operands[0]], list(zip(lo, hi)), mode="constant",
+                      constant_values=a.get("value", 0.0))
+
+    if o == "tile":
+        # Repeat the whole tensor `reps[d]` times along each dim (numpy tile /
+        # torch.tile / torch.Tensor.repeat).
+        return np.tile(env[op.operands[0]], [int(x) for x in a["reps"]])
+
+    if o == "flip":
+        # Reverse the element order along each axis in `axes` (numpy flip /
+        # torch.flip).
+        return np.flip(env[op.operands[0]], axis=tuple(int(x) for x in a["axes"]))
+
+    if o == "triu":
+        # Upper triangle above the k-th diagonal, rest zeroed (numpy/torch triu).
+        return np.triu(env[op.operands[0]], k=int(a.get("k", 0)))
+
     if o == "transpose":
         return np.transpose(env[op.operands[0]], axes=a.get("perm"))
 

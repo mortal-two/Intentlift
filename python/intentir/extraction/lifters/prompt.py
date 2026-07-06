@@ -69,6 +69,21 @@ Atomic ops (each is one JSON object in a "body" list):
                shape; mode "along_axis" (torch.scatter/scatter_add_); reduce
                "none" overwrites, "add" accumulates (scatter_add).
      {"op":"scatter","result":R,"operands":[DATA,INDEX,SRC],"attrs":{"axis":i,"mode":"along_axis","reduce":"none"|"add"}}
+  concat     : variadic structural placement along `axis` (numpy concatenate /
+               torch.cat; hstack/vstack = axis 1/0; stack = concat after an
+               unsqueeze of each input at `axis`).
+     {"op":"concat","result":R,"operands":[A,B,...],"attrs":{"axis":i}}
+  pad        : constant pad `lo`/`hi` elements before/after each dim, border =
+               `value` (numpy pad "constant" / torch constant_pad_nd).
+     {"op":"pad","result":R,"operands":[A],"attrs":{"lo":[..],"hi":[..],"value":0.0}}
+  tile       : repeat the whole tensor `reps[d]` times per dim (numpy tile /
+               torch.tile / torch.Tensor.repeat).
+     {"op":"tile","result":R,"operands":[A],"attrs":{"reps":[..]}}
+  flip       : reverse element order along `axes` (numpy flip / torch.flip).
+     {"op":"flip","result":R,"operands":[A],"attrs":{"axes":[..]}}
+  triu       : upper triangle above the k-th diagonal, rest zeroed (numpy/torch
+               triu). Rank-2, shape-preserving.
+     {"op":"triu","result":R,"operands":[A],"attrs":{"k":0}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

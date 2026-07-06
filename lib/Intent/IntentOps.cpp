@@ -191,6 +191,113 @@ LogicalResult ScatterOp::verify() {
   return success();
 }
 
+LogicalResult ConcatOp::verify() {
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  int64_t rank = rTy.getRank();
+  int64_t axis = getAxis();
+  if (axis < 0 || axis >= rank)
+    return emitOpError("axis ")
+           << axis << " out of range for rank-" << rank << " result";
+  if (getInputs().empty())
+    return emitOpError("concat requires at least one input");
+  int64_t axisSum = 0;
+  bool axisStatic = true;
+  for (auto in : getInputs()) {
+    auto iTy = cast<RankedTensorType>(in.getType());
+    if (iTy.getRank() != rank)
+      return emitOpError("all inputs must have the result rank ") << rank;
+    if (iTy.getElementType() != rTy.getElementType())
+      return emitOpError("all inputs must share the result element type");
+    for (int64_t d = 0; d < rank; ++d) {
+      int64_t id = iTy.getDimSize(d);
+      if (d == axis) {
+        if (ShapedType::isDynamic(id))
+          axisStatic = false;
+        else
+          axisSum += id;
+      } else {
+        int64_t rd = rTy.getDimSize(d);
+        if (!ShapedType::isDynamic(id) && !ShapedType::isDynamic(rd) && id != rd)
+          return emitOpError("input extent ")
+                 << id << " != result extent " << rd << " at non-concat dim "
+                 << d;
+      }
+    }
+  }
+  int64_t ra = rTy.getDimSize(axis);
+  if (axisStatic && !ShapedType::isDynamic(ra) && axisSum != ra)
+    return emitOpError("sum of input axis extents ")
+           << axisSum << " != result axis extent " << ra;
+  return success();
+}
+
+LogicalResult PadOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  int64_t rank = iTy.getRank();
+  if (rTy.getRank() != rank)
+    return emitOpError("result rank must equal input rank");
+  if (iTy.getElementType() != rTy.getElementType())
+    return emitOpError("pad is element-type-preserving");
+  if ((int64_t)getLo().size() != rank || (int64_t)getHi().size() != rank)
+    return emitOpError("lo/hi must have one entry per dim (rank ") << rank << ")";
+  for (int64_t d = 0; d < rank; ++d) {
+    int64_t id = iTy.getDimSize(d), rd = rTy.getDimSize(d);
+    if (ShapedType::isDynamic(id) || ShapedType::isDynamic(rd))
+      continue;
+    int64_t lo = cast<IntegerAttr>(getLo()[d]).getInt();
+    int64_t hi = cast<IntegerAttr>(getHi()[d]).getInt();
+    if (id + lo + hi != rd)
+      return emitOpError("result extent ")
+             << rd << " != input+lo+hi (" << (id + lo + hi) << ") at dim " << d;
+  }
+  return success();
+}
+
+LogicalResult TileOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  int64_t rank = iTy.getRank();
+  if (rTy.getRank() != rank)
+    return emitOpError("result rank must equal input rank");
+  if (iTy.getElementType() != rTy.getElementType())
+    return emitOpError("tile is element-type-preserving");
+  if ((int64_t)getReps().size() != rank)
+    return emitOpError("reps must have one entry per dim (rank ") << rank << ")";
+  for (int64_t d = 0; d < rank; ++d) {
+    int64_t id = iTy.getDimSize(d), rd = rTy.getDimSize(d);
+    if (ShapedType::isDynamic(id) || ShapedType::isDynamic(rd))
+      continue;
+    int64_t rep = cast<IntegerAttr>(getReps()[d]).getInt();
+    if (id * rep != rd)
+      return emitOpError("result extent ")
+             << rd << " != input*reps (" << (id * rep) << ") at dim " << d;
+  }
+  return success();
+}
+
+LogicalResult FlipOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("flip is shape- and element-type-preserving");
+  for (Attribute a : getAxes()) {
+    int64_t ax = cast<IntegerAttr>(a).getInt();
+    if (ax < 0 || ax >= iTy.getRank())
+      return emitOpError("flip axis ")
+             << ax << " out of range for rank-" << iTy.getRank() << " input";
+  }
+  return success();
+}
+
+LogicalResult TriuOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  if (iTy.getRank() != 2)
+    return emitOpError("triu operates on a rank-2 tensor");
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("triu is shape- and element-type-preserving");
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};
