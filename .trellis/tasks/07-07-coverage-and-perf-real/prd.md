@@ -358,3 +358,41 @@ just W-aware top-k; the 14 residual coverage modules — re-attacked to their re
 - Streaming-attention atom reference (for bwd/splitK recipe):
   `refs/TianchenForge/backends/cuda/runtime_support/streaming_attention_*`.
 - Coverage source of truth: `corpus/coverage.json` (162/231 = 137 fg + 25 triton verified-e2e).
+
+---
+
+## Outcome (2026-07-07 — DONE, trellis-check PASS)
+
+Delivered M0–M8, all committed (`5306609..ce82f0b`); every headline reproduces under fair 3-way
+CUDA-graph measurement (`python/tests/perf/REPORT.md`, audited SOUND).
+
+**Real high performance vs the real Triton target (flag_gems, now benchable via the M0 shim):**
+- **conv2d 10.14× → 1.31× vs cuDNN, beats flag_gems 1.9×** — M3 implicit-GEMM on tensor cores
+  (mma.sync, im2col never materialized) + M8 TF32 (m16n8k8, cuDNN-exact rel<1e-3). The flagship.
+- **Movers WIN** (M1 occupancy/coalescing/vectorization): avg_pool **0.49×**, max_pool 0.76×,
+  argmax 0.93×, triu 0.74× — beat the *faster* of torch/flag_gems.
+- **Compaction** (M2 CUB DeviceSelect block-cooperative): masked_select 7.8×→0.63/1.12×, nonzero
+  →0.68–0.70× WIN.
+- **flash fwd BEATS Triton at every shape** (0.71–0.91×) — M4 CachedLauncher killed per-call launch
+  overhead; +causal +LSE PK-exact.
+- **matmul autotuned 1.70×→1.04×** — M5 measured autotuner (lower→bench→argmin, per-(op,shape)
+  cache), the GPU analog of the paper's RVV roofline search.
+- **sort** — M7a segmented-radix cost-model hybrid wins the large-non-pow2 regime (0.68–0.95×);
+  GATE pow2 down to 1.17–1.25× (no regression).
+- **M6** Schedule abstraction + structured launch plan de-brittled the regex runtime (equivalence-
+  proven, behavior-preserving, full PK suite green).
+
+**Coverage 129→168/231 verified-e2e** (M7b re-attack: attention/scaled_softmax via the now-solid
+flash cubin; rwkv found stateless not recurrent; bin_topk via sort). Residual **8 classified-miss,
+each evidence-based**: flash_mla/indexer_k_tiled/sparse_mla (genuinely-new sparse-latent addressing),
+flash_api/get_scheduler_metadata (non-numeric host/scheduler glue), ai_bench_correlation (multi-op),
+bicubic-aa ×2 (torch antialias weight-derivation detail).
+
+**Declared walls (evidence, not labels):**
+- flash **bwd 1.64×** exceeds the §4.4 ≤1.2× target — a WALL: transposed dV/dK operands need ~40KB
+  over the 99KB sm_120a smem cap + no transpose-ldmatrix precedent (multi-session GPU work).
+- sort GATE 1.2× — MLIR gpu dialect has no `gpu.ballot` for CUB's register-ranking radix.
+- cuBLAS-class GEMM residual — no Hopper wgmma/TMA on sm_120a; Triton flash under the same wall.
+
+**Discipline:** no per-kernel recognizer (op-type dispatch only, trellis-check confirmed);
+Dataset/refs/site-packages/key read-only (flash Triton ref via /tmp content-hash copy).
