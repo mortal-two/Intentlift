@@ -225,6 +225,80 @@ def Intent_ScatterOp : Intent_Op<"scatter"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Dynamic-shape output ops (Layer A). The C8 cluster — the ONE genuinely-new
+// mechanism vs every prior cluster: a data-dependent output EXTENT. The output
+// row count `nnz` (number of true mask / nonzero elements) depends on the input
+// VALUES, unknown at compile time. All three share the compaction primitive: an
+// exclusive prefix-sum of the flattened 0/1 mask gives each true element its
+// compacted output SLOT (row-major order, matching torch); the total `nnz` is
+// the inclusive sum. Lowered by `convert-intent-compact-to-gpu`; the runtime
+// extent is resolved host-side (a reduce over the mask) before the compaction
+// launch, so the destination buffer's leading dim is concrete at launch time.
+// See spec/ir/atomic-ops.md (C8).
+//===----------------------------------------------------------------------===//
+
+def Intent_NonzeroOp : Intent_Op<"nonzero"> {
+  let summary = "Row-major multi-indices of the nonzero elements (Layer A).";
+  let description = [{
+    Materialize the multi-indices of the nonzero elements of `cond`
+    (torch.nonzero / numpy.argwhere): a rank-2 integer `[nnz, ndim]` result whose
+    row `k` is the `ndim`-vector coordinate of the `k`-th nonzero element in
+    row-major (C-order) scan order, where `ndim = cond.rank`. An element counts
+    as nonzero when it is `!= 0` (the `i1` `true`, or any nonzero numeric value).
+
+    The C8 dynamic-shape mechanism: the leading extent `nnz` is DATA-DEPENDENT
+    (the count of nonzero elements), unknown at compile time — so the result type
+    carries a dynamic leading dim `tensor<?x{ndim}xi64>`. The GPU lowering
+    compacts each true element to its row-major slot (an exclusive prefix-sum of
+    the flattened mask) and writes the unraveled coordinate; the host sizes the
+    `[nnz, ndim]` allocation from a reduce over `cond` before the launch. Row
+    order is exact (matches torch.nonzero).
+  }];
+  let arguments = (ins AnyRankedTensor:$cond);
+  let results = (outs AnyRankedTensor:$indices);
+  let assemblyFormat = "$cond attr-dict `:` functional-type($cond, $indices)";
+  let hasVerifier = 1;
+}
+
+def Intent_MaskedSelectOp : Intent_Op<"masked_select"> {
+  let summary = "Compact the masked-true elements into a rank-1 vector (Layer A).";
+  let description = [{
+    Select the elements of `data` where `mask` is true, flattened in row-major
+    order into a rank-1 `[nnz]` result (torch.masked_select / numpy boolean
+    index `data[mask]`). `mask` shares `data`'s shape; `nnz` is the number of true
+    mask elements — the same DATA-DEPENDENT extent as `intent.nonzero`, so the
+    result type is `tensor<?x{elt}>`. The GPU lowering compacts each masked-true
+    element to its exclusive-prefix-sum slot (row-major, exact vs torch); the host
+    sizes the `[nnz]` allocation from a reduce over `mask`.
+  }];
+  let arguments = (ins AnyRankedTensor:$data, AnyRankedTensor:$mask);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$data `,` $mask attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_MaskedScatterOp : Intent_Op<"masked_scatter"> {
+  let summary = "Fill the masked positions of data with src, in order (Layer A).";
+  let description = [{
+    Copy `data`, then overwrite each position where `mask` is true with the next
+    element of the rank-1 `src` vector, consumed in row-major order
+    (torch.Tensor.masked_scatter): `out[coord] = mask[coord] ? src[rank(coord)] :
+    data[coord]`, where `rank(coord)` is the exclusive prefix-sum of the mask (the
+    count of true elements before `coord`). The result is DATA-SHAPED (same shape
+    and element type as `data`) — NOT dynamic-extent — but it shares the C8
+    compaction primitive: the prefix-sum of the mask indexes `src`. `mask` shares
+    `data`'s shape; `src` must supply at least `nnz` elements.
+  }];
+  let arguments = (ins AnyRankedTensor:$data, AnyRankedTensor:$mask,
+                       AnyRankedTensor:$src);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$data `,` $mask `,` $src attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Structural layout ops (Layer A). Pure DATA MOVEMENT: every output element is a
 // source element chosen by a STATIC structural rule (an affine index / a
 // piecewise-by-offset select) or a pad constant — no arithmetic. Only

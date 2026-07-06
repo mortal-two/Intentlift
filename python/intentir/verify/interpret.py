@@ -240,6 +240,34 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
             raise InterpError(f"scatter: unknown reduce {reduce!r}")
         return out
 
+    if o == "nonzero":
+        # Dynamic-shape output (C8): row-major multi-indices of the nonzero
+        # elements (torch.nonzero / numpy.argwhere). Result [nnz, ndim] i64; the
+        # leading extent nnz is data-dependent. np.argwhere is C-order, matching
+        # torch.nonzero's row-major scan.
+        cond = env[op.operands[0]]
+        return np.argwhere(cond != 0).astype(np.int64)
+
+    if o == "masked_select":
+        # Dynamic-shape output (C8): elements where mask is true, flattened in
+        # row-major order (torch.masked_select / data[mask]). Result [nnz].
+        data = env[op.operands[0]]
+        mask = env[op.operands[1]] != 0
+        return data[mask]
+
+    if o == "masked_scatter":
+        # C8 compaction primitive with a data-shaped output: overwrite each
+        # masked position with the next src element in row-major order
+        # (torch.masked_scatter). Boolean assignment on a C-contiguous array
+        # consumes src[0..nnz) in row-major order.
+        data = env[op.operands[0]]
+        mask = env[op.operands[1]] != 0
+        src = np.asarray(env[op.operands[2]]).reshape(-1)
+        out = np.array(data, copy=True)
+        n = int(mask.sum())
+        out[mask] = src[:n].astype(out.dtype)
+        return out
+
     if o == "concat":
         # Structural layout (C4). Variadic inputs placed end-to-end along `axis`
         # at their cumulative offsets (numpy concatenate / torch.cat; hstack /

@@ -251,6 +251,56 @@ LogicalResult ScatterOp::verify() {
   return success();
 }
 
+LogicalResult NonzeroOp::verify() {
+  auto cTy = cast<RankedTensorType>(getCond().getType());
+  auto rTy = cast<RankedTensorType>(getIndices().getType());
+  // Result is rank-2 [nnz, ndim] integer: one row per nonzero element, each row
+  // the ndim-vector coordinate (ndim = cond.rank). The leading `nnz` extent is
+  // data-dependent (typically dynamic).
+  if (rTy.getRank() != 2)
+    return emitOpError("nonzero result must be a rank-2 [nnz, ndim] tensor");
+  if (!rTy.getElementType().isIntOrIndex())
+    return emitOpError("nonzero result must be an integer-typed (index) tensor");
+  int64_t ndim = rTy.getDimSize(1);
+  if (!ShapedType::isDynamic(ndim) && ndim != cTy.getRank())
+    return emitOpError("nonzero result inner extent ")
+           << ndim << " must equal cond rank " << cTy.getRank();
+  return success();
+}
+
+LogicalResult MaskedSelectOp::verify() {
+  auto dTy = cast<RankedTensorType>(getData().getType());
+  auto mTy = cast<RankedTensorType>(getMask().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  // mask shares data's shape; result is a rank-1 [nnz] compaction (data elt).
+  if (mTy.getShape() != dTy.getShape())
+    return emitOpError("mask shape must equal data shape");
+  if (rTy.getRank() != 1)
+    return emitOpError("masked_select result must be a rank-1 [nnz] tensor");
+  if (rTy.getElementType() != dTy.getElementType())
+    return emitOpError("result element type must equal data element type");
+  return success();
+}
+
+LogicalResult MaskedScatterOp::verify() {
+  auto dTy = cast<RankedTensorType>(getData().getType());
+  auto mTy = cast<RankedTensorType>(getMask().getType());
+  auto sTy = cast<RankedTensorType>(getSrc().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  // data-shaped result; mask shares data's shape; src is a rank-1 fill vector.
+  if (mTy.getShape() != dTy.getShape())
+    return emitOpError("mask shape must equal data shape");
+  if (sTy.getRank() != 1)
+    return emitOpError("masked_scatter src must be a rank-1 vector");
+  if (sTy.getElementType() != dTy.getElementType())
+    return emitOpError("src element type must equal data element type");
+  if (rTy.getShape() != dTy.getShape())
+    return emitOpError("masked_scatter result shape must equal data shape");
+  if (rTy.getElementType() != dTy.getElementType())
+    return emitOpError("result element type must equal data element type");
+  return success();
+}
+
 LogicalResult ConcatOp::verify() {
   auto rTy = cast<RankedTensorType>(getResult().getType());
   int64_t rank = rTy.getRank();

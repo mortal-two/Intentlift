@@ -474,6 +474,62 @@ def ConvertIntentConvToGPU
   ];
 }
 
+def ConvertIntentCompactToGPU
+    : Pass<"convert-intent-compact-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single dynamic-shape compaction op (nonzero / "
+                "masked_select / masked_scatter) to one block-cooperative "
+                "prefix-sum gpu.launch.";
+  let description = [{
+    The C8 dynamic-shape-output pass — the ONE genuinely-new mechanism vs every
+    prior cluster: a data-dependent output EXTENT. Recognizes a `func.func` whose
+    body is exactly one `intent.nonzero` / `intent.masked_select` /
+    `intent.masked_scatter` and rewrites it in place to ONE block-cooperative
+    `gpu.launch` (grid = (1,1,1), block = (T,1,1)).
+
+    The compaction primitive is an EXCLUSIVE PREFIX-SUM of the flattened 0/1
+    mask: the flattened `Ntotal = prod(shape)` elements are split into T
+    contiguous SEGMENTS (Ntotal % T == 0, seg = Ntotal/T); thread `t` first counts
+    the true elements in ALL prior segments `[0, t*seg)` — its exclusive-prefix
+    base slot — then re-scans its own segment `[t*seg, (t+1)*seg)` ascending,
+    emitting each true element at the running slot (`base`, `base+1`, ...). Because
+    the segments are contiguous ranges of the row-major flat index and each is
+    scanned ascending, the global write order is EXACT row-major (matches
+    torch.nonzero / torch.masked_select). No shared memory / barriers (each thread
+    is independent); the last thread writes the total `nnz` to a `count` buffer.
+
+    * nonzero (`cond`): dest-passing `(cond, out[MAXNNZ,ndim] i64, count[1] i64)`.
+      Each true flat index `i` is unraveled to its `ndim`-vector coord (a divmod
+      chain) and written as `out[slot, 0..ndim)`; `ndim = cond.rank`.
+    * masked_select (`data`,`mask`): dest-passing `(data, mask, sel[MAXNNZ],
+      count[1] i64)`. `sel[slot] = data[coord]` at each true position.
+    * masked_scatter (`data`,`mask`,`src`): dest-passing `(data, mask, src, out)`,
+      out DATA-SHAPED (static). `out[coord] = mask[coord] ? src[slot] :
+      data[coord]` — the prefix-sum indexes `src`; no dynamic extent, no count.
+
+    The runtime extent (`nnz`) flows HOST-side: the caller sizes the `[nnz,*]`
+    allocation from a reduce over the mask BEFORE the launch (two-step), OR passes
+    a MAX-sized buffer + reads the kernel's `count` and slices `[:nnz]` on the host
+    (single-launch). Either way the destination leading dim is concrete at launch —
+    orchestrate never allocates a dynamically-sized device buffer. A truth test of
+    `!= 0` accepts f32 / integer / i1 masks. Correctness-only (bit-faithful, exact
+    row-major order). Static shapes, Ntotal % T == 0, T a power of two. Run BEFORE
+    `convert-intent-to-linalg`; the memref+gpu.launch module goes straight to the
+    device pipeline.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the flattened element axis; 0 = auto "
+           "(largest power-of-two <= min(Ntotal,256) dividing Ntotal).">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

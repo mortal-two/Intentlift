@@ -51,6 +51,21 @@ Kernel<->cubin matching: in a multi-kernel program the *gpu.func* name can repea
 name (``mm_kernel`` vs ``mm_kernel_0``) is unique. We match each launch site by the
 token before ``::`` against ``CompiledKernel.binary_name``.
 
+Dynamic-shape output (C8 nonzero / masked_select): the compaction kernel's output
+extent ``nnz`` is data-dependent (unknown at compile time), but this parser only
+ever sees CONCRETE leading dims — because the runtime extent is resolved on the
+HOST before the launch, never as a dynamically-sized device allocation. Two flows,
+both compatible with the static-buffer machinery here:
+  * two-step: reduce the mask to ``nnz`` on the host (``mask.sum()``), allocate the
+    exact ``[nnz, ndim]`` / ``[nnz]`` output, then run the single compaction launch;
+  * max-buffer + count: allocate a ``[Ntotal, *]`` upper-bound buffer, launch the
+    compaction (the last thread writes the total ``nnz`` into a ``[1] i64`` count
+    buffer), read ``count`` on the host and slice ``out[:nnz]``.
+Either way the kernel writes only its valid slots and the destination leading dim
+handed to ``run_program`` is a plain constant, so nothing dynamic flows through the
+LLVM-descriptor parsing below. (The C8 PK harness drives this directly via
+``RowReductionKernel``; ``run_program`` needs no dynamic-extent special-casing.)
+
 f32 scalar args: ``launch.py``'s ``_marshal`` only handles i32/i64/pointer; a float
 would silently fall through to ``c_void_p`` (a null-ish pointer) and corrupt the
 result with no error. The matmul fixture's fill kernel takes an ``f32`` value, so

@@ -129,6 +129,20 @@ Atomic ops (each is one JSON object in a "body" list):
                there is none.
      {"op":"conv","result":O,"operands":[IN,W,BIAS],"attrs":{"stride":[s,s],"padding":[p,p],"dilation":[1,1],"groups":1}}
      {"op":"conv","result":O,"operands":[IN,W],"attrs":{"stride":[s],"padding":[p],"dilation":[1],"groups":1}}
+  nonzero    : DYNAMIC-shape output. Row-major multi-indices of the nonzero
+               elements (torch.nonzero / numpy.argwhere). Result [nnz, ndim] i64
+               (ndim = cond rank); nnz is data-dependent. count_nonzero is NOT
+               this — it is sum(cast(x!=0, i64)) (a reduce). masked_fill is NOT
+               this — it is select(mask, value, x) (elementwise).
+     {"op":"nonzero","result":R,"operands":[COND],"attrs":{}}
+  masked_select : DYNAMIC-shape output. Elements where mask is true, flattened in
+               row-major order (torch.masked_select / data[mask]). mask shares
+               data's shape; result [nnz].
+     {"op":"masked_select","result":R,"operands":[DATA,MASK],"attrs":{}}
+  masked_scatter: fill the masked positions of data with `src` (rank-1) in
+               row-major order (torch.Tensor.masked_scatter). Result is
+               data-shaped: out[c]=mask[c]?src[rank(c)]:data[c].
+     {"op":"masked_scatter","result":R,"operands":[DATA,MASK,SRC],"attrs":{}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

@@ -128,6 +128,25 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
     if op.op == "scatter":
         d = op.operands[0]
         return list(env[d]) if d in env else None        # shaped like data
+    if op.op == "nonzero":
+        # Dynamic-shape output (C8): [nnz, ndim]. nnz is data-dependent, so the
+        # emitter uses the MAX (upper-bound) extent = prod(cond shape); ndim =
+        # cond rank. The true nnz is resolved host-side (the interpreter yields
+        # the exact [nnz, ndim]); the emitted static type is an upper bound.
+        (c,) = op.operands
+        if c not in env:
+            return None
+        import math as _m
+        return [_m.prod(env[c]) if env[c] else 1, len(env[c])]
+    if op.op == "masked_select":
+        d, m = op.operands
+        if d not in env:
+            return None
+        import math as _m
+        return [_m.prod(env[d]) if env[d] else 1]         # [nnz] upper bound
+    if op.op == "masked_scatter":
+        d = op.operands[0]
+        return list(env[d]) if d in env else None         # data-shaped
     if op.op == "select":
         c, x, y = op.operands
         return _broadcast(_broadcast(env.get(c), env.get(x)), env.get(y))
@@ -416,6 +435,26 @@ class _Printer:
                 f'{{axis = {axis} : i64, mode = "{a.get("mode", "along_axis")}", '
                 f'reduce = "{a.get("reduce", "none")}"}} : '
                 f'({td}, {ti}, {ts}) -> {self._ttn(op.result, env)}')
+        elif op.op == "nonzero":
+            # Dynamic-shape output (C8): [nnz, ndim] i64 index rows. The emitted
+            # leading extent is the MAX upper bound (prod of cond shape).
+            c = self.ssa[op.operands[0]]
+            self.int_results[op.result] = "i64"
+            self.lines.append(
+                f'{indent}{r} = intent.nonzero {c} : '
+                f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
+        elif op.op == "masked_select":
+            d, m = (self.ssa[o] for o in op.operands)
+            td, tm = (self._ttn(o, env) for o in op.operands)
+            self.lines.append(
+                f'{indent}{r} = intent.masked_select {d}, {m} : '
+                f'({td}, {tm}) -> {self._ttn(op.result, env)}')
+        elif op.op == "masked_scatter":
+            d, m, s = (self.ssa[o] for o in op.operands)
+            td, tm, ts = (self._ttn(o, env) for o in op.operands)
+            self.lines.append(
+                f'{indent}{r} = intent.masked_scatter {d}, {m}, {s} : '
+                f'({td}, {tm}, {ts}) -> {self._ttn(op.result, env)}')
         elif op.op == "concat":
             xs = ", ".join(self.ssa[o] for o in op.operands)
             txs = ", ".join(self._ttn(o, env) for o in op.operands)

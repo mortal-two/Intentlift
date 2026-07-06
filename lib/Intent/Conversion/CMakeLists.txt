@@ -4,6 +4,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentElementwiseToGPU.cpp
   ConvertIntentGatherToGPU.cpp
   ConvertIntentLayoutToGPU.cpp
+  ConvertIntentCompactToGPU.cpp
   ConvertIntentRngToGPU.cpp
   ConvertIntentArgReduceToGPU.cpp
   ConvertIntentSortToGPU.cpp
