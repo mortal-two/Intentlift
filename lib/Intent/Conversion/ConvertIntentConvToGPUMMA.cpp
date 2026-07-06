@@ -38,6 +38,7 @@
 
 #include "Intent/Conversion/Passes.h"
 
+#include "Schedule.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
 
@@ -198,6 +199,14 @@ struct ConvMMALowering {
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+    // M6: structured launch plan for the implicit-GEMM conv (grid/block/smem +
+    // tile knobs), so the runtime reads the config from a Schedule.
+    Schedule sched;
+    sched.gridX = gridM * gridN;
+    sched.blockX = kBlock;
+    sched.smemBytes = aBytes + wBytes;
+    sched.perThreadTile = nFrag;
+    ::intent::attachLaunchPlan(gpuFn, sched);
     auto launch =
         b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
     b.setInsertionPointToStart(&launch.getBody().front());

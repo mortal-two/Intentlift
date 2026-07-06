@@ -372,30 +372,40 @@ def _host_func_text(binary_mlir: str) -> tuple[str, str]:
     func_starts = [(mm.start(), mm.group(1), mm.end())
                    for mm in re.finditer(r"llvm\.func\s+@(\w+)\s*\(", binary_mlir)]
     for k, (start, name, end) in enumerate(func_starts):
-        # find the body opening brace after the signature/attrs
-        open_idx = binary_mlir.find("{", end)
-        if open_idx == -1:
-            continue
         # A declaration-only func (e.g. @malloc) has no body brace before the
         # next llvm.func; reject a brace that belongs to a *later* function.
         next_start = func_starts[k + 1][0] if k + 1 < len(func_starts) else len(binary_mlir)
-        if open_idx >= next_start:
-            continue
-        depth = 0
-        i = open_idx
-        while i < len(binary_mlir):
-            c = binary_mlir[i]
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    body = binary_mlir[open_idx + 1 : i]
-                    if "gpu.launch_func" in body:
-                        sig = binary_mlir[start:open_idx]
-                        return name, sig + "{" + body + "}"
-                    break
-            i += 1
+        # Scan every top-level brace region after the signature and return the
+        # one that is the *body* (contains gpu.launch_func). A func may carry an
+        # `attributes {...}` dict brace BEFORE its body brace (e.g. the M6
+        # `intent.launch_plan` structured launch plan); we skip such non-body
+        # regions instead of mistaking the first `{` for the body. With no
+        # attributes the first region IS the body -> identical to before.
+        search = end
+        while True:
+            open_idx = binary_mlir.find("{", search)
+            if open_idx == -1 or open_idx >= next_start:
+                break
+            depth = 0
+            i = open_idx
+            close_idx = -1
+            while i < len(binary_mlir):
+                c = binary_mlir[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        close_idx = i
+                        break
+                i += 1
+            if close_idx == -1:
+                break
+            body = binary_mlir[open_idx + 1 : close_idx]
+            if "gpu.launch_func" in body:
+                sig = binary_mlir[start:open_idx]
+                return name, sig + "{" + body + "}"
+            search = close_idx + 1  # skip this region (attributes dict); try next
     raise ValueError("orchestrate: no host llvm.func containing gpu.launch_func found")
 
 

@@ -30,6 +30,7 @@
 #include "Intent/Conversion/Passes.h"
 
 #include "MapEmit.h"
+#include "Schedule.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
 
@@ -191,6 +192,13 @@ struct RowReductionLowering {
   SmallVector<AffineMap> colSegMap;
   int64_t numGroups = 0;
   Value groupVal;                    // bx % G (per-block uniform), set in rewrite
+
+  // M6: the first-class Schedule this lowering emits. Populated by match();
+  // `kind` carries the three-way fork decision (0=register-tile, 1=tiled-smem,
+  // 2=scan) so rewrite() dispatches on the Schedule, not on ad-hoc predicates.
+  // Each rewrite path fills `smemBytes` and attaches the structured launch plan.
+  enum RowKind { KRegister = 0, KTiled = 1, KScan = 2 };
+  Schedule sched;
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc)
       : fn(fn), blockThreads(bt), tileColsMax(tc) {}
@@ -489,6 +497,23 @@ struct RowReductionLowering {
       if ((T & (T - 1)) != 0)
         return failure();
     }
+
+    // M6: fold the launch geometry + fork decision into the first-class
+    // Schedule. grid = one block per row (M), block = T threads over the feature
+    // dim; perThreadTile = the register/tiled strip Kpt; splitFactor = numTiles.
+    // `kind` is the three-way fork rewrite() then dispatches on. `smemBytes` is
+    // filled per path (it depends on the path's shared-memory carving).
+    sched.gridX = M;
+    sched.blockX = T;
+    sched.perThreadTile = Kpt;
+    sched.splitFactor = numTiles;
+    sched.gridStyle = GridStyle::OneBlockPerRow;
+    if (!scans.empty())
+      sched.kind = KScan;
+    else if (numTiles > 1)
+      sched.kind = KTiled;
+    else
+      sched.kind = KRegister;
     return success();
   }
 
@@ -759,6 +784,8 @@ struct RowReductionLowering {
     // sidesteps that overlap entirely.
     int64_t cacheBytes = (int64_t)N * (int64_t)frontiers.size() * 4;
     int64_t shBytes = cacheBytes + (int64_t)T * 4;
+    sched.smemBytes = shBytes; // M6: record the tiled path's dynamic-shared plan
+    attachLaunchPlan(gpuFn, sched);
     Value shBytesV =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shBytes));
 
@@ -977,6 +1004,8 @@ struct RowReductionLowering {
     // Dynamic shared: a single [T] f32 scratch, reused (sequentially, separated
     // by gpu.barrier) for the cross-thread exclusive scan and each reduce tree.
     int64_t shBytes = (int64_t)T * 4;
+    sched.smemBytes = shBytes; // M6: record the scan path's dynamic-shared plan
+    attachLaunchPlan(gpuFn, sched);
     Value shBytesV =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shBytes));
 
@@ -1173,9 +1202,10 @@ struct RowReductionLowering {
   }
 
   LogicalResult rewrite() {
-    if (!scans.empty())
+    // Dispatch on the Schedule's fork decision (set in match()).
+    if (sched.kind == KScan)
       return rewriteScan();
-    if (numTiles > 1)
+    if (sched.kind == KTiled)
       return rewriteTiled();
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
@@ -1200,6 +1230,10 @@ struct RowReductionLowering {
 
     b.setInsertionPoint(fn);
     auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    // M6: register-tile path uses no dynamic shared (gpu.all_reduce carves its
+    // own static .shared). Emit the structured launch plan for the runtime.
+    sched.smemBytes = 0;
+    attachLaunchPlan(gpuFn, sched);
     Block *entry = gpuFn.addEntryBlock();
     b.setInsertionPointToStart(entry);
 

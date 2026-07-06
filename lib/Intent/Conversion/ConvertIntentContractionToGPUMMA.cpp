@@ -29,6 +29,7 @@
 #include "Intent/Conversion/Passes.h"
 
 #include "MapEmit.h"
+#include "Schedule.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
 
@@ -277,6 +278,17 @@ struct ContractionMMALowering {
     int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
         loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
+
+    // M6: emit the structured launch plan (grid/block/smem + the tuned tile
+    // knobs) for the runtime, so it reads the tensor-core launch config from a
+    // Schedule instead of regex-scraping the lowered mma.sync host module.
+    Schedule sched;
+    sched.gridX = gridM * gridN;
+    sched.blockX = kBlock;
+    sched.smemBytes = aAllBytes + wAllBytes + cBytes;
+    sched.pipelineDepth = nStages;
+    sched.perThreadTile = nFrag;
+    ::intent::attachLaunchPlan(gpuFn, sched);
 
     auto launch =
         b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlk, c1, c1, shBytes);
