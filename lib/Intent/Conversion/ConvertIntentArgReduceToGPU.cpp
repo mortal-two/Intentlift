@@ -177,15 +177,19 @@ struct ArgReduceLowering {
     Value idxBuf =
         b.create<memref::ViewOp>(loc, idxTy, raw, idxByteOff, ValueRange{});
 
-    // (1) per-thread local best over K CONTIGUOUS columns (col = tx*K + k).
-    Value cK = b.create<arith::ConstantIndexOp>(loc, K);
-    Value base = b.create<arith::MulIOp>(loc, tx, cK);
+    // (1) per-thread local best over K INTERLEAVED columns (col = tx + k*T).
+    // The interleaved stride (vs. the old contiguous tx*K+k) makes consecutive
+    // lanes touch consecutive addresses for each k -> fully COALESCED global
+    // loads (the old stride-K pattern issued K-way-scattered transactions). The
+    // per-thread scan is still ASCENDING in column (tx, tx+T, tx+2T, ...) so the
+    // first-index tie-break is preserved, and the cross-thread tree keeps the
+    // globally lower index on value ties.
     Value bestV, bestI;
     for (int64_t k = 0; k < K; ++k) {
-      Value col = base;
+      Value col = tx;
       if (k != 0) {
-        Value off = b.create<arith::ConstantIndexOp>(loc, k);
-        col = b.create<arith::AddIOp>(loc, base, off);
+        Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
+        col = b.create<arith::AddIOp>(loc, tx, off);
       }
       Value v = b.create<memref::LoadOp>(loc, inMem, ValueRange{bx, col});
       Value ci = b.create<arith::IndexCastOp>(loc, i32, col);

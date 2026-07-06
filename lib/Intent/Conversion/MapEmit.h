@@ -17,7 +17,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace intent {
@@ -314,6 +318,73 @@ inline int64_t autoThreads(int64_t N) {
   while (t * 2 <= N && t * 2 <= 256)
     t *= 2;
   return t;
+}
+
+//===----------------------------------------------------------------------===//
+// M1 shared high-performance emit primitives (R-CODEGEN-1/2, R3 §3, R5 P1/P2).
+//
+// The "flat grid-stride" occupancy fix + tail-mask: instead of one block per
+// output row (sub-warp blocks that leave most SMs idle on NCHW pool/interp),
+// map the WHOLE flattened output element space onto a full-width block-stride
+// grid so every SM stays busy and any N (no divisibility) lowers. The grid is
+// sized to a few waves of a numSM-SM device; the `scf.for i = gtid..total step
+// grid*T` loop tail-masks the ragged remainder for free (threads past `total`
+// just run zero iterations).
+//===----------------------------------------------------------------------===//
+
+/// Grid blocks for a flat grid-stride kernel over `total` output elements with
+/// `T` threads/block: enough to fill a ~numSM-SM device several waves deep, but
+/// never more than needed. numSM defaults to the RTX 5090D (GB202, sm_120a).
+inline int64_t flatGridBlocks(int64_t total, int64_t T, int64_t numSM = 170) {
+  if (T <= 0)
+    return 1;
+  int64_t need = (total + T - 1) / T;
+  int64_t threadsPerSM = 2048, waves = 4;
+  int64_t cap = (waves * numSM * threadsPerSM + T - 1) / T;
+  int64_t g = need < cap ? need : cap;
+  return g < 1 ? 1 : g;
+}
+
+/// Effective block size for a flat kernel: honor an explicit `blockThreads`
+/// hint (the PK harness / autotuner), else a full 256-thread block (8 warps).
+inline int64_t flatThreads(unsigned blockThreads) {
+  return blockThreads ? (int64_t)blockThreads : 256;
+}
+
+/// Emit `gtid = bx*T + tx; scf.for iv = gtid to total step (G*T) { ... }` and
+/// leave `b` positioned at the start of the loop body. `iv` receives the flat
+/// output element index. The loop bound (static `total`) is the tail-mask: no
+/// `total % (G*T) == 0` requirement. Returns the loop op.
+inline mlir::scf::ForOp emitGridStride(mlir::OpBuilder &b, mlir::Location loc,
+                                       mlir::Value bx, mlir::Value tx, int64_t T,
+                                       int64_t G, int64_t total,
+                                       mlir::Value &iv) {
+  using namespace mlir;
+  Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+  Value gtid =
+      b.create<arith::AddIOp>(loc, b.create<arith::MulIOp>(loc, bx, cT), tx);
+  Value ub = b.create<arith::ConstantIndexOp>(loc, total);
+  Value step = b.create<arith::ConstantIndexOp>(loc, G * T);
+  auto forOp = b.create<scf::ForOp>(loc, gtid, ub, step);
+  b.setInsertionPointToStart(forOp.getBody());
+  iv = forOp.getInductionVar();
+  return forOp;
+}
+
+/// Unravel a flat row-major index `flat` into per-dimension index coords for a
+/// tensor of static shape `dims` (coords[i] in [0,dims[i])). coords is resized.
+inline void unravelIndex(mlir::OpBuilder &b, mlir::Location loc,
+                         mlir::Value flat, llvm::ArrayRef<int64_t> dims,
+                         llvm::SmallVectorImpl<mlir::Value> &coords) {
+  using namespace mlir;
+  coords.assign(dims.size(), nullptr);
+  Value rem = flat;
+  for (int i = (int)dims.size() - 1; i >= 0; --i) {
+    Value d = b.create<arith::ConstantIndexOp>(loc, dims[i]);
+    coords[i] = b.create<arith::RemUIOp>(loc, rem, d);
+    if (i > 0)
+      rem = b.create<arith::DivUIOp>(loc, rem, d);
+  }
 }
 
 } // namespace intent

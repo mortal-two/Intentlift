@@ -58,7 +58,7 @@ struct PoolLowering {
   RankedTensorType inTy, outTy;
   int64_t N = 0, C = 0, H = 0, W = 0, OH = 0, OW = 0;
   int64_t kH = 0, kW = 0, sH = 0, sW = 0, padH = 0, padW = 0;
-  int64_t T = 0, K = 0;
+  int64_t T = 0, G = 0, total = 0;
   bool isMax = false, hasIdx = false;
 
   PoolLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
@@ -104,10 +104,12 @@ struct PoolLowering {
     hasIdx = pool.getIndices() != nullptr;
     if (hasIdx && !isMax)
       return failure();
-    T = blockThreads ? (int64_t)blockThreads : autoThreads(OW);
-    if (T <= 0 || OW % T != 0)
-      return failure();
-    K = OW / T;
+    // Flat grid-stride over the whole output (N*C*OH*OW): full-width blocks +
+    // tail-mask, so every SM stays busy (the old one-block-per-row / T-over-OW
+    // scheme launched sub-warp blocks) and any OW lowers (no OW % T == 0).
+    T = flatThreads(blockThreads);
+    total = N * C * OH * OW;
+    G = flatGridBlocks(total, T);
     return success();
   }
 
@@ -138,19 +140,21 @@ struct PoolLowering {
     Value outMem = entry->getArgument(1);
     Value idxMem = hasIdx ? entry->getArgument(2) : nullptr;
 
-    Value cNC = b.create<arith::ConstantIndexOp>(loc, N * C);
-    Value cOH = b.create<arith::ConstantIndexOp>(loc, OH);
+    Value cG = b.create<arith::ConstantIndexOp>(loc, G);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    auto launch = b.create<gpu::LaunchOp>(loc, cNC, cOH, c1, cT, c1, c1);
+    auto launch = b.create<gpu::LaunchOp>(loc, cG, c1, c1, cT, c1, c1);
     b.setInsertionPointToStart(&launch.getBody().front());
-    Value bx = launch.getBlockIds().x;  // n*C + c
-    Value by = launch.getBlockIds().y;  // oh
+    Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
 
-    Value cC = b.create<arith::ConstantIndexOp>(loc, C);
-    Value nIdx = b.create<arith::DivUIOp>(loc, bx, cC);
-    Value cIdx = b.create<arith::RemUIOp>(loc, bx, cC);
+    // Flat grid-stride over every output cell; unravel the induction index into
+    // (n, c, oh, ow). The loop bound is the tail-mask (no OW % T == 0).
+    Value iv;
+    auto gsFor = emitGridStride(b, loc, bx, tx, T, G, total, iv);
+    SmallVector<Value> co;
+    unravelIndex(b, loc, iv, {N, C, OH, OW}, co);
+    Value nIdx = co[0], cIdx = co[1], by = co[2], ow = co[3];
     Value ohI64 = b.create<arith::IndexCastOp>(loc, i64, by);
 
     auto ci64 = [&](int64_t v) {
@@ -159,11 +163,7 @@ struct PoolLowering {
     Value cHi64 = ci64(H), cWi64 = ci64(W);
     Value zero64 = ci64(0);
 
-    for (int64_t k = 0; k < K; ++k) {
-      Value ow = tx;
-      if (k != 0)
-        ow = b.create<arith::AddIOp>(loc, tx,
-                                     b.create<arith::ConstantIndexOp>(loc, k * T));
+    {
       Value owI64 = b.create<arith::IndexCastOp>(loc, i64, ow);
 
       // Accumulator init.
@@ -256,6 +256,7 @@ struct PoolLowering {
       }
     }
 
+    b.setInsertionPointAfter(gsFor);
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);

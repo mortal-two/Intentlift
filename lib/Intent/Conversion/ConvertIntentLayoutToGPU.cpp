@@ -261,10 +261,20 @@ struct LayoutLowering {
     Value diag = b.create<arith::AddIOp>(loc, rowI, kI);
     Value cond =
         b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, colI, diag);
-    Value v = b.create<memref::LoadOp>(loc, inMem, ValueRange{row, col});
     Value zero = b.create<arith::ConstantOp>(loc, b.getFloatAttr(elt, 0.0));
-    Value sel = b.create<arith::SelectOp>(loc, cond, v, zero);
-    store(b, loc, sel, outMem, row, col);
+    // GUARD the load: only read the input inside the kept (upper) triangle. The
+    // old form read the full N^2 then `select`ed the lower triangle to 0, paying
+    // 2x the read bandwidth (the measured ~2x loss vs a triangle-aware library);
+    // reading only where kept halves the input traffic. Warps diverge only on
+    // the diagonal band; whole below/above blocks stay uniform (all-skip / all-
+    // load), so coalescing is preserved off the diagonal.
+    auto ifOp = b.create<scf::IfOp>(loc, TypeRange{elt}, cond, /*withElse=*/true);
+    OpBuilder tb = ifOp.getThenBodyBuilder();
+    Value v = tb.create<memref::LoadOp>(loc, inMem, ValueRange{row, col});
+    tb.create<scf::YieldOp>(loc, v);
+    OpBuilder eb = ifOp.getElseBodyBuilder();
+    eb.create<scf::YieldOp>(loc, zero);
+    store(b, loc, ifOp.getResult(0), outMem, row, col);
   }
 
   LogicalResult rewrite() {

@@ -79,14 +79,19 @@ func.func @flip1(%a: tensor<4x8xf32>) -> tensor<4x8xf32> {
 
 // -----
 
-// triu k=0: out[i,j] = (j >= i) ? input[i,j] : 0 (select on the position).
+// triu k=0: out[i,j] = (j >= i) ? input[i,j] : 0. The load is GUARDED by the
+// keep predicate (scf.if) so the zeroed lower triangle is never read.
 // CHECK-LABEL: func.func @triu0(
 // CHECK-SAME:    %{{.*}}: memref<8x8xf32>, %{{.*}}: memref<8x8xf32>)
 // CHECK:         gpu.launch
 // CHECK:         arith.cmpi sge
-// CHECK:         memref.load
-// CHECK:         arith.select
-// CHECK:         memref.store
+// CHECK:         %[[R:.*]] = scf.if %{{.*}} -> (f32) {
+// CHECK:           memref.load
+// CHECK:           scf.yield
+// CHECK:         } else {
+// CHECK:           scf.yield
+// CHECK:         }
+// CHECK:         memref.store %[[R]]
 // CHECK:         gpu.terminator
 func.func @triu0(%a: tensor<8x8xf32>) -> tensor<8x8xf32> {
   %u = intent.triu %a {k = 0 : i64} : (tensor<8x8xf32>) -> tensor<8x8xf32>

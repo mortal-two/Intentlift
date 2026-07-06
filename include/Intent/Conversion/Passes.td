@@ -392,6 +392,7 @@ def ConvertIntentUpsampleToGPU
     "::mlir::memref::MemRefDialect",
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
+    "::mlir::scf::SCFDialect",
     "::mlir::func::FuncDialect",
   ];
   let options = [

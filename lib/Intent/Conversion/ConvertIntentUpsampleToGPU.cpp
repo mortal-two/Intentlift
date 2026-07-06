@@ -56,7 +56,7 @@ struct UpsampleLowering {
   UpsampleOp up;
   RankedTensorType inTy, outTy;
   int64_t N = 0, C = 0, H = 0, W = 0, OH = 0, OW = 0;
-  int64_t T = 0, K = 0;
+  int64_t T = 0, G = 0, total = 0;
   bool bicubic = false;
 
   UpsampleLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
@@ -93,10 +93,11 @@ struct UpsampleLowering {
     W = inTy.getDimSize(3);
     OH = outTy.getDimSize(2);
     OW = outTy.getDimSize(3);
-    T = blockThreads ? (int64_t)blockThreads : autoThreads(OW);
-    if (T <= 0 || OW % T != 0)
-      return failure();
-    K = OW / T;
+    // Flat grid-stride over the whole output (see MapEmit.h): full-width blocks
+    // + tail-mask, replacing the old one-block-per-(N*C,OH)-row / T-over-OW map.
+    T = flatThreads(blockThreads);
+    total = N * C * OH * OW;
+    G = flatGridBlocks(total, T);
     return success();
   }
 
@@ -205,42 +206,32 @@ struct UpsampleLowering {
     Value inMem = entry->getArgument(0);
     Value outMem = entry->getArgument(1);
 
-    Value cNC = b.create<arith::ConstantIndexOp>(loc, N * C);
-    Value cOH = b.create<arith::ConstantIndexOp>(loc, OH);
+    Value cG = b.create<arith::ConstantIndexOp>(loc, G);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    auto launch = b.create<gpu::LaunchOp>(loc, cNC, cOH, c1, cT, c1, c1);
+    auto launch = b.create<gpu::LaunchOp>(loc, cG, c1, c1, cT, c1, c1);
     b.setInsertionPointToStart(&launch.getBody().front());
-    Value bx = launch.getBlockIds().x;  // n*C + c
-    Value by = launch.getBlockIds().y;  // oh
+    Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
 
-    Value cC = b.create<arith::ConstantIndexOp>(loc, C);
-    Value nIdx = b.create<arith::DivUIOp>(loc, bx, cC);
-    Value cIdx = b.create<arith::RemUIOp>(loc, bx, cC);
+    // Flat grid-stride over every output cell; unravel into (n, c, oh, ow).
+    Value iv;
+    auto gsFor = emitGridStride(b, loc, bx, tx, T, G, total, iv);
+    SmallVector<Value> co;
+    unravelIndex(b, loc, iv, {N, C, OH, OW}, co);
+    Value nIdx = co[0], cIdx = co[1], by = co[2], ow = co[3];
 
-    // Row-invariant vertical geometry (shared by every output column).
-    Value ihIdx, yBase, ty, wy[4];
-    if (bicubic)
-      bicubicPos(b, loc, by, H, OH, yBase, ty);
-    else
-      ihIdx = srcCoord(b, loc, by, H, OH);
-    if (bicubic)
-      bicubicWeights(b, loc, ty, wy);
-
-    for (int64_t k = 0; k < K; ++k) {
-      Value ow = tx;
-      if (k != 0)
-        ow = b.create<arith::AddIOp>(loc, tx,
-                                     b.create<arith::ConstantIndexOp>(loc, k * T));
-      if (!bicubic) {
-        Value iwIdx = srcCoord(b, loc, ow, W, OW);
-        Value v = b.create<memref::LoadOp>(loc, inMem,
-                                           ValueRange{nIdx, cIdx, ihIdx, iwIdx});
-        b.create<memref::StoreOp>(loc, v, outMem, ValueRange{nIdx, cIdx, by, ow});
-        continue;
-      }
+    if (!bicubic) {
+      Value ihIdx = srcCoord(b, loc, by, H, OH);
+      Value iwIdx = srcCoord(b, loc, ow, W, OW);
+      Value v = b.create<memref::LoadOp>(loc, inMem,
+                                         ValueRange{nIdx, cIdx, ihIdx, iwIdx});
+      b.create<memref::StoreOp>(loc, v, outMem, ValueRange{nIdx, cIdx, by, ow});
+    } else {
       // Bicubic: sum_{p,q} wy[p]*wx[q]*in[n,c, clamp(yBase-1+p), clamp(xBase-1+q)].
+      Value yBase, ty, wy[4];
+      bicubicPos(b, loc, by, H, OH, yBase, ty);
+      bicubicWeights(b, loc, ty, wy);
       Value xBase, tx2, wx[4];
       bicubicPos(b, loc, ow, W, OW, xBase, tx2);
       bicubicWeights(b, loc, tx2, wx);
@@ -262,6 +253,7 @@ struct UpsampleLowering {
                                 ValueRange{nIdx, cIdx, by, ow});
     }
 
+    b.setInsertionPointAfter(gsFor);
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);

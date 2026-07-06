@@ -450,14 +450,15 @@ func.func @dp(%x: {O}) -> {O} {{
 # C6  arg-reduce / sort                                                     #
 # ======================================================================== #
 def _thr_arg(N):
-    best, bc, t = 32, 1 << 30, 1
-    while t <= 1024:
-        if N % t == 0 and N // t <= 32:
-            c = abs(N // t - 4)
-            if c < bc:
-                best, bc = t, c
-        t *= 2
-    return best
+    # Moderate block (<=256 threads) that divides N, so each lane does plenty of
+    # COALESCED work (K = N/T >= 16) and the shared-memory reduction tree has few
+    # barrier stages. A 1024-thread block is latency-bound here: the argmax input
+    # is L2-resident, so the 10-stage block sync — not HBM — is the cost, and a
+    # 256-thread block (8 stages, 4x the work/lane) beats CUB/flag_gems.
+    t = 256
+    while t > 1 and N % t != 0:
+        t //= 2
+    return t
 
 
 def c6_argmax():
@@ -540,8 +541,9 @@ def c7_pool():
     print("\n[C7] pool / upsample (NCHW movers)")
     N, C, H, W = 32, 64, 56, 56
 
-    # avg_pool2d k2 s2 -> 28x28, T | 28
-    OH = OW = 28; T = 28
+    # avg_pool2d k2 s2 -> 28x28. Flat grid-stride: full 256-thread blocks over
+    # the whole output (no OW % T divisibility), so every SM stays busy.
+    OH = OW = 28; T = 256
     I = f"tensor<{N}x{C}x{H}x{W}xf32>"; O = f"tensor<{N}x{C}x{OH}x{OW}xf32>"
     mlir = f'func.func @ap(%a: {I}) -> {O} {{ %o = intent.pool %a {{fn = "avg", kH = 2 : i64, kW = 2 : i64, sH = 2 : i64, sW = 2 : i64, padH = 0 : i64, padW = 0 : i64}} : ({I}) -> {O}\n return %o : {O} }}'
     torch.manual_seed(0)
@@ -586,8 +588,9 @@ def c7_pool():
            graph_ours=gg)
     del out, idx; _cleanup()
 
-    # upsample_nearest2d scale2 -> 112x112, T | 112
-    OH = OW = 112; T = 112
+    # upsample_nearest2d scale2 -> 112x112. Flat grid-stride, full 256-thread
+    # blocks over the whole output (no OW % T divisibility).
+    OH = OW = 112; T = 256
     O = f"tensor<{N}x{C}x{OH}x{OW}xf32>"
     mlir = f'func.func @up(%a: {I}) -> {O} {{ %o = intent.upsample %a {{mode = "nearest"}} : ({I}) -> {O}\n return %o : {O} }}'
     out = torch.empty(N, C, OH, OW, device="cuda")
