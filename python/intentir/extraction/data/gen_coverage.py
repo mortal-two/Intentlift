@@ -93,6 +93,31 @@ CLUSTER = {
     "masked_scatter": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)",
 }
 
+# backward / gradient cluster (07-06 P4) — each *_backward is a composition of
+# mechanisms IntentIR already lowers (map / row-reduction / scatter-add), NOT a
+# new pass. Verified vs torch autograd (the reference gradient) AND the real
+# flag_gems.<op>_backward where callable; test_backward_pk.py, rel<1e-3. Keyed by
+# the owning ops/ module (the backward entrypoint lives in the forward module).
+BACKWARD = {
+    # group 1: pointwise activation backward = pure map (elementwise pass).
+    "sigmoid": "backward P4: pointwise map grad*y*(1-y) (test_backward_pk.py vs autograd+flag_gems)",
+    "tanh": "backward P4: pointwise map grad*(1-y^2) (test_backward_pk.py vs autograd+flag_gems)",
+    "silu": "backward P4: pointwise map grad*silu'(x) (test_backward_pk.py vs autograd+flag_gems)",
+    "gelu": "backward P4: pointwise map grad*gelu'(x) erf (test_backward_pk.py vs autograd+flag_gems)",
+    "elu": "backward P4: pointwise map grad*(x>0?1:exp x) (test_backward_pk.py vs autograd+flag_gems)",
+    "threshold": "backward P4: pointwise map grad*(x>t) (test_backward_pk.py vs autograd+flag_gems)",
+    "dropout": "backward P4: pointwise map grad*mask*scale (test_backward_pk.py vs autograd+flag_gems)",
+    # group 2: softmax / norm backward = row-reduction + map (row-reduction pass).
+    "softmax": "backward P4: row-reduction y*(g-sum(g*y)) (test_backward_pk.py vs autograd+flag_gems)",
+    "log_softmax": "backward P4: row-reduction g-exp(y)*sum(g) (test_backward_pk.py vs autograd+flag_gems)",
+    "rms_norm": "backward P4: row-reduction dx (recompute inv_rms) (test_backward_pk.py vs autograd+flag_gems)",
+    "layernorm": "backward P4: row-reduction dx (recompute mean/rstd) (test_backward_pk.py vs autograd)",
+    # group 3: scatter-grad backward = C3 scatter reduce=add (gather pass).
+    "gather": "backward P4: scatter-add of grad into zeroed buffer (test_backward_pk.py vs autograd)",
+    "embedding": "backward P4: scatter-add grad rows by index axis=0 (test_backward_pk.py vs autograd+flag_gems)",
+    "nllloss": "backward P4: scatter -grad at target class (test_backward_pk.py vs autograd)",
+}
+
 # ---- classified-miss (deferred mechanism + named reason) -------------------
 MISS = {
     # multi-op-graph compositions (quantile/topk_softmax/cross_entropy_loss now
@@ -133,14 +158,17 @@ DSA_MISS = {m: "DSA experimental sparse kernel (sub-package, not a top-level op)
 
 
 def classify(mod):
+    bwd = f"; {BACKWARD[mod]}" if mod in BACKWARD else ""
     if mod in corpus15:
-        return "verified-e2e", "15-kernel certified corpus (corpus/kernels)"
+        return "verified-e2e", "15-kernel certified corpus (corpus/kernels)" + bwd
     if mod in CLUSTER:
-        return "verified-e2e", CLUSTER[mod]
+        return "verified-e2e", CLUSTER[mod] + bwd
     if mod in bulk_v:
-        return "verified-e2e", "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+        return "verified-e2e", "corpus/bulk batch (extract->lower->verify, rel<1e-3)" + bwd
     if mod in pilot_v:
-        return "verified-e2e", "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+        return "verified-e2e", "corpus/pilot batch (extract->lower->verify, rel<1e-3)" + bwd
+    if bwd:  # gradient landed even if the forward is not otherwise cataloged
+        return "verified-e2e", BACKWARD[mod]
     if mod in MISS:
         return "classified-miss", MISS[mod]
     return ("extraction-only-proven",

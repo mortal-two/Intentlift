@@ -8,14 +8,14 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 120,
+    "verified-e2e": 122,
     "classified-miss": 23,
-    "extraction-only-proven": 47
+    "extraction-only-proven": 45
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 120,
+    "verified-e2e": 122,
     "classified-miss": 26,
-    "extraction-only-proven": 47
+    "extraction-only-proven": 45
   },
   "triton_refs_total": 38,
   "triton_tally": {
@@ -292,19 +292,19 @@
       "module": "dropout",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "C5 RNG/philox PK (test_rng_pk.py)"
+      "evidence": "C5 RNG/philox PK (test_rng_pk.py); backward P4: pointwise map grad*mask*scale (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "elu",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3); backward P4: pointwise map grad*(x>0?1:exp x) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "embedding",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py); backward P4: scatter-add grad rows by index axis=0 (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "eq",
@@ -388,7 +388,7 @@
       "module": "gather",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py); backward P4: scatter-add of grad into zeroed buffer (test_backward_pk.py vs autograd)"
     },
     {
       "module": "ge",
@@ -400,7 +400,7 @@
       "module": "gelu",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*gelu'(x) erf (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "get_scheduler_metadata",
@@ -495,8 +495,8 @@
     {
       "module": "layernorm",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "backward P4: row-reduction dx (recompute mean/rstd) (test_backward_pk.py vs autograd)"
     },
     {
       "module": "le",
@@ -532,7 +532,7 @@
       "module": "log_softmax",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: row-reduction g-exp(y)*sum(g) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "logical_and",
@@ -681,8 +681,8 @@
     {
       "module": "nllloss",
       "group": "ops",
-      "bucket": "extraction-only-proven",
-      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+      "bucket": "verified-e2e",
+      "evidence": "backward P4: scatter -grad at target class (test_backward_pk.py vs autograd)"
     },
     {
       "module": "nonzero",
@@ -814,7 +814,7 @@
       "module": "rms_norm",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: row-reduction dx (recompute inv_rms) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "rsqrt",
@@ -850,13 +850,13 @@
       "module": "sigmoid",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*y*(1-y) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "silu",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*silu'(x) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "sin",
@@ -874,7 +874,7 @@
       "module": "softmax",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: row-reduction y*(g-sum(g*y)) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "softplus",
@@ -928,13 +928,13 @@
       "module": "tanh",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "15-kernel certified corpus (corpus/kernels)"
+      "evidence": "15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*(1-y^2) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "threshold",
       "group": "ops",
       "bucket": "verified-e2e",
-      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3); backward P4: pointwise map grad*(x>t) (test_backward_pk.py vs autograd+flag_gems)"
     },
     {
       "module": "tile",

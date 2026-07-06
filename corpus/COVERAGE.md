@@ -28,8 +28,8 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 120 | 25 |
-| extraction-only-proven | 47 | 9 |
+| verified-e2e | 122 | 25 |
+| extraction-only-proven | 45 | 9 |
 | classified-miss | 26 | 4 |
 | **total** | **193** | **38** |
 
@@ -37,7 +37,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (120)
+### verified-e2e (122)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -76,9 +76,9 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `cummin` | ops | C6 scan-max/min PK (test_order_stats_pk.py) |
 | `div` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `dot` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `dropout` | ops | C5 RNG/philox PK (test_rng_pk.py) |
-| `elu` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
-| `embedding` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
+| `dropout` | ops | C5 RNG/philox PK (test_rng_pk.py); backward P4: pointwise map grad*mask*scale (test_backward_pk.py vs autograd+flag_gems) |
+| `elu` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3); backward P4: pointwise map grad*(x>0?1:exp x) (test_backward_pk.py vs autograd+flag_gems) |
+| `embedding` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py); backward P4: scatter-add grad rows by index axis=0 (test_backward_pk.py vs autograd+flag_gems) |
 | `eq` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `erf` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `exp` | ops | 15-kernel certified corpus (corpus/kernels) |
@@ -87,20 +87,21 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `flip` | ops | C4 layout PK (test_layout_pk.py) |
 | `full` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `full_like` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `gather` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
+| `gather` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py); backward P4: scatter-add of grad into zeroed buffer (test_backward_pk.py vs autograd) |
 | `ge` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `gelu` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `gelu` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*gelu'(x) erf (test_backward_pk.py vs autograd+flag_gems) |
 | `gt` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `index_select` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
 | `isclose` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `isfinite` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `isinf` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `isnan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `layernorm` | ops | backward P4: row-reduction dx (recompute mean/rstd) (test_backward_pk.py vs autograd) |
 | `le` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `lerp` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `log` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `log_sigmoid` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `log_softmax` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `log_softmax` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: row-reduction g-exp(y)*sum(g) (test_backward_pk.py vs autograd+flag_gems) |
 | `logical_and` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `logical_not` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `logical_or` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -122,6 +123,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `nan_to_num` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `ne` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `neg` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `nllloss` | ops | backward P4: scatter -grad at target class (test_backward_pk.py vs autograd) |
 | `nonzero` | ops | C8 dynamic-shape PK (test_dynamic_shape_pk.py) |
 | `ones` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `pad` | ops | C4 layout PK (test_layout_pk.py) |
@@ -133,13 +135,13 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `randn` | ops | C5 RNG/philox PK (test_rng_pk.py) |
 | `reciprocal` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `relu` | ops | 15-kernel certified corpus (corpus/kernels) |
-| `rms_norm` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `rms_norm` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: row-reduction dx (recompute inv_rms) (test_backward_pk.py vs autograd+flag_gems) |
 | `scatter` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
 | `scatter_add_` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
-| `sigmoid` | ops | 15-kernel certified corpus (corpus/kernels) |
-| `silu` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `sigmoid` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*y*(1-y) (test_backward_pk.py vs autograd+flag_gems) |
+| `silu` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*silu'(x) (test_backward_pk.py vs autograd+flag_gems) |
 | `sin` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
-| `softmax` | ops | 15-kernel certified corpus (corpus/kernels) |
+| `softmax` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: row-reduction y*(g-sum(g*y)) (test_backward_pk.py vs autograd+flag_gems) |
 | `softplus` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `sort` | ops | C6b bitonic-sort PK (test_sort_pk.py; covers argsort) |
 | `sqrt` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -147,8 +149,8 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `sub` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `sum` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `tan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
-| `tanh` | ops | 15-kernel certified corpus (corpus/kernels) |
-| `threshold` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `tanh` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*(1-y^2) (test_backward_pk.py vs autograd+flag_gems) |
+| `threshold` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3); backward P4: pointwise map grad*(x>t) (test_backward_pk.py vs autograd+flag_gems) |
 | `tile` | ops | C4 layout PK (test_layout_pk.py) |
 | `topk` | ops | C6b bitonic-sort PK (test_sort_pk.py) |
 | `trace` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -162,7 +164,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `zeros` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `zeros_like` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 
-### extraction-only-proven (47)
+### extraction-only-proven (45)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -195,11 +197,9 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `index_put` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `isin` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `kron` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `layernorm` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `linspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `logspace` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `mm_streamk` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
-| `nllloss` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `normal` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `ones_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `rand_like` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
