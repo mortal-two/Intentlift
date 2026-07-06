@@ -155,6 +155,31 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
             raise InterpError(f"arg_reduce: unknown fn {fn!r}")
         return idx.astype(np.int32)
 
+    if o == "sort":
+        # Full sort along the last axis (C6 HARD tier). Produces sorted VALUES
+        # and the argsort INDICES (torch.sort / numpy.sort+argsort). `descending`
+        # flips the direction; a result `axis` extent W < N keeps the first W
+        # (topk). `op.result` is a list [values, indices] when both are named, or
+        # a single str for a values-only / indices-only op. A stable argsort gives
+        # ONE valid permutation; the lowering's bitonic ties are unstable but
+        # reproduce the same sorted values.
+        x, ax = env[op.operands[0]], int(a.get("axis", -1))
+        desc = bool(a.get("descending", False))
+        idx = np.argsort(x, axis=ax, kind="stable")
+        if desc:
+            idx = np.flip(idx, axis=ax)
+        vals = np.take_along_axis(x, idx, axis=ax)
+        w = a.get("k")  # optional topk width
+        if w is not None:
+            vals = np.take(vals, np.arange(int(w)), axis=ax)
+            idx = np.take(idx, np.arange(int(w)), axis=ax)
+        vals = vals.astype(x.dtype)
+        idx = idx.astype(np.int32)
+        if isinstance(op.result, list):
+            return (vals, idx)
+        # single result: values unless the op is explicitly index-typed (argsort).
+        return idx if a.get("return") == "indices" else vals
+
     if o == "contraction":
         sub = a["subscripts"]
         return np.einsum(sub, env[op.operands[0]], env[op.operands[1]])
@@ -272,7 +297,10 @@ def _run_body(
             env = _eval_loop(op, env, params)
             continue
         out = _eval_op(op, env, params)
-        if op.result is not None:
+        if isinstance(op.result, list):  # multi-result (e.g. sort -> values,indices)
+            for name, val in zip(op.result, out):
+                env[name] = val
+        elif op.result is not None:
             env[op.result] = out  # non-loop result is always a str
         if op.out is not None:
             env[op.out] = out

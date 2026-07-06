@@ -282,6 +282,48 @@ def ConvertIntentArgReduceToGPU
   ];
 }
 
+def ConvertIntentSortToGPU
+    : Pass<"convert-intent-sort-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower an intent.sort/topk/argsort func (one intent.sort over the "
+                "last axis) to one block-cooperative bitonic-sort gpu.launch.";
+  let description = [{
+    The C6 HARD-tier order-statistics pass — the last order-stats gap. Recognizes
+    a `func.func` whose body is a single `intent.sort` over a rank-2 `[M,N]`
+    static-f32 row (`axis = 1`) producing sorted `values` `[M,W]` f32 and/or
+    argsort `indices` `[M,W]` i32 (`W <= N`; `W < N` = topk). It lowers to ONE
+    block-cooperative BLOCK BITONIC SORT `gpu.launch`: one block per row, `T`
+    threads.
+
+    Each block loads its row into a `[P]`-element dynamic-shared value buffer,
+    padding `N -> P` (the next power of two) with a `+inf` (ascending) / `-inf`
+    (descending) sentinel so the pad sorts to the END. It then runs the bitonic
+    network: for `k = 2,4,...,P` (outer) and `j = k/2,...,1` (inner),
+    `log2(P)*(log2(P)+1)/2` stages, each a `gpu.barrier` then a grid-stride sweep
+    where the thread owning the lower index of each pair `(i, i^j)` compare-swaps
+    under the direction bit `(i & k)==0` (inverted for `descending`). After the
+    network thread `t` writes `shared[t] -> values[row,t]` for the first `W`. For
+    the argsort `indices` an `i32` index buffer (init `idx[i]=i`) is swapped in
+    lockstep and written the same way.
+
+    The new mechanism vs. the value-only reductions/scans is the O(N log^2 N)
+    barrier-separated compare-exchange NETWORK in shared memory (not a single
+    tree/scan). Correctness-only: values exact vs torch.sort/topk + flag_gems; the
+    index permutation reproduces the sorted values (ties unstable, like torch).
+    Static shapes, `axis` last, `T` a power of two dividing `P`.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (power of two dividing P=next_pow2(N)); 0 = auto.">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

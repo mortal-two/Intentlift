@@ -137,6 +137,36 @@ def Intent_ArgReduceOp : Intent_Op<"arg_reduce"> {
   let hasVerifier = 1;
 }
 
+def Intent_SortOp : Intent_Op<"sort"> {
+  let summary = "Full sort along the last axis (Layer A): values + argsort indices.";
+  let description = [{
+    Sort each row of `input` along `axis` (the last axis) and produce BOTH the
+    sorted `values` and the `indices` (argsort permutation) — torch.sort /
+    numpy.sort + argsort. `descending` selects the direction. The two results are
+    always present; a caller returns whichever it needs (values = sort, indices =
+    argsort, both = sort-with-indices). When the result `axis` extent `W` is
+    SMALLER than the input extent `N`, only the first `W` sorted entries are kept
+    — that is `topk` (`descending` = largest-first). Quantile composes on top
+    (sort ascending, then a fractional-rank gather with linear interpolation).
+
+    The C6 HARD-tier order-statistics mechanism, the last order-stats gap: a
+    single-block BLOCK BITONIC SORT. One block per row loads the row into a
+    dynamic-shared buffer padded up to the next power of two `P` with a `+inf`
+    (ascending) / `-inf` (descending) sentinel so the pad sorts to the END, then
+    runs the bitonic compare-exchange network — `log2(P)*(log2(P)+1)/2`
+    barrier-separated stages, each a `gpu.barrier` then a paired compare-swap of
+    partners `i` and `i^j` under the direction bit `(i & k)==0`. For the index
+    result a parallel `i32` index buffer is swapped in lockstep. Correctness-only
+    (a valid permutation reproducing the sorted values; ties are unstable, like
+    torch's default sort). `axis` must be the last axis and index a static extent.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, BoolAttr:$descending,
+                       I64Attr:$axis);
+  let results = (outs AnyRankedTensor:$values, AnyRankedTensor:$indices);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_GatherOp : Intent_Op<"gather"> {
   let summary = "Data-dependent gather along one axis (Layer A).";
   let description = [{

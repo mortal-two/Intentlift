@@ -152,6 +152,43 @@ LogicalResult ArgReduceOp::verify() {
   return success();
 }
 
+LogicalResult SortOp::verify() {
+  auto inTy = cast<RankedTensorType>(getInput().getType());
+  auto vTy = cast<RankedTensorType>(getValues().getType());
+  auto iTy = cast<RankedTensorType>(getIndices().getType());
+  int64_t rank = inTy.getRank();
+  int64_t axis = getAxis();
+  if (axis < 0 || axis >= rank)
+    return emitOpError("axis ")
+           << axis << " out of range for rank-" << rank << " input";
+  if (axis != rank - 1)
+    return emitOpError("sort axis must be the last axis (got ")
+           << axis << " for rank " << rank << ")";
+  if (vTy.getElementType() != inTy.getElementType())
+    return emitOpError("values element type must equal input element type");
+  if (!iTy.getElementType().isInteger(32))
+    return emitOpError("indices must be an i32 tensor (the argsort permutation)");
+  if (vTy.getRank() != rank || iTy.getRank() != rank)
+    return emitOpError("values/indices must have the input rank ") << rank;
+  // Values and indices share a shape; every non-axis extent matches the input;
+  // the axis extent W may be <= N (W < N = topk).
+  for (int64_t d = 0; d < rank; ++d) {
+    int64_t vd = vTy.getDimSize(d), id = iTy.getDimSize(d), nd = inTy.getDimSize(d);
+    if (!ShapedType::isDynamic(vd) && !ShapedType::isDynamic(id) && vd != id)
+      return emitOpError("values/indices extent mismatch at dim ") << d;
+    if (d == axis) {
+      if (!ShapedType::isDynamic(vd) && !ShapedType::isDynamic(nd) && vd > nd)
+        return emitOpError("sort output extent ")
+               << vd << " exceeds input extent " << nd << " at axis " << d;
+    } else if (!ShapedType::isDynamic(vd) && !ShapedType::isDynamic(nd) &&
+               vd != nd) {
+      return emitOpError("non-axis extent ")
+             << vd << " != input extent " << nd << " at dim " << d;
+    }
+  }
+  return success();
+}
+
 LogicalResult GatherOp::verify() {
   auto dTy = cast<RankedTensorType>(getData().getType());
   auto iTy = cast<RankedTensorType>(getIndex().getType());

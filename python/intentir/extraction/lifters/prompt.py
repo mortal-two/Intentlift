@@ -99,6 +99,15 @@ Atomic ops (each is one JSON object in a "body" list):
                Result is an INTEGER tensor (the axis collapsed); ties resolve to
                the FIRST/lowest index (matches torch). fn in {argmax,argmin}.
      {"op":"arg_reduce","result":R,"operands":[A],"attrs":{"fn":F,"axis":i}}
+  sort       : full sort along the LAST `axis`, shape-preserving. Produces sorted
+               VALUES and the argsort INDICES (i32). `descending` picks the
+               direction. Name BOTH results (list) for torch.sort, ONE for a
+               values-only sort, or ONE with {"return":"indices"} for argsort.
+               topk = sort(descending) with `k` set (keep the first k). ties are
+               unstable (like torch's default sort).
+     {"op":"sort","result":[V,IDX],"operands":[A],"attrs":{"descending":false,"axis":i}}
+     {"op":"sort","result":IDX,"operands":[A],"attrs":{"descending":false,"axis":i,"return":"indices"}}   // argsort
+     {"op":"sort","result":[V,IDX],"operands":[A],"attrs":{"descending":true,"axis":i,"k":<int>}}          // topk
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

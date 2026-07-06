@@ -90,6 +90,15 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
             return None
         ax = int(op.attrs["axis"]) - fold  # collapse the axis (rank-1 index out)
         return [d for i, d in enumerate(env[x]) if i != ax]
+    if op.op == "sort":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        shp = list(env[x])            # shape-preserving (values & indices)
+        w = op.attrs.get("k")         # optional topk width along the last axis
+        if w is not None:
+            shp[-1] = int(w)
+        return shp
     if op.op == "iota":
         return [int(op.attrs["n"])]
     if op.op == "const":
@@ -157,9 +166,15 @@ def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int,
         changed = False
         for op in body:
             sh = _infer_op(op, env, fold, extents)
-            if sh is not None and env.get(op.result) != sh:
-                env[op.result] = sh
-                changed = True
+            if sh is None:
+                continue
+            # Multi-result ops (sort -> values, indices) name every result; all
+            # results share the inferred shape.
+            names = op.result if isinstance(op.result, list) else [op.result]
+            for nm in names:
+                if env.get(nm) != sh:
+                    env[nm] = sh
+                    changed = True
         if not changed:
             break
 
@@ -204,6 +219,34 @@ class _Printer:
             # no-op: alias the operand SSA. (A precision-changing cast would need
             # arith/tensor cast ops; out of scope for the f32 lifting check.)
             self.ssa[op.result] = self.ssa[op.operands[0]]
+            return
+        if op.op == "sort":
+            # The op ALWAYS has two results (sorted values + argsort indices); a
+            # JSON op may name both (list result) or just one (values-only sort,
+            # or indices-only argsort via attrs {"return":"indices"}). Emit both
+            # SSA results, aliasing a throwaway name for the unnamed one.
+            if isinstance(op.result, list):
+                vname, iname = op.result[0], op.result[1]
+            elif a.get("return") == "indices":
+                vname, iname = None, op.result
+            else:
+                vname, iname = op.result, None
+            named = iname if vname is None else vname
+            shp = env[named]
+            self._n += 1
+            vssa = self.fresh(vname) if vname else f"%_sortv_{self._n}"
+            issa = self.fresh(iname) if iname else f"%_sorti_{self._n}"
+            if iname:
+                self.int_results[iname] = "i32"
+            x = self.ssa[op.operands[0]]
+            desc = "true" if a.get("descending", False) else "false"
+            vty = _tt(shp)
+            ity = "tensor<" + "x".join(str(s) for s in shp) + "xi32>"
+            axis = int(a.get("axis", len(env[op.operands[0]]) - 1 + fold)) - fold
+            self.lines.append(
+                f'{indent}{vssa}, {issa} = intent.sort {x} '
+                f'{{descending = {desc}, axis = {axis} : i64}} : '
+                f'({_tt(env[op.operands[0]])}) -> ({vty}, {ity})')
             return
         r = self.fresh(op.result)
         if op.op == "contraction":
