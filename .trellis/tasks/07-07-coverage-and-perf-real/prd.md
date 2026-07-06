@@ -290,20 +290,25 @@ half is independently valuable.
 
 ---
 
-## 6. Open decisions (confirm with user)
+## 6. Decision (ADR — resolved 2026-07-07)
 
-1. **TF32 vs fp16 for conv/matmul input mode.** TF32 (`m16n8k8`, `cvt.rna.tf32.f32`) matches
-   cuDNN numerics exactly but is new codegen; fp16-cast into the *existing* `m16n8k16` path is
-   near-zero new code and legitimate (cuDNN ref is reduced-precision), but slightly different
-   numerics. Proposed: **fp16-reuse first to land conv fast, TF32 as a follow-up** if numerics
-   matter. Confirm.
-2. **How far to push M6 (Schedule unification).** Full parametric-codegen refactor of 20 passes
-   is large and mostly structural (not a perf number by itself). Proposed: **land the
-   launch-plan half in-task; treat the full Schedule/fork-collapse as a stretch** that may
-   extend past this task. Confirm whether the fork-collapse must complete here.
-3. **Beat-margin target vs pure parity.** The honest bar is parity (~1.0×) with ~1.3× where the
-   lever exists. Do you want the gate set at **parity-required / 1.3×-targeted** (proposed), or
-   a harder **1.2×-required** on the beat class (riskier given the sm_120a cuBLAS wall)?
+**User chose MAXIMAL scope** ("推到 sm_120a 硬件天花板"): A (erase naive losses + match/beat
+flag_gems) **+ B** (full backend restructure: measured autotuner M5 + Schedule-abstraction M6
+with fork-collapse) **+ C** (push conv/flash to the absolute sm_120a ceiling, complete
+segmented radix sort, re-attack the 14 irreducible coverage items, and justify every remaining
+hardware wall with evidence not a label). Consequences:
+
+1. **conv/matmul input mode: do BOTH.** fp16-reuse first to land conv fast, THEN TF32
+   (`m16n8k8`, `cvt.rna.tf32.f32`) for cuDNN-exact numerics + the ceiling push.
+2. **M6 Schedule unification: full fork-collapse in-task** (not just the launch-plan half) —
+   the parametric-codegen refactor of the ~20 passes is in scope; it is the clean substrate M5
+   needs and the "beat not tie" foundation.
+3. **Beat-margin: parity-required, ~1.3× targeted where the lever exists, pushed to the
+   hardware ceiling.** Every op that can hold a lever is driven to its sm_120a optimum; where
+   physics caps us (cuBLAS-class GEMM residual, no wgmma/TMA) we state it with measured evidence.
+4. **Pulled INTO scope** (was proposed out-of-scope): full large-N segmented radix sort (M7),
+   Winograd conv as the ceiling push on top of implicit-GEMM, and re-attacking the 14 residual
+   coverage modules (rwkv/DSA/complex-flash/attention family) to their real achievable bar.
 
 ---
 
@@ -316,13 +321,12 @@ half is independently valuable.
   single-wave on sm_120a (no forward-progress guarantee). Correctly abandoned; not a path.
 - **fp8_v attention.** `tl.float8e4nv` codegen unverified on consumer Blackwell — gated to
   fp16/bf16.
-- **Winograd conv.** Big code surface for ~2.25× *on top of* implicit-GEMM, which alone gets
-  conv to ~parity. Deferred as an optional refinement, not needed to hit the ≤2× gate.
-- **Full large-N segmented radix sort.** W-aware top-k (M7) covers the common case; full radix
-  is the largest effort with the narrowest payoff — deprioritized, not excused (sort stays a
-  correctness op with an improvement target, §4.2).
 - **RVV/CPU roofline retune.** The paper's real search is RVV-only; this task is GPU-focused
   and the GPU analog is the measured autotuner (M5). RVV retune is a separate effort.
+
+*(Pulled INTO scope by the maximal decision, no longer out: Winograd conv — the ceiling push on
+top of implicit-GEMM; full large-N segmented radix sort — M7 now targets the complete radix, not
+just W-aware top-k; the 14 residual coverage modules — re-attacked to their real achievable bar.)*
 - **Auto-lifting flash via the LLM extraction pipeline.** Flash needs hand loop-authorship
   (the passes already exist); "flash = PRD-OOS" in `corpus/coverage.json` refers *only* to the
   auto-extraction harness, not to capability. We ship flash by hand-authored passes (M4).
