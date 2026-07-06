@@ -28,23 +28,28 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 125 | 25 |
-| extraction-only-proven | 45 | 9 |
-| classified-miss | 23 | 4 |
+| verified-e2e | 130 | 25 |
+| extraction-only-proven | 45 | 10 |
+| classified-miss | 18 | 3 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (125)
+### verified-e2e (130)
 
 | module | group | evidence / reason |
 |---|---|---|
+| `apply_repetition_penalties` | fused | P6 gen-loop: scale seen-token logits by a per-seq penalty (div if >0 else mul) = masked select/map (elementwise pass); test_llm_serving_pk vs torch+flag_gems |
+| `concat_and_cache_mla` | fused | P6 KV-cache: concat kv_c+k_pe then C3 row-scatter into the MLA paged cache at slot addresses; test_llm_serving_pk vs flag_gems (exact) |
 | `cross_entropy_loss` | fused | op-graph dispatch: log_softmax+nll fused to one row-reduction kernel; test_opgraph_pk vs torch+flag_gems (rel<1e-3) |
 | `gelu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `moe_sum` | fused | P6 MoE: sum top-k expert outputs per token = reduce over the expert axis (add-chain over strided expert views, elementwise pass); test_llm_serving_pk vs torch+flag_gems |
 | `outer` | fused | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `reglu` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `reshape_and_cache_flash` | fused | P6 KV-cache: C3 scatter of key/value rows into the flash paged cache at slot addresses (cache[slot,:] = kv[t,:], scatter axis 0); test_llm_serving_pk vs torch+flag_gems (exact) |
+| `rotary_embedding` | fused | P6 rotary: same paired-rotation mechanism as apply_rotary_pos_emb (test_llm_serving_pk vs torch+flag_gems, both rotary_interleaved modes) |
 | `silu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `topk_softmax` | fused | op-graph dispatch: softmax->topk (2-stage reduce->sort MoE-gating); test_opgraph_pk weights+indices vs torch+flag_gems |
 | `abs` | ops | 15-kernel certified corpus (corpus/kernels) |
@@ -217,18 +222,13 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (23)
+### classified-miss (18)
 
 | module | group | evidence / reason |
 |---|---|---|
-| `apply_repetition_penalties` | fused | token-histogram scatter penalty (data-dependent, gen-loop) |
-| `concat_and_cache_mla` | fused | MLA KV-cache concat+scatter (stateful multi-op) |
 | `flash_mla` | fused | flash multi-latent-attention (loop authorship, PRD out-of-scope) |
 | `moe_align_block_size` | fused | MoE routing/block-alignment (sort+scan+scatter integer bookkeeping) |
-| `moe_sum` | fused | MoE expert-weighted gather+sum (data-dependent routing composition) |
-| `reshape_and_cache` | fused | KV-cache scatter into paged layout (stateful multi-op, C3-tail) |
-| `reshape_and_cache_flash` | fused | KV-cache scatter, flash paged layout (stateful) |
-| `rotary_embedding` | fused | rotary positional embedding (paired-rotation over complex-like layout) |
+| `reshape_and_cache` | fused | KV-cache scatter into the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] reshape (index-bookkeeping remap, not a row scatter; flash/MLA variants landed P6) |
 | `rwkv_ka_fusion` | fused | RWKV state-recurrent fusion (sequential scan with carried state) |
 | `rwkv_mm_sparsity` | fused | RWKV sparse-mm fusion (sparse addressing) |
 | `bin_topk` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
@@ -277,11 +277,12 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `softmax` | triton-ref | op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs) |
 | `where2d` | triton-ref | op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs) |
 
-### extraction-only-proven (9)
+### extraction-only-proven (10)
 
 | module | group | evidence / reason |
 |---|---|---|
 | `ai_bench_dropout` | triton-ref | philox dropout (C5 RNG mechanism) |
+| `ai_bench_rope` | triton-ref | rotary paired-rotation (P6 rotary mechanism; test_llm_serving_pk) |
 | `ai_bench_warp` | triton-ref | warp-primitive microbench (elementwise/reduce class) |
 | `any` | triton-ref | boolean reduce (reduce class) |
 | `copy2d_divmod` | triton-ref | strided copy/layout (C4 layout mechanism) |
@@ -291,11 +292,10 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `masked_attention2d` | triton-ref | masked attention (flash/attention class) |
 | `transpose2d` | triton-ref | transpose/layout (C4 layout mechanism) |
 
-### classified-miss (4)
+### classified-miss (3)
 
 | module | group | evidence / reason |
 |---|---|---|
 | `ai_bench_correlation` | triton-ref | cross-correlation multi-op graph (sliding-window reduce composition) |
 | `ai_bench_resize` | triton-ref | bicubic/aa resize interpolation (deferred; nearest verified C7a) |
-| `ai_bench_rope` | triton-ref | rotary positional embedding (paired-rotation, complex-like layout) |
 | `upsample_bicubic2d_aa` | triton-ref | bicubic/anti-aliased interpolation (deferred) |

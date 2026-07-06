@@ -8,20 +8,20 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 125,
-    "classified-miss": 20,
+    "verified-e2e": 130,
+    "classified-miss": 15,
     "extraction-only-proven": 45
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 125,
-    "classified-miss": 23,
+    "verified-e2e": 130,
+    "classified-miss": 18,
     "extraction-only-proven": 45
   },
   "triton_refs_total": 38,
   "triton_tally": {
     "verified-e2e": 25,
-    "classified-miss": 4,
-    "extraction-only-proven": 9
+    "classified-miss": 3,
+    "extraction-only-proven": 10
   },
   "flag_gems": [
     {
@@ -1041,14 +1041,14 @@
     {
       "module": "apply_repetition_penalties",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "token-histogram scatter penalty (data-dependent, gen-loop)"
+      "bucket": "verified-e2e",
+      "evidence": "P6 gen-loop: scale seen-token logits by a per-seq penalty (div if >0 else mul) = masked select/map (elementwise pass); test_llm_serving_pk vs torch+flag_gems"
     },
     {
       "module": "concat_and_cache_mla",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "MLA KV-cache concat+scatter (stateful multi-op)"
+      "bucket": "verified-e2e",
+      "evidence": "P6 KV-cache: concat kv_c+k_pe then C3 row-scatter into the MLA paged cache at slot addresses; test_llm_serving_pk vs flag_gems (exact)"
     },
     {
       "module": "cross_entropy_loss",
@@ -1095,8 +1095,8 @@
     {
       "module": "moe_sum",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "MoE expert-weighted gather+sum (data-dependent routing composition)"
+      "bucket": "verified-e2e",
+      "evidence": "P6 MoE: sum top-k expert outputs per token = reduce over the expert axis (add-chain over strided expert views, elementwise pass); test_llm_serving_pk vs torch+flag_gems"
     },
     {
       "module": "outer",
@@ -1114,19 +1114,19 @@
       "module": "reshape_and_cache",
       "group": "fused",
       "bucket": "classified-miss",
-      "evidence": "KV-cache scatter into paged layout (stateful multi-op, C3-tail)"
+      "evidence": "KV-cache scatter into the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] reshape (index-bookkeeping remap, not a row scatter; flash/MLA variants landed P6)"
     },
     {
       "module": "reshape_and_cache_flash",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "KV-cache scatter, flash paged layout (stateful)"
+      "bucket": "verified-e2e",
+      "evidence": "P6 KV-cache: C3 scatter of key/value rows into the flash paged cache at slot addresses (cache[slot,:] = kv[t,:], scatter axis 0); test_llm_serving_pk vs torch+flag_gems (exact)"
     },
     {
       "module": "rotary_embedding",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "rotary positional embedding (paired-rotation over complex-like layout)"
+      "bucket": "verified-e2e",
+      "evidence": "P6 rotary: same paired-rotation mechanism as apply_rotary_pos_emb (test_llm_serving_pk vs torch+flag_gems, both rotary_interleaved modes)"
     },
     {
       "module": "rwkv_ka_fusion",
@@ -1229,8 +1229,8 @@
     {
       "module": "ai_bench_rope",
       "group": "triton-ref",
-      "bucket": "classified-miss",
-      "evidence": "rotary positional embedding (paired-rotation, complex-like layout)"
+      "bucket": "extraction-only-proven",
+      "evidence": "rotary paired-rotation (P6 rotary mechanism; test_llm_serving_pk)"
     },
     {
       "module": "ai_bench_softmax",

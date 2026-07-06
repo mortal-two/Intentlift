@@ -98,6 +98,33 @@ CLUSTER = {
               "(test_complex_pk.py vs torch.angle+flag_gems, abs_err~7.7e-7)"),
     "resolve_conj": "P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real)",
     "resolve_neg": "P5 complex: (-re,-im) plane negation (test_complex_pk.py vs torch view_as_real)",
+    # P6 LLM-serving compositions (07-06) — every one is a composition of existing
+    # mechanisms (paired map/select for rotary, C3 scatter for the paged KV-cache
+    # write, reduce for the MoE expert sum), NOT a new pass. Verified vs an fp32
+    # torch reference AND the real flag_gems.<op>; test_llm_serving_pk.py, rel<1e-3
+    # (cache/moe byte-exact).
+    "apply_rotary_pos_emb": ("P6 rotary: paired rotation out_a=x_a*cos-x_b*sin, "
+                             "out_b=x_a*sin+x_b*cos over half-split (NeoX) + "
+                             "interleaved (GPT-J) strided views + cos/sin "
+                             "broadcast row (elementwise pass); "
+                             "test_llm_serving_pk vs torch+flag_gems"),
+    "rotary_embedding": ("P6 rotary: same paired-rotation mechanism as "
+                         "apply_rotary_pos_emb (test_llm_serving_pk vs "
+                         "torch+flag_gems, both rotary_interleaved modes)"),
+    "reshape_and_cache_flash": ("P6 KV-cache: C3 scatter of key/value rows into "
+                                "the flash paged cache at slot addresses "
+                                "(cache[slot,:] = kv[t,:], scatter axis 0); "
+                                "test_llm_serving_pk vs torch+flag_gems (exact)"),
+    "concat_and_cache_mla": ("P6 KV-cache: concat kv_c+k_pe then C3 row-scatter "
+                             "into the MLA paged cache at slot addresses; "
+                             "test_llm_serving_pk vs flag_gems (exact)"),
+    "moe_sum": ("P6 MoE: sum top-k expert outputs per token = reduce over the "
+                "expert axis (add-chain over strided expert views, elementwise "
+                "pass); test_llm_serving_pk vs torch+flag_gems"),
+    "apply_repetition_penalties": ("P6 gen-loop: scale seen-token logits by a "
+                                   "per-seq penalty (div if >0 else mul) = masked "
+                                   "select/map (elementwise pass); "
+                                   "test_llm_serving_pk vs torch+flag_gems"),
 }
 
 # backward / gradient cluster (07-06 P4) — each *_backward is a composition of
@@ -145,15 +172,14 @@ MISS = {
     "flash_mla": "flash multi-latent-attention (loop authorship, PRD out-of-scope)",
     "get_scheduler_metadata": "scheduler-metadata helper (not a numeric op)",
     "scaled_softmax": "attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path)",
-    # KV-cache / MoE / RWKV / rotary stateful compositions
-    "reshape_and_cache": "KV-cache scatter into paged layout (stateful multi-op, C3-tail)",
-    "reshape_and_cache_flash": "KV-cache scatter, flash paged layout (stateful)",
-    "concat_and_cache_mla": "MLA KV-cache concat+scatter (stateful multi-op)",
-    "moe_sum": "MoE expert-weighted gather+sum (data-dependent routing composition)",
+    # KV-cache / MoE / RWKV stateful compositions. flash / MLA cache scatter,
+    # moe_sum, apply_repetition_penalties, rotary landed P6 (-> CLUSTER); the
+    # remainder are genuine bookkeeping/recurrence deferred with a named reason.
+    "reshape_and_cache": ("KV-cache scatter into the non-flash key cache's "
+                          "x-vectorized [num_blocks,num_heads,head_size/x,"
+                          "block_size,x] reshape (index-bookkeeping remap, not a "
+                          "row scatter; flash/MLA variants landed P6)"),
     "moe_align_block_size": "MoE routing/block-alignment (sort+scan+scatter integer bookkeeping)",
-    "apply_repetition_penalties": "token-histogram scatter penalty (data-dependent, gen-loop)",
-    "rotary_embedding": "rotary positional embedding (paired-rotation over complex-like layout)",
-    "apply_rotary_pos_emb": "rotary positional embedding apply (paired-rotation)",
     "rwkv_ka_fusion": "RWKV state-recurrent fusion (sequential scan with carried state)",
     "rwkv_mm_sparsity": "RWKV sparse-mm fusion (sparse addressing)",
 }
@@ -200,9 +226,9 @@ T_MISS = {
     "ai_bench_resize": "bicubic/aa resize interpolation (deferred; nearest verified C7a)",
     "upsample_bicubic2d_aa": "bicubic/anti-aliased interpolation (deferred)",
     "ai_bench_correlation": "cross-correlation multi-op graph (sliding-window reduce composition)",
-    "ai_bench_rope": "rotary positional embedding (paired-rotation, complex-like layout)",
 }
 T_PROVEN = {  # op-class handled by an available pass, not individually re-run here
+    "ai_bench_rope": "rotary paired-rotation (P6 rotary mechanism; test_llm_serving_pk)",
     "ai_bench_warp": "warp-primitive microbench (elementwise/reduce class)",
     "ai_bench_dropout": "philox dropout (C5 RNG mechanism)",
     "copy2d_divmod": "strided copy/layout (C4 layout mechanism)",
