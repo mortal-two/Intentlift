@@ -7,7 +7,14 @@ from pathlib import Path
 
 ROOT = Path("/home/kingdom/phdworks/TianchenIR")
 FG = Path(os.path.expanduser("~/.local/lib/python3.10/site-packages/flag_gems"))
-TRITON = Path("/mnt/hdd/intentir_paper_runs/42fad66/repo/kernels/triton/ops")
+# Triton refs (read-only). Prefer the canonical refs/ mount; fall back to the
+# paper-runs snapshot on hosts that only have that.
+TRITON = next(
+    (p for p in (Path("/home/kingdom/phdworks/refs/intentir/kernels/triton/ops"),
+                 Path("/mnt/hdd/intentir_paper_runs/42fad66/repo/kernels/triton/ops"))
+     if p.is_dir()),
+    Path("/home/kingdom/phdworks/refs/intentir/kernels/triton/ops"),
+)
 
 
 def mods(d):
@@ -194,7 +201,7 @@ def tally(es):
 fg_all = entries
 fg_top = [x for x in entries if x["group"] != "fused/DSA"]
 out = {
-    "generated_by": "scratchpad/gen_coverage.py (programmatic glob, live manifests)",
+    "generated_by": "python -m intentir.extraction.data.gen_coverage (programmatic glob, live manifests)",
     "flag_gems_modules": {
         "ops": len(ops), "fused": len(fused), "dsa_experimental": len(dsa),
         "top_level_total": len(ops) + len(fused),
