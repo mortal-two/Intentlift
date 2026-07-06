@@ -1,4 +1,24 @@
 // RUN: intent-opt -convert-intent-sort-to-gpu=block-threads=4 %s | FileCheck %s
+// RUN: env RADIX_MIN_N=0 intent-opt -convert-intent-sort-to-gpu=block-threads=16 %s | FileCheck %s --check-prefix=RADIX
+
+// C6 HARD-tier order statistics: intent.sort (values + argsort indices) over a
+// [M,N] row (axis 1). Two single-block-per-row lowerings are cost-model-
+// selected: the BLOCK BITONIC network (default here; wins at/near powers of two)
+// and, forced via RADIX_MIN_N for the second RUN, the SEGMENTED LSD RADIX sort
+// (CUB-style; wins for large padding-heavy rows). The radix path flips f32 to an
+// order-preserving unsigned key (arith.shrsi sign-fill, xor 0x80000000), then 8
+// LSD passes of 4-bit-digit (andi 15) histogram -> warp-shuffle prefix scan
+// (gpu.shuffle up) -> stable scatter, ping-ponging shared key buffers.
+//
+// RADIX-LABEL: func.func @sort_row(
+// RADIX:         gpu.launch
+// RADIX:         arith.bitcast %{{.*}} : f32 to i32
+// RADIX:         arith.shrsi
+// RADIX:         arith.xori
+// RADIX:         arith.shrui
+// RADIX:         arith.andi %{{.*}}, %c15_i32
+// RADIX:         gpu.shuffle  up
+// RADIX-NOT:     intent.
 
 // C6 HARD-tier order statistics: intent.sort (values + argsort indices) over a
 // [M,N] row (axis 1) -> ONE block-cooperative BLOCK BITONIC SORT gpu.launch.

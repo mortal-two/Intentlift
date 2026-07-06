@@ -500,7 +500,8 @@ def _thr_sort(N):
 
 
 def c6_sort():
-    print("\n[C6] sort / topk (single-block bitonic)")
+    print("\n[C6] sort / topk (cost-model hybrid: bitonic near-pow2 / LSD radix "
+          "large-pad)")
     # honest realistic-ish: N=2048 row (bitonic single-block; N=4096 balloons
     # shared to 32KB + 78 stages, still measured below as the stress point).
     for M, N in [(4096, 2048), (4096, 4096)]:
@@ -530,7 +531,7 @@ func.func @so(%x: tensor<{M}x{N}xf32>) -> tensor<{M}x{N}xf32> {{
             verify=lambda r: torch.equal(r, ref_sv))
         record("C6", "sort ax1", f"[{M},{N}] T={T}", our, refs,
                nbytes=M * N * 4 * 2, cls="serial",
-               note=f"O(N log^2 N) single-block; exact={ok}", graph_ours=gg)
+               note=f"pow2 N -> bitonic; exact={ok}", graph_ours=gg)
         del x, out; _cleanup()
 
 
