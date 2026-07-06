@@ -136,18 +136,17 @@ class _FlashKernel:
             else:
                 raise RuntimeError(f"flash: unhandled launch-arg {op.ty}")
 
+        # R-FLASH-1: a CACHED launcher (pre-marshalled arg array, updated in
+        # place, no per-call rebuild, no per-call synchronize) -- Triton-style.
+        # This kills the small-shape launch-overhead gap so flash-fwd reaches
+        # parity at ALL shapes, not just the GPU-bound large ones. Correctness
+        # harnesses synchronize explicitly after run().
+        from intentir.backend.orchestrate import CachedLauncher
+        self._cached = CachedLauncher(self.func, self.grid, self.block,
+                                      self.plan, shared=self.shared)
+
     def run(self, q, k, v, scale: float, o):
-        inputs = [q, k, v, o]
-        call_args = []
-        for entry in self.plan:
-            kind = entry[0]
-            if kind == "ptr":
-                call_args.append(_PtrArg(inputs[entry[1]].data_ptr()))
-            elif kind == "scale":
-                call_args.append(_F32Arg(float(scale)))
-            elif kind == "i64":
-                call_args.append(_I64Arg(entry[1]))
-        _launch(self.func, self.grid, self.block, call_args, shared=self.shared)
+        self._cached.launch([q, k, v, o], scale)
 
 
 def _rel(a, b):

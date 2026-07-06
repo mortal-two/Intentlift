@@ -76,9 +76,14 @@ using namespace intent;
 
 namespace {
 
-// Tile geometry. BM/BN = the block's query/key tile (64x64), 4 warps each owning
-// a 16-row C strip. kWMMA is the WMMA k (16). D is the head dim.
-static constexpr int64_t BM = 64, BN = 64, kWMMA = 16, kBlock = 128;
+// Tile geometry. BM/BN = the block's query/key tile (64x64). kWMMA is the WMMA k
+// (16). D is the head dim. The block runs 4 or 8 warps: with 8 warps the C tile
+// is split 4 row-strips x 2 column-groups (warp/2 = 16-row strip, warp%2 = which
+// half of the output columns), doubling the WMMA pipelines that hide the
+// 5-matmul serial-chain latency -- the M4/R-FLASH-2 occupancy lever matching
+// Triton's num_warps=8 bwd. Falls back to 4 warps (1 column-group) when the C
+// column extents are not 32-divisible.
+static constexpr int64_t BM = 64, BN = 64, kWMMA = 16;
 
 static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 
@@ -287,6 +292,14 @@ struct FlashBwdLowering {
     int64_t numKT = Sk / BN; // outer key tiles
     int64_t numQT = Sq / BM; // inner query tiles
 
+    // Warp layout: 8 warps (4 row-strips x 2 column-groups) when the C-tile
+    // column extents (BN and D) are both 32-divisible, else 4 warps. More warps
+    // = more concurrent WMMA pipelines hiding the 5-matmul serial-chain latency.
+    bool use8 = (BN % 32 == 0) && (D % 32 == 0);
+    int64_t numWarps = use8 ? 8 : 4;
+    int64_t nColGroups = use8 ? 2 : 1;
+    int64_t kBlock = numWarps * 32;
+
     // Dynamic-shared layout (one raw i8 buffer + 16-byte-aligned views). dk/dv
     // accumulators + K/V key tile resident across the inner query loop; Q/dO/
     // LSE/Delta loaded per query tile; Sd[BM,BN] f32 + Pds[BM,BN] f16 scratch
@@ -324,7 +337,13 @@ struct FlashBwdLowering {
     Value zeroF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
     Value warp = b.create<arith::DivUIOp>(loc, tx, c32);
     Value cWMMA = b.create<arith::ConstantIndexOp>(loc, kWMMA);
-    Value warpRow16 = b.create<arith::MulIOp>(loc, warp, cWMMA);
+    // 8-warp split: rowStrip = warp / nColGroups, colGroup = warp % nColGroups.
+    // (With 4 warps nColGroups=1 -> rowStrip=warp, colGroup=0, identical to the
+    // original single-column-group layout.)
+    Value cNCG = b.create<arith::ConstantIndexOp>(loc, nColGroups);
+    Value rowStrip = b.create<arith::DivUIOp>(loc, warp, cNCG);
+    Value colGroup = b.create<arith::RemUIOp>(loc, warp, cNCG);
+    Value warpRow16 = b.create<arith::MulIOp>(loc, rowStrip, cWMMA);
 
     // Shared views.
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
@@ -374,27 +393,57 @@ struct FlashBwdLowering {
     };
 
     // Generic WMMA contraction: out[I,J] = sum_l A * B over Kext, FRESH (init 0),
-    // stored to outSh. Each warp owns rows [warp*16,+16) of the I axis (I=64).
+    // stored to outSh. Each warp owns rows [rowStrip*16,+16) of the I axis and,
+    // under the 8-warp split, the column half [colGroup*halfCol, +halfCol) of the
+    // J-tile columns (colGroup = warp % nColGroups). So two warps in a row-strip
+    // cooperatively cover its full J extent -- doubling the live WMMA pipelines.
     //   aTrans=false: A is [I,Kext], frag tile at [warpRow16, ks*16], lead=aLD.
     //   aTrans=true : A is stored [Kext,I], frag at [ks*16, warpRow16], lead=aLD.
-    //   bTrans=false: B is [Kext,J], frag tile at [ks*16, j*16], lead=bLD.
-    //   bTrans=true : B is stored [J,Kext], frag at [j*16, ks*16], lead=bLD.
+    //   bTrans=false: B is [Kext,J], frag tile at [ks*16, col*16], lead=bLD.
+    //   bTrans=true : B is stored [J,Kext], frag at [col*16, ks*16], lead=bLD.
+    // (col = colGroup*halfCol + j, a runtime column-tile index.)
+    // accInit=true: the C accumulator is SEEDED by loading outSh (a WMMA COp
+    // load of the current f32 accumulator) instead of zero, so the matmul result
+    // lands directly in the outSh accumulator -- no scratch store + cooperative
+    // read-add round-trip. Used for the dV/dK reductions (outSh = dvSh/dkSh):
+    // each warp owns a disjoint row-strip x column-group of the accumulator, so
+    // the in-place load/store is warp-private (no cross-warp hazard), removing
+    // two cooperative loops + two barriers per inner iteration (the M4 barrier-
+    // chain shortening).
     auto emitMMA = [&](OpBuilder &nb, Value aSh, IntegerAttr aLD, bool aTrans,
                        Value bSh, IntegerAttr bLD, bool bTrans, Value outSh,
-                       IntegerAttr outLD, int64_t Jext, int64_t Kext) {
+                       IntegerAttr outLD, int64_t Jext, int64_t Kext,
+                       bool accInit = false) {
       int64_t nCol = Jext / kWMMA, kSub = Kext / kWMMA;
+      int64_t halfCol = nCol / nColGroups;
+      // Column-tile element base for this warp's column-group = colGroup*halfCol*16.
+      Value colBaseOff = nb.create<arith::MulIOp>(
+          loc, colGroup,
+          nb.create<arith::ConstantIndexOp>(loc, halfCol * kWMMA));
       SmallVector<Value> acc;
-      for (int64_t j = 0; j < nCol; ++j)
-        acc.push_back(
-            nb.create<gpu::SubgroupMmaConstantMatrixOp>(loc, copTy, zeroF));
+      for (int64_t j = 0; j < halfCol; ++j) {
+        if (accInit) {
+          Value cj = nb.create<arith::AddIOp>(
+              loc, colBaseOff,
+              nb.create<arith::ConstantIndexOp>(loc, j * kWMMA));
+          acc.push_back(nb.create<gpu::SubgroupMmaLoadMatrixOp>(
+              loc, copTy, outSh, ValueRange{warpRow16, cj}, outLD,
+              /*transpose=*/UnitAttr()));
+        } else {
+          acc.push_back(
+              nb.create<gpu::SubgroupMmaConstantMatrixOp>(loc, copTy, zeroF));
+        }
+      }
       for (int64_t ks = 0; ks < kSub; ++ks) {
         Value ksc = nb.create<arith::ConstantIndexOp>(loc, ks * kWMMA);
         SmallVector<Value> aIdx = aTrans ? SmallVector<Value>{ksc, warpRow16}
                                          : SmallVector<Value>{warpRow16, ksc};
         Value aFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
             loc, aopTy, aSh, aIdx, aLD, aTrans ? transpose : UnitAttr());
-        for (int64_t j = 0; j < nCol; ++j) {
-          Value cj = nb.create<arith::ConstantIndexOp>(loc, j * kWMMA);
+        for (int64_t j = 0; j < halfCol; ++j) {
+          Value cj = nb.create<arith::AddIOp>(
+              loc, colBaseOff,
+              nb.create<arith::ConstantIndexOp>(loc, j * kWMMA));
           SmallVector<Value> bIdx = bTrans ? SmallVector<Value>{cj, ksc}
                                            : SmallVector<Value>{ksc, cj};
           Value bFrag = nb.create<gpu::SubgroupMmaLoadMatrixOp>(
@@ -404,8 +453,9 @@ struct FlashBwdLowering {
               /*b_transpose=*/nullptr);
         }
       }
-      for (int64_t j = 0; j < nCol; ++j) {
-        Value cj = nb.create<arith::ConstantIndexOp>(loc, j * kWMMA);
+      for (int64_t j = 0; j < halfCol; ++j) {
+        Value cj = nb.create<arith::AddIOp>(
+            loc, colBaseOff, nb.create<arith::ConstantIndexOp>(loc, j * kWMMA));
         nb.create<gpu::SubgroupMmaStoreMatrixOp>(loc, acc[j], outSh,
                                                  ValueRange{warpRow16, cj},
                                                  outLD, /*transpose=*/nullptr);
@@ -482,20 +532,18 @@ struct FlashBwdLowering {
         });
         lb.create<gpu::BarrierOp>(loc);
 
-        // (3) dV product = P^T@dO -> Sd ; coop dv_sh += Sd.
+        // (3) dV += P^T@dO, ACCUMULATED IN PLACE into dvSh (accInit=true).
         //     out[k,d]=sum_q P[q,k]*dO[q,d]. A=P transposed (stored [q,k]),
-        //     B=dO[q,d] normal, Kext=BM (query).
-        emitMMA(lb, pdsSh, ldBN, true, doSh, ldD, false, sdSh, ldD, D, BM);
-        lb.create<gpu::BarrierOp>(loc);
-        forEachElem(lb, BN, D, [&](OpBuilder &nb, Value r, Value c) {
-          Value acc = nb.create<memref::LoadOp>(loc, dvSh, ValueRange{r, c});
-          Value add = nb.create<memref::LoadOp>(loc, sdSh, ValueRange{r, c});
-          Value nv = nb.create<arith::AddFOp>(loc, acc, add);
-          nb.create<memref::StoreOp>(loc, nv, dvSh, ValueRange{r, c});
-        });
-        lb.create<gpu::BarrierOp>(loc);
+        //     B=dO[q,d] normal, Kext=BM (query). Each warp owns a disjoint
+        //     row-strip x column-group of dvSh, so the WMMA C-load/store is
+        //     warp-private -- no scratch round-trip, no barrier here (dvSh is
+        //     not read cross-warp until the epilogue store; sdSh is untouched).
+        emitMMA(lb, pdsSh, ldBN, true, doSh, ldD, false, dvSh, ldD, D, BM,
+                /*accInit=*/true);
 
-        // (4) dP = dO@Vj^T -> Sd. A=dO[q,d] normal, B=V[k,d] transposed.
+        // (4) dP = dO@Vj^T -> Sd. A=dO[q,d] normal, B=V[k,d] transposed. sdSh's
+        // last reader was step (2) before the barrier above, so overwriting it
+        // here is safe with no extra barrier.
         emitMMA(lb, doSh, ldD, false, vSh, ldD, true, sdSh, ldBN, BN, D);
         lb.create<gpu::BarrierOp>(loc);
 
@@ -513,19 +561,15 @@ struct FlashBwdLowering {
         });
         lb.create<gpu::BarrierOp>(loc);
 
-        // (6) dK product = dS^T@Q -> Sd ; coop dk_sh += Sd.
-        //     out[k,d]=sum_q dS[q,k]*Q[q,d]. A=dS transposed, B=Q normal, Kext=BM.
-        emitMMA(lb, pdsSh, ldBN, true, qSh, ldD, false, sdSh, ldD, D, BM);
-        lb.create<gpu::BarrierOp>(loc);
-        forEachElem(lb, BN, D, [&](OpBuilder &nb, Value r, Value c) {
-          Value acc = nb.create<memref::LoadOp>(loc, dkSh, ValueRange{r, c});
-          Value add = nb.create<memref::LoadOp>(loc, sdSh, ValueRange{r, c});
-          Value nk = nb.create<arith::AddFOp>(loc, acc, add);
-          nb.create<memref::StoreOp>(loc, nk, dkSh, ValueRange{r, c});
-        });
-        lb.create<gpu::BarrierOp>(loc);
+        // (6) dK += dS^T@Q, ACCUMULATED IN PLACE into dkSh (accInit=true; same
+        //     warp-private argument as dV). out[k,d]=sum_q dS[q,k]*Q[q,d].
+        //     A=dS transposed, B=Q normal, Kext=BM. No barrier here.
+        emitMMA(lb, pdsSh, ldBN, true, qSh, ldD, false, dkSh, ldD, D, BM,
+                /*accInit=*/true);
 
-        // (7) dQ product = dS@Kj -> Sd ; accumulate into DQ[start_m].
+        // (7) dQ product = dS@Kj -> Sd ; accumulate into DQ[start_m]. dS (pdsSh)
+        // is still needed as the A operand here; sdSh's previous reader was step
+        // (5), synchronized by the barrier above.
         //     out[q,d]=sum_k dS[q,k]*K[k,d]. A=dS[q,k] normal, B=K[k,d] normal,
         //     Kext=BN (key). SERIAL: deterministic load+add+store (one block, no
         //     concurrent writers). ATOMIC: memref.atomic_rmw addf (-> red.global.

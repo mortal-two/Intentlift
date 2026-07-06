@@ -132,17 +132,14 @@ class _FlashBwdKernel:
             else:
                 raise RuntimeError(f"flash-bwd: unhandled launch-arg {op.ty}")
 
+        # R-FLASH-1: cached launcher (see test_flash_fwd_mma_pk). Correctness
+        # harnesses synchronize explicitly after run().
+        from intentir.backend.orchestrate import CachedLauncher
+        self._cached = CachedLauncher(self.func, self.grid, self.block,
+                                      self.plan, shared=self.shared)
+
     def run(self, q, k, v, do, lse, delta, scale, dq, dk, dv):
-        inputs = [q, k, v, do, lse, delta, dq, dk, dv]
-        call_args = []
-        for entry in self.plan:
-            if entry[0] == "ptr":
-                call_args.append(_PtrArg(inputs[entry[1]].data_ptr()))
-            elif entry[0] == "scale":
-                call_args.append(_F32Arg(float(scale)))
-            elif entry[0] == "i64":
-                call_args.append(_I64Arg(entry[1]))
-        _launch(self.func, self.grid, self.block, call_args, shared=self.shared)
+        self._cached.launch([q, k, v, do, lse, delta, dq, dk, dv], scale)
 
 
 def _rel(a, b):

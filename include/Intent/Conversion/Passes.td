@@ -821,6 +821,24 @@ def ConvertIntentFlashMMAToGPU
            "count). 1 = single-buffer (no multistage). N=2 hides the K/V "
            "global-load latency behind the mma.sync+softmax of the previous "
            "tile (~1.2x at >=512 keys); N>=3 plateaus and only wastes smem.">,
+    Option<"emitLse", "emit-lse", "bool", /*default=*/"false",
+           "Also emit the per-query log-sum-exp (LSE = m + log(l), the "
+           "log-sum-exp of the SCALED scores) as an appended [Sq,1] f32 "
+           "destination output. This is the statistic FlashAttention's backward "
+           "(and flag_gems' flash_api) consume; it is free here because the "
+           "online-softmax m (rowmax) and l (rowsum) are already register-"
+           "resident per row. Written once per row (from the quad's tig==0 "
+           "lane). R-FLASH-3 attention-coverage extension.">,
+    Option<"causal", "causal", "bool", /*default=*/"false",
+           "Apply causal (lower-triangular) masking: score S[q,k] is set to -inf "
+           "when the GLOBAL key index exceeds the GLOBAL query index (assuming "
+           "Sq==Sk diagonal alignment), so query q attends only to keys <= q -- "
+           "the flag_gems _attn_fwd STAGE=3 diagonal mask. Applied to the scaled "
+           "scores in the register-resident online softmax (each accumulator "
+           "lane knows its (query-row, key-col) from the m16n8 PTX layout). This "
+           "is the CORRECTNESS extension (every key tile is still visited + "
+           "masked; the STAGE=1 fully-masked-tile skip is not applied). "
+           "R-FLASH-3 attention-coverage extension.">,
   ];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",

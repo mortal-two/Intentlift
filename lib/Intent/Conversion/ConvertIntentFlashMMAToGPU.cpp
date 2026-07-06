@@ -87,14 +87,16 @@ static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 struct FlashMMALowering {
   func::FuncOp fn;
   int numStages; // cp.async pipeline depth (clamped to the K-tile count)
+  bool emitLse;  // also emit LSE = m + log(l) per query row (R-FLASH-3)
+  bool causal;   // causal (lower-triangular) score masking (R-FLASH-3)
 
   int64_t Sq = 0, Sk = 0, D = 0;
   unsigned qArgIdx = 0, kArgIdx = 0, vArgIdx = 0, scaleArgIdx = 0;
   LoopOp loop;
   Type f16, f32;
 
-  FlashMMALowering(func::FuncOp fn, int numStages)
-      : fn(fn), numStages(numStages) {}
+  FlashMMALowering(func::FuncOp fn, int numStages, bool emitLse, bool causal)
+      : fn(fn), numStages(numStages), emitLse(emitLse), causal(causal) {}
 
   // ---- recognition (a focused subset of the M8a matcher: rank-2, 1 result) -//
   LogicalResult match() {
@@ -221,7 +223,9 @@ struct FlashMMALowering {
       else
         inTys.push_back(at);
     }
-    inTys.push_back(MemRefType::get({Sq, D}, f32));
+    inTys.push_back(MemRefType::get({Sq, D}, f32)); // O
+    if (emitLse)
+      inTys.push_back(MemRefType::get({Sq, 1}, f32)); // LSE
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -236,7 +240,9 @@ struct FlashMMALowering {
     Value kMem = entry->getArgument(kArgIdx);
     Value vMem = entry->getArgument(vArgIdx);
     Value scale = entry->getArgument(scaleArgIdx);
-    Value oMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+    unsigned numInputs = fn.getFunctionType().getNumInputs();
+    Value oMem = entry->getArgument(numInputs);
+    Value lseMem = emitLse ? entry->getArgument(numInputs + 1) : Value();
 
     int64_t numWarps = BM / MMA_M; // 4
     int64_t kBlock = numWarps * 32;
@@ -421,10 +427,35 @@ struct FlashMMALowering {
     // -> vtSh, shared->shared), then S=Q@Kj^T -> register online softmax ->
     // O+=P@Vj, all via mma.sync. Carries in/out = [oAcc(nColPV), m0,m1,l0,l1].
     auto computeTile = [&](OpBuilder &nb, Location nl, Value stageR,
+                           Value keyBase,
                            ArrayRef<Value> carries) -> SmallVector<Value> {
       SmallVector<Value> oAcc(carries.begin(), carries.begin() + nColPV);
       Value mOld[2] = {carries[nColPV], carries[nColPV + 1]};
       Value lOld[2] = {carries[nColPV + 2], carries[nColPV + 3]};
+
+      // Causal masking (R-FLASH-3): a lane's S accumulator element [i][i2] of n8
+      // tile t is query row (rowBlk + warp*16 + lane/4 + i*8), key col
+      // (keyBase + 8*t + (lane%4)*2 + i2). We keep only key <= query. Precompute
+      // the lane-local global query-row base (rowBlk + warp*16 + lane/4).
+      Value qGlobBase;
+      if (causal)
+        qGlobBase = nb.create<arith::AddIOp>(
+            nl, nb.create<arith::AddIOp>(nl, rowBlk, warpRow16), laneDiv4);
+      // ss <- -inf when the element is above the causal diagonal.
+      auto maskCausal = [&](OpBuilder &mb, Value ss, int i, int64_t t,
+                            int i2) -> Value {
+        if (!causal)
+          return ss;
+        Value qG = mb.create<arith::AddIOp>(
+            nl, qGlobBase, mb.create<arith::ConstantIndexOp>(nl, i * 8));
+        Value kG = mb.create<arith::AddIOp>(
+            nl, keyBase,
+            mb.create<arith::AddIOp>(
+                nl, stCol, mb.create<arith::ConstantIndexOp>(nl, 8 * t + i2)));
+        Value keep =
+            mb.create<arith::CmpIOp>(nl, arith::CmpIPredicate::ule, kG, qG);
+        return mb.create<arith::SelectOp>(nl, keep, ss, ninf);
+      };
 
       // (0) transpose V tile: vtSh[c,r] = vSh[stageR,r,c] (shared->shared).
       forEachElem(nb, BN, D, [&](OpBuilder &cb, Value r, Value c) {
@@ -463,6 +494,7 @@ struct FlashMMALowering {
             Value s = nb.create<vector::ExtractOp>(
                 nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
             Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+            ss = maskCausal(nb, ss, i, t, i2);
             lmax = nb.create<arith::MaxNumFOp>(nl, lmax, ss);
           }
         Value rowmax = quadReduce(nb, lmax, /*isMax=*/true);
@@ -475,6 +507,7 @@ struct FlashMMALowering {
             Value s = nb.create<vector::ExtractOp>(
                 nl, sAcc[t], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
             Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+            ss = maskCausal(nb, ss, i, t, i2);
             Value sd = nb.create<arith::SubFOp>(nl, ss, mNew[i]);
             Value p = nb.create<math::ExpOp>(nl, sd);
             lsum = nb.create<arith::AddFOp>(nl, lsum, p);
@@ -565,8 +598,9 @@ struct FlashMMALowering {
           nb.create<nvgpu::DeviceAsyncWaitOp>(nl, grp, waitNm1);
           nb.create<gpu::BarrierOp>(nl); // async tile ki visible to all warps
           Value stageR = nb.create<arith::RemUIOp>(nl, ki, cNStages);
+          Value keyBaseR = nb.create<arith::MulIOp>(nl, ki, cBN);
           SmallVector<Value> cur(args.begin(), args.end());
-          SmallVector<Value> res = computeTile(nb, nl, stageR, cur);
+          SmallVector<Value> res = computeTile(nb, nl, stageR, keyBaseR, cur);
           nb.create<scf::YieldOp>(nl, res);
         });
 
@@ -578,16 +612,39 @@ struct FlashMMALowering {
     for (int j = 0; j < nStages - 1; ++j) {
       int64_t tile = numKT - nStages + 1 + j;
       Value stageR = b.create<arith::ConstantIndexOp>(loc, tile % nStages);
+      Value keyBaseE = b.create<arith::ConstantIndexOp>(loc, tile * BN);
       b.create<nvgpu::DeviceAsyncWaitOp>(loc, prologTok,
                                          b.getI32IntegerAttr(nStages - 2 - j));
       b.create<gpu::BarrierOp>(loc);
-      carries = computeTile(b, loc, stageR, carries);
+      carries = computeTile(b, loc, stageR, keyBaseE, carries);
     }
 
     // Epilogue: O_global[row,col] = oAcc / l, straight from registers.
     SmallVector<Value> finalAcc(carries.begin(), carries.begin() + nColPV);
+    Value mFin[2] = {carries[nColPV], carries[nColPV + 1]};
     Value lFin[2] = {carries[nColPV + 2], carries[nColPV + 3]};
     Value warpRowGlobal = b.create<arith::AddIOp>(loc, rowBlk, warpRow16);
+
+    // LSE = m + log(l) per query row (R-FLASH-3). All 4 lanes of a row's quad
+    // hold the same m/l (quad-reduced), so only tig==0 (lane%4==0) writes each of
+    // its 2 owned rows (groupID=lane/4, and groupID+8). Global row layout matches
+    // the O epilogue (warpRowGlobal + laneDiv4 + i*8).
+    if (emitLse) {
+      Value isLead = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                             laneMod4, c0);
+      Value c0i = b.create<arith::ConstantIndexOp>(loc, 0);
+      b.create<scf::IfOp>(loc, isLead, [&](OpBuilder &nb, Location nl) {
+        for (int i = 0; i < 2; ++i) {
+          Value ic = nb.create<arith::ConstantIndexOp>(nl, i * 8);
+          Value row = nb.create<arith::AddIOp>(
+              nl, warpRowGlobal, nb.create<arith::AddIOp>(nl, laneDiv4, ic));
+          Value ll = nb.create<math::LogOp>(nl, lFin[i]);
+          Value lse = nb.create<arith::AddFOp>(nl, mFin[i], ll);
+          nb.create<memref::StoreOp>(nl, lse, lseMem, ValueRange{row, c0i});
+        }
+        nb.create<scf::YieldOp>(nl);
+      });
+    }
     for (int64_t jo = 0; jo < nColPV; ++jo) {
       Value nb8 = b.create<arith::ConstantIndexOp>(loc, jo * MMA_N);
       for (int i = 0; i < 2; ++i) {
@@ -624,12 +681,12 @@ struct ConvertIntentFlashMMAToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      FlashMMALowering probe(fn, (int)numStages);
+      FlashMMALowering probe(fn, (int)numStages, emitLse, causal);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      FlashMMALowering low(fn, (int)numStages);
+      FlashMMALowering low(fn, (int)numStages, emitLse, causal);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("flash-mma lowering failed after match");
         return signalPassFailure();

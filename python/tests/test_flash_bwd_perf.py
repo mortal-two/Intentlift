@@ -20,11 +20,22 @@ This test measures the atomic mode against:
       recompute, a different op boundary -- informational).
   (c) the serial mode (the 617us M9a baseline).
 
-HONEST RESIDUAL (5090D): atomic lands ~1.4-1.6x off the same-tile (64x64,8warp)
-Triton config and ~1.8-1.9x off Triton's best (128x64) -- the inherited
-wmma.load gap (M7) + the 5-matmul serial chain (barrier between each) + 4 warps
-vs Triton's 8. Single-head grid is 8-16 blocks for ~170 SMs (Triton's BN=64 grid
-is the SAME 8 blocks), so the residual is per-block efficiency, not grid size.
+HONEST RESIDUAL (5090D, M4/R-FLASH-2 update): atomic now lands ~1.58x @512 /
+~1.62x @1024 off Triton's best (128x64), down from ~1.70-1.73x, via three ordinary
+(NOT warp-spec) changes to the WMMA bwd: (1) 4->8 warps (the C-tile split 4
+row-strips x 2 column-groups, matching Triton's num_warps=8, doubling the live
+WMMA pipelines); (2) the dV/dK reductions accumulated IN PLACE via a WMMA C-load
+(each warp owns a disjoint strip x column-group of the accumulator) instead of a
+scratch store + cooperative read-add; (3) the freed barriers pruned from the
+5-matmul chain. The NAMED remaining residual is precise: the 5 matmuls still use
+WMMA wmma.load (shared-operand staging) rather than the forward pass's
+register-resident nvgpu.ldmatrix + nvgpu.mma.sync. Fully porting the bwd to
+mma.sync is blocked here by TWO of its five contractions (dV=P^T@dO, dK=dS^T@Q)
+needing TRANSPOSED A and B operands: materializing them in shared costs ~40KB on
+top of the 90KB already resident (>the 99KB sm_120a cap), and the transpose=true
+ldmatrix path has no in-repo precedent to reuse. Single-head grid is 8-16 blocks
+for ~170 SMs (Triton's BN=64 grid is the SAME 8 blocks), so the residual is
+per-block WMMA-vs-mma.sync efficiency, not grid size.
 
 Run: export PATH=/usr/local/cuda-12.8/bin:$PATH; PYTHONPATH=python \
      python3 -m pytest python/tests/test_flash_bwd_perf.py -q -s

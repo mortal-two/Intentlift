@@ -159,6 +159,80 @@ def _launch(func, grid, block, args, shared: int = 0) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Cached (Triton-style) launcher (R-FLASH-1).                                  #
+# --------------------------------------------------------------------------- #
+class CachedLauncher:
+    """Pre-marshalled kernel launcher: builds the ctypes argument array ONCE and
+    updates only the pointer/scalar slots in place per call, then invokes
+    ``cuLaunchKernel`` directly with NO per-call Python arg rebuild and NO
+    synchronize (the caller / ``do_bench`` owns timing + sync).
+
+    ``_launch`` above rebuilds the ctypes value list, casts a fresh pointer
+    array, and blocks on ``torch.cuda.synchronize()`` every call -- fine for
+    correctness harnesses but it inflates sub-30us kernels (the small-shape flash
+    gap in R4). Triton's launcher caches its arg buffer and does not sync per
+    call; this mirrors that so flash-fwd reaches parity at ALL shapes, not just
+    the GPU-bound large ones.
+
+    ``plan`` is the same launch-arg plan the flash kernels already build:
+    ``("ptr", input_index) | ("scale",) | ("i64", value)``. ``launch(inputs,
+    scale)`` refreshes the pointer slots from ``inputs[i].data_ptr()`` and the
+    scale slot, then launches on torch's current stream.
+    """
+
+    def __init__(self, func, grid, block, plan, shared: int = 0):
+        from intentir.backend.launch import _driver  # internal helper, read-only
+
+        self.func = func
+        self.grid = tuple(int(x) for x in grid)
+        self.block = tuple(int(x) for x in block)
+        self.shared = int(shared)
+        self._cuda = _driver()
+
+        self._cells: list = []
+        self._ptr_slots: list[tuple[int, int]] = []  # (cell_index, input_index)
+        self._scale_slots: list[int] = []
+        for entry in plan:
+            kind = entry[0]
+            if kind == "ptr":
+                self._ptr_slots.append((len(self._cells), entry[1]))
+                self._cells.append(ctypes.c_void_p(0))
+            elif kind == "scale":
+                self._scale_slots.append(len(self._cells))
+                self._cells.append(ctypes.c_float(0.0))
+            elif kind == "i64":
+                self._cells.append(ctypes.c_int64(int(entry[1])))
+            elif kind == "i32":
+                self._cells.append(ctypes.c_int32(int(entry[1])))
+            else:
+                raise RuntimeError(f"CachedLauncher: unhandled plan entry {entry!r}")
+        # Build the pointer array ONCE; the cells' addresses are stable.
+        self._arg_ptrs = (ctypes.c_void_p * len(self._cells))()
+        for i, cv in enumerate(self._cells):
+            self._arg_ptrs[i] = ctypes.cast(ctypes.byref(cv), ctypes.c_void_p)
+        self._arg_addr = int(ctypes.addressof(self._arg_ptrs))
+
+    def launch(self, inputs, scale: float | None = None) -> None:
+        import torch
+
+        for cell_i, in_i in self._ptr_slots:
+            self._cells[cell_i].value = int(inputs[in_i].data_ptr())
+        if scale is not None:
+            fs = float(scale)
+            for cell_i in self._scale_slots:
+                self._cells[cell_i].value = fs
+        stream = int(torch.cuda.current_stream().cuda_stream)
+        ret = self._cuda.cuLaunchKernel(
+            self.func, self.grid[0], self.grid[1], self.grid[2],
+            self.block[0], self.block[1], self.block[2],
+            self.shared, stream, self._arg_addr, 0,
+        )
+        err = ret[0] if isinstance(ret, tuple) else ret
+        if int(err) != 0:
+            raise RuntimeError(f"cuLaunchKernel: CUDA driver error {int(err)}")
+
+
+# --------------------------------------------------------------------------- #
 # MLIR type -> torch dtype.                                                    #
 # --------------------------------------------------------------------------- #
 def _torch_dtype(elem: str):
