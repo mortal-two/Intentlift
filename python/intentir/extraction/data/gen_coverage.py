@@ -164,6 +164,33 @@ CLUSTER = {
                              "cumulative scan (C6) + placement scatter (C3); "
                              "test_p8_pk EXACT sorted_ids+expert_ids+num_post_pad "
                              "vs flag_gems"),
+    # M7b: residual flash/attention + RWKV modules RE-ATTACKED after the M4 flash
+    # fwd+causal+LSE shipped. Verified vs the real flag_gems kernel AND torch.
+    "attention": ("M7b: our register-resident flash-mma fwd (+causal) IS "
+                  "scaled-dot-product attention; the cubin is PK'd vs BOTH "
+                  "flag_gems.scaled_dot_product_attention and torch SDPA, causal "
+                  "+ non-causal (test_residual_coverage_pk / test_flash_fwd_*_pk, "
+                  "rel<2e-2)"),
+    "flash_kernel": ("M7b: the flash inner online-softmax loop kernel = our "
+                     "register-resident nvgpu.mma.sync flash fwd+causal+LSE, "
+                     "lowered by -convert-intent-flash-mma-to-gpu to ONE sm_120a "
+                     "gpu.launch and PK'd vs torch SDPA + flag_gems SDPA "
+                     "(test_flash_fwd_mma_pk / _causal_pk / _lse_pk, rel<2e-2)"),
+    "scaled_softmax": ("M7b: softmax(scale*x) over the last axis = a row-reduction "
+                       "softmax with a scalar pre-scale (the exact subgraph our "
+                       "flash fwd computes internally); interpret PK vs "
+                       "flag_gems.scaled_softmax_forward + torch "
+                       "(test_residual_coverage_pk, rel_flaggems~2e-4)"),
+    "rwkv_ka_fusion": ("M7b: NOT a carried-state recurrence -- flag_gems' fused "
+                       "kernel is an elementwise fusion + a per-head grouped L2 "
+                       "normalise (reduce over the head-channel group); interpret "
+                       "PK of all 3 outputs vs flag_gems.rwkv_ka_fusion "
+                       "(test_residual_coverage_pk, rel<2e-2)"),
+    "rwkv_mm_sparsity": ("M7b: NOT sparse addressing -- k(1D)@v(2D) mat-vec "
+                         "contraction; the 'sparsity' is a perf-only zero-row "
+                         "skip that does not change the value; interpret PK vs "
+                         "flag_gems.rwkv_mm_sparsity (pow2 K) + torch "
+                         "(test_residual_coverage_pk, rel_torch<1e-5)"),
 }
 
 # backward / gradient cluster (07-06 P4) — each *_backward is a composition of
@@ -199,22 +226,39 @@ MISS = {
     # (order-dependent RNG multinomial/randperm landed P7 -> CLUSTER)
     # (native complex dtype angle/resolve_conj/resolve_neg landed P5 -> CLUSTER)
     # (bicubic upsampling landed P7 -> CLUSTER; the aa DOWNSAMPLE kernel remains)
-    # loop/flash kernel authorship — explicit PRD out-of-scope
-    "attention": "flash/attention loop-kernel authorship beyond pipeline auto-lift (PRD out-of-scope)",
-    "flash_api": "flash-attention host API glue (multi-kernel, not one op-graph)",
-    "flash_kernel": "flash-attention inner loop kernel (loop authorship, PRD out-of-scope)",
-    "flash_mla": "flash multi-latent-attention (loop authorship, PRD out-of-scope)",
-    "get_scheduler_metadata": "scheduler-metadata helper (not a numeric op)",
-    "scaled_softmax": "attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path)",
-    # KV-cache / MoE / RWKV stateful compositions. flash / MLA cache scatter,
-    # moe_sum, apply_repetition_penalties, rotary landed P6; reshape_and_cache
-    # (non-flash) + moe_align_block_size landed P8 (-> CLUSTER); the remaining RWKV
-    # recurrences are genuine carried-state deferred with a named reason.
-    "rwkv_ka_fusion": "RWKV state-recurrent fusion (sequential scan with carried state)",
-    "rwkv_mm_sparsity": "RWKV sparse-mm fusion (sparse addressing)",
+    # M7b: attention/flash_kernel/scaled_softmax/rwkv_* RE-ATTACKED and moved to
+    # verified-e2e (-> CLUSTER). What REMAINS is genuinely non-numeric host glue or
+    # a genuinely-new sparse/paged-addressing mechanism, each with an EVIDENCE
+    # reason (not a PRD label):
+    "flash_api": ("non-numeric host orchestration: the multi-kernel launcher "
+                  "(splitkv-combine + varlen-ragged + paged-KV dispatch) that "
+                  "wraps flash_fwd_kernel. The numeric kernel it dispatches "
+                  "(flash_kernel) IS verified (-> CLUSTER); the module itself is "
+                  "host glue over 4 kernels, not one op-graph"),
+    "flash_mla": ("genuinely-new paged/latent-addressing: multi-latent attention "
+                  "gathers KV through a paged block_table (data-dependent block "
+                  "addressing) with dv!=d latent compression -- a sparse-paged "
+                  "gather mechanism our dense flash loop does not express"),
+    "get_scheduler_metadata": ("non-numeric scheduling helper: computes an int32 "
+                               "tile-split scheduling plan (num_splits / SM "
+                               "partition, headdim rounding) -- no data-parallel "
+                               "tensor math, not a kernel"),
 }
-DSA_MISS = {m: "DSA experimental sparse kernel (sub-package, not a top-level op)"
-            for m in dsa}
+# DSA experimental: bin_topk RE-ATTACKED (row-segment top-k = our sort op, verified
+# vs torch.topk set match); the flag_gems bucket-sort kernel itself FAILS LLVM
+# sm_120a codegen (Cannot select v2f16 in its uint16-histogram bitcast) so torch
+# is the reference. indexer_k_tiled / sparse_mla remain genuinely-new sparse index
+# selection + addressing mechanisms.
+DSA_VERIFIED = {
+    "bin_topk": ("M7b: binned top-k = top-k INDICES over a row segment = our "
+                 "sort/topk op; interpret PK vs torch.topk (set match). "
+                 "flag_gems' bucket-sort kernel does not compile on sm_120a "
+                 "(LLVM 'Cannot select v2f16'), so torch is the reference "
+                 "(test_residual_coverage_pk)"),
+}
+DSA_MISS = {m: ("genuinely-new sparse index-selection + addressing (learned/tiled "
+                "top-k KV index gather); not expressible by the dense op-classes")
+            for m in dsa if m not in DSA_VERIFIED}
 
 
 def classify(mod):
@@ -246,15 +290,29 @@ for m in fused:
     b, e = classify(m)
     entries.append({"module": m, "group": "fused", "bucket": b, "evidence": e})
 for m in dsa:
-    entries.append({"module": m, "group": "fused/DSA", "bucket": "classified-miss",
-                    "evidence": DSA_MISS[m]})
+    if m in DSA_VERIFIED:
+        entries.append({"module": m, "group": "fused/DSA", "bucket": "verified-e2e",
+                        "evidence": DSA_VERIFIED[m]})
+    else:
+        entries.append({"module": m, "group": "fused/DSA", "bucket": "classified-miss",
+                        "evidence": DSA_MISS[m]})
 
 # ---- Triton refs (38) ------------------------------------------------------
 # op-class -> evidence. verified where the op-class is proven live; the deferred
 # interpolation/correlation/rope get a named miss.
 T_MISS = {
-    "ai_bench_resize": "bicubic/aa resize interpolation (deferred; nearest verified C7a)",
-    "upsample_bicubic2d_aa": "bicubic/anti-aliased interpolation (deferred)",
+    "ai_bench_resize": ("bicubic-aa DOWNSAMPLE: the compute mechanism (separable "
+                        "resample = two contractions with precomputed cubic-aa "
+                        "weight matrices) is reachable, but bit-faithful "
+                        "reproduction of torch's antialias weight derivation is "
+                        "unresolved (~7-8% residual with the documented a=-0.75 "
+                        "variable-support formula) -- a weight-derivation detail, "
+                        "not a missing compute mechanism (M7b)"),
+    "upsample_bicubic2d_aa": ("bicubic-aa DOWNSAMPLE variable-support kernel: same "
+                              "as ai_bench_resize -- separable resample-matmul is "
+                              "reachable (fixed 4-tap bicubic UPSAMPLE already "
+                              "lowered, test/lower-pool-interp-to-gpu.mlir), but "
+                              "exact torch-aa weight replication unresolved (M7b)"),
     "ai_bench_correlation": "cross-correlation multi-op graph (sliding-window reduce composition)",
 }
 T_PROVEN = {  # op-class handled by an available pass, not individually re-run here

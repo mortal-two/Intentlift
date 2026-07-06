@@ -28,16 +28,16 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 137 | 25 |
+| verified-e2e | 143 | 25 |
 | extraction-only-proven | 45 | 10 |
-| classified-miss | 11 | 3 |
+| classified-miss | 5 | 3 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (137)
+### verified-e2e (143)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -52,8 +52,11 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `reshape_and_cache` | fused | P8 KV-cache: the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] layout as an index-remap C3 scatter (destination coord computed host-side, one intent.scatter into the flat cache); test_p8_pk BYTE-EXACT key+value cache vs flag_gems |
 | `reshape_and_cache_flash` | fused | P6 KV-cache: C3 scatter of key/value rows into the flash paged cache at slot addresses (cache[slot,:] = kv[t,:], scatter axis 0); test_llm_serving_pk vs torch+flag_gems (exact) |
 | `rotary_embedding` | fused | P6 rotary: same paired-rotation mechanism as apply_rotary_pos_emb (test_llm_serving_pk vs torch+flag_gems, both rotary_interleaved modes) |
+| `rwkv_ka_fusion` | fused | M7b: NOT a carried-state recurrence -- flag_gems' fused kernel is an elementwise fusion + a per-head grouped L2 normalise (reduce over the head-channel group); interpret PK of all 3 outputs vs flag_gems.rwkv_ka_fusion (test_residual_coverage_pk, rel<2e-2) |
+| `rwkv_mm_sparsity` | fused | M7b: NOT sparse addressing -- k(1D)@v(2D) mat-vec contraction; the 'sparsity' is a perf-only zero-row skip that does not change the value; interpret PK vs flag_gems.rwkv_mm_sparsity (pow2 K) + torch (test_residual_coverage_pk, rel_torch<1e-5) |
 | `silu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `topk_softmax` | fused | op-graph dispatch: softmax->topk (2-stage reduce->sort MoE-gating); test_opgraph_pk weights+indices vs torch+flag_gems |
+| `bin_topk` | fused/DSA | M7b: binned top-k = top-k INDICES over a row segment = our sort/topk op; interpret PK vs torch.topk (set match). flag_gems' bucket-sort kernel does not compile on sm_120a (LLVM 'Cannot select v2f16'), so torch is the reference (test_residual_coverage_pk) |
 | `abs` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `add` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `addcdiv` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
@@ -69,6 +72,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `argmax` | ops | C6 arg-reduce PK (test_order_stats_pk.py) |
 | `argmin` | ops | C6 arg-reduce PK (test_order_stats_pk.py) |
 | `atan` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `attention` | ops | M7b: our register-resident flash-mma fwd (+causal) IS scaled-dot-product attention; the cubin is PK'd vs BOTH flag_gems.scaled_dot_product_attention and torch SDPA, causal + non-causal (test_residual_coverage_pk / test_flash_fwd_*_pk, rel<2e-2) |
 | `avg_pool2d` | ops | C7a pool/interp PK (test_pool_interp_pk.py) |
 | `baddbmm` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `bmm` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -92,6 +96,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `exp` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `exp2` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `fill` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `flash_kernel` | ops | M7b: the flash inner online-softmax loop kernel = our register-resident nvgpu.mma.sync flash fwd+causal+LSE, lowered by -convert-intent-flash-mma-to-gpu to ONE sm_120a gpu.launch and PK'd vs torch SDPA + flag_gems SDPA (test_flash_fwd_mma_pk / _causal_pk / _lse_pk, rel<2e-2) |
 | `flip` | ops | C4 layout PK (test_layout_pk.py) |
 | `full` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `full_like` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -149,6 +154,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `resolve_conj` | ops | P5 complex: (re,-im) plane negation (test_complex_pk.py vs torch view_as_real) |
 | `resolve_neg` | ops | P5 complex: (-re,-im) plane negation (test_complex_pk.py vs torch view_as_real) |
 | `rms_norm` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: row-reduction dx (recompute inv_rms) (test_backward_pk.py vs autograd+flag_gems) |
+| `scaled_softmax` | ops | M7b: softmax(scale*x) over the last axis = a row-reduction softmax with a scalar pre-scale (the exact subgraph our flash fwd computes internally); interpret PK vs flag_gems.scaled_softmax_forward + torch (test_residual_coverage_pk, rel_flaggems~2e-4) |
 | `scatter` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
 | `scatter_add_` | ops | C3 gather/scatter PK (test_gather_scatter_pk.py) |
 | `sigmoid` | ops | 15-kernel certified corpus (corpus/kernels); backward P4: pointwise map grad*y*(1-y) (test_backward_pk.py vs autograd+flag_gems) |
@@ -229,21 +235,15 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (11)
+### classified-miss (5)
 
 | module | group | evidence / reason |
 |---|---|---|
-| `flash_mla` | fused | flash multi-latent-attention (loop authorship, PRD out-of-scope) |
-| `rwkv_ka_fusion` | fused | RWKV state-recurrent fusion (sequential scan with carried state) |
-| `rwkv_mm_sparsity` | fused | RWKV sparse-mm fusion (sparse addressing) |
-| `bin_topk` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
-| `indexer_k_tiled` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
-| `sparse_mla` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
-| `attention` | ops | flash/attention loop-kernel authorship beyond pipeline auto-lift (PRD out-of-scope) |
-| `flash_api` | ops | flash-attention host API glue (multi-kernel, not one op-graph) |
-| `flash_kernel` | ops | flash-attention inner loop kernel (loop authorship, PRD out-of-scope) |
-| `get_scheduler_metadata` | ops | scheduler-metadata helper (not a numeric op) |
-| `scaled_softmax` | ops | attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path) |
+| `flash_mla` | fused | genuinely-new paged/latent-addressing: multi-latent attention gathers KV through a paged block_table (data-dependent block addressing) with dv!=d latent compression -- a sparse-paged gather mechanism our dense flash loop does not express |
+| `indexer_k_tiled` | fused/DSA | genuinely-new sparse index-selection + addressing (learned/tiled top-k KV index gather); not expressible by the dense op-classes |
+| `sparse_mla` | fused/DSA | genuinely-new sparse index-selection + addressing (learned/tiled top-k KV index gather); not expressible by the dense op-classes |
+| `flash_api` | ops | non-numeric host orchestration: the multi-kernel launcher (splitkv-combine + varlen-ragged + paged-KV dispatch) that wraps flash_fwd_kernel. The numeric kernel it dispatches (flash_kernel) IS verified (-> CLUSTER); the module itself is host glue over 4 kernels, not one op-graph |
+| `get_scheduler_metadata` | ops | non-numeric scheduling helper: computes an int32 tile-split scheduling plan (num_splits / SM partition, headdim rounding) -- no data-parallel tensor math, not a kernel |
 
 ## Triton refs (refs/…/kernels/triton/ops, read-only)
 
@@ -297,5 +297,5 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | module | group | evidence / reason |
 |---|---|---|
 | `ai_bench_correlation` | triton-ref | cross-correlation multi-op graph (sliding-window reduce composition) |
-| `ai_bench_resize` | triton-ref | bicubic/aa resize interpolation (deferred; nearest verified C7a) |
-| `upsample_bicubic2d_aa` | triton-ref | bicubic/anti-aliased interpolation (deferred) |
+| `ai_bench_resize` | triton-ref | bicubic-aa DOWNSAMPLE: the compute mechanism (separable resample = two contractions with precomputed cubic-aa weight matrices) is reachable, but bit-faithful reproduction of torch's antialias weight derivation is unresolved (~7-8% residual with the documented a=-0.75 variable-support formula) -- a weight-derivation detail, not a missing compute mechanism (M7b) |
+| `upsample_bicubic2d_aa` | triton-ref | bicubic-aa DOWNSAMPLE variable-support kernel: same as ai_bench_resize -- separable resample-matmul is reachable (fixed 4-tap bicubic UPSAMPLE already lowered, test/lower-pool-interp-to-gpu.mlir), but exact torch-aa weight replication unresolved (M7b) |
