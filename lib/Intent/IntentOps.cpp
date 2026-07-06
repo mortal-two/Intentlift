@@ -111,7 +111,7 @@ LogicalResult CastOp::verify() {
 }
 
 LogicalResult ScanOp::verify() {
-  static constexpr llvm::StringRef kFns[] = {"sum"};
+  static constexpr llvm::StringRef kFns[] = {"sum", "max", "min"};
   bool ok = false;
   for (llvm::StringRef f : kFns)
     if (getFn() == f)
@@ -126,6 +126,29 @@ LogicalResult ScanOp::verify() {
     return emitOpError("axis ")
            << getAxis() << " out of range for rank-" << inTy.getRank()
            << " input";
+  return success();
+}
+
+LogicalResult ArgReduceOp::verify() {
+  if (getFn() != "argmax" && getFn() != "argmin")
+    return emitOpError("unknown arg_reduce fn '")
+           << getFn() << "' (expected argmax/argmin)";
+  auto inTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (!rTy.getElementType().isIntOrIndex())
+    return emitOpError("arg_reduce result must be an integer-typed tensor (an "
+                       "index)");
+  int64_t axis = getAxis();
+  if (axis < 0 || axis >= inTy.getRank())
+    return emitOpError("axis ")
+           << axis << " out of range for rank-" << inTy.getRank() << " input";
+  // Result is the input with `axis` collapsed: either dropped (rank-1) or kept
+  // as size 1 (keepdims). Both layouts are accepted.
+  bool keepdims = rTy.getRank() == inTy.getRank();
+  bool collapsed = rTy.getRank() == inTy.getRank() - 1;
+  if (!keepdims && !collapsed)
+    return emitOpError("result rank must be input rank (keepdims) or input "
+                       "rank-1 (collapsed)");
   return success();
 }
 

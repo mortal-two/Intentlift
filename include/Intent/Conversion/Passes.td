@@ -246,6 +246,42 @@ def ConvertIntentRngToGPU
   ];
 }
 
+def ConvertIntentArgReduceToGPU
+    : Pass<"convert-intent-arg-reduce-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower an argmax/argmin intent func (one intent.arg_reduce over "
+                "the last axis) to one block-cooperative gpu.launch returning the "
+                "extremum's INDEX.";
+  let description = [{
+    The C6 order-statistics arg-reduce pass. Recognizes a `func.func` whose body
+    is a single `intent.arg_reduce` (`argmax`/`argmin`) over a rank-2 `[M,N]`
+    static-f32 row (`axis = 1`), producing the integer INDEX of the row extremum
+    (`[M]` or keepdims `[M,1]` i32). It lowers to ONE block-cooperative
+    `gpu.launch`: one block per row, the feature axis split over T threads
+    (K = N/T contiguous columns each). Each thread scans its K columns for a local
+    `(best_val, best_idx)` pair (ascending columns + a STRICT compare so ties keep
+    the lowest column, matching torch's first-index tie-break); a power-of-two
+    shared-memory tree then reduces the T per-thread pairs keeping the extremum
+    (ties -> the lower index). Thread 0 stores the winning integer index.
+
+    The new mechanism vs. `intent.reduce` (value-only, one `gpu.all_reduce`) is
+    the PAIR carried through the reduction — an argmax/argmin tree over
+    `(val, idx)` in two dynamic-shared buffers — and an INTEGER output. Verified
+    exact-index vs torch.argmax/argmin and the real flag_gems kernel. Static
+    shapes, N % T == 0, T a power of two.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the feature axis; 0 = auto.">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

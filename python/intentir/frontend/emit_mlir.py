@@ -84,6 +84,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
     if op.op == "scan":
         (x,) = op.operands
         return list(env[x]) if x in env else None
+    if op.op == "arg_reduce":
+        (x,) = op.operands
+        if x not in env:
+            return None
+        ax = int(op.attrs["axis"]) - fold  # collapse the axis (rank-1 index out)
+        return [d for i, d in enumerate(env[x]) if i != ax]
     if op.op == "iota":
         return [int(op.attrs["n"])]
     if op.op == "const":
@@ -222,6 +228,14 @@ class _Printer:
                 f'{indent}{r} = intent.scan {x} {{fn = "{a["fn"]}", '
                 f'axis = {int(a["axis"]) - fold}}} : '
                 f'({_tt(env[op.operands[0]])}) -> {_tt(env[op.result])}')
+        elif op.op == "arg_reduce":
+            # Index-of-extremum: an INTEGER (i32) result with `axis` collapsed.
+            x = self.ssa[op.operands[0]]
+            self.int_results[op.result] = "i32"
+            self.lines.append(
+                f'{indent}{r} = intent.arg_reduce {x} {{fn = "{a["fn"]}", '
+                f'axis = {int(a["axis"]) - fold} : i64}} : '
+                f'({_tt(env[op.operands[0]])}) -> {self._ttn(op.result, env)}')
         elif op.op == "map_unary":
             x = self.ssa[op.operands[0]]
             self.lines.append(

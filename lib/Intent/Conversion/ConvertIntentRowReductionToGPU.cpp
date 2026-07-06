@@ -410,7 +410,8 @@ struct RowReductionLowering {
         auto inTy = cast<RankedTensorType>(sc.getInput().getType());
         if (sc.getAxis() != 1 || inTy.getRank() != 2 ||
             inTy.getDimSize(0) != M || inTy.getDimSize(1) != N ||
-            sc.getFn() != "sum")
+            !reduceInfoFor(sc.getFn()) || sc.getFn() == "mean" ||
+            sc.getFn() == "prod")
           return failure();
         scans.push_back(sc);
       } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op)) {
@@ -1028,30 +1029,36 @@ struct RowReductionLowering {
 
     Value c0i = b.create<arith::ConstantIndexOp>(loc, 0);
 
-    // For each scan: build the full-row inclusive cumsum register tile.
+    // For each scan: build the full-row inclusive scan register tile. `fn`
+    // selects the monoid combine (sum=+, max=max, min=min); the SAME
+    // Hillis-Steele block scan drives all three (C5/M4 for sum, C6 for max/min).
     for (ScanOp sc : scans) {
+      ReduceInfo sinfo = *reduceInfoFor(sc.getFn());
+      bool isSum = sinfo.op == gpu::AllReduceOperation::ADD;
       // (1) per-thread sequential inclusive prefix over its K contiguous values.
       SmallVector<Value> local(K);
       Value running;
       for (int64_t k = 0; k < K; ++k) {
         Value v = emitAt(b, loc, sc.getInput(), k);
-        running = (k == 0) ? v : b.create<arith::AddFOp>(loc, running, v);
+        running = (k == 0) ? v : combineScalar(b, loc, sinfo.op, running, v);
         local[k] = running;
       }
       Value segTotal = local[K - 1];
       // (2) cross-thread INCLUSIVE scan of the T segment totals via a parallel
       // Hillis-Steele scan over `scratch` (log2(T) steps, fully unrolled; T is
       // static). Each step reads scratch[tx-stride] into a register, barriers,
-      // then writes scratch[tx] += that (so no read/write hazard on the buffer);
-      // exclusive prefix = inclusive - segTotal.
+      // then writes scratch[tx] = combine(scratch[tx], that) (no read/write
+      // hazard on the buffer). Inactive lanes read the monoid IDENTITY (0 for
+      // sum, -inf/+inf for max/min).
       b.create<memref::StoreOp>(loc, segTotal, scratch, ValueRange{tx});
       b.create<gpu::BarrierOp>(loc);
       for (int64_t stride = 1; stride < T; stride <<= 1) {
         Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
         Value active =
             b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, tx, cStride);
-        // v = (tx >= stride) ? scratch[tx-stride] : 0  (read phase)
-        Value zeroF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
+        // v = (tx >= stride) ? scratch[tx-stride] : ident  (read phase)
+        Value identF =
+            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(sinfo.ident));
         auto rdIf = b.create<scf::IfOp>(loc, TypeRange{f32}, active,
                                         /*withElseRegion=*/true);
         {
@@ -1061,26 +1068,50 @@ struct RowReductionLowering {
           Value v = b.create<memref::LoadOp>(loc, scratch, ValueRange{src});
           b.create<scf::YieldOp>(loc, v);
           b.setInsertionPointToStart(rdIf.elseBlock());
-          b.create<scf::YieldOp>(loc, zeroF);
+          b.create<scf::YieldOp>(loc, identF);
         }
         b.create<gpu::BarrierOp>(loc);
-        // scratch[tx] += v  (write phase, only active lanes)
+        // scratch[tx] = combine(scratch[tx], v)  (write phase, only active lanes)
         auto wrIf = b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
         {
           OpBuilder::InsertionGuard g(b);
           b.setInsertionPointToStart(wrIf.thenBlock());
           Value cur = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
-          Value nv = b.create<arith::AddFOp>(loc, cur, rdIf.getResult(0));
+          Value nv = combineScalar(b, loc, sinfo.op, cur, rdIf.getResult(0));
           b.create<memref::StoreOp>(loc, nv, scratch, ValueRange{tx});
         }
         b.create<gpu::BarrierOp>(loc);
       }
-      Value incl = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
-      Value excl = b.create<arith::SubFOp>(loc, incl, segTotal);
-      // (3) cssv[k] = excl + local[k] (full-row inclusive prefix).
+      // Exclusive prefix. sum keeps the invertible incl-segTotal (byte-identical
+      // to the proven sparsemax path); a general monoid (max/min) is not
+      // invertible, so excl = the inclusive value of thread tx-1 (ident for
+      // tx==0), read from the now-fully-scanned buffer (post-barrier, safe).
+      Value excl;
+      if (isSum) {
+        Value incl = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+        excl = b.create<arith::SubFOp>(loc, incl, segTotal);
+      } else {
+        Value identF =
+            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(sinfo.ident));
+        Value isFirst = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, tx, c0i);
+        auto exIf = b.create<scf::IfOp>(loc, TypeRange{f32}, isFirst,
+                                        /*withElseRegion=*/true);
+        {
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(exIf.thenBlock());
+          b.create<scf::YieldOp>(loc, identF);
+          b.setInsertionPointToStart(exIf.elseBlock());
+          Value prev = b.create<arith::SubIOp>(loc, tx, c1);
+          Value pv = b.create<memref::LoadOp>(loc, scratch, ValueRange{prev});
+          b.create<scf::YieldOp>(loc, pv);
+        }
+        excl = exIf.getResult(0);
+      }
+      // (3) out[k] = combine(excl, local[k]) (full-row inclusive prefix).
       SmallVector<Value> vals(K);
       for (int64_t k = 0; k < K; ++k)
-        vals[k] = b.create<arith::AddFOp>(loc, excl, local[k]);
+        vals[k] = combineScalar(b, loc, sinfo.op, excl, local[k]);
       scanVals[sc.getResult()] = vals;
       // A later reduce may consume scan results; fence the scratch reuse.
       b.create<gpu::BarrierOp>(loc);

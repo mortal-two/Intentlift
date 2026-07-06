@@ -133,9 +133,27 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
 
     if o == "scan":
         fn = a["fn"]
-        if fn != "sum":
-            raise InterpError(f"scan: unknown fn {fn!r}")
-        return np.cumsum(env[op.operands[0]], axis=int(a["axis"]))
+        x, ax = env[op.operands[0]], int(a["axis"])
+        if fn == "sum":
+            return np.cumsum(x, axis=ax)
+        if fn == "max":  # cummax value (torch.cummax also returns indices)
+            return np.maximum.accumulate(x, axis=ax)
+        if fn == "min":  # cummin value
+            return np.minimum.accumulate(x, axis=ax)
+        raise InterpError(f"scan: unknown fn {fn!r}")
+
+    if o == "arg_reduce":
+        # Index of the extremum along `axis` (torch.argmax/argmin). Ties -> the
+        # first/lowest index, which is exactly numpy argmax/argmin's contract.
+        fn = a["fn"]
+        x, ax = env[op.operands[0]], int(a["axis"])
+        if fn == "argmax":
+            idx = np.argmax(x, axis=ax)
+        elif fn == "argmin":
+            idx = np.argmin(x, axis=ax)
+        else:
+            raise InterpError(f"arg_reduce: unknown fn {fn!r}")
+        return idx.astype(np.int32)
 
     if o == "contraction":
         sub = a["subscripts"]

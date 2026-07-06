@@ -98,9 +98,11 @@ def Intent_CastOp : Intent_Op<"cast"> {
 def Intent_ScanOp : Intent_Op<"scan"> {
   let summary = "Inclusive cumulative scan along one axis (Layer A).";
   let description = [{
-    Inclusive cumulative scan of `input` along `axis` with `fn` (currently
-    `sum` = cumsum). Shape-preserving: the result has the same shape and element
-    type as the input; `result[..., i, ...] = combine(input[..., 0..i, ...])`.
+    Inclusive cumulative scan of `input` along `axis` with `fn`
+    (`sum` = cumsum, `max` = cummax, `min` = cummin). Shape-preserving: the
+    result has the same shape and element type as the input;
+    `result[..., i, ...] = combine(input[..., 0..i, ...])`. `max`/`min` (C6) reuse
+    the SAME Hillis-Steele block scan as `sum`, only the combine changes.
     Unlike `intent.reduce` (which collapses the axis to a single value) and
     `intent.loop` (which yields only the final carry), scan keeps the per-element
     running value — the primitive sparsemax's `cumsum` of the sorted row needs.
@@ -108,6 +110,26 @@ def Intent_ScanOp : Intent_Op<"scan"> {
     inclusive scan over a contiguous column-to-thread tiling (per-thread
     sequential prefix + a cross-thread exclusive scan of the segment totals
     through `gpu.dynamic_shared_memory` + `gpu.barrier`).
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn, I64Attr:$axis);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_ArgReduceOp : Intent_Op<"arg_reduce"> {
+  let summary = "Index of the extremum along one axis (Layer A): argmax/argmin.";
+  let description = [{
+    Reduce `input` along `axis` to the INTEGER INDEX of the extremum
+    (torch.argmax / torch.argmin), NOT the extremum value. `fn` selects
+    `argmax`/`argmin`. Ties resolve to the FIRST (lowest) index, matching torch.
+    The result is an integer-typed tensor with `axis` collapsed (rank-1 `[M]` for
+    a `[M,N]` row argmax, or keepdims `[M,1]`). The C6 order-statistics mechanism:
+    the block reduction carries a `(best_val, best_idx)` PAIR — a manual argmax
+    tree over the register tile + a shared-memory tree keeping the max/min value's
+    column index — and stores the integer index. Distinct from `intent.reduce`
+    (returns the value) and `intent.scan` (running value). `axis` must index a
+    static extent.
   }];
   let arguments = (ins AnyRankedTensor:$input, StrAttr:$fn, I64Attr:$axis);
   let results = (outs AnyRankedTensor:$result);

@@ -90,6 +90,15 @@ Atomic ops (each is one JSON object in a "body" list):
                order-independent and reproducible. randn / normal / uniform(a,b)
                / dropout are COMPOSITIONS of rand (see below), NOT new ops.
      {"op":"rand","result":R,"attrs":{"seed":<int>,"shape":[..]}}
+  scan       : inclusive cumulative scan along ONE `axis`, shape-preserving. fn in
+               {sum,max,min} (cumsum / cummax / cummin). torch.cummax/cummin also
+               return argmax/argmin indices — emit the VALUE scan here (pair the
+               index with arg_reduce if needed).
+     {"op":"scan","result":R,"operands":[A],"attrs":{"fn":F,"axis":i}}
+  arg_reduce : INDEX of the extremum along ONE `axis` (torch.argmax/argmin).
+               Result is an INTEGER tensor (the axis collapsed); ties resolve to
+               the FIRST/lowest index (matches torch). fn in {argmax,argmin}.
+     {"op":"arg_reduce","result":R,"operands":[A],"attrs":{"fn":F,"axis":i}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

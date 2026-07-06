@@ -35,12 +35,13 @@
 
 **归约族**(Layer A 语义 + Layer B 结合性)
 - `reduce` — 沿轴归约,op ∈ {sum, max, min, prod, any, all};带**结合性标注** `associative` / `float_nondeterministic`(见下)
+- `arg_reduce`(C6)— 沿轴归约到**极值的整数索引**(argmax / argmin),而非极值本身;结果是整数 tensor(轴折叠或 keepdims)。并列取**最低索引**(与 torch 一致)。lowering:block 归约携带 `(best_val, best_idx)` 对(register-tile 局部最优 + 共享内存 pair-tree),整数输出。见 `convert-intent-arg-reduce-to-gpu`。
 
 **收缩族**(Layer A,`reduction` 轴 + `indexing maps`)
 - `contraction` — einsum 风格的通用收缩(matmul / batched-matmul / dot / 带轴标注)
 
 **扫描 / 递推族**(Layer A)
-- `scan` — 沿轴的带 carry 递推(cumsum / online-softmax 累加器)。复杂递推用结构化 `loop`,见 [structured-loop.md](structured-loop.md)
+- `scan` — 沿轴的带 carry 递推,fn ∈ {sum, max, min}(cumsum / cummax / cummin / online-softmax 累加器)。max/min(C6)复用与 sum 相同的 Hillis-Steele block scan,仅换 combine + 单位元(-inf/+inf);一般 monoid 不可逆,exclusive 前缀取线程 `tx-1` 的 inclusive 值而非 sum 专用的 incl-segTotal 相减。复杂递推用结构化 `loop`,见 [structured-loop.md](structured-loop.md)
 
 **数据移动 / 重排族**(Layer A,纯重排)
 - `transpose` / `reshape` / `broadcast` / `slice` / `concat` / `pad`
