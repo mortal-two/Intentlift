@@ -16,14 +16,27 @@
 // and loaded (or zero for out-of-bounds pad) directly into the padded f16 shared
 // tile -- the address math IS the tile-fill load predicate. W is already a real
 // [Cout, Cin*kH*kW] matrix in memory (row-major NCHW weight), so its tile-fill
-// is a plain [N_gemm, K] gather. Both operands are cast f32 -> f16 during the
-// fill (fp16 input mode: reduced precision, rel ~1e-2 vs fp32 torch, matching
-// the fact that the cuDNN reference itself runs TF32). The register-level
-// contraction (ldmatrix + mma.sync + per-warp vector<2x2xf32> accumulators
-// carried across the K loop as scf.for iter_args) and the padded-smem tile
-// geometry are reused verbatim from ConvertIntentContractionToGPUMMA; the store
-// scatters each accumulator element back to the NCHW output (row -> (n,oh,ow),
-// col -> co) with an optional bias add.
+// is a plain [N_gemm, K] gather.
+//
+// Two input modes:
+//   * fp16 (default, fast): both operands are cast f32 -> f16 during the fill;
+//     the contraction is nvgpu.ldmatrix + nvgpu.mma.sync m16n8k16. Reduced
+//     precision (rel ~1e-2..1e-5 depending on K), matching the fact that the
+//     cuDNN reference itself runs TF32.
+//   * tf32 (`tf32=true`, precise): the operands stay f32 in shared memory and
+//     are rounded to TF32 by the mma.sync itself. ldmatrix is 16-bit only, so
+//     the m16n8k8 tf32 fragments (A=vector<4x1xf32>, B=vector<2x1xf32>) are
+//     gathered by explicit warp-distributed memref.load at the PTX lane->(row,
+//     col) coordinates and packed with vector.insert, then contracted on the
+//     m16n8k8 `tf32Enabled` nvgpu.mma.sync. cuDNN-matching numerics: rel<1e-3
+//     vs fp32 torch (measured worst ~8.8e-4).
+//
+// Either way the register-level accumulator is per-warp vector<2x2xf32> carried
+// across the K loop as scf.for iter_args (the m16n8 accumulator layout is
+// identical for k16 and k8), and the store scatters each accumulator element
+// back to the NCHW output (row -> (n,oh,ow), col -> co) with an optional bias
+// add. The padded-smem tile geometry is reused from
+// ConvertIntentContractionToGPUMMA.
 //
 // Single-buffered staging (fill -> barrier -> mma -> barrier): the im2col gather
 // is not contiguous so cp.async (which needs a contiguous source) is not used
@@ -64,13 +77,16 @@ using namespace intent;
 
 namespace {
 
-// mma.sync m16n8k16 tile geometry (identical to the contraction pass).
-static constexpr int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles)
-static constexpr int64_t MMA_M = 16, MMA_N = 8, MMA_K = 16;
+// mma.sync tile geometry (identical to the contraction pass). MMA_K is 16 for
+// the fp16 m16n8k16 path and 8 for the TF32 m16n8k8 path; BK stays 32 (both
+// divide it, giving 2 or 4 k mma sub-tiles per staged K-block).
+static constexpr int64_t BK = 32; // K staging step
+static constexpr int64_t MMA_M = 16, MMA_N = 8;
 
 struct ConvMMALowering {
   func::FuncOp fn;
   int64_t reqBM, reqBN;
+  bool tf32; // precise TF32 input mode (else fast fp16)
 
   int64_t BM = 64, BN = 64;
   ConvOp conv;
@@ -82,8 +98,11 @@ struct ConvMMALowering {
   bool hasBias = false;
   Type f16, f32;
 
-  ConvMMALowering(func::FuncOp fn, int64_t reqBM, int64_t reqBN)
-      : fn(fn), reqBM(reqBM), reqBN(reqBN) {}
+  ConvMMALowering(func::FuncOp fn, int64_t reqBM, int64_t reqBN, bool tf32)
+      : fn(fn), reqBM(reqBM), reqBN(reqBN), tf32(tf32) {}
+
+  // MMA K step: fp16 uses m16n8k16, TF32 uses m16n8k8.
+  int64_t mmaK() const { return tf32 ? 8 : 16; }
 
   static MemRefType memrefOf(RankedTensorType t) {
     return MemRefType::get(t.getShape(), t.getElementType());
@@ -163,6 +182,11 @@ struct ConvMMALowering {
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
     f16 = b.getF16Type();
     f32 = b.getF32Type();
+    // Shared-tile operand element type: f16 (fast path) or f32 (TF32 path -- the
+    // operands stay f32 in smem and are rounded to tf32 by the mma.sync itself).
+    Type tElem = tf32 ? f32 : f16;
+    int64_t elBytes = tf32 ? 4 : 2;
+    int64_t MMA_K = mmaK();
 
     // New signature: (input, weight[, bias]) ++ [output] memrefs.
     SmallVector<Type> inTys;
@@ -193,7 +217,7 @@ struct ConvMMALowering {
     int64_t gridN = (Ng + BN - 1) / BN;
     int64_t numK = (Kg + BK - 1) / BK; // K padded via guarded fill
 
-    int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;
+    int64_t aBytes = BM * BK * elBytes, wBytes = BN * BK * elBytes;
     Value shBytes = b.create<arith::ConstantOp>(
         loc, b.getI32IntegerAttr((int32_t)(aBytes + wBytes)));
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
@@ -252,14 +276,19 @@ struct ConvMMALowering {
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy = MemRefType::get({BM, BK}, f16, nullptr, wgSpace);
-    auto wShTy = MemRefType::get({BN, BK}, f16, nullptr, wgSpace);
+    auto aShTy = MemRefType::get({BM, BK}, tElem, nullptr, wgSpace);
+    auto wShTy = MemRefType::get({BN, BK}, tElem, nullptr, wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = cidx(aBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
 
-    auto aFragTy = VectorType::get({4, 2}, f16);
-    auto wFragTy = VectorType::get({2, 2}, f16);
+    // Register fragments. fp16 m16n8k16: A=vector<4x2xf16>, W=vector<2x2xf16>
+    // loaded via nvgpu.ldmatrix. TF32 m16n8k8: A=vector<4x1xf32>,
+    // W=vector<2x1xf32> loaded by explicit warp-distributed memref.load (ldmatrix
+    // is 16-bit only, so the 32-bit tf32 fragments are gathered by hand at the
+    // PTX lane->(row,col) coordinates). Accumulator vector<2x2xf32> either way.
+    auto aFragTy = tf32 ? VectorType::get({4, 1}, f32) : VectorType::get({4, 2}, f16);
+    auto wFragTy = tf32 ? VectorType::get({2, 1}, f32) : VectorType::get({2, 2}, f16);
     auto accTy = VectorType::get({2, 2}, f32);
     auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
     Value zeroAcc = b.create<arith::ConstantOp>(
@@ -326,19 +355,19 @@ struct ConvMMALowering {
             nb.create<arith::AndIOp>(nl, iwGe, iwLt));
         cond = nb.create<arith::AndIOp>(
             nl, cond, nb.create<arith::AndIOp>(nl, mIn, kIn));
-        auto ifOp = nb.create<scf::IfOp>(nl, TypeRange{f16}, cond, true);
+        auto ifOp = nb.create<scf::IfOp>(nl, TypeRange{tElem}, cond, true);
         {
           OpBuilder tb = ifOp.getThenBodyBuilder();
           Value ihI = tb.create<arith::IndexCastOp>(nl, tb.getIndexType(), ih);
           Value iwI = tb.create<arith::IndexCastOp>(nl, tb.getIndexType(), iw);
           Value v = tb.create<memref::LoadOp>(nl, inMem,
                                               ValueRange{n, ci, ihI, iwI});
-          Value vh = tb.create<arith::TruncFOp>(nl, f16, v);
+          Value vh = tf32 ? v : tb.create<arith::TruncFOp>(nl, f16, v).getResult();
           tb.create<scf::YieldOp>(nl, ValueRange{vh});
         }
         {
           OpBuilder eb = ifOp.getElseBodyBuilder();
-          Value z = eb.create<arith::ConstantOp>(nl, eb.getFloatAttr(f16, 0.0));
+          Value z = eb.create<arith::ConstantOp>(nl, eb.getFloatAttr(tElem, 0.0));
           eb.create<scf::YieldOp>(nl, ValueRange{z});
         }
         nb.create<memref::StoreOp>(nl, ifOp.getResult(0), aSh,
@@ -360,17 +389,17 @@ struct ConvMMALowering {
         Value kIn =
             nb.create<arith::CmpIOp>(nl, arith::CmpIPredicate::ult, gk, cKg);
         nIn = nb.create<arith::AndIOp>(nl, nIn, kIn);
-        auto ifOp = nb.create<scf::IfOp>(nl, TypeRange{f16}, nIn, true);
+        auto ifOp = nb.create<scf::IfOp>(nl, TypeRange{tElem}, nIn, true);
         {
           OpBuilder tb = ifOp.getThenBodyBuilder();
           Value v = tb.create<memref::LoadOp>(nl, wMem,
                                               ValueRange{gn, ci, kh, kw});
-          Value vh = tb.create<arith::TruncFOp>(nl, f16, v);
+          Value vh = tf32 ? v : tb.create<arith::TruncFOp>(nl, f16, v).getResult();
           tb.create<scf::YieldOp>(nl, ValueRange{vh});
         }
         {
           OpBuilder eb = ifOp.getElseBodyBuilder();
-          Value z = eb.create<arith::ConstantOp>(nl, eb.getFloatAttr(f16, 0.0));
+          Value z = eb.create<arith::ConstantOp>(nl, eb.getFloatAttr(tElem, 0.0));
           eb.create<scf::YieldOp>(nl, ValueRange{z});
         }
         nb.create<memref::StoreOp>(nl, ifOp.getResult(0), wSh,
@@ -378,24 +407,67 @@ struct ConvMMALowering {
       }
     };
 
-    // acc[nt] += A * W_nt over the BK/16 k-subtiles (contraction pass recipe).
+    // acc[nt] += A * W_nt over the BK/MMA_K k-subtiles (contraction pass recipe).
     auto computeTile = [&](OpBuilder &nb, Location nl,
                            ValueRange acc) -> SmallVector<Value> {
       SmallVector<Value> cur(acc.begin(), acc.end());
       for (int64_t ks = 0; ks < BK / MMA_K; ++ks) {
         Value ksc = cidx(ks * MMA_K);
-        Value aKcol = nb.create<arith::AddIOp>(nl, ksc, aColLane);
-        Value aFrag = nb.create<nvgpu::LdMatrixOp>(
-            nl, aFragTy, aSh, ValueRange{aRow, aKcol}, /*transpose=*/false,
-            /*numTiles=*/4);
-        Value wKcol = nb.create<arith::AddIOp>(nl, ksc, wColLane);
+        if (!tf32) {
+          // ---- fp16 m16n8k16: nvgpu.ldmatrix warp-cooperative fragment load -//
+          Value aKcol = nb.create<arith::AddIOp>(nl, ksc, aColLane);
+          Value aFrag = nb.create<nvgpu::LdMatrixOp>(
+              nl, aFragTy, aSh, ValueRange{aRow, aKcol}, /*transpose=*/false,
+              /*numTiles=*/4);
+          Value wKcol = nb.create<arith::AddIOp>(nl, ksc, wColLane);
+          for (int j = 0; j < nFrag; ++j) {
+            Value wRow = nb.create<arith::AddIOp>(nl, cidx(j * MMA_N), laneMod8);
+            Value wFrag = nb.create<nvgpu::LdMatrixOp>(
+                nl, wFragTy, wSh, ValueRange{wRow, wKcol}, /*transpose=*/false,
+                /*numTiles=*/2);
+            cur[j] =
+                nb.create<nvgpu::MmaSyncOp>(nl, aFrag, wFrag, cur[j], mmaShape);
+          }
+          continue;
+        }
+        // ---- TF32 m16n8k8: explicit fragment gather (ldmatrix is 16-bit) ----//
+        // PTX m16n8k8 tf32 lane layout: gid = lane/4, tig = lane%4.
+        //   A(16x8) fragment a0..a3 (vector<4x1xf32>):
+        //     a0=(gid,tig)   a1=(gid+8,tig)   a2=(gid,tig+4)  a3=(gid+8,tig+4)
+        //   B(8x8, stored [n,k]) fragment b0,b1 (vector<2x1xf32>):
+        //     b0=(n=gid, k=tig)   b1=(n=gid, k=tig+4)
+        Value aRow0 = nb.create<arith::AddIOp>(nl, warpRowBase, laneDiv4);
+        Value aRow1 = nb.create<arith::AddIOp>(nl, aRow0, c8);
+        Value kc0 = nb.create<arith::AddIOp>(nl, ksc, laneMod4);
+        Value kc1 = nb.create<arith::AddIOp>(nl, kc0, c4);
+        // Build the 2D fragment vectors via vector.insert into a zero constant
+        // (the shape nvgpu.mma.sync requires; this lowers cleanly through the
+        // gpu-to-nvvm composite, unlike 2D from_elements / shape_cast).
+        Value zA = nb.create<arith::ConstantOp>(
+            nl, DenseElementsAttr::get(aFragTy, nb.getF32FloatAttr(0.0).getValue()));
+        Value a0 = nb.create<memref::LoadOp>(nl, aSh, ValueRange{aRow0, kc0});
+        Value a1 = nb.create<memref::LoadOp>(nl, aSh, ValueRange{aRow1, kc0});
+        Value a2 = nb.create<memref::LoadOp>(nl, aSh, ValueRange{aRow0, kc1});
+        Value a3 = nb.create<memref::LoadOp>(nl, aSh, ValueRange{aRow1, kc1});
+        Value aFrag = zA;
+        Value av[4] = {a0, a1, a2, a3};
+        for (int e = 0; e < 4; ++e)
+          aFrag = nb.create<vector::InsertOp>(nl, av[e], aFrag,
+                                              ArrayRef<int64_t>{e, 0});
         for (int j = 0; j < nFrag; ++j) {
-          Value wRow = nb.create<arith::AddIOp>(nl, cidx(j * MMA_N), laneMod8);
-          Value wFrag = nb.create<nvgpu::LdMatrixOp>(
-              nl, wFragTy, wSh, ValueRange{wRow, wKcol}, /*transpose=*/false,
-              /*numTiles=*/2);
-          cur[j] =
-              nb.create<nvgpu::MmaSyncOp>(nl, aFrag, wFrag, cur[j], mmaShape);
+          Value wRow = nb.create<arith::AddIOp>(nl, cidx(j * MMA_N), laneDiv4);
+          Value b0 = nb.create<memref::LoadOp>(nl, wSh, ValueRange{wRow, kc0});
+          Value b1 = nb.create<memref::LoadOp>(nl, wSh, ValueRange{wRow, kc1});
+          Value zW = nb.create<arith::ConstantOp>(
+              nl, DenseElementsAttr::get(wFragTy,
+                                         nb.getF32FloatAttr(0.0).getValue()));
+          Value wFrag = nb.create<vector::InsertOp>(
+              nl, b0, zW, ArrayRef<int64_t>{0, 0});
+          wFrag = nb.create<vector::InsertOp>(nl, b1, wFrag,
+                                              ArrayRef<int64_t>{1, 0});
+          cur[j] = nb.create<nvgpu::MmaSyncOp>(
+              nl, aFrag, wFrag, cur[j],
+              ArrayRef<int64_t>{MMA_M, MMA_N, MMA_K}, /*tf32Enabled=*/true);
         }
       }
       return cur;
@@ -470,12 +542,12 @@ struct ConvertIntentConvToGPUMMAPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      ConvMMALowering probe(fn, (int64_t)blockM, (int64_t)blockN);
+      ConvMMALowering probe(fn, (int64_t)blockM, (int64_t)blockN, (bool)tf32);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      ConvMMALowering low(fn, (int64_t)blockM, (int64_t)blockN);
+      ConvMMALowering low(fn, (int64_t)blockM, (int64_t)blockN, (bool)tf32);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("conv-mma lowering failed after match");
         return signalPassFailure();

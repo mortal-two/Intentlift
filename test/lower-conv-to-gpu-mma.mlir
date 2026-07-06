@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-conv-to-gpu-mma %s | FileCheck %s
+// RUN: intent-opt -convert-intent-conv-to-gpu-mma='tf32=true' %s | FileCheck %s --check-prefix=TF32
 
 // The tensor-core sibling of -convert-intent-conv-to-gpu. Lowers a forward
 // conv2d as an IMPLICIT GEMM (M=N*OH*OW, N_gemm=Cout, K=Cin*kH*kW) onto the
@@ -31,6 +32,25 @@
 // CHECK:         memref.store
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.
+
+// TF32 (precise) input mode: operands stay f32 in smem (NO arith.truncf), the
+// fragments are gathered by explicit memref.load + vector.insert (NO ldmatrix --
+// it is 16-bit only), and the contraction is the m16n8k8 tf32Enabled mma.sync.
+// TF32-LABEL: func.func @conv2d(
+// TF32:         gpu.launch
+// TF32:         scf.for
+// TF32-SAME:      iter_args
+// TF32:           scf.if
+// TF32-NOT:         arith.truncf
+// TF32:           memref.store
+// TF32:           gpu.barrier
+// TF32-NOT:       nvgpu.ldmatrix
+// TF32:           vector.insert
+// TF32:           nvgpu.mma.sync
+// TF32-SAME:        mmaShape = [16, 8, 8]
+// TF32-SAME:        tf32Enabled
+// TF32:           gpu.barrier
+// TF32:           scf.yield
 func.func @conv2d(%x: tensor<2x4x16x16xf32>, %w: tensor<8x4x3x3xf32>,
                   %b: tensor<8xf32>) -> tensor<2x8x14x14xf32> {
   %o = intent.conv %x, %w, %b {stride = [1, 1], padding = [0, 0], dilation = [1, 1], groups = 1 : i64}

@@ -426,12 +426,14 @@ class ConvMMAKernel:
     """
 
     def __init__(self, mlir_text: str, block_m: int | None = None,
-                 block_n: int | None = None):
+                 block_n: int | None = None, tf32: bool = False):
         opts = []
         if block_m is not None:
             opts.append(f"block-m={block_m}")
         if block_n is not None:
             opts.append(f"block-n={block_n}")
+        if tf32:
+            opts.append("tf32=true")
         pass_opt = "-convert-intent-conv-to-gpu-mma"
         if opts:
             pass_opt += "=" + " ".join(opts)

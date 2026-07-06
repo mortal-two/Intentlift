@@ -522,6 +522,11 @@ def ConvertIntentConvToGPUMMA
            "block C-tile rows BM (numWarps = BM/16 warps tile the M axis).">,
     Option<"blockN", "block-n", "unsigned", /*default=*/"64",
            "block C-tile cols BN (each warp owns BN/8 n8 mma column tiles).">,
+    Option<"tf32", "tf32", "bool", /*default=*/"false",
+           "precise input mode: keep f32 operands, round to TF32 and contract "
+           "on the m16n8k8 nvgpu.mma.sync (tf32Enabled) tensor-core shape "
+           "(rel ~1e-3 vs fp32 torch, cuDNN-matching). Default false = the fast "
+           "fp16 m16n8k16 path (rel ~1e-2).">,
   ];
 }
 

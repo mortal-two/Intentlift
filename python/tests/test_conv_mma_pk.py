@@ -46,6 +46,8 @@ pytestmark = [
 
 # fp16 tensor-core input mode: reduced precision vs fp32 torch (cuDNN runs TF32).
 REL_TOL = 2e-2
+# TF32 (precise) input mode: cuDNN-matching numerics, rel<1e-3 vs fp32 torch.
+REL_TOL_TF32 = 1e-3
 
 
 def _rel(a, b):
@@ -98,13 +100,15 @@ def _outshape(xs, ws, stride, pad, dil):
     return out
 
 
-def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed):
+def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed, tf32=False):
     from intentir.benchmarks.row_reduction import ConvMMAKernel
     N = 2
     xs = [N, Cin] + sp
     ws = [Cout, Cin] + kk
     ost = _outshape(xs, ws, stride, pad, dil)
     bs = [Cout] if bias else None
+    tol = REL_TOL_TF32 if tf32 else REL_TOL
+    mode = "tf32" if tf32 else "fp16"
 
     torch.manual_seed(seed)
     x = torch.randn(*xs, device="cuda").contiguous()
@@ -113,7 +117,7 @@ def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed):
     out = torch.empty(*ost, device="cuda")
 
     mlir = _mlir(name, xs, ws, bs, ost, (stride, pad, dil))
-    k = ConvMMAKernel(mlir)
+    k = ConvMMAKernel(mlir, tf32=tf32)
     args = [x, w] + ([b] if bias else []) + [out]
     k.thunk(args)()
     torch.cuda.synchronize()
@@ -121,7 +125,7 @@ def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed):
     ref = torch.nn.functional.conv2d(x, w, b, stride=tuple(stride),
                                      padding=tuple(pad), dilation=tuple(dil))
     rel = _rel(out, ref)
-    assert rel < REL_TOL, f"{name}: rel {rel} vs torch (fp16 tensor-core)"
+    assert rel < tol, f"{name}: rel {rel} vs torch ({mode} tensor-core)"
 
     fg = _flag_gems()
     if fg is not None:
@@ -129,8 +133,9 @@ def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed):
                        dilation=tuple(dil), groups=1)
         torch.cuda.synchronize()
         assert _rel(out, yg) < REL_TOL, f"{name}: rel vs flag_gems"
-    print(f"\n{name} in{tuple(xs)} w{tuple(ws)} -> {tuple(ost)}: rel={rel:.1e} "
-          f"< {REL_TOL:g} vs torch" + ("" if fg is None else " + flag_gems"))
+    print(f"\n{name} [{mode}] in{tuple(xs)} w{tuple(ws)} -> {tuple(ost)}: "
+          f"rel={rel:.1e} < {tol:g} vs torch"
+          + ("" if fg is None else " + flag_gems"))
 
 
 # conv2d, no pad, stride 1, with bias.
@@ -173,3 +178,42 @@ def test_conv2d_1x1():
 def test_conv2d_bench_shape():
     _run("conv2d_big", 64, 64, [56, 56], [3, 3], [1, 1], [1, 1], [1, 1],
          bias=False, seed=6)
+
+
+# ---- TF32 (precise) input mode: cuDNN-matching numerics at rel<1e-3 ------- //
+# m16n8k8 mma.sync (tf32Enabled) with f32 smem operands + explicit fragment
+# gather (ldmatrix is 16-bit only). Tighter tolerance than the fp16 path.
+def test_conv2d_tf32():
+    _run("conv2d_tf32", 4, 8, [16, 16], [3, 3], [1, 1], [0, 0], [1, 1],
+         bias=True, seed=0, tf32=True)
+
+
+def test_conv2d_tf32_pad():
+    _run("conv2d_tf32_pad", 4, 8, [16, 16], [3, 3], [1, 1], [1, 1], [1, 1],
+         bias=False, seed=1, tf32=True)
+
+
+def test_conv2d_tf32_stride2():
+    _run("conv2d_tf32_s2", 8, 16, [16, 16], [3, 3], [2, 2], [1, 1], [1, 1],
+         bias=True, seed=2, tf32=True)
+
+
+def test_conv2d_tf32_dilation2():
+    _run("conv2d_tf32_d2", 4, 8, [16, 16], [3, 3], [1, 1], [2, 2], [2, 2],
+         bias=False, seed=3, tf32=True)
+
+
+def test_conv2d_tf32_cout10():
+    _run("conv2d_tf32_c10", 4, 10, [16, 16], [3, 3], [1, 1], [1, 1], [1, 1],
+         bias=True, seed=4, tf32=True)
+
+
+def test_conv2d_tf32_1x1():
+    _run("conv2d_tf32_1x1", 32, 16, [8, 8], [1, 1], [1, 1], [0, 0], [1, 1],
+         bias=False, seed=5, tf32=True)
+
+
+# The benched ResNet-ish shape in TF32 mode (K=576, the ceiling-precision shape).
+def test_conv2d_tf32_bench_shape():
+    _run("conv2d_tf32_big", 64, 64, [56, 56], [3, 3], [1, 1], [1, 1], [1, 1],
+         bias=False, seed=6, tf32=True)
