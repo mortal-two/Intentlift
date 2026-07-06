@@ -298,6 +298,14 @@ LogicalResult TriuOp::verify() {
   return success();
 }
 
+LogicalResult RandOp::verify() {
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (!rTy.getElementType().isF32())
+    return emitOpError("rand produces a uniform[0,1) f32 tensor; result element "
+                       "type must be f32");
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};

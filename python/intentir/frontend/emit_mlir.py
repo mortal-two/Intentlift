@@ -57,7 +57,8 @@ def _broadcast(a: list[int] | None, b: list[int] | None) -> list[int] | None:
     return [max(x, y) for x, y in zip(a, b)]
 
 
-def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] | None:
+def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
+              extents: dict[str, int] | None = None) -> list[int] | None:
     """Output shape of one body op given known operand shapes (None if not yet
     resolvable). Mirrors interpret.py's shape rules."""
     if op.op == "contraction":
@@ -86,7 +87,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
     if op.op == "iota":
         return [int(op.attrs["n"])]
     if op.op == "const":
-        return list(op.attrs.get("shape", []))
+        return _resolve(op.attrs.get("shape", []), extents or {})
+    if op.op == "rand":
+        # Counter-based RNG (C5): shape carried in attrs (like const), symbolic
+        # dims resolved against the extents, fold the leading batch dims out so a
+        # single-head instance emits rank-2.
+        return _resolve(op.attrs.get("shape", []), extents or {})[fold:]
     if op.op == "cast":
         (x,) = op.operands
         return list(env[x]) if x in env else None
@@ -139,11 +145,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
 _CMP_FNS = {"gt", "ge", "lt", "le", "eq", "ne"}
 
 
-def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int) -> None:
+def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int,
+                extents: dict[str, int] | None = None) -> None:
     for _ in range(len(body) + 2):
         changed = False
         for op in body:
-            sh = _infer_op(op, env, fold)
+            sh = _infer_op(op, env, fold, extents)
             if sh is not None and env.get(op.result) != sh:
                 env[op.result] = sh
                 changed = True
@@ -292,6 +299,12 @@ class _Printer:
             self.int_results[op.result] = dt
             self.lines.append(
                 f'{indent}{r} = intent.iota : tensor<{n}x{dt}>')
+        elif op.op == "rand":
+            # Counter-based uniform[0,1) RNG (C5); no operands, shape+dtype in the
+            # result type, seed in the attr.
+            self.lines.append(
+                f'{indent}{r} = intent.rand {{seed = {int(a["seed"])} : i64}} : '
+                f'{_tt(env[op.result])}')
         elif op.op == "const":
             # A literal value -> standard arith.constant (no intent semantics to
             # lower). A scalar splats dense over the (possibly rank-0) result
@@ -345,7 +358,7 @@ def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
     carries = [c["name"] for c in loop.carry]
     yields = list(loop.yields)
     for _ in range(len(loop.body) + 3):
-        _infer_body(loop.body, env, fold)
+        _infer_body(loop.body, env, fold, extents)
         moved = False
         for cname, yname in zip(carries, yields):
             if yname in env and env.get(cname) != env[yname]:
@@ -470,7 +483,7 @@ def emit_module(fn: IntentFunction, dims: dict[str, int], fold: int = 0,
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
         env[t.name] = _resolve(t.shape, extents)[fold:]
-    _infer_body(fn.body, env, fold)
+    _infer_body(fn.body, env, fold, extents)
 
     p = _Printer()
     # Integer inputs (e.g. a gather/scatter `index` tensor) keep their declared

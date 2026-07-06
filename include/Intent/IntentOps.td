@@ -258,6 +258,38 @@ def Intent_TriuOp : Intent_Op<"triu"> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Stateful seeded RNG (Layer A). A counter-based, STATELESS-per-element philox
+// hash: the value at output element linear-index `i` is a pure function of
+// (seed, i) — no visited-order dependence, no global RNG state. `intent.rand`
+// produces uniform[0,1) f32; every other RNG op (dropout / randn / normal /
+// uniform(a,b) / *_like) COMPOSES rand with the existing map/select primitives
+// (dropout = select(rand >= p, x/(1-p), 0); randn = Box-Muller of two rands;
+// uniform(a,b) = a + (b-a)*rand). Lowered by `convert-intent-rng-to-gpu`: one
+// block per output row, each element computes philox4x32-10(seed, row*Co+col)
+// -> uniform -> the composed elementwise transform -> store. See spec/ir (C5).
+//===----------------------------------------------------------------------===//
+
+def Intent_RandOp : Intent_Op<"rand"> {
+  let summary = "Counter-based uniform[0,1) RNG (Layer A, stateless per element).";
+  let description = [{
+    Materialize a tensor of uniform[0,1) f32 samples whose element at row-major
+    linear index `i` is `philox4x32-10(seed, i)` mapped to `[0,1)` — a PURE
+    function of the `seed` attribute and the element index (no operands, no
+    global RNG state, order-independent), so two launches with the same seed are
+    bit-identical and different seeds decorrelate. The seed splits into the two
+    philox key words; the counter is `(i, 0, 0, 0)`; the first output word gives
+    the 24-bit-mantissa uniform. The result must be f32; its shape is carried in
+    the result type (like `intent.iota`'s extent). rand_like is rand at the
+    input's shape; randn / normal / uniform(a,b) / dropout are COMPOSITIONS of
+    rand with map_unary / map_binary / select (no new op).
+  }];
+  let arguments = (ins I64Attr:$seed);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

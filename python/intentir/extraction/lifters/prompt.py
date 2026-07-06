@@ -84,6 +84,12 @@ Atomic ops (each is one JSON object in a "body" list):
   triu       : upper triangle above the k-th diagonal, rest zeroed (numpy/torch
                triu). Rank-2, shape-preserving.
      {"op":"triu","result":R,"operands":[A],"attrs":{"k":0}}
+  rand       : counter-based uniform[0,1) f32 RNG. NO operands; the output shape
+               is `attrs.shape`, `attrs.seed` is the philox seed. value[i] is a
+               stateless philox4x32-10 hash of (seed, element-index), so it is
+               order-independent and reproducible. randn / normal / uniform(a,b)
+               / dropout are COMPOSITIONS of rand (see below), NOT new ops.
+     {"op":"rand","result":R,"attrs":{"seed":<int>,"shape":[..]}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",
@@ -108,6 +114,10 @@ Hard rules:
     clamp(x,lo,hi) = min(max(x, lo), hi)                (map_binary max then min)
     threshold(x,t,v)= select(x>t, x, v)
     nan_to_num(x)  = select(isnan(x), 0, x)             (map_unary isnan, select)
+    uniform(a,b)   = a + (b-a)*rand(seed)               (rand, mul const, add const)
+    dropout(x,p)   = select(rand(seed) >= p, x/(1-p), 0)  (rand, map_binary ge, select)
+    randn/normal   = sqrt(-2*log(rand(s1)))*cos(2*pi*rand(s2))  (Box-Muller: two
+                     rands with DIFFERENT seeds, log/sqrt/cos)
 - Numerical-stability shifts (subtract row-max before exp) ARE part of the
   algorithm -- keep them.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\

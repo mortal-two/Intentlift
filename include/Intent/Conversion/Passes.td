@@ -198,6 +198,54 @@ def ConvertIntentLayoutToGPU
   ];
 }
 
+def ConvertIntentRngToGPU
+    : Pass<"convert-intent-rng-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a seeded-RNG intent func (a straight-line elementwise "
+                "graph containing >=1 intent.rand) to one block-cooperative "
+                "gpu.launch with an inline philox4x32-10 counter RNG.";
+  let description = [{
+    The C5 stateful-RNG pass. Recognizes a `func.func` whose body is a
+    straight-line SCALAR-elementwise graph over rank-2 `[Ro,Co]` operands
+    containing at least one `intent.rand` — the RNG family: `rand`/`rand_like`
+    (one rand), `dropout` (`select(rand >= p, x/(1-p), 0)`), `randn`/`normal`
+    (Box-Muller of two rands), `uniform(a,b)` (`a + (b-a)*rand`) — and rewrites
+    it in place to ONE block-cooperative `gpu.launch`: one block per OUTPUT row,
+    the column axis split over the block's threads (T threads, K = cols/T columns
+    each, unrolled). Destination-passing: the appended `[Ro,Co]` output memref is
+    written; any tensor inputs (e.g. dropout's `x`) are passed as memrefs.
+
+    The new mechanism is a STATELESS counter-based RNG: each output element at
+    `(row,col)` computes `philox4x32-10(seed, row*Co + col)` entirely in `arith`
+    (10 rounds of integer mul-hi/xor over the public philox constants; the seed
+    splits into the two key words, the element index is the counter), maps the
+    first output word to a 24-bit-mantissa uniform[0,1) f32, then runs the
+    composed scalar transform (map_unary / map_binary incl. compare / select /
+    const, reusing the C0/M3 scalar emitters) and stores. No global RNG state, no
+    visited-order dependence — same seed -> bit-identical, different seed ->
+    decorrelated.
+
+    Verification is matched-seed against the same philox in the interpreter
+    (determinism / self-consistency) and STATISTICAL against torch/flag_gems
+    (uniform mean~0.5 var~1/12, normal mean~0 var~1, dropout keeps ~(1-p)) — the
+    philox counter layout does NOT match Triton's `tl.rand` bit-for-bit, so
+    library parity is distributional, not byte-exact. Static shapes, cols % T ==
+    0 (tail-mask is a follow-up). Run BEFORE `convert-intent-to-linalg`; the
+    memref+gpu.launch module goes straight to the device pipeline.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (block size over the output column axis); 0 = auto "
+           "(largest power-of-two <= min(cols,256) dividing cols).">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

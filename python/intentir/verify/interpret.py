@@ -56,14 +56,57 @@ class InterpError(Exception):
     pass
 
 
-def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
+# --- philox4x32-10 counter-based RNG (matches the C++ convert-intent-rng-to-gpu
+# lowering bit-for-bit up to f32 rounding). value[i] = philox(seed, i) -> two
+# independent uniforms in [0,1). Public philox constants; 10 rounds. ------------
+_PHILOX_M0 = np.uint32(0xD2511F53)
+_PHILOX_M1 = np.uint32(0xCD9E8D57)
+_PHILOX_W0 = np.uint32(0x9E3779B9)
+_PHILOX_W1 = np.uint32(0xBB67AE85)
+
+
+def _philox_uniform(seed: int, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Two length-`n` uniform[0,1) f32 arrays; element i hashes (seed, i)."""
+    seed = int(seed) & 0xFFFFFFFFFFFFFFFF
+    c0 = np.arange(n, dtype=np.uint32)
+    c1 = np.zeros(n, dtype=np.uint32)
+    c2 = np.zeros(n, dtype=np.uint32)
+    c3 = np.zeros(n, dtype=np.uint32)
+    k0 = np.full(n, np.uint32(seed & 0xFFFFFFFF))
+    k1 = np.full(n, np.uint32((seed >> 32) & 0xFFFFFFFF))
+    with np.errstate(over="ignore"):
+        for r in range(10):
+            p0 = c0.astype(np.uint64) * np.uint64(_PHILOX_M0)
+            hi0 = (p0 >> np.uint64(32)).astype(np.uint32)
+            lo0 = p0.astype(np.uint32)
+            p1 = c2.astype(np.uint64) * np.uint64(_PHILOX_M1)
+            hi1 = (p1 >> np.uint64(32)).astype(np.uint32)
+            lo1 = p1.astype(np.uint32)
+            c0, c1, c2, c3 = (hi1 ^ c1 ^ k0), lo1, (hi0 ^ c3 ^ k1), lo0
+            if r < 9:
+                k0 = k0 + _PHILOX_W0
+                k1 = k1 + _PHILOX_W1
+
+    def unit(c: np.ndarray) -> np.ndarray:
+        # top 24 bits -> [0,1) f32 (mantissa-exact, matches uitofp(c>>8)*2^-24).
+        return (c >> np.uint32(8)).astype(np.float32) * np.float32(1.0 / 16777216.0)
+
+    return unit(c0), unit(c1)
+
+
+def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
+             dims: dict[str, int] | None = None) -> np.ndarray:
     o = op.op
     a = op.attrs
+    dims = dims or {}
+
+    def _dim(s: Any) -> int:  # resolve an int-or-symbolic shape entry
+        return int(dims[s]) if isinstance(s, str) else int(s)
 
     if o == "const":
         # A literal value (scalar or filled tensor). Not "intent" to be lowered;
         # the emitter turns it into arith.constant. shape [] -> scalar.
-        shape = tuple(a.get("shape", []))
+        shape = tuple(_dim(s) for s in a.get("shape", []))
         val = np.full(shape, a["value"], dtype=_DTYPE.get(a.get("dtype", "f32")))
         return val if shape else _DTYPE.get(a.get("dtype", "f32"))(a["value"])
 
@@ -110,6 +153,14 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
 
     if o == "cast":
         return env[op.operands[0]].astype(_DTYPE[a["to_dtype"]])
+
+    if o == "rand":
+        # Counter-based uniform[0,1) (C5). Order-independent: element i = the
+        # philox hash of (seed, i), reshaped to the result's shape.
+        shape = tuple(_dim(s) for s in a.get("shape", []))
+        n = int(np.prod(shape)) if shape else 1
+        u0, _u1 = _philox_uniform(int(a["seed"]), n)
+        return u0.reshape(shape) if shape else np.float32(u0[0])
 
     if o == "gather":
         # Data-dependent addressing (C3). "along_axis" = torch.gather /
@@ -202,7 +253,7 @@ def _run_body(
         if op.op == "loop":
             env = _eval_loop(op, env, params)
             continue
-        out = _eval_op(op, env)
+        out = _eval_op(op, env, params)
         if op.result is not None:
             env[op.result] = out  # non-loop result is always a str
         if op.out is not None:
@@ -264,7 +315,16 @@ def interpret(
     ``params`` supplies concrete values for symbolic loop tile hints (e.g.
     {"BK": 32}); omit to run loops as a single full-extent iteration.
     """
-    env = _run_body(fn.body, dict(inputs), params or {})
+    # Resolve symbolic shape dims (e.g. a `rand`/`const` shape ["M","N"]) from the
+    # concrete input arrays, merged with any caller-supplied tile hints.
+    dims: dict[str, int] = dict(params or {})
+    for t in fn.inputs:
+        arr = inputs.get(t.name)
+        if arr is not None and hasattr(arr, "shape"):
+            for s, sz in zip(t.shape, arr.shape):
+                if isinstance(s, str):
+                    dims[s] = int(sz)
+    env = _run_body(fn.body, dict(inputs), dims)
     missing = [t.name for t in fn.outputs if t.name not in env]
     if missing:
         raise InterpError(f"outputs not produced: {missing}")
