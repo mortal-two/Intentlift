@@ -30,10 +30,10 @@
 | C7 | upsample_near ×2 | [32,64,56,56] | 108 | 93 | **91** | flag_gems | 1.18 | 🔴 lose |
 | C7 | conv2d k3s1p1 | [32,64,56,56]→64 | 1124 | **111** | 276 | torch | 10.14 | 🔴 LOSE (no tensor-core) |
 | C7 | polar | [4096,4096] | 180 | 176 | **176** | flag_gems | 1.02 | ⚪ parity |
-| C8 | masked_select | [2048,2048] ~50% | 187 | 74 | **63** | flag_gems | 2.94 | 🔴 LOSE (multi-block) |
-| C8 | masked_select | [4096,4096] ~50% | 1006 | 325 | **129** | flag_gems | 7.79 | 🔴 LOSE (multi-block) |
-| C8 | nonzero | [2048,2048] ~50% | 142 | **63** | 111 | torch | 2.24 | 🔴 lose (multi-block) |
-| C8 | nonzero | [4096,4096] ~50% | 709 | **275** | 553 | torch | 2.57 | 🔴 LOSE (multi-block) |
+| C8 | masked_select | [2048,2048] ~50% | 41 | 71 | **59** | flag_gems | 0.69 | 🟢 WIN (block-coop M2) |
+| C8 | masked_select | [4096,4096] ~50% | 145 | 325 | **126** | flag_gems | 1.15 | 🟡 ≤1.3× (block-coop M2) |
+| C8 | nonzero | [2048,2048] ~50% | 43 | **60** | 111 | torch | 0.72 | 🟢 WIN (block-coop M2) |
+| C8 | nonzero | [4096,4096] ~50% | 188 | **273** | 551 | torch | 0.69 | 🟢 WIN (block-coop M2) |
 
 best-ref split: flag_gems is the faster reference on 10/22 rows, torch on 12/22.
 
@@ -50,7 +50,7 @@ Adding flag_gems as a real contender **tightens several gates** — the ratio is
 | op | vs torch | vs flag_gems | real target |
 |---|--:|--:|---|
 | avg_pool2d | 1.96× | **2.90×** | flag_gems (Triton 9 µs) — tighter |
-| masked_select[4096²] | 3.1× | **7.8×** | flag_gems (compaction 129 µs) — much tighter |
+| masked_select[4096²] | 3.1× → **1.16×** (M2) | 7.8× → **1.16×** (M2) | flag_gems (compaction 125 µs); block-coop coalesced closed it |
 | argmax | 2.25× | **2.45×** | flag_gems (11 µs) |
 | upsample | 1.14× | **1.18×** | flag_gems (91 µs) |
 | conv2d | **10.1×** | 4.1× | torch/cuDNN (flag_gems conv itself 2.5× off cuDNN) |
@@ -64,6 +64,6 @@ Adding flag_gems as a real contender **tightens several gates** — the ratio is
 
 ## Downstream targets (unchanged milestone order)
 1. **M1** pool/argmax/triu: flat grid-stride + vector<4> + tail-mask → parity.
-2. **M2** compaction: block-cooperative coalesced mover → beat flag_gems' 129 µs.
+2. **M2** compaction: block-cooperative coalesced mover → **DONE**. Rewrote `ConvertIntentCompactToGPU.cpp` from block=1-thread to block=T-threads (T=256, coalesced flag loads + block Hillis-Steele scan of the 0/1 predicate + cooperative scatter — the CUB `DeviceSelect::Flagged` pattern; exact row-major preserved). HBM 6–12% → 54–62%. masked_select [2048²] 3.12→**0.69×**, [4096²] 7.99→**1.16×**; nonzero [2048²] 2.30→**0.72×**, [4096²] 2.59→**0.69×**. 3/4 now beat flag_gems outright; masked_select[4096²] within the ≤1.3× target. All exact (torch.equal).
 3. **M3** conv2d: implicit-GEMM on mma.sync + TF32/fp16 → ≤2× cuDNN.
 4. **M7** sort: W-aware top-k (torch/CUB stays the target).

@@ -10,24 +10,35 @@
 // O(Ntotal * T) work on a single block).
 //
 // The compaction primitive is an EXCLUSIVE PREFIX-SUM of the flattened 0/1 mask,
-// now done in the standard 3-phase parallel form. The `Ntotal = prod(shape)`
+// done in the standard 3-phase parallel form. The `Ntotal = prod(shape)`
 // flattened elements are split into B contiguous CHUNKS (chunk = Ntotal/B), one
-// per grid block (block = 1 thread):
+// per grid block. Each block runs T (default 256) threads that cooperatively
+// process the chunk in `numTiles = chunk/T` sub-tiles of T contiguous elements —
+// the CUB `DeviceSelect::Flagged` pattern (coalesced flag load + block-wide
+// prefix-sum + cooperative scatter), replacing the prior block=1-thread form
+// whose serial, un-coalesced chunk read floored HBM at ~6-12% (~8x slower than
+// flag_gems' Triton compaction on large masks):
 //
-//   Phase 1 (count)   grid(B) block(1): block b serially counts the true mask
-//                     elements in its chunk [b*chunk, (b+1)*chunk) -> scratch[b].
-//   Phase 2 (scan)    grid(1) block(1): a single thread exclusive-scans the B
-//                     block counts in place (scratch[b] <- sum of all prior
-//                     blocks = that block's global base slot) and writes the
-//                     grand total `nnz` to the `count` buffer.
-//   Phase 3 (scatter) grid(B) block(1): block b re-scans its chunk ascending,
-//                     emitting each true element at scratch[b] + local_prefix
-//                     (local_prefix = the block's own running counter).
+//   Phase 1 (count)   grid(B) block(T): thread tx COALESCED-loads flag[lo+kk*T+tx]
+//                     over the numTiles sub-tiles, keeping a private true-count; a
+//                     block inclusive Hillis-Steele scan makes sh[T-1] the chunk
+//                     total -> scratch[b].
+//   Phase 2 (scan)    grid(1) block(Ts): two-level parallel exclusive-scan of the
+//                     B block counts in place (scratch[b] <- sum of prior blocks =
+//                     that block's global base slot); grand total `nnz` -> count.
+//   Phase 3 (scatter) grid(B) block(T): the chunk is walked ASCENDING in T-wide
+//                     tiles; per tile a block inclusive-scan of the 0/1 predicate
+//                     gives each true thread its local slot (exclusive prefix), and
+//                     a running block counter (base = scratch[b] + prior tiles'
+//                     true-counts) makes the write index the EXACT count of trues
+//                     before this element within the chunk. Coalesced flag load;
+//                     the compacted store is the only scatter.
 //
-// Contiguous chunks in block order + ascending within each block => the global
-// write order is EXACT row-major (matches torch.nonzero / torch.masked_select),
-// identical to the old single-block order but parallelized across all SMs. The
-// serial scan (phase 2) is over only B (<= 8192) elements, negligible.
+// Contiguous chunks in block order + ascending tiles + ascending threads within a
+// tile => the global write order is EXACT row-major (matches torch.nonzero /
+// torch.masked_select), bit-identical to the old order but now coalesced and
+// parallel across all SMs. The serial-ish scan (phase 2) is over only B (<= 8192)
+// block counts, negligible. T degrades to 1 only for pathological non-2^k chunks.
 //
 //   nonzero        : dest (cond, out[Ntotal,ndim] i64, count[1] i64). Each true
 //                    flat index i is unraveled to its ndim-vector coord and
@@ -88,6 +99,7 @@ struct CompactLowering {
   SmallVector<int64_t> shape; // static shape of the mask/cond
   int64_t Ntotal = 0, B = 0, chunk = 0;
   int64_t Ts = 0, G = 0; // scan block: Ts threads, each owns G = B/Ts counts
+  int64_t T = 0, numTiles = 0; // compaction block: T threads, chunk = T*numTiles
 
   CompactLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
 
@@ -123,6 +135,17 @@ struct CompactLowering {
     // G = B/Ts of the block counts for the two-level parallel scan.
     Ts = B < 1024 ? B : 1024;
     G = B / Ts;
+    // Compaction block: T threads (<= blockThreads, default 256), a power of two
+    // dividing `chunk` so each of the numTiles sub-tiles is FULL (no ragged
+    // tail) and, within a tile, consecutive threads read consecutive flat
+    // indices (col = tx + kk*T) -> coalesced HBM loads. T==1 is the safe
+    // degenerate for pathological (non-2^k) chunk factors.
+    int64_t cap = blockThreads ? (int64_t)blockThreads : 256;
+    T = 1;
+    for (int64_t t = 1; t <= cap && t <= chunk; t <<= 1)
+      if (chunk % t == 0)
+        T = t;
+    numTiles = chunk / T;
     return success();
   }
 
@@ -193,21 +216,51 @@ struct CompactLowering {
     return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, v, z);
   }
 
-  /// Count the true mask elements over the half-open flat range [lo, hi).
-  Value countTrue(OpBuilder &b, Location loc, Value maskMem, Value lo, Value hi) {
-    Value c0 = cIdx(b, loc, 0);
-    Value c1 = cIdx(b, loc, 1);
-    auto loop = b.create<scf::ForOp>(loc, lo, hi, c1, ValueRange{c0});
-    OpBuilder lb = OpBuilder::atBlockBegin(loop.getBody());
-    Value j = loop.getInductionVar();
-    Value acc = loop.getRegionIterArg(0);
-    SmallVector<Value> coord = unravel(lb, loc, j);
-    Value v = lb.create<memref::LoadOp>(loc, maskMem, coord);
-    Value tru = isTrue(lb, loc, v);
-    Value inc = lb.create<arith::SelectOp>(loc, tru, c1, c0);
-    Value next = lb.create<arith::AddIOp>(loc, acc, inc);
-    lb.create<scf::YieldOp>(loc, next);
-    return loop.getResult(0);
+  /// A dynamic-shared `memref<[T]xi64>` view over the launch's shared window.
+  Value shView(OpBuilder &lb, Location loc) {
+    auto ctx = lb.getContext();
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+    auto rawTy = MemRefType::get({ShapedType::kDynamic}, lb.getI8Type(),
+                                 nullptr, wgSpace);
+    Value raw = lb.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
+    auto shTy = MemRefType::get({T}, lb.getI64Type(), nullptr, wgSpace);
+    return lb.create<memref::ViewOp>(loc, shTy, raw, cIdx(lb, loc, 0),
+                                     ValueRange{});
+  }
+
+  /// In-place INCLUSIVE Hillis-Steele scan of `sh[0..T)` (i64, workgroup mem).
+  /// Fully unrolled (T is a compile-time power of two); the log2(T) barriers are
+  /// uniform (emitted at launch-body scope, never inside divergent control).
+  /// This is the block-scan half of the CUB DeviceSelect::Flagged pattern and
+  /// reuses the exact read-into-register / barrier / guarded-write recipe of the
+  /// C6 row-reduction scan. `sh[tx]` holds each thread's inclusive prefix and
+  /// `sh[T-1]` the block total on return.
+  void blockInclScan(OpBuilder &lb, Location loc, Value sh, Value tx) {
+    Type i64 = lb.getI64Type();
+    Value z64 = lb.create<arith::ConstantIntOp>(loc, 0, 64);
+    for (int64_t d = 1; d < T; d <<= 1) {
+      Value cd = cIdx(lb, loc, d);
+      Value ge =
+          lb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, tx, cd);
+      auto rd = lb.create<scf::IfOp>(loc, TypeRange{i64}, ge, true);
+      {
+        OpBuilder tb = rd.getThenBodyBuilder();
+        Value idx = tb.create<arith::SubIOp>(loc, tx, cd);
+        Value nv = tb.create<memref::LoadOp>(loc, sh, ValueRange{idx});
+        tb.create<scf::YieldOp>(loc, nv);
+        OpBuilder eb = rd.getElseBodyBuilder();
+        eb.create<scf::YieldOp>(loc, z64);
+      }
+      lb.create<gpu::BarrierOp>(loc);
+      auto wr = lb.create<scf::IfOp>(loc, ge, false);
+      {
+        OpBuilder tb = wr.getThenBodyBuilder();
+        Value cur = tb.create<memref::LoadOp>(loc, sh, ValueRange{tx});
+        Value sum = tb.create<arith::AddIOp>(loc, cur, rd.getResult(0));
+        tb.create<memref::StoreOp>(loc, sum, sh, ValueRange{tx});
+      }
+      lb.create<gpu::BarrierOp>(loc);
+    }
   }
 
   // ---- rewrite ----------------------------------------------------------- //
@@ -276,16 +329,47 @@ struct CompactLowering {
     Value cChunk = cIdx(b, loc, chunk);
     Value c0 = cIdx(b, loc, 0);
 
-    // ---- Phase 1 (count): grid(B) block(1). scratch[b] = trues in chunk b. --
+    // ---- Phase 1 (count): grid(B) block(T). scratch[b] = trues in chunk b. --
+    // The T threads COALESCED-scan the chunk (thread tx handles flat indices
+    // lo+tx, lo+T+tx, ... over numTiles sub-tiles), each keeping a private
+    // partial; a block inclusive-scan of the T partials makes sh[T-1] the block
+    // total. (block=1 previously read the whole chunk serially, un-coalesced.)
     {
-      auto launch = b.create<gpu::LaunchOp>(loc, cB, c1, c1, c1, c1, c1);
+      Value shBytesV = b.create<arith::ConstantOp>(
+          loc, b.getI32IntegerAttr((int32_t)(T * 8)));
+      Value cT = cIdx(b, loc, T);
+      auto launch = b.create<gpu::LaunchOp>(loc, cB, c1, c1, cT, c1, c1, shBytesV);
       OpBuilder lb = OpBuilder::atBlockBegin(&launch.getBody().front());
       Value bid = launch.getBlockIds().x;
+      Value tx = launch.getThreadIds().x;
+      Value z64 = lb.create<arith::ConstantIntOp>(loc, 0, 64);
+      Value one64 = lb.create<arith::ConstantIntOp>(loc, 1, 64);
       Value lo = lb.create<arith::MulIOp>(loc, bid, cChunk);
-      Value hi = lb.create<arith::AddIOp>(loc, lo, cChunk);
-      Value cnt = countTrue(lb, loc, maskMem, lo, hi);
-      Value cnt64 = lb.create<arith::IndexCastOp>(loc, i64, cnt);
-      lb.create<memref::StoreOp>(loc, cnt64, scratch, ValueRange{bid});
+      Value g0 = lb.create<arith::AddIOp>(loc, lo, tx); // lo + tx
+      Value partial = z64;
+      for (int64_t kk = 0; kk < numTiles; ++kk) {
+        Value gidx = kk == 0 ? g0
+                             : lb.create<arith::AddIOp>(
+                                   loc, g0, cIdx(lb, loc, kk * T));
+        SmallVector<Value> coord = unravel(lb, loc, gidx);
+        Value v = lb.create<memref::LoadOp>(loc, maskMem, coord);
+        Value tru = isTrue(lb, loc, v);
+        Value inc = lb.create<arith::SelectOp>(loc, tru, one64, z64);
+        partial = lb.create<arith::AddIOp>(loc, partial, inc);
+      }
+      Value sh = shView(lb, loc);
+      lb.create<memref::StoreOp>(loc, partial, sh, ValueRange{tx});
+      lb.create<gpu::BarrierOp>(loc);
+      blockInclScan(lb, loc, sh, tx);
+      Value isFirst =
+          lb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tx, c0);
+      auto wIf = lb.create<scf::IfOp>(loc, isFirst, false);
+      {
+        OpBuilder tb = wIf.getThenBodyBuilder();
+        Value last = cIdx(tb, loc, T - 1);
+        Value total = tb.create<memref::LoadOp>(loc, sh, ValueRange{last});
+        tb.create<memref::StoreOp>(loc, total, scratch, ValueRange{bid});
+      }
       lb.create<gpu::TerminatorOp>(loc);
     }
 
@@ -392,53 +476,76 @@ struct CompactLowering {
       lb.create<gpu::TerminatorOp>(loc);
     }
 
-    // ---- Phase 3 (scatter): grid(B) block(1). Block b emits its chunk's true
-    //      elements at scratch[b] + local running prefix. ------------------- //
+    // ---- Phase 3 (scatter): grid(B) block(T). Block b cooperatively emits its
+    //      chunk's true elements, coalesced, at scratch[b] + (# trues before
+    //      this element within the chunk). ---------------------------------- //
+    // The chunk is walked in numTiles sub-tiles of T contiguous flat indices,
+    // ASCENDING. Per tile: thread tx loads flag[lo+kk*T+tx] (coalesced), a block
+    // inclusive-scan of the 0/1 predicates yields each true thread its local
+    // slot (excl prefix) and the tile's true-count; a running block counter
+    // (base = scratch[b] + sum of prior tiles' counts) makes `slot` the exact
+    // global row-major compaction index. This is CUB DeviceSelect::Flagged.
     {
-      auto launch = b.create<gpu::LaunchOp>(loc, cB, c1, c1, c1, c1, c1);
+      Value shBytesV = b.create<arith::ConstantOp>(
+          loc, b.getI32IntegerAttr((int32_t)(T * 8)));
+      Value cT = cIdx(b, loc, T);
+      auto launch = b.create<gpu::LaunchOp>(loc, cB, c1, c1, cT, c1, c1, shBytesV);
       OpBuilder lb = OpBuilder::atBlockBegin(&launch.getBody().front());
       Value bid = launch.getBlockIds().x;
+      Value tx = launch.getThreadIds().x;
+      Value z64 = lb.create<arith::ConstantIntOp>(loc, 0, 64);
+      Value one64 = lb.create<arith::ConstantIntOp>(loc, 1, 64);
+      Type idxTy = lb.getIndexType();
       Value lo = lb.create<arith::MulIOp>(loc, bid, cChunk);
-      Value hi = lb.create<arith::AddIOp>(loc, lo, cChunk);
+      Value g0 = lb.create<arith::AddIOp>(loc, lo, tx); // lo + tx
       Value base64 = lb.create<memref::LoadOp>(loc, scratch, ValueRange{bid});
-      Value base = lb.create<arith::IndexCastOp>(loc, lb.getIndexType(), base64);
+      Value running = lb.create<arith::IndexCastOp>(loc, idxTy, base64);
+      Value sh = shView(lb, loc);
+      Value cLast = cIdx(lb, loc, T - 1);
+      for (int64_t kk = 0; kk < numTiles; ++kk) {
+        Value gidx = kk == 0 ? g0
+                             : lb.create<arith::AddIOp>(
+                                   loc, g0, cIdx(lb, loc, kk * T));
+        SmallVector<Value> coord = unravel(lb, loc, gidx);
+        Value mv = lb.create<memref::LoadOp>(loc, maskMem, coord);
+        Value tru = isTrue(lb, loc, mv);
+        Value pred = lb.create<arith::SelectOp>(loc, tru, one64, z64);
+        // sh reuse across tiles: fence the prior tile's reads before overwrite.
+        if (kk > 0)
+          lb.create<gpu::BarrierOp>(loc);
+        lb.create<memref::StoreOp>(loc, pred, sh, ValueRange{tx});
+        lb.create<gpu::BarrierOp>(loc);
+        blockInclScan(lb, loc, sh, tx);
+        Value incl = lb.create<memref::LoadOp>(loc, sh, ValueRange{tx});
+        Value total = lb.create<memref::LoadOp>(loc, sh, ValueRange{cLast});
+        Value excl = lb.create<arith::SubIOp>(loc, incl, pred); // local slot
+        Value exclIdx = lb.create<arith::IndexCastOp>(loc, idxTy, excl);
+        Value slot = lb.create<arith::AddIOp>(loc, running, exclIdx);
 
-      auto emit = lb.create<scf::ForOp>(loc, lo, hi, c1, ValueRange{base});
-      {
-        OpBuilder eb = OpBuilder::atBlockBegin(emit.getBody());
-        Value j = emit.getInductionVar();
-        Value slot = emit.getRegionIterArg(0);
-        SmallVector<Value> coord = unravel(eb, loc, j);
-        Value mv = eb.create<memref::LoadOp>(loc, maskMem, coord);
-        Value tru = isTrue(eb, loc, mv);
-
-        auto ifOp = eb.create<scf::IfOp>(loc, TypeRange{eb.getIndexType()}, tru,
-                                         /*withElse=*/true);
-        OpBuilder tb = ifOp.getThenBodyBuilder();
-        if (nonzero) {
-          for (int k = 0; k < D; ++k) {
-            Value ci = tb.create<arith::IndexCastOp>(loc, i64, coord[k]);
-            Value ck = cIdx(tb, loc, k);
-            tb.create<memref::StoreOp>(loc, ci, outMem, ValueRange{slot, ck});
+        auto ifOp = lb.create<scf::IfOp>(loc, tru, /*withElse=*/mscatter);
+        {
+          OpBuilder tb = ifOp.getThenBodyBuilder();
+          if (nonzero) {
+            for (int k = 0; k < D; ++k) {
+              Value ci = tb.create<arith::IndexCastOp>(loc, i64, coord[k]);
+              Value ck = cIdx(tb, loc, k);
+              tb.create<memref::StoreOp>(loc, ci, outMem, ValueRange{slot, ck});
+            }
+          } else if (mselect) {
+            Value dv = tb.create<memref::LoadOp>(loc, dataMem, coord);
+            tb.create<memref::StoreOp>(loc, dv, outMem, ValueRange{slot});
+          } else { // masked_scatter: masked -> out[coord] = src[slot]
+            Value sv = tb.create<memref::LoadOp>(loc, srcMem, ValueRange{slot});
+            tb.create<memref::StoreOp>(loc, sv, outMem, coord);
           }
-        } else if (mselect) {
-          Value dv = tb.create<memref::LoadOp>(loc, dataMem, coord);
-          tb.create<memref::StoreOp>(loc, dv, outMem, ValueRange{slot});
-        } else { // masked_scatter: masked -> out[coord] = src[slot]
-          Value sv = tb.create<memref::LoadOp>(loc, srcMem, ValueRange{slot});
-          tb.create<memref::StoreOp>(loc, sv, outMem, coord);
+          if (mscatter) { // unmasked -> out[coord] = data[coord]
+            OpBuilder ebElse = ifOp.getElseBodyBuilder();
+            Value dv = ebElse.create<memref::LoadOp>(loc, dataMem, coord);
+            ebElse.create<memref::StoreOp>(loc, dv, outMem, coord);
+          }
         }
-        Value slotp1 = tb.create<arith::AddIOp>(loc, slot, c1);
-        tb.create<scf::YieldOp>(loc, slotp1);
-
-        OpBuilder ebElse = ifOp.getElseBodyBuilder();
-        if (mscatter) { // unmasked -> out[coord] = data[coord]
-          Value dv = ebElse.create<memref::LoadOp>(loc, dataMem, coord);
-          ebElse.create<memref::StoreOp>(loc, dv, outMem, coord);
-        }
-        ebElse.create<scf::YieldOp>(loc, slot);
-
-        eb.create<scf::YieldOp>(loc, ifOp.getResult(0));
+        Value totalIdx = lb.create<arith::IndexCastOp>(loc, idxTy, total);
+        running = lb.create<arith::AddIOp>(loc, running, totalIdx);
       }
       lb.create<gpu::TerminatorOp>(loc);
     }
