@@ -96,6 +96,17 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int) -> list[int] |
     if op.op == "map_binary":
         a, b = op.operands
         return _broadcast(env.get(a), env.get(b))
+    if op.op == "gather":
+        d, idx = op.operands
+        if d not in env or idx not in env:
+            return None
+        axis = int(op.attrs["axis"]) - fold
+        if op.attrs.get("mode", "along_axis") == "along_axis":
+            return list(env[idx])                        # shaped like index
+        return list(env[d][:axis]) + list(env[idx]) + list(env[d][axis + 1:])
+    if op.op == "scatter":
+        d = op.operands[0]
+        return list(env[d]) if d in env else None        # shaped like data
     if op.op == "select":
         c, x, y = op.operands
         return _broadcast(_broadcast(env.get(c), env.get(x)), env.get(y))
@@ -200,6 +211,24 @@ class _Printer:
             self.lines.append(
                 f'{indent}{r} = intent.select {c}, {x}, {y} : '
                 f'({tc}, {tx}, {ty}) -> {self._ttn(op.result, env)}')
+        elif op.op == "gather":
+            d, i = (self.ssa[o] for o in op.operands)
+            td, ti = (self._ttn(o, env) for o in op.operands)
+            axis = int(a["axis"]) - fold
+            mode = a.get("mode", "along_axis")
+            self.lines.append(
+                f'{indent}{r} = intent.gather {d}, {i} '
+                f'{{axis = {axis} : i64, mode = "{mode}"}} : '
+                f'({td}, {ti}) -> {self._ttn(op.result, env)}')
+        elif op.op == "scatter":
+            d, i, s = (self.ssa[o] for o in op.operands)
+            td, ti, ts = (self._ttn(o, env) for o in op.operands)
+            axis = int(a["axis"]) - fold
+            self.lines.append(
+                f'{indent}{r} = intent.scatter {d}, {i}, {s} '
+                f'{{axis = {axis} : i64, mode = "{a.get("mode", "along_axis")}", '
+                f'reduce = "{a.get("reduce", "none")}"}} : '
+                f'({td}, {ti}, {ts}) -> {self._ttn(op.result, env)}')
         elif op.op == "iota":
             # Integer column-index vector; the result is an integer tensor (not
             # f32), so record it as a non-f32 op and print its int type directly.
@@ -389,7 +418,12 @@ def emit_module(fn: IntentFunction, dims: dict[str, int], fold: int = 0,
     _infer_body(fn.body, env, fold)
 
     p = _Printer()
-    args = [f"{p.arg(t.name)}: {_tt(env[t.name])}" for t in fn.inputs]
+    # Integer inputs (e.g. a gather/scatter `index` tensor) keep their declared
+    # integer width; every other input is emitted in the execute dtype (f32).
+    for t in fn.inputs:
+        if t.dtype in ("i8", "i16", "i32", "i64"):
+            p.int_results[t.name] = t.dtype
+    args = [f"{p.arg(t.name)}: {p._ttn(t.name, env)}" for t in fn.inputs]
     for op in fn.body:
         p.emit_op(op, env, fold)
         if op.out is not None:                 # destination-passing alias

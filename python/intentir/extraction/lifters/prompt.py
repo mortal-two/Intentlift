@@ -58,6 +58,17 @@ Atomic ops (each is one JSON object in a "body" list):
      {"op":"select","result":R,"operands":[COND,X,Y]}
   cast       : dtype cast.  {"op":"cast","result":R,"operands":[A],"attrs":{"to_dtype":DT}}
   transpose  : {"op":"transpose","result":R,"operands":[A],"attrs":{"perm":[...]}}
+  gather     : data-dependent addressing. `index` is an INTEGER tensor; `axis`
+               selects the gathered dim. mode "along_axis" = torch.gather /
+               numpy take_along_axis (index shaped like the result); mode "take"
+               = index_select / embedding row-gather = numpy take (index rank r
+               inserted at axis; result rank = data.rank-1+index.rank). embedding
+               = gather(weight, indices, axis=0, mode="take").
+     {"op":"gather","result":R,"operands":[DATA,INDEX],"attrs":{"axis":i,"mode":"along_axis"|"take"}}
+  scatter    : data-dependent write into a COPY of data. `index`/`src` share a
+               shape; mode "along_axis" (torch.scatter/scatter_add_); reduce
+               "none" overwrites, "add" accumulates (scatter_add).
+     {"op":"scatter","result":R,"operands":[DATA,INDEX,SRC],"attrs":{"axis":i,"mode":"along_axis","reduce":"none"|"add"}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

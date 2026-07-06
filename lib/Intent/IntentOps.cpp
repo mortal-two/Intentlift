@@ -129,6 +129,68 @@ LogicalResult ScanOp::verify() {
   return success();
 }
 
+LogicalResult GatherOp::verify() {
+  auto dTy = cast<RankedTensorType>(getData().getType());
+  auto iTy = cast<RankedTensorType>(getIndex().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (!iTy.getElementType().isIntOrIndex())
+    return emitOpError("index must be an integer-typed tensor");
+  if (dTy.getElementType() != rTy.getElementType())
+    return emitOpError("result element type must equal data element type");
+  int64_t axis = getAxis();
+  if (axis < 0 || axis >= dTy.getRank())
+    return emitOpError("axis ")
+           << axis << " out of range for rank-" << dTy.getRank() << " data";
+  llvm::StringRef mode = getMode();
+  if (mode == "along_axis") {
+    if (iTy.getRank() != dTy.getRank())
+      return emitOpError("along_axis gather: index rank ")
+             << iTy.getRank() << " must equal data rank " << dTy.getRank();
+    if (rTy.getRank() != iTy.getRank())
+      return emitOpError("along_axis gather: result must be shaped like index");
+    // Static extents must match index exactly (dynamic dims are wildcards).
+    for (int64_t d = 0; d < rTy.getRank(); ++d) {
+      int64_t rd = rTy.getDimSize(d), id = iTy.getDimSize(d);
+      if (!ShapedType::isDynamic(rd) && !ShapedType::isDynamic(id) && rd != id)
+        return emitOpError("along_axis gather: result extent ")
+               << rd << " != index extent " << id << " at dim " << d;
+    }
+    return success();
+  }
+  if (mode == "take") {
+    int64_t want = dTy.getRank() - 1 + iTy.getRank();
+    if (rTy.getRank() != want)
+      return emitOpError("take gather: result rank ")
+             << rTy.getRank() << " != data.rank-1+index.rank (" << want << ")";
+    return success();
+  }
+  return emitOpError("unknown gather mode '") << mode << "'";
+}
+
+LogicalResult ScatterOp::verify() {
+  auto dTy = cast<RankedTensorType>(getData().getType());
+  auto iTy = cast<RankedTensorType>(getIndex().getType());
+  auto sTy = cast<RankedTensorType>(getSrc().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  if (!iTy.getElementType().isIntOrIndex())
+    return emitOpError("index must be an integer-typed tensor");
+  if (dTy.getElementType() != rTy.getElementType())
+    return emitOpError("result element type must equal data element type");
+  if (getMode() != "along_axis")
+    return emitOpError("unknown scatter mode '") << getMode() << "'";
+  if (getReduce() != "none" && getReduce() != "add")
+    return emitOpError("reduce must be 'none' or 'add'");
+  int64_t axis = getAxis();
+  if (axis < 0 || axis >= dTy.getRank())
+    return emitOpError("axis ")
+           << axis << " out of range for rank-" << dTy.getRank() << " data";
+  if (iTy.getRank() != dTy.getRank() || sTy.getRank() != dTy.getRank())
+    return emitOpError("along_axis scatter: index/src rank must equal data rank");
+  if (rTy.getShape() != dTy.getShape())
+    return emitOpError("scatter result shape must equal data shape");
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};

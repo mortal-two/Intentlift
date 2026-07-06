@@ -115,6 +115,63 @@ def Intent_ScanOp : Intent_Op<"scan"> {
   let hasVerifier = 1;
 }
 
+def Intent_GatherOp : Intent_Op<"gather"> {
+  let summary = "Data-dependent gather along one axis (Layer A).";
+  let description = [{
+    Gather elements of `data` at runtime positions read from an integer `index`
+    tensor along `axis`. Two `mode`s cover the data-dependent-addressing family:
+
+    * `"along_axis"` (torch.gather / numpy `take_along_axis`): `index` has the
+      same rank as `data`, the result is shaped like `index`, and
+      `result[i..] = data[i.. with i[axis] replaced by index[i..]]`.
+    * `"take"` (index_select / embedding row-gather / numpy `take`): `index` is a
+      rank-r selector inserted at `axis`; the result rank is
+      `data.rank - 1 + index.rank` and
+      `result[pre.., k.., post..] = data[pre.., index[k..], post..]`. An
+      embedding is exactly `take` with a rank-1 `[N]` index into axis 0 of the
+      `[V,D]` weight (`result[n,d] = weight[index[n], d]`).
+
+    The C0/C1 cluster's new mechanism: the load address is a RUNTIME value (read
+    from `index`), not an affine function of the iteration — the GPU lowering
+    emits a data-dependent `memref.load` at the index-computed coordinate. The
+    result element type equals `data`'s; `index` must be integer-typed.
+  }];
+  let arguments = (ins AnyRankedTensor:$data, AnyRankedTensor:$index,
+                       I64Attr:$axis, StrAttr:$mode);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$data `,` $index attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def Intent_ScatterOp : Intent_Op<"scatter"> {
+  let summary = "Data-dependent scatter/scatter-add along one axis (Layer A).";
+  let description = [{
+    Write `src` elements into a copy of `data` at runtime positions read from an
+    integer `index` tensor along `axis` (torch.scatter / scatter_add_ /
+    numpy `put_along_axis`). `mode` is `"along_axis"`: `index` and `src` share a
+    shape, and for each element `out[i.. with i[axis]=index[i..]] (op)= src[i..]`
+    where the combine `op` is selected by `reduce`:
+
+    * `"none"` — overwrite (torch.scatter, nondeterministic for duplicate
+      indices, matching torch's contract);
+    * `"add"`  — accumulate (torch.scatter_add_, order-independent).
+
+    The result has `data`'s shape and element type. The GPU lowering treats it as
+    an in-place update of the (caller-cloned) `data` buffer: a data-dependent
+    `memref.store` (reduce `"none"`) or `memref.atomic_rmw addf` (reduce
+    `"add"`, reusing the M4/M9 atomic -> `red.global.add.f32` on sm_120a) at the
+    index-computed coordinate. `index` must be integer-typed.
+  }];
+  let arguments = (ins AnyRankedTensor:$data, AnyRankedTensor:$index,
+                       AnyRankedTensor:$src, I64Attr:$axis, StrAttr:$mode,
+                       StrAttr:$reduce);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat =
+      "$data `,` $index `,` $src attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

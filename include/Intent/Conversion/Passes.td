@@ -110,6 +110,50 @@ def ConvertIntentElementwiseToGPU
   ];
 }
 
+def ConvertIntentGatherToGPU
+    : Pass<"convert-intent-gather-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.gather / intent.scatter (data-dependent "
+                "addressing) to one block-cooperative gpu.launch.";
+  let description = [{
+    The C3 data-dependent-addressing pass. Recognizes a `func.func` whose body is
+    exactly one `intent.gather` or one `intent.scatter` over rank-2 data producing
+    a rank-2 result, and rewrites it in place to ONE block-cooperative
+    `gpu.launch`: one block per output/scatter row, the free (column) axis split
+    over the block's threads (T threads, K = cols/T columns each, the register
+    tile unrolled over K). The new mechanism is a data-dependent address: the
+    per-element load/store coordinate is read at runtime from the integer `index`
+    memref (a `memref.load` of `index`, `arith.index_cast` to an index, then used
+    as a `memref.load`/`memref.store` coordinate on `data`) — NOT an affine
+    function of the iteration.
+
+    * gather (`along_axis` = torch.gather, `take` = index_select/embedding
+      row-gather): destination-passing — the appended `[Ro,Co]` output memref is
+      written from the index-computed `data` load. `index` rank 1 (`take`) or 2
+      (`along_axis`); `axis` selects which output coordinate the index replaces.
+    * scatter (`along_axis`, reduce `none`/`add`): IN-PLACE on the (caller-cloned)
+      `data` memref — one launch per `src`/`index` element does a data-dependent
+      `memref.store` (reduce `none`) or `memref.atomic_rmw addf` (reduce `add` =
+      scatter_add, -> `red.global.add.f32` on sm_120a). No output arg is appended.
+
+    Correctness-only (no bank-conflict-free guarantee needed): the index stream is
+    exact so verification is bit-faithful (rel < 1e-3). Static shapes, cols % T ==
+    0 (tail-mask is a follow-up). Run BEFORE `convert-intent-to-linalg`; the
+    resulting memref+gpu.launch module goes straight to the device pipeline
+    (`lower_memref_module_to_kernels`), bypassing bufferization.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block (block size over the free/column axis); 0 = auto "
+           "(largest power-of-two <= min(cols,256) dividing cols).">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

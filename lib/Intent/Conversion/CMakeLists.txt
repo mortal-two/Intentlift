@@ -2,6 +2,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentToLinalg.cpp
   ConvertIntentRowReductionToGPU.cpp
   ConvertIntentElementwiseToGPU.cpp
+  ConvertIntentGatherToGPU.cpp
   ConvertIntentContractionToGPU.cpp
   ConvertIntentContractionToGPUMMA.cpp
   ConvertIntentContractionToGPUMMAWS.cpp

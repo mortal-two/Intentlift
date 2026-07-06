@@ -111,6 +111,40 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray]) -> np.ndarray:
     if o == "cast":
         return env[op.operands[0]].astype(_DTYPE[a["to_dtype"]])
 
+    if o == "gather":
+        # Data-dependent addressing (C3). "along_axis" = torch.gather /
+        # numpy take_along_axis (index shaped like the result); "take" =
+        # index_select / embedding row-gather = numpy take along `axis`.
+        data = env[op.operands[0]]
+        index = np.asarray(env[op.operands[1]]).astype(np.int64)
+        axis = int(a["axis"])
+        mode = a.get("mode", "along_axis")
+        if mode == "along_axis":
+            return np.take_along_axis(data, index, axis=axis)
+        if mode == "take":
+            return np.take(data, index, axis=axis)
+        raise InterpError(f"gather: unknown mode {mode!r}")
+
+    if o == "scatter":
+        # In-place-semantics scatter into a COPY of data (torch.scatter /
+        # scatter_add_). reduce "none" overwrites (numpy put_along_axis);
+        # "add" accumulates order-independently (numpy add.at along the axis).
+        data = env[op.operands[0]]
+        index = np.asarray(env[op.operands[1]]).astype(np.int64)
+        src = env[op.operands[2]]
+        axis = int(a["axis"])
+        reduce = a.get("reduce", "none")
+        out = np.array(data, copy=True)
+        if reduce == "add":
+            grid = list(np.indices(index.shape))
+            grid[axis] = index
+            np.add.at(out, tuple(grid), src)
+        elif reduce == "none":
+            np.put_along_axis(out, index, src, axis=axis)
+        else:
+            raise InterpError(f"scatter: unknown reduce {reduce!r}")
+        return out
+
     if o == "transpose":
         return np.transpose(env[op.operands[0]], axes=a.get("perm"))
 
