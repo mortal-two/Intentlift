@@ -8,13 +8,13 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 117,
-    "classified-miss": 26,
+    "verified-e2e": 120,
+    "classified-miss": 23,
     "extraction-only-proven": 47
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 117,
-    "classified-miss": 29,
+    "verified-e2e": 120,
+    "classified-miss": 26,
     "extraction-only-proven": 47
   },
   "triton_refs_total": 38,
@@ -741,8 +741,8 @@
     {
       "module": "quantile",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "multi-op graph: sort + linear interpolation between order statistics"
+      "bucket": "verified-e2e",
+      "evidence": "op-graph dispatch: sort->gather->lerp (3-stage sort C6b + gather C3 + reduce); test_opgraph_pk vs torch (exact), flag_gems where its kernel works"
     },
     {
       "module": "rand",
@@ -976,7 +976,7 @@
       "module": "unique",
       "group": "ops",
       "bucket": "classified-miss",
-      "evidence": "multi-op graph: sort + adjacent-dedup compaction (C6 bitonic then C8 compaction)"
+      "evidence": "multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction)"
     },
     {
       "module": "upsample_bicubic2d_aa",
@@ -1053,8 +1053,8 @@
     {
       "module": "cross_entropy_loss",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "multi-op graph: log_softmax then nll gather-reduce"
+      "bucket": "verified-e2e",
+      "evidence": "op-graph dispatch: log_softmax+nll fused to one row-reduction kernel; test_opgraph_pk vs torch+flag_gems (rel<1e-3)"
     },
     {
       "module": "flash_mla",
@@ -1155,8 +1155,8 @@
     {
       "module": "topk_softmax",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "multi-op graph: topk then softmax MoE-gating"
+      "bucket": "verified-e2e",
+      "evidence": "op-graph dispatch: softmax->topk (2-stage reduce->sort MoE-gating); test_opgraph_pk weights+indices vs torch+flag_gems"
     },
     {
       "module": "weight_norm",

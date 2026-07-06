@@ -28,23 +28,25 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 117 | 25 |
+| verified-e2e | 120 | 25 |
 | extraction-only-proven | 47 | 9 |
-| classified-miss | 29 | 4 |
+| classified-miss | 26 | 4 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (117)
+### verified-e2e (120)
 
 | module | group | evidence / reason |
 |---|---|---|
+| `cross_entropy_loss` | fused | op-graph dispatch: log_softmax+nll fused to one row-reduction kernel; test_opgraph_pk vs torch+flag_gems (rel<1e-3) |
 | `gelu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `outer` | fused | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `reglu` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
 | `silu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `topk_softmax` | fused | op-graph dispatch: softmax->topk (2-stage reduce->sort MoE-gating); test_opgraph_pk weights+indices vs torch+flag_gems |
 | `abs` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `add` | ops | 15-kernel certified corpus (corpus/kernels) |
 | `addcdiv` | ops | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
@@ -126,6 +128,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `polar` | ops | C7a polar PK (test_pool_interp_pk.py) |
 | `pow` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `prod` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
+| `quantile` | ops | op-graph dispatch: sort->gather->lerp (3-stage sort C6b + gather C3 + reduce); test_opgraph_pk vs torch (exact), flag_gems where its kernel works |
 | `rand` | ops | C5 RNG/philox PK (test_rng_pk.py) |
 | `randn` | ops | C5 RNG/philox PK (test_rng_pk.py) |
 | `reciprocal` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -211,13 +214,12 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (29)
+### classified-miss (26)
 
 | module | group | evidence / reason |
 |---|---|---|
 | `apply_repetition_penalties` | fused | token-histogram scatter penalty (data-dependent, gen-loop) |
 | `concat_and_cache_mla` | fused | MLA KV-cache concat+scatter (stateful multi-op) |
-| `cross_entropy_loss` | fused | multi-op graph: log_softmax then nll gather-reduce |
 | `flash_mla` | fused | flash multi-latent-attention (loop authorship, PRD out-of-scope) |
 | `moe_align_block_size` | fused | MoE routing/block-alignment (sort+scan+scatter integer bookkeeping) |
 | `moe_sum` | fused | MoE expert-weighted gather+sum (data-dependent routing composition) |
@@ -226,7 +228,6 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `rotary_embedding` | fused | rotary positional embedding (paired-rotation over complex-like layout) |
 | `rwkv_ka_fusion` | fused | RWKV state-recurrent fusion (sequential scan with carried state) |
 | `rwkv_mm_sparsity` | fused | RWKV sparse-mm fusion (sparse addressing) |
-| `topk_softmax` | fused | multi-op graph: topk then softmax MoE-gating |
 | `bin_topk` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
 | `indexer_k_tiled` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
 | `sparse_mla` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
@@ -237,12 +238,11 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `get_scheduler_metadata` | ops | scheduler-metadata helper (not a numeric op) |
 | `multinomial` | ops | order-dependent RNG: cumulative-CDF categorical sampling |
 | `per_token_group_quant_fp8` | ops | multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping) |
-| `quantile` | ops | multi-op graph: sort + linear interpolation between order statistics |
 | `randperm` | ops | order-dependent RNG: Fisher-Yates permutation (sequence-dependent) |
 | `resolve_conj` | ops | native complex dtype: conjugate-flag resolution |
 | `resolve_neg` | ops | native complex dtype: negation-flag resolution |
 | `scaled_softmax` | ops | attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path) |
-| `unique` | ops | multi-op graph: sort + adjacent-dedup compaction (C6 bitonic then C8 compaction) |
+| `unique` | ops | multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction) |
 | `upsample_bicubic2d_aa` | ops | bicubic/anti-aliased interpolation (deferred; nearest verified C7a) |
 
 ## Triton refs (refs/…/kernels/triton/ops, read-only)

@@ -72,6 +72,15 @@ CLUSTER = {
     "cummin": "C6 scan-max/min PK (test_order_stats_pk.py)",
     "sort": "C6b bitonic-sort PK (test_sort_pk.py; covers argsort)",
     "topk": "C6b bitonic-sort PK (test_sort_pk.py)",
+    "quantile": ("op-graph dispatch: sort->gather->lerp (3-stage sort C6b + "
+                 "gather C3 + reduce); test_opgraph_pk vs torch (exact), "
+                 "flag_gems where its kernel works"),
+    "topk_softmax": ("op-graph dispatch: softmax->topk (2-stage reduce->sort "
+                     "MoE-gating); test_opgraph_pk weights+indices vs "
+                     "torch+flag_gems"),
+    "cross_entropy_loss": ("op-graph dispatch: log_softmax+nll fused to one "
+                           "row-reduction kernel; test_opgraph_pk vs "
+                           "torch+flag_gems (rel<1e-3)"),
     "avg_pool2d": "C7a pool/interp PK (test_pool_interp_pk.py)",
     "max_pool2d_with_indices": "C7a pool/interp PK (test_pool_interp_pk.py)",
     "upsample_nearest2d": "C7a pool/interp PK (test_pool_interp_pk.py)",
@@ -86,11 +95,10 @@ CLUSTER = {
 
 # ---- classified-miss (deferred mechanism + named reason) -------------------
 MISS = {
-    # multi-op-graph compositions (need the general op-graph dispatch)
-    "quantile": "multi-op graph: sort + linear interpolation between order statistics",
-    "unique": "multi-op graph: sort + adjacent-dedup compaction (C6 bitonic then C8 compaction)",
-    "topk_softmax": "multi-op graph: topk then softmax MoE-gating",
-    "cross_entropy_loss": "multi-op graph: log_softmax then nll gather-reduce",
+    # multi-op-graph compositions (quantile/topk_softmax/cross_entropy_loss now
+    # land via the op-graph dispatch — see CLUSTER above); unique defers on
+    # dynamic extent (adjacent-dedup output size is data-dependent).
+    "unique": "multi-op graph: sort + adjacent-dedup compaction (dynamic extent: C6 bitonic then C8 compaction)",
     "per_token_group_quant_fp8": "multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping)",
     # order-dependent / stateful RNG (sequence semantics, not per-element philox)
     "multinomial": "order-dependent RNG: cumulative-CDF categorical sampling",
