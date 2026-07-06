@@ -432,6 +432,48 @@ def ConvertIntentPolarToGPU
   ];
 }
 
+def ConvertIntentConvToGPU
+    : Pass<"convert-intent-conv-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a single intent.conv (conv1d/2d/3d, forward) over "
+                "NC*spatial to one block-cooperative gpu.launch (direct "
+                "windowed-weighted accumulation).";
+  let description = [{
+    The C7 convolution pass. Recognizes a `func.func` whose body is exactly one
+    `intent.conv` over a rank `2+R` (`R` = 1/2/3) f32 input `[N,Cin,*spatial]`
+    with a `[Cout,Cin/groups,*kernel]` weight (+ optional `[Cout]` bias)
+    producing `[N,Cout,*out_spatial]`, and rewrites it in place to ONE
+    block-cooperative `gpu.launch`: grid = (N*Cout, prod(outer out-spatial), 1)
+    (one block per output row = fixed `(n,co,*outer)`), block = (T,1,1) threads
+    over the innermost out-spatial axis (K = O_last/T columns each, unrolled).
+
+    The mechanism EXTENDS the `intent.pool` windowed per-output-cell reduce with
+    an input-channel sum and a per-tap weight multiply (direct
+    windowed-weighted-accumulation, no im2col): for output cell `(n,co,*o)`,
+    `acc = bias[co] + sum_{ci_local} sum_{*k} in[n, g*(Cin/groups)+ci_local,
+    *(o*stride - pad + k*dil)] * w[co, ci_local, *k]`, guarding every source
+    spatial coord with a single in-bounds `scf.if` (out-of-bounds = zero pad).
+    Channel groups pick the input-channel slice via `g = co/(Cout/groups)`. The
+    accumulation core is parameterized by the spatial rank `R`, so conv1d (R=1),
+    conv2d (R=2) and conv3d (R=3) share one code path (extra kernel/window
+    loops). Destination-passing: the new signature is
+    `(input, weight[, bias]) ++ [output]` memrefs.
+
+    Correctness-only (rel < 1e-3 vs torch + flag_gems; fp accumulation order).
+    Static shapes, O_last % T == 0. Run BEFORE `convert-intent-to-linalg`.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block over the innermost out-spatial axis; 0 = auto.">,
+  ];
+}
+
 def ConvertIntentContractionToGPU
     : Pass<"convert-intent-contraction-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single intent.contraction matmul to one tiled-K "

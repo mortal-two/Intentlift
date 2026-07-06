@@ -57,3 +57,33 @@ func.func @bad_polar(%a: tensor<4x8xf32>, %b: tensor<4x8xf32>) -> (tensor<4x4xf3
   %r, %i = intent.polar %a, %b : (tensor<4x8xf32>, tensor<4x8xf32>) -> (tensor<4x4xf32>, tensor<4x8xf32>)
   return %r, %i : tensor<4x4xf32>, tensor<4x8xf32>
 }
+
+// -----
+
+// conv output spatial extent must follow the conv formula.
+func.func @bad_conv_ext(%x: tensor<2x4x16x16xf32>, %w: tensor<8x4x3x3xf32>) -> tensor<2x8x15x15xf32> {
+  // expected-error @+1 {{conv output spatial extent mismatch on axis 0}}
+  %o = intent.conv %x, %w {stride = [1, 1], padding = [0, 0], dilation = [1, 1], groups = 1 : i64}
+      : (tensor<2x4x16x16xf32>, tensor<8x4x3x3xf32>) -> tensor<2x8x15x15xf32>
+  return %o : tensor<2x8x15x15xf32>
+}
+
+// -----
+
+// conv weight dim 1 must equal Cin/groups.
+func.func @bad_conv_w(%x: tensor<2x4x16x16xf32>, %w: tensor<8x4x3x3xf32>) -> tensor<2x8x14x14xf32> {
+  // expected-error @+1 {{conv weight dim 1 must equal Cin/groups}}
+  %o = intent.conv %x, %w {stride = [1, 1], padding = [0, 0], dilation = [1, 1], groups = 2 : i64}
+      : (tensor<2x4x16x16xf32>, tensor<8x4x3x3xf32>) -> tensor<2x8x14x14xf32>
+  return %o : tensor<2x8x14x14xf32>
+}
+
+// -----
+
+// conv stride/padding/dilation length must equal the spatial rank.
+func.func @bad_conv_arr(%x: tensor<2x4x16x16xf32>, %w: tensor<8x4x3x3xf32>) -> tensor<2x8x14x14xf32> {
+  // expected-error @+1 {{conv stride/padding/dilation must have length = spatial rank}}
+  %o = intent.conv %x, %w {stride = [1], padding = [0, 0], dilation = [1, 1], groups = 1 : i64}
+      : (tensor<2x4x16x16xf32>, tensor<8x4x3x3xf32>) -> tensor<2x8x14x14xf32>
+  return %o : tensor<2x8x14x14xf32>
+}

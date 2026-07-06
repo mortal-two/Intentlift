@@ -121,6 +121,14 @@ Atomic ops (each is one JSON object in a "body" list):
                is the trailing real/imag PAIR — name BOTH results (list):
                real=abs*cos(angle), imag=abs*sin(angle).
      {"op":"polar","result":[RE,IM],"operands":[ABS,ANGLE],"attrs":{}}
+  conv       : forward conv1d/2d/3d (torch.nn.functional.conv{1,2,3}d, cross-
+               correlation, NO kernel flip). input [N,Cin,*spatial], weight
+               [Cout,Cin/groups,*kernel], optional bias [Cout] -> [N,Cout,*out].
+               stride/padding/dilation are length-R spatial arrays (R=spatial
+               rank 1/2/3); groups partitions channels. Omit the bias operand if
+               there is none.
+     {"op":"conv","result":O,"operands":[IN,W,BIAS],"attrs":{"stride":[s,s],"padding":[p,p],"dilation":[1,1],"groups":1}}
+     {"op":"conv","result":O,"operands":[IN,W],"attrs":{"stride":[s],"padding":[p],"dilation":[1],"groups":1}}
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",

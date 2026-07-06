@@ -418,6 +418,68 @@ LogicalResult PolarOp::verify() {
   return success();
 }
 
+LogicalResult ConvOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto wTy = cast<RankedTensorType>(getWeight().getType());
+  auto oTy = cast<RankedTensorType>(getOutput().getType());
+  int64_t rank = iTy.getRank();
+  if (rank < 3 || rank > 5)
+    return emitOpError("conv input must be rank 3/4/5 ([N,Cin,*spatial])");
+  int64_t R = rank - 2;
+  if (wTy.getRank() != rank || oTy.getRank() != rank)
+    return emitOpError("conv weight/output rank must match the input rank");
+  if (iTy.getElementType() != wTy.getElementType() ||
+      iTy.getElementType() != oTy.getElementType())
+    return emitOpError("conv input/weight/output element types must match");
+  int64_t groups = getGroups();
+  if (groups < 1)
+    return emitOpError("conv groups must be >= 1");
+  if ((int64_t)getStride().size() != R || (int64_t)getPadding().size() != R ||
+      (int64_t)getDilation().size() != R)
+    return emitOpError("conv stride/padding/dilation must have length = "
+                       "spatial rank");
+  if (getBias()) {
+    auto bTy = cast<RankedTensorType>(getBias().getType());
+    if (bTy.getRank() != 1)
+      return emitOpError("conv bias must be a rank-1 [Cout] tensor");
+    if (bTy.getElementType() != iTy.getElementType())
+      return emitOpError("conv bias element type must match the input");
+  }
+  if (!iTy.hasStaticShape() || !wTy.hasStaticShape() || !oTy.hasStaticShape())
+    return success();
+  int64_t Cin = iTy.getDimSize(1);
+  int64_t Cout = wTy.getDimSize(0);
+  if (Cin % groups != 0)
+    return emitOpError("conv Cin must be divisible by groups");
+  if (Cout % groups != 0)
+    return emitOpError("conv Cout must be divisible by groups");
+  if (wTy.getDimSize(1) != Cin / groups)
+    return emitOpError("conv weight dim 1 must equal Cin/groups");
+  if (oTy.getDimSize(0) != iTy.getDimSize(0) || oTy.getDimSize(1) != Cout)
+    return emitOpError("conv output must be [N, Cout, *out_spatial]");
+  if (getBias()) {
+    auto bTy = cast<RankedTensorType>(getBias().getType());
+    if (bTy.getDimSize(0) != Cout)
+      return emitOpError("conv bias length must equal Cout");
+  }
+  auto asI64 = [](Attribute a) {
+    return cast<IntegerAttr>(a).getInt();
+  };
+  for (int64_t j = 0; j < R; ++j) {
+    int64_t H = iTy.getDimSize(2 + j);
+    int64_t k = wTy.getDimSize(2 + j);
+    int64_t s = asI64(getStride()[j]);
+    int64_t p = asI64(getPadding()[j]);
+    int64_t d = asI64(getDilation()[j]);
+    if (s < 1 || d < 1)
+      return emitOpError("conv stride/dilation must be >= 1");
+    int64_t O = (H + 2 * p - d * (k - 1) - 1) / s + 1;
+    if (oTy.getDimSize(2 + j) != O)
+      return emitOpError("conv output spatial extent mismatch on axis ") << j;
+  }
+  return success();
+}
+
 LogicalResult ReduceOp::verify() {
   static constexpr llvm::StringRef kFns[] = {"sum", "mean", "max", "min",
                                              "prod", "any", "all"};

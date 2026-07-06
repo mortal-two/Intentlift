@@ -175,6 +175,20 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
     if op.op == "polar":
         a0 = op.operands[0]
         return list(env[a0]) if a0 in env else None
+    if op.op == "conv":
+        xn, wn = op.operands[0], op.operands[1]
+        if xn not in env or wn not in env:
+            return None
+        inshape, wshape = env[xn], env[wn]
+        R = len(inshape) - 2
+        stride = [int(v) for v in op.attrs["stride"]]
+        pad = [int(v) for v in op.attrs["padding"]]
+        dil = [int(v) for v in op.attrs["dilation"]]
+        out = [inshape[0], wshape[0]]
+        for j in range(R):
+            H, k = inshape[2 + j], wshape[2 + j]
+            out.append((H + 2 * pad[j] - dil[j] * (k - 1) - 1) // stride[j] + 1)
+        return out
     raise NotImplementedError(f"emit_mlir: unhandled body op {op.op!r}")
 
 
@@ -308,7 +322,29 @@ class _Printer:
                 f'({ta}, {ta}) -> ({_tt(env[rname])}, {_tt(env[iname])})')
             return
         r = self.fresh(op.result)
-        if op.op == "upsample":
+        if op.op == "conv":
+            # input, weight, optional bias -> single output. stride/padding/
+            # dilation are length-R spatial arrays; groups partitions channels.
+            x = self.ssa[op.operands[0]]
+            w = self.ssa[op.operands[1]]
+            tx, tw = _tt(env[op.operands[0]]), _tt(env[op.operands[1]])
+            st = ", ".join(str(int(v)) for v in a["stride"])
+            pd = ", ".join(str(int(v)) for v in a["padding"])
+            dl = ", ".join(str(int(v)) for v in a["dilation"])
+            grp = int(a.get("groups", 1))
+            attrs = (f'stride = [{st}], padding = [{pd}], dilation = [{dl}], '
+                     f'groups = {grp} : i64')
+            if len(op.operands) > 2:
+                bn = op.operands[2]
+                bssa, tb = self.ssa[bn], _tt(env[bn])
+                self.lines.append(
+                    f'{indent}{r} = intent.conv {x}, {w}, {bssa} {{{attrs}}} : '
+                    f'({tx}, {tw}, {tb}) -> {_tt(env[op.result])}')
+            else:
+                self.lines.append(
+                    f'{indent}{r} = intent.conv {x}, {w} {{{attrs}}} : '
+                    f'({tx}, {tw}) -> {_tt(env[op.result])}')
+        elif op.op == "upsample":
             x = self.ssa[op.operands[0]]
             self.lines.append(
                 f'{indent}{r} = intent.upsample {x} {{mode = "nearest"}} : '

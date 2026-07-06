@@ -426,6 +426,42 @@ def Intent_PolarOp : Intent_Op<"polar"> {
   let hasVerifier = 1;
 }
 
+def Intent_ConvOp : Intent_Op<"conv"> {
+  let summary = "N-D cross-correlation convolution (conv1d/2d/3d) over NC*spatial.";
+  let description = [{
+    Forward convolution (torch.nn.functional.conv1d/conv2d/conv3d) of a rank
+    `2+R` `input` `[N, Cin, *spatial]` with a rank `2+R` `weight`
+    `[Cout, Cin/groups, *kernel]` and an optional `bias` `[Cout]`, producing
+    `[N, Cout, *out_spatial]`. `R` (the spatial rank, 1/2/3) is `input.rank - 2`;
+    `stride`, `padding`, `dilation` are length-`R` integer arrays and `groups`
+    partitions the channels. The output spatial extent along axis `j` is
+    `O_j = (H_j + 2*pad_j - dil_j*(k_j - 1) - 1) / stride_j + 1`.
+
+    Cross-correlation (no kernel flip, matching torch): for output cell
+    `(n, co, *o)`,
+      `out = bias[co] + sum_{ci in group(co)} sum_{*k}
+             input[n, ci, *(o*stride - pad + k*dil)] * weight[co, ci_local, *k]`
+    where out-of-bounds source coords are skipped (implicit zero pad). Channel
+    grouping: group `g = co / (Cout/groups)` selects input channels
+    `[g*(Cin/groups), (g+1)*(Cin/groups))`; `ci_local` is `ci - g*(Cin/groups)`.
+
+    The C7 convolution mechanism = the windowed per-output-cell accumulation of
+    `intent.pool` extended with an input-channel sum and a per-tap weight
+    multiply (correctness-only; direct windowed-weighted-accumulation, no
+    im2col). `bias` is optional; `Cin` must be divisible by `groups` and
+    `Cout` must match `weight` dim 0.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, AnyRankedTensor:$weight,
+                       Optional<AnyRankedTensor>:$bias,
+                       I64ArrayAttr:$stride, I64ArrayAttr:$padding,
+                       I64ArrayAttr:$dilation, I64Attr:$groups);
+  let results = (outs AnyRankedTensor:$output);
+  let assemblyFormat =
+      "$input `,` $weight (`,` $bias^)? attr-dict `:` "
+      "functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def Intent_ReduceOp : Intent_Op<"reduce"> {
   let summary = "Reduction along axes (Layer A semantics + Layer B associativity).";
   let description = [{

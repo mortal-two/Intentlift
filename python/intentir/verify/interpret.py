@@ -12,6 +12,7 @@ tolerance; Layer C is ignored here.
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 import numpy as np
@@ -329,6 +330,47 @@ def _eval_op(op: IntentOp, env: dict[str, np.ndarray],
         # complex result is the trailing real/imag PAIR (two real results).
         absv, ang = env[op.operands[0]], env[op.operands[1]]
         return (absv * np.cos(ang), absv * np.sin(ang))
+
+    if o == "conv":
+        # Forward conv1d/2d/3d (C7): cross-correlation (no kernel flip, matching
+        # torch.nn.functional.conv{1,2,3}d). input [N,Cin,*spatial], weight
+        # [Cout,Cin/groups,*kernel], optional bias [Cout] -> [N,Cout,*out]. A
+        # direct windowed-weighted accumulation over (input channel, kernel tap),
+        # zero-padded, grouped. Verified rel<1e-3 (fp accumulation order).
+        x = env[op.operands[0]].astype(np.float32)
+        w = env[op.operands[1]].astype(np.float32)
+        bias = env[op.operands[2]].astype(np.float32) if len(op.operands) > 2 \
+            else None
+        R = x.ndim - 2
+        stride = [int(v) for v in a["stride"]]
+        pad = [int(v) for v in a["padding"]]
+        dil = [int(v) for v in a["dilation"]]
+        groups = int(a.get("groups", 1))
+        N, Cin = x.shape[0], x.shape[1]
+        Cout = w.shape[0]
+        ipg, opg = Cin // groups, Cout // groups
+        Hs, Ks = x.shape[2:], w.shape[2:]
+        Os = [(Hs[j] + 2 * pad[j] - dil[j] * (Ks[j] - 1) - 1) // stride[j] + 1
+              for j in range(R)]
+        xp = np.pad(x, [(0, 0), (0, 0)] + [(pad[j], pad[j]) for j in range(R)])
+        out = np.zeros((N, Cout) + tuple(Os), np.float32)
+        for kk in itertools.product(*[range(k) for k in Ks]):
+            slc = [slice(None), slice(None)]
+            for j in range(R):
+                start = kk[j] * dil[j]
+                slc.append(slice(start, start + stride[j] * (Os[j] - 1) + 1,
+                                 stride[j]))
+            xs = xp[tuple(slc)]                          # [N, Cin, *O]
+            wk = w[(slice(None), slice(None)) + kk]      # [Cout, ipg]
+            for g in range(groups):
+                xg = xs[:, g * ipg:(g + 1) * ipg]        # [N, ipg, *O]
+                wg = wk[g * opg:(g + 1) * opg]           # [opg, ipg]
+                # tensordot over ipg -> [N, *O, opg]; move opg to channel axis.
+                contrib = np.tensordot(xg, wg, axes=([1], [1]))
+                out[:, g * opg:(g + 1) * opg] += np.moveaxis(contrib, -1, 1)
+        if bias is not None:
+            out += bias.reshape((1, Cout) + (1,) * R)
+        return out
 
     if o == "transpose":
         return np.transpose(env[op.operands[0]], axes=a.get("perm"))
