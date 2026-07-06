@@ -1,0 +1,10 @@
+{
+  "name": "full_like",
+  "family": "init",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/full_like.py",
+  "model": "gpt-5.5",
+  "attempts": 1,
+  "repairs": [],
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

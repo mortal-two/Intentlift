@@ -1,0 +1,56 @@
+{
+  "intent_function": {
+    "name": "threshold",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "cond",
+        "operands": [
+          "X",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "gt"
+        }
+      },
+      {
+        "op": "select",
+        "result": "Y",
+        "operands": [
+          "cond",
+          "X",
+          "zero"
+        ]
+      }
+    ]
+  }
+}

@@ -1,14 +1,14 @@
 # C1 universe pilot — composability-measurement gate
 
-- extraction success: **95.1%** (39/41)
-- composability-failure rate (extract-ok but lower-fail): **5.1%** (2/39)
-- verify pass: **95.1%** (39/41)
+- extraction success: **97.3%** (72/74)
+- composability-failure rate (extract-ok but lower-fail): **27.8%** (20/72)
+- verify pass: **93.2%** (69/74)
 
 | op | family | extract | lower | verify | rel | class |
 |---|---|---|---|---|---|---|
 | tanh | unary | ✅ | ✅ | ✅ | 1.19e-07 | ok |
 | sigmoid | unary | ✅ | ✅ | ✅ | 1.22e-07 | ok |
-| silu | unary | ✅ | ❌ | ✅ | 1.33e-07 | lowering_fail |
+| silu | unary | ✅ | ✅ | ✅ | 1.27e-07 | ok |
 | gelu | unary | ✅ | ✅ | ✅ | 5.94e-08 | ok |
 | relu | unary | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | abs | unary | ✅ | ✅ | ✅ | 0.00e+00 | ok |
@@ -47,5 +47,38 @@
 | outer | blas | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | zeros | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | ones | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| eye | init | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| linspace | init | ✅ | ❌ | ✅ | 5.96e-08 | lowering_fail |
+| full_like | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| geglu | fused | ✅ | ✅ | ❌ | — | verify_fail |
+| glu | fused | ✅ | ✅ | ❌ | — | verify_fail |
+| clamp | unary | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| threshold | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| nan_to_num | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| isnan | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| isinf | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| isfinite | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| logical_not | unary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| fill | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| logical_and | binary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| logical_or | binary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| logical_xor | binary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| isclose | binary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| lerp | binary | ✅ | ✅ | ✅ | 6.36e-08 | ok |
+| masked_fill | binary | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| all | reduce | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| any | reduce | ✅ | ❌ | ✅ | 0.00e+00 | lowering_fail |
+| trace | reduce | ✅ | ✅ | ✅ | 4.60e-06 | ok |
+| cumsum | scan | ✅ | ❌ | ✅ | 5.02e-07 | lowering_fail |
+| dot | blas | ✅ | ✅ | ✅ | 1.89e-07 | ok |
+| vdot | blas | ✅ | ✅ | ✅ | 3.85e-07 | ok |
+| baddbmm | blas | ✅ | ✅ | ✅ | 2.36e-07 | ok |
+| addmv | blas | ✅ | ✅ | ✅ | 2.00e-07 | ok |
+| addr | blas | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| rms_norm | norm | ✅ | ❌ | ✅ | 1.10e-07 | lowering_fail |
+| layer_norm | norm | ✅ | ❌ | ❌ | — | lowering_fail |
+| zeros_like | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| ones_like | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
+| logspace | init | ✅ | ❌ | ✅ | 9.54e-08 | lowering_fail |
 
-Gate: composability-fail 5.1% (< 20% ? **C2 CAN scale**)
+Gate: composability-fail 27.8% (< 20% ? **C2 needs pass-boundary triage first**)

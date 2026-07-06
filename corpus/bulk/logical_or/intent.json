@@ -1,0 +1,75 @@
+{
+  "intent_function": {
+    "name": "logical_or",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "A_nz",
+        "operands": [
+          "A",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "ne"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "B_nz",
+        "operands": [
+          "B",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "ne"
+        }
+      },
+      {
+        "op": "select",
+        "result": "Y",
+        "operands": [
+          "A_nz",
+          "A_nz",
+          "B_nz"
+        ]
+      }
+    ]
+  }
+}

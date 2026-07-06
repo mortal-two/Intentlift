@@ -1,0 +1,10 @@
+{
+  "name": "geglu",
+  "family": "fused",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/fused/geglu.py",
+  "model": "gpt-5.5",
+  "attempts": 1,
+  "repairs": [],
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

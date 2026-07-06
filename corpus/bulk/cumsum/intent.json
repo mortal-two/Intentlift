@@ -1,0 +1,38 @@
+{
+  "intent_function": {
+    "name": "cumsum",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "scan",
+        "result": "Y",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "sum",
+          "axis": 1
+        }
+      }
+    ]
+  }
+}

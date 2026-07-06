@@ -1,0 +1,12 @@
+{
+  "name": "isinf",
+  "family": "unary",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/isinf.py",
+  "model": "gpt-5.5",
+  "attempts": 2,
+  "repairs": [
+    "InterpError: map_unary: unknown fn 'isinf'"
+  ],
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

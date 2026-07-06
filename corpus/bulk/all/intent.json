@@ -1,0 +1,66 @@
+{
+  "intent_function": {
+    "name": "all",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "i1",
+        "shape": []
+      }
+    ],
+    "layer_c": {
+      "reduction_strategy": "two_stage_tiled",
+      "tile": {
+        "elements": "BLOCK_SIZE",
+        "mid": "BLOCK_MID"
+      }
+    },
+    "body": [
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "nz",
+        "operands": [
+          "X",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "ne"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "Y",
+        "operands": [
+          "nz"
+        ],
+        "attrs": {
+          "fn": "all",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "associative"
+        }
+      }
+    ]
+  }
+}

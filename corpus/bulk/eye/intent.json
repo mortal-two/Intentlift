@@ -1,0 +1,67 @@
+{
+  "intent_function": {
+    "name": "eye",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "out",
+        "dtype": "f32",
+        "shape": [
+          64,
+          64
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "rows": 32,
+        "cols": 32
+      }
+    },
+    "body": [
+      {
+        "op": "const",
+        "result": "ones",
+        "attrs": {
+          "value": 1.0,
+          "dtype": "f32",
+          "shape": [
+            64,
+            64
+          ]
+        }
+      },
+      {
+        "op": "triu",
+        "result": "upper_incl_diag",
+        "operands": [
+          "ones"
+        ],
+        "attrs": {
+          "k": 0
+        }
+      },
+      {
+        "op": "triu",
+        "result": "upper_excl_diag",
+        "operands": [
+          "ones"
+        ],
+        "attrs": {
+          "k": 1
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "out",
+        "operands": [
+          "upper_incl_diag",
+          "upper_excl_diag"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      }
+    ]
+  }
+}

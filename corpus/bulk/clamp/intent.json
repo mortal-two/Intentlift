@@ -1,0 +1,67 @@
+{
+  "intent_function": {
+    "name": "clamp",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "lo",
+        "attrs": {
+          "value": -0.5,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "hi",
+        "attrs": {
+          "value": 0.5,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_ge_lo",
+        "operands": [
+          "X",
+          "lo"
+        ],
+        "attrs": {
+          "fn": "max"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "x_ge_lo",
+          "hi"
+        ],
+        "attrs": {
+          "fn": "min"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "glu",
+  "family": "fused",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/glu.py",
+  "model": "gpt-5.5",
+  "attempts": 2,
+  "repairs": [
+    "KeyError: 'B'"
+  ],
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

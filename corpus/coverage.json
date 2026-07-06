@@ -1,0 +1,1416 @@
+{
+  "generated_by": "scratchpad/gen_coverage.py (programmatic glob, live manifests)",
+  "flag_gems_modules": {
+    "ops": 169,
+    "fused": 21,
+    "dsa_experimental": 3,
+    "top_level_total": 190,
+    "with_dsa_total": 193
+  },
+  "flag_gems_tally_top_level": {
+    "verified-e2e": 104,
+    "extraction-only-proven": 60,
+    "classified-miss": 26
+  },
+  "flag_gems_tally_with_dsa": {
+    "verified-e2e": 104,
+    "extraction-only-proven": 60,
+    "classified-miss": 29
+  },
+  "triton_refs_total": 38,
+  "triton_tally": {
+    "verified-e2e": 25,
+    "classified-miss": 4,
+    "extraction-only-proven": 9
+  },
+  "flag_gems": [
+    {
+      "module": "abs",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "add",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "addcdiv",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "addcmul",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "addmm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "addmv",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "addr",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "all",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "amax",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "angle",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "native complex dtype: arg(z) of a complex input"
+    },
+    {
+      "module": "any",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "arange",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "argmax",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6 arg-reduce PK (test_order_stats_pk.py)"
+    },
+    {
+      "module": "argmin",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6 arg-reduce PK (test_order_stats_pk.py)"
+    },
+    {
+      "module": "atan",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "attention",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "flash/attention loop-kernel authorship beyond pipeline auto-lift (PRD out-of-scope)"
+    },
+    {
+      "module": "avg_pool2d",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7a pool/interp PK (test_pool_interp_pk.py)"
+    },
+    {
+      "module": "baddbmm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "batch_norm",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bitwise_and",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bitwise_left_shift",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bitwise_not",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bitwise_or",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bitwise_right_shift",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bmm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "cat",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C4 layout PK (test_layout_pk.py)"
+    },
+    {
+      "module": "celu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "clamp",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "contiguous",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "conv1d",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7b conv PK (test_conv_pk.py)"
+    },
+    {
+      "module": "conv2d",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7b conv PK (test_conv_pk.py)"
+    },
+    {
+      "module": "conv3d",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7b conv PK (test_conv_pk.py)"
+    },
+    {
+      "module": "conv_depthwise2d",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "copy",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "cos",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "count_nonzero",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "cummax",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6 scan-max/min PK (test_order_stats_pk.py)"
+    },
+    {
+      "module": "cummin",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6 scan-max/min PK (test_order_stats_pk.py)"
+    },
+    {
+      "module": "cumsum",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "diag",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "diag_embed",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "diagonal",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "div",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "dot",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "dropout",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C5 RNG/philox PK (test_rng_pk.py)"
+    },
+    {
+      "module": "elu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "embedding",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+    },
+    {
+      "module": "eq",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "erf",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "exp",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "exp2",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "exponential_",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "eye",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "eye_m",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "fill",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "flash_api",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "flash-attention host API glue (multi-kernel, not one op-graph)"
+    },
+    {
+      "module": "flash_kernel",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "flash-attention inner loop kernel (loop authorship, PRD out-of-scope)"
+    },
+    {
+      "module": "flip",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C4 layout PK (test_layout_pk.py)"
+    },
+    {
+      "module": "full",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "full_like",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "gather",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+    },
+    {
+      "module": "ge",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "gelu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "get_scheduler_metadata",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "scheduler-metadata helper (not a numeric op)"
+    },
+    {
+      "module": "glu",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "groupnorm",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "gt",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "hstack",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "index",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "index_add",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "index_put",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "index_select",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+    },
+    {
+      "module": "isclose",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "isfinite",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "isin",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "isinf",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "isnan",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "kron",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "layernorm",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "le",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "lerp",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "linspace",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "log",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "log_sigmoid",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "log_softmax",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "logical_and",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "logical_not",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "logical_or",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "logical_xor",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "logspace",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "lt",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "masked_fill",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "masked_scatter",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)"
+    },
+    {
+      "module": "masked_select",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)"
+    },
+    {
+      "module": "max",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "max_pool2d_with_indices",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7a pool/interp PK (test_pool_interp_pk.py)"
+    },
+    {
+      "module": "maximum",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "mean",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "min",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "minimum",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "mm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "mm_streamk",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "mse_loss",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "mul",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "multinomial",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "order-dependent RNG: cumulative-CDF categorical sampling"
+    },
+    {
+      "module": "mv",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "nan_to_num",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "ne",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "neg",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "nllloss",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "nonzero",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C8 dynamic-shape PK (test_dynamic_shape_pk.py)"
+    },
+    {
+      "module": "normal",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "ones",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "ones_like",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "pad",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C4 layout PK (test_layout_pk.py)"
+    },
+    {
+      "module": "per_token_group_quant_fp8",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping)"
+    },
+    {
+      "module": "polar",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7a polar PK (test_pool_interp_pk.py)"
+    },
+    {
+      "module": "pow",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "prod",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "quantile",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "multi-op graph: sort + linear interpolation between order statistics"
+    },
+    {
+      "module": "rand",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C5 RNG/philox PK (test_rng_pk.py)"
+    },
+    {
+      "module": "rand_like",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "randn",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C5 RNG/philox PK (test_rng_pk.py)"
+    },
+    {
+      "module": "randn_like",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "randperm",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "order-dependent RNG: Fisher-Yates permutation (sequence-dependent)"
+    },
+    {
+      "module": "reciprocal",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "relu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "repeat",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "repeat_interleave",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "resolve_conj",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "native complex dtype: conjugate-flag resolution"
+    },
+    {
+      "module": "resolve_neg",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "native complex dtype: negation-flag resolution"
+    },
+    {
+      "module": "rms_norm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "rsqrt",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "scaled_softmax",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path)"
+    },
+    {
+      "module": "scatter",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+    },
+    {
+      "module": "scatter_add_",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C3 gather/scatter PK (test_gather_scatter_pk.py)"
+    },
+    {
+      "module": "select_scatter",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "sigmoid",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "silu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "sin",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "slice_scatter",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "softmax",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "softplus",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "sort",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6b bitonic-sort PK (test_sort_pk.py; covers argsort)"
+    },
+    {
+      "module": "sqrt",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "stack",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "std",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "sub",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "sum",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "tan",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "tanh",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "15-kernel certified corpus (corpus/kernels)"
+    },
+    {
+      "module": "threshold",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "tile",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C4 layout PK (test_layout_pk.py)"
+    },
+    {
+      "module": "to",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "topk",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C6b bitonic-sort PK (test_sort_pk.py)"
+    },
+    {
+      "module": "trace",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "triu",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C4 layout PK (test_layout_pk.py)"
+    },
+    {
+      "module": "uniform",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C5 RNG/philox PK (test_rng_pk.py)"
+    },
+    {
+      "module": "unique",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "multi-op graph: sort + adjacent-dedup compaction (C6 bitonic then C8 compaction)"
+    },
+    {
+      "module": "upsample_bicubic2d_aa",
+      "group": "ops",
+      "bucket": "classified-miss",
+      "evidence": "bicubic/anti-aliased interpolation (deferred; nearest verified C7a)"
+    },
+    {
+      "module": "upsample_nearest2d",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "C7a pool/interp PK (test_pool_interp_pk.py)"
+    },
+    {
+      "module": "var_mean",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "vdot",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "vector_norm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "vstack",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "weightnorm",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "where",
+      "group": "ops",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "zeros",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "zeros_like",
+      "group": "ops",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "apply_repetition_penalties",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "token-histogram scatter penalty (data-dependent, gen-loop)"
+    },
+    {
+      "module": "concat_and_cache_mla",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "MLA KV-cache concat+scatter (stateful multi-op)"
+    },
+    {
+      "module": "cross_entropy_loss",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "multi-op graph: log_softmax then nll gather-reduce"
+    },
+    {
+      "module": "flash_mla",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "flash multi-latent-attention (loop authorship, PRD out-of-scope)"
+    },
+    {
+      "module": "fused_add_rms_norm",
+      "group": "fused",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "geglu",
+      "group": "fused",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "gelu_and_mul",
+      "group": "fused",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "instance_norm",
+      "group": "fused",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "moe_align_block_size",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "MoE routing/block-alignment (sort+scan+scatter integer bookkeeping)"
+    },
+    {
+      "module": "moe_sum",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "MoE expert-weighted gather+sum (data-dependent routing composition)"
+    },
+    {
+      "module": "outer",
+      "group": "fused",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/bulk batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "reglu",
+      "group": "fused",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "reshape_and_cache",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "KV-cache scatter into paged layout (stateful multi-op, C3-tail)"
+    },
+    {
+      "module": "reshape_and_cache_flash",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "KV-cache scatter, flash paged layout (stateful)"
+    },
+    {
+      "module": "rotary_embedding",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "rotary positional embedding (paired-rotation over complex-like layout)"
+    },
+    {
+      "module": "rwkv_ka_fusion",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "RWKV state-recurrent fusion (sequential scan with carried state)"
+    },
+    {
+      "module": "rwkv_mm_sparsity",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "RWKV sparse-mm fusion (sparse addressing)"
+    },
+    {
+      "module": "silu_and_mul",
+      "group": "fused",
+      "bucket": "verified-e2e",
+      "evidence": "corpus/pilot batch (extract->lower->verify, rel<1e-3)"
+    },
+    {
+      "module": "skip_layernorm",
+      "group": "fused",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "topk_softmax",
+      "group": "fused",
+      "bucket": "classified-miss",
+      "evidence": "multi-op graph: topk then softmax MoE-gating"
+    },
+    {
+      "module": "weight_norm",
+      "group": "fused",
+      "bucket": "extraction-only-proven",
+      "evidence": "op-class + an available pass lower it; measured 97.3% extraction / 27.8% composability-fail at 74-op scale (corpus/bulk/manifest.json)"
+    },
+    {
+      "module": "bin_topk",
+      "group": "fused/DSA",
+      "bucket": "classified-miss",
+      "evidence": "DSA experimental sparse kernel (sub-package, not a top-level op)"
+    },
+    {
+      "module": "indexer_k_tiled",
+      "group": "fused/DSA",
+      "bucket": "classified-miss",
+      "evidence": "DSA experimental sparse kernel (sub-package, not a top-level op)"
+    },
+    {
+      "module": "sparse_mla",
+      "group": "fused/DSA",
+      "bucket": "classified-miss",
+      "evidence": "DSA experimental sparse kernel (sub-package, not a top-level op)"
+    }
+  ],
+  "triton_refs": [
+    {
+      "module": "add2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "add_bias2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "ai_bench_correlation",
+      "group": "triton-ref",
+      "bucket": "classified-miss",
+      "evidence": "cross-correlation multi-op graph (sliding-window reduce composition)"
+    },
+    {
+      "module": "ai_bench_dropout",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "philox dropout (C5 RNG mechanism)"
+    },
+    {
+      "module": "ai_bench_layernorm",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "ai_bench_matmul",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "ai_bench_resize",
+      "group": "triton-ref",
+      "bucket": "classified-miss",
+      "evidence": "bicubic/aa resize interpolation (deferred; nearest verified C7a)"
+    },
+    {
+      "module": "ai_bench_rope",
+      "group": "triton-ref",
+      "bucket": "classified-miss",
+      "evidence": "rotary positional embedding (paired-rotation, complex-like layout)"
+    },
+    {
+      "module": "ai_bench_softmax",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "ai_bench_warp",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "warp-primitive microbench (elementwise/reduce class)"
+    },
+    {
+      "module": "any",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "boolean reduce (reduce class)"
+    },
+    {
+      "module": "attention",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "clamp2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "copy2d_divmod",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "strided copy/layout (C4 layout mechanism)"
+    },
+    {
+      "module": "exp2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "flash_attention2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "floor2d",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "elementwise floor (map_unary class)"
+    },
+    {
+      "module": "gather2d",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "gather (C3 data-dependent addressing mechanism)"
+    },
+    {
+      "module": "grouped_row_sum2d",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "segmented row-reduce (reduce class)"
+    },
+    {
+      "module": "groupnorm",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "layer_norm_residual2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "layernorm",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "masked_attention2d",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "masked attention (flash/attention class)"
+    },
+    {
+      "module": "masked_softmax2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "matmul_bias_relu2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "matmul_fused_epilogue2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "matmul_relu2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "mlp2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "relu2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "rms_norm2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "rms_norm_residual2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "row_max",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "row_sum",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "rowmask_where2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "softmax",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    },
+    {
+      "module": "transpose2d",
+      "group": "triton-ref",
+      "bucket": "extraction-only-proven",
+      "evidence": "transpose/layout (C4 layout mechanism)"
+    },
+    {
+      "module": "upsample_bicubic2d_aa",
+      "group": "triton-ref",
+      "bucket": "classified-miss",
+      "evidence": "bicubic/anti-aliased interpolation (deferred)"
+    },
+    {
+      "module": "where2d",
+      "group": "triton-ref",
+      "bucket": "verified-e2e",
+      "evidence": "op-class proven live (15-kernel corpus + 29 high-perf lowered kernels + cluster PKs)"
+    }
+  ]
+}

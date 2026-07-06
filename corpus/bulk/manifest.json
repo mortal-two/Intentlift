@@ -1,16 +1,16 @@
 {
   "summary": {
-    "total": 41,
-    "extracted": 39,
-    "lowered": 37,
-    "verified": 39,
-    "ok": 37,
+    "total": 74,
+    "extracted": 72,
+    "lowered": 52,
+    "verified": 69,
+    "ok": 50,
     "extraction_fail": 2,
-    "lowering_fail": 2,
-    "verify_fail": 0,
-    "extraction_success_pct": 95.1,
-    "composability_fail_pct": 5.1,
-    "verify_pass_pct": 95.1
+    "lowering_fail": 20,
+    "verify_fail": 2,
+    "extraction_success_pct": 97.3,
+    "composability_fail_pct": 27.8,
+    "verify_pass_pct": 93.2
   },
   "ops": [
     {
@@ -47,17 +47,17 @@
       "op": "silu",
       "family": "unary",
       "extracted": true,
-      "lowered": false,
+      "lowered": true,
       "verified": true,
-      "rel": 1.3296086562838252e-07,
-      "residual_intent": null,
+      "rel": 1.2666607049166125e-07,
+      "residual_intent": 0,
       "attempts": 1,
-      "failure_class": "lowering_fail",
+      "failure_class": "ok",
       "ops": [
         "map_unary:sigmoid",
         "map_binary:mul"
       ],
-      "error": "lower: PermissionError: [Errno 13] Permission denied: '/home/kingdom/phdworks/TianchenIR/build/tools/intent-opt/intent-opt'"
+      "error": ""
     },
     {
       "op": "gelu",
@@ -701,6 +701,649 @@
         "const"
       ],
       "error": ""
+    },
+    {
+      "op": "eye",
+      "family": "init",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 2,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "triu",
+        "triu",
+        "map_binary:sub"
+      ],
+      "error": "lower: 2 residual intent.* op(s)"
+    },
+    {
+      "op": "linspace",
+      "family": "init",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 5.9604644775331015e-08,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "concat"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "full_like",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "geglu",
+      "family": "fused",
+      "extracted": true,
+      "lowered": true,
+      "verified": false,
+      "rel": null,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "verify_fail",
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "map_binary:mul",
+        "map_unary:erf",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "error": "verify: ValueError: operands could not be broadcast together with shapes (64,256) (64,128) "
+    },
+    {
+      "op": "glu",
+      "family": "fused",
+      "extracted": true,
+      "lowered": true,
+      "verified": false,
+      "rel": null,
+      "residual_intent": 0,
+      "attempts": 2,
+      "failure_class": "verify_fail",
+      "ops": [
+        "map_unary:sigmoid",
+        "map_binary:mul"
+      ],
+      "error": "verify: RuntimeError: arity: provided 1 inputs, LLM declared 2"
+    },
+    {
+      "op": "clamp",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "map_binary:max",
+        "map_binary:min"
+      ],
+      "error": ""
+    },
+    {
+      "op": "threshold",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:gt",
+        "select"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "nan_to_num",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_unary:isnan",
+        "const",
+        "select",
+        "const",
+        "map_binary:gt",
+        "select",
+        "const",
+        "map_binary:lt",
+        "select"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:4:16: error: 'intent.map_unary' op predicate fn 'isnan' must produce an i1-typed result tenso"
+    },
+    {
+      "op": "isnan",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_unary:isnan"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:4:12: error: 'intent.map_unary' op predicate fn 'isnan' must produce an i1-typed result tenso"
+    },
+    {
+      "op": "isinf",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 2,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_unary:isnan",
+        "map_binary:sub",
+        "map_unary:isnan",
+        "const",
+        "select"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:4:18: error: 'intent.map_unary' op predicate fn 'isnan' must produce an i1-typed result tenso"
+    },
+    {
+      "op": "isfinite",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:sub",
+        "map_unary:isnan",
+        "map_unary:logical_not"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:5:24: error: 'intent.map_unary' op predicate fn 'isnan' must produce an i1-typed result tenso"
+    },
+    {
+      "op": "logical_not",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "cast",
+        "map_unary:logical_not"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "fill",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "logical_and",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "map_binary:ne",
+        "const",
+        "select"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:8:12: error: 'intent.select' op x and y must share one element type\n    %Y_5 = intent.select "
+    },
+    {
+      "op": "logical_or",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "map_binary:ne",
+        "select"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:7:12: error: 'intent.select' op result element type must equal x/y element type\n    %Y_4 = in"
+    },
+    {
+      "op": "logical_xor",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "map_binary:ne",
+        "map_binary:ne"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "isclose",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:sub",
+        "map_unary:abs",
+        "map_unary:abs",
+        "const",
+        "const",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:le"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:7:37: error: expected '>'\n    %rtol_4 = arith.constant dense<1e-05> : tensor<f32>\n           "
+    },
+    {
+      "op": "lerp",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 6.361961374877958e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:sub",
+        "map_binary:mul",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "masked_fill",
+      "family": "binary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 2,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "const",
+        "select"
+      ],
+      "error": "lower: 2 residual intent.* op(s)"
+    },
+    {
+      "op": "all",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "reduce:all"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:6:26: error: use of value '%nz_2' expects different type than prior uses: 'tensor<64x256xf32>"
+    },
+    {
+      "op": "any",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "map_binary:ne",
+        "reduce:any"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:6:26: error: use of value '%nonzero_2' expects different type than prior uses: 'tensor<64x256"
+    },
+    {
+      "op": "trace",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 4.596874533908303e-06,
+      "residual_intent": 0,
+      "attempts": 2,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "cumsum",
+      "family": "scan",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 5.017169525990072e-07,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "scan:sum"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
+    },
+    {
+      "op": "dot",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.8889237290372946e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "vdot",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 3.853011020226754e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "baddbmm",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 2.3596228882161205e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "addmv",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.9985983163807086e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "addr",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "rms_norm",
+      "family": "norm",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 1.0966789782284986e-07,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_binary:mul",
+        "reduce:mean",
+        "const",
+        "map_binary:add",
+        "map_unary:sqrt",
+        "map_binary:div",
+        "map_binary:mul"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:6:36: error: expected '>'\n    %eps_3 = arith.constant dense<1e-05> : tensor<f32>\n            "
+    },
+    {
+      "op": "layer_norm",
+      "family": "norm",
+      "extracted": true,
+      "lowered": false,
+      "verified": false,
+      "rel": null,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "reduce:mean",
+        "map_binary:sub",
+        "map_binary:mul",
+        "reduce:mean",
+        "const",
+        "map_binary:add",
+        "map_unary:sqrt",
+        "map_binary:div",
+        "map_binary:mul",
+        "map_binary:add"
+      ],
+      "error": "lower: RuntimeError: intent-opt failed: <stdin>:8:36: error: expected '>'\n    %eps_5 = arith.constant dense<1e-05> : tensor<f32>\n            ; verify: AttributeError: 'tuple' object has no attribute 'detach'"
+    },
+    {
+      "op": "zeros_like",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "ones_like",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "logspace",
+      "family": "init",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 9.536743164061546e-08,
+      "residual_intent": 1,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "scan:sum",
+        "const",
+        "map_binary:sub",
+        "const",
+        "map_binary:mul",
+        "const",
+        "map_binary:pow"
+      ],
+      "error": "lower: 1 residual intent.* op(s)"
     }
   ]
 }

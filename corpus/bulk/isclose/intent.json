@@ -1,0 +1,117 @@
+{
+  "intent_function": {
+    "name": "isclose",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "diff",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "abs_diff",
+        "operands": [
+          "diff"
+        ],
+        "attrs": {
+          "fn": "abs"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "abs_B",
+        "operands": [
+          "B"
+        ],
+        "attrs": {
+          "fn": "abs"
+        }
+      },
+      {
+        "op": "const",
+        "result": "rtol",
+        "attrs": {
+          "value": 1e-05,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "atol",
+        "attrs": {
+          "value": 1e-08,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "rel_tol",
+        "operands": [
+          "rtol",
+          "abs_B"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "allowed",
+        "operands": [
+          "atol",
+          "rel_tol"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "mask",
+        "operands": [
+          "abs_diff",
+          "allowed"
+        ],
+        "attrs": {
+          "fn": "le"
+        }
+      }
+    ]
+  }
+}

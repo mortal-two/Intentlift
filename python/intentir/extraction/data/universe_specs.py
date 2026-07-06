@@ -391,4 +391,162 @@ def bulk_specs() -> list[KernelSpec]:
           "along the last axis and compute A*sigmoid(B) -> [M, N/2].",
           lambda: [rnd(M, N)], lambda t: flag_gems.glu(t[0], -1), family="fused"),
     ]
+    specs += _bulk2_specs(flag_gems, torch, dev, rnd, pos, small, M, N, K, S)
     return specs
+
+
+def _bulk2_specs(flag_gems, torch, dev, rnd, pos, small, M, N, K, S):
+    """Second SCALE batch (disjoint from the 41 bulk + 22 pilot): more
+    extraction-only families — select/clamp composites, logical/bitwise binaries,
+    boolean reductions, scan, blas (dot/baddbmm/addmv/addr), norm smoke, init.
+    Extraction+lowering are scored from source+shape_hint; a best-effort verify
+    wrapper only touches the verify column."""
+
+    def ints(*shape):  # small non-negative ints for bitwise/logical ops
+        return torch.randint(0, 8, shape, device=dev, dtype=torch.int32)
+
+    def mask(*shape):  # boolean mask
+        return (torch.rand(*shape, device=dev) > 0.5)
+
+    _f2 = lambda n: str((FG_OPS) / f"{n}.py")
+    return [
+        # ---- select / clamp / threshold composites (map_binary + select) ----
+        S("clamp", "flag_gems", _f2("clamp"),
+          "single input X shape [M, N]; clamp each element into [-0.5, 0.5] "
+          "(elementwise min(max(x,-0.5),0.5)).",
+          lambda: [rnd(M, N)], lambda t: flag_gems.clamp(t[0], -0.5, 0.5),
+          family="unary"),
+        S("threshold", "flag_gems", _f2("threshold"),
+          "single input X shape [M, N]; threshold: y = x if x > 0 else 0 "
+          "(select(x>0, x, 0)).",
+          lambda: [rnd(M, N)], lambda t: flag_gems.threshold(t[0], 0.0, 0.0),
+          family="unary"),
+        S("nan_to_num", "flag_gems", _f2("nan_to_num"),
+          "single input X shape [M, N] (finite); replace NaN->0, +inf->big, "
+          "-inf->-big elementwise; on finite input this is identity.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.nan_to_num(t[0]),
+          family="unary"),
+        S("isnan", "flag_gems", _f2("isnan"),
+          "single input X shape [M, N]; elementwise isnan (x != x) -> i1 mask.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.isnan(t[0]), family="unary"),
+        S("isinf", "flag_gems", _f2("isinf"),
+          "single input X shape [M, N]; elementwise isinf -> i1 mask.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.isinf(t[0]), family="unary"),
+        S("isfinite", "flag_gems", _f2("isfinite"),
+          "single input X shape [M, N]; elementwise isfinite -> i1 mask.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.isfinite(t[0]), family="unary"),
+        S("logical_not", "flag_gems", _f2("logical_not"),
+          "single input X shape [M, N]; logical NOT (x == 0) -> i1 mask.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.logical_not(t[0]),
+          family="unary"),
+        S("fill", "flag_gems", _f2("fill"),
+          "single input X shape [M, N]; produce a [M, N] tensor filled with the "
+          "constant 3.0 (const splat, same shape as X).",
+          lambda: [rnd(M, N)], lambda t: flag_gems.fill_scalar(t[0], 3.0),
+          family="init"),
+        # ---- logical / where / lerp / masked binaries -----------------------
+        S("logical_and", "flag_gems", _f2("logical_and"),
+          "inputs A, B both shape [M, N]; logical AND ((A!=0)&(B!=0)) -> i1 mask.",
+          lambda: [rnd(M, N), rnd(M, N)],
+          lambda t: flag_gems.logical_and(t[0], t[1]), family="binary"),
+        S("logical_or", "flag_gems", _f2("logical_or"),
+          "inputs A, B both shape [M, N]; logical OR ((A!=0)|(B!=0)) -> i1 mask.",
+          lambda: [rnd(M, N), rnd(M, N)],
+          lambda t: flag_gems.logical_or(t[0], t[1]), family="binary"),
+        S("logical_xor", "flag_gems", _f2("logical_xor"),
+          "inputs A, B both shape [M, N]; logical XOR ((A!=0)^(B!=0)) -> i1 mask.",
+          lambda: [rnd(M, N), rnd(M, N)],
+          lambda t: flag_gems.logical_xor(t[0], t[1]), family="binary"),
+        S("isclose", "flag_gems", _f2("isclose"),
+          "inputs A, B both shape [M, N]; elementwise |A-B| <= atol+rtol*|B| "
+          "with rtol=1e-5, atol=1e-8 -> i1 mask.",
+          lambda: [rnd(M, N), rnd(M, N)],
+          lambda t: flag_gems.isclose(t[0], t[1]), family="binary"),
+        S("lerp", "flag_gems", _f2("lerp"),
+          "inputs IN THIS ORDER: A(start), B(end), W(weight) all shape [M, N]; "
+          "linear interpolation A + W*(B-A) elementwise.",
+          lambda: [rnd(M, N), rnd(M, N), rnd(M, N)],
+          lambda t: flag_gems.lerp_tensor(t[0], t[1], t[2]), family="binary"),
+        S("masked_fill", "flag_gems", _f2("masked_fill"),
+          "inputs IN THIS ORDER: X shape [M, N], MASK shape [M, N] (0/1); "
+          "y = select(MASK != 0, 0.0, X) elementwise.",
+          lambda: [rnd(M, N), mask(M, N).float()],
+          lambda t: flag_gems.masked_fill(t[0], t[1].bool(), 0.0),
+          family="binary"),
+        # ---- boolean reductions --------------------------------------------
+        S("all", "flag_gems", _f2("all"),
+          "single input X shape [M, N]; reduce logical-AND over ALL elements "
+          "(true iff every element != 0) -> scalar i1.",
+          lambda: [pos(M, N)], lambda t: flag_gems.all(t[0]), family="reduce"),
+        S("any", "flag_gems", _f2("any"),
+          "single input X shape [M, N]; reduce logical-OR over ALL elements "
+          "(true iff any element != 0) -> scalar i1.",
+          lambda: [rnd(M, N)], lambda t: flag_gems.any(t[0]), family="reduce"),
+        S("trace", "flag_gems", _f2("trace"),
+          "single input X shape [M, M]; sum of the main diagonal X[i,i] -> "
+          "scalar.",
+          lambda: [rnd(M, M)], lambda t: flag_gems.trace(t[0]), family="reduce"),
+        # ---- scan ----------------------------------------------------------
+        S("cumsum", "flag_gems", _f2("cumsum"),
+          "single input X shape [M, N]; inclusive prefix-sum (cumulative sum) "
+          "along the last axis (axis 1) -> [M, N].",
+          lambda: [rnd(M, N)], lambda t: flag_gems.cumsum(t[0], dim=1),
+          family="scan"),
+        # ---- blas ----------------------------------------------------------
+        S("dot", "flag_gems", _f2("dot"),
+          "inputs a, b both shape [K] (1-D); dot product sum(a*b) -> scalar.",
+          lambda: [rnd(K), rnd(K)], lambda t: flag_gems.dot(t[0], t[1]),
+          family="blas"),
+        S("vdot", "flag_gems", _f2("vdot"),
+          "inputs a, b both shape [K] (1-D, real); vdot = sum(a*b) -> scalar.",
+          lambda: [rnd(K), rnd(K)], lambda t: flag_gems.vdot(t[0], t[1]),
+          family="blas"),
+        S("baddbmm", "flag_gems", _f2("baddbmm"),
+          "inputs IN THIS ORDER: C shape [B, M, N], A shape [B, M, K], B2 shape "
+          "[B, K, N]; batched C + A@B2 (beta=alpha=1) -> [B, M, N]. Use B=4.",
+          lambda: [rnd(4, M, N), rnd(4, M, K), rnd(4, K, N)],
+          lambda t: flag_gems.baddbmm(t[0], t[1], t[2]), family="blas"),
+        S("addmv", "flag_gems", _f2("addmv"),
+          "inputs IN THIS ORDER: c shape [M], A shape [M, K], v shape [K]; "
+          "c + A@v (beta=alpha=1) -> [M].",
+          lambda: [rnd(M), rnd(M, K), rnd(K)],
+          lambda t: flag_gems.addmv(t[0], t[1], t[2]), family="blas"),
+        S("addr", "flag_gems", _f2("addr"),
+          "inputs IN THIS ORDER: C shape [M, N], a shape [M], b shape [N]; "
+          "C + outer(a, b) i.e. C[i,j] + a[i]*b[j] -> [M, N].",
+          lambda: [rnd(M, N), rnd(M), rnd(N)],
+          lambda t: flag_gems.addr(t[0], t[1], t[2]), family="blas"),
+        # ---- norm smoke ----------------------------------------------------
+        S("rms_norm", "flag_gems", _f2("rms_norm"),
+          "inputs IN THIS ORDER: X shape [M, N], W shape [N]. For EACH row i: "
+          "ms[i] = mean over columns of X[i,:]^2 (a per-row mean reduction over "
+          "axis 1, keepdims -> [M, 1]); Y[i,j] = X[i,j]/sqrt(ms[i]+eps)*W[j], "
+          "eps=1e-5. Emit Y as the single output.",
+          lambda: [rnd(M, N), rnd(N)],
+          lambda t: flag_gems.rms_norm(t[0], [N], t[1], 1e-5), family="norm"),
+        S("layer_norm", "flag_gems", _f2("layernorm"),
+          "inputs IN THIS ORDER: X shape [M, N], W shape [N], Bi shape [N]. For "
+          "EACH row i: mean[i] = average over columns; var[i] = average over "
+          "columns of (X[i,:]-mean[i])^2 (per-row reductions over axis 1, "
+          "keepdims -> [M, 1]); Y[i,j] = (X[i,j]-mean[i])/sqrt(var[i]+eps)*W[j] "
+          "+ Bi[j], eps=1e-5. Emit Y as the single output.",
+          lambda: [rnd(M, N), rnd(N), rnd(N)],
+          lambda t: flag_gems.layer_norm(t[0], [N], t[1], t[2], 1e-5),
+          family="norm"),
+        # ---- init ----------------------------------------------------------
+        S("zeros_like", "flag_gems", _f2("zeros_like"),
+          "single input X shape [M, N]; produce a [M, N] f32 tensor of all "
+          "zeros (same shape as X).",
+          lambda: [rnd(M, N)], lambda t: flag_gems.zeros_like(t[0]),
+          family="init"),
+        S("ones_like", "flag_gems", _f2("ones_like"),
+          "single input X shape [M, N]; produce a [M, N] f32 tensor of all "
+          "ones (same shape as X).",
+          lambda: [rnd(M, N)], lambda t: flag_gems.ones_like(t[0]),
+          family="init"),
+        S("logspace", "flag_gems", _f2("logspace"),
+          "no tensor input; produce 64 f32 values 10**linspace(0,1,64) — "
+          "logarithmically spaced from 10**0 to 10**1 (a length-64 1-D tensor).",
+          lambda: [], lambda t: flag_gems.logspace(0.0, 1.0, 64, device="cuda"),
+          family="init"),
+    ]

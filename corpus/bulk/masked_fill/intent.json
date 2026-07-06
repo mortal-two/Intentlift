@@ -1,0 +1,73 @@
+{
+  "intent_function": {
+    "name": "masked_fill",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "MASK",
+        "dtype": "i32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "mask_zero",
+        "attrs": {
+          "value": 0,
+          "dtype": "i32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "cond",
+        "operands": [
+          "MASK",
+          "mask_zero"
+        ],
+        "attrs": {
+          "fn": "ne"
+        }
+      },
+      {
+        "op": "const",
+        "result": "fill_zero",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "select",
+        "result": "Y",
+        "operands": [
+          "cond",
+          "fill_zero",
+          "X"
+        ]
+      }
+    ]
+  }
+}

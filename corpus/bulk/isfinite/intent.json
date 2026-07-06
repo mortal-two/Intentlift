@@ -1,0 +1,58 @@
+{
+  "intent_function": {
+    "name": "isfinite",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "x_minus_x",
+        "operands": [
+          "X",
+          "X"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "is_nan_or_inf",
+        "operands": [
+          "x_minus_x"
+        ],
+        "attrs": {
+          "fn": "isnan"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "Y",
+        "operands": [
+          "is_nan_or_inf"
+        ],
+        "attrs": {
+          "fn": "logical_not"
+        }
+      }
+    ]
+  }
+}

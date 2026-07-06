@@ -1,0 +1,76 @@
+{
+  "intent_function": {
+    "name": "isinf",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_unary",
+        "result": "x_isnan",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "isnan"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "x_minus_x",
+        "operands": [
+          "X",
+          "X"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "diff_isnan",
+        "operands": [
+          "x_minus_x"
+        ],
+        "attrs": {
+          "fn": "isnan"
+        }
+      },
+      {
+        "op": "const",
+        "result": "false_const",
+        "attrs": {
+          "value": 0,
+          "dtype": "i1",
+          "shape": []
+        }
+      },
+      {
+        "op": "select",
+        "result": "Y",
+        "operands": [
+          "x_isnan",
+          "false_const",
+          "diff_isnan"
+        ]
+      }
+    ]
+  }
+}
