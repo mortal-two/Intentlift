@@ -1,0 +1,545 @@
+{
+  "intent_function": {
+    "name": "atan",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "c0",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c1",
+        "attrs": {
+          "value": 1.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_m1_3",
+        "attrs": {
+          "value": -0.3333333333333333,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_1_5",
+        "attrs": {
+          "value": 0.2,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_m1_7",
+        "attrs": {
+          "value": -0.14285714285714285,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_1_9",
+        "attrs": {
+          "value": 0.1111111111111111,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_m1_11",
+        "attrs": {
+          "value": -0.09090909090909091,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_1_13",
+        "attrs": {
+          "value": 0.07692307692307693,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_m1_15",
+        "attrs": {
+          "value": -0.06666666666666667,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_1_17",
+        "attrs": {
+          "value": 0.058823529411764705,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_m1_19",
+        "attrs": {
+          "value": -0.05263157894736842,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_thresh",
+        "attrs": {
+          "value": 0.41421356237309503,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_pi_4",
+        "attrs": {
+          "value": 0.7853981633974483,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "c_pi_2",
+        "attrs": {
+          "value": 1.5707963267948966,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "ax",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "abs"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "is_large",
+        "operands": [
+          "ax",
+          "c1"
+        ],
+        "attrs": {
+          "fn": "gt"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "inv_ax",
+        "operands": [
+          "ax"
+        ],
+        "attrs": {
+          "fn": "recip"
+        }
+      },
+      {
+        "op": "select",
+        "result": "t",
+        "operands": [
+          "is_large",
+          "inv_ax",
+          "ax"
+        ]
+      },
+      {
+        "op": "map_binary",
+        "result": "is_mid",
+        "operands": [
+          "t",
+          "c_thresh"
+        ],
+        "attrs": {
+          "fn": "gt"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "t_minus_1",
+        "operands": [
+          "t",
+          "c1"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "t_plus_1",
+        "operands": [
+          "t",
+          "c1"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "z_mid",
+        "operands": [
+          "t_minus_1",
+          "t_plus_1"
+        ],
+        "attrs": {
+          "fn": "div"
+        }
+      },
+      {
+        "op": "select",
+        "result": "z",
+        "operands": [
+          "is_mid",
+          "z_mid",
+          "t"
+        ]
+      },
+      {
+        "op": "select",
+        "result": "base",
+        "operands": [
+          "is_mid",
+          "c_pi_4",
+          "c0"
+        ]
+      },
+      {
+        "op": "map_binary",
+        "result": "z2",
+        "operands": [
+          "z",
+          "z"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p1",
+        "operands": [
+          "c_m1_19",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p2",
+        "operands": [
+          "p1",
+          "c_1_17"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p3",
+        "operands": [
+          "p2",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p4",
+        "operands": [
+          "p3",
+          "c_m1_15"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p5",
+        "operands": [
+          "p4",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p6",
+        "operands": [
+          "p5",
+          "c_1_13"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p7",
+        "operands": [
+          "p6",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p8",
+        "operands": [
+          "p7",
+          "c_m1_11"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p9",
+        "operands": [
+          "p8",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p10",
+        "operands": [
+          "p9",
+          "c_1_9"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p11",
+        "operands": [
+          "p10",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p12",
+        "operands": [
+          "p11",
+          "c_m1_7"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p13",
+        "operands": [
+          "p12",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p14",
+        "operands": [
+          "p13",
+          "c_1_5"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p15",
+        "operands": [
+          "p14",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p16",
+        "operands": [
+          "p15",
+          "c_m1_3"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p17",
+        "operands": [
+          "p16",
+          "z2"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "p18",
+        "operands": [
+          "p17",
+          "c1"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "poly",
+        "operands": [
+          "z",
+          "p18"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "atan_t",
+        "operands": [
+          "base",
+          "poly"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "large_val",
+        "operands": [
+          "c_pi_2",
+          "atan_t"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "select",
+        "result": "angle",
+        "operands": [
+          "is_large",
+          "large_val",
+          "atan_t"
+        ]
+      },
+      {
+        "op": "const",
+        "result": "c_zero",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "is_neg",
+        "operands": [
+          "X",
+          "c_zero"
+        ],
+        "attrs": {
+          "fn": "lt"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "neg_angle",
+        "operands": [
+          "angle"
+        ],
+        "attrs": {
+          "fn": "neg"
+        }
+      },
+      {
+        "op": "select",
+        "result": "Y",
+        "operands": [
+          "is_neg",
+          "neg_angle",
+          "angle"
+        ]
+      }
+    ]
+  }
+}

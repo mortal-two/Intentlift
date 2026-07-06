@@ -244,6 +244,8 @@ class _HostModule:
     launches: list[_LaunchSite]
     return_aligned_ptrs: list[str]            # aligned-ptr ssa per result, in order
     body_text: str = field(default="", repr=False)
+    const_globals: dict[str, tuple[float, str]] = field(default_factory=dict)
+    # llvm.mlir.addressof ssa -> (scalar value, elem type)
 
 
 @dataclass
@@ -655,6 +657,30 @@ def _parse_return_aligned_ptrs(func_text: str) -> list[str]:
     return [a] if a is not None else []
 
 
+def _parse_const_globals(binary_mlir: str, func_text: str) -> dict[str, tuple[float, str]]:
+    """``llvm.mlir.addressof`` ssa -> (scalar value, elem) for each scalar const
+    global. A rank-0 ``intent.const`` (e.g. the ``0.0`` in std's ``max(var,0)``)
+    bufferizes to a module-level ``llvm.mlir.global private constant`` and is
+    handed to a kernel as the bare pointer off ``llvm.mlir.addressof``. Only
+    scalar-float globals are resolved (splat/dense fall through unhandled)."""
+    # name -> (value, elem) from module-level scalar-float global declarations.
+    globals_: dict[str, tuple[float, str]] = {}
+    for m in re.finditer(
+        r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*([-+0-9.eE]+)\s*:\s*(f\d+)\s*\)",
+        binary_mlir,
+    ):
+        try:
+            globals_[m.group(1)] = (float(m.group(2)), m.group(3))
+        except ValueError:
+            pass
+    # addressof ssa (in the host func) -> the resolved (value, elem).
+    out: dict[str, tuple[float, str]] = {}
+    for m in re.finditer(r"(%\w+)\s*=\s*llvm\.mlir\.addressof\s+@(\w+)", func_text):
+        if m.group(2) in globals_:
+            out[m.group(1)] = globals_[m.group(2)]
+    return out
+
+
 def _parse_host_module(binary_mlir: str, intent_inputs: list[_IntentInput]) -> _HostModule:
     _func_name, func_text = _host_func_text(binary_mlir)
     sig_name, ordered, ptr_blockargs = _parse_signature_blockargs(func_text)
@@ -681,6 +707,7 @@ def _parse_host_module(binary_mlir: str, intent_inputs: list[_IntentInput]) -> _
         launches=_parse_launches(func_text),
         return_aligned_ptrs=_parse_return_aligned_ptrs(func_text),
         body_text=func_text,
+        const_globals=_parse_const_globals(binary_mlir, func_text),
     )
 
 
@@ -776,6 +803,13 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
         # identity-fill kernel (-inf for max, 0 for sum) before first read.
         buffer_tensor_by_ssa[ssa] = torch.empty(
             (lbuf.n_elems,), dtype=dtype, device="cuda"
+        ).contiguous()
+
+    # Scalar const globals (e.g. the 0.0 in std's max(var, 0)) -> a 1-elem
+    # read-only device buffer the kernel loads (and broadcasts).
+    for ssa, (val, elem) in host.const_globals.items():
+        buffer_tensor_by_ssa[ssa] = torch.full(
+            (1,), val, dtype=_torch_dtype(elem), device="cuda"
         ).contiguous()
 
     # --- map each launch operand to a concrete launch arg ------------------ #

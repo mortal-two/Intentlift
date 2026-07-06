@@ -12,7 +12,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 7.706698469562634e-08,
+      "rel_err": 5.979582357218183e-08,
       "attempts": 0,
       "ops": [
         "reduce:max",
@@ -30,7 +30,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 9.659205831686587e-08,
+      "rel_err": 9.839809863385032e-08,
       "attempts": 0,
       "ops": [
         "reduce:max",
@@ -49,7 +49,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 9.929387491828666e-08,
+      "rel_err": 1.2312984996932426e-07,
       "attempts": 0,
       "ops": [
         "map_unary:sigmoid",
@@ -64,7 +64,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 6.708040968955848e-08,
+      "rel_err": 5.608675319505283e-08,
       "attempts": 0,
       "ops": [
         "const",
@@ -105,7 +105,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 1.7376202664905004e-07,
+      "rel_err": 1.477042767379299e-07,
       "attempts": 0,
       "ops": [
         "map_binary:mul",
@@ -125,7 +125,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 2.2708492803723507e-07,
+      "rel_err": 2.0416108881558052e-07,
       "attempts": 0,
       "ops": [
         "contraction"
@@ -139,7 +139,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 1.2116162985642875e-07,
+      "rel_err": 1.2169942784827064e-07,
       "attempts": 0,
       "ops": [
         "map_unary:sigmoid"
@@ -153,7 +153,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 1.1927580502210771e-07,
+      "rel_err": 1.1923330362623648e-07,
       "attempts": 0,
       "ops": [
         "map_unary:tanh"
@@ -167,7 +167,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 9.84433739930694e-08,
+      "rel_err": 1.369696210968256e-07,
       "attempts": 0,
       "ops": [
         "map_unary:exp"
@@ -195,7 +195,7 @@
       "extracted": true,
       "verified": true,
       "lowered": true,
-      "rel_err": 8.599601356867094e-08,
+      "rel_err": 8.599738911914226e-08,
       "attempts": 0,
       "ops": [
         "map_unary:abs",

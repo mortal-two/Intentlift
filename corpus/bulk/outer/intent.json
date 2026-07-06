@@ -1,0 +1,44 @@
+{
+  "intent_function": {
+    "name": "outer",
+    "inputs": [
+      {
+        "name": "a",
+        "dtype": "f32",
+        "shape": [
+          "M"
+        ]
+      },
+      {
+        "name": "b",
+        "dtype": "f32",
+        "shape": [
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "contraction",
+        "result": "out",
+        "operands": [
+          "a",
+          "b"
+        ],
+        "attrs": {
+          "subscripts": "i,j->ij"
+        }
+      }
+    ]
+  }
+}

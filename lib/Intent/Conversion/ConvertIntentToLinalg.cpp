@@ -293,59 +293,93 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     Location loc = op.getLoc();
     MLIRContext *ctx = op.getContext();
 
-    // Full reduction (every axis reduced -> no surviving dims). The result is a
-    // rank-0 scalar, or an all-size-1 tensor when keepdims kept the input rank.
-    // A single linalg.generic over ALL-reduction iterators handles both: the
-    // output map is empty (rank-0) or constant-0 in each dim (keepdims [1,..,1]).
-    // This is the multi-axis / all-axis case (amax/mse_loss/vector_norm/std/
-    // var_mean/count_nonzero) that a single-axis lowering left as residual.
+    // Full reduction (every axis reduced -> no surviving dims) to an all-size-1
+    // keepdims tensor [1,..,1] (result rank == input rank).
+    //
+    // C2b cubin fix: a naive all-reduction linalg.generic (all iterators
+    // "reduction", no parallel dim) is SYNTACTICALLY valid and reaches zero
+    // residual, but does NOT lower to a runnable cubin — with no parallel
+    // iterator, `-convert-parallel-loops-to-gpu` cannot outline it, so the whole
+    // reduction stays a HOST scf.for nest (only the identity-fill is mapped to
+    // GPU). The launched cubin then returns only the fill identity (-inf / 0),
+    // silently wrong. Verified end-to-end (amax -> -inf) before this fix.
+    //
+    // Fix: expand the input with a leading UNIT parallel dim
+    // ([d0,..] -> [1, d0, ..]) and reduce the trailing R axes, keeping dim0
+    // parallel. Now `-convert-parallel-loops-to-gpu` maps the size-1 parallel
+    // loop to a 1-block grid and outlines the inner reduction scf.for INTO the
+    // GPU kernel. Collapse the [1,1,..,1] (rank R+1) result back to the keepdims
+    // [1,..,1] (rank R) declared shape. Verified end-to-end (amax/vector_norm/
+    // mse_loss cubin == the real kernel).
     if (r == 0) {
-      bool keepdims = resTy.getRank() == (int64_t)R;
-      SmallVector<int64_t> outShape(keepdims ? R : 0, 1);
+      if (resTy.getRank() != (int64_t)R)
+        return rewriter.notifyMatchFailure(
+            op, "rank-0 full-reduction result: frontend emits keepdims "
+                "[1,..,1]; rank-0 (expand+collapse-to-scalar) not built");
+      for (unsigned d = 0; d < R; ++d)
+        if (inTy.isDynamicDim(d))
+          return rewriter.notifyMatchFailure(op, "full reduce over dynamic extent");
+
+      unsigned RE = R + 1;  // expanded rank: [1, d0, .., d_{R-1}]
+
+      // expand reassociation: source dim0 -> result {0,1}; source dim i>0 ->
+      // result {i+1}.
+      SmallVector<ReassociationIndices> expandRe;
+      expandRe.push_back({0, 1});
+      for (unsigned d = 1; d < R; ++d)
+        expandRe.push_back({(int64_t)d + 1});
+      SmallVector<int64_t> expShape;
+      expShape.push_back(1);
+      for (unsigned d = 0; d < R; ++d)
+        expShape.push_back(inTy.getDimSize(d));
+      auto expTy = RankedTensorType::get(expShape, elemTy);
+      Value xin = rewriter.create<tensor::ExpandShapeOp>(loc, expTy,
+                                                         op.getInput(), expandRe);
+
+      // reduce: iterators [parallel, reduction*R]; out [1,1,..,1] (RE ones),
+      // out map = (d0, 0, .., 0) so the leading parallel dim survives.
+      SmallVector<int64_t> redShape(RE, 1);
+      auto redTy = RankedTensorType::get(redShape, elemTy);
+      SmallVector<utils::IteratorType> iters(RE, utils::IteratorType::reduction);
+      iters[0] = utils::IteratorType::parallel;
       SmallVector<AffineExpr> outExprs;
-      if (keepdims)
-        for (unsigned d = 0; d < R; ++d)
-          outExprs.push_back(getAffineConstantExpr(0, ctx));
-      auto outTy = RankedTensorType::get(outShape, elemTy);
-      SmallVector<utils::IteratorType> iters(R, utils::IteratorType::reduction);
-      SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(R),
-                                     AffineMap::get(R, 0, outExprs, ctx)};
+      outExprs.push_back(getAffineDimExpr(0, ctx));
+      for (unsigned d = 1; d < RE; ++d)
+        outExprs.push_back(getAffineConstantExpr(0, ctx));
+      SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(RE),
+                                     AffineMap::get(RE, 0, outExprs, ctx)};
 
       Value identVal = rewriter.create<arith::ConstantOp>(
           loc, rewriter.getFloatAttr(elemTy, *ident));
-      Value empty = rewriter.create<tensor::EmptyOp>(loc, outShape, elemTy);
+      Value empty = rewriter.create<tensor::EmptyOp>(loc, redShape, elemTy);
       Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
                                                    ValueRange{empty}).getResult(0);
       Value reduced =
           rewriter
               .create<linalg::GenericOp>(
-                  loc, TypeRange{outTy}, ValueRange{op.getInput()},
-                  ValueRange{init}, maps, iters,
+                  loc, TypeRange{redTy}, ValueRange{xin}, ValueRange{init},
+                  maps, iters,
                   [&](OpBuilder &b, Location l, ValueRange args) {
                     b.create<linalg::YieldOp>(
                         l, emitReduceCombine(b, l, fn, args[1], args[0]));
                   })
               .getResult(0);
 
-      // mean = sum / (product of all extents), computed over the (rank-0 or
-      // all-1) result with an elementwise scale.
+      // mean = sum / (product of all extents), an elementwise scale over the
+      // all-parallel [1,..,1] result.
       if (fn == "mean") {
         int64_t count = 1;
-        for (unsigned d = 0; d < R; ++d) {
-          if (inTy.isDynamicDim(d))
-            return rewriter.notifyMatchFailure(op, "mean over dynamic extent");
+        for (unsigned d = 0; d < R; ++d)
           count *= inTy.getDimSize(d);
-        }
         Value inv = rewriter.create<arith::ConstantOp>(
             loc, rewriter.getFloatAttr(elemTy, 1.0 / (double)count));
-        unsigned or_ = outShape.size();
-        Value empty2 = rewriter.create<tensor::EmptyOp>(loc, outShape, elemTy);
-        SmallVector<AffineMap> smaps(2, rewriter.getMultiDimIdentityMap(or_));
-        SmallVector<utils::IteratorType> siters(or_,
+        Value empty2 = rewriter.create<tensor::EmptyOp>(loc, redShape, elemTy);
+        SmallVector<AffineMap> smaps(2, rewriter.getMultiDimIdentityMap(RE));
+        SmallVector<utils::IteratorType> siters(RE,
                                                 utils::IteratorType::parallel);
         reduced = rewriter
                       .create<linalg::GenericOp>(
-                          loc, TypeRange{outTy}, ValueRange{reduced},
+                          loc, TypeRange{redTy}, ValueRange{reduced},
                           ValueRange{empty2}, smaps, siters,
                           [&](OpBuilder &b, Location l, ValueRange args) {
                             Value scaled =
@@ -354,7 +388,17 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
                           })
                       .getResult(0);
       }
-      rewriter.replaceOp(op, reduced);
+
+      // collapse [1,1,..,1] (rank R+1) -> keepdims [1,..,1] (rank R): merge the
+      // leading two unit dims, keep the rest. (For R==1 this collapses [1,1]
+      // -> [1] via the single group {0,1}.)
+      SmallVector<ReassociationIndices> collapseRe;
+      collapseRe.push_back({0, 1});
+      for (unsigned d = 1; d < R; ++d)
+        collapseRe.push_back({(int64_t)d + 1});
+      Value out = rewriter.create<tensor::CollapseShapeOp>(loc, resTy, reduced,
+                                                           collapseRe);
+      rewriter.replaceOp(op, out);
       return success();
     }
 

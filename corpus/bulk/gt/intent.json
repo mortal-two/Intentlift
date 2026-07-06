@@ -1,0 +1,46 @@
+{
+  "intent_function": {
+    "name": "gt",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "gt"
+        }
+      }
+    ]
+  }
+}

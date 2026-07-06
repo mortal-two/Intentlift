@@ -1,0 +1,706 @@
+{
+  "summary": {
+    "total": 41,
+    "extracted": 39,
+    "lowered": 37,
+    "verified": 39,
+    "ok": 37,
+    "extraction_fail": 2,
+    "lowering_fail": 2,
+    "verify_fail": 0,
+    "extraction_success_pct": 95.1,
+    "composability_fail_pct": 5.1,
+    "verify_pass_pct": 95.1
+  },
+  "ops": [
+    {
+      "op": "tanh",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.1933825030780305e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:tanh"
+      ],
+      "error": ""
+    },
+    {
+      "op": "sigmoid",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.2160576275104582e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:sigmoid"
+      ],
+      "error": ""
+    },
+    {
+      "op": "silu",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 1.3296086562838252e-07,
+      "residual_intent": null,
+      "attempts": 1,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "map_unary:sigmoid",
+        "map_binary:mul"
+      ],
+      "error": "lower: PermissionError: [Errno 13] Permission denied: '/home/kingdom/phdworks/TianchenIR/build/tools/intent-opt/intent-opt'"
+    },
+    {
+      "op": "gelu",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 5.9443670421680914e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "map_binary:mul",
+        "map_unary:erf",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:mul"
+      ],
+      "error": ""
+    },
+    {
+      "op": "relu",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "map_binary:max"
+      ],
+      "error": ""
+    },
+    {
+      "op": "abs",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:abs"
+      ],
+      "error": ""
+    },
+    {
+      "op": "neg",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:neg"
+      ],
+      "error": ""
+    },
+    {
+      "op": "exp",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.3843001262343032e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:exp"
+      ],
+      "error": ""
+    },
+    {
+      "op": "sqrt",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 9.734207465155756e-08,
+      "residual_intent": 0,
+      "attempts": 4,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "map_binary:max",
+        "map_unary:sqrt"
+      ],
+      "error": ""
+    },
+    {
+      "op": "log",
+      "family": "unary",
+      "extracted": false,
+      "lowered": false,
+      "verified": false,
+      "rel": null,
+      "residual_intent": null,
+      "attempts": 0,
+      "failure_class": "extraction_fail",
+      "ops": [],
+      "error": "extract: RuntimeError: extraction failed after 4 tries; last: ValueError: output 'Y' not finite on random inputs"
+    },
+    {
+      "op": "reciprocal",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 5.963016062513755e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:recip"
+      ],
+      "error": ""
+    },
+    {
+      "op": "rsqrt",
+      "family": "unary",
+      "extracted": false,
+      "lowered": false,
+      "verified": false,
+      "rel": null,
+      "residual_intent": null,
+      "attempts": 0,
+      "failure_class": "extraction_fail",
+      "ops": [],
+      "error": "extract: RuntimeError: extraction failed after 4 tries; last: ValueError: output 'Y' not finite on random inputs"
+    },
+    {
+      "op": "atan",
+      "family": "unary",
+      "extracted": true,
+      "lowered": false,
+      "verified": true,
+      "rel": 8.932040569321573e-08,
+      "residual_intent": 5,
+      "attempts": 2,
+      "failure_class": "lowering_fail",
+      "ops": [
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "const",
+        "map_unary:abs",
+        "map_binary:gt",
+        "map_unary:recip",
+        "select",
+        "map_binary:gt",
+        "map_binary:sub",
+        "map_binary:add",
+        "map_binary:div",
+        "select",
+        "select",
+        "map_binary:mul",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:mul",
+        "map_binary:add",
+        "map_binary:sub",
+        "select",
+        "const",
+        "map_binary:lt",
+        "map_unary:neg",
+        "select"
+      ],
+      "error": "lower: 5 residual intent.* op(s)"
+    },
+    {
+      "op": "tan",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 7.808364007189942e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:tan"
+      ],
+      "error": ""
+    },
+    {
+      "op": "exp2",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 6.650545301485713e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:exp2"
+      ],
+      "error": ""
+    },
+    {
+      "op": "celu",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 4.8666890577609534e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "map_binary:max",
+        "map_unary:exp",
+        "map_binary:sub",
+        "map_binary:min",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "log_sigmoid",
+      "family": "unary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 6.428375776361244e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "const",
+        "const",
+        "map_binary:min",
+        "map_unary:abs",
+        "cast",
+        "map_unary:neg",
+        "map_unary:exp",
+        "map_binary:add",
+        "map_unary:log",
+        "map_binary:sub"
+      ],
+      "error": ""
+    },
+    {
+      "op": "add",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "sub",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:sub"
+      ],
+      "error": ""
+    },
+    {
+      "op": "mul",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:mul"
+      ],
+      "error": ""
+    },
+    {
+      "op": "div",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 7.27588421274167e-08,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:div"
+      ],
+      "error": ""
+    },
+    {
+      "op": "maximum",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:max"
+      ],
+      "error": ""
+    },
+    {
+      "op": "minimum",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:min"
+      ],
+      "error": ""
+    },
+    {
+      "op": "pow",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.4422989206330957e-07,
+      "residual_intent": 0,
+      "attempts": 4,
+      "failure_class": "ok",
+      "ops": [
+        "map_unary:abs",
+        "map_binary:pow"
+      ],
+      "error": ""
+    },
+    {
+      "op": "ge",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:ge"
+      ],
+      "error": ""
+    },
+    {
+      "op": "gt",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:gt"
+      ],
+      "error": ""
+    },
+    {
+      "op": "lt",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:lt"
+      ],
+      "error": ""
+    },
+    {
+      "op": "le",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:le"
+      ],
+      "error": ""
+    },
+    {
+      "op": "ne",
+      "family": "binary",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "map_binary:ne"
+      ],
+      "error": ""
+    },
+    {
+      "op": "sum",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 2.0423547615152285e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "reduce:sum"
+      ],
+      "error": ""
+    },
+    {
+      "op": "mean",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "reduce:mean"
+      ],
+      "error": ""
+    },
+    {
+      "op": "prod",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 2.802596928649634e-33,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "reduce:prod"
+      ],
+      "error": ""
+    },
+    {
+      "op": "max",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "reduce:max"
+      ],
+      "error": ""
+    },
+    {
+      "op": "min",
+      "family": "reduce",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "reduce:min"
+      ],
+      "error": ""
+    },
+    {
+      "op": "mm",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.5178833602264014e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "bmm",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 2.122099755202246e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "addmm",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 2.4529461559512324e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction",
+        "map_binary:add"
+      ],
+      "error": ""
+    },
+    {
+      "op": "mv",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 1.2138695521154782e-07,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "outer",
+      "family": "blas",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 1,
+      "failure_class": "ok",
+      "ops": [
+        "contraction"
+      ],
+      "error": ""
+    },
+    {
+      "op": "zeros",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 2,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    },
+    {
+      "op": "ones",
+      "family": "init",
+      "extracted": true,
+      "lowered": true,
+      "verified": true,
+      "rel": 0.0,
+      "residual_intent": 0,
+      "attempts": 2,
+      "failure_class": "ok",
+      "ops": [
+        "const"
+      ],
+      "error": ""
+    }
+  ]
+}

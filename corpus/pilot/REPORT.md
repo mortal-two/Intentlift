@@ -2,7 +2,7 @@
 
 - extraction success: **90.9%** (20/22)
 - composability-failure rate (extract-ok but lower-fail): **0.0%** (0/20)
-- verify pass: **81.8%** (18/22)
+- verify pass: **90.9%** (20/22)
 
 | op | family | extract | lower | verify | rel | class |
 |---|---|---|---|---|---|---|
@@ -21,12 +21,12 @@
 | var_mean | reduce | ✅ | ✅ | ✅ | 6.09e-05 | ok |
 | count_nonzero | reduce | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | batch_norm | norm | ❌ | ❌ | ❌ | — | extraction_fail |
-| weight_norm | norm | ✅ | ✅ | ❌ | 2.23e+00 | verify_fail |
+| weight_norm | norm | ✅ | ✅ | ✅ | 1.88e-07 | ok |
 | instance_norm | norm | ❌ | ❌ | ❌ | — | extraction_fail |
 | arange | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | full | init | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 | silu_and_mul | fused | ✅ | ✅ | ✅ | 6.01e-08 | ok |
 | gelu_and_mul | fused | ✅ | ✅ | ✅ | 7.59e-08 | ok |
-| reglu | fused | ✅ | ✅ | ❌ | — | verify_fail |
+| reglu | fused | ✅ | ✅ | ✅ | 0.00e+00 | ok |
 
 Gate: composability-fail 0.0% (< 20% ? **C2 CAN scale**)

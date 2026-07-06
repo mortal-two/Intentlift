@@ -1,0 +1,49 @@
+{
+  "intent_function": {
+    "name": "true_divide",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "div"
+        },
+        "layer_b": {
+          "precondition": "B is elementwise nonzero"
+        }
+      }
+    ]
+  }
+}

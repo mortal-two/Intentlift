@@ -1,0 +1,46 @@
+{
+  "intent_function": {
+    "name": "lt",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "dtype": "i1",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "mask",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "lt"
+        }
+      }
+    ]
+  }
+}

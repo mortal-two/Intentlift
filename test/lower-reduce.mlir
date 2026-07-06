@@ -27,16 +27,21 @@ func.func @rsum(%x: tensor<4x8xf32>) -> tensor<4xf32> {
 
 // -----
 
-// reduce{max} over ALL axes with keepdims (result [1x1], every dim reduced):
-// a single all-reduction linalg.generic writing a constant-0 output index — no
-// surviving dim, no expand_shape. This is the multi-axis / full-reduction case
-// (amax / mse_loss / vector_norm / std / var_mean / count_nonzero).
+// reduce{max} over ALL axes with keepdims (result [1x1], every dim reduced).
+// C2b cubin fix: a naive all-reduction generic (all "reduction" iterators, no
+// parallel dim) is valid MLIR but stays a HOST scf.for nest — the GPU pipeline
+// cannot outline it, so the cubin returns only the fill identity. Instead we
+// expand a leading UNIT parallel dim ([4x8] -> [1x4x8]), reduce the trailing
+// axes keeping dim0 parallel, then collapse back to [1x1]. Now the whole
+// reduction outlines into a 1-block GPU kernel (verified end-to-end for
+// amax/vector_norm/std/var_mean/mse_loss).
 // CHECK-LABEL: func.func @rall
+// CHECK: tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 4, 8]
 // CHECK: linalg.fill
 // CHECK: linalg.generic
-// CHECK-SAME: iterator_types = ["reduction", "reduction"]
+// CHECK-SAME: iterator_types = ["parallel", "reduction", "reduction"]
 // CHECK: arith.maximumf
-// CHECK-NOT: tensor.expand_shape
+// CHECK: tensor.collapse_shape %{{.*}} {{\[\[}}0, 1], [2]]
 func.func @rall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
   %m = intent.reduce %x {fn = "max", axes = [0, 1], assoc = "associative"} : (tensor<4x8xf32>) -> tensor<1x1xf32>
   return %m : tensor<1x1xf32>
@@ -44,13 +49,15 @@ func.func @rall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
 
 // -----
 
-// reduce{mean} over ALL axes with keepdims: the all-reduction generic followed
-// by the 1/count elementwise scale, all over the [1x1] result.
+// reduce{mean} over ALL axes with keepdims: the leading-parallel-dim reduction
+// followed by the 1/count elementwise scale, all over the [1x1x1] result.
 // CHECK-LABEL: func.func @rmeanall
+// CHECK: tensor.expand_shape
 // CHECK: linalg.generic
-// CHECK-SAME: iterator_types = ["reduction", "reduction"]
+// CHECK-SAME: iterator_types = ["parallel", "reduction", "reduction"]
 // CHECK: arith.addf
 // CHECK: arith.mulf
+// CHECK: tensor.collapse_shape
 func.func @rmeanall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
   %m = intent.reduce %x {fn = "mean", axes = [0, 1], assoc = "float_nondeterministic"} : (tensor<4x8xf32>) -> tensor<1x1xf32>
   return %m : tensor<1x1xf32>

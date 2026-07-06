@@ -1,0 +1,57 @@
+{
+  "intent_function": {
+    "name": "bmm",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          4,
+          "M",
+          "K"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          4,
+          "K",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "O",
+        "dtype": "f32",
+        "shape": [
+          4,
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "M": "TILE_M",
+        "N": "TILE_N",
+        "K": "TILE_K"
+      },
+      "group_m": "GROUP_M"
+    },
+    "body": [
+      {
+        "op": "contraction",
+        "result": "O",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "subscripts": "bmk,bkn->bmn"
+        }
+      }
+    ]
+  }
+}

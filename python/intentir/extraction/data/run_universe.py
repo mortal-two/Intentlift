@@ -31,7 +31,7 @@ from intentir.verify.interpret import interpret
 from intentir.extraction.lifters.extract import extract_intent, _concretize_dims
 from intentir.extraction.providers.provider import REPO_ROOT
 from .corpus import KernelSpec, _dims_from, _relerr, _src, lower_to_linalg
-from .universe_specs import pilot_specs
+from .universe_specs import bulk_specs, pilot_specs
 
 PILOT_DIR = REPO_ROOT / "corpus" / "pilot"
 MANIFEST = PILOT_DIR / "manifest.json"
@@ -205,26 +205,46 @@ def _write(results: list[OpResult]) -> None:
 
 
 def main() -> int:
+    global PILOT_DIR, MANIFEST, REPORT
     args = sys.argv[1:]
     saved = "saved" in args
-    only = {a for a in args if a not in ("saved", "--fresh")}
+    bulk = "bulk" in args
+    only = {a for a in args if a not in ("saved", "--fresh", "bulk")}
     fresh = "--fresh" in args
+
+    if bulk:  # SCALE run: the extraction-only bulk, its own manifest dir
+        PILOT_DIR = REPO_ROOT / "corpus" / "bulk"
+        MANIFEST = PILOT_DIR / "manifest.json"
+        REPORT = PILOT_DIR / "REPORT.md"
 
     if not saved and not os.environ.get("IIR_LIVE_LLM"):
         print("IIR_LIVE_LLM not set: falling back to saved-mode replay.", flush=True)
         saved = True
 
-    specs = [s for s in pilot_specs() if not only or s.name in only]
+    spec_fn = bulk_specs if bulk else pilot_specs
+    all_specs = spec_fn()
     prior = {} if fresh else {o["op"]: o for o in _load_manifest().get("ops", [])}
 
-    mode = "saved-replay" if saved else "live gpt-5.5 extraction"
-    print(f"=== C1 pilot: {len(specs)} ops ({mode}) ===\n", flush=True)
+    def _load_prior(name: str) -> OpResult:
+        return OpResult(**{k: v for k, v in prior[name].items()
+                           if k in OpResult.__dataclass_fields__})
 
+    mode = "saved-replay" if saved else "live gpt-5.5 extraction"
+    n_req = len(only) if only else len(all_specs)
+    print(f"=== C1 pilot: {n_req} requested / {len(all_specs)} ops ({mode}) ===\n",
+          flush=True)
+
+    # `only` MERGES: re-run exactly the named ops fresh, carry every other op's
+    # prior manifest entry forward (so a targeted re-verify never clobbers the
+    # full manifest). Without `only`, resume normally (skip recorded, run new).
     results: list[OpResult] = []
-    for s in specs:
+    for s in all_specs:
+        if only and s.name not in only:
+            if s.name in prior:
+                results.append(_load_prior(s.name))  # carry forward untouched
+            continue
         if s.name in prior and not only:
-            r = OpResult(**{k: v for k, v in prior[s.name].items()
-                            if k in OpResult.__dataclass_fields__})
+            r = _load_prior(s.name)
             print(f"    (skip, recorded) {r.row()}", flush=True)
         else:
             print(f">>> {s.name} ({s.family}) ...", flush=True)
@@ -232,6 +252,7 @@ def main() -> int:
             print("   ", r.row(), flush=True)
         results.append(r)
         _write(results)  # resumable: persist after every op
+    _write(results)
 
     ext = sum(1 for r in results if r.extracted)
     lf = sum(1 for r in results if r.failure_class == "lowering_fail")

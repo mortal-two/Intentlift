@@ -3,14 +3,14 @@
     "total": 22,
     "extracted": 20,
     "lowered": 20,
-    "verified": 18,
-    "ok": 18,
+    "verified": 20,
+    "ok": 20,
     "extraction_fail": 2,
     "lowering_fail": 0,
-    "verify_fail": 2,
+    "verify_fail": 0,
     "extraction_success_pct": 90.9,
     "composability_fail_pct": 0.0,
-    "verify_pass_pct": 81.8
+    "verify_pass_pct": 90.9
   },
   "ops": [
     {
@@ -280,11 +280,11 @@
       "family": "norm",
       "extracted": true,
       "lowered": true,
-      "verified": false,
-      "rel": 2.2290923950969965,
+      "verified": true,
+      "rel": 1.8785763397052363e-07,
       "residual_intent": 0,
       "attempts": 0,
-      "failure_class": "verify_fail",
+      "failure_class": "ok",
       "ops": [
         "const",
         "map_binary:mul",
@@ -384,17 +384,17 @@
       "family": "fused",
       "extracted": true,
       "lowered": true,
-      "verified": false,
-      "rel": null,
+      "verified": true,
+      "rel": 0.0,
       "residual_intent": 0,
       "attempts": 0,
-      "failure_class": "verify_fail",
+      "failure_class": "ok",
       "ops": [
         "const",
         "map_binary:max",
         "map_binary:mul"
       ],
-      "error": "verify: RuntimeError: arity: provided 1 inputs, LLM declared 2"
+      "error": ""
     }
   ]
 }

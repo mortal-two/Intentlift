@@ -1,0 +1,46 @@
+{
+  "intent_function": {
+    "name": "add",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "C",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_binary",
+        "result": "C",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      }
+    ]
+  }
+}

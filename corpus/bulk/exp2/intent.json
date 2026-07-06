@@ -1,0 +1,37 @@
+{
+  "intent_function": {
+    "name": "exp2",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "map_unary",
+        "result": "Y",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "exp2"
+        }
+      }
+    ]
+  }
+}

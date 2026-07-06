@@ -1,0 +1,39 @@
+{
+  "intent_function": {
+    "name": "prod",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "body": [
+      {
+        "op": "reduce",
+        "result": "Y",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "prod",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "intent_function": {
+    "name": "max",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "layer_c": {
+      "reduction_strategy": "two_stage_tiled",
+      "tile": {
+        "flat": "BLOCK_SIZE"
+      }
+    },
+    "body": [
+      {
+        "op": "reduce",
+        "result": "Y",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "max",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "associative"
+        }
+      }
+    ]
+  }
+}

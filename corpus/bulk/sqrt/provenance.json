@@ -1,0 +1,14 @@
+{
+  "name": "sqrt",
+  "family": "unary",
+  "library": "flag_gems",
+  "source_file": "/home/kingdom/.local/lib/python3.10/site-packages/flag_gems/ops/sqrt.py",
+  "model": "gpt-5.5",
+  "attempts": 4,
+  "repairs": [
+    "ValueError: output 'Y' not finite on random inputs",
+    "ValueError: output 'Y' not finite on random inputs",
+    "ValueError: output 'Y' not finite on random inputs"
+  ],
+  "generated_by": "intentir.extraction (live provider, NOT hand-authored)"
+}

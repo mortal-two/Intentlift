@@ -1,0 +1,57 @@
+{
+  "intent_function": {
+    "name": "sqrt",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "body": [
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "X_nonneg",
+        "operands": [
+          "X",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "max"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "Y",
+        "operands": [
+          "X_nonneg"
+        ],
+        "attrs": {
+          "fn": "sqrt"
+        }
+      }
+    ]
+  }
+}
