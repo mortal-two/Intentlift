@@ -144,6 +144,26 @@ CLUSTER = {
                                    "per-seq penalty (div if >0 else mul) = masked "
                                    "select/map (elementwise pass); "
                                    "test_llm_serving_pk vs torch+flag_gems"),
+    # P8 last-deferred ops (07-06) — each a composition of already-verified cluster
+    # mechanisms (grouped reduce+cast, x-vectorized C3 scatter, sort+scan+scatter),
+    # NOT a new pass. test_p8_pk.py, exact/rel<1e-3 vs the real flag_gems.<op>.
+    "per_token_group_quant_fp8": ("P8 op-graph: grouped abs-max scale + clamp/"
+                                  "divide in ONE row-reduction kernel (reduce -> "
+                                  "broadcast -> map), then the e4m3-grid cast "
+                                  "(float8_e4m3fn dtype; an f8E4M3FN store through "
+                                  "NVVM is a separate deferred mechanism); "
+                                  "test_p8_pk scales EXACT + dequant byte-exact vs "
+                                  "flag_gems"),
+    "reshape_and_cache": ("P8 KV-cache: the non-flash key cache's x-vectorized "
+                          "[num_blocks,num_heads,head_size/x,block_size,x] layout "
+                          "as an index-remap C3 scatter (destination coord computed "
+                          "host-side, one intent.scatter into the flat cache); "
+                          "test_p8_pk BYTE-EXACT key+value cache vs flag_gems"),
+    "moe_align_block_size": ("P8 MoE routing: by-expert sort (C6b, composite "
+                             "expert*numel+token key = stable) + block-padded "
+                             "cumulative scan (C6) + placement scatter (C3); "
+                             "test_p8_pk EXACT sorted_ids+expert_ids+num_post_pad "
+                             "vs flag_gems"),
 }
 
 # backward / gradient cluster (07-06 P4) — each *_backward is a composition of
@@ -174,9 +194,8 @@ BACKWARD = {
 # ---- classified-miss (deferred mechanism + named reason) -------------------
 MISS = {
     # multi-op-graph compositions (quantile/topk_softmax/cross_entropy_loss land
-    # via the op-graph dispatch; unique/randperm/multinomial/bicubic land P7 —
-    # all in CLUSTER above). The fp8-quant remainder defers on the fp8 dtype.
-    "per_token_group_quant_fp8": "multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping)",
+    # via the op-graph dispatch; unique/randperm/multinomial/bicubic land P7;
+    # per_token_group_quant_fp8 lands P8 — all in CLUSTER above).
     # (order-dependent RNG multinomial/randperm landed P7 -> CLUSTER)
     # (native complex dtype angle/resolve_conj/resolve_neg landed P5 -> CLUSTER)
     # (bicubic upsampling landed P7 -> CLUSTER; the aa DOWNSAMPLE kernel remains)
@@ -188,13 +207,9 @@ MISS = {
     "get_scheduler_metadata": "scheduler-metadata helper (not a numeric op)",
     "scaled_softmax": "attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path)",
     # KV-cache / MoE / RWKV stateful compositions. flash / MLA cache scatter,
-    # moe_sum, apply_repetition_penalties, rotary landed P6 (-> CLUSTER); the
-    # remainder are genuine bookkeeping/recurrence deferred with a named reason.
-    "reshape_and_cache": ("KV-cache scatter into the non-flash key cache's "
-                          "x-vectorized [num_blocks,num_heads,head_size/x,"
-                          "block_size,x] reshape (index-bookkeeping remap, not a "
-                          "row scatter; flash/MLA variants landed P6)"),
-    "moe_align_block_size": "MoE routing/block-alignment (sort+scan+scatter integer bookkeeping)",
+    # moe_sum, apply_repetition_penalties, rotary landed P6; reshape_and_cache
+    # (non-flash) + moe_align_block_size landed P8 (-> CLUSTER); the remaining RWKV
+    # recurrences are genuine carried-state deferred with a named reason.
     "rwkv_ka_fusion": "RWKV state-recurrent fusion (sequential scan with carried state)",
     "rwkv_mm_sparsity": "RWKV sparse-mm fusion (sparse addressing)",
 }

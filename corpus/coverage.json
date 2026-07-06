@@ -8,13 +8,13 @@
     "with_dsa_total": 193
   },
   "flag_gems_tally_top_level": {
-    "verified-e2e": 134,
-    "classified-miss": 11,
+    "verified-e2e": 137,
+    "classified-miss": 8,
     "extraction-only-proven": 45
   },
   "flag_gems_tally_with_dsa": {
-    "verified-e2e": 134,
-    "classified-miss": 14,
+    "verified-e2e": 137,
+    "classified-miss": 11,
     "extraction-only-proven": 45
   },
   "triton_refs_total": 38,
@@ -717,8 +717,8 @@
     {
       "module": "per_token_group_quant_fp8",
       "group": "ops",
-      "bucket": "classified-miss",
-      "evidence": "multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping)"
+      "bucket": "verified-e2e",
+      "evidence": "P8 op-graph: grouped abs-max scale + clamp/divide in ONE row-reduction kernel (reduce -> broadcast -> map), then the e4m3-grid cast (float8_e4m3fn dtype; an f8E4M3FN store through NVVM is a separate deferred mechanism); test_p8_pk scales EXACT + dequant byte-exact vs flag_gems"
     },
     {
       "module": "polar",
@@ -1089,8 +1089,8 @@
     {
       "module": "moe_align_block_size",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "MoE routing/block-alignment (sort+scan+scatter integer bookkeeping)"
+      "bucket": "verified-e2e",
+      "evidence": "P8 MoE routing: by-expert sort (C6b, composite expert*numel+token key = stable) + block-padded cumulative scan (C6) + placement scatter (C3); test_p8_pk EXACT sorted_ids+expert_ids+num_post_pad vs flag_gems"
     },
     {
       "module": "moe_sum",
@@ -1113,8 +1113,8 @@
     {
       "module": "reshape_and_cache",
       "group": "fused",
-      "bucket": "classified-miss",
-      "evidence": "KV-cache scatter into the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] reshape (index-bookkeeping remap, not a row scatter; flash/MLA variants landed P6)"
+      "bucket": "verified-e2e",
+      "evidence": "P8 KV-cache: the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] layout as an index-remap C3 scatter (destination coord computed host-side, one intent.scatter into the flat cache); test_p8_pk BYTE-EXACT key+value cache vs flag_gems"
     },
     {
       "module": "reshape_and_cache_flash",

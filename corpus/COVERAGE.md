@@ -28,16 +28,16 @@ read-only refs), not hand-listed. Regenerate with
 
 | bucket | FlagGems (incl. DSA) | Triton refs |
 |---|---|---|
-| verified-e2e | 134 | 25 |
+| verified-e2e | 137 | 25 |
 | extraction-only-proven | 45 | 10 |
-| classified-miss | 14 | 3 |
+| classified-miss | 11 | 3 |
 | **total** | **193** | **38** |
 
 Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fail **0.0%**, verify **91.9%**.
 
 ## FlagGems `ops/` + `fused/` + `DSA/`
 
-### verified-e2e (134)
+### verified-e2e (137)
 
 | module | group | evidence / reason |
 |---|---|---|
@@ -45,9 +45,11 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `concat_and_cache_mla` | fused | P6 KV-cache: concat kv_c+k_pe then C3 row-scatter into the MLA paged cache at slot addresses; test_llm_serving_pk vs flag_gems (exact) |
 | `cross_entropy_loss` | fused | op-graph dispatch: log_softmax+nll fused to one row-reduction kernel; test_opgraph_pk vs torch+flag_gems (rel<1e-3) |
 | `gelu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `moe_align_block_size` | fused | P8 MoE routing: by-expert sort (C6b, composite expert*numel+token key = stable) + block-padded cumulative scan (C6) + placement scatter (C3); test_p8_pk EXACT sorted_ids+expert_ids+num_post_pad vs flag_gems |
 | `moe_sum` | fused | P6 MoE: sum top-k expert outputs per token = reduce over the expert axis (add-chain over strided expert views, elementwise pass); test_llm_serving_pk vs torch+flag_gems |
 | `outer` | fused | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `reglu` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
+| `reshape_and_cache` | fused | P8 KV-cache: the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] layout as an index-remap C3 scatter (destination coord computed host-side, one intent.scatter into the flat cache); test_p8_pk BYTE-EXACT key+value cache vs flag_gems |
 | `reshape_and_cache_flash` | fused | P6 KV-cache: C3 scatter of key/value rows into the flash paged cache at slot addresses (cache[slot,:] = kv[t,:], scatter axis 0); test_llm_serving_pk vs torch+flag_gems (exact) |
 | `rotary_embedding` | fused | P6 rotary: same paired-rotation mechanism as apply_rotary_pos_emb (test_llm_serving_pk vs torch+flag_gems, both rotary_interleaved modes) |
 | `silu_and_mul` | fused | corpus/pilot batch (extract->lower->verify, rel<1e-3) |
@@ -134,6 +136,7 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `nonzero` | ops | C8 dynamic-shape PK (test_dynamic_shape_pk.py) |
 | `ones` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `pad` | ops | C4 layout PK (test_layout_pk.py) |
+| `per_token_group_quant_fp8` | ops | P8 op-graph: grouped abs-max scale + clamp/divide in ONE row-reduction kernel (reduce -> broadcast -> map), then the e4m3-grid cast (float8_e4m3fn dtype; an f8E4M3FN store through NVVM is a separate deferred mechanism); test_p8_pk scales EXACT + dequant byte-exact vs flag_gems |
 | `polar` | ops | C7a polar PK (test_pool_interp_pk.py) |
 | `pow` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
 | `prod` | ops | corpus/bulk batch (extract->lower->verify, rel<1e-3) |
@@ -226,13 +229,11 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `vstack` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 | `where` | ops | op-class + an available pass lower it; measured 97.3% extraction / 0.0% composability-fail at 74-op scale (corpus/bulk/manifest.json) |
 
-### classified-miss (14)
+### classified-miss (11)
 
 | module | group | evidence / reason |
 |---|---|---|
 | `flash_mla` | fused | flash multi-latent-attention (loop authorship, PRD out-of-scope) |
-| `moe_align_block_size` | fused | MoE routing/block-alignment (sort+scan+scatter integer bookkeeping) |
-| `reshape_and_cache` | fused | KV-cache scatter into the non-flash key cache's x-vectorized [num_blocks,num_heads,head_size/x,block_size,x] reshape (index-bookkeeping remap, not a row scatter; flash/MLA variants landed P6) |
 | `rwkv_ka_fusion` | fused | RWKV state-recurrent fusion (sequential scan with carried state) |
 | `rwkv_mm_sparsity` | fused | RWKV sparse-mm fusion (sparse addressing) |
 | `bin_topk` | fused/DSA | DSA experimental sparse kernel (sub-package, not a top-level op) |
@@ -242,7 +243,6 @@ Scale measurement (corpus/bulk, 74 ops): extraction **97.3%**, composability-fai
 | `flash_api` | ops | flash-attention host API glue (multi-kernel, not one op-graph) |
 | `flash_kernel` | ops | flash-attention inner loop kernel (loop authorship, PRD out-of-scope) |
 | `get_scheduler_metadata` | ops | scheduler-metadata helper (not a numeric op) |
-| `per_token_group_quant_fp8` | ops | multi-op graph: grouped reduce + fp8 quantize/scale (dtype+grouping) |
 | `scaled_softmax` | ops | attention-scaled softmax (Triton-3.6 launcher arg-count bug family; loop path) |
 
 ## Triton refs (refs/…/kernels/triton/ops, read-only)

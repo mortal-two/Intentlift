@@ -440,6 +440,253 @@ func.func @mn_search(%cdfk: tensor<{k}x{N}xf32>, %uk: tensor<{k}x{N}xf32>,
         [cumsum_stage, tile_stage, rng_stage, utile_stage, search_stage])
 
 
+def per_token_group_quant_fp8_plan(G: int, group_size: int) -> OpGraphProgram:
+    """per_token_group_quant_fp8(x) = grouped abs-max scale + clamp/divide (fp8).
+
+    Matches ``flag_gems.per_token_group_quant_fp8`` (row-major, the vLLM
+    block-fp8 quantizer). ``x`` is viewed as ``[G, group_size]`` (one group per
+    row, groups contiguous). Per group:
+
+      amax  = max(max(|x|), eps)          (grouped abs-max reduce, C-reduce)
+      scale = amax / fp8_max              (fp8_max = 448 for e4m3fn)
+      q     = clamp(x / scale, fp8_min, fp8_max)   then rounded to the e4m3 grid.
+
+    The genuinely-IntentIR part is ONE row-reduction kernel: the grouped abs-max
+    reduce + the eps-clamp + the per-group scale + the broadcast clamp/divide
+    (the same reduce -> broadcast -> map shape softmax/cross_entropy use). The
+    final e4m3-grid rounding is a *dtype cast* — emitting an ``f8E4M3FN`` store
+    through NVVM/ptxas is a separate large mechanism (deferred, named), so the
+    caller realizes the cast with the arch's ``float8_e4m3fn`` and verifies the
+    DEQUANTIZED result (``q_fp8 * scale``) vs the real flag_gems dequant, plus
+    the scales exactly.
+
+    Inputs (env): x[G,group_size] f32; eps, invmax(=1/fp8_max), fmin, fmax
+    rank-0 f32 scalars. Outputs: scale[G,1], q[G,group_size] (pre-cast clamp).
+    """
+    R = f"tensor<{G}x{group_size}xf32>"
+    P = f"tensor<{G}x1xf32>"
+    S = "tensor<f32>"
+    T = _div_threads(group_size)
+    stage = Stage(
+        name="ptgq", pass_name="convert-intent-row-reduction-to-gpu",
+        mlir_text=f"""
+func.func @ptgq(%x: {R}, %eps: {S}, %invmax: {S}, %fmin: {S}, %fmax: {S})
+    -> ({P}, {R}) {{
+  %ax = intent.map_unary %x {{fn = "abs"}} : ({R}) -> {R}
+  %amax = intent.reduce %ax {{fn = "max", axes = [1], assoc = "associative"}} : ({R}) -> {P}
+  %ampos = intent.map_binary %amax, %eps {{fn = "max"}} : ({P}, {S}) -> {P}
+  %scale = intent.map_binary %ampos, %invmax {{fn = "mul"}} : ({P}, {S}) -> {P}
+  %div = intent.map_binary %x, %scale {{fn = "div"}} : ({R}, {P}) -> {R}
+  %clo = intent.map_binary %div, %fmin {{fn = "max"}} : ({R}, {S}) -> {R}
+  %q = intent.map_binary %clo, %fmax {{fn = "min"}} : ({R}, {S}) -> {R}
+  return %scale, %q : {P}, {R}
+}}
+""",
+        block_threads=T,
+        inputs=["x", "eps", "invmax", "fmin", "fmax"],
+        outputs=[Buf("scale", (G, 1), "f32"), Buf("q", (G, group_size), "f32")],
+    )
+    return OpGraphProgram([stage])
+
+
+def reshape_and_cache_run(key, value, key_cache, value_cache, slot_mapping,
+                          block_size: int, x: int):
+    """reshape_and_cache (non-flash) = the x-vectorized cache-layout C3 scatter.
+
+    The extra reshape bookkeeping the flash/MLA row-scatter (P6) deferred. Matches
+    ``flag_gems.reshape_and_cache`` byte-for-byte. Each token ``t`` (slot
+    ``s=slot_mapping[t]``, block ``s//block_size``, offset ``s%block_size``)
+    writes its ``[num_heads, head_size]`` key/value into the vectorized cache:
+
+      key_cache[num_blocks, num_heads, head_size/x, block_size, x]
+      value_cache[num_blocks, num_heads, head_size, block_size]
+
+    The per-element destination is a pure index remap (see the flag_gems kernel's
+    ``tgt_key_idx``/``tgt_value_idx``): a deterministic function of (t, i, slot),
+    NOT a plain row scatter. We materialize that destination flat index host-side
+    and drive ONE ``intent.scatter`` (C3, the gather pass) into the flattened
+    cache — the identical scatter mechanism the flash variant used, with the
+    x-vectorized coordinate as the data-dependent address.
+
+    Args are the flag_gems tensors (``key``/``value`` [Nt,H,hd], the pre-allocated
+    caches, ``slot_mapping`` [Nt]). Writes the caches in place; returns nothing.
+    """
+    import torch
+
+    from intentir.benchmarks.row_reduction import RowReductionKernel
+
+    Nt = int(slot_mapping.shape[0])
+    H = int(key.shape[1])
+    hd = int(key.shape[2])
+    D = H * hd
+    nblk = int(key_cache.shape[0])
+    total = nblk * H * hd * block_size
+
+    dev = key.device
+    slot = slot_mapping.to(torch.int64)
+    valid = slot >= 0
+    t = torch.arange(Nt, device=dev, dtype=torch.int64).view(Nt, 1)
+    i = torch.arange(D, device=dev, dtype=torch.int64).view(1, D)  # [1, H*hd]
+    block_idx = (slot // block_size).view(Nt, 1)
+    block_off = (slot % block_size).view(Nt, 1)
+    head_idx = i // hd
+    head_off = i % hd
+    x_idx = head_off // x
+    x_off = head_off % x
+    tgt_key = (block_idx * H * (hd // x) * block_size * x
+               + head_idx * (hd // x) * block_size * x
+               + x_idx * block_size * x
+               + block_off * x
+               + x_off)
+    tgt_val = (block_idx * H * hd * block_size
+               + head_idx * hd * block_size
+               + head_off * block_size
+               + block_off)
+    # invalid (slot<0) tokens: park them past the end so the scatter drops them
+    # (flag_gems early-returns; we route to a throwaway tail row instead).
+    park = torch.full_like(tgt_key, total)
+    tgt_key = torch.where(valid.view(Nt, 1), tgt_key, park).reshape(Nt * D, 1).contiguous()
+    tgt_val = torch.where(valid.view(Nt, 1), tgt_val, park).reshape(Nt * D, 1).contiguous()
+
+    kc_flat = key_cache.reshape(total, 1)
+    vc_flat = value_cache.reshape(total, 1)
+    # pad one throwaway tail row for parked (dropped) writes.
+    kc_pad = torch.cat([kc_flat, torch.zeros(1, 1, device=dev, dtype=kc_flat.dtype)], 0).contiguous()
+    vc_pad = torch.cat([vc_flat, torch.zeros(1, 1, device=dev, dtype=vc_flat.dtype)], 0).contiguous()
+
+    scat = RowReductionKernel(
+        "rac", {}, 1, pass_name="convert-intent-gather-to-gpu",
+        mlir_text=f"""
+func.func @rac(%data: tensor<{total + 1}x1xf32>, %index: tensor<{Nt * D}x1xi64>,
+    %src: tensor<{Nt * D}x1xf32>) -> tensor<{total + 1}x1xf32> {{
+  %o = intent.scatter %data, %index, %src {{axis = 0 : i64, mode = "along_axis", reduce = "none"}}
+      : (tensor<{total + 1}x1xf32>, tensor<{Nt * D}x1xi64>, tensor<{Nt * D}x1xf32>) -> tensor<{total + 1}x1xf32>
+  return %o : tensor<{total + 1}x1xf32>
+}}
+""")
+    ksrc = key.reshape(Nt * D, 1).contiguous()
+    vsrc = value.reshape(Nt * D, 1).contiguous()
+    scat.thunk([kc_pad, tgt_key, ksrc])()
+    scat.thunk([vc_pad, tgt_val, vsrc])()
+    torch.cuda.synchronize()
+    key_cache.reshape(total, 1).copy_(kc_pad[:total])
+    value_cache.reshape(total, 1).copy_(vc_pad[:total])
+
+
+def moe_align_block_size_run(topk_ids, block_size: int, num_experts: int):
+    """moe_align_block_size = sort tokens by expert + block-padded scatter.
+
+    Matches ``flag_gems.moe_align_block_size`` EXACTLY (the vLLM fused-MoE routing
+    bookkeeping). Returns ``(sorted_ids, expert_ids, num_tokens_post_pad)``.
+
+    The core is the by-expert sort (C6b) + the block-padded cumulative scan (C6) +
+    the placement scatter (C3):
+
+      1. sort the composite key ``expert*numel + token`` ascending -> tokens
+         GROUPED by expert, STABLE within an expert by original flat index (the
+         unique token term breaks bitonic ties, so the argsort == flag_gems'
+         stable order). The argsort indices are the by-expert token order.  [C6b]
+      2. per-expert counts (histogram) -> block round-up ``round_up(cnt, bs)`` ->
+         exclusive scan = ``cumsum_padded[e]`` = each expert's block-aligned
+         start; the inclusive total is ``num_tokens_post_pad``.               [C6]
+      3. each sorted position ``p`` (expert ``e``, within-expert rank ``r``) lands
+         at ``rank_post_pad = cumsum_padded[e] + r``; scatter the token id there;
+         unwritten slots stay ``numel`` (the padding marker).                 [C3]
+      4. ``expert_ids[block] = e`` for blocks in expert ``e``'s padded region.
+
+    The sort + scan + scatter are IntentIR kernels; the integer round-up / block
+    bookkeeping is thin host glue (the opgraph-driver pattern, cf. ``unique_run``).
+    """
+    import torch
+
+    from intentir.benchmarks.row_reduction import RowReductionKernel
+
+    dev = topk_ids.device
+    flat = topk_ids.reshape(-1).to(torch.int64)
+    numel = int(flat.numel())
+    max_pad = numel + num_experts * (block_size - 1)
+    max_blocks = (max_pad + block_size - 1) // block_size
+
+    # ---- 1. by-expert sort (C6b): composite key = expert*numel + token idx ----
+    tok = torch.arange(numel, device=dev, dtype=torch.int64)
+    key_f = (flat * numel + tok).to(torch.float32).reshape(1, numel).contiguous()
+    Ts = _threads_pow2(numel)
+    sort_k = RowReductionKernel(
+        "mab_sort", {}, Ts, pass_name="convert-intent-sort-to-gpu",
+        mlir_text=f"""
+func.func @mab_sort(%x: tensor<1x{numel}xf32>)
+    -> (tensor<1x{numel}xf32>, tensor<1x{numel}xi32>) {{
+  %v, %i = intent.sort %x {{descending = false, axis = 1 : i64}}
+      : (tensor<1x{numel}xf32>) -> (tensor<1x{numel}xf32>, tensor<1x{numel}xi32>)
+  return %v, %i : tensor<1x{numel}xf32>, tensor<1x{numel}xi32>
+}}
+""")
+    sorted_key = torch.empty(1, numel, device=dev, dtype=torch.float32).contiguous()
+    order = torch.empty(1, numel, device=dev, dtype=torch.int32).contiguous()
+    sort_k.thunk([key_f, sorted_key, order])()
+    torch.cuda.synchronize()
+    order = order.reshape(numel).to(torch.int64)          # by-expert token order
+    sorted_expert = flat[order]                           # expert per sorted pos
+
+    # ---- 2. counts -> block round-up -> exclusive scan (C6) ----
+    counts = torch.bincount(flat, minlength=num_experts)[:num_experts]
+    padded = ((counts + block_size - 1) // block_size) * block_size
+    pad_row = padded.to(torch.float32).reshape(1, num_experts).contiguous()
+    Tc = _div_threads(num_experts)
+    scan_k = RowReductionKernel(
+        "mab_scan", {}, Tc, pass_name="convert-intent-row-reduction-to-gpu",
+        mlir_text=f"""
+func.func @mab_scan(%p: tensor<1x{num_experts}xf32>) -> tensor<1x{num_experts}xf32> {{
+  %c = intent.scan %p {{fn = "sum", axis = 1 : i64}}
+      : (tensor<1x{num_experts}xf32>) -> tensor<1x{num_experts}xf32>
+  return %c : tensor<1x{num_experts}xf32>
+}}
+""")
+    incl = torch.empty(1, num_experts, device=dev, dtype=torch.float32).contiguous()
+    scan_k.thunk([pad_row, incl])()
+    torch.cuda.synchronize()
+    incl = incl.reshape(num_experts).round().to(torch.int64)  # inclusive padded scan
+    cumsum_padded = torch.cat([torch.zeros(1, dtype=torch.int64, device=dev), incl])
+    num_post_pad = int(incl[-1].item()) if num_experts > 0 else 0
+
+    # within-expert rank r[p] = p - group_start[e_p] (unpadded exclusive count scan)
+    grp_start = torch.cat([torch.zeros(1, dtype=torch.int64, device=dev),
+                           counts.cumsum(0)])[:num_experts]
+    pos = torch.arange(numel, device=dev, dtype=torch.int64)
+    rank = pos - grp_start[sorted_expert]
+    dest = cumsum_padded[sorted_expert] + rank            # rank_post_pad
+
+    # ---- 3. placement scatter (C3): sorted_ids[dest[p]] = order[p] ----
+    sorted_ids = torch.full((max_pad,), numel, device=dev, dtype=torch.int64)
+    padrow = torch.zeros(1, device=dev, dtype=torch.int64)   # throwaway tail
+    buf = torch.cat([sorted_ids.to(torch.float32), padrow.to(torch.float32)]).reshape(max_pad + 1, 1).contiguous()
+    idx = dest.reshape(numel, 1).contiguous()
+    src = order.to(torch.float32).reshape(numel, 1).contiguous()
+    scat = RowReductionKernel(
+        "mab_scat", {}, 1, pass_name="convert-intent-gather-to-gpu",
+        mlir_text=f"""
+func.func @mab_scat(%data: tensor<{max_pad + 1}x1xf32>, %index: tensor<{numel}x1xi64>,
+    %src: tensor<{numel}x1xf32>) -> tensor<{max_pad + 1}x1xf32> {{
+  %o = intent.scatter %data, %index, %src {{axis = 0 : i64, mode = "along_axis", reduce = "none"}}
+      : (tensor<{max_pad + 1}x1xf32>, tensor<{numel}x1xi64>, tensor<{numel}x1xf32>) -> tensor<{max_pad + 1}x1xf32>
+  return %o : tensor<{max_pad + 1}x1xf32>
+}}
+""")
+    scat.thunk([buf, idx, src])()
+    torch.cuda.synchronize()
+    sorted_ids = buf[:max_pad, 0].round().to(torch.int32)
+
+    # ---- 4. expert_ids per block ----
+    expert_ids = torch.zeros(max_blocks, device=dev, dtype=torch.int32)
+    for e in range(num_experts):
+        b0 = int(cumsum_padded[e].item()) // block_size
+        b1 = int(cumsum_padded[e + 1].item()) // block_size
+        if b1 > b0:
+            expert_ids[b0:b1] = e
+    npp = torch.tensor([num_post_pad], device=dev, dtype=torch.int32)
+    return sorted_ids, expert_ids, npp
+
+
 def unique_run(x, block_threads: int | None = None):
     """unique(x) = sort(asc) -> adjacent-dedup -> C8 compaction (sort+dedup graph).
 
@@ -542,4 +789,6 @@ __all__ = [
     "Buf", "Stage", "OpGraphProgram",
     "quantile_plan", "topk_softmax_plan", "cross_entropy_plan",
     "randperm_plan", "multinomial_plan", "unique_run",
+    "per_token_group_quant_fp8_plan", "reshape_and_cache_run",
+    "moe_align_block_size_run",
 ]
