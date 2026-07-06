@@ -383,3 +383,86 @@ class MatmulKernel:
                                 shared, stream, addr, 0)
 
         return go
+
+
+class ConvMMAKernel:
+    """A compiled implicit-GEMM tensor-core conv2d kernel + its launch plan.
+
+    Drives ``-convert-intent-conv-to-gpu-mma`` on a raw intent-MLIR module (one
+    forward conv2d ``intent.conv``) and compiles the resulting nvgpu.ldmatrix +
+    nvgpu.mma.sync (m16n8k16) implicit-GEMM ``gpu.launch`` to an sm_120a cubin.
+    Same device pipeline as ``MatmulKernel`` (``scf_to_cf=True`` so the
+    ``scf.for`` carrying the ``vector<2x2xf32>`` accumulator iter_args lowers),
+    and the same bare-ptr launch-plan resolution.
+
+    ``thunk(tensors)`` returns a zero-arg NO-SYNC launch closure; ``tensors`` are
+    the destination-passing args ``[input, weight, (bias,) output]`` (all f32
+    CUDA tensors; the pass casts to f16 internally, fp16 tensor-core input mode).
+    """
+
+    def __init__(self, mlir_text: str, block_m: int | None = None,
+                 block_n: int | None = None):
+        opts = []
+        if block_m is not None:
+            opts.append(f"block-m={block_m}")
+        if block_n is not None:
+            opts.append(f"block-n={block_n}")
+        pass_opt = "-convert-intent-conv-to-gpu-mma"
+        if opts:
+            pass_opt += "=" + " ".join(opts)
+        rr = _run([INTENT_OPT, pass_opt], stdin=mlir_text)
+        kernels = lower_memref_module_to_kernels(rr, scf_to_cf=True)
+        if len(kernels) != 1:
+            raise RuntimeError(f"conv-mma: expected one kernel, got {len(kernels)}")
+        ck = kernels[0]
+        self.func = load_module(ck.cubin).function(ck.kernel_name)
+
+        _n, ftext = _host_func_text(ck.binary_mlir)
+        _s, _o, ptr_blockargs = _parse_signature_blockargs(ftext)
+        aligned = _map_input_aligned_ptrs(ptr_blockargs)
+        consts = _parse_constants(ftext)
+        sites = _parse_launches(ftext)
+        if len(sites) != 1:
+            raise RuntimeError(
+                f"conv-mma: expected one gpu.launch_func, got {len(sites)}")
+        site = sites[0]
+
+        class _Shim:
+            constants = consts
+
+        self.grid = tuple(_resolve_const_index(_Shim, s) for s in site.grid_ssa)
+        self.block = tuple(_resolve_const_index(_Shim, s) for s in site.block_ssa)
+        self.shared = 0
+        if site.dynamic_shared_ssa is not None:
+            self.shared = int(consts[site.dynamic_shared_ssa][0])
+            cuda = _driver()
+            attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+            cuda.cuFuncSetAttribute(self.func, attr, self.shared)
+        self.plan = []
+        for op in site.args:
+            if op.ty.startswith("!llvm.ptr"):
+                self.plan.append(("ptr", aligned[op.ssa]))
+            elif op.ty in ("i64", "index"):
+                self.plan.append(("i64", int(consts[op.ssa][0])))
+            else:
+                raise RuntimeError(f"conv-mma: unhandled launch-arg {op.ty}")
+        self._cuda = _driver()
+
+    def thunk(self, tensors):
+        """A zero-arg NO-SYNC launch closure binding `tensors` (kept alive)."""
+        import torch
+
+        args = [PtrArg(tensors[i].data_ptr()) if kind == "ptr" else I64Arg(i)
+                for kind, i in self.plan]
+        keep, argp = _marshal(args)
+        cuda, func, grid, block = self._cuda, self.func, self.grid, self.block
+        shared = self.shared
+        addr = int(ctypes.addressof(argp))
+        stream = int(torch.cuda.current_stream().cuda_stream)
+
+        def go(_keep=keep, _argp=argp):  # keep the marshaled buffer alive
+            cuda.cuLaunchKernel(func, grid[0], grid[1], grid[2],
+                                block[0], block[1], block[2],
+                                shared, stream, addr, 0)
+
+        return go

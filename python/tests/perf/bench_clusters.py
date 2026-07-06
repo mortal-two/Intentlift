@@ -53,7 +53,7 @@ import torch
 import triton
 
 from intentir.backend.launch import I64Arg, PtrArg, _marshal
-from intentir.benchmarks.row_reduction import RowReductionKernel
+from intentir.benchmarks.row_reduction import ConvMMAKernel, RowReductionKernel
 
 # NOTE (perf audit): the GB/s / %HBM columns are INDICATIVE only — nbytes counts
 # LOGICAL bytes (a tiled/broadcast input is counted per-read though it is
@@ -613,8 +613,11 @@ def c7_pool():
 
 
 def c7_conv():
-    print("\n[C7] conv2d (naive windowed accumulation, NO tensor-core)")
-    # NCHW [32,64,56,56] k3 pad1 s1 -> out 56x56 (O_last 56 % T==0)
+    print("\n[C7] conv2d (fp16 implicit-GEMM on nvgpu.mma.sync tensor cores)")
+    # NCHW [32,64,56,56] k3 pad1 s1 -> out 56x56. Implicit GEMM: M=N*OH*OW,
+    # N_gemm=Cout, K=Cin*3*3; im2col never materialized (the OOB-guarded conv
+    # address math IS the f16 smem tile-fill). fp16 input mode -> rel ~1e-2 vs
+    # fp32 torch (cuDNN itself runs TF32).
     N, Cin, Cout, H, W, T = 32, 64, 64, 56, 56, 56
     OH = OW = 56
     I = f"tensor<{N}x{Cin}x{H}x{W}xf32>"
@@ -630,11 +633,12 @@ func.func @cv(%x: {I}, %w: {Wt}) -> {O} {{
     w = torch.randn(Cout, Cin, 3, 3, device="cuda")
     out = torch.empty(N, Cout, OH, OW, device="cuda")
     try:
-        k = _mk("convert-intent-conv-to-gpu", mlir, T)
+        k = ConvMMAKernel(mlir)
         go = our_launcher(k, [x, w, out])
         go(); torch.cuda.synchronize()
         ref = torch.nn.functional.conv2d(x, w, None, 1, 1)
         rel = float((out - ref).norm() / ref.norm())
+        assert rel < 2e-2, f"conv2d-mma rel {rel} (fp16 tensor-core)"
     except Exception as e:
         print(f"  conv2d FAILED: {e}"); traceback.print_exc()
         del x, w, out; _cleanup(); return
@@ -645,10 +649,11 @@ func.func @cv(%x: {I}, %w: {Wt}) -> {O} {{
     refs["flag_gems"] = fg_time(
         lambda: FG.conv2d(x, w, None, stride=(1, 1), padding=(1, 1),
                           dilation=(1, 1), groups=1),
-        verify=lambda r: float((r - ref_cv).norm() / ref_cv.norm()) < 1e-2)
+        verify=lambda r: float((r - ref_cv).norm() / ref_cv.norm()) < 2e-2)
     flop = 2.0 * N * Cout * OH * OW * Cin * 3 * 3
     record("C7", "conv2d k3 s1 p1", f"[{N},{Cin},{H},{W}]->{Cout}", our, refs,
-           flop=flop, cls="compute", note=f"rel={rel:.1e}; cuDNN=tensor-core ref",
+           flop=flop, cls="compute",
+           note=f"rel={rel:.1e}; fp16 mma.sync implicit-GEMM; cuDNN=TF32 ref",
            graph_ours=gg)
     del x, w, out; _cleanup()
 

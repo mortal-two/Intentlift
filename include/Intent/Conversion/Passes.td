@@ -475,6 +475,56 @@ def ConvertIntentConvToGPU
   ];
 }
 
+def ConvertIntentConvToGPUMMA
+    : Pass<"convert-intent-conv-to-gpu-mma", "::mlir::ModuleOp"> {
+  let summary = "Lower a single conv2d intent.conv as an IMPLICIT GEMM onto the "
+                "nvgpu.ldmatrix + nvgpu.mma.sync (m16n8k16) tensor-core path.";
+  let description = [{
+    The tensor-core sibling of `convert-intent-conv-to-gpu` (the naive direct
+    windowed f32-accumulation path). Recognizes a `func.func` whose body is
+    exactly one forward conv2d `intent.conv` (rank-4 `[N,Cin,H,W]` f32 input,
+    `[Cout,Cin,kH,kW]` weight, optional `[Cout]` bias, `groups == 1`) and rewrites
+    it as an IMPLICIT GEMM `Y = im2col(X) . W^T`:
+
+      M = N*OH*OW (output pixels)   N_gemm = Cout   K = Cin*kH*kW
+
+    The im2col matrix is NEVER materialized: each `(m-row, k-col)` of the A shared
+    tile is mapped back to an input pixel by the SAME OOB-guarded conv address
+    math as the naive pass (`ih = oh*stride - pad + kh*dil`, out-of-bounds = zero
+    pad) emitted as the smem tile-fill load predicate. W is already a real
+    `[Cout, Cin*kH*kW]` row-major matrix so its tile-fill is a plain gather. Both
+    operands are cast f32 -> f16 during the fill (fp16 input mode: rel ~1e-2 vs
+    fp32 torch, matching the TF32 cuDNN reference). The register-level contraction
+    (`nvgpu.ldmatrix` + `nvgpu.mma.sync` m16n8k16 -> per-warp `vector<2x2xf32>`
+    accumulators carried across the K loop as `scf.for` iter_args) and the padded
+    f16 shared tile geometry are reused verbatim from
+    `convert-intent-contraction-to-gpu-mma`; the store scatters each accumulator
+    element back to the NCHW output (`row -> (n,oh,ow)`, `col -> co`) with an
+    optional bias add.
+
+    stride/padding/dilation are fully general (folded into the address math).
+    Static shapes, `groups == 1`, `K % 32 == 0` (else the pass declines and the
+    naive `convert-intent-conv-to-gpu` fallback handles it); M and N are padded
+    via a ceil grid + guarded store. Bare-ptr ABI; the result goes to the device
+    pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "block C-tile rows BM (numWarps = BM/16 warps tile the M axis).">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"64",
+           "block C-tile cols BN (each warp owns BN/8 n8 mma column tiles).">,
+  ];
+}
+
 def ConvertIntentCompactToGPU
     : Pass<"convert-intent-compact-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower a single dynamic-shape compaction op (nonzero / "
