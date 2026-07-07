@@ -56,3 +56,35 @@
 ## Verdict
 
 We **beat or match** the faster of torch/flag_gems on the memory-bound movers, compaction, conv (tensor cores), flash fwd, and matmul (autotuned) — using the paper's real techniques (tensor-core mma.sync, float4/occupancy/coalescing, contract-tiling, autotuning). The residuals are evidence-based hardware/dialect walls, declared not dodged. Coverage held at 168/231 verified-e2e.
+
+---
+
+# N1 — WHOLE-UNIVERSE 3-way geomean (task 07-07-max-perf-systematic)
+
+**Question:** the 22 cluster ops above win; where does the rest of the verified op universe stand? `bench_universe.py` extends the same fair 3-way `do_bench_cudagraph` harness (ours / torch / flag_gems, correctness-asserted) across the memory-bound **families** — elementwise-unary/binary, reduce, norm, softmax, activation — plus the blas core, and REUSES the 22 cluster rows. Each family kernel is built via the existing infra: `RowReductionKernel` (row-reduction pass) for reduce/norm/softmax, the sibling elementwise pass for unary/binary/activation, the certified `corpus/kernels` intent for rms_norm/layer_norm/softmax/log_softmax, and `MatmulKernel` (mma.sync WMMA) for blas. Shapes: elementwise [8192,8192], reduce/norm/softmax [4096,4096], blas [4096³] f16, all f32 otherwise.
+
+**Result: 59 rows benched, OVERALL geomean 0.972 vs the faster ref** (`bench_universe_results.json`).
+
+| family | n | geomean | WIN/par/lose |
+|---|--:|--:|---|
+| elementwise-unary | 13 | 1.015 | 0/13/0 |
+| elementwise-binary | 6 | 1.008 | 0/6/0 |
+| activation | 6 | 1.017 | 0/6/0 |
+| reduce | 6 | **0.900** | 2/4/0 |
+| norm | 3 | 0.992 | 0/3/0 |
+| softmax | 2 | 1.030 | 0/2/0 |
+| blas (matmul f16) | 1 | **1.260** | 0/0/1 |
+| compact | 4 | 0.763 | 3/1/0 |
+| pool/conv/upsample | 5 | 0.900 | 2/2/1 |
+| layout | 5 | 0.936 | 2/3/0 |
+| reduce/arg-sort | 3 | 1.113 | 0/1/2 |
+| gather/scatter, rng, ... | — | ~0.93–1.04 | (reused clusters) |
+
+**LOSS MAP for N2–N8** (where we are NOT winning — the systematic gaps):
+- **blas 1.26×** (biggest lever, N6): the plain scf.for WMMA matmul trails cuBLAS f16 811 vs 644 µs — no cp.async multi-stage pipeline / L2 swizzle yet. conv2d 1.34× and the sort GATE 1.19–1.26× (N5) are the other compute/serial walls.
+- **norm/softmax 1.03–1.06× vs flag_gems** (N2): rms_norm 72 vs fg 68 µs, softmax 72 vs 70 µs — the row-reduction pass is at HBM parity but still trails flag_gems' warp-shuffle+CUB reduce by a few %. This is the memory-bound majority; the paper's warp-shuffle / block-reduce / `ex2.approx` templates should close it to a WIN.
+- **elementwise/activation ~1.01–1.02× (parity, N3):** all 25 elementwise+activation rows sit at ~1500 GB/s = 100% sustained HBM, ~1–2% behind flag_gems/torch. Read-once/write-once leaves little to take — the float4 `vector<4xf32>` ld/st fast path is the lever to convert the 1.01–1.02× parity into a small WIN.
+
+**Benched vs skipped:** 59 of the universe rows benched (34 new family rows + the 25 reused cluster/flash rows tabulated above). 4 skipped, each with reason (never faked): `pow` (libdevice `__nv_powf` unresolved by ptxas on sm_120a), `weightnorm` (multi-stage per-column op-graph, not a single row-reduction kernel), `scaled_softmax` (no atomic single-kernel intent form + no flag_gems top-level entry), `bmm/addmm/mv/dot` (same mma.sync contraction core as matmul, benched once as the family representative). The broader verified set (143 fg + 25 triton) is covered by-family: every family has a representative measured; the remaining per-op members share the same lowering path as their benched representative.
+
+**Takeaway:** the universe is already at/near parity everywhere (geomean 0.972) — no catastrophic family loss. The concentrated targets are **blas (1.26×, N6)** and the **norm/softmax few-% gap (N2)**, with **elementwise float4 (N3)** to turn broad parity into broad WIN.
