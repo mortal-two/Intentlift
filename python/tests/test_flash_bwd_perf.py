@@ -20,22 +20,21 @@ This test measures the atomic mode against:
       recompute, a different op boundary -- informational).
   (c) the serial mode (the 617us M9a baseline).
 
-HONEST RESIDUAL (5090D, M4/R-FLASH-2 update): atomic now lands ~1.58x @512 /
-~1.62x @1024 off Triton's best (128x64), down from ~1.70-1.73x, via three ordinary
-(NOT warp-spec) changes to the WMMA bwd: (1) 4->8 warps (the C-tile split 4
-row-strips x 2 column-groups, matching Triton's num_warps=8, doubling the live
-WMMA pipelines); (2) the dV/dK reductions accumulated IN PLACE via a WMMA C-load
-(each warp owns a disjoint strip x column-group of the accumulator) instead of a
-scratch store + cooperative read-add; (3) the freed barriers pruned from the
-5-matmul chain. The NAMED remaining residual is precise: the 5 matmuls still use
-WMMA wmma.load (shared-operand staging) rather than the forward pass's
-register-resident nvgpu.ldmatrix + nvgpu.mma.sync. Fully porting the bwd to
-mma.sync is blocked here by TWO of its five contractions (dV=P^T@dO, dK=dS^T@Q)
-needing TRANSPOSED A and B operands: materializing them in shared costs ~40KB on
-top of the 90KB already resident (>the 99KB sm_120a cap), and the transpose=true
-ldmatrix path has no in-repo precedent to reuse. Single-head grid is 8-16 blocks
-for ~170 SMs (Triton's BN=64 grid is the SAME 8 blocks), so the residual is
-per-block WMMA-vs-mma.sync efficiency, not grid size.
+N4 (5090D) -- the flash-bwd wall BROKEN to near-parity: atomic now lands ~1.11x
+@512 / ~1.08x @1024 off Triton's best (128x64), down from the WMMA baseline's
+~1.58x/1.62x. The 5 matmuls were ported from WMMA wmma.load to REGISTER-RESIDENT
+nvgpu.mma.sync m16n8k16, in four steps each measured here: (1) mma.sync with the
+dV/dK accumulators register-resident (scf.for iter_args, freeing ~32KB shared):
+1.58->1.49x; (2) BM 64->128 (Triton's BLOCK_M), halving the query-tile barrier/
+loop overhead: ->1.32x; (3) cp.async vectorized K/V/Q/dO staging: ->1.26x; (4)
+S/dP/dS + the online-softmax recompute moved INTO REGISTERS (only P/dS published
+to one [BM,BN] f16 shared tile for the transpose), dropping a barrier and the
+32KB Sd scratch: ->1.11x. The KEY UNBLOCKER was nvgpu.ldmatrix transpose=true (the
+ldmatrix.trans PTX): the two transposed contractions (dV=P^T@dO, dK=dS^T@Q) load
+their [q,*] operands TRANSPOSED DIRECTLY from the untransposed shared tiles -- NO
++40KB transpose materialization -- so the budget stays ~65KB < the 99KB cap. This
+validated exactly (dQ/dK/dV rel ~2e-4 vs fp32 ref; serial==atomic ~5e-8). Single-
+head grid is 8-16 blocks for ~170 SMs (Triton's BN=64 grid is the SAME 8 blocks).
 
 Run: export PATH=/usr/local/cuda-12.8/bin:$PATH; PYTHONPATH=python \
      python3 -m pytest python/tests/test_flash_bwd_perf.py -q -s
@@ -239,7 +238,8 @@ def test_flash_bwd_atomic_perf(sq, sk, d):
     # serial baseline (measured 6.7x@512, 14.5x@1024).
     assert t_atomic < t_serial * 0.5, \
         f"atomic {t_atomic*1e3:.1f}us not >> serial {t_serial*1e3:.1f}us"
-    # Honest residual vs the real Triton bwd kernel (measured ~1.8-1.9x); loose
-    # bound guards against a regression, not a parity claim.
-    assert t_atomic < t_triton * 3.0, \
-        f"atomic {t_atomic*1e3:.1f}us vs triton {t_triton*1e3:.1f}us > 3x"
+    # N4 near-parity vs the real Triton bwd kernel (measured ~1.08-1.11x). The
+    # 1.35x bound locks in the ≤1.2x break (with headroom for machine variance)
+    # and guards against a regression back toward the WMMA baseline's ~1.6x.
+    assert t_atomic < t_triton * 1.35, \
+        f"atomic {t_atomic*1e3:.1f}us vs triton {t_triton*1e3:.1f}us > 1.35x"

@@ -892,26 +892,29 @@ def ConvertIntentAttentionBackwardToGPU
     subtree + the carry shapes), NOT a kernel-name match -- it just happens to be
     attention-backward-shaped (hence the pass name).
 
-    It rewrites the func in place to ONE tiled tensor-core `gpu.launch`, modeled
-    on `convert-intent-loop-contraction-to-gpu` (M8 flash fwd): the matmuls run on
-    WMMA (`gpu.subgroup_mma_*`, reusing the M7 tiled-K primitive), while the
-    recompute-P / dS elementwise transforms and the dk/dv accumulators live
-    RESIDENT IN DYNAMIC SHARED MEMORY (the M8 cooperative-shared design). The
-    schedule is ONE block per (b,h): an OUTER `scf.for` over key tiles (BN=64,
-    dk/dv reset per key tile in shared) wrapping an INNER `scf.for` over query
-    tiles (BM=64, the intent.loop's scan). dQ uses the SERIAL accumulation mode
+    It rewrites the func in place to ONE tiled tensor-core `gpu.launch`. N4: the 5
+    matmuls run on REGISTER-RESIDENT `nvgpu.mma.sync` m16n8k16 (the forward pass's
+    proven recipe), NOT WMMA. The dV/dK accumulators are carried in registers
+    (`scf.for` iter_args across the inner query loop); S/dP/dS and the online-
+    softmax recompute run in registers; only P (then dS) is published to a single
+    `[BM,BN]` f16 shared scratch, REQUIRED there for the dV/dK operand transpose.
+    Both `dV=P^T@dO` and `dK=dS^T@Q` (and `dQ=dS@K`'s `K^T`) load their transposed
+    operands DIRECTLY from the untransposed shared tiles via `nvgpu.ldmatrix
+    transpose=true` (the `ldmatrix.trans` PTX) -- no separate transpose
+    materialization, so the smem budget (~65KB) stays within the 99KB sm_120a cap.
+    K/V/Q/dO stage via cp.async. 8 warps: the q-outputs (S/dP/dQ, M=BM=128) use 8
+    row-strips; the k-outputs (dV/dK, M=BN=64) use 4 row-strips x 2 column-groups.
+    The schedule is ONE block per (b,h): an OUTER `scf.for` over key tiles wrapping
+    an INNER `scf.for` over query tiles. dQ uses the SERIAL accumulation mode
     (SEQUENCE_PARALLEL=false): one block owns the whole head and read-modify-
     writes the pre-zeroed global `DQ` deterministically across the outer key loop
     (the cross-program atomic_add mode + its serial==atomic gate are M9b).
 
-    Q/K/V/dO are f16 (WMMA operands), LSE/Delta/scale and all accumulators are
-    f32. The `dV=P^T@dO` and `dK=dS^T@Q` contractions reduce over the query axis,
-    so their `[q,*]` operands are loaded TRANSPOSED on the WMMA A operand (probed:
-    AOp-transpose lowers through `wmma.load.a...col.f16` on sm_120a). Static
-    shapes, BM=BN=64, D%16==0, Sq%64==0, Sk%64==0 (non-causal, no bias; tail-mask
-    / causal / atomic-DQ / split-K are documented follow-ups). The pass appends
-    three destination-passing outputs `dQ`, `dK`, `dV` (host pre-zeros DQ). Run
-    BEFORE `convert-intent-to-linalg`; the result goes to the device pipeline
+    Q/K/V/dO are f16, LSE/Delta/scale and all accumulators are f32. Static shapes,
+    BM=128, BN=64, D%16==0, Sq%128==0, Sk%64==0 (non-causal, no bias; tail-mask /
+    causal / split-K are documented follow-ups). The pass appends three
+    destination-passing outputs `dQ`, `dK`, `dV` (host pre-zeros DQ). Run BEFORE
+    `convert-intent-to-linalg`; the result goes to the device pipeline
     (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
   }];
   let dependentDialects = [
@@ -921,6 +924,8 @@ def ConvertIntentAttentionBackwardToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::vector::VectorDialect",
   ];
   let options = [
     Option<"dqMode", "dq-mode", "std::string", /*default=*/"\"serial\"",

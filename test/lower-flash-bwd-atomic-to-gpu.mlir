@@ -11,12 +11,16 @@
 // CHECK-LABEL: func.func @flash_bwd(
 // CHECK:         gpu.launch blocks(%{{.*}}, %{{.*}}, %{{.*}}) in (%{{.*}} = %c2
 // CHECK:         gpu.dynamic_shared_memory
+// CHECK:         nvgpu.device_async_copy
 // CHECK:         scf.for
 // CHECK-NOT:       scf.for
+// CHECK:           nvgpu.mma.sync
+// CHECK:           nvgpu.ldmatrix {{.*}}transpose = true
 // CHECK:         memref.atomic_rmw addf
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.loop
 // CHECK-NOT:     intent.contraction
+// CHECK-NOT:     gpu.subgroup_mma_compute
 func.func @flash_bwd(%Q: tensor<128x64xf16>, %K: tensor<128x64xf16>,
                      %V: tensor<128x64xf16>, %dO: tensor<128x64xf16>,
                      %LSE: tensor<128x1xf32>, %Delta: tensor<128x1xf32>,

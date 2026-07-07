@@ -4,25 +4,30 @@
 // (scan Q/dO/LSE/Delta, carry the per-key-row gradients dk[Sk,D], dv[Sk,D]; body
 // = recompute P = exp(scale*S - LSE) + the 5 contractions S=Q@K^T, dV=P^T@dO,
 // dP=dO@V^T, dK=dS^T@Q, dQ=dS@K) lowers to ONE tiled tensor-core gpu.launch.
-// The dk/dv accumulators + the recompute-P/dS transforms live in dynamic shared;
-// the 5 matmuls run on WMMA. ONE block per (b,h): an OUTER scf.for over key
-// tiles wrapping an INNER scf.for over query tiles, dQ read-modify-written into
-// pre-zeroed global DQ (serial accumulation). The pass appends dQ/dK/dV
-// destinations. No intent.* survives.
+// N4: the 5 matmuls run on REGISTER-RESIDENT nvgpu.mma.sync m16n8k16 (not WMMA);
+// the dV/dK accumulators are carried in scf.for iter_args (registers); S/dP/dS
+// and the online-softmax recompute run in registers; only P (then dS) is
+// published to shared for the dV/dK TRANSPOSE loads (nvgpu.ldmatrix transpose=
+// true -- no separate transpose materialization). K/V/Q/dO stage via cp.async.
+// ONE block per (b,h): an OUTER scf.for over key tiles wrapping an INNER scf.for
+// over query tiles, dQ read-modify-written into pre-zeroed global DQ (serial
+// accumulation). The pass appends dQ/dK/dV destinations. No intent.* survives.
 //
 // CHECK-LABEL: func.func @flash_bwd(
 // CHECK-SAME:    %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x64xf16>, %{{.*}}: memref<128x1xf32>, %{{.*}}: memref<128x1xf32>, %{{.*}}: f32, %{{.*}}: memref<128x64xf32>, %{{.*}}: memref<128x64xf32>, %{{.*}}: memref<128x64xf32>)
 // CHECK:         gpu.launch
 // CHECK:         gpu.dynamic_shared_memory
 // CHECK:         scf.for
+// CHECK:           nvgpu.device_async_copy
 // CHECK:           scf.for
-// CHECK:             gpu.subgroup_mma_constant_matrix
-// CHECK:             gpu.subgroup_mma_load_matrix
-// CHECK:             gpu.subgroup_mma_compute
+// CHECK:             nvgpu.ldmatrix
+// CHECK:             nvgpu.mma.sync
 // CHECK:             math.exp
+// CHECK:             nvgpu.ldmatrix {{.*}}transpose = true
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.loop
 // CHECK-NOT:     intent.contraction
+// CHECK-NOT:     gpu.subgroup_mma_compute
 func.func @flash_bwd(%Q: tensor<128x64xf16>, %K: tensor<128x64xf16>,
                      %V: tensor<128x64xf16>, %dO: tensor<128x64xf16>,
                      %LSE: tensor<128x1xf32>, %Delta: tensor<128x1xf32>,
