@@ -40,6 +40,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
@@ -177,6 +178,15 @@ struct RowReductionLowering {
   // tiles of `Kpt` columns each (K == Kpt * numTiles). numTiles==1 (K <=
   // tileColsMax) is the M1 register-tile path, emitted byte-identically.
   int64_t Kpt = 0, numTiles = 1;
+  // float4 vectorization (N2): when the register-tile path has K divisible by 4
+  // and only Row/Col/Scalar args (no ColSeg gather, no iota/select), the K
+  // columns of each thread are grouped into K/4 CONTIGUOUS-vec4 tiles so the Row
+  // load + RowOut store lower to `ld.global.v4.f32`/`st.global.v4.f32` (4x fewer
+  // memory instructions — the memory-read bulk of these HBM-bound kernels). The
+  // per-thread column layout becomes col = vt*(T*4) + tx*4 + j (vec index tx+vt*T
+  // in the retyped memref<Mx(N/4)xvector<4xf32>>), staying fully coalesced.
+  bool useVec4 = false;
+  int64_t numVecTiles = 0;
   Type f32;
   Type rowIntTy;                     // element type of a RowInt [M] arg (Y), if any
   SmallVector<Role> argRoles;        // per func arg
@@ -514,6 +524,22 @@ struct RowReductionLowering {
       sched.kind = KTiled;
     else
       sched.kind = KRegister;
+
+    // float4 gate (register-tile path only): K a multiple of 4, no ColSeg gather
+    // (numGroups==0), and no iota/select in the body (cross_entropy's per-column
+    // scalar gather stays on the scalar path). Every Row arg + RowOut output is
+    // retyped to a vector<4xf32>-element memref so the bulk load/store vectorize.
+    if (sched.kind == KRegister && (K % 4 == 0) && numGroups == 0) {
+      bool hasScalarGather = false;
+      for (Operation &op : fn.getBody().front().without_terminator())
+        if (isa<IotaOp, SelectOp>(&op))
+          hasScalarGather = true;
+      if (!hasScalarGather) {
+        useVec4 = true;
+        numVecTiles = K / 4;
+        sched.vectorWidth = 4; // M6: record the vectorized load/store plan
+      }
+    }
     return success();
   }
 
@@ -1211,13 +1237,24 @@ struct RowReductionLowering {
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
 
+    // float4 path: Row args + RowOut outputs are retyped to a vector<4xf32>-
+    // element memref<Mx(N/4)xvector<4xf32>> so the bulk load/store lower to
+    // `ld.global.v4.f32`/`st.global.v4.f32`. Host is unchanged: the bare-ptr ABI
+    // passes one aligned pointer per memref regardless of element type.
+    Type vec4Ty = VectorType::get({4}, f32);
+    MemRefType rowVecMemref = MemRefType::get({M, N / 4}, vec4Ty);
+
     // New signature: original args (as memrefs) ++ one output memref per result.
     SmallVector<Type> inTys;
-    for (unsigned i = 0; i < argRoles.size(); ++i)
-      inTys.push_back(memrefOf(i));
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      if (useVec4 && argRoles[i] == Role::Row)
+        inTys.push_back(rowVecMemref);
+      else
+        inTys.push_back(memrefOf(i));
+    }
     for (ResultRole rr : outRoles) { // destination-passing: one memref per result
       if (rr == ResultRole::RowOut)
-        inTys.push_back(MemRefType::get({M, N}, f32));
+        inTys.push_back(useVec4 ? rowVecMemref : MemRefType::get({M, N}, f32));
       else if (rr == ResultRole::PerRowOut)
         inTys.push_back(MemRefType::get({M}, f32));
       else // AtomicOut: a rank-0 scalar accumulated across blocks (host pre-zeroes)
@@ -1262,20 +1299,55 @@ struct RowReductionLowering {
       groupVal = b.create<arith::RemUIOp>(loc, bx, cG);
     }
 
-    // Column indices col[k] = tx + k*T (k*T is a compile-time constant), and the
-    // read-once register tile: each Row input's K values loaded ONCE into SSA.
+    // Column indices + the read-once register tile. Two layouts:
+    //  - scalar path: col[k] = tx + k*T (interleaved, coalesced scalar loads).
+    //  - float4 path: the K columns split into K/4 vec4 tiles; the register value
+    //    at k = vt*4 + j has scalar col vt*(T*4) + tx*4 + j, i.e. vec index
+    //    (tx + vt*T) in memref<Mx(N/4)xvector<4xf32>>. Each vec tile is one
+    //    coalesced `ld.global.v4.f32` across the warp; the 4 lanes are extracted
+    //    into the SAME register tile the scalar path feeds emitAt.
     cols.clear();
-    for (int64_t k = 0; k < K; ++k) {
-      Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
-      cols.push_back(b.create<arith::AddIOp>(loc, tx, off));
+    cols.resize(K);
+    // vecIdx[vt] = tx + vt*T (float4 path): the vec4 tile index into the retyped
+    // memref<Mx(N/4)xvector<4xf32>>. Reused by the RowOut vec4 store epilogue.
+    SmallVector<Value> vecIdx;
+    if (useVec4) {
+      vecIdx.resize(numVecTiles);
+      Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
+      for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+        Value off = b.create<arith::ConstantIndexOp>(loc, vt * T);
+        vecIdx[vt] = b.create<arith::AddIOp>(loc, tx, off);
+        Value base4 = b.create<arith::MulIOp>(loc, vecIdx[vt], c4);
+        for (int64_t j = 0; j < 4; ++j) {
+          Value cj = b.create<arith::ConstantIndexOp>(loc, j);
+          cols[vt * 4 + j] = b.create<arith::AddIOp>(loc, base4, cj);
+        }
+      }
+    } else {
+      for (int64_t k = 0; k < K; ++k) {
+        Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
+        cols[k] = b.create<arith::AddIOp>(loc, tx, off);
+      }
     }
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Row) {
-        SmallVector<Value> vals;
-        for (int64_t k = 0; k < K; ++k)
-          vals.push_back(b.create<memref::LoadOp>(loc, argMemref[arg],
-                                                  ValueRange{bx, cols[k]}));
+        SmallVector<Value> vals(K);
+        if (useVec4) {
+          // One coalesced ld.global.v4.f32 per vec tile; extract the 4 lanes into
+          // the same register tile the scalar path feeds emitAt.
+          for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+            Value v = b.create<memref::LoadOp>(loc, argMemref[arg],
+                                               ValueRange{bx, vecIdx[vt]});
+            for (int64_t j = 0; j < 4; ++j)
+              vals[vt * 4 + j] =
+                  b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
+          }
+        } else {
+          for (int64_t k = 0; k < K; ++k)
+            vals[k] = b.create<memref::LoadOp>(loc, argMemref[arg],
+                                               ValueRange{bx, cols[k]});
+        }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
         uniform[arg] =
@@ -1332,10 +1404,23 @@ struct RowReductionLowering {
     }
     for (unsigned j = 0; j < outputVals.size(); ++j) {
       if (outRoles[j] == ResultRole::RowOut) {
-        for (int64_t k = 0; k < K; ++k) {
-          Value out = emitAt(b, loc, outputVals[j], k);
-          b.create<memref::StoreOp>(loc, out, outMems[j],
-                                    ValueRange{bx, cols[k]});
+        if (useVec4) {
+          // Group the 4 contiguous lanes of each vec tile into a vector<4xf32>
+          // and emit one coalesced st.global.v4.f32.
+          for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+            SmallVector<Value> lanes(4);
+            for (int64_t lj = 0; lj < 4; ++lj)
+              lanes[lj] = emitAt(b, loc, outputVals[j], vt * 4 + lj);
+            Value vec = b.create<vector::FromElementsOp>(loc, vec4Ty, lanes);
+            b.create<memref::StoreOp>(loc, vec, outMems[j],
+                                      ValueRange{bx, vecIdx[vt]});
+          }
+        } else {
+          for (int64_t k = 0; k < K; ++k) {
+            Value out = emitAt(b, loc, outputVals[j], k);
+            b.create<memref::StoreOp>(loc, out, outMems[j],
+                                      ValueRange{bx, cols[k]});
+          }
         }
       } else if (outRoles[j] == ResultRole::PerRowOut) {
         Value scalar = emitAt(b, loc, outputVals[j], 0); // per-row uniform
