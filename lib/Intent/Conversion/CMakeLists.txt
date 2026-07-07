@@ -41,6 +41,7 @@ add_mlir_library(MLIRIntentConversion
   MLIRSCFDialect
   MLIRGPUDialect
   MLIRNVGPUDialect
+  MLIRNVVMDialect
   MLIRVectorDialect
   MLIRMemRefDialect
   MLIRFuncDialect

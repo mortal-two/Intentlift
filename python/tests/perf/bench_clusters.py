@@ -531,7 +531,7 @@ func.func @so(%x: tensor<{M}x{N}xf32>) -> tensor<{M}x{N}xf32> {{
             verify=lambda r: torch.equal(r, ref_sv))
         record("C6", "sort ax1", f"[{M},{N}] T={T}", our, refs,
                nbytes=M * N * 4 * 2, cls="serial",
-               note=f"pow2 N -> bitonic; exact={ok}", graph_ours=gg)
+               note=f"pow2 N -> warp-match radix; exact={ok}", graph_ours=gg)
         del x, out; _cleanup()
 
 

@@ -319,6 +319,8 @@ def ConvertIntentSortToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::scf::SCFDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::NVVM::NVVMDialect",
   ];
   let options = [
     Option<"blockThreads", "block-threads", "unsigned", "0",
