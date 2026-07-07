@@ -40,6 +40,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -76,6 +77,16 @@ struct ElementwiseLowering {
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
+  // float4 vectorization (N3, ported from the N2 row-reduction path): when the
+  // per-thread strip K is divisible by 4, every Row arg + every result view is
+  // CONTIGUOUS (default [N,1] strides), and the body has no iota/select scalar
+  // gather, the K columns are grouped into K/4 contiguous vec4 tiles so each
+  // Row load + result store lowers to `ld.global.v4.f32`/`st.global.v4.f32`
+  // (4x fewer memory instructions — the bandwidth bulk of these HBM-bound maps).
+  // The per-thread column layout becomes col = vt*(T*4) + tx*4 + j (vec index
+  // tx+vt*T in the retyped memref<d0x(N/4)xvector<4xf32>>), staying coalesced.
+  bool useVec4 = false;
+  int64_t numVecTiles = 0;
   Type f32;
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<int64_t> argRowDiv;    // per arg: 1, or M/d0 for a broadcast Row
@@ -96,6 +107,13 @@ struct ElementwiseLowering {
       return MemRefType::get({d0, N}, f32);
     return MemRefType::get({d0, N}, f32,
                            StridedLayoutAttr::get(ctx, 0, {s.row, s.col}));
+  }
+
+  /// vec4-element memref for a contiguous Row/result view: the [d0, N/4] shape
+  /// with a `vector<4xf32>` element (N3 float4 path). Only used when useVec4 —
+  /// the caller has already checked the view is contiguous (default strides).
+  MemRefType rowVecMemref(MLIRContext *ctx, int64_t d0) {
+    return MemRefType::get({d0, N / 4}, VectorType::get({4}, f32));
   }
 
   // ---- recognition ------------------------------------------------------- //
@@ -212,6 +230,29 @@ struct ElementwiseLowering {
     if (T <= 0 || N % T != 0)
       return failure(); // tail-mask (non-divisible) is a documented follow-up
     K = N / T;
+
+    // float4 gate: K a multiple of 4, every Row arg + every result view fully
+    // CONTIGUOUS (default [N,1] strides — a strided half/even-odd view cannot be
+    // a contiguous vec4 load, so rope/llama4/qwen2vl stay on the scalar path),
+    // and no iota/select in the body (those index a per-column scalar, not a
+    // vectorizable lane). Col/Scalar args stay scalar-loaded at col[k]/once —
+    // the vec4 column layout keeps cols[k] pointing at the right scalar column.
+    if (K % 4 == 0) {
+      bool ok = true;
+      for (unsigned i = 0; i < argRoles.size(); ++i)
+        if (argRoles[i] == Role::Row && !argStrides[i].isDefault(N))
+          ok = false;
+      for (unsigned j = 0; j < resStrides.size(); ++j)
+        if (!resStrides[j].isDefault(N))
+          ok = false;
+      for (Operation &op : body.without_terminator())
+        if (isa<IotaOp, SelectOp>(&op))
+          ok = false;
+      if (ok) {
+        useVec4 = true;
+        numVecTiles = K / 4;
+      }
+    }
     return success();
   }
 
@@ -321,11 +362,16 @@ struct ElementwiseLowering {
     // New signature: original args (as memrefs) ++ one [M,N] output memref per
     // result (destination-passing).
     SmallVector<Type> inTys;
-    for (unsigned i = 0; i < argRoles.size(); ++i)
-      inTys.push_back(memrefOfArg(ctx, i));
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      if (useVec4 && argRoles[i] == Role::Row)
+        inTys.push_back(rowVecMemref(ctx, M / argRowDiv[i]));
+      else
+        inTys.push_back(memrefOfArg(ctx, i));
+    }
     for (unsigned j = 0; j < outputVals.size(); ++j)
       if (inplaceArg[j] < 0) // fresh destination; in-place reuses an input arg
-        inTys.push_back(rowMemref(ctx, M, resStrides[j]));
+        inTys.push_back(useVec4 ? rowVecMemref(ctx, M)
+                                : rowMemref(ctx, M, resStrides[j]));
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -356,12 +402,36 @@ struct ElementwiseLowering {
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
 
-    // Column indices col[k] = tx + k*T, and the read-once register tile: each
-    // Row input's K values loaded ONCE into SSA.
+    // Column indices + the read-once register tile: each Row input's K values
+    // loaded ONCE into SSA. Two layouts:
+    //  - scalar path: col[k] = tx + k*T (interleaved, coalesced scalar loads).
+    //  - float4 path: the K columns split into K/4 vec4 tiles; the register
+    //    value at k = vt*4 + j has scalar col vt*(T*4) + tx*4 + j, i.e. vec index
+    //    (tx + vt*T) in memref<d0x(N/4)xvector<4xf32>>. Each vec tile is one
+    //    coalesced ld.global.v4.f32 across the warp; the 4 lanes are extracted
+    //    into the SAME register tile the scalar path feeds emitAt. Col/Scalar
+    //    args still index cols[k]/once, so they need no retype.
     cols.clear();
-    for (int64_t k = 0; k < K; ++k) {
-      Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
-      cols.push_back(b.create<arith::AddIOp>(loc, tx, off));
+    cols.resize(K);
+    Type vec4Ty = VectorType::get({4}, f32);
+    SmallVector<Value> vecIdx; // vec4 tile index tx+vt*T (reused by the store)
+    if (useVec4) {
+      vecIdx.resize(numVecTiles);
+      Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
+      for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+        Value off = b.create<arith::ConstantIndexOp>(loc, vt * T);
+        vecIdx[vt] = b.create<arith::AddIOp>(loc, tx, off);
+        Value base4 = b.create<arith::MulIOp>(loc, vecIdx[vt], c4);
+        for (int64_t j = 0; j < 4; ++j) {
+          Value cj = b.create<arith::ConstantIndexOp>(loc, j);
+          cols[vt * 4 + j] = b.create<arith::AddIOp>(loc, base4, cj);
+        }
+      }
+    } else {
+      for (int64_t k = 0; k < K; ++k) {
+        Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
+        cols[k] = b.create<arith::AddIOp>(loc, tx, off);
+      }
     }
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
@@ -373,10 +443,22 @@ struct ElementwiseLowering {
           Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
           ridx = b.create<arith::DivUIOp>(loc, bx, d);
         }
-        SmallVector<Value> vals;
-        for (int64_t k = 0; k < K; ++k)
-          vals.push_back(b.create<memref::LoadOp>(loc, argMemref[arg],
-                                                  ValueRange{ridx, cols[k]}));
+        SmallVector<Value> vals(K);
+        if (useVec4) {
+          // One coalesced ld.global.v4.f32 per vec tile; extract the 4 lanes
+          // into the same register tile the scalar path feeds emitAt.
+          for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+            Value v = b.create<memref::LoadOp>(loc, argMemref[arg],
+                                               ValueRange{ridx, vecIdx[vt]});
+            for (int64_t j = 0; j < 4; ++j)
+              vals[vt * 4 + j] =
+                  b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
+          }
+        } else {
+          for (int64_t k = 0; k < K; ++k)
+            vals[k] = b.create<memref::LoadOp>(loc, argMemref[arg],
+                                               ValueRange{ridx, cols[k]});
+        }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
         uniform[arg] =
@@ -389,9 +471,23 @@ struct ElementwiseLowering {
     // reduction, no all_reduce, no thread-0 guard — every thread writes its own
     // columns for every output.
     for (unsigned j = 0; j < outputVals.size(); ++j) {
-      for (int64_t k = 0; k < K; ++k) {
-        Value out = emitAt(b, loc, outputVals[j], k);
-        b.create<memref::StoreOp>(loc, out, outMems[j], ValueRange{bx, cols[k]});
+      if (useVec4) {
+        // Group the 4 contiguous lanes of each vec tile into a vector<4xf32>
+        // and emit one coalesced st.global.v4.f32.
+        for (int64_t vt = 0; vt < numVecTiles; ++vt) {
+          SmallVector<Value> lanes(4);
+          for (int64_t lj = 0; lj < 4; ++lj)
+            lanes[lj] = emitAt(b, loc, outputVals[j], vt * 4 + lj);
+          Value vec = b.create<vector::FromElementsOp>(loc, vec4Ty, lanes);
+          b.create<memref::StoreOp>(loc, vec, outMems[j],
+                                    ValueRange{bx, vecIdx[vt]});
+        }
+      } else {
+        for (int64_t k = 0; k < K; ++k) {
+          Value out = emitAt(b, loc, outputVals[j], k);
+          b.create<memref::StoreOp>(loc, out, outMems[j],
+                                    ValueRange{bx, cols[k]});
+        }
       }
     }
 

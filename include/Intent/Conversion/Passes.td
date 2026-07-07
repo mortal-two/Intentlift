@@ -102,6 +102,7 @@ def ConvertIntentElementwiseToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
   ];
   let options = [
     Option<"blockThreads", "block-threads", "unsigned", "0",
