@@ -12,13 +12,23 @@
 //     N=2048/4096 ~1.2x torch and N=8192 (pow2) 0.52x (beats torch CUB ~2x).
 //     Its weakness is the pow2 padding: a row just past a power of two nearly
 //     doubles P and its work.
-//   * RADIX (rewriteRadix): a per-row SEGMENTED LSD RADIX sort — the CUB
-//     `DeviceSegmentedRadixSort` algorithm. O(8N), work-linear and immune to
-//     padding, but a ~20x larger per-element constant (shared histogram +
-//     scattered writes). It WINS only for large padding-heavy rows where the
-//     bitonic P log^2 P blows up — measured N=9000 0.68x, N=10240 0.95x,
-//     N=12000 0.85x (all beating torch, where padded bitonic loses at 1.7-1.9x).
-//   IEEE-f32 -> order-preserving UNSIGNED key (both paths sort ascending): flip
+//   * MATCH RADIX (rewriteRadixMatch): the CUB-style WARP-MATCH REGISTER-RANKING
+//     LSD radix. O(8N) and immune to padding like the legacy radix, but the
+//     per-4-bit-digit ranking is done ENTIRELY in registers — no shared
+//     histogram at all. Each thread holds C = ceil(N/T) keys; per digit the warp
+//     peer-mask of same-digit lanes is built from kBits `nvvm.vote.ballot.sync`
+//     and ranked with `math.ctpop`, and a tiny numWarps*kDigits cross-warp table
+//     (one exclusive scan) replaces the kDigits*T histogram sweep + count RMW.
+//     That removes the bottleneck that capped the legacy radix at ~6-9% HBM ->
+//     bandwidth-bound. It now WINS the power-of-two GATE too (measured on
+//     sm_120a: [4096,2048] 0.61x, [4096,4096] 0.99x vs torch CUB — was bitonic
+//     1.17x / 1.25x). Selected whenever it fits (T a whole number of warps,
+//     C<=32); the legacy `rewriteRadix` is the fallback when it does not.
+//   * RADIX (rewriteRadix): the legacy per-row SEGMENTED LSD RADIX — the CUB
+//     `DeviceSegmentedRadixSort` shape with a per-thread shared histogram column
+//     + warp-shuffle block scan + scatter. Fallback for shapes the match path
+//     cannot fit (kept for large rows: N=9000 0.68x, N=10240 0.95x vs torch).
+//   IEEE-f32 -> order-preserving UNSIGNED key (all paths sort ascending): flip
 //   `key = bits ^ (sign ? 0xFFFFFFFF : 0x80000000)` (negatives reverse, sit
 //   below positives), inverted on output.
 //
@@ -56,6 +66,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -95,6 +107,7 @@ struct SortLowering {
   bool descending = false;
   bool needValues = false, needIndices = false;
   bool useRadix = false;
+  bool matchRadix = false; // CUB-style warp-match register-ranking radix
   Type f32, i32;
 
   SortLowering(func::FuncOp fn, unsigned bt) : fn(fn), blockThreads(bt) {}
@@ -170,8 +183,41 @@ struct SortLowering {
     // below bitonic's AND its ping-pong buffers + histogram fit the sm_120
     // ~100 KiB dynamic-shared budget.
 
-    // Radix thread count: power of two; a modest T keeps the kDigits*T histogram
-    // small (fewer shared sweeps) -- 64 measured best in the large-N regime.
+    // --- MATCH-RADIX geometry (the CUB warp-match register-ranking path) -----
+    // T is a multiple of the 32-lane warp so every warp is full (the ballot
+    // active-mask is -1); C = ceil(N/T) keys/thread are held IN REGISTERS across
+    // the pass (the slot loop is fully unrolled, so C is a compile-time bound and
+    // no dynamically-indexed local memory appears). 256 threads is the sweet
+    // spot (8 warps, high occupancy); grow to 512/1024 only if C would exceed the
+    // register budget. There is NO kDigits*T shared histogram -- ranking is done
+    // with nvvm.vote.ballot.sync + math.ctpop in registers, and the only shared
+    // scratch is a tiny numWarps*kDigits warp-digit table -- so the match path is
+    // bandwidth-bound (its per-element constant is far below the old radix's).
+    int64_t Tm;
+    if (const char *e = getenv("RADIX_T")) {
+      Tm = atoi(e);
+    } else {
+      // Measured sweet spot: ~16 keys/thread with a SMALL block (<=256 threads)
+      // so many blocks stay resident per SM (high occupancy) while each thread
+      // still carries enough register-resident work to hide the ballot latency.
+      Tm = ((N / 16) + 31) / 32 * 32; // round up N/16 to a whole warp
+      if (Tm > 256)
+        Tm = 256;
+    }
+    Tm = (Tm / 32) * 32; // whole number of warps
+    if (Tm < 32)
+      Tm = 32;
+    if (Tm > 1024)
+      Tm = 1024;
+    while ((N + Tm - 1) / Tm > 32 && Tm < 1024)
+      Tm <<= 1; // keep C = items/thread within the register budget
+    int64_t Cm = (N + Tm - 1) / Tm;
+    int64_t numWarpsM = Tm / 32;
+    int64_t matchSmem = (int64_t)(needIndices ? 4 : 2) * N * 4 +
+                        numWarpsM * kDigits * 4; // keys/idx ping-pong + warp table
+    bool matchValid = Cm <= 32 && matchSmem <= 101000;
+
+    // --- legacy shared-histogram radix geometry (fallback when match is unfit) -
     int64_t Trdx = 64;
     if (const char *e = getenv("RADIX_T"))
       Trdx = atoi(e);
@@ -184,7 +230,7 @@ struct SortLowering {
     int64_t numWarps = (Trdx + 31) / 32;
     int64_t radixSmem = (int64_t)(needIndices ? 4 : 2) * N * 4 +
                         kDigits * Trdx * 4 + Trdx * 4 + numWarps * 4;
-    bool radixFits = radixSmem <= 101000; // sm_120 opt-in max is 101376 B
+    bool radixFits = matchValid || radixSmem <= 101000;
 
     // Bitonic thread count: power of two dividing P = next_pow2(N).
     P = nextPow2(N);
@@ -193,12 +239,15 @@ struct SortLowering {
         Tbit > 0 && (Tbit & (Tbit - 1)) == 0 && Tbit <= P && P % Tbit == 0;
 
     // Cost model (element-ops): bitonic = P * L(L+1)/2 stages; radix = 8N with a
-    // ~kRadixOpCost higher per-op constant (calibrated on sm_120).
+    // per-op constant. The match radix's constant (kMatchOpCost) is far below the
+    // legacy shared-histogram radix's (kRadixOpCost): register ballot-ranking
+    // instead of a full kDigits*T histogram sweep + count RMW. This lowers the
+    // radix<->bitonic crossover so the match path also wins the power-of-two GATE.
     int64_t L = 0;
     for (int64_t p = P; p > 1; p >>= 1)
       ++L;
     int64_t bitonicOps = P * (L * (L + 1) / 2);
-    int64_t kRadixOpCost = 12;
+    int64_t kRadixOpCost = matchValid ? 5 : 12;
     if (const char *e = getenv("RADIX_OP_COST"))
       kRadixOpCost = atoi(e);
     int64_t radixOps = kRadixOpCost * kPasses * N;
@@ -212,8 +261,14 @@ struct SortLowering {
     }
 
     if (useRadix) {
-      T = Trdx;
-      C = (N + T - 1) / T;
+      matchRadix = matchValid;
+      if (matchRadix) {
+        T = Tm;
+        C = Cm;
+      } else {
+        T = Trdx;
+        C = (N + T - 1) / T;
+      }
     } else {
       T = Tbit;
     }
@@ -253,7 +308,9 @@ struct SortLowering {
 
   // ---- emission ---------------------------------------------------------- //
   LogicalResult rewrite() {
-    return useRadix ? rewriteRadix() : rewriteBitonic();
+    if (!useRadix)
+      return rewriteBitonic();
+    return matchRadix ? rewriteRadixMatch() : rewriteRadix();
   }
 
   // Build the new func signature (input + one memref per USED result) and the
@@ -679,6 +736,297 @@ struct SortLowering {
 
     // (2) STORE: strided (coalesced) write of the first W entries. descending
     // reverse-reads srcW = N-1-w (internal sort is ascending).
+    {
+      auto loop = b.create<scf::ForOp>(loc, tx, cW, cT);
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(loop.getBody());
+      Value w = loop.getInductionVar();
+      Value srcW = w;
+      if (descending) {
+        Value cNm1 = cIdx(b, loc, N - 1);
+        srcW = b.create<arith::SubIOp>(loc, cNm1, w);
+      }
+      if (needValues) {
+        Value k = b.create<memref::LoadOp>(loc, keyA, ValueRange{srcW});
+        b.create<memref::StoreOp>(loc, unflip(b, loc, k), valOut,
+                                  ValueRange{bx, w});
+      }
+      if (needIndices) {
+        Value id = b.create<memref::LoadOp>(loc, idxA, ValueRange{srcW});
+        b.create<memref::StoreOp>(loc, id, idxOut, ValueRange{bx, w});
+      }
+    }
+
+    b.create<gpu::TerminatorOp>(loc);
+    b.setInsertionPointAfter(launch);
+    b.create<func::ReturnOp>(loc);
+    fn.erase();
+    return success();
+  }
+
+  // ---- MATCH RADIX (CUB-style warp-match register-ranking) --------------- //
+  // The single-block LSD radix that BEATS CUB at the power-of-two GATE by
+  // removing the shared histogram entirely. Per 4-bit digit pass, keys are held
+  // in registers (C = ceil(N/T) per thread, the slot loop UNROLLED so no local
+  // spill) and ranked with the warp-match trick:
+  //   * peer_mask = the active lanes of my warp holding my digit, built with
+  //     kBits `nvvm.vote.ballot.sync` (one per digit bit) ANDed together;
+  //   * my intra-warp rank = popc(peer_mask & lanes-below-me), leader adds
+  //     popc(peer_mask) to a tiny numWarps*kDigits shared warp table.
+  // A single cross-warp exclusive scan of that table (digit-major, warp-minor)
+  // yields each (warp,digit) block base; each key's destination is base + its
+  // running warp-digit offset. Order (digit, warp, slot, lane) == ascending
+  // buffer position, so the pass is STABLE -> LSD is correct. No count RMW, no
+  // kDigits*T histogram sweep -> bandwidth-bound.
+  LogicalResult rewriteRadixMatch() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+
+    SmallVector<Type> inTys;
+    inTys.push_back(MemRefType::get({M, N}, f32));
+    if (needValues)
+      inTys.push_back(MemRefType::get({M, W}, f32));
+    if (needIndices)
+      inTys.push_back(MemRefType::get({M, W}, i32));
+    auto newFty = FunctionType::get(ctx, inTys, {});
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    b.setInsertionPoint(fn);
+    auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    Block *entry = gpuFn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+    Value inMem = entry->getArgument(0);
+    unsigned argi = 1;
+    Value valOut = needValues ? entry->getArgument(argi++) : Value();
+    Value idxOut = needIndices ? entry->getArgument(argi++) : Value();
+
+    int64_t numWarps = T / 32;
+    int64_t nTab = numWarps * kDigits;
+    int64_t nBytes = N * 4;
+    int64_t offKeyA = 0, offKeyB = nBytes;
+    int64_t offIdxA = 2 * nBytes, offIdxB = 3 * nBytes;
+    int64_t offTab = (needIndices ? 4 : 2) * nBytes;
+    int64_t shBytes = offTab + nTab * 4;
+
+    Value cT = cIdx(b, loc, T), c1 = cIdx(b, loc, 1);
+    Value cM = cIdx(b, loc, M);
+    Value shBytesV =
+        b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr((int32_t)shBytes));
+
+    auto launch =
+        b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1, shBytesV);
+    b.setInsertionPointToStart(&launch.getBody().front());
+    Value bx = launch.getBlockIds().x;
+    Value tx = launch.getThreadIds().x;
+    // Constants used INSIDE the launch region must be defined inside it, else the
+    // kernel outliner captures them as launch args (the harness only maps ptr /
+    // index/i64 args, not i32).
+    Value cN = cIdx(b, loc, N), cW = cIdx(b, loc, W), c0 = cIdx(b, loc, 0);
+    Value c0i = cI32(b, loc, 0), cNeg1 = cI32(b, loc, -1);
+
+    auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
+                                 wgSpace);
+    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
+    auto keyTy = MemRefType::get({N}, i32, nullptr, wgSpace);
+    auto tabTy = MemRefType::get({nTab}, i32, nullptr, wgSpace);
+    auto view = [&](Type ty, int64_t off) -> Value {
+      return b.create<memref::ViewOp>(loc, ty, raw, cIdx(b, loc, off),
+                                      ValueRange{});
+    };
+    Value keyA = view(keyTy, offKeyA), keyB = view(keyTy, offKeyB);
+    Value idxA, idxB;
+    if (needIndices) {
+      idxA = view(keyTy, offIdxA);
+      idxB = view(keyTy, offIdxB);
+    }
+    Value tab = view(tabTy, offTab);
+
+    // warp-relative geometry.
+    Value c32 = cIdx(b, loc, 32);
+    Value warpId = b.create<arith::DivUIOp>(loc, tx, c32);   // index
+    Value laneIdx = b.create<arith::RemUIOp>(loc, tx, c32);  // index
+    Value lane = b.create<arith::IndexCastOp>(loc, i32, laneIdx);
+    Value warpBaseElems =
+        b.create<arith::MulIOp>(loc, warpId, cIdx(b, loc, 32 * C)); // w*32*C
+    Value warpTabRow =
+        b.create<arith::MulIOp>(loc, warpId, cIdx(b, loc, kDigits)); // w*16
+    // lanes strictly below me: (1<<lane) - 1.
+    Value ltMask = b.create<arith::SubIOp>(
+        loc, b.create<arith::ShLIOp>(loc, cI32(b, loc, 1), lane),
+        cI32(b, loc, 1));
+
+    auto ballot = [&](Value predI1) -> Value {
+      return b.create<NVVM::VoteBallotOp>(loc, i32, cNeg1, predI1);
+    };
+    auto popc = [&](Value v) -> Value {
+      return b.create<math::CtPopOp>(loc, v);
+    };
+    auto warpSync = [&]() { b.create<NVVM::SyncWarpOp>(loc, cNeg1); };
+
+    // (0) LOAD: strided coalesced flip of the row into keyA; idxA[i]=i.
+    {
+      auto loop = b.create<scf::ForOp>(loc, tx, cN, cT);
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(loop.getBody());
+      Value i = loop.getInductionVar();
+      Value v = b.create<memref::LoadOp>(loc, inMem, ValueRange{bx, i});
+      b.create<memref::StoreOp>(loc, flip(b, loc, v), keyA, ValueRange{i});
+      if (needIndices) {
+        Value ii = b.create<arith::IndexCastOp>(loc, i32, i);
+        b.create<memref::StoreOp>(loc, ii, idxA, ValueRange{i});
+      }
+    }
+
+    Value cTab = cIdx(b, loc, nTab);
+    Value cKD = cIdx(b, loc, kDigits);
+
+    // (1) 8 LSD RADIX PASSES.
+    for (int64_t p = 0; p < kPasses; ++p) {
+      Value srcK = (p & 1) ? keyB : keyA;
+      Value dstK = (p & 1) ? keyA : keyB;
+      Value srcI = (p & 1) ? idxB : idxA;
+      Value dstI = (p & 1) ? idxA : idxB;
+      Value shift = cI32(b, loc, (int32_t)(p * kBits));
+
+      b.create<gpu::BarrierOp>(loc); // src ready + tab reuse safe
+
+      // zero the warp table.
+      {
+        Value inRange =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, tx, cTab);
+        auto ifz = b.create<scf::IfOp>(loc, inRange, /*withElse=*/false);
+        OpBuilder::InsertionGuard g(b);
+        b.setInsertionPointToStart(ifz.thenBlock());
+        b.create<memref::StoreOp>(loc, c0i, tab, ValueRange{tx});
+      }
+      b.create<gpu::BarrierOp>(loc);
+
+      // SWEEP 1: rank each register-resident key, accumulate the warp table.
+      // Only the key, its running offset and index need cross the barrier; the
+      // digit and active flag are recomputed in sweep 2 (cheaper than holding
+      // them live -> lower register pressure -> higher occupancy).
+      SmallVector<Value> keyS(C), idxS(C), offS(C);
+      for (int64_t s = 0; s < C; ++s) {
+        Value sBase = b.create<arith::AddIOp>(loc, warpBaseElems,
+                                              cIdx(b, loc, s * 32));
+        Value pos = b.create<arith::AddIOp>(loc, sBase, laneIdx);
+        Value active =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, pos, cN);
+        Value posSafe = b.create<arith::SelectOp>(loc, active, pos, c0);
+        Value key = b.create<memref::LoadOp>(loc, srcK, ValueRange{posSafe});
+        Value idx;
+        if (needIndices)
+          idx = b.create<memref::LoadOp>(loc, srcI, ValueRange{posSafe});
+        Value digI32 = b.create<arith::AndIOp>(
+            loc, b.create<arith::ShRUIOp>(loc, key, shift),
+            cI32(b, loc, kDigits - 1));
+        Value digIdx = b.create<arith::IndexCastOp>(loc, b.getIndexType(),
+                                                    digI32);
+        // warp-match: peer_mask = active lanes of my warp with my digit.
+        Value activeBallot = ballot(active);
+        Value peer = activeBallot;
+        for (int bit = 0; bit < kBits; ++bit) {
+          Value shd =
+              b.create<arith::ShRUIOp>(loc, digI32, cI32(b, loc, bit));
+          Value b1 = b.create<arith::AndIOp>(loc, shd, cI32(b, loc, 1));
+          Value bitSet =
+              b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, b1, c0i);
+          Value pred = b.create<arith::AndIOp>(loc, active, bitSet);
+          Value bal = ballot(pred);
+          Value notBal = b.create<arith::XOrIOp>(loc, bal, cNeg1);
+          Value elseMask = b.create<arith::AndIOp>(loc, activeBallot, notBal);
+          Value sel = b.create<arith::SelectOp>(loc, bitSet, bal, elseMask);
+          peer = b.create<arith::AndIOp>(loc, peer, sel);
+        }
+        Value peerLt = b.create<arith::AndIOp>(loc, peer, ltMask);
+        Value rankBefore = popc(peerLt);
+        Value peerCount = popc(peer);
+        Value isLeaderRaw = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, peerLt, c0i);
+        Value isLeader = b.create<arith::AndIOp>(loc, isLeaderRaw, active);
+        // running warp-digit offset.
+        Value tabSlot = b.create<arith::AddIOp>(loc, warpTabRow, digIdx);
+        Value runBefore = b.create<memref::LoadOp>(loc, tab, ValueRange{tabSlot});
+        Value warpOff = b.create<arith::AddIOp>(loc, runBefore, rankBefore);
+        warpSync(); // all lanes read runBefore before any leader writes
+        {
+          auto ifl = b.create<scf::IfOp>(loc, isLeader, /*withElse=*/false);
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(ifl.thenBlock());
+          Value upd = b.create<arith::AddIOp>(loc, runBefore, peerCount);
+          b.create<memref::StoreOp>(loc, upd, tab, ValueRange{tabSlot});
+        }
+        warpSync(); // publish the leader writes before the next slot
+        keyS[s] = key;
+        idxS[s] = idx;
+        offS[s] = warpOff;
+      }
+
+      b.create<gpu::BarrierOp>(loc);
+
+      // SCAN: thread 0 exclusive-scans the warp table in place, digit-major /
+      // warp-minor, so tab[w*16+d] becomes the block base for (warp w, digit d).
+      {
+        Value is0 =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tx, c0);
+        auto if0 = b.create<scf::IfOp>(loc, is0, /*withElse=*/false);
+        OpBuilder::InsertionGuard g(b);
+        b.setInsertionPointToStart(if0.thenBlock());
+        auto od = b.create<scf::ForOp>(loc, c0, cKD, c1, ValueRange{c0i});
+        OpBuilder::InsertionGuard g2(b);
+        b.setInsertionPointToStart(od.getBody());
+        Value d = od.getInductionVar();
+        Value runD = od.getRegionIterArgs()[0];
+        auto iw = b.create<scf::ForOp>(loc, c0, cIdx(b, loc, numWarps), c1,
+                                       ValueRange{runD});
+        {
+          OpBuilder::InsertionGuard g3(b);
+          b.setInsertionPointToStart(iw.getBody());
+          Value w = iw.getInductionVar();
+          Value run = iw.getRegionIterArgs()[0];
+          Value idx = b.create<arith::AddIOp>(
+              loc, b.create<arith::MulIOp>(loc, w, cKD), d);
+          Value v = b.create<memref::LoadOp>(loc, tab, ValueRange{idx});
+          b.create<memref::StoreOp>(loc, run, tab, ValueRange{idx});
+          b.create<scf::YieldOp>(loc,
+                                 ValueRange{b.create<arith::AddIOp>(loc, run, v)});
+        }
+        b.create<scf::YieldOp>(loc, ValueRange{iw.getResult(0)});
+      }
+      b.create<gpu::BarrierOp>(loc);
+
+      // SWEEP 2: scatter each key to base[warp,digit] + its running offset. The
+      // digit and active flag are recomputed here (not held across the barrier).
+      for (int64_t s = 0; s < C; ++s) {
+        Value sBase = b.create<arith::AddIOp>(loc, warpBaseElems,
+                                              cIdx(b, loc, s * 32));
+        Value pos = b.create<arith::AddIOp>(loc, sBase, laneIdx);
+        Value active =
+            b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, pos, cN);
+        auto ifa = b.create<scf::IfOp>(loc, active, /*withElse=*/false);
+        OpBuilder::InsertionGuard g(b);
+        b.setInsertionPointToStart(ifa.thenBlock());
+        Value digI32 = b.create<arith::AndIOp>(
+            loc, b.create<arith::ShRUIOp>(loc, keyS[s], shift),
+            cI32(b, loc, kDigits - 1));
+        Value digIdx =
+            b.create<arith::IndexCastOp>(loc, b.getIndexType(), digI32);
+        Value baseSlot = b.create<arith::AddIOp>(loc, warpTabRow, digIdx);
+        Value base = b.create<memref::LoadOp>(loc, tab, ValueRange{baseSlot});
+        Value fp = b.create<arith::AddIOp>(loc, base, offS[s]);
+        Value fpIdx = b.create<arith::IndexCastOp>(loc, b.getIndexType(), fp);
+        b.create<memref::StoreOp>(loc, keyS[s], dstK, ValueRange{fpIdx});
+        if (needIndices)
+          b.create<memref::StoreOp>(loc, idxS[s], dstI, ValueRange{fpIdx});
+      }
+    }
+    // kPasses is even -> sorted result is back in keyA / idxA.
+
+    b.create<gpu::BarrierOp>(loc);
+
+    // (2) STORE: coalesced write of the first W entries; descending mirror-reads.
     {
       auto loop = b.create<scf::ForOp>(loc, tx, cW, cT);
       OpBuilder::InsertionGuard g(b);

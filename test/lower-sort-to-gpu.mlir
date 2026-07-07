@@ -4,11 +4,13 @@
 // C6 HARD-tier order statistics: intent.sort (values + argsort indices) over a
 // [M,N] row (axis 1). Two single-block-per-row lowerings are cost-model-
 // selected: the BLOCK BITONIC network (default here; wins at/near powers of two)
-// and, forced via RADIX_MIN_N for the second RUN, the SEGMENTED LSD RADIX sort
-// (CUB-style; wins for large padding-heavy rows). The radix path flips f32 to an
-// order-preserving unsigned key (arith.shrsi sign-fill, xor 0x80000000), then 8
-// LSD passes of 4-bit-digit (andi 15) histogram -> warp-shuffle prefix scan
-// (gpu.shuffle up) -> stable scatter, ping-ponging shared key buffers.
+// and, forced via RADIX_MIN_N for the second RUN, the CUB-style WARP-MATCH
+// REGISTER-RANKING LSD RADIX sort (wins large rows AND the power-of-two GATE).
+// The radix path flips f32 to an order-preserving unsigned key (arith.shrsi
+// sign-fill, xor 0x80000000), then 8 LSD passes of 4-bit-digit (andi 15) ranking
+// done ENTIRELY in registers: nvvm.vote.ballot.sync builds each key's warp
+// peer-mask (one ballot per digit bit), math.ctpop ranks it, and a tiny cross-
+// warp table replaces the old shared histogram -> bandwidth-bound scatter.
 //
 // RADIX-LABEL: func.func @sort_row(
 // RADIX:         gpu.launch
@@ -17,7 +19,9 @@
 // RADIX:         arith.xori
 // RADIX:         arith.shrui
 // RADIX:         arith.andi %{{.*}}, %c15_i32
-// RADIX:         gpu.shuffle  up
+// RADIX:         nvvm.vote.ballot.sync
+// RADIX:         math.ctpop
+// RADIX:         nvvm.bar.warp.sync
 // RADIX-NOT:     intent.
 
 // C6 HARD-tier order statistics: intent.sort (values + argsort indices) over a
