@@ -317,7 +317,7 @@ class MatmulKernel:
                  block_m: int | None = None, block_n: int | None = None,
                  mma: bool = False, warp_spec: bool = False,
                  num_producer_warps: int | None = None,
-                 block_k: int | None = None):
+                 block_k: int | None = None, smem_pad: int | None = None):
         # mma=True selects the nvgpu.ldmatrix + nvgpu.mma.sync path
         # (-convert-intent-contraction-to-gpu-mma); warp_spec=True selects the
         # M7g warp-specialized (producer/consumer) mma.sync path
@@ -336,6 +336,10 @@ class MatmulKernel:
             if not mma:
                 raise ValueError("block_k is only supported with mma=True")
             opts.append(f"block-k={block_k}")
+        if smem_pad is not None:
+            if not mma:
+                raise ValueError("smem_pad is only supported with mma=True")
+            opts.append(f"smem-pad-k={smem_pad}")
         if warp_spec and num_producer_warps is not None:
             opts.append(f"num-producer-warps={num_producer_warps}")
         if warp_spec:

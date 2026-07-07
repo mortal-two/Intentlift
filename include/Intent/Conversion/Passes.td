@@ -684,6 +684,11 @@ def ConvertIntentContractionToGPUMMA
            "BK/16 mma sub-tiles per stage). Wider BK stages more K per cp.async "
            "wave; the smem budget caps nStages*(BM+BN)*BK*2 at ~100 KiB. "
            "Autotuner knob (was a hard constant 32).">,
+    Option<"smemPadK", "smem-pad-k", "unsigned", /*default=*/"8",
+           "Pad the shared A/W K-tile leading dim by this many f16 elements "
+           "(swizzle-free bank-conflict avoidance for the ldmatrix reads). "
+           "Must be a multiple of 8 (16-byte cp.async alignment) or 0 to "
+           "disable. Autotuner knob.">,
   ];
 }
 

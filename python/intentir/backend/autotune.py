@@ -55,6 +55,10 @@ MOVER_T_SWEEP = [128, 256, 512, 1024]
 TILE_SWEEP = [32, 64, 128]
 BK_SWEEP = [16, 32, 64]
 STAGES_SWEEP = [1, 2, 3]
+# f16 padding on the smem K-tile leading dim (swizzle-free bank-conflict
+# avoidance for the ldmatrix reads). 0 = off; 8 = one 128-bit lane. Only the
+# nvgpu.mma.sync contraction path exposes ``smem-pad-k``.
+PAD_SWEEP = [0, 8]
 
 
 def _do_bench(thunk, want_graph: bool = True):
@@ -169,21 +173,28 @@ class AutotuneDriver:
                 bk_list = (BK_SWEEP if (family == "contraction" and K is not None)
                            else [None])
                 stages_list = (STAGES_SWEEP if family == "contraction" else [None])
+                # smemPadK (the ldmatrix bank-conflict pad) is only a knob on the
+                # nvgpu.mma.sync contraction path; other families sweep pad=0.
+                pad_list = (PAD_SWEEP if family == "contraction" else [0])
                 for BK in bk_list:
                     if BK is not None and (K % BK != 0):
                         continue
                     for ns in stages_list:
-                        cfg = {"BM": BM, "BN": BN}
-                        if BK is not None:
-                            cfg["BK"] = BK
-                        if ns is not None:
-                            cfg["numStages"] = ns
-                            # smem = numStages * (BM+BN) * BK * 2B (f16 A/W tiles)
-                            bk_eff = BK if BK is not None else 32
-                            smem = ns * (BM + BN) * bk_eff * 2
+                        for pad in pad_list:
+                            cfg = {"BM": BM, "BN": BN}
+                            if BK is not None:
+                                cfg["BK"] = BK
+                            if ns is not None:
+                                cfg["numStages"] = ns
+                            if family == "contraction":
+                                cfg["smemPadK"] = pad
+                            # smem = numStages*(BM+BN)*(BK+pad)*2B (f16 A/W tiles)
+                            bk_eff = (BK if BK is not None else 32) + pad
+                            ns_eff = ns if ns is not None else 1
+                            smem = ns_eff * (BM + BN) * bk_eff * 2
                             if smem > SMEM_CAP_BYTES:
                                 continue
-                        out.append(cfg)
+                            out.append(cfg)
         return out or [self.default_config(family, meta)]
 
     # ------------------------------------------------------------------ #

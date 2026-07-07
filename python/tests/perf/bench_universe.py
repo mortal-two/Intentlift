@@ -449,7 +449,13 @@ def fam_blas():
     w = torch.randn(Nn, Kk, device="cuda", dtype=torch.float16)
     ref = torch.matmul(a.float(), w.float().t())
     try:
-        k = MatmulKernel(mlir)
+        # nvgpu.ldmatrix + mma.sync path with the N6-tuned compute-bound config:
+        # BM=BN=128 (8-warp block, max A/W reuse), BK=32, 2-stage cp.async double
+        # buffer (ns=3 costs an smem stage -> loses a co-resident block on the
+        # 100 KiB SM), smem-pad-k=8 to kill the ldmatrix bank conflicts. This is
+        # the argmin the M5 autotuner selects over the BM/BN/BK/stages/pad sweep.
+        k = MatmulKernel(mlir, mma=True, num_stages=2, block_m=128,
+                         block_n=128, block_k=32, smem_pad=8)
         out = torch.zeros(Mm, Nn, device="cuda", dtype=torch.float32)
         go = our_launcher(k, [a, w, out]); go(); torch.cuda.synchronize()
         rel = _rel(out, ref)
@@ -464,7 +470,9 @@ def fam_blas():
             verify=lambda r: _rel(r.float(), ref) < 3e-2) if FG else None)
         flop = 2.0 * Mm * Nn * Kk
         record("blas", "matmul f16", f"[{Mm},{Nn},{Kk}]", our, refs, flop=flop,
-               cls="compute", note=f"rel={rel:.1e}; mma.sync WMMA vs cuBLAS",
+               cls="compute",
+               note=f"rel={rel:.1e}; nvgpu.mma.sync cp.async-2stage "
+                    f"pad8 bm128 vs cuBLAS",
                graph_ours=gg)
     except Exception as e:  # noqa: BLE001
         SKIPPED.append(("blas", "matmul", f"{str(e)[:70]}"))

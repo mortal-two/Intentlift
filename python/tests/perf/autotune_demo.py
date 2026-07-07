@@ -228,7 +228,8 @@ func.func @mm(%a: {A}, %w: {Wt}) -> {Y} {{
 
     def build(cfg):
         k = MatmulKernel(mlir, mma=True, block_m=cfg["BM"], block_n=cfg["BN"],
-                         block_k=cfg["BK"], num_stages=cfg["numStages"])
+                         block_k=cfg["BK"], num_stages=cfg["numStages"],
+                         smem_pad=cfg.get("smemPadK", 0))
         go = our_launcher(k, [a, w, y])  # stream read INSIDE go (graph-captured)
         go(); torch.cuda.synchronize()
         rel = float((y - ref).norm() / ref.norm())

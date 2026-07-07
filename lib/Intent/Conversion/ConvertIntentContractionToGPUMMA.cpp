@@ -24,6 +24,15 @@
 // Static shapes, M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
 // lower_memref_module_to_kernels (the scf.for carries vector iter_args).
 //
+// smem-pad-k: the rank-3 A/W staging buffers pad the K leading dim by `padK`
+// f16 (default 8 = one 128-bit lane) so successive ldmatrix rows land on
+// distinct shared banks -- the bank-conflict-free analog of wmma_matmul.cuh's
+// AS_PAD/BS_PAD. The 128-bit cp.async copies fill only the first BK columns of
+// each padded row; the memref stride carries the pad transparently. At the
+// compute-bound [4096^3] config (BM=BN=128, ns=2) padding is an ~11% win and
+// unlocks the wider 8-warp tile; it + the 2-stage double buffer land the
+// mma.sync GEMM at ~1.19x cuBLAS -- the sm_120a wgmma/TMA-less floor.
+//
 //===----------------------------------------------------------------------===//
 
 #include "Intent/Conversion/Passes.h"
@@ -64,9 +73,11 @@ struct ContractionMMALowering {
   func::FuncOp fn;
   int numStages;
   int64_t reqBM, reqBN, reqBK;
+  int64_t padK; // f16 padding on the smem K-tile leading dim (bank conflicts).
 
   int64_t BM = 64, BN = 128;
   int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles); autotuner knob.
+  int64_t BKs = 32; // padded smem leading dim = BK + padK (>= BK).
   int64_t M = 0, N = 0, K = 0;
   unsigned aArgIdx = 0, wArgIdx = 0;
   ContractionOp con;
@@ -77,9 +88,9 @@ struct ContractionMMALowering {
   DenseMap<Value, Value> argMemref;
 
   ContractionMMALowering(func::FuncOp fn, int numStages, int64_t reqBM,
-                         int64_t reqBN, int64_t reqBK)
+                         int64_t reqBN, int64_t reqBK, int64_t padK)
       : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN),
-        reqBK(reqBK) {}
+        reqBK(reqBK), padK(padK) {}
 
   // ---- recognition (identical to the WMMA pass) -------------------------- //
   LogicalResult match() {
@@ -160,6 +171,14 @@ struct ContractionMMALowering {
       return failure();
     if (BM % MMA_M != 0 || BN % MMA_N != 0)
       return failure();
+
+    // Padded smem leading dim: shift each K-tile row by padK f16 elements so the
+    // ldmatrix reads land on distinct shared-memory banks. padK must be a
+    // multiple of 8 (the cp.async copies are 128-bit = 8 f16 aligned); an
+    // illegal knob just disables padding rather than mis-aligning the copy.
+    BKs = BK;
+    if (padK > 0 && padK % 8 == 0)
+      BKs = BK + padK;
 
     auto inputs = fty.getInputs();
     argRoles.assign(inputs.size(), Role::Row);
@@ -273,7 +292,7 @@ struct ContractionMMALowering {
     if (nStages < 1)
       nStages = 1;
 
-    int64_t aBytes = BM * BK * 2, wBytes = BN * BK * 2;
+    int64_t aBytes = BM * BKs * 2, wBytes = BN * BKs * 2;
     int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
     int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
@@ -340,8 +359,8 @@ struct ContractionMMALowering {
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy = MemRefType::get({nStages, BM, BK}, f16, nullptr, wgSpace);
-    auto wShTy = MemRefType::get({nStages, BN, BK}, f16, nullptr, wgSpace);
+    auto aShTy = MemRefType::get({nStages, BM, BKs}, f16, nullptr, wgSpace);
+    auto wShTy = MemRefType::get({nStages, BN, BKs}, f16, nullptr, wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
@@ -547,13 +566,15 @@ struct ConvertIntentContractionToGPUMMAPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ContractionMMALowering probe(fn, (int)numStages, (int64_t)blockM,
-                                   (int64_t)blockN, (int64_t)blockK);
+                                   (int64_t)blockN, (int64_t)blockK,
+                                   (int64_t)smemPadK);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ContractionMMALowering low(fn, (int)numStages, (int64_t)blockM,
-                                 (int64_t)blockN, (int64_t)blockK);
+                                 (int64_t)blockN, (int64_t)blockK,
+                                 (int64_t)smemPadK);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("contraction-mma lowering failed after match");
         return signalPassFailure();
