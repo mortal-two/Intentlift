@@ -325,3 +325,158 @@ def test_gate2_real_softmax_source_replay_lowering_three_way() -> None:
         result.replay.error,
         result.lowering.error,
     )
+
+
+def _rmsnorm_intent() -> IntentFunction:
+    return IntentFunction.from_json(
+        json.loads((ROOT / "corpus/kernels/rms_norm/intent.json").read_text())
+    )
+
+
+def _rmsnorm_gate2_case(
+    x: np.ndarray,
+    w: np.ndarray,
+    eps: np.float32,
+    *,
+    block: int = 64,
+) -> Gate2Case:
+    m, n = x.shape
+    return Gate2Case(
+        f"rmsnorm.fixed.tail{n}.eps-{float(eps):g}",
+        {"X": x, "W": w, "eps": eps, "M": m, "N": n},
+        TritonExecutionSpec(
+            (
+                TritonArgument("x_ptr", ArgumentRole.INPUT, "X", "f32"),
+                TritonArgument("w_ptr", ArgumentRole.INPUT, "W", "f32"),
+                TritonArgument(
+                    "out_ptr",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(m, n),
+                    output_key="Y",
+                ),
+                TritonArgument("M", ArgumentRole.SCALAR, "M"),
+                TritonArgument("N", ArgumentRole.SCALAR, "N"),
+                TritonArgument("eps", ArgumentRole.SCALAR, "eps"),
+            ),
+            (m,),
+            {"BLOCK_N": block, "num_warps": 4, "num_stages": 2},
+        ),
+        Lower2CSpec(
+            _rmsnorm_intent(),
+            {"M": m, "N": n},
+            {"X": "X", "W": "W", "eps": "eps"},
+            "Y",
+        ),
+        ("Y",),
+        {"Y": Tolerance(rtol=3.0e-4, atol=3.0e-5)},
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_rmsnorm_consumes_runtime_eps() -> None:
+    fn = _rmsnorm_intent()
+    m, n = 4, 37
+    rng = np.random.default_rng(29)
+    x = (rng.standard_normal((m, n)) * 0.25).astype(np.float32)
+    w = (0.75 + rng.random(n) * 0.5).astype(np.float32)
+    spec = Lower2CSpec(
+        fn,
+        {"M": m, "N": n},
+        {"X": "X", "W": "W", "eps": "eps"},
+        "Y",
+    )
+    outputs = []
+
+    for eps in (np.float32(1.0e-5), np.float32(1.0e-2)):
+        result = Lower2CRunner().run(spec, {"X": x, "W": w, "eps": eps})
+        assert result.ok, result.error
+        reference = x * (
+            1.0
+            / np.sqrt(
+                np.mean(x * x, axis=1, keepdims=True, dtype=np.float32) + eps
+            )
+        ) * w
+        np.testing.assert_allclose(
+            result.outputs["Y"], reference, rtol=3.0e-4, atol=3.0e-5
+        )
+        outputs.append(result.outputs["Y"])
+
+    assert not np.allclose(outputs[0], outputs[1], rtol=1.0e-7, atol=1.0e-8)
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_rmsnorm_runtime_eps_three_way() -> None:
+    m, n = 4, 37
+    rng = np.random.default_rng(31)
+    x = (rng.standard_normal((m, n)) * 0.25).astype(np.float32)
+    w = (0.75 + rng.random(n) * 0.5).astype(np.float32)
+    source_outputs = []
+
+    for eps in (np.float32(1.0e-5), np.float32(1.0e-2)):
+        case = _rmsnorm_gate2_case(x, w, eps)
+
+        result = Gate2Runner().run(
+            KernelSource.from_file(
+                ROOT / "test/scrc_probe_sources.py",
+                "rmsnorm_kernel",
+                trusted=True,
+            ),
+            KernelSource.from_file(
+                ROOT / "test/scrc_probe_replays.py", "rmsnorm_kernel"
+            ),
+            case,
+        )
+
+        assert result.status is Gate2Status.PASS, (
+            result.source.error,
+            result.replay.error,
+            result.lowering.error,
+        )
+        source_outputs.append(result.source.outputs["Y"])
+
+    assert not np.allclose(
+        source_outputs[0], source_outputs[1], rtol=1.0e-7, atol=1.0e-8
+    )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_rmsnorm_attributes_baked_eps_to_replay() -> None:
+    m, n = 4, 37
+    rng = np.random.default_rng(37)
+    x = (rng.standard_normal((m, n)) * 0.25).astype(np.float32)
+    w = (0.75 + rng.random(n) * 0.5).astype(np.float32)
+    eps = np.float32(1.0e-2)
+    replay_text = (ROOT / "test/scrc_probe_replays.py").read_text()
+    baked = replay_text.replace(
+        "    shifted = mean_square + eps",
+        "    shifted = mean_square + 1.0e-5",
+        1,
+    )
+    assert baked != replay_text
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_sources.py",
+            "rmsnorm_kernel",
+            trusted=True,
+        ),
+        KernelSource.from_code(baked, "rmsnorm_kernel"),
+        _rmsnorm_gate2_case(x, w, eps),
+    )
+
+    assert result.status is Gate2Status.REPLAY_DIVERGED, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )
+    assert result.source_lowering is not None
+    assert result.source_lowering.passed
+    assert result.source_replay is not None
+    assert not result.source_replay.passed

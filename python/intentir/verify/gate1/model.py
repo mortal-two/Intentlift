@@ -114,6 +114,22 @@ def _string_list(value: Any, path: str, *, unique: bool = False) -> list[str]:
     return result
 
 
+def _dtype_key(value: str) -> str:
+    key = value.removeprefix("torch.").lower()
+    aliases = {
+        "float16": "f16",
+        "bfloat16": "bf16",
+        "float32": "f32",
+        "float64": "f64",
+        "int8": "i8",
+        "int16": "i16",
+        "int32": "i32",
+        "int64": "i64",
+        "bool": "i1",
+    }
+    return aliases.get(key, key)
+
+
 def _json_value(value: Any, path: str) -> JsonValue:
     """Validate and defensively copy a proper RFC-8259 JSON value."""
 
@@ -1280,6 +1296,31 @@ class Gate1Artifact(StrictJSONMixin):
                 "KernelParameter.tensor_ref references unknown J tensor(s): "
                 + ", ".join(bad_tensor_refs)
             )
+        input_tensors = {tensor.name: tensor for tensor in self.j.intent.inputs}
+        for parameter in self.interface.parameters:
+            if (
+                parameter.kind is not ParameterKind.SCALAR
+                or parameter.tensor_ref is None
+            ):
+                continue
+            tensor = input_tensors.get(parameter.tensor_ref)
+            if tensor is None:
+                raise SchemaError(
+                    f"scalar parameter {parameter.name!r} tensor_ref must "
+                    "reference a J input"
+                )
+            if tensor.shape:
+                raise SchemaError(
+                    f"scalar parameter {parameter.name!r} tensor_ref must "
+                    "have shape=[]"
+                )
+            if parameter.dtype is not None and (
+                _dtype_key(parameter.dtype) != _dtype_key(tensor.dtype)
+            ):
+                raise SchemaError(
+                    f"scalar parameter {parameter.name!r} tensor_ref dtype "
+                    "must match the J scalar input"
+                )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
         boundary_node_refs = [

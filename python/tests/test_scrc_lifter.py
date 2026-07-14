@@ -127,6 +127,14 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "copy `col < N`" in prompt
     assert "materialize_pointer_tile" in prompt
     assert "staged pointer additions" in prompt
+    assert "load(ptr + row*N + lane)" in prompt
+    assert "offset = row*N + lane" in prompt
+    assert "semantic index_expression string alone" in prompt
+    assert "runtime scalar consumed by the computation" in prompt
+    assert "shape=[]" in prompt
+    assert "canonicalize reciprocal square root" in prompt
+    assert "semantic extent" in prompt
+    assert "global J axis" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
 
@@ -229,6 +237,99 @@ def test_scrc_lift_rejects_compiler_view_drift(monkeypatch) -> None:
     assert "schedule.values differs from trusted compiler view" in str(
         caught.value
     )
+
+
+def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "eps", "dtype": "f32", "shape": []}
+    )
+    payload["interface"]["parameters"].insert(
+        -1,
+        {
+            "name": "eps",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "f32",
+            "rank": 0,
+            "tensor_ref": "eps",
+        },
+    )
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-scalar"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    view = scrc.SCRCCompilerView(
+        {"BLOCK": 64, "num_warps": 4},
+        ("num_warps",),
+        (),
+        (
+            scrc.SCRCCompilerArgument("a_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("b_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("N", "scalar", "i32", value=65),
+            scrc.SCRCCompilerArgument("eps", "scalar", "f32", value=1.0e-5),
+        ),
+        (2,),
+        ("ceil_div(N, BLOCK)",),
+        ("a_ptr", "b_ptr", "out_ptr", "N", "eps", "BLOCK"),
+        ("BLOCK",),
+    )
+
+    result = scrc.extract_scrc_artifact(
+        "source", "add_kernel", compiler_view=view, max_repairs=0
+    )
+
+    eps = next(
+        item for item in result.artifact.interface.parameters if item.name == "eps"
+    )
+    assert eps.tensor_ref == "eps"
+    assert result.artifact.j.intent.inputs[-1].shape == []
+
+
+def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "eps", "dtype": "f32", "shape": [1]}
+    )
+    payload["interface"]["parameters"].insert(
+        -1,
+        {
+            "name": "eps",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "f32",
+            "rank": 0,
+            "tensor_ref": "eps",
+        },
+    )
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-bad-scalar"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    view = scrc.SCRCCompilerView(
+        {"BLOCK": 64, "num_warps": 4},
+        ("num_warps",),
+        (),
+        (
+            scrc.SCRCCompilerArgument("a_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("b_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("N", "scalar", "i32", value=65),
+            scrc.SCRCCompilerArgument("eps", "scalar", "f32", value=1.0e-5),
+        ),
+        (2,),
+        ("ceil_div(N, BLOCK)",),
+        ("a_ptr", "b_ptr", "out_ptr", "N", "eps", "BLOCK"),
+        ("BLOCK",),
+    )
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source", "add_kernel", compiler_view=view, max_repairs=0
+        )
+
+    assert "tensor_ref must have shape=[]" in str(caught.value)
 
 
 def test_scrc_lift_rejects_concrete_c_inside_j(monkeypatch) -> None:

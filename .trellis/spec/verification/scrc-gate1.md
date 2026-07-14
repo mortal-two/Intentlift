@@ -72,6 +72,9 @@ source TTIR / replay TTIR ──> 纯代码指纹与裁判 ──> CLOSED 或差
 当前 Triton 库覆盖 program domain、integer-offset index tile、staged pointer
 tile、masked/unmasked access、elementwise、reduce、broadcast、tiled dot、
 runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 张卡。
+其中 runtime scalar 支持通过 `tensor_ref` 连到 J `shape=[]` 输入；reduce
+卡的 `mean` 除数取全局 J 轴语义长度，elementwise 卡支持
+`sqrt+recip`。
 后续只根据真实 LLM 提取 Kernel 的
 失败补卡，不按想象中的特性枚举扩张。
 
@@ -105,15 +108,12 @@ runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
 PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端证据。
 
-2026-07-14 已打通一个真实 add 首例：`gpt-5.6-sol/xhigh` 提升首轮产出完整
-artifact，source-blind 重写首轮编译并以总分 1.0 通过 interface/A/B/C 结构
-比较；source 与 replay 均非缓存编译。J 内 `layer_c` 为空，具体 C 只存在于
-独立 schedule。masked-J 候选在 `tl.static_assert(False)` 处编译终止，无法
-恢复正常语义，泄漏比为 0，最终状态 `REPLAY_CLOSED`。入口与实测记录分别为
-`test/scrc_live_add_e2e.py` 和 `test/scrc_live_add_report.md`。
-
-这一条只证明真实 add 单例闭环，不外推为数百 Kernel 覆盖，也不替代后续
-row-sum、softmax、RMSNorm、matmul 与复杂特性的真实 extraction 证据。
+2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax
+和 RMSNorm 的 normal source-blind replay 都已达到 TTIR 硬闭合；在完整不透明
+ABI/C 消融下，四者最终都是 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
+`eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
+验证；该被拒绝 live 样本的离线 Gate2 对照三方 PASS，但不改变
+Gate1 结论。下一个五核主线样本是 matmul。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1
 不得导入它。

@@ -307,6 +307,13 @@ Cross-field rules:
   body[0], never domain/access/effect/output-mapping ids;
 - a scalar kernel parameter that only supplies a symbolic extent is not an
   IntentIR tensor input;
+- a runtime scalar consumed by the computation is an IntentIR scalar input with
+  shape=[] and is linked from the scalar interface parameter with tensor_ref;
+- canonicalize reciprocal square root in J as sqrt followed by recip. The replay
+  may recover the source-native mechanism through the selected rule card;
+- when the source spells a mean as local sum divided by the runtime logical
+  extent, encode J as reduce fn=mean. The divisor is the semantic extent of the
+  global J axis, never a Layer-C tile size;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
 - interface runtime parameters copy the trusted compiler-view argument order,
@@ -331,6 +338,12 @@ pi/plan rules:
 - select materialize_index_tile when the source computes a complete integer tile
   offset before adding it to a pointer; select materialize_pointer_tile when the
   source keeps pointer + scalar base + lane tile as staged pointer additions.
+  In particular, an inline source access such as `load(ptr + row*N + lane)` or
+  `store(ptr + row*N + lane, ...)` selects materialize_pointer_tile. Select
+  materialize_index_tile only when the source first assigns the complete integer
+  expression (for example `offset = row*N + lane`) and later uses `ptr + offset`.
+  Inspect the source association; the semantic index_expression string alone
+  does not distinguish these two frontend mechanisms.
 
 Registered rule ids (API spellings intentionally omitted):
 {_rule_catalog(registry)}
@@ -549,11 +562,34 @@ def extract_scrc_artifact(
                                         f"J tensor {tensor.name!r} static extent "
                                         f"{declared} != {concrete}"
                                     )
-                        elif parameter.rank not in (None, 0):
-                            raise ValueError(
-                                f"scalar parameter {parameter.name!r} rank must "
-                                "be absent or zero"
-                            )
+                        else:
+                            if parameter.rank not in (None, 0):
+                                raise ValueError(
+                                    f"scalar parameter {parameter.name!r} rank must "
+                                    "be absent or zero"
+                                )
+                            if parameter.tensor_ref is not None:
+                                tensor = tensors.get(parameter.tensor_ref)
+                                input_names = {
+                                    item.name for item in artifact.j.intent.inputs
+                                }
+                                if tensor is None or tensor.name not in input_names:
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref must name a J input"
+                                    )
+                                if tensor.shape:
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref must have shape=[]"
+                                    )
+                                if _canonical_dtype(tensor.dtype) != _canonical_dtype(
+                                    argument.dtype
+                                ):
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref dtype differs from compiler view"
+                                    )
                 if compiler_view.grid and len(artifact.interface.grid) != len(
                     compiler_view.grid
                 ):

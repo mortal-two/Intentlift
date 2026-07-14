@@ -211,6 +211,36 @@ def test_schedule_constexpr_must_exist_in_interface_signature() -> None:
         Gate1Artifact.from_json(payload)
 
 
+def test_semantic_scalar_tensor_ref_requires_scalar_j_input_and_matching_dtype() -> None:
+    payload = _artifact().to_json()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "eps", "dtype": "f32", "shape": []}
+    )
+    payload["interface"]["parameters"].insert(
+        -1,
+        {
+            "name": "eps",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "float32",
+            "rank": 0,
+            "tensor_ref": "eps",
+        },
+    )
+    parsed = Gate1Artifact.from_json(payload)
+    assert parsed.interface.parameters[-2].tensor_ref == "eps"
+
+    bad_shape = _artifact().to_json()
+    bad_shape["interface"]["parameters"][2]["tensor_ref"] = "input_tensor"
+    with pytest.raises(SchemaError, match=r"tensor_ref must have shape=\[\]"):
+        Gate1Artifact.from_json(bad_shape)
+
+    bad_dtype = payload
+    bad_dtype["j"]["intent"]["intent_function"]["inputs"][-1]["dtype"] = "f16"
+    with pytest.raises(SchemaError, match="tensor_ref dtype must match"):
+        Gate1Artifact.from_json(bad_dtype)
+
+
 def test_unknown_keys_are_rejected_at_every_closed_boundary() -> None:
     payload = _artifact().to_json()
     payload["surprise"] = True

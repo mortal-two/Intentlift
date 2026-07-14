@@ -54,6 +54,13 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 `tile_axis=0`。同理，`Boundary.broadcasts.axes` 描述全局语义 broadcast，不等于
 强制生成本地 `expand_dims`；标量归约结果对同一一维 tile 可直接隐式广播。
 
+参与数值计算的 runtime scalar 使用 J 的 `shape=[]` 输入表示，并由
+Gate1 interface scalar 参数的 `tensor_ref` 连接；只提供 symbolic shape
+extent 的 M/N 类参数不是 J 输入。`reduce(fn=mean)` 在前端本地 tile
+重放为 sum 除全局归约轴的语义长度，不得用 Layer-C tile 大小作除数。
+对 SCRC canonical J，源码 `rsqrt` 使用既有 `sqrt` 后 `recip` 组合表达；
+Gate1 只沿用已登记的局部 `1/sqrt <-> rsqrt` TTIR 规范化。
+
 ## `loop` 的具体形态(承载递推)
 
 ```json

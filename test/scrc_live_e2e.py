@@ -46,7 +46,12 @@ from intentir.verify.gate2 import (
     TritonExecutionSpec,
 )
 
-from scrc_probe_sources import add_kernel, row_sum_kernel, softmax_kernel
+from scrc_probe_sources import (
+    add_kernel,
+    rmsnorm_kernel,
+    row_sum_kernel,
+    softmax_kernel,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -178,6 +183,40 @@ def build_case(args: argparse.Namespace) -> LiveKernelCase:
             2.0,
             Tolerance(rtol=2.0e-4, atol=2.0e-5),
         )
+    if args.kernel == "rmsnorm":
+        m = int(args.m)
+        if m <= 0:
+            raise ValueError("M must be positive")
+        block = int(args.block if args.block is not None else 1024)
+        if block < n:
+            raise ValueError(
+                "rmsnorm first closure requires one BLOCK_N tile covering N"
+            )
+        eps = float(args.eps)
+        arguments = (
+            SCRCCompilerArgument("x_ptr", "tensor", "f32", (m, n)),
+            SCRCCompilerArgument("w_ptr", "tensor", "f32", (n,)),
+            SCRCCompilerArgument("out_ptr", "tensor", "f32", (m, n)),
+            SCRCCompilerArgument("M", "scalar", "i32", value=m),
+            SCRCCompilerArgument("N", "scalar", "i32", value=n),
+            SCRCCompilerArgument("eps", "scalar", "f32", value=eps),
+        )
+        return LiveKernelCase(
+            "rmsnorm",
+            rmsnorm_kernel,
+            arguments,
+            (m,),
+            {
+                "BLOCK_N": block,
+                "num_warps": args.num_warps,
+                "num_stages": args.num_stages,
+            },
+            ("num_warps", "num_stages"),
+            ("M",),
+            ("BLOCK_N",),
+            0.25,
+            Tolerance(rtol=3.0e-4, atol=3.0e-5),
+        )
     raise KeyError(args.kernel)
 
 
@@ -274,12 +313,17 @@ def _gate2_case(
             continue
         concrete = runtime[parameter.name]
         if parameter.kind is ParameterKind.SCALAR:
-            values[parameter.name] = concrete.value
+            value_key = parameter.tensor_ref or parameter.name
+            scalar_value: Any = concrete.value
+            if parameter.tensor_ref is not None:
+                dtype = _numpy_dtype(parameter.dtype or concrete.dtype)
+                scalar_value = dtype.type(concrete.value)
+            values[value_key] = scalar_value
             arguments.append(
                 TritonArgument(
                     parameter.name,
                     ArgumentRole.SCALAR,
-                    value_key=parameter.name,
+                    value_key=value_key,
                 )
             )
             continue
@@ -566,12 +610,15 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--kernel", choices=("add", "row_sum", "softmax"), default=default_kernel
+        "--kernel",
+        choices=("add", "row_sum", "softmax", "rmsnorm"),
+        default=default_kernel,
     )
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--effort", default="xhigh")
     parser.add_argument("--m", type=int, default=7)
     parser.add_argument("--n", type=int, default=1003)
+    parser.add_argument("--eps", type=float, default=1.0e-5)
     parser.add_argument("--block", type=int)
     parser.add_argument("--num-warps", type=int, default=4)
     parser.add_argument("--num-stages", type=int, default=2)

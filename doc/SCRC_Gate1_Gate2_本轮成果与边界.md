@@ -63,6 +63,14 @@ row-sum 的 masked score 为 `0.778676`，softmax 的 masked replay 又完整
 production lower2c 三方预检已 PASS，但正式 live Gate2 按门禁顺序没有
 运行。详见 `test/scrc_live_softmax_report.md`。
 
+RMSNorm 随后也沿用同一入口完成真实 Lift 和 normal replay。本轮补齐
+runtime `eps` 到 J `shape=[]` 输入的 `tensor_ref` 连接、`mean` 的语义
+除数、`sqrt+recip` 规范形态，并用真实失败收紧 staged pointer card 的
+选择说明。normal replay 首候选 score `1.0`，masked replay 也为 `1.0`，
+最终仍是 `LEAKAGE_REJECTED`。对这份被拒绝的真实 live artifact 按方案
+9.1 离线执行 Gate2，三方 PASS，但不改变门禁结论。详见
+`test/scrc_live_rmsnorm_report.md`。
+
 ### 1.3 Gate1 收回 SCRC 主线
 
 保留了方案要求的硬项：
@@ -129,7 +137,9 @@ prompt 不再只是塞卡片，而是显式记录：
 - lower 不支持时明确返回 `LOWERING_UNSUPPORTED`，不会退回旧解释器伪装成功。
 
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
-add、collapsed row-sum 与 softmax 的三方一致。这些固定 J 测试是
+add、collapsed row-sum、softmax 与 RMSNorm 的三方一致。RMSNorm 还用
+`eps=1e-5/1e-2` 两个值证明 production lower2c 真正消费 runtime scalar。
+这些固定 J 测试是
 production lowering 能力证据，不代替每个 live artifact 的 Gate1 接收。
 
 ## 2. False reject 是什么意思
@@ -171,7 +181,7 @@ Gate1 闭合，但 Gate2 失败 = false accept
 已经真实发生的事情包括：
 
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
-  add、row-sum、softmax 上结构闭合；最终接收目前被低熵先验和
+  add、row-sum、softmax、RMSNorm 上结构闭合；最终接收目前被低熵先验和
   π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
@@ -182,7 +192,7 @@ Gate1 闭合，但 Gate2 失败 = false accept
 所以核心机制已经不是“差得远到只剩接口”。差距主要在覆盖与工程闭环：
 
 - 尚未把数百个真实 Kernel 全部重新走一遍新的 `extract_scrc_artifact`；
-- live add/row-sum/softmax 的 normal 路径已收敛，但一次性 masked-J
+- live add/row-sum/softmax/RMSNorm 的 normal 路径已收敛，但一次性 masked-J
   无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
   有序拓扑结合仍公开的结构信息，可成为语义替代编码；
 - 规则卡只在五核和当前变异集上证过；

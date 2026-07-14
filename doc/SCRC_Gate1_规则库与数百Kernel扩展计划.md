@@ -40,6 +40,20 @@ J + π + 接口 + C 槽 + 规则卡
 `tt.addptr` 与 `tt.splat` 多重集不同。新卡只表达这个地址物化机制，
 不包含 softmax 算子序列。
 
+RMSNorm 证明这张卡是通用机制而非 softmax 特例：提升官首先错选
+integer-offset card 时，normal replay 三个候选都固定停在
+`score=0.770359`；明确源码内联 `ptr + row*N + lane` 的选卡契约后，
+同一 pointer card 让 RMSNorm 达到 TTIR 零差异。
+
+RMSNorm 没有新增规则卡，而是完善三张已有通用卡：
+
+- `bind_runtime_scalar`：区分纯 shape extent 与由 `tensor_ref` 连到 J
+  `shape=[]` 输入的语义 scalar；
+- `realize_reduce`：`mean` 实现为局部 sum 除全局 J 轴的逻辑长度，
+  不得除 C 的 tile 大小；
+- `realize_elementwise`：补全 `recip` 和已有 binary/unary 构造映射，
+  语义仍只从 J 节点读取。
+
 检索过程已经显式化：
 
 ```text
@@ -143,10 +157,12 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 ### 第一批：20～40 个 Triton
 
-- live add、row-sum、softmax 的 normal replay 已结构闭合，三者都因
-  masked-J 消融被最终拒绝；add 的历史正式 Gate2 与三者的独立
+- live add、row-sum、softmax、RMSNorm 的 normal replay 已结构闭合，四者都因
+  masked-J 消融被最终拒绝；add 的历史正式 Gate2 与四者的独立
   production lower2c 三方预检均已跑通；
-- 下一步按同一入口依次推进 RMSNorm、matmul，不改 masked 裁决；
+- RMSNorm 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.4
+  的 rejected 对照，不改变 Gate1 裁决；
+- 下一步按同一入口推进 matmul，不改 masked 裁决；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；

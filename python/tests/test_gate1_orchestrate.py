@@ -478,8 +478,16 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     } <= {card.id for card in first.cards}
     cards = {card.id: card for card in first.cards}
     assert cards["materialize_pointer_tile"].version == "1"
-    assert cards["realize_reduce"].version == "2"
+    assert cards["realize_elementwise"].version == "3"
+    assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
+    assert cards["realize_reduce"].version == "3"
     assert "tile_axis" in cards["realize_reduce"].reads
+    assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]
+    assert cards["bind_runtime_scalar"].version == "2"
+    assert "tensor_ref" in cards["bind_runtime_scalar"].reads
+    assert "tl.sum" in first.api_tokens(Frontend.TRITON)
+    assert "+" not in first.api_tokens(Frontend.TRITON)
+    assert "*" not in first.api_tokens(Frontend.TRITON)
     assert cards["realize_broadcast"].api_mapping["scalar_to_tile"] == (
         "use the scalar operand directly"
     )

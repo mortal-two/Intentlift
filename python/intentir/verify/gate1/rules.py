@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -185,7 +186,19 @@ class RuleRegistry(StrictJSONMixin):
         for card in self._cards.values():
             if expected is not None and card.frontend is not expected:
                 continue
-            tokens.update(card.api_mapping.values())
+            for spelling in card.api_mapping.values():
+                # A rule mapping may also describe a generic operator or a
+                # construction recipe (for example ``+`` or ``1 / operand``).
+                # Those are valid J/B expression syntax, not frontend API
+                # names, and must not poison static leakage scanning.  Keep
+                # qualified API names plus standalone identifier spellings.
+                qualified = re.findall(
+                    r"[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)+", spelling
+                )
+                if qualified:
+                    tokens.update(qualified)
+                elif spelling.isidentifier():
+                    tokens.add(spelling)
         return tokens
 
     @classmethod
@@ -266,30 +279,43 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_elementwise",
             Frontend.TRITON,
-            version="2",
+            version="3",
             applies_to=["map_unary", "map_binary", "cast", "select"],
             reads=["fn", "operands", "dtype"],
             api_mapping={
+                "add": "+",
+                "sub": "-",
+                "mul": "*",
+                "div": "/",
                 "exp": "tl.exp",
                 "log": "tl.log",
                 "sqrt": "tl.sqrt",
                 "rsqrt": "tl.rsqrt",
+                "recip": "1.0 / operand",
                 "sigmoid": "tl.sigmoid",
                 "where": "tl.where",
             },
             example="Select the concrete operation only from the referenced J node.",
-            pitfalls=["Preserve non-commutative operand order."],
+            pitfalls=[
+                "Preserve non-commutative operand order.",
+                "A J scalar input remains a runtime operand; never bake its sampled value.",
+            ],
         ),
         RuleCard(
             "realize_reduce",
             Frontend.TRITON,
-            version="2",
+            version="3",
             applies_to=["reduce", "boundary.reductions"],
             reads=[
                 "fn", "global axes", "tile_axis", "identity",
-                "masked_contribution",
+                "masked_contribution", "semantic extent of each global axis",
             ],
-            api_mapping={"sum": "tl.sum", "max": "tl.max", "min": "tl.min"},
+            api_mapping={
+                "sum": "tl.sum",
+                "max": "tl.max",
+                "min": "tl.min",
+                "mean": "tl.sum(tile, axis=tile_axis) / semantic_extent(global_axis)",
+            },
             example=(
                 "Choose sum/max/min from J, but pass boundary.reductions.tile_axis "
                 "to the frontend reduction."
@@ -297,6 +323,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             pitfalls=[
                 "Do not substitute a different reduction identity.",
                 "Do not pass the global J tensor axis when the local tile rank differs.",
+                "For mean, divide by the logical J-axis extent, never a C tile size.",
             ],
         ),
         RuleCard(
@@ -330,10 +357,21 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "bind_runtime_scalar",
             Frontend.TRITON,
-            applies_to=["interface.parameters", "boundary.domains"],
-            reads=["parameter name", "dtype", "referencing domain id"],
-            example="Use the declared scalar parameter where J/B references it.",
-            pitfalls=["Do not replace a runtime extent with a C slot."],
+            version="2",
+            applies_to=[
+                "interface.parameters", "intent.inputs", "boundary.domains"
+            ],
+            reads=[
+                "parameter name", "dtype", "tensor_ref", "referencing domain id"
+            ],
+            example=(
+                "Bind an extent scalar to its domain references, or bind a semantic "
+                "scalar through tensor_ref to the corresponding J scalar input."
+            ),
+            pitfalls=[
+                "Do not replace a runtime extent with a C slot.",
+                "Do not replace a semantic scalar with its current specialization value.",
+            ],
         ),
         RuleCard(
             "declare_schedule_slot",

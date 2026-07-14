@@ -210,8 +210,9 @@ def _interface_schema() -> dict[str, Any]:
         ("name", "kind", "mode"),
         description=(
             "A callable parameter. tensor_ref is the only field that links a "
-            "pointer/tensor parameter to a J tensor; do not invent dimension "
-            "reference fields."
+            "pointer/tensor parameter or a computation-valued scalar parameter "
+            "to a J tensor; semantic scalars use shape=[]. Do not invent "
+            "dimension reference fields."
         ),
     )
     return _closed_object(
