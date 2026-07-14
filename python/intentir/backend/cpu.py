@@ -39,35 +39,52 @@ _CPU_PIPELINE = [
 ]
 
 
-def _dense(arr: np.ndarray) -> str:
+def _dense(arr: np.ndarray, element_type: str = "f32") -> str:
     """numpy array -> MLIR dense<...> attribute literal."""
-    a = np.asarray(arr, dtype=np.float32)
+    if element_type == "i1":
+        a = np.asarray(arr, dtype=np.bool_)
 
-    def scalar(value: float) -> str:
-        text = f"{float(value):.8g}"
-        if "e" in text or "E" in text:
-            marker = "e" if "e" in text else "E"
-            mantissa, exponent = text.split(marker, 1)
-            if "." not in mantissa:
-                mantissa += ".0"
-            return f"{mantissa}e{exponent}"
-        if "." not in text and text not in {"inf", "-inf", "nan"}:
-            text += ".0"
-        return text
+        def scalar(value) -> str:
+            return "true" if bool(value) else "false"
+
+    elif element_type.startswith("i"):
+        a = np.asarray(arr, dtype=np.int64)
+
+        def scalar(value) -> str:
+            return str(int(value))
+
+    else:
+        a = np.asarray(arr, dtype=np.float32)
+
+        def scalar(value: float) -> str:
+            text = f"{float(value):.8g}"
+            if "e" in text or "E" in text:
+                marker = "e" if "e" in text else "E"
+                mantissa, exponent = text.split(marker, 1)
+                if "." not in mantissa:
+                    mantissa += ".0"
+                return f"{mantissa}e{exponent}"
+            if "." not in text and text not in {"inf", "-inf", "nan"}:
+                text += ".0"
+            return text
 
     if a.ndim == 0:
-        return scalar(float(a))
+        return scalar(a.item())
 
     def rec(x):
         if x.ndim == 1:
-            return "[" + ", ".join(scalar(float(v)) for v in x) + "]"
+            return "[" + ", ".join(scalar(v) for v in x) + "]"
         return "[" + ", ".join(rec(x[i]) for i in range(x.shape[0])) + "]"
 
     return rec(a)
 
 
-def _tt(shape) -> str:
-    return f"tensor<{'x'.join(str(s) for s in shape)}xf32>" if shape else "tensor<f32>"
+def _tt(shape, element_type: str = "f32") -> str:
+    return (
+        f"tensor<{'x'.join(str(s) for s in shape)}x{element_type}>"
+        if shape
+        else f"tensor<{element_type}>"
+    )
 
 
 def _build_main(fn: IntentFunction, kernel_mlir: str,
@@ -79,8 +96,15 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
     lines.append("  func.func @main() {")
     call_args, call_tys = [], []
     for i, (t, arr) in enumerate(zip(fn.inputs, inputs)):
-        ty = _tt(np.shape(arr))
-        lines.append(f"    %in{i} = arith.constant dense<{_dense(arr)}> : {ty}")
+        element_type = (
+            t.dtype
+            if t.dtype in {"i1", "i8", "i16", "i32", "i64"}
+            else "f32"
+        )
+        ty = _tt(np.shape(arr), element_type)
+        lines.append(
+            f"    %in{i} = arith.constant dense<{_dense(arr, element_type)}> : {ty}"
+        )
         call_args.append(f"%in{i}")
         call_tys.append(ty)
     oty = _tt(out_shape)
@@ -114,7 +138,7 @@ def run_on_cpu(fn: IntentFunction, dims: dict[str, int],
     from ..frontend.emit_mlir import _resolve, _infer_body
     env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
     env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
-    _infer_body(fn.body, env, 0)
+    _infer_body(fn.body, env, 0, dict(dims))
     for op in fn.body:
         if op.out is not None:
             env[op.out] = env.get(op.result, env.get(op.out))

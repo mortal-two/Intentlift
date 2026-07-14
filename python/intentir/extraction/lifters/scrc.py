@@ -328,6 +328,11 @@ Cross-field rules:
   offset arithmetic, preserve that as pi mechanism by selecting
   bind_wide_program_domain; otherwise select bind_program_domain. J/B remain
   API-free in both cases;
+- in FlagGems sources, an import of
+  `flag_gems.utils.triton_lang_extension as tle` makes `tle.program_id(...)` a
+  visible helper whose defined result is `tl.program_id(...).to(tl.int64)`;
+  select bind_wide_program_domain for that call. Keep the helper/API spelling
+  out of J/B and pi free text;
 - if the source reduction call omits its axis and therefore flattens the local
   tile, keep the global J axes and BoundaryReduction.tile_axis semantic facts
   but select realize_flattened_reduce. An explicit source axis selects

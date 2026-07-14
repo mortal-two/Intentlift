@@ -95,6 +95,24 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
 上量化 retune 收益)。dialect 设计不被任何单一后端绑架。
 
+### SCRC Gate2 CPU 腿的真实增量(2026-07-15)
+
+首批 FlagGems live artifact 又验证并补齐了三条非解释器路径：
+
+- `const(value=1.0, shape=[N])` 在零输入函数中经 dims 解析、intent/linalg/LLVM
+  产生 f32 symbolic-shape 输出；
+- CPU wrapper 不再把所有输入常量硬写成 f32，对声明的 i1/i8/i16/i32/i64
+  输入生成相同 element type 的 dense tensor；
+- emitter 对 integer/i1 与 f32/int 的真实 dtype 变化发射 `intent.cast`，
+  `mean_kernel_2` 的 rank-0 i32 `M → f32` 已三方执行通过；full reduction 没有
+  surviving axis 时默认 rank 0；C++ `ReduceLowering` 已补
+  collapse-all→extract→`tensor.from_elements` 路径，并从源码重新构建
+  `intent-opt`、通过 `lower-reduce.mlir`，不依赖旧二进制漂移。
+
+边界仍明确：当前通用 CPU `convert-intent-to-linalg` 没有 iota/gather lowering，
+integer output 也没有通用 read-back。因此 arange/trace/eye 仍是 queued 能力缺口，
+没有被解释器或手写 MLIR 假装成 Gate2 PASS。
+
 ## 自动融合(elementwise 前沿,2026-06-26)——**不是 PK 标准**(自我审查,2026-06-26)
 
 > **重要纠偏(2026-06-26):** 本节原标题"性能已超越 Triton"是**误导**。自动融合

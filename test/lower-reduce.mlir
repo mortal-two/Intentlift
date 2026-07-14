@@ -62,3 +62,20 @@ func.func @rmeanall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
   %m = intent.reduce %x {fn = "mean", axes = [0, 1], assoc = "float_nondeterministic"} : (tensor<4x8xf32>) -> tensor<1x1xf32>
   return %m : tensor<1x1xf32>
 }
+
+// -----
+
+// A full reduction may also match a rank-0 external ABI. Keep the leading unit
+// parallel dimension for executable lowering, then collapse every unit result
+// dimension to tensor<1xf32>, extract the scalar, and rebuild tensor<f32>.
+// CHECK-LABEL: func.func @rscalar
+// CHECK: tensor.expand_shape
+// CHECK: linalg.generic
+// CHECK-SAME: iterator_types = ["parallel", "reduction"]
+// CHECK: tensor.collapse_shape
+// CHECK: tensor.extract
+// CHECK: tensor.from_elements
+func.func @rscalar(%x: tensor<37xf32>) -> tensor<f32> {
+  %s = intent.reduce %x {fn = "sum", axes = [0], assoc = "float_nondeterministic"} : (tensor<37xf32>) -> tensor<f32>
+  return %s : tensor<f32>
+}

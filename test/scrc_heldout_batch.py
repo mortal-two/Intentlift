@@ -55,7 +55,9 @@ CANDIDATES = (
         "broadcast",
         "ready",
     ),
-    HeldoutCandidate("fg_ones", "flag_gems.ops.ones", "ones_kernel", "fill"),
+    HeldoutCandidate(
+        "fg_ones", "flag_gems.ops.ones", "ones_kernel", "fill", "ready"
+    ),
     HeldoutCandidate("fg_arange", "flag_gems.ops.arange", "arange_func", "iota"),
     HeldoutCandidate("fg_eye", "flag_gems.ops.eye_m", "eye_kernel", "select"),
     HeldoutCandidate(
@@ -74,8 +76,12 @@ CANDIDATES = (
         "atomic_reduce",
     ),
     HeldoutCandidate("fg_amax", "flag_gems.ops.amax", "amax_kernel_1", "reduce"),
-    HeldoutCandidate("fg_sum", "flag_gems.ops.sum", "sum_kernel_1", "reduce"),
-    HeldoutCandidate("fg_mean", "flag_gems.ops.mean", "mean_kernel_1", "reduce"),
+    HeldoutCandidate(
+        "fg_sum", "flag_gems.ops.sum", "sum_kernel_2", "reduce", "ready"
+    ),
+    HeldoutCandidate(
+        "fg_mean", "flag_gems.ops.mean", "mean_kernel_2", "reduce", "ready"
+    ),
     HeldoutCandidate("fg_max", "flag_gems.ops.max", "max_kernel_1", "reduce"),
     HeldoutCandidate("fg_min", "flag_gems.ops.min", "min_kernel_1", "reduce"),
     HeldoutCandidate("fg_prod", "flag_gems.ops.prod", "prod_kernel_mid", "reduce"),
@@ -214,6 +220,91 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ("BLOCK_SIZE_M", "BLOCK_SIZE_N"),
             0.25,
             Tolerance(rtol=2.0e-4, atol=2.0e-4),
+        )
+
+    if name == "fg_ones":
+        n = 2051
+        block = 1024
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "output_ptr", "tensor", "f32", (n,)
+                ),
+                SCRCCompilerArgument(
+                    "n_elements", "scalar", "i32", value=n
+                ),
+            ),
+            ((n + block - 1) // block,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(n_elements, BLOCK_SIZE)",),
+            ("BLOCK_SIZE",),
+            1.0,
+            Tolerance(rtol=0.0, atol=0.0),
+        )
+
+    if name == "fg_sum":
+        n = 1003
+        block = 1024
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument("mid", "tensor", "f32", (n,)),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "mid_size", "scalar", "i32", value=n
+                ),
+            ),
+            (1, 1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1", "1"),
+            ("BLOCK_MID",),
+            0.25,
+            Tolerance(rtol=2.0e-4, atol=2.0e-4),
+        )
+
+    if name == "fg_mean":
+        total = 1003
+        mid_size = 37
+        block = 64
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "M", "scalar", "i32", value=total
+                ),
+                SCRCCompilerArgument(
+                    "MID_SIZE", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1, 1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1", "1"),
+            ("BLOCK_MID",),
+            0.25,
+            Tolerance(rtol=2.0e-4, atol=2.0e-6),
         )
 
     raise AssertionError(name)

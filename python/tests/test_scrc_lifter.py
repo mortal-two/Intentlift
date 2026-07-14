@@ -143,6 +143,8 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "scalar-language `and` or `&&`" in prompt
     assert "Do not also select realize_reduce" in prompt
     assert "bind_wide_program_domain" in prompt
+    assert "flag_gems.utils.triton_lang_extension as tle" in prompt
+    assert "tle.program_id" in prompt
     assert "select realize_flattened_reduce" in prompt
     assert "exactly one of realize_reduce/realize_flattened_reduce" in prompt
     assert "m,n->mn" in prompt

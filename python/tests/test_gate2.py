@@ -119,6 +119,94 @@ def test_lower2c_uses_real_intent_lowering_not_legacy_interpreter() -> None:
     assert "mlir-runner" in result.metadata["path"]
 
 
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_supports_no_input_symbolic_const_output() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "ones_gate2",
+                "inputs": [],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": ["N"]}
+                ],
+                "body": [
+                    {
+                        "op": "const",
+                        "result": "Y",
+                        "attrs": {
+                            "value": 1.0,
+                            "dtype": "f32",
+                            "shape": ["N"],
+                        },
+                    }
+                ],
+            }
+        }
+    )
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {"N": 1003}, {}, "Y"), {}
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["Y"], np.ones(1003, dtype=np.float32)
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_casts_rank_zero_i32_semantic_scalar_to_f32() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "partial_mean_gate2",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["K"]},
+                    {"name": "M", "dtype": "i32", "shape": []},
+                ],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+                "body": [
+                    {
+                        "op": "reduce",
+                        "result": "S",
+                        "operands": ["X"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [0],
+                            "assoc": "float_nondeterministic",
+                        },
+                    },
+                    {
+                        "op": "cast",
+                        "result": "M_f32",
+                        "operands": ["M"],
+                        "attrs": {"to_dtype": "f32"},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["S", "M_f32"],
+                        "attrs": {"fn": "div"},
+                    },
+                ],
+            }
+        }
+    )
+    x = np.linspace(-1.0, 1.0, 37, dtype=np.float32)
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {"K": 37}, {"X": "X", "M": "M"}, "Y"),
+        {"X": x, "M": np.int32(1003)},
+    )
+
+    assert result.ok, result.error
+    assert result.outputs["Y"].shape == ()
+    np.testing.assert_allclose(
+        result.outputs["Y"],
+        np.asarray(x.sum() / 1003, dtype=np.float32),
+        rtol=1.0e-6,
+        atol=1.0e-7,
+    )
+
+
 def _have_cuda_triton() -> bool:
     try:
         import torch
@@ -745,6 +833,207 @@ def test_gate2_real_flag_gems_libentry_dot_rank_zero_three_way() -> None:
     result = Gate2Runner().run(
         KernelSource.from_file(source_path, "dot_kernel", trusted=True),
         KernelSource.from_code(_FLAG_GEMS_DOT_REPLAY, "dot_kernel"),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )
+
+
+_FLAG_GEMS_ONES_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def ones_kernel(output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0).to(tl.int64)
+    lane = tl.arange(0, BLOCK_SIZE)
+    offsets = pid * BLOCK_SIZE + lane
+    mask = offsets < n_elements
+    output = 1.0
+    tl.store(output_ptr + offsets, output, mask=mask)
+"""
+
+
+def _flag_gems_ones_intent() -> IntentFunction:
+    return IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "flag_gems_ones",
+                "inputs": [],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": ["N"]}
+                ],
+                "body": [
+                    {
+                        "op": "const",
+                        "result": "Y",
+                        "attrs": {
+                            "value": 1.0,
+                            "dtype": "f32",
+                            "shape": ["N"],
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_ones_no_input_multi_program_tail() -> None:
+    module = pytest.importorskip("flag_gems.ops.ones")
+    python_function = module.ones_kernel
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    n = 2051
+    case = Gate2Case(
+        "flag_gems.ones.no_input_tail",
+        {"N": n},
+        TritonExecutionSpec(
+            (
+                TritonArgument(
+                    "output_ptr",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(n,),
+                    output_key="Y",
+                ),
+                TritonArgument("n_elements", ArgumentRole.SCALAR, "N"),
+            ),
+            (3,),
+            {"BLOCK_SIZE": 1024, "num_warps": 4, "num_stages": 1},
+        ),
+        Lower2CSpec(_flag_gems_ones_intent(), {"N": n}, {}, "Y"),
+        ("Y",),
+        {"Y": Tolerance(rtol=0.0, atol=0.0)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(source_path, "ones_kernel", trusted=True),
+        KernelSource.from_code(_FLAG_GEMS_ONES_REPLAY, "ones_kernel"),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )
+
+
+_FLAG_GEMS_MEAN_FINAL_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def mean_kernel_2(mid, out, M, MID_SIZE, BLOCK_MID: tl.constexpr):
+    offset = tl.arange(0, BLOCK_MID)
+    mid_tile = tl.load(mid + offset, mask=offset < MID_SIZE, other=0.0)
+    mid_sum = tl.sum(mid_tile)
+    m_as_f32 = M.to(tl.float32)
+    out_value = mid_sum / m_as_f32
+    tl.store(out + 0, out_value)
+"""
+
+
+def _flag_gems_mean_final_intent() -> IntentFunction:
+    return IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "flag_gems_mean_final",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["K"]},
+                    {"name": "M", "dtype": "i32", "shape": []},
+                ],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+                "body": [
+                    {
+                        "op": "reduce",
+                        "result": "S",
+                        "operands": ["X"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [0],
+                            "assoc": "float_nondeterministic",
+                        },
+                    },
+                    {
+                        "op": "cast",
+                        "result": "M_f32",
+                        "operands": ["M"],
+                        "attrs": {"to_dtype": "f32"},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["S", "M_f32"],
+                        "attrs": {"fn": "div"},
+                    },
+                ],
+            }
+        }
+    )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_mean_final_runtime_i32_divisor() -> None:
+    module = pytest.importorskip("flag_gems.ops.mean")
+    python_function = module.mean_kernel_2
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    total, mid_size = 1003, 37
+    rng = np.random.default_rng(53)
+    x = (rng.standard_normal(mid_size) * 0.25).astype(np.float32)
+    case = Gate2Case(
+        "flag_gems.mean.final_runtime_divisor",
+        {"X": x, "M": np.int32(total), "K": mid_size},
+        TritonExecutionSpec(
+            (
+                TritonArgument("mid", ArgumentRole.INPUT, "X", "f32"),
+                TritonArgument(
+                    "out",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(),
+                    output_key="Y",
+                ),
+                TritonArgument("M", ArgumentRole.SCALAR, "M"),
+                TritonArgument("MID_SIZE", ArgumentRole.SCALAR, "K"),
+            ),
+            (1, 1, 1),
+            {"BLOCK_MID": 64, "num_warps": 4, "num_stages": 1},
+        ),
+        Lower2CSpec(
+            _flag_gems_mean_final_intent(),
+            {"K": mid_size},
+            {"X": "X", "M": "M"},
+            "Y",
+        ),
+        ("Y",),
+        {"Y": Tolerance(rtol=2.0e-4, atol=2.0e-6)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(source_path, "mean_kernel_2", trusted=True),
+        KernelSource.from_code(
+            _FLAG_GEMS_MEAN_FINAL_REPLAY, "mean_kernel_2"
+        ),
         case,
     )
 

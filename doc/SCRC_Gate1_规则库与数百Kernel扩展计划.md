@@ -199,15 +199,18 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 - RMSNorm 和 matmul 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.1
   的 rejected 对照，不改变 Gate1 裁决；
 - 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
-- 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前只有 `fg_dot` 与
-  `fg_addr` 完成 compiler/execution contract 并实际运行，其余 22 个仍为
-  queued，不改 masked 裁决；
-- `fg_dot` 与 `fg_addr` 的 normal replay 均达到 TTIR 硬闭合；masked score
-  分别为 `1.0` 与 `0.763387`，所以正式状态均为 `LEAKAGE_REJECTED`；
-- 两个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
+- 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前 `fg_dot`、
+  `fg_addr`、`fg_ones`、final-stage `fg_sum`、final-stage `fg_mean` 已完成
+  compiler/execution contract 并实际运行，其余 19 个仍为 queued；
+- 五例 normal replay 均达到 TTIR 硬闭合；masked score 依次为 `1.0`、
+  `0.763387`、`0.925`、`1.0`、`1.0`，所以正式状态全部是
+  `LEAKAGE_REJECTED`；
+- 五个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
   `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
-- 这两例是首批规则增长样本，不是假装规则已冻结的独立准确率样本；下一步按
-  队列逐个补齐真实 compiler/execution contract，并观察新增卡能否直接复用；
+- `fg_dot/fg_addr` 是规则增长样本，后三例没有新增卡并直接复用了已有 19 张卡；
+  这开始提供冻结后复用证据，但仍不足以报告总体准确率；
+- `fg_arange/fg_trace/fg_eye` 继续 queued：现有 production Lower2C 分别缺 iota、
+  gather 和二维对角 predicate realization，本轮没有越过计划擅自补新 op；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；

@@ -68,6 +68,14 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 `axes=[1]`，但一整个 row 被物化为一维 Triton tile 时，本地归约调用使用
 `tile_axis=0`。同理，`Boundary.broadcasts.axes` 描述全局语义 broadcast，不等于
 强制生成本地 `expand_dims`；标量归约结果对同一一维 tile 可直接隐式广播。
+当 reduction 覆盖输入的全部语义轴且没有显式声明 keepdims 结果时，canonical
+结果为 rank 0；它仍可在后续 elementwise 中自然 broadcast。final-stage
+`sum(partials) / M` 不得因为前端内部实现而被推成 shape `[1]`。
+
+JSON `const` 表示字面量或按声明 shape 的 splat materialization，例如
+`{"value":1.0,"dtype":"f32","shape":["N"]}`；它直接降为标准
+`arith.constant`，不是新增库级 named op。shape 中的符号必须由 Gate2 dims
+解析，零输入函数同样允许产生该输出。
 
 所有 interface `tensor_ref` 的 dtype 必须与被引用 J tensor 的 dtype 一致。
 pointer 所指 tensor 可以是 rank 0，此时 compiler view 使用 `shape=[]`；它仍是
@@ -79,6 +87,9 @@ extent 的 M/N 类参数不是 J 输入。`reduce(fn=mean)` 在前端本地 tile
 重放为 sum 除全局归约轴的语义长度，不得用 Layer-C tile 大小作除数。
 对 SCRC canonical J，源码 `rsqrt` 使用既有 `sqrt` 后 `recip` 组合表达；
 Gate1 只沿用已登记的局部 `1/sqrt <-> rsqrt` TTIR 规范化。
+如果 runtime semantic scalar 的真实 ABI dtype 是整数，而数值图需要浮点值，
+J 保留整数 `shape=[]` 输入并显式使用现有 `cast(to_dtype=f32)`；不得把接口 i32
+偷偷声明成 f32，也不得把当前 specialization 烘成常量。
 
 ## `loop` 的具体形态(承载递推)
 

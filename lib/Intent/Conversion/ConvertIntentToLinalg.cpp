@@ -467,13 +467,15 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     // parallel. Now `-convert-parallel-loops-to-gpu` maps the size-1 parallel
     // loop to a 1-block grid and outlines the inner reduction scf.for INTO the
     // GPU kernel. Collapse the [1,1,..,1] (rank R+1) result back to the keepdims
-    // [1,..,1] (rank R) declared shape. Verified end-to-end (amax/vector_norm/
-    // mse_loss cubin == the real kernel).
+    // [1,..,1] (rank R) declared shape, or collapse all unit dims to tensor<1xT>,
+    // extract its only element, and rebuild a rank-0 tensor when the ABI declares
+    // a scalar result. Verified end-to-end (amax/vector_norm/mse_loss and SCRC
+    // rank-0 sum/mean-final).
     if (r == 0) {
-      if (resTy.getRank() != (int64_t)R)
+      bool scalarResult = resTy.getRank() == 0;
+      if (!scalarResult && resTy.getRank() != (int64_t)R)
         return rewriter.notifyMatchFailure(
-            op, "rank-0 full-reduction result: frontend emits keepdims "
-                "[1,..,1]; rank-0 (expand+collapse-to-scalar) not built");
+            op, "full-reduction result must be rank-0 or keepdims rank");
       for (unsigned d = 0; d < R; ++d)
         if (inTy.isDynamicDim(d))
           return rewriter.notifyMatchFailure(op, "full reduce over dynamic extent");
@@ -544,6 +546,22 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
                             b.create<linalg::YieldOp>(l, scaled);
                           })
                       .getResult(0);
+      }
+
+      if (scalarResult) {
+        SmallVector<ReassociationIndices> collapseAll(1);
+        for (unsigned d = 0; d < RE; ++d)
+          collapseAll[0].push_back(d);
+        auto oneTy = RankedTensorType::get({1}, elemTy);
+        Value one = rewriter.create<tensor::CollapseShapeOp>(
+            loc, oneTy, reduced, collapseAll);
+        Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+        Value scalar =
+            rewriter.create<tensor::ExtractOp>(loc, one, ValueRange{zero});
+        Value out = rewriter.create<tensor::FromElementsOp>(
+            loc, resTy, ValueRange{scalar});
+        rewriter.replaceOp(op, out);
+        return success();
       }
 
       // collapse [1,1,..,1] (rank R+1) -> keepdims [1,..,1] (rank R): merge the

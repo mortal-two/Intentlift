@@ -170,13 +170,17 @@ source-only compile preflight
   → 正式 Gate1 闭合时才进入正式 Gate2
 ```
 
-批处理显式登记 24 个 Kernel；当前只有 `fg_dot` 与 `fg_addr` 已具备审核过的
-compiler/execution contract 并真实运行，其余 22 个保持 queued。两例结果为：
+批处理显式登记 24 个 Kernel；当前 `fg_dot`、`fg_addr`、`fg_ones`、final-stage
+`fg_sum` 与 final-stage `fg_mean` 已具备审核过的 compiler/execution contract
+并真实运行，其余 19 个保持 queued。结果为：
 
 | Kernel | normal | masked | 正式 Gate1 | rejected-sample 离线 Gate2 |
 |---|---:|---:|---|---|
 | FlagGems `dot_kernel` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
 | FlagGems `addr_kernel` | `1.0` | `0.763387` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `ones_kernel` | `1.0` | `0.925` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `sum_kernel_2` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `mean_kernel_2` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
 
 真实扩展还暴露并修复了三个工程接缝：FlagGems `LibEntry → JITFunction` wrapper、
 rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/stride scalar
@@ -185,7 +189,14 @@ rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/strid
 
 `fg_dot`/`fg_addr` 的 diff 又触发 wide program domain、flattened reduce、
 staged mask tile 与 outer product 四张通用规则卡。它们因此是五核之后的首批
-真实规则增长样本，而不是冻结 15/19 张规则后的独立 held-out 成功率证据。
+真实规则增长样本；`fg_ones/fg_sum/fg_mean` 没有新增卡并直接复用当前 19 张卡，
+但五例规模仍不能当作总体 held-out 成功率。
+
+后三例还补齐两个真实 Lower2C 接缝：零输入 symbolic-shape const 的 dims 传递，
+以及 rank-0 i32 semantic scalar 经真实 `intent.cast` 转 f32。`fg_mean` 首次
+diagnostic 因 CPU wrapper 把输入硬编码为 f32 而 `EXECUTION_FAILED`；修复后严格
+复用同一 Lift artifact，source/replay 最大误差 0，二者对 lowering 最大误差
+`3.6089e-9`。这些修复属于既有 const/cast/reduce lowering，不新增 IntentIR op。
 详细证据见 `doc/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
 
 ## 2. False reject 是什么意思
@@ -231,7 +242,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
   add、row-sum、softmax、RMSNorm、matmul、FlagGems dot 与 FlagGems addr
-  上结构闭合；七者最终接收目前都被模型先验和 π 结构可识别性阻塞；
+  以及 FlagGems ones/sum-final/mean-final 上结构闭合；十者最终接收目前都被
+  模型先验和 π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
 - 真实 GPU source/replay launch；
@@ -245,11 +257,11 @@ Gate1 闭合，但 Gate2 失败 = false accept
   无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
   有序拓扑结合仍公开的结构信息，可成为语义替代编码；matmul 还证明 masked
   无需完全硬闭合也可能超过当前泄漏比阈值；
-- 规则卡只在五核和当前变异集上证过；
+- 规则卡已在五核与五个真实外部 Kernel 上证过，其中后三个直接复用 19 张卡；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；
 - 已有 24 个真实 Kernel 的批处理队列、逐 case 报告、resume/Lift cache 与失败
-  分诊，但只实际完成前两例；还缺其余 22 个及后续数百 Kernel 的运行证据。
+  分诊，但只实际完成前五例；还缺其余 19 个及后续数百 Kernel 的运行证据。
 
 因此最准确的称呼是：
 

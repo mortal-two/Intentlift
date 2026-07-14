@@ -63,12 +63,33 @@ production lowering 执行腿。
 - source/replay 实际拆分执行已实现；
 - production lowering 执行已实现；
 - 三方 tolerance 比较与机械归属已实现；
-- `python/tests/test_gate2.py` 已真实跑通 add 的 source/replay/lowering 三方；
+- `python/tests/test_gate2.py` 已真实跑通 add、row-sum、softmax、RMSNorm、matmul、
+  FlagGems dot、FlagGems ones 与 FlagGems mean-final 的
+  source/replay/lowering 三方；
 - `test/scrc_live_add_e2e.py` 已进一步跑通真实 LLM lift + 真实 source-blind
   replay 后的完整三方 add：`N=1003, BLOCK=256`，source↔replay 最大误差 0，
   source/replay↔lowering 最大误差约 `5.01e-6`，状态 `GATE2_PASS`；
 - 其余 op 能否进入 Gate2，由现有 A/B/C 表达和 production lowering 的真实
   支持情况决定；不引入“verify-ready op”概念。
+
+2026-07-15 首批真实外部样本中，`fg_dot/fg_addr/fg_ones/fg_sum/fg_mean` 都因
+masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执行 Gate2 后，
+五例均三方 PASS。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
+
+为这些真实样本补齐的 production Lower2C 接缝包括：
+
+- 无输入、symbolic shape 的 f32 const 输出；
+- CPU main 对 rank-0/任意 rank i1/i8/i16/i32/i64 输入发射 typed dense constant；
+- tracked integer/i1 与 f32/int 之间发射真实 `intent.cast`；
+- 没有 surviving axis 的 full reduction 默认得到 rank-0 结果；C++
+  `ReduceLowering` 使用 leading-unit parallel reduction 后的
+  collapse→extract→`tensor.from_elements` 生成 rank-0 tensor，源码、重建后的
+  `intent-opt` 与 MLIR regression 已一致。
+
+当前明确未闭合的既有能力也必须原样报告：通用 CPU Lower2C 尚无 iota/gather
+lowering，integer output 仍没有通用 read-back；因此 `fg_arange/fg_trace` 继续
+queued。`fg_eye` 还缺合法的二维 index/predicate shape realization。本轮没有为
+这些 queued 样本擅自增加新 op 或回退解释器。
 
 若 lower 当前不支持某个真实 LLM 提取 artifact，Gate2 返回
 `LOWERING_UNSUPPORTED`。这是一条需要补 A/B/C 或 lowering 的具体失败证据，

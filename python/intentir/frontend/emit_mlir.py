@@ -93,6 +93,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
                     f"keepdims {keepdims} nor collapsed {collapsed}"
                 )
             return list(declared)
+        if sorted(axes) == list(range(len(shp))):
+            # A full reduction has no surviving semantic axis.  Rank-0 is the
+            # canonical default and still broadcasts naturally to later ops;
+            # keeping one unit dimension here would make scalar final-stage
+            # reductions (sum(partials)/M) disagree with their ABI.
+            return []
         for ax in axes:  # existing default: keepdims for broadcast consumers
             shp[ax] = 1
         return shp
@@ -304,22 +310,34 @@ class _Printer:
         a = op.attrs
         if op.op == "cast":
             to = a.get("to_dtype", "")
+            operand = op.operands[0]
+            source_is_non_f32 = (
+                operand in self.bool_results or operand in self.int_results
+            )
             if to in ("i1", "bool"):
-                # A boolean cast is a truthiness test (x != 0), NOT a value-level
-                # no-op — emit a real intent.cast so logical_not(x.bool()) & co.
-                # carry a proper i1 through lowering.
                 self.bool_results.add(op.result)
-                rr = self.fresh(op.result)
-                x = self.ssa[op.operands[0]]
-                self.lines.append(
-                    f'{indent}{rr} = intent.cast {x} {{to_dtype = "i1"}} : '
-                    f'({self._ttn(op.operands[0], env)}) -> '
-                    f'{self._ttn(op.result, env)}')
-                return
-            # The corpus otherwise runs entirely in f32, so a dtype cast is a
-            # value-level no-op: alias the operand SSA. (A precision-changing
-            # float cast would need arith/tensor cast ops; out of scope here.)
-            self.ssa[op.result] = self.ssa[op.operands[0]]
+                self.int_results.pop(op.result, None)
+                target = "i1"
+            elif to in ("i8", "i16", "i32", "i64"):
+                self.bool_results.discard(op.result)
+                self.int_results[op.result] = to
+                target = to
+            else:
+                # The CPU execution domain represents floating tensors as f32.
+                # A float-to-float cast therefore stays an alias, but a tracked
+                # integer/i1 source must emit the real Intent cast into f32.
+                self.bool_results.discard(op.result)
+                self.int_results.pop(op.result, None)
+                target = "f32"
+                if not source_is_non_f32:
+                    self.ssa[op.result] = self.ssa[operand]
+                    return
+            rr = self.fresh(op.result)
+            x = self.ssa[operand]
+            self.lines.append(
+                f'{indent}{rr} = intent.cast {x} {{to_dtype = "{target}"}} : '
+                f'({self._ttn(operand, env)}) -> '
+                f'{self._ttn(op.result, env)}')
             return
         if op.op == "sort":
             # The op ALWAYS has two results (sorted values + argsort indices); a
