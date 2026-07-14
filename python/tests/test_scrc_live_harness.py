@@ -68,6 +68,28 @@ def test_row_sum_case_rejects_multi_program_column_reduction() -> None:
         build_case(_args("row_sum", block=512))
 
 
+def test_softmax_case_preserves_two_dimensional_output_and_tail_tile() -> None:
+    case = build_case(_args("softmax", m=4, n=37, block=64))
+    view = case.compiler_view().to_json()
+    compile_case = _compile_case(case)
+
+    assert [item["shape"] for item in view["arguments"][:2]] == [
+        [4, 37],
+        [4, 37],
+    ]
+    assert view["grid"] == [4]
+    assert view["grid_contract"] == ["M"]
+    assert view["schedule_values"]["BLOCK_N"] == 64
+    assert compile_case.arguments["N"].value == 37
+    assert case.tolerance.rtol == 2.0e-4
+    assert case.tolerance.atol == 2.0e-5
+
+
+def test_softmax_case_rejects_multi_program_column_reduction() -> None:
+    with pytest.raises(ValueError, match="one BLOCK_N tile"):
+        build_case(_args("softmax", block=512))
+
+
 def test_add_compatibility_case_keeps_existing_defaults() -> None:
     case = build_case(_args("add"))
     view = case.compiler_view().to_json()

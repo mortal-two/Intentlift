@@ -1,13 +1,13 @@
-# SCRC Gate1 masked-J：低熵 Kernel 阻塞报告
+# SCRC Gate1 masked-J：低熵 Kernel 与 π 结构可识别性阻塞报告
 
 日期：2026-07-15
 
 ## 1. 结论先行
 
 当前 Gate1 没有实现错误放行；相反，它按 SCRC 方案正确地拒绝了最新的
-`add` 和 `row_sum`：两者的正常 source-blind replay 都在首个候选上达到
+`add`、`row_sum` 和 `softmax`：三者的正常 source-blind replay 最终都达到
 TTIR 硬闭合，但遮盖 J 后，`π + 接口结构 + 规则卡 + 模型先验` 仍能重构出
-过于接近源的实现。
+过于接近、甚至完全等同于源结构的实现。
 
 因此当前真实状态是：
 
@@ -25,12 +25,19 @@ row_sum:
   masked replay score = 0.778676，硬项未全过
   leakage ratio L = 0.778676 > 0.5
   Gate1 = LEAKAGE_REJECTED
+
+softmax:
+  Lift 在一次 schema repair 后成功
+  normal replay score = 1.0，硬项全过
+  masked replay score = 1.0，硬项全过
+  leakage ratio L = 1.0 > 0.5
+  Gate1 = LEAKAGE_REJECTED
 ```
 
-按现有方案，Gate2 不能覆盖 Gate1 的反作弊失败，所以这两次最新运行都没有
-进入 Gate2。此前 add 的三方 Gate2 PASS 仍能证明 production lower2c 和三方
-执行链可工作，但在更完整的不透明消融实现下，它不再构成“当前 Gate1 已接受”
-的证据。
+按现有方案，Gate2 不能覆盖 Gate1 的反作弊失败，所以这三次最新运行都没有
+作为正式流程进入 Gate2。add、row-sum 和 softmax 的独立三方预检仍能证明
+production lower2c 与三方执行链可工作，但在更完整的不透明消融实现下，它们
+不构成“当前 Gate1 已接受”的证据。
 
 本轮没有调低阈值、没有重试到 masked 偶然失败、没有给简单 Kernel 加白名单，
 也没有让 Gate2 把 Gate1 救回来。
@@ -59,7 +66,7 @@ row_sum:
 
 所以最新失败已经不是函数名、参数名或 C 槽拼写造成的侧信道。
 
-## 3. 两个真实样例说明了什么
+## 3. 三个真实样例说明了什么
 
 ### 3.1 add：不是相似，而是完整猜中
 
@@ -94,38 +101,72 @@ row_sum 的 masked 候选没有完全闭合，主要差异在地址构造与 dat
 公开一个 rank-2 输入、rank-1 输出和 grid 结构。即使语义名字全部不透明，这些
 信息加上模型先验仍足以得到 `L=0.778676`。
 
+### 3.3 softmax：π 的机制序列已经接近语义骨架
+
+softmax 先经历了两个真实、可枚举的正常 replay 修复：
+
+1. 区分 J 的全局 reduce axis=1 与一维 Triton row tile 的本地
+   `tile_axis=0`，同时禁止把语义 broadcast 自动实现为 `expand_dims`；
+2. 新增 `materialize_pointer_tile` 规则，让 π 能表达源码的 staged
+   `pointer + row-base + lane`，而不是先计算完整 integer offset。
+
+修复后 normal replay 首轮达到 `score=1.0`。但 masked packet 中仍保留同一 π：
+
+```text
+masked load
+  -> reduce
+  -> elementwise
+  -> broadcast
+  -> elementwise
+  -> reduce
+  -> elementwise
+  -> broadcast
+  -> masked store
+```
+
+结合规则卡里的 reduce/elementwise 实现集合和一个 rank-2 输入/输出接口，模型
+完整猜回 `max -> sub -> exp -> sum -> div`，连地址 staging、mask、fill 与 TTIR
+dataflow 都完全一致，`L=1.0`。
+
+这推翻了“只有 add/row-sum 等低熵 Kernel 才有问题”的初步假设。即使 softmax
+本身语义更复杂，源实例特定 π 的规则序列和拓扑也可能形成高度可识别的语义
+骨架。按当前第②档定义，这就是 π 能独立重构 J 的直接证据，Gate1 必须拒绝。
+
 ## 4. 根因不是一个普通 bug
 
-现有第②档消融把以下两种情况合并成同一个观测：
+现有第②档消融把以下三种情况合并成同一个观测：
 
 1. π/C 真的偷藏了 J 语义；
-2. π/C 没写出具体语义，但剩余假设空间很小，模型凭先验偶然或稳定猜中。
+2. π/C 没写出具体语义，但剩余假设空间很小，模型凭先验偶然或稳定猜中；
+3. π 没写算子参数，却用规则 id 的顺序、重复次数和引用拓扑暴露了足以识别
+   整体算法的机制骨架。
 
-对 softmax、RMSNorm、matmul 等高熵 Kernel，遮盖 J 后通常会明显崩掉；但对
-add、copy、简单 row-reduce 等低熵 Kernel，“遮盖后能猜中”并不能单独证明 π
-作弊。反过来，只做一次随机 masked generation，若模型这次主动失败，也不能
-充分证明没有泄漏。
+softmax 的实测表明不能再假设“高熵 Kernel 遮盖 J 后自然会崩掉”。对 add 等
+低熵 Kernel，模型先验与 π 泄漏仍不可区分；对 softmax，π 的机制拓扑本身已经
+足以精确恢复语义。反过来，只做一次随机 masked generation，若模型这次主动
+失败，也不能充分证明没有泄漏。
 
-因此现有一次性 masked-J 对低熵 Kernel 存在两个问题：
+因此现有一次性 masked-J 存在三个问题：
 
 - **不可识别性：** 无法区分泄漏与先验猜测；
-- **单样本不稳定性：** 一次模型采样可能左右最终接收结果。
+- **单样本不稳定性：** 一次模型采样可能左右最终接收结果；
+- **π 结构泄漏：** 合法机制卡的有序拓扑可能已成为语义的替代编码。
 
-Gate1 当前 fail-closed 是正确实现，但若不修改实验设计，低熵 Kernel 的覆盖率
-会很低，且单次消融证据不够强。
+Gate1 当前 fail-closed 是正确实现，但若不修改实验设计，不仅低熵 Kernel，连
+softmax 这类复合图也可能无法通过最终接受，且单次消融证据仍不够强。
 
 ## 5. 现在可以选择的路线
 
 ### 路线 A：保持现方案，不改（最严格、覆盖率最低）
 
-把 add、copy、部分简单 reduction 标记为 `J_NON_IDENTIFYING` / 当前已有的
-`LEAKAGE_REJECTED`，不宣称其 replay-closed。Gate2 可作为独立诊断运行，但
-不能改变 Gate1 结论。
+把 add、copy、部分简单 reduction 以及 π 可独立识别的 softmax 标记为
+`J_NON_IDENTIFYING` / 当前已有的 `LEAKAGE_REJECTED`，不宣称其
+replay-closed。Gate2 可作为独立诊断运行，但不能改变 Gate1 结论。
 
 优点：完全忠于当前文档；不引入新裁决。
 
-缺点：大量简单 Kernel 永远无法提供“语义因 J 而来”的单样本证据，规模化
-闭合率会显著下降。
+缺点：大量简单 Kernel 和 π 拓扑可识别的复合 Kernel 都无法提供“语义因 J
+而来”的单样本证据，规模化闭合率会显著下降。
 
 ### 路线 B：增加预注册的多次 masked 统计（改动较小，不推荐单独使用）
 
@@ -134,8 +175,8 @@ Gate1 当前 fail-closed 是正确实现，但若不修改实验设计，低熵 
 
 优点：能降低一次随机失败造成的 false-safe。
 
-缺点：成本高；仍无法区分“π 泄漏”与“模型对 add 的稳定先验”，add 很可能
-依旧全部被拒绝。不能采用“重试到失败就通过”的做法。
+缺点：成本高；仍无法区分“π 泄漏”与稳定模型先验，也无法消除 softmax 已
+观察到的 π 拓扑泄漏。不能采用“重试到失败就通过”的做法。
 
 ### 路线 C：加入成对语义干预（建议进一步论证后采用）
 
@@ -174,18 +215,19 @@ J→TTIR 语义投影，检查 replay 是否跟随干预改变对应的 TTIR 语
 
 当前建议分两步：
 
-1. 在获得批准前采用路线 A：保持 `LEAKAGE_REJECTED`，继续收集 softmax、
-   RMSNorm、matmul 等更高熵 Kernel 的真实结果，不篡改阈值；
+1. 在获得批准前采用路线 A：保持 `LEAKAGE_REJECTED`，继续收集 RMSNorm、
+   matmul 的真实结果，不篡改阈值；softmax 已证明高熵本身不能解决问题；
 2. 单独评审路线 C，把“成对语义干预”作为第八章消融的补充或替代，并在方案
    文档中先写死适用 op、裁决方式与失败语义，再实现代码。
 
 请求确认的问题只有一个：
 
 > 是否允许把 Gate1 第②档从“单次空白 masked-J”扩展为“空白 masked-J +
-> 成对语义干预”，并以成对干预作为低熵 Kernel 的主要 J 因果证据？
+> 成对语义干预”，并以成对干预作为低熵或 π 拓扑可识别 Kernel 的主要 J
+> 因果证据？
 
-在得到确认前，本项目不会自行加入该裁决，也不会把最新 add/row_sum 标成
-Gate1 闭合。
+在得到确认前，本项目不会自行加入该裁决，也不会把最新
+add/row_sum/softmax 标成 Gate1 闭合。
 
 ## 7. 可复核证据
 
@@ -195,11 +237,13 @@ Gate1 闭合。
 |---|---|---|---|---:|---:|---:|---|
 | add | `resp_09756db56f798306016a56726741508190a5de16f83c99e5f0` | `resp_0d7755f9c6965b91016a5672c94000819498870cf2542f2a02` | `resp_0c7ede99b0c80499016a5672d7a5d88195b673d75e0956bf71` | 1.0 | 1.0 | 1.0 | `LEAKAGE_REJECTED` |
 | row_sum | `resp_06a7127cd99a3713016a566f62f8c8819ba4b009051c465f46` | `resp_0a5bdeb327c00b91016a566fbfe1cc819bb2761cff2ceb2e6c` | `resp_05c1df0cfaaec727016a566fd31dc8819b8413f368ba41231c` | 1.0 | 0.778676 | 0.778676 | `LEAKAGE_REJECTED` |
+| softmax | `resp_06c991a807d02279016a567a78a9a08199b54735a58e73572e` | `resp_0344d49f6a8f19df016a567b0333188199a70cab5e8db3d434` | `resp_0c7cfec07fab4718016a567b16fc6c819a8e6418e53d79809a` | 1.0 | 1.0 | 1.0 | `LEAKAGE_REJECTED` |
 
 本地临时报告：
 
 - `/tmp/scrc_live_add_result_v2.json`；
-- `/tmp/scrc_live_row_sum_result_v3.json`。
+- `/tmp/scrc_live_row_sum_result_v3.json`；
+- `/tmp/scrc_live_softmax_result_v3.json`。
 
 临时文件不纳入仓库。最新 harness 报告已经移除原始源 kernel，只保留 source
 摘要，并保存所有真正被 Gate1 验证过的 normal/masked source-blind 候选代码。

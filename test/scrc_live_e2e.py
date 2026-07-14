@@ -46,7 +46,7 @@ from intentir.verify.gate2 import (
     TritonExecutionSpec,
 )
 
-from scrc_probe_sources import add_kernel, row_sum_kernel
+from scrc_probe_sources import add_kernel, row_sum_kernel, softmax_kernel
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,6 +146,37 @@ def build_case(args: argparse.Namespace) -> LiveKernelCase:
             ("BLOCK_N",),
             0.25,
             Tolerance(rtol=2.0e-4, atol=2.0e-4),
+        )
+    if args.kernel == "softmax":
+        m = int(args.m)
+        if m <= 0:
+            raise ValueError("M must be positive")
+        block = int(args.block if args.block is not None else 1024)
+        if block < n:
+            raise ValueError(
+                "softmax first closure requires one BLOCK_N tile covering N"
+            )
+        arguments = (
+            SCRCCompilerArgument("x_ptr", "tensor", "f32", (m, n)),
+            SCRCCompilerArgument("out_ptr", "tensor", "f32", (m, n)),
+            SCRCCompilerArgument("M", "scalar", "i32", value=m),
+            SCRCCompilerArgument("N", "scalar", "i32", value=n),
+        )
+        return LiveKernelCase(
+            "softmax",
+            softmax_kernel,
+            arguments,
+            (m,),
+            {
+                "BLOCK_N": block,
+                "num_warps": args.num_warps,
+                "num_stages": args.num_stages,
+            },
+            ("num_warps", "num_stages"),
+            ("M",),
+            ("BLOCK_N",),
+            2.0,
+            Tolerance(rtol=2.0e-4, atol=2.0e-5),
         )
     raise KeyError(args.kernel)
 
@@ -535,7 +566,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--kernel", choices=("add", "row_sum"), default=default_kernel
+        "--kernel", choices=("add", "row_sum", "softmax"), default=default_kernel
     )
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--effort", default="xhigh")

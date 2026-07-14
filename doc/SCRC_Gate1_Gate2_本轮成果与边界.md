@@ -55,6 +55,14 @@ ABI/C 消融后，最新 add 的 masked replay 也完全闭合，因 `L=1.0` 被
 证据。详见 `test/scrc_live_add_report.md` 与
 `doc/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
 
+2026-07-15 同一入口又推进了 row-sum 和 softmax。两者的 normal
+source-blind replay 都已达到 TTIR 硬闭合；softmax 还用真实 diff 补了
+全局/局部归约轴契约、隐式 broadcast 和 staged pointer tile 规则。但
+row-sum 的 masked score 为 `0.778676`，softmax 的 masked replay 又完整
+闭合为 `1.0`，所以两者最终仍是 `LEAKAGE_REJECTED`。softmax 的
+production lower2c 三方预检已 PASS，但正式 live Gate2 按门禁顺序没有
+运行。详见 `test/scrc_live_softmax_report.md`。
+
 ### 1.3 Gate1 收回 SCRC 主线
 
 保留了方案要求的硬项：
@@ -77,10 +85,10 @@ ABI/C 消融后，最新 add 的 masked replay 也完全闭合，因 `L=1.0` 被
 
 ### 1.4 规则库完善
 
-Triton 默认规则库由原来的 7 张扩到 14 张，覆盖当前 A/B/C 主线需要的：
+Triton 默认规则库由原来的 7 张扩到 15 张，覆盖当前 A/B/C 主线需要的：
 
 - program domain；
-- index tile；
+- integer-offset index tile 与 staged pointer tile；
 - masked/unmasked access；
 - elementwise；
 - reduce；
@@ -121,7 +129,8 @@ prompt 不再只是塞卡片，而是显式记录：
 - lower 不支持时明确返回 `LOWERING_UNSUPPORTED`，不会退回旧解释器伪装成功。
 
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
-add 与 collapsed row-sum 的三方一致。
+add、collapsed row-sum 与 softmax 的三方一致。这些固定 J 测试是
+production lowering 能力证据，不代替每个 live artifact 的 Gate1 接收。
 
 ## 2. False reject 是什么意思
 
@@ -161,8 +170,9 @@ Gate1 闭合，但 Gate2 失败 = false accept
 
 已经真实发生的事情包括：
 
-- 真实 `gpt-5.6-sol/xhigh` Lift artifact 与正常 replay 已在 add、row-sum 上
-  首轮结构闭合；最终接收目前被低熵 Kernel 的 masked-J 可识别性阻塞；
+- 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
+  add、row-sum、softmax 上结构闭合；最终接收目前被低熵先验和
+  π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
 - 真实 GPU source/replay launch；
@@ -172,8 +182,9 @@ Gate1 闭合，但 Gate2 失败 = false accept
 所以核心机制已经不是“差得远到只剩接口”。差距主要在覆盖与工程闭环：
 
 - 尚未把数百个真实 Kernel 全部重新走一遍新的 `extract_scrc_artifact`；
-- live add/row-sum 的 prompt/schema 已在首轮收敛，但一次性 masked-J 无法稳定
-  区分 π 泄漏和模型先验猜测；
+- live add/row-sum/softmax 的 normal 路径已收敛，但一次性 masked-J
+  无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
+  有序拓扑结合仍公开的结构信息，可成为语义替代编码；
 - 规则卡只在五核和当前变异集上证过；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；

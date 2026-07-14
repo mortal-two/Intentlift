@@ -21,7 +21,13 @@ Hard constraints:
 2. Implement every J node and every boundary access/effect referenced by pi.
 3. Keep every schedule slot symbolic. Never invent or bake in a C value.
 4. Do not infer extra semantics from identifier spelling.
-5. Return kernel source only, with no Markdown fence or explanatory prose.
+5. J reduction axes are global tensor axes; frontend reduction calls use the
+   matching boundary.reductions.tile_axis for the local tile value.
+6. A semantic broadcast may be implicit on a local tile. Do not emit an explicit
+   rank change unless the selected rule and local operand ranks require it.
+7. Reproduce each declared access predicate exactly; do not strengthen it with
+   redundant domain bounds.
+8. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 
 _MASKED_NOTE = """

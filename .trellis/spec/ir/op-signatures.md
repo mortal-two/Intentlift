@@ -48,6 +48,12 @@
 | `segment_reduce` | `data, segment_ids` | `fn` | tensor | A |
 | `loop` | `<carry inits>` | `trip`{axis, tile_hint}; `carry`; `yield` | `<carry outs>` | A 语义 + C tiling |
 
+SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 的实际归约轴
+记录在 `Boundary.reductions.tile_axis`。例如 `[M,N]` 的逐行归约在 J 中是
+`axes=[1]`，但一整个 row 被物化为一维 Triton tile 时，本地归约调用使用
+`tile_axis=0`。同理，`Boundary.broadcasts.axes` 描述全局语义 broadcast，不等于
+强制生成本地 `expand_dims`；标量归约结果对同一一维 tile 可直接隐式广播。
+
 ## `loop` 的具体形态(承载递推)
 
 ```json

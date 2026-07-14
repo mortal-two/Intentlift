@@ -470,11 +470,23 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert {
         "bind_program_domain",
         "materialize_index_tile",
+        "materialize_pointer_tile",
         "realize_masked_access",
         "realize_elementwise",
         "realize_reduce",
         "realize_k_tiled_dot",
     } <= {card.id for card in first.cards}
+    cards = {card.id: card for card in first.cards}
+    assert cards["materialize_pointer_tile"].version == "1"
+    assert cards["realize_reduce"].version == "2"
+    assert "tile_axis" in cards["realize_reduce"].reads
+    assert cards["realize_broadcast"].api_mapping["scalar_to_tile"] == (
+        "use the scalar operand directly"
+    )
+    assert any(
+        "redundant domain facts" in item
+        for item in cards["realize_masked_access"].pitfalls
+    )
 
 
 def test_best_candidate_rank_keeps_interface_ahead_of_semantic_score() -> None:

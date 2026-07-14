@@ -56,7 +56,9 @@ API、源码表达式、自由 action/code/comment 或完整计算图。任何�
 
 **示例:softmax**(单层张量代数)
 - A:`exp` / `reduce-max` / `reduce-sum` / `div`(几个张量原子)
-- B:行长被 block 覆盖、masked load、store guard
+- B:行长被 block 覆盖、masked load、store guard；全局归约轴为 1，但一行对应
+  一维前端 tile 时局部 `tile_axis=0`；归约标量回到 row tile 的 broadcast 可由
+  前端隐式完成，不因全局 axes=[1] 自动增加本地维度
 - C:block 大小、向量宽度、流水深度
 
 **示例:FlashAttention**(分层的关键案例,必须支持)

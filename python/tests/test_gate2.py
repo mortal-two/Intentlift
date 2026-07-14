@@ -264,3 +264,64 @@ def test_gate2_real_collapsed_row_sum_three_way() -> None:
         result.replay.error,
         result.lowering.error,
     )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_softmax_source_replay_lowering_three_way() -> None:
+    # Production-lowering preflight only.  The live SCRC path still requires
+    # the artifact to come from the source-visible LLM lifter.
+    fn = IntentFunction.from_json(
+        json.loads((ROOT / "corpus/kernels/softmax/intent.json").read_text())
+    )
+    m, n, block = 4, 37, 64
+    rng = np.random.default_rng(23)
+    values = {
+        "X": (rng.standard_normal((m, n)) * 2.0).astype(np.float32),
+        "M": m,
+        "N": n,
+    }
+    triton_spec = TritonExecutionSpec(
+        (
+            TritonArgument("x_ptr", ArgumentRole.INPUT, "X", "f32"),
+            TritonArgument(
+                "out_ptr",
+                ArgumentRole.OUTPUT,
+                dtype="f32",
+                shape=(m, n),
+                output_key="Y",
+            ),
+            TritonArgument("M", ArgumentRole.SCALAR, "M"),
+            TritonArgument("N", ArgumentRole.SCALAR, "N"),
+        ),
+        (m,),
+        {"BLOCK_N": block, "num_warps": 4, "num_stages": 2},
+    )
+    case = Gate2Case(
+        "softmax.fixed.tail37",
+        values,
+        triton_spec,
+        Lower2CSpec(fn, {"M": m, "N": n}, {"X": "X"}, "Y"),
+        ("Y",),
+        {"Y": Tolerance(rtol=2.0e-4, atol=2.0e-5)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_sources.py",
+            "softmax_kernel",
+            trusted=True,
+        ),
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_replays.py", "softmax_kernel"
+        ),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )

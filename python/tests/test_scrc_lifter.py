@@ -122,6 +122,11 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "realize_reduce" in prompt
     assert "COLLAPSED" in prompt
     assert "at least one of" in prompt
+    assert "global [M,N] row reduce" in prompt
+    assert "tile_axis=0" in prompt
+    assert "copy `col < N`" in prompt
+    assert "materialize_pointer_tile" in prompt
+    assert "staged pointer additions" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
 

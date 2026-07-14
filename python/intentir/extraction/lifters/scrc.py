@@ -290,11 +290,19 @@ predicate, optional fill_value, optional node_ref. Never emit a field named
 "fill". Every tiled reduction records node_ref, tile_axis and at least one of
 identity or masked_contribution. Every effects entry uses exactly kind, target
 and optional node_ref; access details stay in accesses, not effects.
-Reduction tile_axis is a reduction dimension/index, never a C schedule slot
-name such as BLOCK_N.
+Reduction tile_axis is the axis of the frontend-local tile value passed to the
+source reduction call, never a C schedule slot name such as BLOCK_N and never a
+blind copy of the global J reduce axis. For example, a global [M,N] row reduce
+has J axes=[1], but when one program holds one 1-D row tile the source call uses
+tile_axis=0. boundary.broadcasts records global semantic broadcast axes; it does
+not by itself require an explicit frontend expand-dims operation.
 
 Cross-field rules:
 - every boundary.domains value is one complete string expression;
+- every access predicate copies only the condition actually executed by the
+  source. Do not add redundant lower bounds or domain facts already guaranteed
+  by a constructed lane range (for tl.arange lanes, copy `col < N`, not
+  `0 <= col < N`);
 - node_ids contains only IntentIR body-node ids mapped to paths such as
   body[0], never domain/access/effect/output-mapping ids;
 - a scalar kernel parameter that only supplies a symbolic extent is not an
@@ -320,6 +328,9 @@ pi/plan rules:
 - node_ref/refs point only to identifiers declared in J;
 - never copy source text, expressions or frontend API names into plan;
 - semantics live in J, implementation mechanism selection lives in plan.
+- select materialize_index_tile when the source computes a complete integer tile
+  offset before adding it to a pointer; select materialize_pointer_tile when the
+  source keeps pointer + scalar base + lane tile as staged pointer additions.
 
 Registered rule ids (API spellings intentionally omitted):
 {_rule_catalog(registry)}

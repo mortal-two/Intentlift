@@ -223,20 +223,45 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "materialize_index_tile",
             Frontend.TRITON,
+            version="2",
             applies_to=["boundary.accesses"],
             reads=["index_expression", "schedule slot"],
             api_mapping={"lane_range": "tl.arange"},
-            example="Build symbolic lane ranges from a declared constexpr slot.",
-            pitfalls=["Keep every C value symbolic until injection."],
+            example=(
+                "Build the complete integer tile offset first, then add that tile "
+                "to each pointer."
+            ),
+            pitfalls=[
+                "Keep every C value symbolic until injection.",
+                "Do not use this card when pi selects staged pointer-base addition.",
+            ],
+        ),
+        RuleCard(
+            "materialize_pointer_tile",
+            Frontend.TRITON,
+            applies_to=["boundary.accesses"],
+            reads=["index_expression", "schedule slot"],
+            api_mapping={"lane_range": "tl.arange"},
+            example=(
+                "Preserve staged row-major address construction as pointer + scalar "
+                "base + lane tile; do not pre-sum base and lanes into one integer tile."
+            ),
+            pitfalls=[
+                "Use the same staged pointer association independently for every buffer."
+            ],
         ),
         RuleCard(
             "realize_masked_access",
             Frontend.TRITON,
+            version="2",
             applies_to=["boundary.accesses", "boundary.effects"],
             reads=["kind", "index_expression", "predicate", "fill_value"],
             api_mapping={"load": "tl.load", "store": "tl.store"},
             example="Use the declared predicate/fill for loads and guard for stores.",
-            pitfalls=["A store guard is independent from a load fill value."],
+            pitfalls=[
+                "A store guard is independent from a load fill value.",
+                "Do not strengthen a declared predicate with redundant domain facts.",
+            ],
         ),
         RuleCard(
             "realize_elementwise",
@@ -258,19 +283,39 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_reduce",
             Frontend.TRITON,
+            version="2",
             applies_to=["reduce", "boundary.reductions"],
-            reads=["fn", "axes", "identity", "masked_contribution"],
+            reads=[
+                "fn", "global axes", "tile_axis", "identity",
+                "masked_contribution",
+            ],
             api_mapping={"sum": "tl.sum", "max": "tl.max", "min": "tl.min"},
-            example="Choose sum/max/min from J and use its declared tile axis.",
-            pitfalls=["Do not substitute a different reduction identity."],
+            example=(
+                "Choose sum/max/min from J, but pass boundary.reductions.tile_axis "
+                "to the frontend reduction."
+            ),
+            pitfalls=[
+                "Do not substitute a different reduction identity.",
+                "Do not pass the global J tensor axis when the local tile rank differs.",
+            ],
         ),
         RuleCard(
             "realize_broadcast",
             Frontend.TRITON,
+            version="2",
             applies_to=["boundary.broadcasts"],
             reads=["operand", "axes"],
-            api_mapping={"expand_dims": "tl.expand_dims"},
-            example="Materialize only broadcasts explicitly declared by J.B.",
+            api_mapping={
+                "scalar_to_tile": "use the scalar operand directly",
+                "rank_insertion": "tl.expand_dims",
+            },
+            example=(
+                "A scalar reduction result consumed by the same 1-D tile broadcasts "
+                "implicitly; use tl.expand_dims only for an actual local rank insertion."
+            ),
+            pitfalls=[
+                "Semantic broadcast axes do not automatically imply a local expand_dims."
+            ],
         ),
         RuleCard(
             "realize_k_tiled_dot",

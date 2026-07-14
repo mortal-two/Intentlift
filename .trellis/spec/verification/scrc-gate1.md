@@ -69,9 +69,10 @@ source TTIR / replay TTIR ──> 纯代码指纹与裁判 ──> CLOSED 或差
 3. prompt 同时记录 step→card 选择轨迹和 registry digest；
 4. 重写员从 J 读取具体语义，从规则卡读取前端构造方法。
 
-当前 Triton 库覆盖 program domain、index tile、masked/unmasked access、
-elementwise、reduce、broadcast、tiled dot、runtime scalar、C 槽、cast、select、
-loop carry 与 output mapping，共 14 张卡。后续只根据真实 LLM 提取 Kernel 的
+当前 Triton 库覆盖 program domain、integer-offset index tile、staged pointer
+tile、masked/unmasked access、elementwise、reduce、broadcast、tiled dot、
+runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 张卡。
+后续只根据真实 LLM 提取 Kernel 的
 失败补卡，不按想象中的特性枚举扩张。
 
 ## 修复与反作弊

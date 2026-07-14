@@ -23,9 +23,9 @@ J + π + 接口 + C 槽 + 规则卡
 
 实现位置：`python/intentir/verify/gate1/rules.py`。
 
-当前 14 张 Triton 规则卡分为：
+当前 15 张 Triton 规则卡分为：
 
-1. domain/index：program domain、index tile；
+1. domain/index：program domain、完整 integer offset tile、分阶段 pointer tile；
 2. memory：masked access、unmasked access、output mapping；
 3. A 算子：elementwise、reduce、broadcast、cast、select；
 4. contraction/loop：tiled dot、loop carry；
@@ -33,6 +33,12 @@ J + π + 接口 + C 槽 + 规则卡
 
 规则卡只提供“如何在 Triton 中实现某种机制”，具体算什么必须从 J 读取。
 π 只保存 rule id 与 J/B 引用。
+
+第 15 张 `materialize_pointer_tile` 不是预先为 softmax 写的专用模板。它来自
+真实 softmax normal replay 的 TTIR diff：源码保留两次 staged
+`pointer + scalar base + lane`，而重放先合成完整 integer offset，导致
+`tt.addptr` 与 `tt.splat` 多重集不同。新卡只表达这个地址物化机制，
+不包含 softmax 算子序列。
 
 检索过程已经显式化：
 
@@ -137,8 +143,10 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 ### 第一批：20～40 个 Triton
 
-- 首个 live add 已于 2026-07-14 完成 J/π/C→Gate1→Gate2 闭环；下一步按
-  同一入口推进 row-sum，再依次覆盖 softmax、RMSNorm、matmul；
+- live add、row-sum、softmax 的 normal replay 已结构闭合，三者都因
+  masked-J 消融被最终拒绝；add 的历史正式 Gate2 与三者的独立
+  production lower2c 三方预检均已跑通；
+- 下一步按同一入口依次推进 RMSNorm、matmul，不改 masked 裁决；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；
