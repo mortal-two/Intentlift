@@ -113,6 +113,7 @@ def run_on_cpu(fn: IntentFunction, dims: dict[str, int],
     # infer output shape from the emitter's own shape inference via a dims-resolve
     from ..frontend.emit_mlir import _resolve, _infer_body
     env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
+    env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
     _infer_body(fn.body, env, 0)
     for op in fn.body:
         if op.out is not None:

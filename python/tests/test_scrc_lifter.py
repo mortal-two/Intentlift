@@ -120,6 +120,8 @@ def _artifact_payload() -> dict:
 def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None:
     prompt = scrc.build_scrc_lift_instructions(default_triton_rule_registry())
     assert "realize_reduce" in prompt
+    assert "COLLAPSED" in prompt
+    assert "at least one of" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
 
@@ -168,7 +170,19 @@ def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:
 
     monkeypatch.setattr(scrc, "call_responses", fake_call)
     view = scrc.SCRCCompilerView(
-        {"BLOCK": 64, "num_warps": 4}, ("num_warps",), ()
+        {"BLOCK": 64, "num_warps": 4},
+        ("num_warps",),
+        (),
+        (
+            scrc.SCRCCompilerArgument("a_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("b_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("N", "scalar", "i32", value=65),
+        ),
+        (2,),
+        ("ceil_div(N, BLOCK)",),
+        ("a_ptr", "b_ptr", "out_ptr", "N", "BLOCK"),
+        ("BLOCK",),
     )
 
     result = scrc.extract_scrc_artifact(
@@ -181,6 +195,11 @@ def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:
     }
     assert "TRUSTED_COMPILER_VIEW" in captured["user_input"]
     assert '"compiler_slots": ["num_warps"]' in captured["user_input"]
+    assert '"shape": [65]' in captured["user_input"]
+    assert '"grid": [2]' in captured["user_input"]
+    assert '"grid_contract": ["ceil_div(N, BLOCK)"]' in captured[
+        "user_input"
+    ]
     assert captured["text_format"]["name"] == "scrc_gate1_artifact"
     rewriter_view = result.artifact.rewriter_view()
     assert rewriter_view["j"]["intent"]["intent_function"]["layer_c"] == {}

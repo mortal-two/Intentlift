@@ -2,6 +2,16 @@
 
 日期：2026-07-14
 
+> **2026-07-15 复核更新（优先于下文历史结论）：** 本报告记录的三方执行
+> PASS 仍是有效的 lower2c/Gate2 工程证据，但当时 masked-J 没有完整遮盖
+> ABI/C 名称，且只采到一次主动失败候选。补齐不透明 ABI/C、精确 opaque
+> 签名检查和 Runner 统一恢复后，最新 `gpt-5.6-sol/xhigh` 运行中 normal replay
+> 仍以 1.0 硬闭合，但 masked replay 也以 1.0 完全闭合，泄漏比为 1.0，最终
+> 状态是 `LEAKAGE_REJECTED`，Gate2 按门禁顺序未运行。因此下文的
+> `REPLAY_CLOSED` 只能视为历史阶段结果，不能再作为当前 Gate1 接受证据。
+> 根因与待批准方案见
+> `doc/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
+
 ## 结论
 
 首个真实 `add` 已完整打通：

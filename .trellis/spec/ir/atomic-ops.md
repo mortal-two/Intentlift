@@ -21,7 +21,8 @@
 > 这是受控开放集:核心集封闭明确,新增算子必须走规范(给出语义 + shape/dtype 规则 + 层归属),不得随手加。
 
 > **FlashAttention 所需子集已端到端验证(2026-06-25)。** `map.unary{exp}` /
-> `map.binary`(含 broadcast)/ `reduce`(keepdims)/ `contraction` 与 `scf` 携带
+> `map.binary`(含 broadcast)/ `reduce`(由声明结果 shape 选择 keepdims 或
+> collapsed)/ `contraction` 与 `scf` 携带
 > carry 的递推,都已通过真实 C++ dialect → linalg → gpu → sm_120a cubin 在
 > 5090 D 上执行,且与解释器参考实现一致(execute==interpret,见
 > [../verification/validation.md](../verification/validation.md))。要求 #1
@@ -34,7 +35,10 @@
 - `cast` — dtype 转换
 
 **归约族**(Layer A 语义 + Layer B 结合性)
-- `reduce` — 沿轴归约,op ∈ {sum, max, min, prod, any, all};带**结合性标注** `associative` / `float_nondeterministic`(见下)
+- `reduce` — 沿轴归约,op ∈ {sum, max, min, prod, any, all};带**结合性标注**
+  `associative` / `float_nondeterministic`。结果 shape 可保留归约轴为 1
+  (keepdims,供后续 broadcast),也可移除归约轴(collapsed,匹配 row-sum 等外部
+  ABI);不新增 op/字段,由声明结果 tensor shape 决定。
 - `arg_reduce`(C6)— 沿轴归约到**极值的整数索引**(argmax / argmin),而非极值本身;结果是整数 tensor(轴折叠或 keepdims)。并列取**最低索引**(与 torch 一致)。lowering:block 归约携带 `(best_val, best_idx)` 对(register-tile 局部最优 + 共享内存 pair-tree),整数输出。见 `convert-intent-arg-reduce-to-gpu`。
 
 **收缩族**(Layer A,`reduction` 轴 + `indexing maps`)

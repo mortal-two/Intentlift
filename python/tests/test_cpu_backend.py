@@ -53,3 +53,40 @@ def test_kernel_runs_on_cpu(name, shapes, dims):
     y_ref = _np_ref(name, arrs)
     rel = np.abs(y_cpu - y_ref).max() / (np.abs(y_ref).max() + 1e-9)
     assert rel < 1e-4, f"{name}: CPU exec rel {rel}"
+
+
+def test_collapsed_row_sum_output_runs_on_cpu() -> None:
+    from intentir.backend.cpu import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "row_sum_lowering",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["M", "N"]}
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": ["M"]}
+                ],
+                "body": [
+                    {
+                        "op": "reduce",
+                        "result": "Y",
+                        "operands": ["X"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [1],
+                            "assoc": "float_nondeterministic",
+                        },
+                    }
+                ],
+            }
+        }
+    )
+    x = np.arange(15, dtype=np.float32).reshape(3, 5)
+
+    actual = run_on_cpu(fn, {"M": 3, "N": 5}, [x])
+
+    assert actual.shape == (3,)
+    np.testing.assert_allclose(actual, x.sum(axis=1), rtol=1.0e-6, atol=1.0e-6)

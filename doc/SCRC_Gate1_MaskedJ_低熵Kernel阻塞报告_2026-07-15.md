@@ -1,0 +1,205 @@
+# SCRC Gate1 masked-J：低熵 Kernel 阻塞报告
+
+日期：2026-07-15
+
+## 1. 结论先行
+
+当前 Gate1 没有实现错误放行；相反，它按 SCRC 方案正确地拒绝了最新的
+`add` 和 `row_sum`：两者的正常 source-blind replay 都在首个候选上达到
+TTIR 硬闭合，但遮盖 J 后，`π + 接口结构 + 规则卡 + 模型先验` 仍能重构出
+过于接近源的实现。
+
+因此当前真实状态是：
+
+```text
+add:
+  Lift 成功
+  normal replay score = 1.0，硬项全过
+  masked replay score = 1.0，硬项全过
+  leakage ratio L = 1.0 > 0.5
+  Gate1 = LEAKAGE_REJECTED
+
+row_sum:
+  Lift 成功
+  normal replay score = 1.0，硬项全过
+  masked replay score = 0.778676，硬项未全过
+  leakage ratio L = 0.778676 > 0.5
+  Gate1 = LEAKAGE_REJECTED
+```
+
+按现有方案，Gate2 不能覆盖 Gate1 的反作弊失败，所以这两次最新运行都没有
+进入 Gate2。此前 add 的三方 Gate2 PASS 仍能证明 production lower2c 和三方
+执行链可工作，但在更完整的不透明消融实现下，它不再构成“当前 Gate1 已接受”
+的证据。
+
+本轮没有调低阈值、没有重试到 masked 偶然失败、没有给简单 Kernel 加白名单，
+也没有让 Gate2 把 Gate1 救回来。
+
+## 2. 本轮先排除的实现侧信道
+
+旧 masked packet 虽然遮掉了 J 的节点内容，却仍暴露：
+
+- `add_kernel` / `row_sum_kernel`；
+- `a_ptr`、`x_ptr`、`out_ptr`；
+- `N`、`BLOCK_N` 等维度与 C 槽名称；
+- 原 grid 表达式中的名字。
+
+这不满足方案第八章“不透明重命名后做遮盖消融”的要求。本轮已经补齐：
+
+1. masked packet 按声明位置把函数、参数、constexpr、compiler slot 和 grid
+   标识符统一改成 `scrc_k0 / scrc_pN / scrc_cN`；
+2. J、π、interface、schedule 中的引用使用同一映射；
+3. writer 保留模型真实返回的 opaque code 与 hash；
+4. Gate1Runner 在 masked compile 前统一做 AST 级确定性恢复；
+5. 恢复前精确检查 opaque 参数顺序、数量和 constexpr 位置；
+6. 若模型局部变量与原 ABI 名冲突，先确定性改名，再恢复 ABI；
+7. 恢复后再次经过现有安全 AST 校验，再用原 CompileCase 编译；
+8. ABI 没有正确复现时，消融记为不可用并 fail-closed，不能把编译失败误当成
+   “无泄漏”。
+
+所以最新失败已经不是函数名、参数名或 C 槽拼写造成的侧信道。
+
+## 3. 两个真实样例说明了什么
+
+### 3.1 add：不是相似，而是完整猜中
+
+最新 masked packet 只公开位置式 ABI 和 π 的机制步骤。模型仍生成：
+
+```text
+两次同 mask load
+  -> 两个值相加
+  -> 同 mask store
+```
+
+恢复原 ABI 后，它的 interface、op multiset、dataflow、reduction、
+predicate/effect 全部与源一致，`L=1.0`。这说明问题不能归咎于当前 score
+把固定接口权重算进去；masked 候选确实完整猜中了 add。
+
+原因是该 Kernel 的剩余假设空间太小：两个同 shape 输入、一个输出、
+`realize_elementwise`、两次 load 和一次 store 已把常见答案高度压缩，模型又有
+强烈的“两个输入默认做加法”先验。
+
+### 3.2 row_sum：名字遮掉后仍接近源
+
+row_sum 的 masked 候选没有完全闭合，主要差异在地址构造与 dataflow，但它仍
+正确猜到：
+
+- 单行 tile；
+- tail mask 与零填充；
+- reduction；
+- sum combiner；
+- 标量行输出。
+
+π 中 `realize_reduce`、`realize_masked_access` 等机制本来就按方案保留；接口还
+公开一个 rank-2 输入、rank-1 输出和 grid 结构。即使语义名字全部不透明，这些
+信息加上模型先验仍足以得到 `L=0.778676`。
+
+## 4. 根因不是一个普通 bug
+
+现有第②档消融把以下两种情况合并成同一个观测：
+
+1. π/C 真的偷藏了 J 语义；
+2. π/C 没写出具体语义，但剩余假设空间很小，模型凭先验偶然或稳定猜中。
+
+对 softmax、RMSNorm、matmul 等高熵 Kernel，遮盖 J 后通常会明显崩掉；但对
+add、copy、简单 row-reduce 等低熵 Kernel，“遮盖后能猜中”并不能单独证明 π
+作弊。反过来，只做一次随机 masked generation，若模型这次主动失败，也不能
+充分证明没有泄漏。
+
+因此现有一次性 masked-J 对低熵 Kernel 存在两个问题：
+
+- **不可识别性：** 无法区分泄漏与先验猜测；
+- **单样本不稳定性：** 一次模型采样可能左右最终接收结果。
+
+Gate1 当前 fail-closed 是正确实现，但若不修改实验设计，低熵 Kernel 的覆盖率
+会很低，且单次消融证据不够强。
+
+## 5. 现在可以选择的路线
+
+### 路线 A：保持现方案，不改（最严格、覆盖率最低）
+
+把 add、copy、部分简单 reduction 标记为 `J_NON_IDENTIFYING` / 当前已有的
+`LEAKAGE_REJECTED`，不宣称其 replay-closed。Gate2 可作为独立诊断运行，但
+不能改变 Gate1 结论。
+
+优点：完全忠于当前文档；不引入新裁决。
+
+缺点：大量简单 Kernel 永远无法提供“语义因 J 而来”的单样本证据，规模化
+闭合率会显著下降。
+
+### 路线 B：增加预注册的多次 masked 统计（改动较小，不推荐单独使用）
+
+对同一 `(masked J, π, C)` 固定运行 K 次，报告 masked 闭合率与 score 分布，
+用预先写死的统计阈值代替单次结果。
+
+优点：能降低一次随机失败造成的 false-safe。
+
+缺点：成本高；仍无法区分“π 泄漏”与“模型对 add 的稳定先验”，add 很可能
+依旧全部被拒绝。不能采用“重试到失败就通过”的做法。
+
+### 路线 C：加入成对语义干预（建议进一步论证后采用）
+
+不再只问“J 空了还能不能猜中”，而是同时问“J 中唯一改变的语义是否会驱动
+重放发生对应改变”。例如保持接口、拓扑、π、C 和 opaque 名不变，仅构造：
+
+```text
+add  <-> sub / mul
+sum  <-> max / min
+exp  <-> log
+```
+
+正常 J 与干预 J' 分别交给同一重写员。Gate1 需要一个确定性的、范围受限的
+J→TTIR 语义投影，检查 replay 是否跟随干预改变对应的 TTIR 语义项，同时保持
+其余结构不变。
+
+这比空白遮盖更接近因果问题：若模型总默认 add，它会在 J'=sub 时暴露；若输出
+随 J 改变，才说明语义内容真正控制重放。
+
+但该路线会新增“反事实 J 与预期 TTIR 差异”的裁决逻辑，属于 SCRC 方案的明确
+扩展，不应在未经批准时直接实现。需要先限定可干预 op、变换合法性、浮点语义、
+规则卡覆盖和接受阈值。
+
+### 路线 D：把 masked-J 降为数据集级实验，而非逐 Kernel 接收门槛
+
+构造接口/π/C 相同或近似的平衡语义族，在 held-out 集上报告 masked 预测准确率
+与泄漏比；单个 Kernel 的 Gate1 只要求 source/replay 结构闭合，反作弊结论在
+整个数据集上给出。
+
+优点：能统计区分模型先验与 artifact 泄漏。
+
+缺点：改变了当前“每个 artifact 最终接受前必跑一次”的接收定义，属于更大的
+方案修改。
+
+## 6. 建议与待批准事项
+
+当前建议分两步：
+
+1. 在获得批准前采用路线 A：保持 `LEAKAGE_REJECTED`，继续收集 softmax、
+   RMSNorm、matmul 等更高熵 Kernel 的真实结果，不篡改阈值；
+2. 单独评审路线 C，把“成对语义干预”作为第八章消融的补充或替代，并在方案
+   文档中先写死适用 op、裁决方式与失败语义，再实现代码。
+
+请求确认的问题只有一个：
+
+> 是否允许把 Gate1 第②档从“单次空白 masked-J”扩展为“空白 masked-J +
+> 成对语义干预”，并以成对干预作为低熵 Kernel 的主要 J 因果证据？
+
+在得到确认前，本项目不会自行加入该裁决，也不会把最新 add/row_sum 标成
+Gate1 闭合。
+
+## 7. 可复核证据
+
+最新 `gpt-5.6-sol / xhigh` 调用：
+
+| Kernel | Lift response | Normal replay response | Masked response | Normal | Masked | L | Gate1 |
+|---|---|---|---|---:|---:|---:|---|
+| add | `resp_09756db56f798306016a56726741508190a5de16f83c99e5f0` | `resp_0d7755f9c6965b91016a5672c94000819498870cf2542f2a02` | `resp_0c7ede99b0c80499016a5672d7a5d88195b673d75e0956bf71` | 1.0 | 1.0 | 1.0 | `LEAKAGE_REJECTED` |
+| row_sum | `resp_06a7127cd99a3713016a566f62f8c8819ba4b009051c465f46` | `resp_0a5bdeb327c00b91016a566fbfe1cc819bb2761cff2ceb2e6c` | `resp_05c1df0cfaaec727016a566fd31dc8819b8413f368ba41231c` | 1.0 | 0.778676 | 0.778676 | `LEAKAGE_REJECTED` |
+
+本地临时报告：
+
+- `/tmp/scrc_live_add_result_v2.json`；
+- `/tmp/scrc_live_row_sum_result_v3.json`。
+
+临时文件不纳入仓库。最新 harness 报告已经移除原始源 kernel，只保留 source
+摘要，并保存所有真正被 Gate1 验证过的 normal/masked source-blind 候选代码。

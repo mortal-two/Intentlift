@@ -37,7 +37,11 @@ from .model import (
     Gate1Status,
     ParameterKind,
 )
-from .replay import ReplayGeneration, ReplayWriter
+from .replay import (
+    ReplayGeneration,
+    ReplayWriter,
+    restore_masked_replay_module,
+)
 from .rules import RuleRegistry
 from .ttir import TTIRFingerprint, TTIRParseError, fingerprint_ttir
 
@@ -743,6 +747,9 @@ class Gate1Runner:
                         raise RuntimeError(
                             "masked ablation reused a normal generation_id"
                         )
+                    masked_code = restore_masked_replay_module(
+                        masked_generation.code, current
+                    )
                     masked_attempted = True
                     function_name = getattr(
                         current.interface,
@@ -751,7 +758,7 @@ class Gate1Runner:
                     )
                     masked_compile = self.compiler.compile(
                         KernelSource.from_code(
-                            masked_generation.code, function_name
+                            masked_code, function_name
                         ),
                         compile_case,
                     )

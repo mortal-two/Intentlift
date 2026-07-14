@@ -183,3 +183,84 @@ def test_gate2_real_add_source_replay_lowering_three_way() -> None:
         result.replay.error,
         result.lowering.error,
     )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_collapsed_row_sum_three_way() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "row_sum_gate2",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["M", "N"]}
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": ["M"]}
+                ],
+                "body": [
+                    {
+                        "op": "reduce",
+                        "result": "Y",
+                        "operands": ["X"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [1],
+                            "assoc": "float_nondeterministic",
+                        },
+                    }
+                ],
+            }
+        }
+    )
+    m, n = 3, 31
+    rng = np.random.default_rng(17)
+    values = {
+        "X": (rng.standard_normal((m, n)) * 0.25).astype(np.float32),
+        "M": m,
+        "N": n,
+    }
+    triton_spec = TritonExecutionSpec(
+        (
+            TritonArgument("x_ptr", ArgumentRole.INPUT, "X", "f32"),
+            TritonArgument(
+                "out_ptr",
+                ArgumentRole.OUTPUT,
+                dtype="f32",
+                shape=(m,),
+                output_key="Y",
+            ),
+            TritonArgument("M", ArgumentRole.SCALAR, "M"),
+            TritonArgument("N", ArgumentRole.SCALAR, "N"),
+        ),
+        (m,),
+        {"BLOCK_N": 64, "num_warps": 4, "num_stages": 2},
+    )
+    case = Gate2Case(
+        "row_sum.fixed.tail31",
+        values,
+        triton_spec,
+        Lower2CSpec(fn, {"M": m, "N": n}, {"X": "X"}, "Y"),
+        ("Y",),
+        {"Y": Tolerance(rtol=2.0e-4, atol=2.0e-4)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_sources.py",
+            "row_sum_kernel",
+            trusted=True,
+        ),
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_replays.py", "row_sum_kernel"
+        ),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )

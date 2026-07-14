@@ -1325,6 +1325,47 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError("LocationMap references unknown boundary accesses")
 
         schedule_by_name = {slot.name: slot for slot in self.schedule.slots}
+        interface_constexprs = {
+            parameter.name
+            for parameter in self.interface.parameters
+            if parameter.kind is ParameterKind.CONSTEXPR
+        }
+        missing_constexpr_slots = sorted(
+            name
+            for name in interface_constexprs
+            if name not in schedule_by_name
+            or schedule_by_name[name].kind is not ScheduleSlotKind.CONSTEXPR
+        )
+        if missing_constexpr_slots:
+            raise SchemaError(
+                "KernelInterface constexpr parameters are not declared "
+                "constexpr schedule slots: "
+                + ", ".join(missing_constexpr_slots)
+            )
+        orphan_constexpr_slots = sorted(
+            name
+            for name, slot in schedule_by_name.items()
+            if slot.kind is ScheduleSlotKind.CONSTEXPR
+            and name not in interface_constexprs
+        )
+        if orphan_constexpr_slots:
+            raise SchemaError(
+                "Schedule constexpr slots are absent from KernelInterface: "
+                + ", ".join(orphan_constexpr_slots)
+            )
+        leaked_reduction_slots = sorted(
+            {
+                item.tile_axis
+                for item in self.j.boundary.reductions
+                if isinstance(item.tile_axis, str)
+                and item.tile_axis in schedule_by_name
+            }
+        )
+        if leaked_reduction_slots:
+            raise SchemaError(
+                "ReductionBoundary.tile_axis must not reference C schedule "
+                "slot(s): " + ", ".join(leaked_reduction_slots)
+            )
         missing_compiler_slots = sorted(
             name for name in self.interface.compiler_slots
             if name not in schedule_by_name
@@ -1446,17 +1487,81 @@ class Gate1Result(StrictJSONMixin):
         return result
 
 
+def opaque_replay_abi(
+    artifact: Gate1Artifact,
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Return deterministic, collision-free aliases for a masked replay ABI.
+
+    The masked-J experiment must not expose semantic hints carried by source
+    identifiers such as ``row_sum_kernel`` or ``BLOCK_N``.  The aliases are
+    intentionally derived only from declaration order.  They are never added
+    to the serialized artifact; the replay adapter independently recomputes
+    the same mapping when it restores the generated module before compilation.
+    """
+
+    occupied = {
+        artifact.interface.kernel_id,
+        artifact.interface.function_name,
+        *(parameter.name for parameter in artifact.interface.parameters),
+        *(slot.name for slot in artifact.schedule.slots),
+    }
+
+    def allocate(stem: str) -> str:
+        candidate = stem
+        suffix = 0
+        while candidate in occupied:
+            suffix += 1
+            candidate = f"{stem}_{suffix}"
+        occupied.add(candidate)
+        return candidate
+
+    function_name = allocate("scrc_k0")
+    parameter_names = {
+        parameter.name: allocate(f"scrc_p{index}")
+        for index, parameter in enumerate(artifact.interface.parameters)
+    }
+    schedule_names: dict[str, str] = {}
+    compiler_index = 0
+    for slot in artifact.schedule.slots:
+        if slot.name in parameter_names:
+            schedule_names[slot.name] = parameter_names[slot.name]
+            continue
+        schedule_names[slot.name] = allocate(f"scrc_c{compiler_index}")
+        compiler_index += 1
+    return function_name, parameter_names, schedule_names
+
+
+def _rename_identifier_tokens(value: str, aliases: dict[str, str]) -> str:
+    """Alpha-rename complete Python-like identifier tokens in an expression."""
+
+    return re.sub(
+        r"\b[A-Za-z_][A-Za-z0-9_]*\b",
+        lambda match: aliases.get(match.group(0), match.group(0)),
+        value,
+    )
+
+
 def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     """Create a consistently opaque J/pi/interface view for leakage ablation."""
 
     tensor_names = [tensor.name for tensor in artifact.j.intent.inputs]
     tensor_names.extend(tensor.name for tensor in artifact.j.intent.outputs)
-    tensor_map = {name: f"t{index}" for index, name in enumerate(dict.fromkeys(tensor_names))}
+    tensor_map = {
+        name: f"t{index}"
+        for index, name in enumerate(dict.fromkeys(tensor_names))
+    }
     node_map = {name: f"n{index}" for index, name in enumerate(artifact.j.node_ids)}
     access_map = {
-        access.access_id: f"a{index}" for index, access in enumerate(artifact.j.boundary.accesses)
+        access.access_id: f"a{index}"
+        for index, access in enumerate(artifact.j.boundary.accesses)
     }
-    domain_map = {name: f"d{index}" for index, name in enumerate(artifact.j.boundary.domains)}
+    domain_map = {
+        name: f"d{index}"
+        for index, name in enumerate(artifact.j.boundary.domains)
+    }
+
+    opaque_function, parameter_map, schedule_map = opaque_replay_abi(artifact)
+    abi_map = {**parameter_map, **schedule_map}
 
     reference_map = {
         **tensor_map, **node_map, **access_map, **domain_map,
@@ -1475,11 +1580,15 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         mapped = renamed(value)
         if mapped != value or value in reference_map:
             return mapped
+        if value in abi_map:
+            return abi_map[value]
         if value not in fallback_reference_map:
             fallback_reference_map[value] = f"r{len(fallback_reference_map)}"
         return fallback_reference_map[value]
 
-    path_to_node = {path: node_map[node_id] for node_id, path in artifact.j.node_ids.items()}
+    path_to_node = {
+        path: node_map[node_id] for node_id, path in artifact.j.node_ids.items()
+    }
     anonymous_node_count = 0
 
     def mask_ops(ops: list[Any], prefix: str) -> list[dict[str, Any]]:
@@ -1501,7 +1610,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 
     masked_intent = {
         "intent_function": {
-            "name": "k0",
+            "name": opaque_function,
             "inputs": [
                 {
                     "name": tensor_map[tensor.name],
@@ -1533,7 +1642,11 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "index_expression": "<masked>",
                 **({"predicate": "<masked>"} if access.predicate is not None else {}),
                 **({"fill_value": "<masked>"} if access.fill_value is not None else {}),
-                **({"node_ref": opaque_reference(access.node_ref)} if access.node_ref is not None else {}),
+                **(
+                    {"node_ref": opaque_reference(access.node_ref)}
+                    if access.node_ref is not None
+                    else {}
+                ),
             }
             for access in artifact.j.boundary.accesses
         ],
@@ -1555,15 +1668,25 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         ],
         "effects": [
             {
-                "kind": "<masked>", "target": opaque_reference(item.target),
-                **({"node_ref": opaque_reference(item.node_ref)} if item.node_ref is not None else {}),
+                "kind": "<masked>",
+                "target": opaque_reference(item.target),
+                **(
+                    {"node_ref": opaque_reference(item.node_ref)}
+                    if item.node_ref is not None
+                    else {}
+                ),
             }
             for item in artifact.j.boundary.effects
         ],
         "output_mappings": [
             {
-                "output": opaque_reference(item.output), "value": "<masked>",
-                **({"node_ref": opaque_reference(item.node_ref)} if item.node_ref is not None else {}),
+                "output": opaque_reference(item.output),
+                "value": "<masked>",
+                **(
+                    {"node_ref": opaque_reference(item.node_ref)}
+                    if item.node_ref is not None
+                    else {}
+                ),
             }
             for item in artifact.j.boundary.output_mappings
         ],
@@ -1584,28 +1707,40 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     masked_parameters = []
     for parameter in artifact.interface.parameters:
         item = parameter.to_json()
+        item["name"] = parameter_map[parameter.name]
         if parameter.tensor_ref is not None:
             item["tensor_ref"] = opaque_reference(parameter.tensor_ref)
+        if parameter.alias_of is not None:
+            item["alias_of"] = parameter_map[parameter.alias_of]
         masked_parameters.append(item)
 
-    # The masked run must remain executable with the exact same CompileCase.
-    # Therefore ABI names, grid expressions, compiler slots and C slot names
-    # are a declared channel and remain unchanged.  Production kernel IDs and
-    # parameter names are required to be semantically neutral.
+    # ABI/C declaration *structure* remains visible, while all source spellings
+    # are alpha-renamed.  The replay adapter restores the names deterministically
+    # before compiling with the exact same CompileCase.
     masked_schedule = artifact.schedule.rewriter_view()
+    for slot in masked_schedule["slots"]:
+        slot["name"] = schedule_map[slot["name"]]
     masked_plan = {
         "steps": [
             {
                 "rule": step.rule,
-                **({"node_ref": opaque_reference(step.node_ref)} if step.node_ref is not None else {}),
-                **({"refs": [opaque_reference(ref) for ref in step.refs]} if step.refs else {}),
+                **(
+                    {"node_ref": opaque_reference(step.node_ref)}
+                    if step.node_ref is not None
+                    else {}
+                ),
+                **(
+                    {"refs": [opaque_reference(ref) for ref in step.refs]}
+                    if step.refs
+                    else {}
+                ),
             }
             for step in artifact.plan.steps
         ]
     }
     return {
         "j": {
-            "kernel_id": "k0",
+            "kernel_id": opaque_function,
             "intent": masked_intent,
             "node_ids": {
                 node_map[node_id]: f"node[{index}]"
@@ -1614,12 +1749,17 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             "boundary": masked_boundary,
         },
         "interface": {
-            "kernel_id": artifact.interface.kernel_id,
-            "function_name": artifact.interface.function_name,
+            "kernel_id": opaque_function,
+            "function_name": opaque_function,
             "frontend": artifact.interface.frontend.value,
             "parameters": masked_parameters,
-            "grid": list(artifact.interface.grid),
-            "compiler_slots": list(artifact.interface.compiler_slots),
+            "grid": [
+                _rename_identifier_tokens(expression, abi_map)
+                for expression in artifact.interface.grid
+            ],
+            "compiler_slots": [
+                schedule_map[name] for name in artifact.interface.compiler_slots
+            ],
         },
         "schedule": masked_schedule,
         "plan": masked_plan,
@@ -1631,6 +1771,7 @@ __all__ = [
     "BroadcastSpec", "CompileCase", "EffectKind", "EffectSpec", "Frontend",
     "Gate1Artifact", "Gate1Result", "Gate1Status", "JsonValue", "KernelInterface",
     "KernelParameter", "LocationEntry", "LocationMap", "OutputMapping",
+    "opaque_replay_abi",
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
     "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuntimeArgument", "ScheduleSlot",
     "ScheduleSlotKind", "ScheduleSpec", "SchemaError", "SemanticArchive",

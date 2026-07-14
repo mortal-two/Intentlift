@@ -49,7 +49,11 @@
 
 这段结论只描述当时那次调用。2026-07-14 后续已改用正确名称
 `gpt-5.6-sol` 与 `xhigh`，并通过 wire schema + 可信 compiler view 打通真实
-add 的 Lift→Gate1→Gate2；最新证据见 `test/scrc_live_add_report.md`。
+add 的 Lift、正常 replay 和三方执行。2026-07-15 补齐方案要求的不透明
+ABI/C 消融后，最新 add 的 masked replay 也完全闭合，因 `L=1.0` 被 Gate1
+正确拒绝；此前 Gate2 PASS 仍是 lowering 工程证据，但不再是当前 Gate1 接受
+证据。详见 `test/scrc_live_add_report.md` 与
+`doc/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
 
 ### 1.3 Gate1 收回 SCRC 主线
 
@@ -117,7 +121,7 @@ prompt 不再只是塞卡片，而是显式记录：
 - lower 不支持时明确返回 `LOWERING_UNSUPPORTED`，不会退回旧解释器伪装成功。
 
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
-add 的三方一致。
+add 与 collapsed row-sum 的三方一致。
 
 ## 2. False reject 是什么意思
 
@@ -157,7 +161,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 
 已经真实发生的事情包括：
 
-- 真实 LLM provider 调用链已触达，但完整提升 artifact 尚未闭合；
+- 真实 `gpt-5.6-sol/xhigh` Lift artifact 与正常 replay 已在 add、row-sum 上
+  首轮结构闭合；最终接收目前被低熵 Kernel 的 masked-J 可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
 - 真实 GPU source/replay launch；
@@ -167,7 +172,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 所以核心机制已经不是“差得远到只剩接口”。差距主要在覆盖与工程闭环：
 
 - 尚未把数百个真实 Kernel 全部重新走一遍新的 `extract_scrc_artifact`；
-- 首个 live add artifact 仍需让 prompt/schema 在有界修复内收敛；
+- live add/row-sum 的 prompt/schema 已在首轮收敛，但一次性 masked-J 无法稳定
+  区分 π 泄漏和模型先验猜测；
 - 规则卡只在五核和当前变异集上证过；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；

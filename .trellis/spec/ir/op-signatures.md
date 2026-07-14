@@ -39,7 +39,7 @@
 | `map.binary` | `lhs, rhs` | `fn`: add/mul/div/max/...; `broadcast` | tensor | A |
 | `select` | `cond, a, b` | — | tensor | A(数据依赖值,图固定) |
 | `cast` | `x` | `to_dtype` | tensor | A |
-| `reduce` | `x` | `fn`: sum/max/...; `axes`; `assoc`: associative \| float_nondeterministic | tensor | A 语义 + B 结合性 |
+| `reduce` | `x` | `fn`: sum/max/...; `axes`; `assoc`: associative \| float_nondeterministic | tensor；声明 shape 可 keepdims 或 collapsed | A 语义 + B 结合性 |
 | `contraction` | `a, b` | `subscripts`: einsum(如 `"bhqd,bhkd->bhqk"`) | tensor | A |
 | `scan` | `x, init` | `fn`/`region`; `axis` | tensor | A |
 | `transpose`/`reshape`/`broadcast`/`slice`/`concat`/`pad` | `x` | 形状参数 | tensor | A |

@@ -26,10 +26,11 @@ Hard constraints:
 
 _MASKED_NOTE = """
 ABLATION RUN: J's semantic and boundary contents were deliberately masked and
-all J-local tensor/node/access/domain identifiers were opaquely renamed. ABI
-function/parameter names, grid, and C slot declarations remain unchanged so the
-same compile case can be used. Do not reverse or guess masked names. Produce the
-best replay possible from the remaining packet.
+all J-local and ABI/C identifiers were consistently alpha-renamed. Preserve the
+opaque function/parameter order, grid contract, and slot declarations exactly;
+the harness will restore source ABI spellings deterministically before using the
+same compile case. Do not reverse or guess masked names. Produce the best replay
+possible from the remaining packet.
 """
 
 

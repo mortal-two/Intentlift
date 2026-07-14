@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from intentir.ir.model import IntentFunction
+from intentir.verify.gate1.codegen import UnsafeReplayCodeError
 from intentir.verify.gate1.compiler import (
     CompileCase,
     CompileResult,
@@ -35,7 +36,11 @@ from intentir.verify.gate1.model import (
     SemanticArchive,
 )
 from intentir.verify.gate1.orchestrate import CandidateRecord, Gate1Config, Gate1Runner
-from intentir.verify.gate1.replay import ReplayGeneration, StaticReplayWriter
+from intentir.verify.gate1.replay import (
+    ReplayGeneration,
+    StaticReplayWriter,
+    restore_masked_replay_module,
+)
 from intentir.verify.gate1.rules import default_triton_rule_registry
 
 
@@ -80,10 +85,25 @@ def kernel(x, out, n, BLOCK: tl.constexpr):
     tl.store(out + offset, value, mask=mask)
 '''
 
-REAL_MASKED_FAILURE_CODE = REAL_COPY_CODE.replace(
-    "value = tl.load(x + offset, mask=mask, other=0.0)",
-    "value = tl.gate1_masked_ablation_unknown(x + offset)",
-)
+REAL_MASKED_FAILURE_CODE = '''import triton
+import triton.language as tl
+
+@triton.jit(do_not_specialize=["scrc_p2"])
+def scrc_k0(scrc_p0, scrc_p1, scrc_p2, scrc_p3: tl.constexpr):
+    offset = tl.program_id(0) * scrc_p3 + tl.arange(0, scrc_p3)
+    mask = offset < scrc_p2
+    value = tl.gate1_masked_ablation_unknown(scrc_p0 + offset)
+    tl.store(scrc_p1 + offset, value, mask=mask)
+'''
+
+OPAQUE_MASKED_COMPILE_FAIL = '''import triton
+import triton.language as tl
+
+@triton.jit(do_not_specialize=["scrc_p2"])
+def scrc_k0(scrc_p0, scrc_p1, scrc_p2, scrc_p3: tl.constexpr):
+    "MASKED_FAIL"
+    return
+'''
 
 
 def _artifact() -> Gate1Artifact:
@@ -223,7 +243,7 @@ class CaptureWriter:
         self,
         normal: list[str],
         *,
-        masked: str = "MASKED_FAIL",
+        masked: str = OPAQUE_MASKED_COMPILE_FAIL,
         repeated_id: bool = False,
     ) -> None:
         self.normal = normal
@@ -277,6 +297,47 @@ def _source(function: str = "kernel") -> KernelSource:
     return KernelSource.from_code("SOURCE", function, trusted=True)
 
 
+def test_static_masked_writer_preserves_opaque_evidence_for_runner() -> None:
+    writer = StaticReplayWriter(GOOD_CODE, masked=REAL_MASKED_FAILURE_CODE)
+    generation = writer.generate(
+        _artifact(), default_triton_rule_registry(), masked=True
+    )
+
+    assert generation.masked
+    assert "def scrc_k0(scrc_p0, scrc_p1, scrc_p2" in generation.code
+    restored = restore_masked_replay_module(generation.code, _artifact())
+    assert "def kernel(x, out, n, BLOCK: tl.constexpr):" in restored
+    assert 'do_not_specialize=[\'n\']' in restored
+
+
+def test_masked_abi_restore_renames_model_locals_that_collide() -> None:
+    opaque = '''import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(scrc_p0, scrc_p1, scrc_p2, scrc_p3: tl.constexpr):
+    x = tl.load(scrc_p0)
+    tl.static_assert(True, "x", scrc_p0=1)
+    tl.store(scrc_p1, x)
+'''
+    restored = restore_masked_replay_module(opaque, _artifact())
+
+    assert "def kernel(x, out, n, BLOCK: tl.constexpr):" in restored
+    assert "scrc_local_0 = tl.load(x)" in restored
+    assert "tl.static_assert(True, 'x', scrc_p0=1)" in restored
+    assert "tl.store(out, scrc_local_0)" in restored
+
+
+def test_masked_abi_restore_rejects_a_wrong_public_signature() -> None:
+    wrong_signature = REAL_MASKED_FAILURE_CODE.replace(
+        "scrc_p2, scrc_p3: tl.constexpr",
+        "scrc_p3: tl.constexpr, scrc_p2",
+    )
+
+    with pytest.raises(UnsafeReplayCodeError, match="opaque ABI"):
+        restore_masked_replay_module(wrong_signature, _artifact())
+
+
 def test_bounded_repair_stability_and_masked_ablation_close() -> None:
     writer = CaptureWriter(["BAD", "GOOD", "GOOD"])
     result = _runner(stable_closures=2).run(
@@ -302,6 +363,23 @@ def test_bounded_repair_stability_and_masked_ablation_close() -> None:
         "masked:"
     )
     assert result.leakage_ratio == 0.0
+
+
+def test_runner_restores_opaque_masked_code_and_rejects_real_leakage() -> None:
+    compiler = FakeCompiler()
+    writer = CaptureWriter(["GOOD"], masked=REAL_MASKED_FAILURE_CODE)
+    result = Gate1Runner(
+        compiler=compiler,
+        config=Gate1Config(stable_closures=1),
+    ).run(
+        _source(), _artifact(), _case(), default_triton_rule_registry(), writer
+    )
+
+    assert result.status is Gate1Status.LEAKAGE_REJECTED
+    assert result.leakage_ratio == 1.0
+    assert result.masked_generation is not None
+    assert "scrc_p0" in result.masked_generation.code
+    assert "def kernel(x, out, n, BLOCK: tl.constexpr):" in compiler.calls[-1]
 
 
 def test_initial_plus_two_repairs_is_exactly_three_candidates() -> None:

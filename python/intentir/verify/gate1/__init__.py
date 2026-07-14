@@ -44,6 +44,7 @@ from .model import (
     SchemaError,
     SemanticArchive,
     SourceSpan,
+    opaque_replay_abi,
 )
 from .prompt import (
     assert_source_isolated_payload,
@@ -100,6 +101,7 @@ from .replay import (
     ReplayWriter,
     ResponsesReplayWriter,
     StaticReplayWriter,
+    restore_masked_replay_module,
 )
 from .orchestrate import (
     CandidateRecord,
@@ -119,6 +121,7 @@ __all__ = [
     "ProvenanceRole", "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuleCard", "RuleRegistry",
     "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec",
     "SchemaError", "SemanticArchive", "SourceSpan",
+    "opaque_replay_abi", "restore_masked_replay_module",
     "assert_source_isolated_payload", "build_masked_rewriter_prompt",
     "build_masked_rewriter_view", "build_normal_rewriter_prompt",
     "build_normal_rewriter_view", "build_rewriter_payload", "build_rewriter_prompt",

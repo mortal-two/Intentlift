@@ -78,7 +78,22 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
         if x not in env:
             return None
         shp = list(env[x])
-        for ax in (int(a) - fold for a in op.attrs["axes"]):  # keepdims
+        axes = [int(a) - fold for a in op.attrs["axes"]]
+        keepdims = list(shp)
+        for ax in axes:
+            keepdims[ax] = 1
+        collapsed = [dim for index, dim in enumerate(shp) if index not in axes]
+        declared = env.get(op.result)
+        if declared is None and op.out is not None:
+            declared = env.get(op.out)
+        if declared is not None:
+            if declared not in (keepdims, collapsed):
+                raise ValueError(
+                    f"reduce result {op.result!r} shape {declared} is neither "
+                    f"keepdims {keepdims} nor collapsed {collapsed}"
+                )
+            return list(declared)
+        for ax in axes:  # existing default: keepdims for broadcast consumers
             shp[ax] = 1
         return shp
     if op.op == "scan":
@@ -737,6 +752,11 @@ def emit_module(fn: IntentFunction, dims: dict[str, int], fold: int = 0,
     extents = dict(dims)
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
+        env[t.name] = _resolve(t.shape, extents)[fold:]
+    # A reduce whose result is a declared external output may intentionally
+    # collapse its reduced axes (e.g. row_sum [M,N] -> [M]).  Seed only output
+    # contracts; intermediate reductions retain the existing keepdims default.
+    for t in fn.outputs:
         env[t.name] = _resolve(t.shape, extents)[fold:]
     _infer_body(fn.body, env, fold, extents)
 

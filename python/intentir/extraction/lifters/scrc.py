@@ -18,6 +18,7 @@ from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
+    ParameterKind,
     ProvenanceRecord,
     ProvenanceRole,
 )
@@ -28,6 +29,28 @@ from .scrc_schema import scrc_artifact_text_format
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+_DTYPE_ALIASES = {
+    "float16": "f16",
+    "half": "f16",
+    "float32": "f32",
+    "float": "f32",
+    "float64": "f64",
+    "double": "f64",
+    "bfloat16": "bf16",
+    "int8": "i8",
+    "int16": "i16",
+    "int32": "i32",
+    "int64": "i64",
+    "bool": "i1",
+}
+
+
+def _canonical_dtype(value: str | None) -> str | None:
+    if value is None:
+        return None
+    spelling = value.casefold().removeprefix("torch.")
+    return _DTYPE_ALIASES.get(spelling, spelling)
 
 
 @dataclass(frozen=True)
@@ -46,6 +69,46 @@ class SCRCExtraction:
 
 
 @dataclass(frozen=True)
+class SCRCCompilerArgument:
+    """One concrete runtime specialization visible only to the lift agent."""
+
+    name: str
+    kind: str
+    dtype: str
+    shape: tuple[int, ...] = ()
+    value: bool | int | float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.isidentifier():
+            raise ValueError(f"invalid compiler argument name: {self.name!r}")
+        if self.kind not in {"tensor", "scalar"}:
+            raise ValueError("compiler argument kind must be tensor or scalar")
+        if not isinstance(self.dtype, str) or not self.dtype:
+            raise ValueError("compiler argument dtype must be a non-empty string")
+        shape = tuple(int(dim) for dim in self.shape)
+        if any(dim < 0 for dim in shape):
+            raise ValueError("compiler argument dimensions must be non-negative")
+        if self.kind == "tensor":
+            if not shape or self.value is not None:
+                raise ValueError("tensor compiler argument requires shape only")
+        elif shape or self.value is None:
+            raise ValueError("scalar compiler argument requires value only")
+        object.__setattr__(self, "shape", shape)
+
+    def to_json(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "name": self.name,
+            "kind": self.kind,
+            "dtype": self.dtype,
+        }
+        if self.kind == "tensor":
+            result["shape"] = list(self.shape)
+        else:
+            result["value"] = self.value
+        return result
+
+
+@dataclass(frozen=True)
 class SCRCCompilerView:
     """Trusted source-compilation facts visible to the lift agent.
 
@@ -57,6 +120,11 @@ class SCRCCompilerView:
     schedule_values: Mapping[str, bool | int | float]
     compiler_slots: tuple[str, ...] = ()
     aliases: tuple[AliasSpec, ...] = ()
+    arguments: tuple[SCRCCompilerArgument, ...] = ()
+    grid: tuple[int, ...] = ()
+    grid_contract: tuple[str, ...] = ()
+    parameter_order: tuple[str, ...] = ()
+    constexpr_parameters: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         values = dict(self.schedule_values)
@@ -75,15 +143,69 @@ class SCRCCompilerView:
             item if isinstance(item, AliasSpec) else AliasSpec.from_json(item)
             for item in self.aliases
         )
+        arguments = tuple(
+            item
+            if isinstance(item, SCRCCompilerArgument)
+            else SCRCCompilerArgument(**item)
+            for item in self.arguments
+        )
+        if len({item.name for item in arguments}) != len(arguments):
+            raise ValueError("compiler arguments must have unique names")
+        grid = tuple(int(dim) for dim in self.grid)
+        if grid and (len(grid) > 3 or any(dim <= 0 for dim in grid)):
+            raise ValueError("compiler grid must have one to three positive dims")
+        grid_contract = tuple(self.grid_contract)
+        if any(not isinstance(item, str) or not item for item in grid_contract):
+            raise ValueError("grid_contract must contain non-empty strings")
+        if grid and grid_contract and len(grid) != len(grid_contract):
+            raise ValueError("concrete grid and grid_contract ranks differ")
+        parameter_order = tuple(self.parameter_order)
+        constexpr_parameters = tuple(self.constexpr_parameters)
+        for label, names in (
+            ("parameter_order", parameter_order),
+            ("constexpr_parameters", constexpr_parameters),
+        ):
+            if len(set(names)) != len(names) or any(
+                not isinstance(name, str) or not name.isidentifier()
+                for name in names
+            ):
+                raise ValueError(f"{label} must contain unique identifiers")
+        runtime_names = {item.name for item in arguments}
+        constexpr_names = set(constexpr_parameters)
+        if runtime_names & constexpr_names:
+            raise ValueError("runtime and constexpr parameter names overlap")
+        if parameter_order and set(parameter_order) != (
+            runtime_names | constexpr_names
+        ):
+            raise ValueError(
+                "parameter_order must contain every runtime and constexpr "
+                "parameter exactly once"
+            )
+        unknown_constexprs = constexpr_names - set(values)
+        if unknown_constexprs:
+            raise ValueError(
+                "constexpr parameters have no schedule value: "
+                + ", ".join(sorted(unknown_constexprs))
+            )
         object.__setattr__(self, "schedule_values", values)
         object.__setattr__(self, "compiler_slots", slots)
         object.__setattr__(self, "aliases", aliases)
+        object.__setattr__(self, "arguments", arguments)
+        object.__setattr__(self, "grid", grid)
+        object.__setattr__(self, "grid_contract", grid_contract)
+        object.__setattr__(self, "parameter_order", parameter_order)
+        object.__setattr__(self, "constexpr_parameters", constexpr_parameters)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "schedule_values": dict(self.schedule_values),
             "compiler_slots": list(self.compiler_slots),
             "aliases": [item.to_json() for item in self.aliases],
+            "arguments": [item.to_json() for item in self.arguments],
+            "grid": list(self.grid),
+            "grid_contract": list(self.grid_contract),
+            "parameter_order": list(self.parameter_order),
+            "constexpr_parameters": list(self.constexpr_parameters),
         }
 
 
@@ -165,9 +287,11 @@ Boundary is Layer B and may contain only domains, accesses, broadcasts,
 aliases, effects, output_mappings and reductions. Every load/store access uses
 exactly these field names: access_id, kind, tensor, index_expression, optional
 predicate, optional fill_value, optional node_ref. Never emit a field named
-"fill". Every tiled reduction records node_ref, tile_axis and exactly one of
+"fill". Every tiled reduction records node_ref, tile_axis and at least one of
 identity or masked_contribution. Every effects entry uses exactly kind, target
 and optional node_ref; access details stay in accesses, not effects.
+Reduction tile_axis is a reduction dimension/index, never a C schedule slot
+name such as BLOCK_N.
 
 Cross-field rules:
 - every boundary.domains value is one complete string expression;
@@ -177,6 +301,13 @@ Cross-field rules:
   IntentIR tensor input;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
+- interface runtime parameters copy the trusted compiler-view argument order,
+  tensor/scalar kind, dtype and tensor rank exactly; interface.grid has the same
+  rank as the trusted concrete grid and copies grid_contract exactly;
+- the complete interface parameter order and constexpr parameter names copy the
+  trusted compiler view exactly;
+- compiler-view tensor shapes and scalar values describe one specialization;
+  keep runtime extents symbolic in J when the source has runtime extent params;
 - schedule declares every C key exactly once: source signature constexprs use
   kind constexpr, compiler_slots use kind compiler, and schedule.values copies
   the trusted compiler-view values exactly;
@@ -298,6 +429,134 @@ def extract_scrc_artifact(
                     "in schedule.values"
                 )
             if compiler_view is not None:
+                if compiler_view.parameter_order:
+                    actual_order = [
+                        item.name for item in artifact.interface.parameters
+                    ]
+                    if actual_order != list(compiler_view.parameter_order):
+                        raise ValueError(
+                            "interface parameter order differs from trusted "
+                            f"compiler view: {actual_order!r} != "
+                            f"{list(compiler_view.parameter_order)!r}"
+                        )
+                if compiler_view.constexpr_parameters:
+                    actual_constexprs = [
+                        item.name
+                        for item in artifact.interface.parameters
+                        if item.kind is ParameterKind.CONSTEXPR
+                    ]
+                    if actual_constexprs != list(
+                        compiler_view.constexpr_parameters
+                    ):
+                        raise ValueError(
+                            "interface constexpr parameters differ from "
+                            "trusted compiler view"
+                        )
+                if compiler_view.arguments:
+                    runtime_parameters = [
+                        item
+                        for item in artifact.interface.parameters
+                        if item.kind is not ParameterKind.CONSTEXPR
+                    ]
+                    expected_names = [
+                        item.name for item in compiler_view.arguments
+                    ]
+                    actual_names = [item.name for item in runtime_parameters]
+                    if actual_names != expected_names:
+                        raise ValueError(
+                            "interface runtime parameter order differs from "
+                            f"trusted compiler view: {actual_names!r} != "
+                            f"{expected_names!r}"
+                        )
+                    tensors = {
+                        tensor.name: tensor
+                        for tensor in [
+                            *artifact.j.intent.inputs,
+                            *artifact.j.intent.outputs,
+                        ]
+                    }
+                    scalar_extents = {
+                        item.name: int(item.value)
+                        for item in compiler_view.arguments
+                        if item.kind == "scalar"
+                        and isinstance(item.value, int)
+                        and not isinstance(item.value, bool)
+                    }
+                    for parameter, argument in zip(
+                        runtime_parameters,
+                        compiler_view.arguments,
+                        strict=True,
+                    ):
+                        pointer = parameter.kind in {
+                            ParameterKind.POINTER,
+                            ParameterKind.TENSOR,
+                        }
+                        if pointer != (argument.kind == "tensor"):
+                            raise ValueError(
+                                f"interface parameter {parameter.name!r} kind "
+                                "differs from trusted compiler view"
+                            )
+                        if _canonical_dtype(parameter.dtype) != _canonical_dtype(
+                            argument.dtype
+                        ):
+                            raise ValueError(
+                                f"interface parameter {parameter.name!r} dtype "
+                                "differs from trusted compiler view"
+                            )
+                        if argument.kind == "tensor":
+                            expected_rank = len(argument.shape)
+                            if parameter.rank != expected_rank:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} rank "
+                                    f"{parameter.rank!r} != {expected_rank}"
+                                )
+                            tensor = tensors.get(parameter.tensor_ref or "")
+                            if tensor is None or len(tensor.shape) != expected_rank:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    "tensor_ref rank differs from compiler view"
+                                )
+                            for declared, concrete in zip(
+                                tensor.shape, argument.shape, strict=True
+                            ):
+                                if isinstance(declared, str):
+                                    if declared not in scalar_extents:
+                                        raise ValueError(
+                                            f"J tensor {tensor.name!r} uses "
+                                            f"shape symbol {declared!r} absent "
+                                            "from compiler scalar arguments"
+                                        )
+                                    if scalar_extents[declared] != concrete:
+                                        raise ValueError(
+                                            f"J tensor {tensor.name!r} shape "
+                                            f"symbol {declared!r} binds to "
+                                            f"{scalar_extents[declared]}, not "
+                                            f"concrete extent {concrete}"
+                                        )
+                                elif int(declared) != concrete:
+                                    raise ValueError(
+                                        f"J tensor {tensor.name!r} static extent "
+                                        f"{declared} != {concrete}"
+                                    )
+                        elif parameter.rank not in (None, 0):
+                            raise ValueError(
+                                f"scalar parameter {parameter.name!r} rank must "
+                                "be absent or zero"
+                            )
+                if compiler_view.grid and len(artifact.interface.grid) != len(
+                    compiler_view.grid
+                ):
+                    raise ValueError(
+                        "interface.grid rank differs from trusted compiler view"
+                    )
+                if compiler_view.grid_contract and tuple(
+                    artifact.interface.grid
+                ) != tuple(compiler_view.grid_contract):
+                    raise ValueError(
+                        "interface.grid differs from trusted grid contract: "
+                        f"{artifact.interface.grid!r} != "
+                        f"{list(compiler_view.grid_contract)!r}"
+                    )
                 if dict(artifact.schedule.values) != dict(
                     compiler_view.schedule_values
                 ):
@@ -356,6 +615,7 @@ def extract_scrc_artifact(
 
 
 __all__ = [
+    "SCRCCompilerArgument",
     "SCRCCompilerView",
     "SCRCExtraction",
     "SCRCLiftAttempt",

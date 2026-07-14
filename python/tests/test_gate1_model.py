@@ -187,6 +187,30 @@ def test_artifact_strict_json_roundtrip() -> None:
     assert CompileCase.from_json_str(case.to_json_str()) == case
 
 
+def test_reduction_boundary_rejects_c_slot_as_tile_axis() -> None:
+    payload = _artifact().to_json()
+    payload["j"]["boundary"]["reductions"][0]["tile_axis"] = "BLOCK_N"
+
+    with pytest.raises(
+        SchemaError, match="tile_axis must not reference C schedule slot"
+    ):
+        Gate1Artifact.from_json(payload)
+
+
+def test_schedule_constexpr_must_exist_in_interface_signature() -> None:
+    payload = _artifact().to_json()
+    payload["interface"]["parameters"] = [
+        item
+        for item in payload["interface"]["parameters"]
+        if item["name"] != "BLOCK_N"
+    ]
+
+    with pytest.raises(
+        SchemaError, match="constexpr slots are absent from KernelInterface"
+    ):
+        Gate1Artifact.from_json(payload)
+
+
 def test_unknown_keys_are_rejected_at_every_closed_boundary() -> None:
     payload = _artifact().to_json()
     payload["surprise"] = True
@@ -241,21 +265,21 @@ def test_masked_view_uses_consistent_opaque_identifiers() -> None:
         "row_offset * N + column_offset",
     ):
         assert secret not in masked_j_and_plan
-    assert view["j"]["kernel_id"] == "k0"
+    assert view["j"]["kernel_id"] == "scrc_k0"
     assert view["plan"]["steps"][2]["node_ref"] == "n0"
     assert view["j"]["boundary"]["accesses"][0]["access_id"] == "a0"
-    # ABI and C declarations stay reusable by the exact same CompileCase;
-    # tensor_ref is the opaque bridge back into masked J.
-    assert view["interface"]["kernel_id"] == "row_sum_kernel"
-    assert view["interface"]["function_name"] == "row_sum_impl"
+    # ABI/C structure remains reusable, but source spellings are opaque and the
+    # replay adapter restores them deterministically before compilation.
+    assert view["interface"]["kernel_id"] == "scrc_k0"
+    assert view["interface"]["function_name"] == "scrc_k0"
     assert [item["name"] for item in view["interface"]["parameters"]] == [
-        "input_tensor", "output_tensor", "M", "N", "BLOCK_N",
+        "scrc_p0", "scrc_p1", "scrc_p2", "scrc_p3", "scrc_p4",
     ]
-    assert view["interface"]["grid"] == ["ceil_div(M, 1)"]
-    assert view["interface"]["compiler_slots"] == ["num_warps"]
+    assert view["interface"]["grid"] == ["ceil_div(scrc_p2, 1)"]
+    assert view["interface"]["compiler_slots"] == ["scrc_c0"]
     assert "do_not_specialize" not in view["interface"]
     assert [slot["name"] for slot in view["schedule"]["slots"]] == [
-        "BLOCK_N", "num_warps",
+        "scrc_p4", "scrc_c0",
     ]
     assert "values" not in view["schedule"]
     assert view["interface"]["parameters"][0]["dtype"] == "f32"
@@ -329,9 +353,12 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "BLOCK_N" in normal
     assert "128" not in normal
     assert "tl.sum" in normal  # concrete API names live in selected system rule cards
-    assert "row_sum_kernel" in masked  # ABI identity remains executable
-    assert "row_sum_impl" in masked
-    assert "BLOCK_N" in masked
+    assert "row_sum_kernel" not in masked
+    assert "row_sum_impl" not in masked
+    assert "BLOCK_N" not in masked
+    assert '"function_name": "scrc_k0"' in masked
+    assert "scrc_p4" in masked
+    assert "tl.sum" in masked  # masked-J retains the same pi/rule-card channel
     assert "reduce_sum_node" not in masked
     assert "ABLATION RUN" in masked
 

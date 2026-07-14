@@ -47,8 +47,10 @@ Atomic ops (each is one JSON object in a "body" list):
                 cos,sin,tan,exp2,atan,erf,isnan,logical_not}.
                (isnan produces an i1 tensor -> feeds select; logical_not is i1->i1.)
      {"op":"map_unary","result":R,"operands":[A],"attrs":{"fn":F}}
-  reduce     : along axes, KEEPDIMS (result keeps reduced dims as size 1 so it
-               stays broadcastable). fn in {sum,mean,max,min,prod,any,all}.
+  reduce     : along axes. The declared result shape chooses either KEEPDIMS
+               (reduced dims become size 1, for broadcast consumers) or
+               COLLAPSED (reduced dims are removed, for an external ABI such as
+               row-sum [M,N] -> [M]). fn in {sum,mean,max,min,prod,any,all}.
      {"op":"reduce","result":R,"operands":[A],"attrs":{"fn":F,"axes":[i,...],
        "assoc":"associative"|"float_nondeterministic"}}
   const      : a literal value, splat over an optional shape (default scalar []).
