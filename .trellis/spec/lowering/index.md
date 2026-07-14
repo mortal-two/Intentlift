@@ -115,6 +115,13 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
   `91.181175` 读回为 `91.1812`。CPU wrapper 现在用一个可 bufferize 的
   `linalg.generic` 对输出逐元素 `arith.bitcast f32→i32`，打印 i32 位模式并按
   IEEE-754 原位恢复；rank-0 与任意 rank f32 输出均保持精确位值。
+- CPU main 的 f32 dense 输入也统一使用 MLIR 十六进制位字面量；普通数值不再受
+  `.8g` 文本舍入，`-0.0/±inf/NaN` 可以合法且逐位注入。Gate2 的 IEEE-special
+  维度因此走的仍是真实 Intent→Linalg→LLVM 路径。
+- 通用 `ReduceLowering` 的 max/min 已从传播 NaN 的 `arith.maximumf/minimumf`
+  改为 `arith.maxnumf/minnumf`，与 Triton reduction TTIR 及 GPU row-reduction
+  一致。修复由真实 max Gate2 矩阵的 `source=replay=+inf, lowering=NaN` 三方模式
+  触发，并由 max/min IEEE-special GPU+CPU 回归固定。
 
 边界仍明确：当前通用 CPU `convert-intent-to-linalg` 没有 iota/gather lowering，
 integer output 也没有通用 read-back。因此 arange/trace/eye 仍是 queued 能力缺口，

@@ -1,6 +1,7 @@
 """Reusable real SCRC lift -> Gate1 -> Gate2 integration harness.
 
-The harness is data-driven by one concrete compile/execution specialization.
+Gate1 remains anchored to one reviewed compile specialization.  Gate2 can run
+either that execution contract or a strict declarative shape/value/seed matrix.
 It does not add a verifier or an alternate correctness path: all decisions are
 still made by the production SCRC lifter, Gate1, and Gate2 implementations.
 """
@@ -45,6 +46,7 @@ from intentir.verify.gate2 import (
     Gate2Case,
     Gate2Runner,
     Gate2Status,
+    Gate2Suite,
     InputDistribution,
     Lower2CSpec,
     TensorInputSpec,
@@ -79,6 +81,44 @@ def _unwrap_python_function(function: Any) -> Any:
 
 
 @dataclass(frozen=True)
+class Gate2ShapeProfile:
+    profile_id: str
+    tensor_shapes: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    scalar_values: Mapping[str, int | float | bool] = field(default_factory=dict)
+    grid: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.profile_id:
+            raise ValueError("Gate2 shape profile_id must not be empty")
+        if self.grid is not None and (
+            not 1 <= len(self.grid) <= 3
+            or any(int(extent) <= 0 for extent in self.grid)
+        ):
+            raise ValueError(
+                "Gate2 shape profile grid must be one to three positive extents"
+            )
+
+
+@dataclass(frozen=True)
+class Gate2ValueProfile:
+    profile_id: str
+    distributions: Mapping[str, InputDistribution] = field(default_factory=dict)
+    scale: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.profile_id:
+            raise ValueError("Gate2 value profile_id must not be empty")
+        if self.scale is not None and (
+            isinstance(self.scale, bool)
+            or not np.isfinite(self.scale)
+            or self.scale < 0
+        ):
+            raise ValueError(
+                "Gate2 value profile scale must be finite and non-negative"
+            )
+
+
+@dataclass(frozen=True)
 class LiveKernelCase:
     name: str
     function: Any
@@ -93,6 +133,8 @@ class LiveKernelCase:
     input_distributions: Mapping[str, InputDistribution] = field(
         default_factory=dict
     )
+    gate2_shape_profiles: tuple[Gate2ShapeProfile, ...] = ()
+    gate2_value_profiles: tuple[Gate2ValueProfile, ...] = ()
 
     @property
     def function_name(self) -> str:
@@ -390,7 +432,12 @@ def _symbolic_dims(artifact, case: LiveKernelCase) -> dict[str, int]:
 
 
 def _gate2_case(
-    artifact, case: LiveKernelCase, seed: int
+    artifact,
+    case: LiveKernelCase,
+    seed: int,
+    *,
+    case_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> Gate2Case:
     rng = np.random.default_rng(seed)
     runtime = _runtime_by_name(case)
@@ -471,13 +518,125 @@ def _gate2_case(
         output_keys[0],
     )
     return Gate2Case(
-        f"{case.name}.live",
+        case_id or f"{case.name}.live",
         values,
         triton,
         lowering,
         tuple(output_keys),
         {output_keys[0]: case.tolerance},
+        dict(metadata or {}),
     )
+
+
+def _apply_gate2_shape_profile(
+    case: LiveKernelCase, profile: Gate2ShapeProfile
+) -> LiveKernelCase:
+    arguments = {argument.name: argument for argument in case.arguments}
+    unknown = sorted(
+        (set(profile.tensor_shapes) | set(profile.scalar_values)) - set(arguments)
+    )
+    if unknown:
+        raise ValueError(
+            f"Gate2 shape profile {profile.profile_id!r} has unknown argument(s): "
+            + ", ".join(unknown)
+        )
+    overlap = sorted(set(profile.tensor_shapes) & set(profile.scalar_values))
+    if overlap:
+        raise ValueError(
+            f"Gate2 shape profile {profile.profile_id!r} has tensor/scalar "
+            "override overlap: " + ", ".join(overlap)
+        )
+
+    updated: list[SCRCCompilerArgument] = []
+    for argument in case.arguments:
+        if argument.name in profile.tensor_shapes:
+            if argument.kind != "tensor":
+                raise ValueError(
+                    f"Gate2 shape profile tensor override {argument.name!r} "
+                    "does not name a tensor argument"
+                )
+            updated.append(
+                replace(argument, shape=profile.tensor_shapes[argument.name])
+            )
+        elif argument.name in profile.scalar_values:
+            if argument.kind != "scalar":
+                raise ValueError(
+                    f"Gate2 shape profile scalar override {argument.name!r} "
+                    "does not name a scalar argument"
+                )
+            updated.append(
+                replace(argument, value=profile.scalar_values[argument.name])
+            )
+        else:
+            updated.append(argument)
+    return replace(
+        case,
+        arguments=tuple(updated),
+        grid=case.grid if profile.grid is None else profile.grid,
+    )
+
+
+def _apply_gate2_value_profile(
+    case: LiveKernelCase, profile: Gate2ValueProfile
+) -> LiveKernelCase:
+    argument_names = {argument.name for argument in case.arguments}
+    unknown = sorted(set(profile.distributions) - argument_names)
+    if unknown:
+        raise ValueError(
+            f"Gate2 value profile {profile.profile_id!r} has unknown argument(s): "
+            + ", ".join(unknown)
+        )
+    distributions = dict(case.input_distributions)
+    distributions.update(
+        {
+            name: InputDistribution(distribution)
+            for name, distribution in profile.distributions.items()
+        }
+    )
+    return replace(
+        case,
+        input_scale=case.input_scale if profile.scale is None else profile.scale,
+        input_distributions=distributions,
+    )
+
+
+def _gate2_suite(
+    artifact,
+    case: LiveKernelCase,
+    seeds: tuple[int, ...],
+) -> Gate2Suite:
+    if not seeds or len(seeds) != len(set(seeds)):
+        raise ValueError("Gate2 matrix seeds must be non-empty and unique")
+    shapes = case.gate2_shape_profiles or (Gate2ShapeProfile("contract"),)
+    values = case.gate2_value_profiles or (Gate2ValueProfile("contract"),)
+    if len({profile.profile_id for profile in shapes}) != len(shapes):
+        raise ValueError("Gate2 shape profile_id values must be unique")
+    if len({profile.profile_id for profile in values}) != len(values):
+        raise ValueError("Gate2 value profile_id values must be unique")
+
+    matrix: list[Gate2Case] = []
+    for shape_profile in shapes:
+        shaped = _apply_gate2_shape_profile(case, shape_profile)
+        for value_profile in values:
+            profiled = _apply_gate2_value_profile(shaped, value_profile)
+            for seed in seeds:
+                matrix.append(
+                    _gate2_case(
+                        artifact,
+                        profiled,
+                        seed,
+                        case_id=(
+                            f"{case.name}.{shape_profile.profile_id}."
+                            f"{value_profile.profile_id}.seed{seed}"
+                        ),
+                        metadata={
+                            "shape_profile": shape_profile.profile_id,
+                            "value_profile": value_profile.profile_id,
+                            "seed": seed,
+                        },
+                    )
+                )
+    return Gate2Suite(f"{case.name}.matrix", tuple(matrix))
 
 
 def _execution_json(result) -> dict[str, Any]:
@@ -501,6 +660,7 @@ def _gate2_evidence_json(result) -> dict[str, Any]:
     return {
         "case_id": result.case_id,
         "status": result.status.value,
+        "metadata": dict(result.metadata),
         "source": _execution_json(result.source),
         "replay": _execution_json(result.replay),
         "lowering": _execution_json(result.lowering),
@@ -513,6 +673,16 @@ def _gate2_evidence_json(result) -> dict[str, Any]:
         "replay_lowering": None
         if result.replay_lowering is None
         else asdict(result.replay_lowering),
+    }
+
+
+def _gate2_suite_evidence_json(result) -> dict[str, Any]:
+    return {
+        "suite_id": result.suite_id,
+        "passed": result.passed,
+        "status_counts": result.status_counts,
+        "failed_case_ids": list(result.failed_case_ids),
+        "cases": [_gate2_evidence_json(case) for case in result.cases],
     }
 
 
@@ -595,6 +765,59 @@ def _lift_attempt_evidence(item) -> dict[str, Any]:
     }
 
 
+def _selected_gate2_seeds(args: argparse.Namespace) -> tuple[int, ...]:
+    requested = tuple(getattr(args, "gate2_seeds", ()) or ())
+    if requested:
+        if any(
+            isinstance(seed, bool) or not isinstance(seed, int)
+            for seed in requested
+        ):
+            raise TypeError("--gate2-seed values must be integers")
+        if len(requested) != len(set(requested)):
+            raise ValueError("--gate2-seed values must be unique")
+        return requested
+    if getattr(args, "gate2_matrix", False):
+        return (args.seed, args.seed + 1, args.seed + 2)
+    return (args.seed,)
+
+
+def _gate2_matrix_policy_json(
+    case: LiveKernelCase,
+    *,
+    enabled: bool,
+    seeds: tuple[int, ...],
+) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "seeds": list(seeds),
+        "shape_profiles": [
+            {
+                "profile_id": profile.profile_id,
+                "tensor_shapes": {
+                    name: list(shape)
+                    for name, shape in sorted(profile.tensor_shapes.items())
+                },
+                "scalar_values": dict(sorted(profile.scalar_values.items())),
+                "grid": None if profile.grid is None else list(profile.grid),
+            }
+            for profile in case.gate2_shape_profiles
+        ],
+        "value_profiles": [
+            {
+                "profile_id": profile.profile_id,
+                "distributions": {
+                    name: InputDistribution(distribution).value
+                    for name, distribution in sorted(
+                        profile.distributions.items()
+                    )
+                },
+                "scale": profile.scale,
+            }
+            for profile in case.gate2_value_profiles
+        ],
+    }
+
+
 def run_case(
     case: LiveKernelCase,
     args: argparse.Namespace,
@@ -610,6 +833,8 @@ def run_case(
     source_text = case.source_text
     source_encoded = source_text.encode("utf-8")
     registry = default_triton_rule_registry()
+    gate2_matrix_enabled = bool(getattr(args, "gate2_matrix", False))
+    gate2_seeds = _selected_gate2_seeds(args)
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
@@ -626,6 +851,9 @@ def run_case(
             "scale": case.input_scale,
             "tolerance": asdict(case.tolerance),
         },
+        "gate2_matrix_policy": _gate2_matrix_policy_json(
+            case, enabled=gate2_matrix_enabled, seeds=gate2_seeds
+        ),
         "source": {
             "path": str(case.source_path),
             "function": case.function_name,
@@ -735,23 +963,51 @@ def run_case(
             )
             _progress("gate2_diagnostic_start", kernel=case.name)
             try:
-                diagnostic = Gate2Runner().run(
-                    case.kernel_source,
-                    replay,
-                    _gate2_case(artifact, case, args.seed),
-                )
-                report["gate2_diagnostic"] = {
-                    "kind": "offline_gate2_for_gate1_rejected_sample",
-                    "gate1_status": gate1.status.value,
-                    **_gate2_evidence_json(diagnostic),
-                }
-                _progress(
-                    "gate2_diagnostic_complete",
-                    kernel=case.name,
-                    status=diagnostic.status.value,
-                )
+                runner = Gate2Runner()
+                if gate2_matrix_enabled:
+                    diagnostic_suite = runner.run_suite(
+                        case.kernel_source,
+                        replay,
+                        _gate2_suite(artifact, case, gate2_seeds),
+                    )
+                    report["gate2_diagnostic_suite"] = {
+                        "kind": "offline_gate2_for_gate1_rejected_sample",
+                        "gate1_status": gate1.status.value,
+                        **_gate2_suite_evidence_json(diagnostic_suite),
+                    }
+                    _progress(
+                        "gate2_diagnostic_complete",
+                        kernel=case.name,
+                        status=(
+                            "gate2_pass"
+                            if diagnostic_suite.passed
+                            else "gate2_suite_failed"
+                        ),
+                        cases=len(diagnostic_suite.cases),
+                    )
+                else:
+                    diagnostic = runner.run(
+                        case.kernel_source,
+                        replay,
+                        _gate2_case(artifact, case, args.seed),
+                    )
+                    report["gate2_diagnostic"] = {
+                        "kind": "offline_gate2_for_gate1_rejected_sample",
+                        "gate1_status": gate1.status.value,
+                        **_gate2_evidence_json(diagnostic),
+                    }
+                    _progress(
+                        "gate2_diagnostic_complete",
+                        kernel=case.name,
+                        status=diagnostic.status.value,
+                    )
             except Exception as exc:
-                report["gate2_diagnostic"] = {
+                key = (
+                    "gate2_diagnostic_suite"
+                    if gate2_matrix_enabled
+                    else "gate2_diagnostic"
+                )
+                report[key] = {
                     "kind": "offline_gate2_for_gate1_rejected_sample",
                     "gate1_status": gate1.status.value,
                     "status": "setup_failed",
@@ -775,7 +1031,22 @@ def run_case(
     }
 
     _progress("gate2_start", kernel=case.name)
-    gate2 = Gate2Runner().run(
+    runner = Gate2Runner()
+    if gate2_matrix_enabled:
+        gate2_suite = runner.run_suite(
+            case.kernel_source,
+            replay,
+            _gate2_suite(artifact, case, gate2_seeds),
+        )
+        report["gate2_suite"] = _gate2_suite_evidence_json(gate2_suite)
+        _progress(
+            "gate2_complete",
+            kernel=case.name,
+            status="gate2_pass" if gate2_suite.passed else "gate2_suite_failed",
+            cases=len(gate2_suite.cases),
+        )
+        return (0 if gate2_suite.passed else 4), report
+    gate2 = runner.run(
         case.kernel_source,
         replay,
         _gate2_case(artifact, case, args.seed),
@@ -809,6 +1080,10 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser.add_argument("--num-warps", type=int, default=4)
     parser.add_argument("--num-stages", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument("--gate2-matrix", action="store_true")
+    parser.add_argument(
+        "--gate2-seed", dest="gate2_seeds", action="append", type=int
+    )
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--rewrite-repairs", type=int, default=2)
     parser.add_argument("--report")
@@ -827,6 +1102,7 @@ def main(default_kernel: str = "add") -> int:
         "lift": report.get("lift", {}).get("ok"),
         "gate1": report.get("gate1", {}).get("status"),
         "gate2": report.get("gate2", {}).get("status"),
+        "gate2_suite": report.get("gate2_suite", {}).get("passed"),
         "report": args.report,
     }
     print(json.dumps(summary, ensure_ascii=False))

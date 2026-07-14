@@ -25,11 +25,19 @@ from intentir.extraction.lifters.scrc import (
 from intentir.verify.gate1.compiler import TritonCompiler
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.rules import default_triton_rule_registry
-from intentir.verify.gate2 import InputDistribution, Tolerance
+from intentir.verify.gate2 import (
+    InputDistribution,
+    Tolerance,
+    boundary_1d_extents,
+)
 
 from scrc_live_e2e import (
+    Gate2ShapeProfile,
+    Gate2ValueProfile,
     LiveKernelCase,
     _compile_case,
+    _gate2_matrix_policy_json,
+    _selected_gate2_seeds,
     _write_report,
     run_case,
 )
@@ -258,6 +266,15 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ("BLOCK_SIZE",),
             1.0,
             Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=tuple(
+                Gate2ShapeProfile(
+                    boundary.label,
+                    {"output_ptr": (boundary.extent,)},
+                    {"n_elements": boundary.extent},
+                    ((boundary.extent + block - 1) // block,),
+                )
+                for boundary in boundary_1d_extents(block)
+            ),
         )
 
     if name == "fg_sum":
@@ -372,6 +389,37 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ("BLOCK_MID",),
             32.0,
             Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=(
+                Gate2ShapeProfile(
+                    "one", {"mid": (1,)}, {"mid_size": 1}
+                ),
+                Gate2ShapeProfile(
+                    "block_minus_one",
+                    {"mid": (block - 1,)},
+                    {"mid_size": block - 1},
+                ),
+                Gate2ShapeProfile(
+                    "block", {"mid": (block,)}, {"mid_size": block}
+                ),
+            ),
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "normal", {"mid": InputDistribution.NORMAL}, 32.0
+                ),
+                Gate2ValueProfile(
+                    "uniform", {"mid": InputDistribution.UNIFORM}, 32.0
+                ),
+                Gate2ValueProfile(
+                    "large_dynamic",
+                    {"mid": InputDistribution.LARGE_DYNAMIC},
+                    1.0,
+                ),
+                Gate2ValueProfile(
+                    "ieee_special",
+                    {"mid": InputDistribution.IEEE_SPECIAL},
+                    1.0,
+                ),
+            ),
         )
 
     if name == "fg_prod":
@@ -443,6 +491,8 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         lift_repairs=args.lift_repairs,
         rewrite_repairs=args.rewrite_repairs,
         diagnose_rejected=args.diagnose_rejected,
+        gate2_matrix=args.gate2_matrix,
+        gate2_seeds=args.gate2_seeds,
     )
 
 
@@ -452,7 +502,7 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 2,
+        "schema": 3,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
@@ -470,6 +520,11 @@ def _batch_identity(
             "scale": case.input_scale,
             "tolerance": asdict(case.tolerance),
         },
+        "gate2_matrix_policy": _gate2_matrix_policy_json(
+            case,
+            enabled=bool(args.gate2_matrix),
+            seeds=_selected_gate2_seeds(args),
+        ),
         "source_sha256": source_sha,
         "compiler_view": case.compiler_view().to_json(),
         "rule_registry_digest": registry.digest,
@@ -502,6 +557,9 @@ def _result_status(report: dict[str, Any]) -> str:
     gate1 = report.get("gate1", {}).get("status")
     if gate1 != "replay_closed":
         return gate1 or "gate1_missing"
+    suite = report.get("gate2_suite")
+    if isinstance(suite, dict):
+        return "gate2_pass" if suite.get("passed") else "gate2_suite_failed"
     return report.get("gate2", {}).get("status") or "gate2_missing"
 
 
@@ -564,6 +622,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--effort", default="xhigh")
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument("--gate2-matrix", action="store_true")
+    parser.add_argument(
+        "--gate2-seed", dest="gate2_seeds", action="append", type=int
+    )
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--rewrite-repairs", type=int, default=2)
     parser.add_argument("--out-dir", type=Path, default=Path("/tmp/scrc_heldout_batch"))

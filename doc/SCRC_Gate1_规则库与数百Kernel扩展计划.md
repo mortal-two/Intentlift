@@ -215,6 +215,10 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
   `LEAKAGE_REJECTED`；
 - 九个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
   `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
+- Gate2 已从单 case 扩成严格 suite；首个 `fg_min` live matrix 覆盖固定 C 下
+  `{1,63,64}` 三种 shape、四种值域和三个 seed，共 36 个三方 case 全部零误差
+  PASS。该结果增强行为对照，但不把单一 Gate1 compile specialization 偷换成
+  “整个 Kernel 已结构闭合”；
 - `fg_dot/fg_addr` 是新增规则卡的增长样本；`fg_prod` 只补齐既有 reduce 卡的
   已规划 prod 映射，其余六例没有新增卡并复用了已有 19 张卡；这开始提供冻结后
   复用证据，但仍不足以报告总体准确率；

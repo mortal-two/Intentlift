@@ -7,7 +7,7 @@
 // CHECK: linalg.fill
 // CHECK: linalg.generic
 // CHECK-SAME: iterator_types = ["parallel", "reduction"]
-// CHECK: arith.maximumf
+// CHECK: arith.maxnumf
 // CHECK: tensor.expand_shape
 func.func @rmax(%x: tensor<4x8xf32>) -> tensor<4x1xf32> {
   %m = intent.reduce %x {fn = "max", axes = [1], assoc = "associative"} : (tensor<4x8xf32>) -> tensor<4x1xf32>
@@ -40,7 +40,7 @@ func.func @rsum(%x: tensor<4x8xf32>) -> tensor<4xf32> {
 // CHECK: linalg.fill
 // CHECK: linalg.generic
 // CHECK-SAME: iterator_types = ["parallel", "reduction", "reduction"]
-// CHECK: arith.maximumf
+// CHECK: arith.maxnumf
 // CHECK: tensor.collapse_shape %{{.*}} {{\[\[}}0, 1], [2]]
 func.func @rall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
   %m = intent.reduce %x {fn = "max", axes = [0, 1], assoc = "associative"} : (tensor<4x8xf32>) -> tensor<1x1xf32>
@@ -78,4 +78,25 @@ func.func @rmeanall(%x: tensor<4x8xf32>) -> tensor<1x1xf32> {
 func.func @rscalar(%x: tensor<37xf32>) -> tensor<f32> {
   %s = intent.reduce %x {fn = "sum", axes = [0], assoc = "float_nondeterministic"} : (tensor<37xf32>) -> tensor<f32>
   return %s : tensor<f32>
+}
+
+// -----
+
+// Min uses minnum rather than minimum so the production CPU leg matches the
+// Triton reduction combiner's non-NaN operand preference.
+// CHECK-LABEL: func.func @rmin
+// CHECK: arith.minnumf
+func.func @rmin(%x: tensor<17xf32>) -> tensor<f32> {
+  %m = intent.reduce %x {fn = "min", axes = [0], assoc = "associative"} : (tensor<17xf32>) -> tensor<f32>
+  return %m : tensor<f32>
+}
+
+// -----
+
+// Product remains a scalar multiply reduction.
+// CHECK-LABEL: func.func @rprod
+// CHECK: arith.mulf
+func.func @rprod(%x: tensor<17xf32>) -> tensor<f32> {
+  %p = intent.reduce %x {fn = "prod", axes = [0], assoc = "float_nondeterministic"} : (tensor<17xf32>) -> tensor<f32>
+  return %p : tensor<f32>
 }

@@ -57,16 +57,10 @@ def _dense(arr: np.ndarray, element_type: str = "f32") -> str:
         a = np.asarray(arr, dtype=np.float32)
 
         def scalar(value: float) -> str:
-            text = f"{float(value):.8g}"
-            if "e" in text or "E" in text:
-                marker = "e" if "e" in text else "E"
-                mantissa, exponent = text.split(marker, 1)
-                if "." not in mantissa:
-                    mantissa += ".0"
-                return f"{mantissa}e{exponent}"
-            if "." not in text and text not in {"inf", "-inf", "nan"}:
-                text += ".0"
-            return text
+            # Hex float attributes preserve every f32 input bit exactly and
+            # are also the MLIR spelling accepted for +/-inf, NaN and -0.0.
+            bits = np.asarray(value, dtype=np.float32).view(np.uint32).item()
+            return f"0x{bits:08X}"
 
     if a.ndim == 0:
         return scalar(a.item())

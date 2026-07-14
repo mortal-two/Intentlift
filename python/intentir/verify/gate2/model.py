@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping
@@ -67,16 +68,47 @@ class Gate2Result:
     source_replay: PairwiseAgreement | None = None
     source_lowering: PairwiseAgreement | None = None
     replay_lowering: PairwiseAgreement | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
         return self.status is Gate2Status.PASS
 
 
+@dataclass(frozen=True)
+class Gate2SuiteResult:
+    suite_id: str
+    cases: tuple[Gate2Result, ...]
+
+    def __post_init__(self) -> None:
+        if not self.suite_id:
+            raise ValueError("Gate2 suite_id must not be empty")
+        if not self.cases:
+            raise ValueError("Gate2 suite requires at least one case result")
+        case_ids = [case.case_id for case in self.cases]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("Gate2 suite result contains duplicate case_id values")
+
+    @property
+    def passed(self) -> bool:
+        return all(case.passed for case in self.cases)
+
+    @property
+    def failed_case_ids(self) -> tuple[str, ...]:
+        return tuple(case.case_id for case in self.cases if not case.passed)
+
+    @property
+    def status_counts(self) -> dict[str, int]:
+        return dict(
+            sorted(Counter(case.status.value for case in self.cases).items())
+        )
+
+
 __all__ = [
     "ExecutionResult",
     "Gate2Result",
     "Gate2Status",
+    "Gate2SuiteResult",
     "OutputAgreement",
     "PairwiseAgreement",
     "Tolerance",

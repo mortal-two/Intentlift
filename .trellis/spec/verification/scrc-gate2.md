@@ -59,8 +59,17 @@ production lowering 执行腿。
 `python/intentir/verify/gate2/inputs.py` 提供显式、确定性的 normal、uniform、
 positive、near-one、large-dynamic 与 IEEE-special tensor 生成。真实中间-stage
 Kernel 必须按其合法输入域选分布，例如 L2 final 的 partial sum 非负，prod final
-用 near-one 避免普遍下溢。当前模块和单例 live wiring 已完成；完整
-shape×value×seed matrix 仍待继续接入，不能只凭分布生成器宣称 Phase 3 完成。
+用 near-one 避免普遍下溢。`InputCaseTemplate × seeds` 生成稳定 case id 与输入
+metadata；`Gate2Suite` 完整运行所有 case，只有每个子 case 都是 `GATE2_PASS`
+时 suite 才通过，不能用平均误差或多数票掩盖一个边界失败。
+
+live/batch 的 `--gate2-matrix` 已接入这一严格聚合；未显式给 seed 时使用主 seed
+及其后两个整数。matrix enable、shape/value profiles、seeds、distribution、scale
+和 tolerance 全部进入 batch identity。2026-07-15 首个真实矩阵为 FlagGems
+`min_kernel_2`：固定源 C `BLOCK_MID=64` 下，shape `{1,63,64}` × value
+`{normal,uniform,large_dynamic,IEEE-special}` × 3 seeds，共 36 个 source/replay/
+Lower2C case，全部 PASS 且三对最大误差均为 0。该矩阵仍是 Gate1-rejected 样本的
+9.4 离线对照，不覆盖 Gate1 verdict。
 
 ## 当前实现
 
@@ -69,6 +78,7 @@ shape×value×seed matrix 仍待继续接入，不能只凭分布生成器宣称
 - source/replay 实际拆分执行已实现；
 - production lowering 执行已实现；
 - 三方 tolerance 比较与机械归属已实现；
+- `Gate2Suite` 的严格全 case 聚合、逐 case metadata/status/error 保存已实现；
 - `python/tests/test_gate2.py` 已真实跑通 add、row-sum、softmax、RMSNorm、matmul、
   FlagGems dot、FlagGems ones、FlagGems mean-final 以及 FlagGems
   max/min/prod/L2-final 的
@@ -96,6 +106,13 @@ masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执�
 - Lower2C 输出不再经有限精度的 `printMemrefF32` 十进制文本读回；CPU wrapper
   使用可 bufferize 的逐元素 f32→i32 bitcast 打印精确 IEEE-754 位模式，再恢复
   f32。max/min 的零容差三方比较因此不会被文本舍入伪造 divergence。
+- Lower2C 输入 dense literal 同样改为 f32 十六进制位模式，因而能精确注入普通
+  数值、`-0.0`、`±inf` 与 NaN；不再用非法的 `inf/nan` 文本或 8 位十进制近似。
+- 通用 `ReduceLowering` 的 max/min combiner 使用 `arith.maxnumf/minnumf`，与
+  Triton TTIR 和项目 GPU row-reduction 的 NaN 行为一致。真实 max 矩阵最初曾
+  机械归属为 `LOWERING_DIVERGED`（source/replay=`+inf`，lowering=NaN），修复后
+  normal/uniform/large-dynamic/IEEE-special × 3 seeds 全部通过；min 的
+  IEEE-special 回归也输出 `-inf`。
 - `reduce(fn=prod)`、`reduce(max/min)` 与 `sqrt(reduce(sum))` 的 rank-0 final-stage
   已经在真实 FlagGems source/replay/lowering 三腿上执行通过。
 

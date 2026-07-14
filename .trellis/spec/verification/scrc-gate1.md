@@ -146,6 +146,14 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
 PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端证据。
 
+Gate2 现已能在一个已闭合 replay 上执行严格 shape/value/seed suite，但这不等于
+Gate1 已完成多 specialization 结构闭合：当前正式 Gate1 verdict 仍锚定每个
+`LiveKernelCase` 的一个 reviewed source/replay compile profile。若要把 Gate1
+升级为多 C/多 specialization 的硬门禁，需要单独定义 source/replay TTIR 的逐
+profile 聚合和 masked-J 规则；在主方案未审批前，不用 Gate2 matrix 反向改写
+Gate1 verdict。候选条件与最小实现范围记录在
+`doc/SCRC_Gate1_多Specialization门禁_计划外候选报告_2026-07-15.md`。
+
 2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
 RMSNorm、matmul、FlagGems dot 和 FlagGems addr 的 normal source-blind replay
 以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final

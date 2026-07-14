@@ -4,8 +4,11 @@ import numpy as np
 import pytest
 
 from intentir.verify.gate2 import (
+    InputCaseTemplate,
     InputDistribution,
     TensorInputSpec,
+    boundary_1d_extents,
+    generate_input_matrix,
     generate_tensor_input,
 )
 
@@ -80,4 +83,76 @@ def test_gate2_input_spec_rejects_ambiguous_or_invalid_requests() -> None:
         generate_tensor_input(
             TensorInputSpec((4,), "i32", InputDistribution.IEEE_SPECIAL),
             seed=43,
+        )
+
+
+def test_gate2_boundary_extent_axis_matches_scrc_shape_requirements() -> None:
+    extents = boundary_1d_extents(64)
+
+    assert [(item.label, item.extent) for item in extents] == [
+        ("one", 1),
+        ("block_minus_one", 63),
+        ("block", 64),
+        ("block_plus_one", 65),
+        ("non_divisible", 131),
+        ("far_multitile", 529),
+    ]
+
+
+def test_gate2_input_matrix_expands_templates_by_seed_with_metadata() -> None:
+    templates = (
+        InputCaseTemplate(
+            "tail.normal",
+            {
+                "X": TensorInputSpec(
+                    (65,), "f32", InputDistribution.NORMAL, 0.5
+                )
+            },
+            {"N": 65},
+            {"shape_profile": "block_plus_one"},
+        ),
+        InputCaseTemplate(
+            "tail.large",
+            {
+                "X": TensorInputSpec(
+                    (65,), "f32", InputDistribution.LARGE_DYNAMIC, 1.0
+                )
+            },
+            {"N": 65},
+        ),
+    )
+
+    matrix = generate_input_matrix(templates, (7, 11, 13))
+
+    assert len(matrix) == 6
+    assert matrix[0].case_id == "tail.normal.seed7"
+    assert matrix[-1].case_id == "tail.large.seed13"
+    assert matrix[0].values["N"] == 65
+    assert matrix[0].metadata["shape_profile"] == "block_plus_one"
+    assert matrix[0].metadata["tensors"]["X"] == {
+        "shape": [65],
+        "dtype": "f32",
+        "distribution": "normal",
+        "scale": 0.5,
+    }
+    repeated = generate_input_matrix(templates, (7, 11, 13))
+    np.testing.assert_array_equal(
+        matrix[0].values["X"], repeated[0].values["X"]
+    )
+
+
+def test_gate2_input_matrix_rejects_duplicate_axes_and_overlapping_keys() -> None:
+    template = InputCaseTemplate(
+        "normal",
+        {"X": TensorInputSpec((4,), "f32")},
+    )
+    with pytest.raises(ValueError, match="template_id"):
+        generate_input_matrix((template, template), (1,))
+    with pytest.raises(ValueError, match="seeds must be unique"):
+        generate_input_matrix((template,), (1, 1))
+    with pytest.raises(ValueError, match="overlap"):
+        InputCaseTemplate(
+            "bad",
+            {"X": TensorInputSpec((4,), "f32")},
+            {"X": 4},
         )

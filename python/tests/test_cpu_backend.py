@@ -117,3 +117,33 @@ def test_cpu_runner_reads_back_exact_f32_bits() -> None:
 
     assert actual.shape == ()
     assert actual.view(np.uint32) == value.view(np.uint32)
+
+
+def test_cpu_runner_accepts_and_preserves_ieee_special_input_bits() -> None:
+    from intentir.backend.cpu import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": "identity_ieee",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+    values = np.asarray(
+        [0.0, -0.0, np.inf, -np.inf, np.nan], dtype=np.float32
+    )
+
+    actual = run_on_cpu(fn, {"N": len(values)}, [values])
+
+    np.testing.assert_array_equal(
+        actual.view(np.uint32), values.view(np.uint32)
+    )

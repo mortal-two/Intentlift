@@ -17,6 +17,8 @@ from intentir.verify.gate2 import (
     Gate2Case,
     Gate2Runner,
     Gate2Status,
+    Gate2Suite,
+    InputCaseTemplate,
     InputDistribution,
     Lower2CRunner,
     Lower2CSpec,
@@ -24,6 +26,8 @@ from intentir.verify.gate2 import (
     Tolerance,
     TritonArgument,
     TritonExecutionSpec,
+    boundary_1d_extents,
+    generate_input_matrix,
     generate_tensor_input,
 )
 
@@ -104,6 +108,86 @@ def test_gate2_mechanical_attribution(source, replay, lowering, status) -> None:
     dummy = KernelSource.from_code("", "kernel")
     result = runner.run(dummy, dummy, _case())
     assert result.status is status
+
+
+class _EchoTritonRunner:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def run(self, leg, program, spec, values):
+        self.calls.append(str(values["case_name"]))
+        return ExecutionResult(
+            leg, True, {"Y": np.asarray(values["X"], dtype=np.float32)}
+        )
+
+
+class _ConditionalLowerRunner:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def run(self, spec, values):
+        self.calls.append(str(values["case_name"]))
+        output = np.asarray(values["X"], dtype=np.float32) + float(
+            values["lower_delta"]
+        )
+        return ExecutionResult("lowering", True, {"Y": output})
+
+
+def test_gate2_suite_runs_every_case_and_aggregates_strictly() -> None:
+    first = _case()
+    first = Gate2Case(
+        "matrix.pass",
+        {"X": np.array([2.0], dtype=np.float32), "lower_delta": 0.0,
+         "case_name": "pass"},
+        first.triton,
+        first.lowering,
+        first.output_keys,
+        first.tolerances,
+        {"shape": "block_minus_one", "seed": 7},
+    )
+    second = Gate2Case(
+        "matrix.lowering_fail",
+        {"X": np.array([2.0], dtype=np.float32), "lower_delta": 1.0,
+         "case_name": "fail"},
+        first.triton,
+        first.lowering,
+        first.output_keys,
+        first.tolerances,
+        {"shape": "block", "seed": 11},
+    )
+    source_runner = _EchoTritonRunner()
+    replay_runner = _EchoTritonRunner()
+    lowering_runner = _ConditionalLowerRunner()
+    runner = Gate2Runner(
+        source_runner=source_runner,
+        replay_runner=replay_runner,
+        lowering_runner=lowering_runner,
+    )
+    dummy = KernelSource.from_code("", "kernel")
+
+    result = runner.run_suite(
+        dummy, dummy, Gate2Suite("strict.matrix", (first, second))
+    )
+
+    assert not result.passed
+    assert result.failed_case_ids == ("matrix.lowering_fail",)
+    assert result.status_counts == {
+        "gate2_pass": 1,
+        "lowering_diverged": 1,
+    }
+    assert [case.metadata for case in result.cases] == [
+        {"shape": "block_minus_one", "seed": 7},
+        {"shape": "block", "seed": 11},
+    ]
+    assert source_runner.calls == ["pass", "fail"]
+    assert replay_runner.calls == ["pass", "fail"]
+    assert lowering_runner.calls == ["pass", "fail"]
+
+
+def test_gate2_suite_rejects_duplicate_case_ids() -> None:
+    case = _case()
+    with pytest.raises(ValueError, match="case_id values must be unique"):
+        Gate2Suite("duplicates", (case, case))
 
 
 @pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
@@ -1278,3 +1362,219 @@ def test_gate2_real_flag_gems_final_reduction_family(
         result.replay.error,
         result.lowering.error,
     )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_ones_boundary_shape_suite() -> None:
+    module = pytest.importorskip("flag_gems.ops.ones")
+    python_function = module.ones_kernel
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    block = 1024
+    cases = []
+    for boundary in boundary_1d_extents(block):
+        n = boundary.extent
+        cases.append(
+            Gate2Case(
+                f"flag_gems.ones.{boundary.label}",
+                {"N": n},
+                TritonExecutionSpec(
+                    (
+                        TritonArgument(
+                            "output_ptr",
+                            ArgumentRole.OUTPUT,
+                            dtype="f32",
+                            shape=(n,),
+                            output_key="Y",
+                        ),
+                        TritonArgument(
+                            "n_elements", ArgumentRole.SCALAR, "N"
+                        ),
+                    ),
+                    ((n + block - 1) // block,),
+                    {
+                        "BLOCK_SIZE": block,
+                        "num_warps": 4,
+                        "num_stages": 1,
+                    },
+                ),
+                Lower2CSpec(_flag_gems_ones_intent(), {"N": n}, {}, "Y"),
+                ("Y",),
+                {"Y": Tolerance(rtol=0.0, atol=0.0)},
+                {
+                    "shape_profile": boundary.label,
+                    "N": n,
+                    "BLOCK_SIZE": block,
+                },
+            )
+        )
+
+    result = Gate2Runner().run_suite(
+        KernelSource.from_file(source_path, "ones_kernel", trusted=True),
+        KernelSource.from_code(_FLAG_GEMS_ONES_REPLAY, "ones_kernel"),
+        Gate2Suite("flag_gems.ones.boundary_shapes", tuple(cases)),
+    )
+
+    assert result.passed, [
+        (case.case_id, case.status.value) for case in result.cases
+    ]
+    assert result.status_counts == {"gate2_pass": 6}
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_max_value_seed_matrix() -> None:
+    module = pytest.importorskip("flag_gems.ops.max")
+    python_function = module.max_kernel_2
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    mid_size, block = 63, 64
+    templates = tuple(
+        InputCaseTemplate(
+            f"max.{distribution.value}",
+            {
+                "X": TensorInputSpec(
+                    (mid_size,), "f32", distribution, scale
+                )
+            },
+            {"K": mid_size},
+            {"distribution": distribution.value},
+        )
+        for distribution, scale in (
+            (InputDistribution.NORMAL, 32.0),
+            (InputDistribution.UNIFORM, 32.0),
+            (InputDistribution.LARGE_DYNAMIC, 1.0),
+            (InputDistribution.IEEE_SPECIAL, 1.0),
+        )
+    )
+    generated = generate_input_matrix(templates, (7, 11, 13))
+    cases = tuple(
+        Gate2Case(
+            f"flag_gems.max.{item.case_id}",
+            item.values,
+            TritonExecutionSpec(
+                (
+                    TritonArgument("mid", ArgumentRole.INPUT, "X", "f32"),
+                    TritonArgument(
+                        "out",
+                        ArgumentRole.OUTPUT,
+                        dtype="f32",
+                        shape=(),
+                        output_key="Y",
+                    ),
+                    TritonArgument(
+                        "mid_size", ArgumentRole.SCALAR, "K"
+                    ),
+                ),
+                (1, 1, 1),
+                {
+                    "BLOCK_MID": block,
+                    "num_warps": 4,
+                    "num_stages": 1,
+                },
+            ),
+            Lower2CSpec(
+                _flag_gems_final_reduce_intent(
+                    "lower_max_value_matrix", "max"
+                ),
+                {"K": mid_size},
+                {"X": "X"},
+                "Y",
+            ),
+            ("Y",),
+            {"Y": Tolerance(rtol=0.0, atol=0.0)},
+            item.metadata,
+        )
+        for item in generated
+    )
+
+    result = Gate2Runner().run_suite(
+        KernelSource.from_file(source_path, "max_kernel_2", trusted=True),
+        KernelSource.from_code(
+            _FLAG_GEMS_MAX_FINAL_REPLAY, "max_kernel_2"
+        ),
+        Gate2Suite("flag_gems.max.value_seed_matrix", cases),
+    )
+
+    assert result.passed, [
+        (
+            case.case_id,
+            case.status.value,
+            None
+            if case.source_lowering is None
+            else [item.max_abs_error for item in case.source_lowering.outputs],
+        )
+        for case in result.cases
+    ]
+    assert result.status_counts == {"gate2_pass": 12}
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_min_ieee_special_semantics() -> None:
+    module = pytest.importorskip("flag_gems.ops.min")
+    python_function = module.min_kernel_2
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    mid_size, block = 64, 64
+    x = generate_tensor_input(
+        TensorInputSpec(
+            (mid_size,), "f32", InputDistribution.IEEE_SPECIAL
+        ),
+        seed=17,
+    )
+    case = Gate2Case(
+        "flag_gems.min.ieee_special",
+        {"X": x, "K": mid_size},
+        TritonExecutionSpec(
+            (
+                TritonArgument("mid", ArgumentRole.INPUT, "X", "f32"),
+                TritonArgument(
+                    "out",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(),
+                    output_key="Y",
+                ),
+                TritonArgument("mid_size", ArgumentRole.SCALAR, "K"),
+            ),
+            (1, 1, 1),
+            {"BLOCK_MID": block, "num_warps": 4, "num_stages": 1},
+        ),
+        Lower2CSpec(
+            _flag_gems_final_reduce_intent("lower_min_ieee", "min"),
+            {"K": mid_size},
+            {"X": "X"},
+            "Y",
+        ),
+        ("Y",),
+        {"Y": Tolerance(rtol=0.0, atol=0.0)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(source_path, "min_kernel_2", trusted=True),
+        KernelSource.from_code(
+            _FLAG_GEMS_MIN_FINAL_REPLAY, "min_kernel_2"
+        ),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS
+    assert np.isneginf(result.source.outputs["Y"])
+    assert np.isneginf(result.lowering.outputs["Y"])

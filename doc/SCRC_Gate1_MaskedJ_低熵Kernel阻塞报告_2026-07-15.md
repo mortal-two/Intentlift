@@ -345,3 +345,9 @@ L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概�
 阻塞不只存在于最初五个探针；outer product、runtime scalar、显式 stride 和
 二维 mask staging 也没有自然消除 π/接口/模型先验的可识别性。该证据仍不授权
 修改 `0.5` 阈值或实现路线 B/C/D，正式流程继续 fail-closed。
+
+`fg_min` 随后严格复用同一 Lift artifact，再生成 normal/masked replay，并执行
+`3 shapes × 4 value profiles × 3 seeds = 36` 个 Gate2 case；36/36 全部三方零误差
+PASS，而 masked 比仍为 `0.507692`。因此该样本的 raw false reject 不能再解释为
+“单个幸运输入”：行为矩阵增强了 Gate2 标签，但按当前主方案仍不足以越过逐
+Kernel masked-J 门槛。

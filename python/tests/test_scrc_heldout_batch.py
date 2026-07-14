@@ -107,6 +107,18 @@ def test_real_flag_gems_ones_case_has_multi_program_tail_contract() -> None:
         "ceil_div(n_elements, BLOCK_SIZE)"
     ]
     assert view["schedule_values"]["BLOCK_SIZE"] == 1024
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one",
+        "block_minus_one",
+        "block",
+        "block_plus_one",
+        "non_divisible",
+        "far_multitile",
+    ]
+    assert [
+        profile.scalar_values["n_elements"]
+        for profile in case.gate2_shape_profiles
+    ] == [1, 1023, 1024, 1025, 2051, 8209]
 
 
 def test_real_flag_gems_sum_case_uses_final_rank_zero_stage() -> None:
@@ -199,6 +211,22 @@ def test_prod_and_l2_gate2_inputs_respect_intermediate_value_domains() -> None:
     }
 
 
+def test_min_gate2_matrix_declares_shape_value_cross_product() -> None:
+    case = build_heldout_case("fg_min")
+
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one",
+        "block_minus_one",
+        "block",
+    ]
+    assert [profile.profile_id for profile in case.gate2_value_profiles] == [
+        "normal",
+        "uniform",
+        "large_dynamic",
+        "ieee_special",
+    ]
+
+
 def test_batch_status_uses_existing_gate_verdicts() -> None:
     assert _result_status(
         {"preflight": {"ok": False}}
@@ -214,6 +242,20 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
             "gate2": {"status": "lowering_unsupported"},
         }
     ) == "lowering_unsupported"
+    assert _result_status(
+        {
+            "lift": {"ok": True},
+            "gate1": {"status": "replay_closed"},
+            "gate2_suite": {"passed": True},
+        }
+    ) == "gate2_pass"
+    assert _result_status(
+        {
+            "lift": {"ok": True},
+            "gate1": {"status": "replay_closed"},
+            "gate2_suite": {"passed": False},
+        }
+    ) == "gate2_suite_failed"
 
 
 def test_batch_response_ids_tolerate_failed_generation_and_absent_masked() -> None:
@@ -240,6 +282,8 @@ def _batch_args(**overrides) -> Namespace:
         "lift_repairs": 2,
         "rewrite_repairs": 2,
         "diagnose_rejected": False,
+        "gate2_matrix": False,
+        "gate2_seeds": None,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -266,6 +310,17 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
     )
     assert changed_input != identity
     assert _resume_row(saved, changed_input) is None
+    matrix_identity = _batch_identity(
+        build_heldout_case("fg_dot"),
+        _batch_args(gate2_matrix=True),
+    )
+    assert matrix_identity["gate2_matrix_policy"]["enabled"]
+    assert matrix_identity["gate2_matrix_policy"]["seeds"] == [
+        20260715,
+        20260716,
+        20260717,
+    ]
+    assert _resume_row(saved, matrix_identity) is None
 
 
 def test_lift_cache_rejects_a_different_rule_registry(tmp_path: Path) -> None:

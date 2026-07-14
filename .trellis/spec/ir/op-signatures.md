@@ -72,6 +72,12 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 结果为 rank 0；它仍可在后续 elementwise 中自然 broadcast。final-stage
 `sum(partials) / M` 不得因为前端内部实现而被推成 shape `[1]`。
 
+floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，与 Triton
+TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
+两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，
+不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由 IEEE-special Gate2
+三方矩阵固定，不引入新 op。
+
 JSON `const` 表示字面量或按声明 shape 的 splat materialization，例如
 `{"value":1.0,"dtype":"f32","shape":["N"]}`；它直接降为标准
 `arith.constant`，不是新增库级 named op。shape 中的符号必须由 Gate2 dims

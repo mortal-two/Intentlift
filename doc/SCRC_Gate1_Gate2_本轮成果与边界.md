@@ -154,12 +154,22 @@ prompt 不再只是塞卡片，而是显式记录：
 positive、near-one、large-dynamic 和 IEEE-special 六种可复现分布。真实 L2 final
 stage 使用 nonnegative partial-sum 域，prod 使用 near-one 域，避免“输入本身不符
 中间 buffer 契约、三条腿一起 NaN/下溢”形成假通过。batch identity 绑定 seed、
-distribution、scale 与 tolerance；完整 shape×value×seed matrix 仍未完成。
+distribution、scale 与 tolerance。
+
+Gate2 现有 `InputCaseTemplate`、canonical boundary extent 和 `Gate2Suite`：suite
+完整运行每个 shape/value/seed case，只有逐例全部 PASS 才通过。live/batch 的
+`--gate2-matrix` 已打通，首个真实 `fg_min` 矩阵在固定 C 下覆盖
+`3 shapes × 4 value profiles × 3 seeds = 36` 个三方 case，全部最大误差 0；
+`fg_ones` 还持续回归 1、BLOCK±1、非整除和远多 tile 六类 shape。其余 ready
+Kernel 和需要改变 C 的 specialization 仍未完成全量矩阵。
 
 CPU Lower2C 还修复了一个真实 Gate2 观测接缝：RunnerUtils 的 f32 文本打印会把
 `91.181175` 舍入成 `91.1812`，造成 max 的假 `LOWERING_DIVERGED`。runner 现在
 通过可 bufferize 的逐元素 f32→i32 bitcast 打印精确位模式并原位恢复，没有放宽
-容差。
+容差。输入 dense literal 也改为精确十六进制 f32 位模式，支持 `-0.0/±inf/NaN`。
+IEEE-special max 矩阵随后抓到通用 CPU reduction 使用传播 NaN 的
+`maximum/minimum`，而 Triton 与 GPU lowering 使用 `maxnum/minnum`；修复后
+max 的 12 个 value×seed case 与 min 的 36 个 live matrix case 全部通过。
 
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
 add、collapsed row-sum、softmax、RMSNorm 与 matmul 的三方一致。RMSNorm 还用
@@ -293,7 +303,7 @@ Gate1 闭合，但 Gate2 失败 = false accept
 
 因此最准确的称呼是：
 
-> Gate1 已是可执行的 Triton SCRC MVP；Gate2 已是可执行的三方最小原型；
+> Gate1 已是可执行的 Triton SCRC MVP；Gate2 已是可执行的严格三方矩阵原型；
 > 整体还不是数百 Kernel 规模的完整工具。
 
 ## 4. 这轮没有做什么

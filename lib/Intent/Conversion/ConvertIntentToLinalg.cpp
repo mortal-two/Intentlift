@@ -369,9 +369,9 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
   if (fn == "sum" || fn == "mean")
     return b.create<arith::AddFOp>(loc, a, c);
   if (fn == "max")
-    return b.create<arith::MaximumFOp>(loc, a, c);
+    return b.create<arith::MaxNumFOp>(loc, a, c);
   if (fn == "min")
-    return b.create<arith::MinimumFOp>(loc, a, c);
+    return b.create<arith::MinNumFOp>(loc, a, c);
   if (fn == "prod")
     return b.create<arith::MulFOp>(loc, a, c);
   if (fn == "all")
