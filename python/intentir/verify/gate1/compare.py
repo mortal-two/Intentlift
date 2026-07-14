@@ -1,0 +1,350 @@
+"""Pure-code Gate1 judge for normalized TTIR fingerprints.
+
+The comparator has no LLM escape hatch and no fuzzy acceptance threshold.
+Every hard component must match exactly after :mod:`.ttir` normalization.
+The continuous score and rank tuple exist only to retain the best failed replay
+candidate and to quantify ablations; they never turn a hard mismatch into a
+pass.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+import json
+from typing import Any, Mapping
+
+from .ttir import TTIRFingerprint, fingerprint_ttir
+
+__all__ = [
+    "ComponentComparison",
+    "FingerprintDifference",
+    "TTIRComparator",
+    "TTIRComparison",
+    "compare_fingerprints",
+    "compare_ttir",
+]
+
+
+_CATEGORY_WEIGHTS = {
+    "interface": 0.15,
+    "op_multiset": 0.20,
+    "dataflow": 0.25,
+    "reduction": 0.20,
+    "predicate_effect": 0.20,
+}
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _display(item: Any, limit: int = 280) -> str:
+    rendered = _stable_json(item)
+    return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
+
+
+@dataclass(frozen=True)
+class FingerprintDifference:
+    category: str
+    kind: str
+    item: Any
+    expected_count: int
+    actual_count: int
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "kind": self.kind,
+            "item": self.item,
+            "expected_count": self.expected_count,
+            "actual_count": self.actual_count,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class ComponentComparison:
+    category: str
+    hard: bool
+    passed: bool
+    score: float
+    differences: tuple[FingerprintDifference, ...]
+
+    @property
+    def name(self) -> str:
+        return self.category
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "hard": self.hard,
+            "passed": self.passed,
+            "score": self.score,
+            "differences": [difference.to_dict() for difference in self.differences],
+        }
+
+
+@dataclass(frozen=True)
+class TTIRComparison:
+    """Itemized deterministic verdict; lexicographically larger rank is better."""
+
+    hard_pass: bool
+    score: float
+    rank_tuple: tuple[int, int, float, int, int, int]
+    components: tuple[ComponentComparison, ...]
+
+    @property
+    def passed(self) -> bool:
+        return self.hard_pass
+
+    @property
+    def replay_closed(self) -> bool:
+        return self.hard_pass
+
+    @property
+    def hard_passes(self) -> dict[str, bool]:
+        return {
+            component.category: component.passed
+            for component in self.components
+            if component.hard
+        }
+
+    @property
+    def differences(self) -> tuple[FingerprintDifference, ...]:
+        return tuple(
+            difference
+            for component in self.components
+            for difference in component.differences
+        )
+
+    @property
+    def primary_difference_category(self) -> str | None:
+        failed = {
+            component.category
+            for component in self.components
+            if not component.passed
+        }
+        # Dedicated semantic fields take precedence over collateral graph/op
+        # differences.  This gives mutations a useful primary root cause:
+        # reduce combiner -> reduction, fill/mask -> predicate/effect, and a
+        # rewired graph with unchanged ops -> dataflow.
+        for category in (
+            "interface",
+            "reduction",
+            "predicate_effect",
+            "op_multiset",
+            "dataflow",
+            "schedule-only",
+        ):
+            if category in failed:
+                return category
+        return None
+
+    def component(self, category: str) -> ComponentComparison:
+        for component in self.components:
+            if component.category == category:
+                return component
+        raise KeyError(category)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hard_pass": self.hard_pass,
+            "passed": self.passed,
+            "score": self.score,
+            "rank_tuple": list(self.rank_tuple),
+            "primary_difference_category": self.primary_difference_category,
+            "hard_passes": self.hard_passes,
+            "components": [component.to_dict() for component in self.components],
+            "differences": [difference.to_dict() for difference in self.differences],
+        }
+
+
+def _counter_similarity(expected: Counter[Any], actual: Counter[Any]) -> float:
+    keys = expected.keys() | actual.keys()
+    union = sum(max(expected[key], actual[key]) for key in keys)
+    if union == 0:
+        return 1.0
+    intersection = sum(min(expected[key], actual[key]) for key in keys)
+    return intersection / union
+
+
+def _compare_counter(
+    category: str,
+    expected: Counter[Any],
+    actual: Counter[Any],
+    *,
+    hard: bool,
+) -> ComponentComparison:
+    differences: list[FingerprintDifference] = []
+    for item in sorted(expected.keys() | actual.keys(), key=_stable_json):
+        expected_count = expected[item]
+        actual_count = actual[item]
+        if expected_count == actual_count:
+            continue
+        kind = "missing" if actual_count < expected_count else "unexpected"
+        direction = "缺少" if kind == "missing" else "多出"
+        differences.append(
+            FingerprintDifference(
+                category=category,
+                kind=kind,
+                item=item,
+                expected_count=expected_count,
+                actual_count=actual_count,
+                message=(
+                    f"{category} {direction} {_display(item)}："
+                    f"源={expected_count}，重放={actual_count}"
+                ),
+            )
+        )
+    return ComponentComparison(
+        category=category,
+        hard=hard,
+        passed=not differences,
+        score=_counter_similarity(expected, actual),
+        differences=tuple(differences),
+    )
+
+
+def _interface_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
+    interface = fingerprint.interface
+    items: Counter[Any] = Counter({("schema_version", fingerprint.schema_version): 1})
+    for argument in interface.arguments:
+        items[("argument", argument.position, _stable_json(argument.to_dict()))] += 1
+    for position, result in enumerate(interface.results):
+        items[("result", position, result)] += 1
+    for key, value in interface.python:
+        items[("python", key, value)] += 1
+    return items
+
+
+def _dataflow_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
+    items: Counter[Any] = Counter()
+    for edge in fingerprint.dataflow_edges:
+        items[("edge", *edge)] += 1
+    for dot in fingerprint.dots:
+        items[("dot", _stable_json(dot.to_dict()))] += 1
+    for loop in fingerprint.loops:
+        items[("loop", _stable_json(loop.to_dict()))] += 1
+    return items
+
+
+def _reduction_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
+    return Counter(
+        ("reduction", _stable_json(reduction.to_dict()))
+        for reduction in fingerprint.reductions
+    )
+
+
+def _predicate_effect_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
+    items: Counter[Any] = Counter()
+    for effect in fingerprint.memory_effects:
+        items[("memory", _stable_json(effect.to_dict()))] += 1
+    for predicate in fingerprint.mask_predicates:
+        items[("mask", predicate)] += 1
+    for effect, count in fingerprint.effect_multiset:
+        items[("effect", effect)] += count
+    return items
+
+
+def _schedule_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
+    return Counter(("schedule", key, value) for key, value in fingerprint.schedule_view)
+
+
+def compare_fingerprints(
+    source: TTIRFingerprint, replay: TTIRFingerprint
+) -> TTIRComparison:
+    """Compare two fingerprints exactly on hard fields and report all deltas."""
+
+    if not isinstance(source, TTIRFingerprint) or not isinstance(replay, TTIRFingerprint):
+        raise TypeError("compare_fingerprints expects two TTIRFingerprint values")
+
+    components = (
+        _compare_counter(
+            "interface", _interface_counter(source), _interface_counter(replay), hard=True
+        ),
+        _compare_counter(
+            "op_multiset",
+            Counter(dict(source.op_multiset)),
+            Counter(dict(replay.op_multiset)),
+            hard=True,
+        ),
+        _compare_counter(
+            "dataflow", _dataflow_counter(source), _dataflow_counter(replay), hard=True
+        ),
+        _compare_counter(
+            "reduction",
+            _reduction_counter(source),
+            _reduction_counter(replay),
+            hard=True,
+        ),
+        _compare_counter(
+            "predicate_effect",
+            _predicate_effect_counter(source),
+            _predicate_effect_counter(replay),
+            hard=True,
+        ),
+        _compare_counter(
+            "schedule-only",
+            _schedule_counter(source),
+            _schedule_counter(replay),
+            hard=False,
+        ),
+    )
+    hard_components = [component for component in components if component.hard]
+    hard_pass = all(component.passed for component in hard_components)
+    score = sum(
+        component.score * _CATEGORY_WEIGHTS[component.category]
+        for component in hard_components
+    )
+    score = min(1.0, max(0.0, score))
+    hard_difference_count = sum(
+        len(component.differences) for component in hard_components
+    )
+    schedule_component = components[-1]
+    rank_tuple = (
+        int(hard_pass),
+        sum(component.passed for component in hard_components),
+        round(score, 12),
+        -hard_difference_count,
+        int(schedule_component.passed),
+        -len(schedule_component.differences),
+    )
+    return TTIRComparison(hard_pass, score, rank_tuple, components)
+
+
+def compare_ttir(
+    source_ttir: str,
+    replay_ttir: str,
+    *,
+    source_python_interface: Mapping[str, Any] | None = None,
+    replay_python_interface: Mapping[str, Any] | None = None,
+    source_schedule: Mapping[str, Any] | None = None,
+    replay_schedule: Mapping[str, Any] | None = None,
+) -> TTIRComparison:
+    """Parse and compare two Triton TTIR texts in one call."""
+
+    source = fingerprint_ttir(
+        source_ttir,
+        python_interface=source_python_interface,
+        schedule=source_schedule,
+    )
+    replay = fingerprint_ttir(
+        replay_ttir,
+        python_interface=replay_python_interface,
+        schedule=replay_schedule,
+    )
+    return compare_fingerprints(source, replay)
+
+
+class TTIRComparator:
+    """Small state-free OO facade for orchestrator dependency injection."""
+
+    def compare(
+        self, source: TTIRFingerprint, replay: TTIRFingerprint
+    ) -> TTIRComparison:
+        return compare_fingerprints(source, replay)
+
+    def compare_text(self, source_ttir: str, replay_ttir: str, **kwargs: Any) -> TTIRComparison:
+        return compare_ttir(source_ttir, replay_ttir, **kwargs)

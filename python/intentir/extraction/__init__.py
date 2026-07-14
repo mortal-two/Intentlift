@@ -7,6 +7,7 @@ provider client, prompts, re-roll, and evidence-as-hint plumbing.
 
 from .providers.client import LLMReply, ProviderError, call_responses
 from .lifters.extract import Extraction, Provenance, extract_intent, smoke_interpret
+from .lifters.scrc import SCRCExtraction, SCRCProvenance, extract_scrc_artifact
 from .providers.provider import ProviderConfig, get_provider, load_providers
 
 __all__ = [
@@ -20,4 +21,7 @@ __all__ = [
     "Extraction",
     "Provenance",
     "smoke_interpret",
+    "SCRCExtraction",
+    "SCRCProvenance",
+    "extract_scrc_artifact",
 ]

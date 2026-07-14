@@ -30,9 +30,9 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 并行轴 → `scf.parallel` → `gpu` grid。完整脊柱:
 `intent → linalg/tensor/arith → scf.parallel → gpu → nvvm → PTX → ptxas → cubin
 → CUDA Driver-API launch`。**朴素(unfused)attention 与 fused FlashAttention
-(online-softmax,单 kernel)都在 5090 D 上真实执行**;输出与解释器参考
-(`verify/interpret.py`,即 Layer A 语义)一致到 rel ~1e-7(execute==interpret,
-见 [../verification/validation.md](../verification/validation.md) 第 3 道检查)。
+(online-softmax,单 kernel)都在 5090 D 上真实执行**。历史 bring-up 曾与现已
+归档的 NumPy 解释器对照到 rel ~1e-7；当前正式验证改由
+[SCRC Gate2](../verification/scrc-gate2.md) 的 source/replay/lowering 三方实跑。
 
 实现细节固化在 `python/intentir/backend/`(`compile.py` / `launch.py` /
 `orchestrate.py`)与 C++ pass `lib/Intent/Transforms/`。**血泪规则**(后续 RVV /
@@ -86,9 +86,9 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
 `intent → linalg` 这一段是**后端中立**的;只有 device 尾巴(此处 GPU 的
 `gpu/nvvm/ptxas`)是特化的。为证明这不是嘴上说说,`python/intentir/backend/cpu.py`
 把**同一份提取出来的 intent dialect** 走 `intent → linalg →`(one-shot-bufferize
-→ linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**,读回结果
-与解释器一致:add / silu / softmax / rms_norm / gelu_tanh / matmul 六个内核
-CPU-exec == interpret(rel ~1e-6)。**没有任何 GPU 专用机制**——同一条 IntentIR、
+→ linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**。历史
+测试已覆盖 add / silu / softmax / rms_norm / gelu_tanh / matmul；这条真实执行链
+现作为 Gate2 的 production-lowering 腿。**没有任何 GPU 专用机制**——同一条 IntentIR、
 两个后端。`test_cpu_backend.py`(确定性,无 GPU)。
 
 这就是"多后端余量":换后端 = 换 `linalg → <target>` 尾巴(CPU 已通,RVV 是下一个

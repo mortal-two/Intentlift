@@ -1,0 +1,325 @@
+{
+  "format": "intentir-scrc-probe-input/v1",
+  "purpose": "Blindly reconstruct five Triton kernels from J, pi, interface contracts, schedule-slot names, and retrieved rule cards. No source text is present in this artifact.",
+  "frontend": {
+    "name": "Triton",
+    "version": "3.6.0",
+    "language": "Python",
+    "target_family": "NVIDIA CUDA"
+  },
+  "rewriter_contract": {
+    "output": "One importable Python module and nothing else.",
+    "required_imports": [
+      "import triton",
+      "import triton.language as tl"
+    ],
+    "hard_rules": [
+      "Define exactly the five requested @triton.jit functions with the exact parameter order and names.",
+      "Implement every J.layer_a node exactly once and preserve the declared dataflow; do not algebraically simplify, fuse, replace, or omit nodes.",
+      "Implement every J.layer_b access predicate, fill value, output mapping, and effect exactly.",
+      "pi may only choose the supplied frontend mechanisms; all semantics must be read from J references.",
+      "Schedule slot values are intentionally unavailable. Keep constexpr slots symbolic and never invent or bake concrete BLOCK, warp, stage, or CTA values.",
+      "Use only Triton 3.6 APIs appearing in the retrieved rule cards.",
+      "Do not emit host launch code, tests, explanations, Markdown fences, or source guesses."
+    ]
+  },
+  "rule_cards": [
+    {
+      "id": "module_shell",
+      "mechanism": "frontend_module",
+      "construction": "Emit the two required imports. Use @triton.jit unless interface.jit_options.do_not_specialize is non-empty; then use @triton.jit(do_not_specialize=[...]) with those exact scalar names."
+    },
+    {
+      "id": "bind_program_domain",
+      "mechanism": "program_domain_bind",
+      "construction": "For each J.layer_b.program_domain binding, obtain its program coordinate with tl.program_id(axis). Do not introduce a different grid mapping."
+    },
+    {
+      "id": "materialize_index_tile",
+      "mechanism": "index_tile",
+      "construction": "Build a one-dimensional lane vector with tl.arange(0, SLOT). A tiled global coordinate is program_coordinate * SLOT + lane. For rank-2 tiles, use [:, None] and [None, :] exactly as required by the J access expressions."
+    },
+    {
+      "id": "realize_masked_access",
+      "mechanism": "masked_tile_load_store",
+      "construction": "A J load becomes tl.load(pointer_expression, mask=predicate, other=J.other). A guarded J store becomes tl.store(pointer_expression, value, mask=predicate). An access with predicate=true is emitted without a mask. Preserve row-major pointer arithmetic, predicate conjunctions, and fill values from J exactly."
+    },
+    {
+      "id": "realize_elementwise",
+      "mechanism": "elementwise_map",
+      "construction": "Map J functions without rewriting their algebra: add uses a + b; sub uses a - b; mul uses a * b; div uses a / b; exp uses tl.exp(a); rsqrt uses tl.rsqrt(a). Keep the J node order and intermediate dataflow."
+    },
+    {
+      "id": "realize_reduce",
+      "mechanism": "native_reduce",
+      "construction": "J reduce(sum) uses tl.sum(value, axis=declared_tile_axis). J reduce(max) uses tl.max(value, axis=declared_tile_axis). J reduce(mean) must be realized as tl.sum(value, axis=declared_tile_axis) followed by division by the referenced runtime axis extent; do not use a different algebraic form."
+    },
+    {
+      "id": "realize_broadcast",
+      "mechanism": "elementwise_broadcast",
+      "construction": "Triton scalar reduction results broadcast implicitly over a tile. A rank-1 weight W[N] broadcasts over the row dimension when multiplied with the current row tile. Do not materialize extra tensors or extra loads."
+    },
+    {
+      "id": "realize_k_tiled_dot",
+      "mechanism": "k_tiled_native_dot",
+      "construction": "For J contraction mk,kn->mn: create acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32); create k_lanes = tl.arange(0, BLOCK_K); iterate for k_tile in range(0, tl.cdiv(K, BLOCK_K)); set offs_k = k_tile * BLOCK_K + k_lanes; issue the two J-prescribed masked loads with other=0.0; update acc with acc += tl.dot(a, b, out_dtype=tl.float32). Triton 3.6 tl.dot has no trans_a/trans_b arguments."
+    }
+  ],
+  "kernels": [
+    {
+      "id": "add",
+      "interface": {
+        "function": "add_kernel",
+        "jit_options": {"do_not_specialize": []},
+        "parameters": [
+          {"name": "a_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "A"},
+          {"name": "b_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "B"},
+          {"name": "out_ptr", "kind": "pointer", "role": "output", "element_dtype": "f32", "tensor": "O"},
+          {"name": "n_elements", "kind": "runtime_scalar", "dtype": "i32", "semantic": "L"},
+          {"name": "BLOCK", "kind": "constexpr_schedule_slot"}
+        ],
+        "compiler_schedule_slots": ["num_warps", "num_stages", "num_ctas"]
+      },
+      "J": {
+        "layer_a": {
+          "tensors": [
+            {"name": "A", "dtype": "f32", "shape": ["L"]},
+            {"name": "B", "dtype": "f32", "shape": ["L"]},
+            {"name": "O", "dtype": "f32", "shape": ["L"]}
+          ],
+          "nodes": [
+            {"id": "n0", "op": "map_binary", "fn": "add", "operands": ["A", "B"], "result": "O"}
+          ]
+        },
+        "layer_b": {
+          "program_domain": [{"program_axis": 0, "maps_to": "flat output blocks"}],
+          "index_tiles": [{"id": "t0", "coordinate": "offset", "expression": "program_id(0) * BLOCK + lane(BLOCK)"}],
+          "accesses": [
+            {"id": "a0", "kind": "load", "tensor": "A", "pointer_index": "offset", "predicate": "offset < L", "other": 0.0},
+            {"id": "a1", "kind": "load", "tensor": "B", "pointer_index": "offset", "predicate": "offset < L", "other": 0.0},
+            {"id": "a2", "kind": "store", "tensor": "O", "pointer_index": "offset", "predicate": "offset < L", "value_ref": "J.layer_a.nodes[n0].result"}
+          ],
+          "effects": {"masked_loads": 2, "masked_stores": 1}
+        }
+      },
+      "pi": [
+        {"rule": "bind_program_domain", "refs": ["J.layer_b.program_domain[0]"]},
+        {"rule": "materialize_index_tile", "refs": ["J.layer_b.index_tiles[t0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a0]", "J.layer_b.accesses[a1]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n0]"},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a2]"]}
+      ]
+    },
+    {
+      "id": "row_sum",
+      "interface": {
+        "function": "row_sum_kernel",
+        "jit_options": {"do_not_specialize": []},
+        "parameters": [
+          {"name": "x_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "X"},
+          {"name": "out_ptr", "kind": "pointer", "role": "output", "element_dtype": "f32", "tensor": "O"},
+          {"name": "M", "kind": "runtime_scalar", "dtype": "i32", "semantic": "rows"},
+          {"name": "N", "kind": "runtime_scalar", "dtype": "i32", "semantic": "columns"},
+          {"name": "BLOCK_N", "kind": "constexpr_schedule_slot"}
+        ],
+        "compiler_schedule_slots": ["num_warps", "num_stages", "num_ctas"]
+      },
+      "J": {
+        "layer_a": {
+          "tensors": [
+            {"name": "X", "dtype": "f32", "shape": ["M", "N"]},
+            {"name": "O", "dtype": "f32", "shape": ["M"]}
+          ],
+          "nodes": [
+            {"id": "n0", "op": "reduce", "fn": "sum", "axes": [1], "keepdims": false, "assoc": "float_nondeterministic", "operands": ["X"], "result": "O"}
+          ]
+        },
+        "layer_b": {
+          "program_domain": [{"program_axis": 0, "maps_to": "row axis M", "coverage": "exactly one program per row"}],
+          "index_tiles": [{"id": "t0", "coordinate": "col", "expression": "lane(BLOCK_N)"}],
+          "accesses": [
+            {"id": "a0", "kind": "load", "tensor": "X", "pointer_index": "row * N + col", "predicate": "col < N", "other": 0.0},
+            {"id": "a1", "kind": "store", "tensor": "O", "pointer_index": "row", "predicate": "true", "value_ref": "J.layer_a.nodes[n0].result"}
+          ],
+          "reduction_contracts": [{"node_ref": "J.layer_a.nodes[n0]", "tile_axis": 0, "masked_lane_identity": 0.0}],
+          "effects": {"masked_loads": 1, "unmasked_stores": 1}
+        }
+      },
+      "pi": [
+        {"rule": "bind_program_domain", "refs": ["J.layer_b.program_domain[0]"]},
+        {"rule": "materialize_index_tile", "refs": ["J.layer_b.index_tiles[t0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a0]"]},
+        {"rule": "realize_reduce", "node_ref": "J.layer_a.nodes[n0]", "refs": ["J.layer_b.reduction_contracts[0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a1]"]}
+      ]
+    },
+    {
+      "id": "softmax",
+      "interface": {
+        "function": "softmax_kernel",
+        "jit_options": {"do_not_specialize": []},
+        "parameters": [
+          {"name": "x_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "X"},
+          {"name": "out_ptr", "kind": "pointer", "role": "output", "element_dtype": "f32", "tensor": "Y"},
+          {"name": "M", "kind": "runtime_scalar", "dtype": "i32", "semantic": "rows"},
+          {"name": "N", "kind": "runtime_scalar", "dtype": "i32", "semantic": "columns"},
+          {"name": "BLOCK_N", "kind": "constexpr_schedule_slot"}
+        ],
+        "compiler_schedule_slots": ["num_warps", "num_stages", "num_ctas"]
+      },
+      "J": {
+        "layer_a": {
+          "tensors": [
+            {"name": "X", "dtype": "f32", "shape": ["M", "N"]},
+            {"name": "Y", "dtype": "f32", "shape": ["M", "N"]}
+          ],
+          "nodes": [
+            {"id": "n0", "op": "reduce", "fn": "max", "axes": [1], "keepdims": true, "assoc": "associative", "operands": ["X"], "result": "row_max"},
+            {"id": "n1", "op": "map_binary", "fn": "sub", "operands": ["X", "row_max"], "result": "shifted"},
+            {"id": "n2", "op": "map_unary", "fn": "exp", "operands": ["shifted"], "result": "numerator"},
+            {"id": "n3", "op": "reduce", "fn": "sum", "axes": [1], "keepdims": true, "assoc": "float_nondeterministic", "operands": ["numerator"], "result": "denominator"},
+            {"id": "n4", "op": "map_binary", "fn": "div", "operands": ["numerator", "denominator"], "result": "Y"}
+          ]
+        },
+        "layer_b": {
+          "program_domain": [{"program_axis": 0, "maps_to": "row axis M", "coverage": "exactly one program per row"}],
+          "index_tiles": [{"id": "t0", "coordinate": "col", "expression": "lane(BLOCK_N)"}],
+          "accesses": [
+            {"id": "a0", "kind": "load", "tensor": "X", "pointer_index": "row * N + col", "predicate": "col < N", "other": "-inf"},
+            {"id": "a1", "kind": "store", "tensor": "Y", "pointer_index": "row * N + col", "predicate": "col < N", "value_ref": "J.layer_a.nodes[n4].result"}
+          ],
+          "reduction_contracts": [
+            {"node_ref": "J.layer_a.nodes[n0]", "tile_axis": 0, "masked_lane_identity": "-inf"},
+            {"node_ref": "J.layer_a.nodes[n3]", "tile_axis": 0, "masked_lane_contribution": 0.0, "derivation": "exp(-inf - finite_row_max) = 0"}
+          ],
+          "effects": {"masked_loads": 1, "masked_stores": 1}
+        }
+      },
+      "pi": [
+        {"rule": "bind_program_domain", "refs": ["J.layer_b.program_domain[0]"]},
+        {"rule": "materialize_index_tile", "refs": ["J.layer_b.index_tiles[t0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a0]"]},
+        {"rule": "realize_reduce", "node_ref": "J.layer_a.nodes[n0]", "refs": ["J.layer_b.reduction_contracts[0]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n1]"},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n2]"},
+        {"rule": "realize_reduce", "node_ref": "J.layer_a.nodes[n3]", "refs": ["J.layer_b.reduction_contracts[1]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n4]"},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a1]"]}
+      ]
+    },
+    {
+      "id": "rmsnorm",
+      "interface": {
+        "function": "rmsnorm_kernel",
+        "jit_options": {"do_not_specialize": ["eps"]},
+        "parameters": [
+          {"name": "x_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "X"},
+          {"name": "w_ptr", "kind": "pointer", "role": "input", "element_dtype": "f32", "tensor": "W"},
+          {"name": "out_ptr", "kind": "pointer", "role": "output", "element_dtype": "f32", "tensor": "Y"},
+          {"name": "M", "kind": "runtime_scalar", "dtype": "i32", "semantic": "rows"},
+          {"name": "N", "kind": "runtime_scalar", "dtype": "i32", "semantic": "columns"},
+          {"name": "eps", "kind": "runtime_scalar", "dtype": "f32", "semantic": "epsilon"},
+          {"name": "BLOCK_N", "kind": "constexpr_schedule_slot"}
+        ],
+        "compiler_schedule_slots": ["num_warps", "num_stages", "num_ctas"]
+      },
+      "J": {
+        "layer_a": {
+          "tensors": [
+            {"name": "X", "dtype": "f32", "shape": ["M", "N"]},
+            {"name": "W", "dtype": "f32", "shape": ["N"]},
+            {"name": "eps", "dtype": "f32", "shape": []},
+            {"name": "Y", "dtype": "f32", "shape": ["M", "N"]}
+          ],
+          "nodes": [
+            {"id": "n0", "op": "map_binary", "fn": "mul", "operands": ["X", "X"], "result": "squared"},
+            {"id": "n1", "op": "reduce", "fn": "mean", "axes": [1], "keepdims": true, "assoc": "float_nondeterministic", "operands": ["squared"], "result": "mean_square", "axis_extent_ref": "N"},
+            {"id": "n2", "op": "map_binary", "fn": "add", "operands": ["mean_square", "eps"], "result": "shifted"},
+            {"id": "n3", "op": "map_unary", "fn": "rsqrt", "operands": ["shifted"], "result": "inv_rms"},
+            {"id": "n4", "op": "map_binary", "fn": "mul", "operands": ["X", "inv_rms"], "result": "normalized"},
+            {"id": "n5", "op": "map_binary", "fn": "mul", "operands": ["normalized", "W"], "result": "Y", "broadcast": {"W": "row-wise over M"}}
+          ]
+        },
+        "layer_b": {
+          "program_domain": [{"program_axis": 0, "maps_to": "row axis M", "coverage": "exactly one program per row"}],
+          "index_tiles": [{"id": "t0", "coordinate": "col", "expression": "lane(BLOCK_N)"}],
+          "accesses": [
+            {"id": "a0", "kind": "load", "tensor": "X", "pointer_index": "row * N + col", "predicate": "col < N", "other": 0.0, "compute_dtype": "f32"},
+            {"id": "a1", "kind": "load", "tensor": "W", "pointer_index": "col", "predicate": "col < N", "other": 0.0, "compute_dtype": "f32"},
+            {"id": "a2", "kind": "store", "tensor": "Y", "pointer_index": "row * N + col", "predicate": "col < N", "value_ref": "J.layer_a.nodes[n5].result"}
+          ],
+          "reduction_contracts": [{"node_ref": "J.layer_a.nodes[n1]", "tile_axis": 0, "masked_lane_identity": 0.0, "divisor": "runtime N, not BLOCK_N"}],
+          "effects": {"masked_loads": 2, "masked_stores": 1}
+        }
+      },
+      "pi": [
+        {"rule": "bind_program_domain", "refs": ["J.layer_b.program_domain[0]"]},
+        {"rule": "materialize_index_tile", "refs": ["J.layer_b.index_tiles[t0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a0]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n0]"},
+        {"rule": "realize_reduce", "node_ref": "J.layer_a.nodes[n1]", "refs": ["J.layer_b.reduction_contracts[0]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n2]"},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n3]"},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a1]"]},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n4]"},
+        {"rule": "realize_elementwise", "node_ref": "J.layer_a.nodes[n5]"},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a2]"]}
+      ]
+    },
+    {
+      "id": "matmul",
+      "interface": {
+        "function": "matmul_kernel",
+        "jit_options": {"do_not_specialize": []},
+        "parameters": [
+          {"name": "a_ptr", "kind": "pointer", "role": "input", "element_dtype": "f16", "tensor": "A"},
+          {"name": "b_ptr", "kind": "pointer", "role": "input", "element_dtype": "f16", "tensor": "B"},
+          {"name": "out_ptr", "kind": "pointer", "role": "output", "element_dtype": "f32", "tensor": "O"},
+          {"name": "M", "kind": "runtime_scalar", "dtype": "i32", "semantic": "rows of A and O"},
+          {"name": "N", "kind": "runtime_scalar", "dtype": "i32", "semantic": "columns of B and O"},
+          {"name": "K", "kind": "runtime_scalar", "dtype": "i32", "semantic": "contracted dimension"},
+          {"name": "BLOCK_M", "kind": "constexpr_schedule_slot"},
+          {"name": "BLOCK_N", "kind": "constexpr_schedule_slot"},
+          {"name": "BLOCK_K", "kind": "constexpr_schedule_slot"}
+        ],
+        "compiler_schedule_slots": ["num_warps", "num_stages", "num_ctas"]
+      },
+      "J": {
+        "layer_a": {
+          "tensors": [
+            {"name": "A", "dtype": "f16", "shape": ["M", "K"], "layout": "row-major"},
+            {"name": "B", "dtype": "f16", "shape": ["K", "N"], "layout": "row-major"},
+            {"name": "O", "dtype": "f32", "shape": ["M", "N"], "layout": "row-major"}
+          ],
+          "nodes": [
+            {"id": "n0", "op": "contraction", "subscripts": "mk,kn->mn", "operands": ["A", "B"], "accumulator_dtype": "f32", "result": "O"}
+          ]
+        },
+        "layer_b": {
+          "program_domain": [
+            {"program_axis": 0, "maps_to": "M output tiles"},
+            {"program_axis": 1, "maps_to": "N output tiles"}
+          ],
+          "index_tiles": [
+            {"id": "tm", "coordinate": "m", "expression": "program_id(0) * BLOCK_M + lane(BLOCK_M)"},
+            {"id": "tn", "coordinate": "n", "expression": "program_id(1) * BLOCK_N + lane(BLOCK_N)"},
+            {"id": "tk", "coordinate": "k", "expression": "k_tile * BLOCK_K + lane(BLOCK_K)", "tile_count": "ceil_div(K, BLOCK_K)"}
+          ],
+          "accesses": [
+            {"id": "a0", "kind": "load", "tensor": "A", "pointer_index": "m[:,None] * K + k[None,:]", "predicate": "(m[:,None] < M) and (k[None,:] < K)", "other": 0.0},
+            {"id": "a1", "kind": "load", "tensor": "B", "pointer_index": "k[:,None] * N + n[None,:]", "predicate": "(k[:,None] < K) and (n[None,:] < N)", "other": 0.0},
+            {"id": "a2", "kind": "store", "tensor": "O", "pointer_index": "m[:,None] * N + n[None,:]", "predicate": "(m[:,None] < M) and (n[None,:] < N)", "value_ref": "J.layer_a.nodes[n0].result"}
+          ],
+          "contraction_contracts": [{"node_ref": "J.layer_a.nodes[n0]", "k_tail_identity": 0.0, "accumulator_init": 0.0, "accumulator_dtype": "f32"}],
+          "effects": {"masked_loads_per_k_tile": 2, "masked_stores": 1}
+        }
+      },
+      "pi": [
+        {"rule": "bind_program_domain", "refs": ["J.layer_b.program_domain[0]", "J.layer_b.program_domain[1]"]},
+        {"rule": "materialize_index_tile", "refs": ["J.layer_b.index_tiles[tm]", "J.layer_b.index_tiles[tn]", "J.layer_b.index_tiles[tk]"]},
+        {"rule": "realize_k_tiled_dot", "node_ref": "J.layer_a.nodes[n0]", "refs": ["J.layer_b.accesses[a0]", "J.layer_b.accesses[a1]", "J.layer_b.contraction_contracts[0]"]},
+        {"rule": "realize_masked_access", "refs": ["J.layer_b.accesses[a2]"]}
+      ]
+    }
+  ]
+}

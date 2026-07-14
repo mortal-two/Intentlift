@@ -1,13 +1,9 @@
-"""Extraction driver: kernel source -> validated IntentIR.
+"""Extraction driver: kernel source -> IntentIR proposal.
 
-Pipeline (mirrors spec/extraction/llm-extraction.md):
-  1. ask the provider for IntentIR JSON,
-  2. parse + structural-validate (build the model),
-  3. smoke-interpret on random inputs (the schema+obligation gate),
-  4. on failure, feed the structured diagnostic back for a BOUNDED repair.
-
-The dynamic certificate (interpret(JSON) == the real kernel) is closed by the
-caller, which has the kernel's runnable entry point.
+The extractor asks the provider for JSON and parses it into the project model.
+Correctness is not decided here: the proposal must subsequently pass SCRC
+Gate1 and Gate2.  The old NumPy smoke interpreter remains available only as a
+legacy compatibility helper and is no longer on the extraction path.
 """
 
 from __future__ import annotations
@@ -18,10 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
 from intentir.ir.model import IntentFunction
-from intentir.verify.interpret import interpret
 from . import prompt as _prompt
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
@@ -65,8 +58,13 @@ def _concretize_dims(fn: IntentFunction, default: int = 6) -> dict[str, int]:
     return dims
 
 
-def smoke_interpret(fn: IntentFunction) -> dict[str, np.ndarray]:
-    """Run the lifted IR on random inputs; raise if it can't produce outputs."""
+def smoke_interpret(fn: IntentFunction) -> dict[str, Any]:
+    """Legacy smoke helper, kept off the active extraction/verification path."""
+
+    import numpy as np
+
+    from intentir.verify.back.legacy_v0.interpret import interpret
+
     dims = _concretize_dims(fn)
     rng = np.random.default_rng(0)
     inputs: dict[str, np.ndarray] = {}
@@ -86,13 +84,12 @@ def smoke_interpret(fn: IntentFunction) -> dict[str, np.ndarray]:
     return out
 
 
-def _validate(raw_text: str) -> tuple[IntentFunction, dict]:
+def _parse_candidate(raw_text: str) -> tuple[IntentFunction, dict]:
     js = _strip_to_json(raw_text)
     obj = json.loads(js)  # JSONDecodeError -> repair
     fn = IntentFunction.from_json(obj)  # KeyError/TypeError -> repair
     if not fn.outputs:
         raise ValueError("no outputs declared")
-    smoke_interpret(fn)  # InterpError/ValueError -> repair
     return fn, obj
 
 
@@ -115,7 +112,7 @@ def extract_intent(
     for attempt in range(max_repairs + 1):
         reply = call_responses(instructions, convo, provider=provider, effort=effort)
         try:
-            fn, obj = _validate(reply.text)
+            fn, obj = _parse_candidate(reply.text)
             return Extraction(
                 fn=fn,
                 json_obj=obj,

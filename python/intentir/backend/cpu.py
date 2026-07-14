@@ -1,11 +1,12 @@
-"""A second backend: IntentIR -> linalg -> LLVM -> CPU (JIT via mlir-runner).
+"""IntentIR -> linalg -> LLVM -> CPU execution via mlir-runner.
 
 The point is architectural, not performance: the SAME intent dialect that the GPU
 path lowers reaches a completely different backend through standard MLIR, with no
 GPU-specific machinery. intent->linalg is backend-neutral; only the device tail
 (gpu/nvvm here, an RVV/vector tail later) is specialized. This module proves that
 neutrality by actually executing a lifted kernel on the CPU and reading the result
-back. See spec/lowering/index.md ("多后端余量").
+back.  SCRC Gate2 uses this as its production-lowering leg; it is not a JSON
+interpreter. See spec/lowering/index.md ("多后端余量").
 """
 
 from __future__ import annotations
@@ -41,12 +42,25 @@ _CPU_PIPELINE = [
 def _dense(arr: np.ndarray) -> str:
     """numpy array -> MLIR dense<...> attribute literal."""
     a = np.asarray(arr, dtype=np.float32)
+
+    def scalar(value: float) -> str:
+        text = f"{float(value):.8g}"
+        if "e" in text or "E" in text:
+            marker = "e" if "e" in text else "E"
+            mantissa, exponent = text.split(marker, 1)
+            if "." not in mantissa:
+                mantissa += ".0"
+            return f"{mantissa}e{exponent}"
+        if "." not in text and text not in {"inf", "-inf", "nan"}:
+            text += ".0"
+        return text
+
     if a.ndim == 0:
-        return f"{float(a):.8g}"
+        return scalar(float(a))
 
     def rec(x):
         if x.ndim == 1:
-            return "[" + ", ".join(f"{float(v):.8g}" for v in x) + "]"
+            return "[" + ", ".join(scalar(float(v)) for v in x) + "]"
         return "[" + ", ".join(rec(x[i]) for i in range(x.shape[0])) + "]"
 
     return rec(a)

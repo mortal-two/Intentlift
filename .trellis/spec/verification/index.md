@@ -1,22 +1,17 @@
-# Verification 层:验证与契约
+# Verification：SCRC Gate1 + Gate2
 
-定义"如何裁决一个 LLM 提案的 IntentIR 是否可接受":三道检查、契约等级、以及动态执行一致性如何反哺契约。
-
-## 何时读
-
-- 改动验证栈、obligation、契约判定、tolerance 之前。
-
-## 文件
+项目当前的 `verify` 仅指两个连续过程：
 
 | 文件 | 内容 |
 |---|---|
-| [validation.md](validation.md) | 三道检查(schema/type、静态 obligation、动态执行一致性)与契约等级。 |
-| [dynamic-feedback.md](dynamic-feedback.md) | 动态执行一致性反哺契约;atomic / 浮点非结合的 tolerance 验证。 |
-| [architecture.md](architecture.md) | 分层验证架构(L0–L9):lift vs lowering 两个正确性问题、decidable vs fp-reassociating 轴、逐层诚实保证标签与当前状态。 |
+| [scrc-gate1.md](scrc-gate1.md) | J/π/C 驱动的源码隔离重放、双 TTIR 结构闭合、规则库与有限修复。 |
+| [scrc-gate2.md](scrc-gate2.md) | source/replay/lowering 三方实际执行与机械归属。 |
+| [architecture.md](architecture.md) | 当前两门架构入口及旧方案归档位置。 |
 
-## 核心原则
+原则：
 
-- **LLM 提案,验证裁决**:正确性不由 LLM 自证。
-- **动态可救静态**:静态证不出但动态执行一致的,应被接受,而不是被拒或烂在 PARTIAL。
-- **证书不是全域证明**:certificate = "测试输入域执行一致 + 静态义务"级别的保证。
-- **FULL/PARTIAL/OOS 沿用论文术语**,但**不背旧实现的任何包袱**(旧的 partial/oos 判定逻辑一律不参考)。
+- LLM 负责理解与生成，纯代码负责 Gate1 裁决；
+- Gate1 不执行，Gate2 才执行；
+- 两门都不依赖旧 JSON 解释器；
+- 正式样本必须从真实 Kernel 经 LLM extraction 产生 J/π/C；
+- 手写 Intent MLIR/固定 PK 只证明 lowering 局部能力，不证明 SCRC 端到端。

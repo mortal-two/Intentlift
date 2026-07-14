@@ -10,17 +10,17 @@
 ## 解法:三个独立角色,谁都不当硬门槛
 
 1. **对生成 = 可选 hint**:有 evidence 就喂给 LLM 增强,**没有也能靠 LLM 直接读源码生成**。evidence 不是必需前置条件,所以**新 kernel 不会因为提不出 evidence 就废**。泛化能力保住。
-2. **对验证 = 事后标尺**:规则能提多少提多少;提不到的让 obligation 判 UNKNOWN,**靠动态源码执行一致性兜底**,契约降级而非失败(见 [../verification/dynamic-feedback.md](../verification/dynamic-feedback.md))。
-3. **LLM 自报 claim**:LLM 在 JSON 里附上它声称的 witness/claim(access pattern / mask / bound),验证去**核对这些 claim 真不真**。这样 evidence 不再是"前端规则的专属产物",新 kernel 靠"LLM 自报 + 执行一致性"也能验。
+2. **对 Gate1 = 诊断辅助**:规则能提多少提多少，用于帮助提升官形成 J/B 与定位表；缺失不阻断 LLM 读源码。Gate1 的裁决仍来自源码隔离重放后的双中层指纹。
+3. **对 Gate2 = 输入设计提示**:evidence 可提示需要覆盖的边界 shape/mask 条件，但最终以源、重放、production lowering 的实际输出为准。
 
 ## 一句话
 
-> **evidence 进生成,但作 hint 不作门槛;验证靠"规则 evidence + LLM 自报 claim + 动态执行一致性"三条腿。**
+> **evidence 进提升和诊断，但作 hint 不作门槛；正确性裁决统一由 SCRC Gate1 + Gate2 完成。**
 
 ## 设计约束
 
 - 禁止把"规则能否提出 evidence"作为"能否提取该 kernel"的门槛。
-- evidence 提取器可以逐前端做(Triton TTIR / TileLang TIR / CUDA PTX),但它们的缺失只导致 obligation UNKNOWN,不导致提取中止。
+- evidence 提取器可以逐前端做(Triton TTIR / TileLang TIR / CUDA PTX)，但缺失不导致提取中止；后续由 Gate1/Gate2 给出是否闭合的实际结果。
 
 ## 与论文机制的关系(有意识的 refinement)
 

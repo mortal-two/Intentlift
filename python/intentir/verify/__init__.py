@@ -1,7 +1,11 @@
-"""Verification stack.
+"""SCRC verification entry point.
 
-Schema/type checks, obligation checks (over evidence + LLM-reported claims),
-and dynamic source-execution agreement. The numpy reference interpreter that
-gives each atomic op an executable semantics lives here. Dynamic agreement can
-rescue statically-UNKNOWN kernels (see .trellis/spec/verification/).
+The active verification design consists only of Gate1 (source-isolated replay
+closure) and Gate2 (three-way execution).  Pre-SCRC helpers are archived under
+``intentir.verify.back`` and are intentionally not re-exported here.
 """
+
+from . import gate1
+from . import gate2
+
+__all__ = ["gate1", "gate2"]

@@ -53,6 +53,21 @@ def test_reduce_max_keepdims() -> None:
     np.testing.assert_allclose(out, x.max(axis=1, keepdims=True), rtol=0, atol=0)
 
 
+def test_map_unary_rsqrt() -> None:
+    fn = {
+        "name": "rsqrt",
+        "inputs": [{"name": "x", "dtype": "f32", "shape": [8]}],
+        "outputs": [{"name": "y", "dtype": "f32", "shape": [8]}],
+        "body": [
+            {"op": "map_unary", "result": "y", "operands": ["x"],
+             "attrs": {"fn": "rsqrt"}},
+        ],
+    }
+    x = np.linspace(0.25, 4.0, 8, dtype=np.float32)
+    out = _run(fn, x=x)["y"]
+    np.testing.assert_allclose(out, 1.0 / np.sqrt(x), rtol=1e-6, atol=1e-6)
+
+
 def test_contraction_qk() -> None:
     fn = {
         "name": "qk",

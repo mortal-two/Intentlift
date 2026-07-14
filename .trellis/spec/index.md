@@ -42,7 +42,7 @@ kernel 源码 (Triton/TileLang/CUDA)
 | ir | [ir/index.md](ir/index.md) | Intent MLIR dialect 的具体形态:ABC 三层、张量级原子算子、结构化循环、JSON↔dialect。 | 改动 IR 定义、算子集、dialect、JSON schema 之前。 |
 | extraction | [extraction/index.md](extraction/index.md) | LLM 前端提取:直接提取到原子 IR、evidence 角色、前端输入清单。 | 改动提取管线、prompt、evidence、前端输入之前。 |
 | capability | [capability/index.md](capability/index.md) | 能力契约:能力矩阵、三种"不能"、诚实边界。 | 决定支持/不支持某类 kernel 模式之前。 |
-| verification | [verification/index.md](verification/index.md) | 验证栈:schema + obligation + 动态执行一致性、契约等级、动态反哺。 | 改动验证、契约判定、obligation 之前。 |
+| verification | [verification/index.md](verification/index.md) | SCRC Gate1 源码隔离重放 + Gate2 三方实跑。 | 改动 Gate1/Gate2、规则库、指纹或动态输入之前。 |
 | lowering | [lowering/index.md](lowering/index.md) | (后续阶段)Intent dialect 下降到标准 MLIR 与 RVV/GPU 后端。 | 进入 lowering 阶段时再读。 |
 | guides | [guides/index.md](guides/index.md) | Trellis 自带的跨层思维方法论(工程机制,非项目内容)。 | 编码前按需。 |
 

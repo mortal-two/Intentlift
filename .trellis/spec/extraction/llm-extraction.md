@@ -12,8 +12,21 @@ LLM 的工作是把任意 kernel **直接提取成张量级原子的 IntentIR JS
 
 1. 取 kernel 源码(+ 可选 evidence hint,见 [evidence.md](evidence.md))。
 2. LLM 在 IntentIR 规范约束下,提出张量级原子的 IntentIR JSON 候选,并附上它声称的 witness/claim。
-3. 验证裁决(schema + obligation + 动态源码执行一致性,见 [../verification/index.md](../verification/index.md))。
-4. 失败 → 结构化诊断反馈给 LLM,做**有界**修复;超过修复上限则记弱化 / 不支持结果,不强行接受。
+3. SCRC Gate1 用源码隔离重放和双 TTIR 结构闭合裁决 J/π 是否装下源结构。
+4. Gate1 闭合后，Gate2 对源、重放、production lowering 三方实跑。
+5. 失败 → 结构化诊断回到重写员小修或提升官重提；超过上限则记录未闭合，不强行接受。
+
+## SCRC 下必须区分两种 LLM 角色
+
+- **提升官/lifter**：可看源 Kernel，负责提出 J、受限 π、接口、C 和定位表；
+- **重写员/rewriter**：绝对不可看源码，只能接收 J、π、接口、C 槽和可信
+  规则卡，生成用于 [../verification/scrc-gate1.md](../verification/scrc-gate1.md)
+  compile-only/TTIR 闭合的重放 Kernel。
+
+两者不能复用同一个包含源码的 conversation/context。LocationMap、源 TTIR、
+C 绑定值与源侧差异明细只能留在提升侧；重写员的小修反馈只允许固定失败
+类别和重放自身的清洗后编译错误。重写员生成代码是验证探针，不改变
+“LLM 直接提取到原子 IntentIR”这一科研主线，也不能成为生产语义真值。
 
 ## re-roll 是提取的一部分
 

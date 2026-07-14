@@ -22,6 +22,9 @@ kernel 源码是 **SPMD 单程序视角**(每个 program/thread 在干什么);�
 
 - B 层不是性能提示——后端可以改 schedule,但**必须保持 A 层计算 + 满足 B 层约束**。
 - B 层使"把 A 层算子切分到并行硬件上"这件事合法。
+- 持久化 schema 必须显式记录每个 access 的 `index_expression`、load mask/fill、
+  store guard、effect 与 output mapping；每个 tiled reduction 必须记录 axis 及
+  identity 或 masked contribution。禁止把这些信息留在无约束自由字典中。
 
 ## Layer C:非绑定调度提示
 
@@ -29,6 +32,18 @@ kernel 源码是 **SPMD 单程序视角**(每个 program/thread 在干什么);�
 
 - C 层是**非绑定**的:后端可拿来当重调度的先验,也可完全忽略。
 - 改 C 层影响性能,但**不改变被提升计算的含义**。
+- 在 SCRC Gate1 中，重写员只看到 C 槽，不看到绑定值；注入器随后为源与
+  重放注入完全相同的 C。C 的语义地位仍是非绑定，但“同 C 编译”是结构
+  比较成立的实验控制条件。
+
+## π:受限重放计划，不是第四层 IR
+
+SCRC 的 π 只保存系统规则卡 id 及对 J/B 标识的引用，用于把源实例的实现
+机制交给源码隔离重写员。π 不是语义真值，也不是 Layer D：它不得含前端
+API、源码表达式、自由 action/code/comment 或完整计算图。任何与计算含义或
+边界正确性有关的事实都必须回到 A/B；规则卡是版本化系统资产。
+
+完整约束见 [../verification/scrc-gate1.md](../verification/scrc-gate1.md)。
 
 ## 分层不变量
 
