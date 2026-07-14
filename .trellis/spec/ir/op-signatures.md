@@ -57,6 +57,12 @@ tensor 语义的递推状态时，才使用 J `loop/scan`。普通 contraction �
 同样不产生 `Boundary.reductions`，A/B/out 的地址、mask、fill 与 store guard
 分别保存在 Layer B。
 
+`contraction` 不等于一定存在 contracted axis。对于
+`subscripts="m,n->mn"` 这类没有任何输入 label 被消去的 outer product，A 层仍
+使用现有 contraction op；前端 realization 是 `lhs[:, None] * rhs[None, :]`，
+不得引入 K loop、`tl.dot` 或 reduce。是否存在 contracted label 必须直接由
+subscripts 判定，不能只凭 op 名选择 K-tiled-dot。
+
 SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 的实际归约轴
 记录在 `Boundary.reductions.tile_axis`。例如 `[M,N]` 的逐行归约在 J 中是
 `axes=[1]`，但一整个 row 被物化为一维 Triton tile 时，本地归约调用使用
@@ -64,6 +70,9 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 强制生成本地 `expand_dims`；标量归约结果对同一一维 tile 可直接隐式广播。
 
 所有 interface `tensor_ref` 的 dtype 必须与被引用 J tensor 的 dtype 一致。
+pointer 所指 tensor 可以是 rank 0，此时 compiler view 使用 `shape=[]`；它仍是
+按地址读写的 tensor binding，不是按值 scalar 参数，也不得携带 scalar
+`value`。
 参与数值计算的 runtime scalar 使用 J 的 `shape=[]` 输入表示，并由
 Gate1 interface scalar 参数的 `tensor_ref` 连接；只提供 symbolic shape
 extent 的 M/N 类参数不是 J 输入。`reduce(fn=mean)` 在前端本地 tile

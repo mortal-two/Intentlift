@@ -142,8 +142,21 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "coordinate components are not a" in prompt
     assert "scalar-language `and` or `&&`" in prompt
     assert "Do not also select realize_reduce" in prompt
+    assert "bind_wide_program_domain" in prompt
+    assert "select realize_flattened_reduce" in prompt
+    assert "exactly one of realize_reduce/realize_flattened_reduce" in prompt
+    assert "m,n->mn" in prompt
+    assert "selects realize_outer_product" in prompt
+    assert "select materialize_mask_tile" in prompt
+    assert "mutually exclusive" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
+
+
+def test_compiler_view_accepts_rank_zero_tensor_pointer() -> None:
+    argument = scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", ())
+    assert argument.shape == ()
+    assert argument.to_json()["shape"] == []
 
 
 def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
@@ -175,6 +188,9 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     assert result.artifact.source == source
     assert result.artifact.provenance[0].model == "gpt-test"
     assert result.provenance.response_id == "resp-test"
+    assert result.provenance.prompt_sha256 == scrc.scrc_lift_prompt_sha256(
+        source, "add_kernel"
+    )
 
 
 def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:

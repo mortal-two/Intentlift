@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -645,3 +646,110 @@ def test_gate2_matmul_attributes_wrong_b_address_to_replay() -> None:
     assert result.source_lowering.passed
     assert result.source_replay is not None
     assert not result.source_replay.passed
+
+
+_FLAG_GEMS_DOT_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def dot_kernel(x_ptr, y_ptr, out_ptr, N, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0).to(tl.int64)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < N
+    x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+    y = tl.load(y_ptr + offsets, mask=mask, other=0.0)
+    out = tl.sum(x * y)
+    tl.store(out_ptr, out)
+"""
+
+
+def _flag_gems_dot_intent() -> IntentFunction:
+    return IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "flag_gems_dot",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["N"]},
+                    {"name": "Y", "dtype": "f32", "shape": ["N"]},
+                ],
+                "outputs": [{"name": "O", "dtype": "f32", "shape": []}],
+                "body": [
+                    {
+                        "op": "map_binary",
+                        "result": "product",
+                        "operands": ["X", "Y"],
+                        "attrs": {"fn": "mul"},
+                    },
+                    {
+                        "op": "reduce",
+                        "result": "O",
+                        "operands": ["product"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [0],
+                            "assoc": "float_nondeterministic",
+                        },
+                    },
+                ],
+            }
+        }
+    )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_libentry_dot_rank_zero_three_way() -> None:
+    module = pytest.importorskip("flag_gems.ops.dot")
+    python_function = module.dot_kernel
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    n = 1003
+    rng = np.random.default_rng(47)
+    x = (rng.standard_normal(n) * 0.25).astype(np.float32)
+    y = (rng.standard_normal(n) * 0.25).astype(np.float32)
+    case = Gate2Case(
+        "flag_gems.dot.rank_zero",
+        {"X": x, "Y": y, "N": n},
+        TritonExecutionSpec(
+            (
+                TritonArgument("x_ptr", ArgumentRole.INPUT, "X", "f32"),
+                TritonArgument("y_ptr", ArgumentRole.INPUT, "Y", "f32"),
+                TritonArgument(
+                    "out_ptr",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(),
+                    output_key="O",
+                ),
+                TritonArgument("N", ArgumentRole.SCALAR, "N"),
+            ),
+            (1,),
+            {"BLOCK_SIZE": 1024, "num_warps": 4, "num_stages": 1},
+        ),
+        Lower2CSpec(
+            _flag_gems_dot_intent(),
+            {"N": n},
+            {"X": "X", "Y": "Y"},
+            "O",
+        ),
+        ("O",),
+        {"O": Tolerance(rtol=2.0e-4, atol=2.0e-4)},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(source_path, "dot_kernel", trusted=True),
+        KernelSource.from_code(_FLAG_GEMS_DOT_REPLAY, "dot_kernel"),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )

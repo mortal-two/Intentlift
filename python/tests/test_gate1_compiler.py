@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from intentir.verify.gate1.compiler import (
     RuntimeArgument,
     TritonCompiler,
 )
+from intentir.verify.gate1 import _triton_worker
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -155,6 +157,39 @@ def test_compile_case_rejects_overlapping_schedule_slots() -> None:
         )
 
 
+def test_worker_unwraps_kernel_interface_metadata_and_warmup_result() -> None:
+    class Inner:
+        arg_names = ["x", "BLOCK"]
+        constexprs = [1]
+        do_not_specialize = []
+
+    class Wrapper:
+        arg_names = ["x", "BLOCK"]
+        fn = Inner()
+
+    class Compiled:
+        asm = {"ttir": "module", "ttgir": "module"}
+
+    interface = _triton_worker._interface(Wrapper())
+    assert interface["arg_names"] == ["x", "BLOCK"]
+    assert interface["constexprs"] == ["BLOCK"]
+    assert _triton_worker._compiled_kernel((Compiled(), {"BLOCK": 64})).asm
+
+
+def test_worker_rejects_wrapper_and_inner_argument_order_drift() -> None:
+    class Inner:
+        arg_names = ["x", "BLOCK"]
+        constexprs = [1]
+        do_not_specialize = []
+
+    class Wrapper:
+        arg_names = ["BLOCK", "x"]
+        fn = Inner()
+
+    with pytest.raises(TypeError, match="argument order differs"):
+        _triton_worker._interface(Wrapper())
+
+
 def _cuda_triton_available() -> bool:
     try:
         import torch
@@ -205,3 +240,41 @@ def test_compile_add_with_warmup_and_disk_cache(tmp_path: Path) -> None:
     assert cached.ok
     assert cached.cache_hit
     assert cached.ttir == result.ttir
+
+
+@pytest.mark.skipif(not _cuda_triton_available(), reason="CUDA/Triton unavailable")
+def test_compile_real_flag_gems_libentry_dot(tmp_path: Path) -> None:
+    module = pytest.importorskip("flag_gems.ops.dot")
+    python_function = module.dot_kernel
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    source = KernelSource.from_file(source_path, "dot_kernel", trusted=True)
+    case = CompileCase(
+        arguments={
+            "x_ptr": RuntimeArgument.tensor((1003,), "float32"),
+            "y_ptr": RuntimeArgument.tensor((1003,), "float32"),
+            "out_ptr": RuntimeArgument.tensor((), "float32"),
+            "N": RuntimeArgument.scalar(1003, "int32"),
+        },
+        grid=(1,),
+        schedule={
+            "BLOCK_SIZE": 1024,
+            "num_warps": 4,
+            "num_stages": 1,
+        },
+    )
+
+    result = TritonCompiler(cache_dir=tmp_path / "cache").compile(source, case)
+    assert result.ok, result.diagnostic
+    assert result.python_interface["arg_names"] == [
+        "x_ptr",
+        "y_ptr",
+        "out_ptr",
+        "N",
+        "BLOCK_SIZE",
+    ]
+    assert result.python_interface["constexprs"] == ["BLOCK_SIZE"]
+    assert result.ttir and "tt.func" in result.ttir

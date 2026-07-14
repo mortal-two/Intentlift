@@ -89,8 +89,10 @@ class SCRCCompilerArgument:
         if any(dim < 0 for dim in shape):
             raise ValueError("compiler argument dimensions must be non-negative")
         if self.kind == "tensor":
-            if not shape or self.value is not None:
-                raise ValueError("tensor compiler argument requires shape only")
+            if self.value is not None:
+                raise ValueError(
+                    "tensor compiler argument requires shape and forbids value"
+                )
         elif shape or self.value is None:
             raise ValueError("scalar compiler argument requires value only")
         object.__setattr__(self, "shape", shape)
@@ -322,6 +324,22 @@ Cross-field rules:
   indexed with [:,None] or [None,:]) is not a global semantic broadcast and does
   not create boundary.broadcasts. A contraction also does not create
   boundary.reductions;
+- if a source helper explicitly widens a frontend program coordinate before
+  offset arithmetic, preserve that as pi mechanism by selecting
+  bind_wide_program_domain; otherwise select bind_program_domain. J/B remain
+  API-free in both cases;
+- if the source reduction call omits its axis and therefore flattens the local
+  tile, keep the global J axes and BoundaryReduction.tile_axis semantic facts
+  but select realize_flattened_reduce. An explicit source axis selects
+  realize_reduce;
+- inspect contraction subscripts before selecting a realization card. A form
+  such as m,n->mn has no contracted label and selects realize_outer_product;
+  only a contraction with an actual tiled contracted dimension selects
+  realize_k_tiled_dot;
+- if the source computes one-dimensional mask components and later rank-inserts
+  and reuses them for compound access masks, select materialize_mask_tile with
+  refs to both component and compound accesses. Do not replace that staging by
+  repeated two-dimensional comparisons;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
 - interface runtime parameters copy the trusted compiler-view argument order,
@@ -361,12 +379,58 @@ pi/plan rules:
 - a contraction plan selects realize_k_tiled_dot for the contraction node and
   its K domain/accesses. Do not also select realize_reduce, realize_loop_carry,
   or realize_broadcast for schedule-only K tiling and local rank insertion.
+- select exactly one program-domain card for each source coordinate mechanism,
+  and exactly one of realize_reduce/realize_flattened_reduce for each source
+  reduction mechanism; do not emit both variants for the same operation.
+- select exactly one contraction realization that matches the subscripts;
+  realize_outer_product and realize_k_tiled_dot are mutually exclusive for one
+  J node. Select materialize_mask_tile only when the source actually stages and
+  reuses predicate components.
 
 Registered rule ids (API spellings intentionally omitted):
 {_rule_catalog(registry)}
 
 Do not emit source or provenance fields; the driver attaches them itself.
 """
+
+
+def _scrc_lift_prompt(
+    source: str,
+    name_hint: str,
+    registry: RuleRegistry,
+    compiler_view: SCRCCompilerView | None,
+) -> tuple[str, str]:
+    instructions = build_scrc_lift_instructions(registry)
+    user = (
+        f'Lift the following kernel. Use kernel_id "{name_hint}" and preserve '
+        "its actual callable entry name in interface.function_name."
+    )
+    if compiler_view is not None:
+        user += (
+            "\n\nTRUSTED_COMPILER_VIEW (copy these C/interface facts exactly):\n"
+            + json.dumps(
+                compiler_view.to_json(), ensure_ascii=False, sort_keys=True
+            )
+        )
+    return instructions, user + "\n\nSOURCE:\n" + source
+
+
+def scrc_lift_prompt_sha256(
+    source: str,
+    name_hint: str,
+    *,
+    registry: RuleRegistry | None = None,
+    compiler_view: SCRCCompilerView | None = None,
+) -> str:
+    """Hash the exact initial Lift prompt used for cache invalidation."""
+
+    active_registry = registry or default_triton_rule_registry()
+    instructions, user = _scrc_lift_prompt(
+        source, name_hint, active_registry, compiler_view
+    )
+    return hashlib.sha256(
+        (instructions + "\x00" + user).encode("utf-8")
+    ).hexdigest()
 
 
 def extract_scrc_artifact(
@@ -382,19 +446,9 @@ def extract_scrc_artifact(
     """Lift a real source kernel to the full SCRC artifact through the LLM."""
 
     registry = registry or default_triton_rule_registry()
-    instructions = build_scrc_lift_instructions(registry)
-    user = (
-        f'Lift the following kernel. Use kernel_id "{name_hint}" and preserve '
-        "its actual callable entry name in interface.function_name."
+    instructions, user = _scrc_lift_prompt(
+        source, name_hint, registry, compiler_view
     )
-    if compiler_view is not None:
-        user += (
-            "\n\nTRUSTED_COMPILER_VIEW (copy these C/interface facts exactly):\n"
-            + json.dumps(
-                compiler_view.to_json(), ensure_ascii=False, sort_keys=True
-            )
-        )
-    user += "\n\nSOURCE:\n" + source
     prompt_sha = hashlib.sha256(
         (instructions + "\x00" + user).encode("utf-8")
     ).hexdigest()
@@ -694,4 +748,5 @@ __all__ = [
     "SCRCProvenance",
     "build_scrc_lift_instructions",
     "extract_scrc_artifact",
+    "scrc_lift_prompt_sha256",
 ]

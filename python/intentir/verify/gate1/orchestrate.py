@@ -43,7 +43,12 @@ from .replay import (
     restore_masked_replay_module,
 )
 from .rules import RuleRegistry
-from .ttir import TTIRFingerprint, TTIRParseError, fingerprint_ttir
+from .ttir import (
+    TTIRFingerprint,
+    TTIRParseError,
+    fingerprint_ttir,
+    runtime_argument_names,
+)
 
 
 @dataclass(frozen=True)
@@ -400,11 +405,45 @@ def _validate_compiled_interface(
         for parameter in declared.parameters
         if parameter.kind is not ParameterKind.CONSTEXPR
     ]
-    if len(runtime_parameters) != len(fingerprint.interface.arguments):
-        raise ValueError("compiled TTIR runtime arity differs from KernelInterface")
-    for parameter, actual in zip(
-        runtime_parameters, fingerprint.interface.arguments, strict=True
+    if result.ttir is None:
+        raise ValueError("compiled result has no TTIR")
+    actual_names = runtime_argument_names(result.ttir)
+    if len(actual_names) != len(fingerprint.interface.arguments):
+        raise ValueError("compiled TTIR argument parser disagrees with fingerprint")
+    by_name = {parameter.name: parameter for parameter in runtime_parameters}
+    unknown = sorted(set(actual_names) - set(by_name))
+    if unknown:
+        raise ValueError(
+            "compiled TTIR contains unknown runtime argument(s): "
+            + ", ".join(unknown)
+        )
+    expected_surviving_order = [
+        parameter.name
+        for parameter in runtime_parameters
+        if parameter.name in actual_names
+    ]
+    if list(actual_names) != expected_surviving_order:
+        raise ValueError("compiled TTIR runtime arguments are not an ABI subsequence")
+    omitted = [
+        parameter
+        for parameter in runtime_parameters
+        if parameter.name not in actual_names
+    ]
+    binding_omissions = [
+        parameter.name
+        for parameter in omitted
+        if parameter.kind in {ParameterKind.POINTER, ParameterKind.TENSOR}
+        or parameter.tensor_ref is not None
+    ]
+    if binding_omissions:
+        raise ValueError(
+            "compiled TTIR omitted binding runtime argument(s): "
+            + ", ".join(binding_omissions)
+        )
+    for name, actual in zip(
+        actual_names, fingerprint.interface.arguments, strict=True
     ):
+        parameter = by_name[name]
         expected_kind = (
             "pointer"
             if parameter.kind in {ParameterKind.POINTER, ParameterKind.TENSOR}

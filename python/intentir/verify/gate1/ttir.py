@@ -1154,6 +1154,20 @@ def parse_ttir(
     )
 
 
+def runtime_argument_names(text: str) -> tuple[str, ...]:
+    """Return surviving TTIR runtime argument names in ABI order.
+
+    Triton may specialize ordinary scalar Python parameters and remove them
+    from the TTIR function signature.  The remaining SSA names retain their
+    Python parameter spelling and let Gate1 validate the surviving subsequence
+    without pretending that specialization changed the public Python ABI.
+    """
+
+    cleaned = _bounded_normalize_ttir(_strip_locations(text))
+    function = _parse_function(cleaned)
+    return tuple(name.removeprefix("%") for name, _, _ in function.arguments)
+
+
 def fingerprint_ttir(
     text: str,
     *,

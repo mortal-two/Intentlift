@@ -26,6 +26,14 @@ IntentIR 是否忠于源码，最终由 Gate1 结构闭合与 Gate2 三方实跑
 接口中的 `tensor_ref` 必须引用存在的 J tensor，且 dtype 与被引用 J tensor
 一致；真实 LLM extraction 还必须与可信 compiler view 中对应实参 dtype 一致。
 该交叉约束防止 f16/f32 等类型在 Lift 接缝漂移，不引入第三套 verifier。
+tensor pointer 可声明 `rank=0/shape=[]`；它仍是 pointer binding，不得与按值
+runtime scalar 混淆。
+
+完整 Python ABI 仍必须与真实 Triton callable 的参数顺序和 constexpr 位置精确
+一致。Triton 若把没有 `tensor_ref` 的普通 shape/stride scalar 专门化并从 TTIR
+签名消去，Gate1 验证 surviving argument name 是声明 ABI 的有序子序列；pointer/
+tensor 或连接 J 的语义 scalar 被消去时仍 fail-closed。该规则只吸收真实前端
+specialization，不恢复 `do_not_specialize` metadata 门禁。
 
 ## 主流程
 
@@ -73,16 +81,20 @@ source TTIR / replay TTIR ──> 纯代码指纹与裁判 ──> CLOSED 或差
 3. prompt 同时记录 step→card 选择轨迹和 registry digest；
 4. 重写员从 J 读取具体语义，从规则卡读取前端构造方法。
 
-当前 Triton 库覆盖 program domain、integer-offset index tile、staged pointer
-tile、masked/unmasked access、elementwise、reduce、broadcast、tiled dot、
-runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 张卡。
+当前 Triton 库覆盖 native/wide program domain、integer-offset index tile、
+staged pointer tile、masked access、staged mask tile、unmasked access、
+elementwise、显式轴/flattened reduce、broadcast、K-tiled dot、outer product、
+runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 19 张卡。
 其中 runtime scalar 支持通过 `tensor_ref` 连到 J `shape=[]` 输入；reduce
 卡的 `mean` 除数取全局 J 轴语义长度，elementwise 卡支持
 `sqrt+recip`。tiled-dot 卡从 contraction/J.B 读取 K 语义 extent、K tile
 slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 matmul
 的 schedule-only K loop 不得重复表示成 J `loop/reduce/broadcast`。二维 access
 中的 coordinate component 也不得任意重组为完整 offset，向量 predicate 使用
-源码声明的 `&`。
+源码声明的 `&`。`m,n->mn` 等没有 contracted label 的 contraction 使用 outer
+product 卡通过 rank insertion 与乘法实现；axis-omitted local reduction 使用
+flattened-reduce 卡；compiler slot 只在 launch/compile 时注入，不是 kernel
+参数或 body 变量。
 后续只根据真实 LLM 提取 Kernel 的
 失败补卡，不按想象中的特性枚举扩张。
 
@@ -102,6 +114,13 @@ slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 ma
 
 代码入口：`python/intentir/verify/gate1/`。
 
+真实库函数不一定是裸 Triton `JITFunction`。compile worker 允许沿有界 `.fn`
+wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapper 的
+`warmup()` 若返回 tuple/list，只接受其中唯一拥有 `asm` 的 CompiledKernel。
+外层若也公开 `arg_names`，必须与内层 metadata owner 的名称和顺序完全同构；
+不得把内层 constexpr 位置套到重排后的外层参数。也不得假定外层 wrapper 自己
+保存 constexpr/do-not-specialize，或从任意对象图递归搜索编译产物。
+
 已经具备：
 
 - `extract_scrc_artifact` 的真实 LLM lift-agent 接口；
@@ -113,20 +132,26 @@ slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 ma
 - 有界小修/重提接口；
 - 静态泄漏与 masked-J 消融；
 - add、row-sum、softmax、RMSNorm、matmul 的随机/边界变异探针。
+- 24 个真实 FlagGems Kernel 的非 Trellis 批处理队列、逐 case 原子报告、按完整
+  batch identity 恢复的 resume，以及同时绑定 source/compiler view/model/effort/
+  registry/Lift-prompt 的 Lift cache；其中 `fg_dot`/`fg_addr` 已具备真实 contract
+  并运行。
 
 当前仍是 Triton 研究原型，不应声称已经覆盖数百 Kernel。正式规模化样本必须
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
 PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端证据。
 
 2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
-RMSNorm 和 matmul 的 normal source-blind replay 都已达到 TTIR 硬闭合；在
-完整不透明 ABI/C 消融下，五者最终都是 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
+RMSNorm、matmul、FlagGems dot 和 FlagGems addr 的 normal source-blind replay
+都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，七者最终都是
+`LEAKAGE_REJECTED`。RMSNorm 的 runtime
 `eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
 验证；matmul 的单一 `mk,kn->mn` contraction、二维 tail mask、两轮 K tile、
 f16 input/f32 output 接缝与 staged pointer 路径也已经过真实 Lift/replay
-验证。两者被拒绝 live 样本的离线 Gate2 对照均三方 PASS，但不改变 Gate1
-结论。五核只完成 normal replay 可行性探针，下一阶段是首批 20～40 个真实
-LLM extraction held-out kernel，而不是宣称已具备数百 Kernel 覆盖。
+验证。RMSNorm、matmul、FlagGems dot 与 FlagGems addr 的 rejected live 样本
+离线 Gate2 对照均三方 PASS，但不改变 Gate1 结论。24 个真实外部 Kernel 已
+进入首批队列，但只完成前两例；它们还触发四张新卡，因此不是冻结规则库上的
+独立成功率样本，更不能宣称已具备数百 Kernel 覆盖。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1
 不得导入它。

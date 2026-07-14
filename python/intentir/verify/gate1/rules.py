@@ -234,6 +234,23 @@ def default_triton_rule_registry() -> RuleRegistry:
             pitfalls=["Do not infer grid rank from a tensor shape."],
         ),
         RuleCard(
+            "bind_wide_program_domain",
+            Frontend.TRITON,
+            applies_to=["boundary.domains", "interface.grid"],
+            reads=["domain expression", "grid axis", "coordinate integer width"],
+            api_mapping={
+                "program_coordinate_i64": "tl.program_id(axis).to(tl.int64)"
+            },
+            example=(
+                "Bind the declared grid axis and preserve an explicitly widened "
+                "64-bit program coordinate before forming offsets."
+            ),
+            pitfalls=[
+                "Select this only when pi records the source's wide-coordinate mechanism.",
+                "Do not widen a source that uses the frontend's native coordinate type.",
+            ],
+        ),
+        RuleCard(
             "materialize_index_tile",
             Frontend.TRITON,
             version="2",
@@ -282,6 +299,29 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "A store guard is independent from a load fill value.",
                 "Do not strengthen a declared predicate with redundant domain facts.",
                 "Use vector conjunction &, never scalar and or &&.",
+            ],
+        ),
+        RuleCard(
+            "materialize_mask_tile",
+            Frontend.TRITON,
+            applies_to=["boundary.accesses"],
+            reads=[
+                "component predicates", "compound predicate",
+                "predicate reuse graph", "local rank insertion",
+            ],
+            api_mapping={
+                "row_rank_insertion": "component[:, None]",
+                "column_rank_insertion": "component[None, :]",
+                "vector_conjunction": "&",
+            },
+            example=(
+                "Compute source-declared one-dimensional predicate components "
+                "once, rank-insert those boolean values, and reuse the composed "
+                "tile mask for every referenced access."
+            ),
+            pitfalls=[
+                "Do not recompute component comparisons after rank insertion.",
+                "Do not merge predicates whose source staging is independent.",
             ],
         ),
         RuleCard(
@@ -335,6 +375,30 @@ def default_triton_rule_registry() -> RuleRegistry:
             ],
         ),
         RuleCard(
+            "realize_flattened_reduce",
+            Frontend.TRITON,
+            applies_to=["reduce", "boundary.reductions"],
+            reads=[
+                "fn", "global axes", "local tile rank", "identity",
+                "masked_contribution", "semantic extent of each global axis",
+            ],
+            api_mapping={
+                "sum": "tl.sum(tile)",
+                "max": "tl.max(tile)",
+                "min": "tl.min(tile)",
+                "mean": "tl.sum(tile) / semantic_extent(global_axes)",
+            },
+            example=(
+                "When pi selects the source's axis-omitted reduction mechanism, "
+                "call the J-selected reducer without an axis argument so the "
+                "frontend flattens the complete local tile."
+            ),
+            pitfalls=[
+                "Do not use this card for a source call with an explicit tile axis.",
+                "Global J axes and masked contribution remain binding semantics.",
+            ],
+        ),
+        RuleCard(
             "realize_broadcast",
             Frontend.TRITON,
             version="2",
@@ -381,6 +445,29 @@ def default_triton_rule_registry() -> RuleRegistry:
             ],
         ),
         RuleCard(
+            "realize_outer_product",
+            Frontend.TRITON,
+            applies_to=["contraction"],
+            reads=[
+                "subscripts", "operands", "result dtype",
+                "lhs/rhs local ranks", "output axes",
+            ],
+            api_mapping={
+                "lhs_rank_insertion": "lhs[:, None]",
+                "rhs_rank_insertion": "rhs[None, :]",
+                "combine": "*",
+            },
+            example=(
+                "For a contraction such as m,n->mn with no contracted label, "
+                "rank-insert the two vectors and multiply them without a dot or "
+                "reduction."
+            ),
+            pitfalls=[
+                "Do not introduce a K loop when no subscript label is contracted.",
+                "Preserve lhs/rhs axis order from the declared subscripts.",
+            ],
+        ),
+        RuleCard(
             "bind_runtime_scalar",
             Frontend.TRITON,
             version="2",
@@ -402,11 +489,22 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "declare_schedule_slot",
             Frontend.TRITON,
+            version="2",
             applies_to=["schedule.slots", "interface.parameters"],
-            reads=["slot name", "slot kind", "value type"],
+            reads=[
+                "slot name", "slot kind", "value type",
+                "matching interface constexpr parameter",
+            ],
             api_mapping={"constexpr_annotation": "tl.constexpr"},
-            example="Declare the visible constexpr slot without choosing its value.",
-            pitfalls=["The concrete C value is injected after generation."],
+            example=(
+                "Declare a kind=constexpr slot through its matching interface "
+                "parameter without choosing a value; keep kind=compiler slots "
+                "as launch-only options."
+            ),
+            pitfalls=[
+                "The concrete C value is injected after generation.",
+                "A compiler slot is not a kernel parameter and must not appear in the body.",
+            ],
         ),
         RuleCard(
             "realize_cast",

@@ -23,18 +23,19 @@ J + π + 接口 + C 槽 + 规则卡
 
 实现位置：`python/intentir/verify/gate1/rules.py`。
 
-当前 15 张 Triton 规则卡分为：
+当前 19 张 Triton 规则卡分为：
 
-1. domain/index：program domain、完整 integer offset tile、分阶段 pointer tile；
-2. memory：masked access、unmasked access、output mapping；
-3. A 算子：elementwise、reduce、broadcast、cast、select；
-4. contraction/loop：tiled dot、loop carry；
+1. domain/index：native/wide program domain、完整 integer offset tile、分阶段
+   pointer tile；
+2. memory：masked access、分阶段 mask tile、unmasked access、output mapping；
+3. A 算子：elementwise、显式轴 reduce、flattened reduce、broadcast、cast、select；
+4. contraction/loop：K-tiled dot、outer product、loop carry；
 5. 接口/C：runtime scalar、schedule slot。
 
 规则卡只提供“如何在 Triton 中实现某种机制”，具体算什么必须从 J 读取。
 π 只保存 rule id 与 J/B 引用。
 
-第 15 张 `materialize_pointer_tile` 不是预先为 softmax 写的专用模板。它来自
+原先新增的 `materialize_pointer_tile` 不是预先为 softmax 写的专用模板。它来自
 真实 softmax normal replay 的 TTIR diff：源码保留两次 staged
 `pointer + scalar base + lane`，而重放先合成完整 integer offset，导致
 `tt.addptr` 与 `tt.splat` 多重集不同。新卡只表达这个地址物化机制，
@@ -68,6 +69,26 @@ matmul 同样没有新增专用卡，而是用真实 v2 diff 完善三张已有�
 同一轮还收紧了 artifact 接缝：interface `tensor_ref` 的 dtype 必须与引用的
 J tensor 一致，并与可信 compiler view 的真实 tensor dtype 一致。它防止提升官
 把 f16 matmul 输入漂成 f32 后仍进入重放，不是新的独立 verifier。
+
+五核之后的首批真实 FlagGems 扩展样本又由稳定 TTIR diff 触发四张通用卡：
+
+- `bind_wide_program_domain`：仅在 π 声明源码把 program coordinate 显式扩到
+  i64 时，保留 `tl.program_id(axis).to(tl.int64)`；
+- `realize_flattened_reduce`：区分源码省略局部 axis 的整 tile flatten reduction
+  与显式 `tile_axis` reduction；
+- `materialize_mask_tile`：先计算并复用一维 predicate component，再对 boolean
+  value 做局部 rank insertion，禁止在二维 tile 上重复比较；
+- `realize_outer_product`：`m,n->mn` 没有 contracted label，只通过两侧 rank
+  insertion 和乘法实现，不引入 dot、K loop 或 reduction。
+
+`declare_schedule_slot` 同时升级为 v2：只有 interface `kind=constexpr` 的槽属于
+kernel 签名；`kind=compiler` 的 `num_warps/num_stages` 等槽只在 launch/compile
+时注入，不能成为函数参数或 kernel body 变量。
+
+这些卡分别由 `fg_dot` 和 `fg_addr` 的真实失败触发。因此两例证明规则库已经能
+沿真实外部 Kernel 的 diff 增长并最终让 normal replay 闭合，但不能被表述为
+“冻结规则库上的独立 held-out 验证”。冻结后的复用能力仍要由后续 queued 样本
+检验。
 
 检索过程已经显式化：
 
@@ -178,8 +199,15 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 - RMSNorm 和 matmul 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.1
   的 rejected 对照，不改变 Gate1 裁决；
 - 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
-- 下一步从现有可执行真实 source 中选择首批 20～40 个 held-out kernel，
-  不改 masked 裁决；
+- 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前只有 `fg_dot` 与
+  `fg_addr` 完成 compiler/execution contract 并实际运行，其余 22 个仍为
+  queued，不改 masked 裁决；
+- `fg_dot` 与 `fg_addr` 的 normal replay 均达到 TTIR 硬闭合；masked score
+  分别为 `1.0` 与 `0.763387`，所以正式状态均为 `LEAKAGE_REJECTED`；
+- 两个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
+  `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
+- 这两例是首批规则增长样本，不是假装规则已冻结的独立准确率样本；下一步按
+  队列逐个补齐真实 compiler/execution contract，并观察新增卡能否直接复用；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；

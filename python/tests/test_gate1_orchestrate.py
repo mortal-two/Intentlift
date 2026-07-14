@@ -35,13 +35,19 @@ from intentir.verify.gate1.model import (
     ScheduleSpec,
     SemanticArchive,
 )
-from intentir.verify.gate1.orchestrate import CandidateRecord, Gate1Config, Gate1Runner
+from intentir.verify.gate1.orchestrate import (
+    CandidateRecord,
+    Gate1Config,
+    Gate1Runner,
+    _validate_compiled_interface,
+)
 from intentir.verify.gate1.replay import (
     ReplayGeneration,
     StaticReplayWriter,
     restore_masked_replay_module,
 )
 from intentir.verify.gate1.rules import default_triton_rule_registry
+from intentir.verify.gate1.ttir import fingerprint_ttir
 
 
 GOOD_TTIR = r'''
@@ -61,6 +67,16 @@ module {
     %value = tt.load %x : !tt.ptr<f32>
     %wrong = arith.addf %value, %one : f32
     tt.store %out, %wrong : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+SPECIALIZED_SCALAR_TTIR = r'''
+module {
+  tt.func public @kernel(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
+    %value = tt.load %x : !tt.ptr<f32>
+    tt.store %out, %value : !tt.ptr<f32>
     tt.return
   }
 }
@@ -469,12 +485,16 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert all(card.version for card in first.cards)
     assert {
         "bind_program_domain",
+        "bind_wide_program_domain",
         "materialize_index_tile",
         "materialize_pointer_tile",
         "realize_masked_access",
+        "materialize_mask_tile",
         "realize_elementwise",
         "realize_reduce",
+        "realize_flattened_reduce",
         "realize_k_tiled_dot",
+        "realize_outer_product",
     } <= {card.id for card in first.cards}
     cards = {card.id: card for card in first.cards}
     assert cards["materialize_pointer_tile"].version == "2"
@@ -489,14 +509,32 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert cards["realize_reduce"].version == "3"
     assert "tile_axis" in cards["realize_reduce"].reads
     assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]
+    assert cards["bind_wide_program_domain"].api_mapping[
+        "program_coordinate_i64"
+    ].endswith("to(tl.int64)")
+    assert cards["realize_flattened_reduce"].api_mapping["sum"] == "tl.sum(tile)"
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads
+    assert cards["declare_schedule_slot"].version == "2"
+    assert any(
+        "compiler slot is not a kernel parameter" in item
+        for item in cards["declare_schedule_slot"].pitfalls
+    )
     assert "tl.sum" in first.api_tokens(Frontend.TRITON)
     assert "+" not in first.api_tokens(Frontend.TRITON)
     assert "*" not in first.api_tokens(Frontend.TRITON)
     assert cards["realize_k_tiled_dot"].version == "3"
     assert "result dtype" in cards["realize_k_tiled_dot"].reads
     assert cards["realize_k_tiled_dot"].api_mapping["float32"] == "tl.float32"
+    assert cards["realize_outer_product"].api_mapping["combine"] == "*"
+    assert "subscripts" in cards["realize_outer_product"].reads
+    assert cards["materialize_mask_tile"].api_mapping[
+        "vector_conjunction"
+    ] == "&"
+    assert any(
+        "Do not recompute component comparisons" in item
+        for item in cards["materialize_mask_tile"].pitfalls
+    )
     assert cards["realize_broadcast"].api_mapping["scalar_to_tile"] == (
         "use the scalar operand directly"
     )
@@ -504,6 +542,62 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "redundant domain facts" in item
         for item in cards["realize_masked_access"].pitfalls
     )
+
+
+def test_compiled_interface_allows_specialized_nonbinding_scalars_only() -> None:
+    artifact = _artifact()
+    python_interface = {
+        "arg_names": ["x", "out", "n", "BLOCK"],
+        "constexprs": ["BLOCK"],
+        "constexpr_indices": [3],
+    }
+    result = CompileResult(
+        ok=True,
+        ttir=SPECIALIZED_SCALAR_TTIR,
+        python_interface=python_interface,
+    )
+    fingerprint = fingerprint_ttir(
+        SPECIALIZED_SCALAR_TTIR,
+        python_interface=python_interface,
+    )
+    _validate_compiled_interface(result, fingerprint, artifact)
+
+    semantic_intent = IntentFunction.from_json(
+        {
+            "name": "semantic_scalar",
+            "inputs": [
+                {"name": "x", "dtype": "f32", "shape": ["N"]},
+                {"name": "eps", "dtype": "f32", "shape": []},
+            ],
+            "outputs": [{"name": "out", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "out",
+                    "operands": ["x"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+    semantic = replace(
+        artifact,
+        j=replace(artifact.j, intent=semantic_intent),
+        interface=replace(
+            artifact.interface,
+            parameters=[
+                *artifact.interface.parameters[:2],
+                replace(
+                    artifact.interface.parameters[2],
+                    dtype="f32",
+                    tensor_ref="eps",
+                ),
+                artifact.interface.parameters[3],
+            ],
+        ),
+    )
+    with pytest.raises(ValueError, match="omitted binding runtime argument.*n"):
+        _validate_compiled_interface(result, fingerprint, semantic)
 
 
 def test_best_candidate_rank_keeps_interface_ahead_of_semantic_score() -> None:

@@ -19,7 +19,10 @@ Hard constraints:
 1. Preserve function_name, parameter order/modes/dtypes/ranks, constexpr slots,
    and the declared grid contract.
 2. Implement every J node and every boundary access/effect referenced by pi.
-3. Keep every schedule slot symbolic. Never invent or bake in a C value.
+3. Keep every schedule slot symbolic. Never invent or bake in a C value. Only
+   interface parameters with kind=constexpr belong in the kernel signature or
+   body; schedule kind=compiler and interface.compiler_slots are launch-only
+   options and must never be referenced as kernel variables.
 4. Do not infer extra semantics from identifier spelling.
 5. J reduction axes are global tensor axes; frontend reduction calls use the
    matching boundary.reductions.tile_axis for the local tile value.

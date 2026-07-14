@@ -118,10 +118,59 @@ def _runtime_value(torch: Any, spec: Mapping[str, Any], device: str) -> Any:
     )
 
 
+def _jit_metadata_owner(kernel: Any) -> Any:
+    """Find the wrapped Triton JITFunction that owns ABI metadata.
+
+    Real libraries commonly expose a ``KernelInterface`` wrapper (for example
+    FlagGems ``LibEntry``) while keeping ``constexprs`` and
+    ``do_not_specialize`` on an inner JITFunction.  Follow only the conventional
+    ``fn`` wrapper chain and fail closed on cycles or unrelated objects.
+    """
+
+    current = kernel
+    visited: set[int] = set()
+    while True:
+        marker = id(current)
+        if marker in visited:
+            raise TypeError("cyclic Triton kernel wrapper chain")
+        visited.add(marker)
+        if all(
+            hasattr(current, attribute)
+            for attribute in ("arg_names", "constexprs", "do_not_specialize")
+        ):
+            return current
+        nested = getattr(current, "fn", None)
+        if nested is None:
+            raise TypeError(
+                "Triton kernel wrapper does not expose JIT ABI metadata"
+            )
+        current = nested
+
+
+def _compiled_kernel(value: Any) -> Any:
+    """Extract one CompiledKernel from a wrapper-specific warmup result."""
+
+    if hasattr(value, "asm"):
+        return value
+    if isinstance(value, (tuple, list)):
+        matches = [item for item in value if hasattr(item, "asm")]
+        if len(matches) == 1:
+            return matches[0]
+    raise TypeError(
+        "Triton warmup did not return one compiled kernel artifact"
+    )
+
+
 def _interface(kernel: Any) -> dict[str, Any]:
-    arg_names = list(kernel.arg_names)
-    constexpr_indices = sorted(int(index) for index in kernel.constexprs)
-    do_not_specialize_raw = list(kernel.do_not_specialize)
+    metadata = _jit_metadata_owner(kernel)
+    arg_names = list(metadata.arg_names)
+    outer_arg_names = getattr(kernel, "arg_names", None)
+    if outer_arg_names is not None and list(outer_arg_names) != arg_names:
+        raise TypeError(
+            "Triton wrapper argument order differs from inner JIT metadata"
+        )
+    constexpr_indices = sorted(int(index) for index in metadata.constexprs)
+    do_not_specialize_raw = list(metadata.do_not_specialize)
 
     def _name(item: Any) -> str:
         if isinstance(item, int) and 0 <= item < len(arg_names):
@@ -225,9 +274,10 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
 
         # JITFunction.warmup invokes the complete frontend/compiler pipeline but
         # its run() path returns before grid canonicalization and kernel launch.
-        compiled = kernel.warmup(grid=grid, **values)
-        if compiled is None:
+        warmup_result = kernel.warmup(grid=grid, **values)
+        if warmup_result is None:
             raise RuntimeError("Triton warmup returned no compiled kernel")
+        compiled = _compiled_kernel(warmup_result)
         asm = compiled.asm
         asm_keys = sorted(str(key) for key in asm.keys())
         ttir = str(asm["ttir"]) if "ttir" in asm else None

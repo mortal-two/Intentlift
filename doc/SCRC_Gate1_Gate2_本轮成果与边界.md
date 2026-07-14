@@ -102,17 +102,17 @@ J.B。normal replay 首候选 score `1.0`；masked replay 虽未硬闭合，仍�
 
 ### 1.4 规则库完善
 
-Triton 默认规则库由原来的 7 张扩到 15 张，覆盖当前 A/B/C 主线需要的：
+Triton 默认规则库由原来的 7 张扩到 19 张，覆盖当前 A/B/C 主线需要的：
 
-- program domain；
+- native/wide program domain；
 - integer-offset index tile 与 staged pointer tile；
-- masked/unmasked access；
+- masked access、staged mask tile 与 unmasked access；
 - elementwise；
-- reduce；
+- 显式轴 reduce 与 flattened reduce；
 - broadcast；
-- tiled dot；
+- K-tiled dot 与无 contracted label 的 outer product；
 - runtime scalar；
-- C 槽；
+- constexpr C 槽与仅在 launch 生效的 compiler slot；
 - cast/select；
 - loop carry；
 - output mapping。
@@ -157,6 +157,37 @@ matmul 当前 Lower2C 会消费已经量化为 f16 的输入数值并产生 f32 
 production MLIR 仍统一发射为 f32；因此这是数值语义第三腿，不是
 mixed-f16/f32 dtype-faithful lowering 已完成的证据。
 
+### 1.7 首批真实库 Kernel 扩展
+
+新增 `test/scrc_heldout_batch.py`，不读取旧 corpus `intent.json`，而是从真实
+FlagGems Triton source 重新执行：
+
+```text
+source-only compile preflight
+  → gpt-5.6-sol/xhigh Lift
+  → Gate1 normal replay
+  → masked-J
+  → 正式 Gate1 闭合时才进入正式 Gate2
+```
+
+批处理显式登记 24 个 Kernel；当前只有 `fg_dot` 与 `fg_addr` 已具备审核过的
+compiler/execution contract 并真实运行，其余 22 个保持 queued。两例结果为：
+
+| Kernel | normal | masked | 正式 Gate1 | rejected-sample 离线 Gate2 |
+|---|---:|---:|---|---|
+| FlagGems `dot_kernel` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `addr_kernel` | `1.0` | `0.763387` | `LEAKAGE_REJECTED` | PASS |
+
+真实扩展还暴露并修复了三个工程接缝：FlagGems `LibEntry → JITFunction` wrapper、
+rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/stride scalar
+的 specialization。pointer/tensor 和通过 `tensor_ref` 连接 J 的语义 scalar
+仍不得被消去。
+
+`fg_dot`/`fg_addr` 的 diff 又触发 wide program domain、flattened reduce、
+staged mask tile 与 outer product 四张通用规则卡。它们因此是五核之后的首批
+真实规则增长样本，而不是冻结 15/19 张规则后的独立 held-out 成功率证据。
+详细证据见 `doc/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
+
 ## 2. False reject 是什么意思
 
 在能力实验里，用后续实际执行结果作为行为标签：
@@ -186,6 +217,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 - `rsqrt ↔ 1/sqrt`：已修；
 - 缺 `do_not_specialize`：不再拒绝；
 - source n-gram 误扫 J.B：已改为只扫描 π；
+- Triton 把普通 shape/stride scalar 从 TTIR signature 专门化消去：已改为验证
+  surviving ABI subsequence，语义 binding 仍 fail-closed；
 - π API 泄漏：仍按 SCRC 有意拒绝。
 
 因此剩余 raw false reject 主要是反作弊边界，不再是 TTIR 表达覆盖问题。
@@ -197,8 +230,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 已经真实发生的事情包括：
 
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
-  add、row-sum、softmax、RMSNorm、matmul 上结构闭合；最终接收目前被模型
-  先验和 π 结构可识别性阻塞；
+  add、row-sum、softmax、RMSNorm、matmul、FlagGems dot 与 FlagGems addr
+  上结构闭合；七者最终接收目前都被模型先验和 π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
 - 真实 GPU source/replay launch；
@@ -215,7 +248,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 - 规则卡只在五核和当前变异集上证过；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；
-- 还缺数百 Kernel 的批处理、失败分诊与真实重提循环运行证据。
+- 已有 24 个真实 Kernel 的批处理队列、逐 case 报告、resume/Lift cache 与失败
+  分诊，但只实际完成前两例；还缺其余 22 个及后续数百 Kernel 的运行证据。
 
 因此最准确的称呼是：
 

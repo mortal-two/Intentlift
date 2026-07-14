@@ -265,6 +265,8 @@ def test_add_compatibility_case_keeps_existing_defaults() -> None:
     assert view["grid"] == [4]
     assert view["grid_contract"] == ["ceil_div(n_elements, BLOCK)"]
     assert view["schedule_values"]["BLOCK"] == 256
+    assert case.source_path == ROOT / "test" / "scrc_probe_sources.py"
+    assert case.function_name == "add_kernel"
 
 
 def _generation(code: str, *, masked: bool) -> ReplayGeneration:

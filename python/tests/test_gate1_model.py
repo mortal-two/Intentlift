@@ -428,6 +428,7 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "tl.sum" in masked  # masked-J retains the same pi/rule-card channel
     assert "reduce_sum_node" not in masked
     assert "ABLATION RUN" in masked
+    assert "interface.compiler_slots are launch-only" in masked
 
 
 def test_leakage_ratio_has_fixed_threshold_semantics() -> None:

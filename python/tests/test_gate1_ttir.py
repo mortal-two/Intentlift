@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from intentir.verify.gate1.compare import compare_fingerprints, compare_ttir
-from intentir.verify.gate1.ttir import TTIRParseError, fingerprint_ttir
+from intentir.verify.gate1.ttir import (
+    TTIRParseError,
+    fingerprint_ttir,
+    runtime_argument_names,
+)
 
 
 EQUIVALENT_SOURCE = r'''
@@ -107,6 +111,17 @@ module {
   }
 }
 '''
+
+
+def test_runtime_argument_names_preserve_surviving_specialized_subsequence() -> None:
+    text = r'''
+module {
+  tt.func public @specialized(%x: !tt.ptr<f32>, %alpha: f32, %stride: i32) {
+    tt.return
+  }
+}
+'''
+    assert runtime_argument_names(text) == ("x", "alpha", "stride")
 
 
 def test_locations_ssa_names_independent_order_and_bounded_rewrites_are_ignored():

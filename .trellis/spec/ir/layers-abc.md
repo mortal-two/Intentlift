@@ -74,6 +74,19 @@ API、源码表达式、自由 action/code/comment 或完整计算图。任何�
 `loop/reduce/broadcast`。这与下述 FlashAttention 不同：普通 matmul 没有
 contraction 之外的 online state recurrence。
 
+**示例:addr outer product**
+- A:`contraction(vec1,vec2,"m,n->mn")`，再与 runtime `alpha/beta` 的
+  elementwise scale 和输入矩阵相加；没有 contracted label
+- B:分别物化并复用 m/n 一维 predicate component，再进行局部 boolean rank
+  insertion；input/vec/output 的 stride index、mask/fill 与 store guard 保持绑定
+- C:`BLOCK_SIZE_M/BLOCK_SIZE_N`、warp/stage
+- π:选择 outer-product、mask-tile、pointer/access 与 runtime-scalar 实现卡
+
+这里的二维结果由 `vec1[:,None] * vec2[None,:]` 实现。因为 subscripts 没有被
+消去的 label，不能凭 `contraction` op 名生成 K loop、dot 或 reduction；一维
+mask component 的 staging/reuse 属于 B 的真实边界结构，也不能在二维 tile 上
+重新比较后当作等价实现。
+
 **示例:FlashAttention**(分层的关键案例,必须支持)
 - 它的 K 维循环**同时**是两件事:
   - **tiling**(把 K 切块流式处理)→ 属于 **C**

@@ -320,3 +320,18 @@ add/row_sum/softmax/rmsnorm/matmul 标成 Gate1 闭合。
 
 临时文件不纳入仓库。最新 harness 报告已经移除原始源 kernel，只保留 source
 摘要，并保存所有真正被 Gate1 验证过的 normal/masked source-blind 候选代码。
+
+## 8. 首批真实外部 Kernel 的追加证据
+
+五核之后，FlagGems `dot_kernel` 与 `addr_kernel` 也通过真实
+`gpt-5.6-sol/xhigh` Lift 让 normal replay 达到 `1.0`。但 masked 结果分别为：
+
+```text
+fg_dot:  masked score = 1.0       → LEAKAGE_REJECTED
+fg_addr: masked score = 0.763387  → LEAKAGE_REJECTED
+```
+
+两例 rejected-sample 离线 Gate2 均三方 PASS。它们进一步说明当前 masked-J
+阻塞不只存在于最初五个探针；outer product、runtime scalar、显式 stride 和
+二维 mask staging 也没有自然消除 π/接口/模型先验的可识别性。该证据仍不授权
+修改 `0.5` 阈值或实现路线 B/C/D，正式流程继续 fail-closed。

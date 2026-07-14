@@ -15,7 +15,7 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -31,7 +31,12 @@ from intentir.verify.gate1.compiler import (
     KernelSource,
     RuntimeArgument,
 )
-from intentir.verify.gate1.model import Gate1Status, ParameterKind, ParameterMode
+from intentir.verify.gate1.model import (
+    Gate1Artifact,
+    Gate1Status,
+    ParameterKind,
+    ParameterMode,
+)
 from intentir.verify.gate1.orchestrate import Gate1Config, Gate1Runner
 from intentir.verify.gate1.replay import ResponsesReplayWriter
 from intentir.verify.gate1.rules import default_triton_rule_registry
@@ -55,8 +60,19 @@ from scrc_probe_sources import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "test/scrc_probe_sources.py"
+def _unwrap_python_function(function: Any) -> Any:
+    current = function
+    visited: set[int] = set()
+    while not inspect.isfunction(current):
+        marker = id(current)
+        if marker in visited:
+            raise TypeError("cyclic Triton function wrapper chain")
+        visited.add(marker)
+        nested = getattr(current, "fn", None)
+        if nested is None:
+            raise TypeError("Triton function wrapper has no Python function")
+        current = nested
+    return current
 
 
 @dataclass(frozen=True)
@@ -74,7 +90,30 @@ class LiveKernelCase:
 
     @property
     def function_name(self) -> str:
-        return self.function.fn.__name__
+        return self.python_function.__name__
+
+    @property
+    def python_function(self) -> Any:
+        return _unwrap_python_function(self.function)
+
+    @property
+    def source_path(self) -> Path:
+        path = inspect.getsourcefile(self.python_function)
+        if path is None:
+            raise ValueError(
+                f"cannot locate source file for {self.function_name!r}"
+            )
+        return Path(path).resolve()
+
+    @property
+    def source_text(self) -> str:
+        return inspect.getsource(self.python_function)
+
+    @property
+    def kernel_source(self) -> KernelSource:
+        return KernelSource.from_file(
+            self.source_path, self.function_name, trusted=True
+        )
 
     def compiler_view(self) -> SCRCCompilerView:
         return SCRCCompilerView(
@@ -443,6 +482,25 @@ def _execution_json(result) -> dict[str, Any]:
     }
 
 
+def _gate2_evidence_json(result) -> dict[str, Any]:
+    return {
+        "case_id": result.case_id,
+        "status": result.status.value,
+        "source": _execution_json(result.source),
+        "replay": _execution_json(result.replay),
+        "lowering": _execution_json(result.lowering),
+        "source_replay": None
+        if result.source_replay is None
+        else asdict(result.source_replay),
+        "source_lowering": None
+        if result.source_lowering is None
+        else asdict(result.source_lowering),
+        "replay_lowering": None
+        if result.replay_lowering is None
+        else asdict(result.replay_lowering),
+    }
+
+
 def _progress(stage: str, **fields: Any) -> None:
     print(json.dumps({"stage": stage, **fields}, ensure_ascii=False), flush=True)
 
@@ -522,58 +580,89 @@ def _lift_attempt_evidence(item) -> dict[str, Any]:
     }
 
 
-def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
-    case = build_case(args)
+def run_case(
+    case: LiveKernelCase,
+    args: argparse.Namespace,
+    *,
+    artifact: Gate1Artifact | None = None,
+    lift_evidence: Mapping[str, Any] | None = None,
+    lift_origin: str | None = None,
+) -> tuple[int, dict[str, Any]]:
     provider = replace(
         get_provider(), model=args.model, reasoning_effort=args.effort
     )
     compiler_view = case.compiler_view()
-    source_text = inspect.getsource(case.function.fn)
+    source_text = case.source_text
+    source_encoded = source_text.encode("utf-8")
     registry = default_triton_rule_registry()
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
+        "source": {
+            "path": str(case.source_path),
+            "function": case.function_name,
+            "sha256": hashlib.sha256(source_encoded).hexdigest(),
+            "bytes": len(source_encoded),
+        },
         "compiler_view": compiler_view.to_json(),
     }
 
-    _progress(
-        "lift_start", kernel=case.name, model=args.model, effort=args.effort
-    )
-    try:
-        extraction = extract_scrc_artifact(
-            source_text,
-            case.function_name,
-            registry=registry,
-            provider=provider,
-            compiler_view=compiler_view,
-            max_repairs=args.lift_repairs,
-            effort=args.effort,
+    if artifact is None:
+        _progress(
+            "lift_start", kernel=case.name, model=args.model, effort=args.effort
         )
-    except SCRCLiftError as exc:
-        report["lift"] = {
-            "ok": False,
-            "attempts": [_lift_attempt_evidence(item) for item in exc.attempts],
-        }
-        _progress("lift_failed", kernel=case.name, attempts=len(exc.attempts))
-        return 2, report
+        try:
+            extraction = extract_scrc_artifact(
+                source_text,
+                case.function_name,
+                registry=registry,
+                provider=provider,
+                compiler_view=compiler_view,
+                max_repairs=args.lift_repairs,
+                effort=args.effort,
+            )
+        except SCRCLiftError as exc:
+            report["lift"] = {
+                "ok": False,
+                "attempts": [
+                    _lift_attempt_evidence(item) for item in exc.attempts
+                ],
+            }
+            _progress("lift_failed", kernel=case.name, attempts=len(exc.attempts))
+            return 2, report
 
-    artifact = extraction.artifact
-    _progress(
-        "lift_complete",
-        kernel=case.name,
-        attempts=extraction.provenance.attempts,
-        response_id=extraction.provenance.response_id,
-    )
-    report["lift"] = {
-        "ok": True,
-        "model": extraction.provenance.model,
-        "attempts": extraction.provenance.attempts,
-        "repairs": list(extraction.provenance.repairs),
-        "response_id": extraction.provenance.response_id,
-        "artifact": _artifact_evidence_json(artifact),
-    }
+        artifact = extraction.artifact
+        _progress(
+            "lift_complete",
+            kernel=case.name,
+            attempts=extraction.provenance.attempts,
+            response_id=extraction.provenance.response_id,
+        )
+        report["lift"] = {
+            "ok": True,
+            "model": extraction.provenance.model,
+            "prompt_sha256": extraction.provenance.prompt_sha256,
+            "rule_registry_digest": registry.digest,
+            "attempts": extraction.provenance.attempts,
+            "repairs": list(extraction.provenance.repairs),
+            "response_id": extraction.provenance.response_id,
+            "artifact": _artifact_evidence_json(artifact),
+        }
+    else:
+        if lift_evidence is None or not lift_evidence.get("ok"):
+            raise ValueError("reused artifact requires successful lift evidence")
+        reused = json.loads(json.dumps(dict(lift_evidence)))
+        reused["reused"] = True
+        reused["reused_from"] = lift_origin
+        report["lift"] = reused
+        _progress(
+            "lift_reused",
+            kernel=case.name,
+            response_id=reused.get("response_id"),
+            origin=lift_origin,
+        )
 
     writer = ResponsesReplayWriter(
         provider=provider,
@@ -590,7 +679,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             run_masked_ablation=True,
         )
     ).run(
-        KernelSource.from_file(SOURCE, case.function_name, trusted=True),
+        case.kernel_source,
         artifact,
         _compile_case(case),
         registry,
@@ -598,9 +687,6 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     )
     report["gate1"] = _gate1_evidence_json(gate1)
     _progress("gate1_complete", kernel=case.name, status=gate1.status.value)
-    if not gate1.replay_closed:
-        return 3, report
-
     closed = next(
         (
             candidate
@@ -611,6 +697,42 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         ),
         None,
     )
+    if not gate1.replay_closed:
+        if (
+            getattr(args, "diagnose_rejected", False)
+            and gate1.status is Gate1Status.LEAKAGE_REJECTED
+            and closed is not None
+            and closed.generation is not None
+        ):
+            replay = KernelSource.from_code(
+                closed.generation.code, artifact.interface.function_name
+            )
+            _progress("gate2_diagnostic_start", kernel=case.name)
+            try:
+                diagnostic = Gate2Runner().run(
+                    case.kernel_source,
+                    replay,
+                    _gate2_case(artifact, case, args.seed),
+                )
+                report["gate2_diagnostic"] = {
+                    "kind": "offline_gate2_for_gate1_rejected_sample",
+                    "gate1_status": gate1.status.value,
+                    **_gate2_evidence_json(diagnostic),
+                }
+                _progress(
+                    "gate2_diagnostic_complete",
+                    kernel=case.name,
+                    status=diagnostic.status.value,
+                )
+            except Exception as exc:
+                report["gate2_diagnostic"] = {
+                    "kind": "offline_gate2_for_gate1_rejected_sample",
+                    "gate1_status": gate1.status.value,
+                    "status": "setup_failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+        return 3, report
+
     if closed is None or closed.generation is None:
         report["gate1"]["diagnostics"].append(
             "Gate1 closed without a recoverable replay candidate"
@@ -628,28 +750,17 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
     _progress("gate2_start", kernel=case.name)
     gate2 = Gate2Runner().run(
-        KernelSource.from_file(SOURCE, case.function_name, trusted=True),
+        case.kernel_source,
         replay,
         _gate2_case(artifact, case, args.seed),
     )
-    report["gate2"] = {
-        "case_id": gate2.case_id,
-        "status": gate2.status.value,
-        "source": _execution_json(gate2.source),
-        "replay": _execution_json(gate2.replay),
-        "lowering": _execution_json(gate2.lowering),
-        "source_replay": None
-        if gate2.source_replay is None
-        else asdict(gate2.source_replay),
-        "source_lowering": None
-        if gate2.source_lowering is None
-        else asdict(gate2.source_lowering),
-        "replay_lowering": None
-        if gate2.replay_lowering is None
-        else asdict(gate2.replay_lowering),
-    }
+    report["gate2"] = _gate2_evidence_json(gate2)
     _progress("gate2_complete", kernel=case.name, status=gate2.status.value)
     return (0 if gate2.status is Gate2Status.PASS else 4), report
+
+
+def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    return run_case(build_case(args), args)
 
 
 def _parser(default_kernel: str) -> argparse.ArgumentParser:
