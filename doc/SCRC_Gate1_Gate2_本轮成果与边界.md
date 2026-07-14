@@ -38,17 +38,18 @@
 该入口只解析 artifact，不用解释器“先验算一遍”来决定正确性。正确性由
 后续 Gate1/Gate2 裁决。模型由现有 provider 配置选择，不在代码中绑定 5.5。
 
-本轮也做了真实 provider 审计，结果必须如实记录：
+当时也做了真实 provider 审计，历史结果必须如实保留：
 
-- 本地 provider 尚不支持 `gpt-5.6`，返回 `unknown provider for model`；
+- 当时使用了不完整模型名 `gpt-5.6`，因此返回 `unknown provider for model`；
 - 回退到配置中的 `gpt-5.5` 后，add 的完整 artifact 在有界修复内仍未解析闭合；
 - 实际暴露的都是 wire/schema 漂移：`fill→fill_value`、`node_ids` 列表、以及
   access 字段被重复塞入 `effects`；
 - 代码已按这些真实失败收紧 prompt，并只兼容这几个已观察到的序列化形态，
   但本轮没有继续无界调用来制造一个“成功样例”。
 
-因此当前状态是“真实 LLM 接口已接通、mock artifact round-trip 已通过，live
-完整 artifact 尚未闭合”，不能宣称真实 lifter 已端到端跑通。
+这段结论只描述当时那次调用。2026-07-14 后续已改用正确名称
+`gpt-5.6-sol` 与 `xhigh`，并通过 wire schema + 可信 compiler view 打通真实
+add 的 Lift→Gate1→Gate2；最新证据见 `test/scrc_live_add_report.md`。
 
 ### 1.3 Gate1 收回 SCRC 主线
 

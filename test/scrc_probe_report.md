@@ -34,14 +34,18 @@ J + π + 前端接口 + C 空位名 + 检索规则卡
 
 | 项 | 值 |
 |---|---|
-| 首选模型 | `gpt-5.6` |
-| 首选模型结果 | HTTP 502：`unknown provider for model gpt-5.6` |
+| 当时使用的不完整模型名 | `gpt-5.6` |
+| 该模型名结果 | HTTP 502：`unknown provider for model gpt-5.6` |
 | 实际请求/响应模型 | `gpt-5.5` / `gpt-5.5` |
 | reasoning effort | `high` |
 | response id | `resp_09484adc73d88790016a55f4e4fd188195868c5a7ef804a822` |
 | 重写调用次数 | 1 |
 | 编译修复次数 | 0 |
 | 重写输入 SHA-256 | `b218d66338b5838291f3ce649e64983680f5ae1e3d50c697f56476c4e0d4da22` |
+
+注：这张表是早期探针的历史记录，不表示 5.6 系列不可用。正确模型名
+`gpt-5.6-sol` 已在后续 `test/scrc_live_add_report.md` 中以 `xhigh` 完成真实
+Lift→Gate1→Gate2 闭环。
 
 环境记录：Python 3.10.12、PyTorch 2.10.0+cu130、Triton 3.6.0、NVIDIA RTX 5090 D（sm_120）、驱动 580.95.05。
 

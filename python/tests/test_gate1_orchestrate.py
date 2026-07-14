@@ -296,6 +296,11 @@ def test_bounded_repair_stability_and_masked_ablation_close() -> None:
     assert writer.calls[2][0] is None and writer.calls[2][1] is None
     assert writer.calls[3][2]
     assert result.masked_compile is not None and not result.masked_compile.ok
+    assert result.masked_generation is not None
+    assert result.masked_generation.masked
+    assert result.to_json()["masked_generation"]["generation_id"].startswith(
+        "masked:"
+    )
     assert result.leakage_ratio == 0.0
 
 

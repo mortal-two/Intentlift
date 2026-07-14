@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from .provider import ProviderConfig, get_provider
 
@@ -42,24 +43,40 @@ def _extract_output_text(data: dict) -> str:
     return "".join(chunks)
 
 
+def _responses_payload(
+    instructions: str,
+    user_input: str,
+    provider: ProviderConfig,
+    effort: str | None,
+    text_format: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": provider.model,
+        "instructions": instructions,
+        "input": user_input,
+        "reasoning": {"effort": effort or provider.reasoning_effort},
+    }
+    if text_format is not None:
+        payload["text"] = {"format": dict(text_format)}
+    return payload
+
+
 def call_responses(
     instructions: str,
     user_input: str,
     *,
     provider: ProviderConfig | None = None,
     effort: str | None = None,
+    text_format: Mapping[str, Any] | None = None,
     max_retries: int = 4,
     timeout: float = 600.0,
 ) -> LLMReply:
     """One ``/responses`` round-trip. ``instructions`` is the system prompt."""
     p = provider or get_provider()
     url = p.base_url.rstrip("/") + "/responses"
-    payload = {
-        "model": p.model,
-        "instructions": instructions,
-        "input": user_input,
-        "reasoning": {"effort": effort or p.reasoning_effort},
-    }
+    payload = _responses_payload(
+        instructions, user_input, p, effort, text_format
+    )
     body = json.dumps(payload).encode()
     headers = {
         "Authorization": f"Bearer {p.api_key}",

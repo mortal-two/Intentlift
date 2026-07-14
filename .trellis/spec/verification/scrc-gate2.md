@@ -64,6 +64,9 @@ production lowering 执行腿。
 - production lowering 执行已实现；
 - 三方 tolerance 比较与机械归属已实现；
 - `python/tests/test_gate2.py` 已真实跑通 add 的 source/replay/lowering 三方；
+- `test/scrc_live_add_e2e.py` 已进一步跑通真实 LLM lift + 真实 source-blind
+  replay 后的完整三方 add：`N=1003, BLOCK=256`，source↔replay 最大误差 0，
+  source/replay↔lowering 最大误差约 `5.01e-6`，状态 `GATE2_PASS`；
 - 其余 op 能否进入 Gate2，由现有 A/B/C 表达和 production lowering 的真实
   支持情况决定；不引入“verify-ready op”概念。
 

@@ -91,6 +91,7 @@ loop carry 与 output mapping，共 14 张卡。后续只根据真实 LLM 提取
 已经具备：
 
 - `extract_scrc_artifact` 的真实 LLM lift-agent 接口；
+- Responses JSON Schema wire contract，以及源码侧可信 compiler-view 摘要；
 - J/π/C/接口/定位表 artifact；
 - 计划—检索—生成规则库；
 - 源与重放 compile-only、TTIR 提取；
@@ -103,9 +104,15 @@ loop carry 与 output mapping，共 14 张卡。后续只根据真实 LLM 提取
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
 PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端证据。
 
-截至本轮，真实 provider 的 add 提升已被实际调用，但完整 artifact 尚未在有界
-修复内通过严格 parser；已观察到的都是字段序列化漂移。所以上述 LLM 入口是
-已经实现的路径，不是已经证明稳定的 live lifting 结果。
+2026-07-14 已打通一个真实 add 首例：`gpt-5.6-sol/xhigh` 提升首轮产出完整
+artifact，source-blind 重写首轮编译并以总分 1.0 通过 interface/A/B/C 结构
+比较；source 与 replay 均非缓存编译。J 内 `layer_c` 为空，具体 C 只存在于
+独立 schedule。masked-J 候选在 `tl.static_assert(False)` 处编译终止，无法
+恢复正常语义，泄漏比为 0，最终状态 `REPLAY_CLOSED`。入口与实测记录分别为
+`test/scrc_live_add_e2e.py` 和 `test/scrc_live_add_report.md`。
+
+这一条只证明真实 add 单例闭环，不外推为数百 Kernel 覆盖，也不替代后续
+row-sum、softmax、RMSNorm、matmul 与复杂特性的真实 extraction 证据。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1
 不得导入它。

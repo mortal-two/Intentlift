@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters import scrc
 from intentir.verify.gate1.rules import default_triton_rule_registry
@@ -151,3 +153,94 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     assert result.artifact.source == source
     assert result.artifact.provenance[0].model == "gpt-test"
     assert result.provenance.response_id == "resp-test"
+
+
+def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:
+    captured: dict = {}
+    response = LLMReply(
+        json.dumps(_artifact_payload()), "gpt-test", {"id": "resp-view"}
+    )
+
+    def fake_call(instructions, user_input, **kwargs):
+        captured["user_input"] = user_input
+        captured["text_format"] = kwargs["text_format"]
+        return response
+
+    monkeypatch.setattr(scrc, "call_responses", fake_call)
+    view = scrc.SCRCCompilerView(
+        {"BLOCK": 64, "num_warps": 4}, ("num_warps",), ()
+    )
+
+    result = scrc.extract_scrc_artifact(
+        "source", "add_kernel", compiler_view=view, max_repairs=0
+    )
+
+    assert result.artifact.schedule.values == {
+        "BLOCK": 64,
+        "num_warps": 4,
+    }
+    assert "TRUSTED_COMPILER_VIEW" in captured["user_input"]
+    assert '"compiler_slots": ["num_warps"]' in captured["user_input"]
+    assert captured["text_format"]["name"] == "scrc_gate1_artifact"
+    rewriter_view = result.artifact.rewriter_view()
+    assert rewriter_view["j"]["intent"]["intent_function"]["layer_c"] == {}
+    assert "values" not in rewriter_view["schedule"]
+
+
+def test_scrc_lift_rejects_compiler_view_drift(monkeypatch) -> None:
+    response = LLMReply(
+        json.dumps(_artifact_payload()), "gpt-test", {"id": "resp-drift"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    view = scrc.SCRCCompilerView({"BLOCK": 128}, (), ())
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source",
+            "add_kernel",
+            compiler_view=view,
+            max_repairs=0,
+        )
+
+    assert "schedule.values differs from trusted compiler view" in str(
+        caught.value
+    )
+
+
+def test_scrc_lift_rejects_concrete_c_inside_j(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["j"]["intent"]["intent_function"]["layer_c"] = {
+        "tile_size": 64
+    }
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-layer-c"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact("source", "add_kernel", max_repairs=0)
+
+    assert "J.intent.layer_c must be empty" in str(caught.value)
+
+
+def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
+    replies = iter(
+        [
+            LLMReply('{"bad": 1}', "gpt-test", {"id": "resp-1"}),
+            LLMReply('{"still_bad": 2}', "gpt-test", {"id": "resp-2"}),
+        ]
+    )
+    monkeypatch.setattr(
+        scrc, "call_responses", lambda *args, **kwargs: next(replies)
+    )
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact("source", "add_kernel", max_repairs=1)
+
+    assert [item.response_id for item in caught.value.attempts] == [
+        "resp-1",
+        "resp-2",
+    ]
+    assert caught.value.attempts[0].response_text == '{"bad": 1}'
+    assert "attempt 1" in str(caught.value)
+    assert "attempt 2" in str(caught.value)

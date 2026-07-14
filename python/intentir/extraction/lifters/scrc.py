@@ -11,10 +11,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import (
+    AliasSpec,
     Gate1Artifact,
     ProvenanceRecord,
     ProvenanceRole,
@@ -22,6 +24,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.rules import RuleRegistry, default_triton_rule_registry
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
+from .scrc_schema import scrc_artifact_text_format
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -40,6 +43,77 @@ class SCRCProvenance:
 class SCRCExtraction:
     artifact: Gate1Artifact
     provenance: SCRCProvenance
+
+
+@dataclass(frozen=True)
+class SCRCCompilerView:
+    """Trusted source-compilation facts visible to the lift agent.
+
+    Concrete C values commonly live at a launch site rather than in the kernel
+    body.  The SCRC plan therefore gives the lift agent a compiler-view summary
+    instead of asking it to invent those values from source text.
+    """
+
+    schedule_values: Mapping[str, bool | int | float]
+    compiler_slots: tuple[str, ...] = ()
+    aliases: tuple[AliasSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        values = dict(self.schedule_values)
+        for name, value in values.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise ValueError(f"invalid schedule name: {name!r}")
+            if not isinstance(value, (bool, int, float)):
+                raise TypeError(f"schedule value {name!r} must be a scalar")
+        slots = tuple(self.compiler_slots)
+        if len(set(slots)) != len(slots) or any(
+            not isinstance(name, str) or not name.isidentifier()
+            for name in slots
+        ):
+            raise ValueError("compiler_slots must contain unique identifiers")
+        aliases = tuple(
+            item if isinstance(item, AliasSpec) else AliasSpec.from_json(item)
+            for item in self.aliases
+        )
+        object.__setattr__(self, "schedule_values", values)
+        object.__setattr__(self, "compiler_slots", slots)
+        object.__setattr__(self, "aliases", aliases)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "schedule_values": dict(self.schedule_values),
+            "compiler_slots": list(self.compiler_slots),
+            "aliases": [item.to_json() for item in self.aliases],
+        }
+
+
+@dataclass(frozen=True)
+class SCRCLiftAttempt:
+    """One provider response and the local reason it was rejected.
+
+    The complete response is retained on the exception object so a live probe
+    can inspect schema drift without issuing the same expensive request again.
+    It is deliberately omitted from the exception message.
+    """
+
+    attempt: int
+    model: str
+    diagnostic: str
+    response_text: str = field(repr=False)
+    response_id: str | None = None
+
+
+class SCRCLiftError(RuntimeError):
+    """Raised after the bounded lift/repair budget is exhausted."""
+
+    def __init__(self, attempts: list[SCRCLiftAttempt]) -> None:
+        self.attempts = tuple(attempts)
+        summary = "; ".join(
+            f"attempt {item.attempt}: {item.diagnostic}" for item in attempts
+        )
+        super().__init__(
+            f"SCRC lift failed after {len(attempts)} response(s): {summary}"
+        )
 
 
 def _json_object(text: str) -> dict:
@@ -74,6 +148,9 @@ Return one JSON object for Gate1Artifact. Do not emit prose or markdown.
 J.intent must follow this IntentIR vocabulary:
 {INTENTIR_SCHEMA}
 
+For SCRC, J contains A+B only. Emit J.intent.intent_function.layer_c as an
+empty object; every concrete Layer-C value belongs only in schedule.values.
+
 In addition, return exactly these top-level fields:
 - j: {{kernel_id, intent, node_ids, boundary}}, where node_ids is an object
   mapping opaque ids to JSON paths, for example {{"n0":"body[0]"}}; never an array
@@ -91,6 +168,21 @@ predicate, optional fill_value, optional node_ref. Never emit a field named
 "fill". Every tiled reduction records node_ref, tile_axis and exactly one of
 identity or masked_contribution. Every effects entry uses exactly kind, target
 and optional node_ref; access details stay in accesses, not effects.
+
+Cross-field rules:
+- every boundary.domains value is one complete string expression;
+- node_ids contains only IntentIR body-node ids mapped to paths such as
+  body[0], never domain/access/effect/output-mapping ids;
+- a scalar kernel parameter that only supplies a symbolic extent is not an
+  IntentIR tensor input;
+- compiler_slots contains only launch/compiler options absent from the kernel
+  signature, never constexpr parameters;
+- schedule declares every C key exactly once: source signature constexprs use
+  kind constexpr, compiler_slots use kind compiler, and schedule.values copies
+  the trusted compiler-view values exactly;
+- boundary.aliases copies the trusted compiler-view alias contract exactly;
+- plan node_ref/refs may reference only node_ids, J tensor names, domain ids,
+  or access_id values. Effects and output mappings have no standalone ids.
 
 pi/plan rules:
 - every step selects one registered rule id below;
@@ -111,6 +203,7 @@ def extract_scrc_artifact(
     *,
     registry: RuleRegistry | None = None,
     provider: ProviderConfig | None = None,
+    compiler_view: SCRCCompilerView | None = None,
     max_repairs: int = 3,
     effort: str | None = None,
 ) -> SCRCExtraction:
@@ -120,19 +213,31 @@ def extract_scrc_artifact(
     instructions = build_scrc_lift_instructions(registry)
     user = (
         f'Lift the following kernel. Use kernel_id "{name_hint}" and preserve '
-        "its actual callable entry name in interface.function_name.\n\nSOURCE:\n"
-        + source
+        "its actual callable entry name in interface.function_name."
     )
+    if compiler_view is not None:
+        user += (
+            "\n\nTRUSTED_COMPILER_VIEW (copy these C/interface facts exactly):\n"
+            + json.dumps(
+                compiler_view.to_json(), ensure_ascii=False, sort_keys=True
+            )
+        )
+    user += "\n\nSOURCE:\n" + source
     prompt_sha = hashlib.sha256(
         (instructions + "\x00" + user).encode("utf-8")
     ).hexdigest()
     source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     repairs: list[str] = []
+    rejected_attempts: list[SCRCLiftAttempt] = []
     conversation = user
 
     for attempt in range(max_repairs + 1):
         reply = call_responses(
-            instructions, conversation, provider=provider, effort=effort
+            instructions,
+            conversation,
+            provider=provider,
+            effort=effort,
+            text_format=scrc_artifact_text_format(),
         )
         try:
             payload = _json_object(reply.text)
@@ -187,6 +292,32 @@ def extract_scrc_artifact(
                 ).to_json()
             ]
             artifact = Gate1Artifact.from_json(payload)
+            if artifact.j.intent.layer_c:
+                raise ValueError(
+                    "J.intent.layer_c must be empty; concrete C belongs only "
+                    "in schedule.values"
+                )
+            if compiler_view is not None:
+                if dict(artifact.schedule.values) != dict(
+                    compiler_view.schedule_values
+                ):
+                    raise ValueError(
+                        "schedule.values differs from trusted compiler view: "
+                        f"{artifact.schedule.values!r} != "
+                        f"{dict(compiler_view.schedule_values)!r}"
+                    )
+                if tuple(artifact.interface.compiler_slots) != tuple(
+                    compiler_view.compiler_slots
+                ):
+                    raise ValueError(
+                        "interface.compiler_slots differs from trusted compiler view"
+                    )
+                if [item.to_json() for item in artifact.j.boundary.aliases] != [
+                    item.to_json() for item in compiler_view.aliases
+                ]:
+                    raise ValueError(
+                        "boundary.aliases differs from trusted compiler view"
+                    )
             registry.resolve(
                 artifact.plan, frontend=artifact.interface.frontend
             )
@@ -203,10 +334,17 @@ def extract_scrc_artifact(
         except Exception as exc:
             diagnostic = f"{type(exc).__name__}: {exc}"
             repairs.append(diagnostic)
+            rejected_attempts.append(
+                SCRCLiftAttempt(
+                    attempt=attempt + 1,
+                    model=reply.model,
+                    diagnostic=diagnostic,
+                    response_text=reply.text,
+                    response_id=reply.raw.get("id"),
+                )
+            )
             if attempt == max_repairs:
-                raise RuntimeError(
-                    f"SCRC lift failed after {attempt + 1} tries; last: {diagnostic}"
-                ) from exc
+                raise SCRCLiftError(rejected_attempts) from exc
             conversation = (
                 user
                 + "\n\nYour previous artifact could not be parsed:\n"
@@ -218,7 +356,10 @@ def extract_scrc_artifact(
 
 
 __all__ = [
+    "SCRCCompilerView",
     "SCRCExtraction",
+    "SCRCLiftAttempt",
+    "SCRCLiftError",
     "SCRCProvenance",
     "build_scrc_lift_instructions",
     "extract_scrc_artifact",

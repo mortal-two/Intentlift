@@ -10,8 +10,14 @@ LLM 的工作是把任意 kernel **直接提取成张量级原子的 IntentIR JS
 
 ## 提取流程
 
-1. 取 kernel 源码(+ 可选 evidence hint,见 [evidence.md](evidence.md))。
-2. LLM 在 IntentIR 规范约束下,提出张量级原子的 IntentIR JSON 候选,并附上它声称的 witness/claim。
+1. 取 kernel 源码、同一 source compile case 的编译器视图摘要(C 绑定、
+   compiler slots、alias contract),以及可选 evidence hint(见
+   [evidence.md](evidence.md))。C 若只存在于 launch site，禁止要求模型从
+   kernel 函数体猜值。
+2. LLM 在 IntentIR 规范与 Gate1Artifact wire JSON Schema 约束下,提出
+   J/π/C/接口/定位表。固定协议对象禁止未知键；IntentIR 的
+   `attrs/layer_b` 保持现有开放 JSON 表达，而 J 内的 `layer_c` 必须为空，
+   具体 C 只进入独立 schedule。最终由项目严格 parser 裁决并做有界修复。
 3. SCRC Gate1 用源码隔离重放和双 TTIR 结构闭合裁决 J/π 是否装下源结构。
 4. Gate1 闭合后，Gate2 对源、重放、production lowering 三方实跑。
 5. 失败 → 结构化诊断回到重写员小修或提升官重提；超过上限则记录未闭合，不强行接受。
@@ -27,6 +33,11 @@ LLM 的工作是把任意 kernel **直接提取成张量级原子的 IntentIR JS
 C 绑定值与源侧差异明细只能留在提升侧；重写员的小修反馈只允许固定失败
 类别和重放自身的清洗后编译错误。重写员生成代码是验证探针，不改变
 “LLM 直接提取到原子 IntentIR”这一科研主线，也不能成为生产语义真值。
+
+当前 Responses 路径允许调用侧显式选择模型与 reasoning effort，不把具体模型
+硬编码进 lifter。2026-07-14 的首个真实闭环使用 `gpt-5.6-sol/xhigh`：add 的
+完整 artifact 首轮通过严格 parser，随后由独立的 source-blind rewriter 进入
+Gate1/Gate2；详见 `test/scrc_live_add_report.md`。
 
 ## re-roll 是提取的一部分
 

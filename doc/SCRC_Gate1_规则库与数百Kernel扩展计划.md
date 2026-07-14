@@ -137,7 +137,8 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 ### 第一批：20～40 个 Triton
 
-- 先让首个 live add 的完整 J/π/C artifact 在有界修复内闭合；
+- 首个 live add 已于 2026-07-14 完成 J/π/C→Gate1→Gate2 闭环；下一步按
+  同一入口推进 row-sum，再依次覆盖 softmax、RMSNorm、matmul；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；

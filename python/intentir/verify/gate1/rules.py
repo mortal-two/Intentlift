@@ -286,7 +286,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             "bind_runtime_scalar",
             Frontend.TRITON,
             applies_to=["interface.parameters", "boundary.domains"],
-            reads=["parameter name", "dtype", "referenced dimension"],
+            reads=["parameter name", "dtype", "referencing domain id"],
             example="Use the declared scalar parameter where J/B references it.",
             pitfalls=["Do not replace a runtime extent with a C slot."],
         ),

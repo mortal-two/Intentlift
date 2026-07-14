@@ -177,6 +177,7 @@ class Gate1ExecutionResult:
     masked_comparison: TTIRComparison | None = None
     leakage_ratio: float | None = None
     diagnostics: tuple[str, ...] = ()
+    masked_generation: ReplayGeneration | None = None
 
     @property
     def replay_closed(self) -> bool:
@@ -213,6 +214,17 @@ class Gate1ExecutionResult:
             else {
                 "ok": self.masked_compile.ok,
                 "diagnostic": self.masked_compile.diagnostic,
+            },
+            "masked_generation": None
+            if self.masked_generation is None
+            else {
+                "prompt_sha256": self.masked_generation.prompt_sha256,
+                "requested_model": self.masked_generation.requested_model,
+                "generation_id": self.masked_generation.generation_id,
+                "code_sha256": self.masked_generation.code_sha256,
+                "response_model": self.masked_generation.response_model,
+                "response_id": self.masked_generation.response_id,
+                "masked": self.masked_generation.masked,
             },
             "masked_comparison": None
             if self.masked_comparison is None
@@ -720,6 +732,7 @@ class Gate1Runner:
 
                 masked_compile: CompileResult | None = None
                 masked_comparison: TTIRComparison | None = None
+                masked_generation: ReplayGeneration | None = None
                 masked_score = 0.0
                 masked_attempted = False
                 try:
@@ -777,6 +790,7 @@ class Gate1Runner:
                         masked_comparison,
                         None,
                         tuple(diagnostics),
+                        masked_generation=masked_generation,
                     )
                 normal_score = closed_record.comparison.score  # type: ignore[union-attr]
                 ratio = leakage_ratio(normal_score, masked_score)
@@ -801,6 +815,7 @@ class Gate1Runner:
                         masked_comparison,
                         ratio,
                         tuple(diagnostics),
+                        masked_generation=masked_generation,
                     )
                 return Gate1ExecutionResult(
                     Gate1Status.REPLAY_CLOSED,
@@ -814,6 +829,7 @@ class Gate1Runner:
                     masked_comparison,
                     ratio,
                     tuple(diagnostics),
+                    masked_generation=masked_generation,
                 )
 
             if relifter is None or relift_round + 1 >= self.config.max_relifts:

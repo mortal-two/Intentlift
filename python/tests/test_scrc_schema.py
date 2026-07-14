@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+from intentir.extraction.lifters.scrc_schema import (
+    scrc_artifact_json_schema,
+    scrc_artifact_text_format,
+)
+
+
+def _parameter_schema() -> dict:
+    schema = scrc_artifact_json_schema()
+    return schema["properties"]["interface"]["properties"]["parameters"][
+        "items"
+    ]
+
+
+def test_scrc_wire_schema_closes_gate1_objects() -> None:
+    schema = scrc_artifact_json_schema()
+
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "j",
+        "interface",
+        "schedule",
+        "plan",
+        "location_map",
+    }
+    assert _parameter_schema()["additionalProperties"] is False
+    assert "referenced_dimension" not in _parameter_schema()["properties"]
+    assert "tensor_ref" in _parameter_schema()["properties"]
+
+
+def test_scrc_wire_schema_preserves_open_intent_payloads() -> None:
+    schema = scrc_artifact_json_schema()
+    op = schema["$defs"]["intent_op"]
+    intent_function = schema["properties"]["j"]["properties"]["intent"][
+        "properties"
+    ]["intent_function"]
+
+    assert op["additionalProperties"] is False
+    assert op["properties"]["attrs"] == {"type": "object"}
+    assert intent_function["properties"]["layer_c"] == {
+        "type": "object",
+        "maxProperties": 0,
+    }
+    assert op["properties"]["body"]["items"] == {
+        "$ref": "#/$defs/intent_op"
+    }
+
+
+def test_scrc_text_format_uses_schema_guidance_plus_local_validation() -> None:
+    text_format = scrc_artifact_text_format()
+
+    assert text_format["type"] == "json_schema"
+    assert text_format["name"] == "scrc_gate1_artifact"
+    assert text_format["strict"] is False
+    assert text_format["schema"] == scrc_artifact_json_schema()
+
+
+def test_scrc_schema_calls_do_not_share_mutable_nodes() -> None:
+    first = scrc_artifact_json_schema()
+    first["properties"]["j"]["properties"]["kernel_id"]["type"] = "null"
+
+    second = scrc_artifact_json_schema()
+    assert second["properties"]["j"]["properties"]["kernel_id"][
+        "type"
+    ] == "string"
