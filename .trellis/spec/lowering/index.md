@@ -108,6 +108,13 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
   surviving axis 时默认 rank 0；C++ `ReduceLowering` 已补
   collapse-all→extract→`tensor.from_elements` 路径，并从源码重新构建
   `intent-opt`、通过 `lower-reduce.mlir`，不依赖旧二进制漂移。
+- final-stage max/min/prod 与 `sqrt(sum(partials))` 已分别通过真实 FlagGems
+  source/replay/CPU-lowering 三方执行；prod 沿用已有 `ReduceLowering` 乘法
+  combiner，没有新增 IntentIR op。
+- `mlir-runner` 的 `printMemrefF32` 只给有限十进制精度，曾把正确的 max 输出
+  `91.181175` 读回为 `91.1812`。CPU wrapper 现在用一个可 bufferize 的
+  `linalg.generic` 对输出逐元素 `arith.bitcast f32→i32`，打印 i32 位模式并按
+  IEEE-754 原位恢复；rank-0 与任意 rank f32 输出均保持精确位值。
 
 边界仍明确：当前通用 CPU `convert-intent-to-linalg` 没有 iota/gather lowering，
 integer output 也没有通用 read-back。因此 arange/trace/eye 仍是 queued 能力缺口，

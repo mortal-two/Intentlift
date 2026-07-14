@@ -506,9 +506,11 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert cards["realize_masked_access"].api_mapping["vector_conjunction"] == "&"
     assert cards["realize_elementwise"].version == "3"
     assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
-    assert cards["realize_reduce"].version == "3"
+    assert cards["realize_reduce"].version == "4"
     assert "tile_axis" in cards["realize_reduce"].reads
     assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]
+    assert "tl.reduce" in cards["realize_reduce"].api_mapping["prod"]
+    assert "multiply combiner" in cards["realize_reduce"].api_mapping["prod"]
     assert cards["bind_wide_program_domain"].api_mapping[
         "program_coordinate_i64"
     ].endswith("to(tl.int64)")

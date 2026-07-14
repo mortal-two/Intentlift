@@ -61,6 +61,46 @@ def test_accepts_probe_triton_subset() -> None:
     )
 
 
+def test_accepts_a_validated_sibling_jit_reduce_helper() -> None:
+    module = """import triton
+import triton.language as tl
+
+@triton.jit
+def product_combine(left, right):
+    return left * right
+
+@triton.jit
+def product_kernel(x, out, BLOCK: tl.constexpr):
+    offsets = tl.arange(0, BLOCK)
+    values = tl.load(x + offsets)
+    result = tl.reduce(values, axis=0, combine_fn=product_combine)
+    tl.store(out, result)
+"""
+
+    validation = validate_triton_module(
+        module, required_function="product_kernel"
+    )
+
+    assert validation.function_names == ("product_combine", "product_kernel")
+
+
+def test_rejects_recursive_sibling_jit_helpers() -> None:
+    module = """import triton
+import triton.language as tl
+
+@triton.jit
+def first(x):
+    return second(x)
+
+@triton.jit
+def second(x):
+    return first(x)
+"""
+
+    with pytest.raises(UnsafeReplayCodeError, match="recursive Triton helper"):
+        validate_triton_module(module)
+
+
 @pytest.mark.parametrize(
     ("module", "message"),
     [

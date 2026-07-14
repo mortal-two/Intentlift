@@ -333,6 +333,11 @@ Cross-field rules:
   visible helper whose defined result is `tl.program_id(...).to(tl.int64)`;
   select bind_wide_program_domain for that call. Keep the helper/API spelling
   out of J/B and pi free text;
+- in the installed FlagGems limits helper, `get_dtype_min` returns negative
+  infinity for a floating dtype and `get_dtype_max` returns positive infinity.
+  Encode those floating boundary contributions in J/B as the JSON strings
+  `-inf` and `+inf`, respectively; do not substitute the largest finite value.
+  Keep the source helper spelling out of J/B and pi free text;
 - if the source reduction call omits its axis and therefore flattens the local
   tile, keep the global J axes and BoundaryReduction.tile_axis semantic facts
   but select realize_flattened_reduce. An explicit source axis selects

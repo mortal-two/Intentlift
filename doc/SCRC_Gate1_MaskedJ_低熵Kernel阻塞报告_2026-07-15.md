@@ -333,9 +333,15 @@ fg_addr: masked score = 0.763387  → LEAKAGE_REJECTED
 fg_ones: masked score = 0.925     → LEAKAGE_REJECTED
 fg_sum:  masked score = 1.0       → LEAKAGE_REJECTED
 fg_mean: masked score = 1.0       → LEAKAGE_REJECTED
+fg_max:  masked score = 0.507692  → LEAKAGE_REJECTED
+fg_min:  masked score = 0.507692  → LEAKAGE_REJECTED
+fg_prod: masked score = 0.509470  → LEAKAGE_REJECTED
+fg_l2:   masked score = 0.917544  → LEAKAGE_REJECTED
 ```
 
-五例 rejected-sample 离线 Gate2 均三方 PASS。它们进一步说明当前 masked-J
+九例 rejected-sample 离线 Gate2 均三方 PASS。新增 max/min/prod 三例尤其接近
+`0.5` 阈值，但主方案判定是 `L <= 0.5` 才通过，因此不能因“只差一点”改写裁决；
+L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概率猜中。它们进一步说明当前 masked-J
 阻塞不只存在于最初五个探针；outer product、runtime scalar、显式 stride 和
 二维 mask staging 也没有自然消除 π/接口/模型先验的可识别性。该证据仍不授权
 修改 `0.5` 阈值或实现路线 B/C/D，正式流程继续 fail-closed。

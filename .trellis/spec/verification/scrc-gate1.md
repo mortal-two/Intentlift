@@ -94,7 +94,10 @@ slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 ma
 源码声明的 `&`。`m,n->mn` 等没有 contracted label 的 contraction 使用 outer
 product 卡通过 rank insertion 与乘法实现；axis-omitted local reduction 使用
 flattened-reduce 卡；compiler slot 只在 launch/compile 时注入，不是 kernel
-参数或 body 变量。
+参数或 body 变量。显式轴 reduce 卡 v4 还支持既有 `fn=prod`：重放模块定义纯
+sibling `@triton.jit` 乘法 combiner 并交给 `tl.reduce`。安全策略仅允许同样经过
+完整 AST 白名单验证、调用图无递归的 sibling JIT helper；任意 Python global/
+free name 仍拒绝。
 后续只根据真实 LLM 提取 Kernel 的
 失败补卡，不按想象中的特性枚举扩张。
 
@@ -135,7 +138,9 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 - 24 个真实 FlagGems Kernel 的非 Trellis 批处理队列、逐 case 原子报告、按完整
   batch identity 恢复的 resume，以及同时绑定 source/compiler view/model/effort/
   registry/Lift-prompt 的 Lift cache；其中 `fg_dot`、`fg_addr`、`fg_ones`、
-  `fg_sum` final stage 与 `fg_mean` final stage 已具备真实 contract 并运行。
+  `fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage 已具备真实
+  contract 并运行。batch identity 还绑定 Gate2 seed、distribution、scale 与
+  tolerance，输入策略变化后不得 resume 旧结果。
 
 当前仍是 Triton 研究原型，不应声称已经覆盖数百 Kernel。正式规模化样本必须
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
@@ -143,15 +148,16 @@ PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端�
 
 2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
 RMSNorm、matmul、FlagGems dot 和 FlagGems addr 的 normal source-blind replay
-以及 FlagGems ones/sum-final/mean-final 都已达到 TTIR 硬闭合；在完整不透明
-ABI/C 消融下，十者最终都是
+以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final
+都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，十四者最终都是
 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
 `eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
 验证；matmul 的单一 `mk,kn->mn` contraction、二维 tail mask、两轮 K tile、
 f16 input/f32 output 接缝与 staged pointer 路径也已经过真实 Lift/replay
-验证。RMSNorm、matmul 与五个已运行 FlagGems rejected live 样本的离线 Gate2
+验证。RMSNorm、matmul 与九个已运行 FlagGems rejected live 样本的离线 Gate2
 对照均三方 PASS，但不改变 Gate1 结论。`fg_dot/fg_addr` 触发四张新卡；后续
-`fg_ones/fg_sum/fg_mean` 直接复用 19 张卡。24 个真实外部 Kernel 只完成前五例，
+`fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 直接复用 19 张卡，`fg_prod`
+只补齐既有 reduce 卡的 prod 映射。24 个真实外部 Kernel 只完成前九例，
 仍不能宣称已具备数百 Kernel 覆盖。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1

@@ -13,7 +13,7 @@ import inspect
 import json
 import os
 import tempfile
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -45,10 +45,13 @@ from intentir.verify.gate2 import (
     Gate2Case,
     Gate2Runner,
     Gate2Status,
+    InputDistribution,
     Lower2CSpec,
+    TensorInputSpec,
     Tolerance,
     TritonArgument,
     TritonExecutionSpec,
+    generate_tensor_input,
 )
 
 from scrc_probe_sources import (
@@ -87,6 +90,9 @@ class LiveKernelCase:
     constexpr_parameters: tuple[str, ...]
     input_scale: float
     tolerance: Tolerance
+    input_distributions: Mapping[str, InputDistribution] = field(
+        default_factory=dict
+    )
 
     @property
     def function_name(self) -> str:
@@ -416,9 +422,18 @@ def _gate2_case(
             raise ValueError(f"pointer {parameter.name!r} has no tensor_ref")
         if parameter.mode is ParameterMode.INPUT:
             dtype = _numpy_dtype(parameter.dtype or concrete.dtype)
-            values[tensor_ref] = (
-                rng.standard_normal(concrete.shape) * case.input_scale
-            ).astype(dtype)
+            distribution = case.input_distributions.get(
+                parameter.name, InputDistribution.NORMAL
+            )
+            values[tensor_ref] = generate_tensor_input(
+                TensorInputSpec(
+                    concrete.shape,
+                    str(dtype),
+                    distribution,
+                    case.input_scale,
+                ),
+                rng=rng,
+            )
             arguments.append(
                 TritonArgument(
                     parameter.name,
@@ -600,6 +615,17 @@ def run_case(
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
+        "gate2_input_policy": {
+            "default_distribution": InputDistribution.NORMAL.value,
+            "argument_distributions": {
+                name: InputDistribution(distribution).value
+                for name, distribution in sorted(
+                    case.input_distributions.items()
+                )
+            },
+            "scale": case.input_scale,
+            "tolerance": asdict(case.tolerance),
+        },
         "source": {
             "path": str(case.source_path),
             "function": case.function_name,

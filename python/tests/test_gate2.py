@@ -17,11 +17,14 @@ from intentir.verify.gate2 import (
     Gate2Case,
     Gate2Runner,
     Gate2Status,
+    InputDistribution,
     Lower2CRunner,
     Lower2CSpec,
+    TensorInputSpec,
     Tolerance,
     TritonArgument,
     TritonExecutionSpec,
+    generate_tensor_input,
 )
 
 
@@ -1034,6 +1037,239 @@ def test_gate2_real_flag_gems_mean_final_runtime_i32_divisor() -> None:
         KernelSource.from_code(
             _FLAG_GEMS_MEAN_FINAL_REPLAY, "mean_kernel_2"
         ),
+        case,
+    )
+
+    assert result.status is Gate2Status.PASS, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )
+
+
+_FLAG_GEMS_MAX_FINAL_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def max_kernel_2(mid, out, mid_size, BLOCK_MID: tl.constexpr):
+    offset = tl.arange(0, BLOCK_MID)
+    mid_tile = tl.load(mid + offset, mask=offset < mid_size, other=-float("inf"))
+    out_value = tl.max(mid_tile)
+    tl.store(out + 0, out_value)
+"""
+
+_FLAG_GEMS_MIN_FINAL_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def min_kernel_2(mid, out, mid_size, BLOCK_MID: tl.constexpr):
+    offset = tl.arange(0, BLOCK_MID)
+    mid_tile = tl.load(mid + offset, mask=offset < mid_size, other=float("inf"))
+    out_value = tl.min(mid_tile)
+    tl.store(out + 0, out_value)
+"""
+
+_FLAG_GEMS_PROD_FINAL_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def _multiply_combine(left, right):
+    return left * right
+
+@triton.jit
+def prod_kernel_result(mid, out, mid_size, BLOCK_MID: tl.constexpr):
+    offset = tl.arange(0, BLOCK_MID)
+    mid_tile = tl.load(mid + offset, mask=offset < mid_size, other=1.0)
+    out_value = tl.reduce(mid_tile, axis=0, combine_fn=_multiply_combine)
+    tl.store(out + 0, out_value)
+"""
+
+_FLAG_GEMS_L2_FINAL_REPLAY = """\
+import triton
+import triton.language as tl
+
+@triton.jit
+def l2_norm_kernel_2(Mid, Out, MID_SIZE, BLOCK_MID: tl.constexpr):
+    offset = tl.arange(0, BLOCK_MID)
+    mid_tile = tl.load(Mid + offset, mask=offset < MID_SIZE, other=0.0)
+    out_value = tl.sqrt(tl.sum(mid_tile))
+    tl.store(Out, out_value)
+"""
+
+
+def _flag_gems_final_reduce_intent(
+    name: str, reduce_fn: str, *, sqrt: bool = False
+) -> IntentFunction:
+    body = [
+        {
+            "op": "reduce",
+            "result": "S" if sqrt else "Y",
+            "operands": ["X"],
+            "attrs": {
+                "fn": reduce_fn,
+                "axes": [0],
+                "assoc": "float_nondeterministic",
+            },
+        }
+    ]
+    if sqrt:
+        body.append(
+            {
+                "op": "map_unary",
+                "result": "Y",
+                "operands": ["S"],
+                "attrs": {"fn": "sqrt"},
+            }
+        )
+    return IntentFunction.from_json(
+        {
+            "name": name,
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["K"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": body,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "module_name",
+        "function_name",
+        "replay_code",
+        "reduce_fn",
+        "mid_size",
+        "block",
+        "grid",
+        "distribution",
+        "scale",
+        "sqrt",
+        "tolerance",
+    ),
+    [
+        (
+            "flag_gems.ops.max",
+            "max_kernel_2",
+            _FLAG_GEMS_MAX_FINAL_REPLAY,
+            "max",
+            63,
+            64,
+            (1, 1, 1),
+            InputDistribution.NORMAL,
+            32.0,
+            False,
+            Tolerance(rtol=0.0, atol=0.0),
+        ),
+        (
+            "flag_gems.ops.min",
+            "min_kernel_2",
+            _FLAG_GEMS_MIN_FINAL_REPLAY,
+            "min",
+            64,
+            64,
+            (1, 1, 1),
+            InputDistribution.NORMAL,
+            32.0,
+            False,
+            Tolerance(rtol=0.0, atol=0.0),
+        ),
+        (
+            "flag_gems.ops.prod",
+            "prod_kernel_result",
+            _FLAG_GEMS_PROD_FINAL_REPLAY,
+            "prod",
+            17,
+            32,
+            (1, 1, 1),
+            InputDistribution.NEAR_ONE,
+            0.125,
+            False,
+            Tolerance(rtol=2.0e-4, atol=2.0e-6),
+        ),
+        (
+            "flag_gems.ops.vector_norm",
+            "l2_norm_kernel_2",
+            _FLAG_GEMS_L2_FINAL_REPLAY,
+            "sum",
+            37,
+            64,
+            (1,),
+            InputDistribution.POSITIVE,
+            4.0,
+            True,
+            Tolerance(rtol=2.0e-4, atol=2.0e-6),
+        ),
+    ],
+)
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_flag_gems_final_reduction_family(
+    module_name: str,
+    function_name: str,
+    replay_code: str,
+    reduce_fn: str,
+    mid_size: int,
+    block: int,
+    grid: tuple[int, ...],
+    distribution: InputDistribution,
+    scale: float,
+    sqrt: bool,
+    tolerance: Tolerance,
+) -> None:
+    module = pytest.importorskip(module_name)
+    python_function = getattr(module, function_name)
+    while not inspect.isfunction(python_function):
+        python_function = python_function.fn
+    source_path = inspect.getsourcefile(python_function)
+    assert source_path is not None
+
+    x = generate_tensor_input(
+        TensorInputSpec((mid_size,), "f32", distribution, scale),
+        seed=20260715,
+    )
+    is_l2 = function_name == "l2_norm_kernel_2"
+    input_name, output_name, extent_name = (
+        ("Mid", "Out", "MID_SIZE")
+        if is_l2
+        else ("mid", "out", "mid_size")
+    )
+    case = Gate2Case(
+        f"flag_gems.{function_name}.final",
+        {"X": x, "K": mid_size},
+        TritonExecutionSpec(
+            (
+                TritonArgument(input_name, ArgumentRole.INPUT, "X", "f32"),
+                TritonArgument(
+                    output_name,
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(),
+                    output_key="Y",
+                ),
+                TritonArgument(extent_name, ArgumentRole.SCALAR, "K"),
+            ),
+            grid,
+            {"BLOCK_MID": block, "num_warps": 4, "num_stages": 1},
+        ),
+        Lower2CSpec(
+            _flag_gems_final_reduce_intent(
+                f"lower_{function_name}", reduce_fn, sqrt=sqrt
+            ),
+            {"K": mid_size},
+            {"X": "X"},
+            "Y",
+        ),
+        ("Y",),
+        {"Y": tolerance},
+    )
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(source_path, function_name, trusted=True),
+        KernelSource.from_code(replay_code, function_name),
         case,
     )
 

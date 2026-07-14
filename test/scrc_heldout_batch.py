@@ -25,7 +25,7 @@ from intentir.extraction.lifters.scrc import (
 from intentir.verify.gate1.compiler import TritonCompiler
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.rules import default_triton_rule_registry
-from intentir.verify.gate2 import Tolerance
+from intentir.verify.gate2 import InputDistribution, Tolerance
 
 from scrc_live_e2e import (
     LiveKernelCase,
@@ -82,14 +82,25 @@ CANDIDATES = (
     HeldoutCandidate(
         "fg_mean", "flag_gems.ops.mean", "mean_kernel_2", "reduce", "ready"
     ),
-    HeldoutCandidate("fg_max", "flag_gems.ops.max", "max_kernel_1", "reduce"),
-    HeldoutCandidate("fg_min", "flag_gems.ops.min", "min_kernel_1", "reduce"),
-    HeldoutCandidate("fg_prod", "flag_gems.ops.prod", "prod_kernel_mid", "reduce"),
+    HeldoutCandidate(
+        "fg_max", "flag_gems.ops.max", "max_kernel_2", "reduce", "ready"
+    ),
+    HeldoutCandidate(
+        "fg_min", "flag_gems.ops.min", "min_kernel_2", "reduce", "ready"
+    ),
+    HeldoutCandidate(
+        "fg_prod",
+        "flag_gems.ops.prod",
+        "prod_kernel_result",
+        "reduce",
+        "ready",
+    ),
     HeldoutCandidate(
         "fg_vector_l2",
         "flag_gems.ops.vector_norm",
-        "l2_norm_kernel_1",
+        "l2_norm_kernel_2",
         "reduce",
+        "ready",
     ),
     HeldoutCandidate(
         "fg_vector_l1",
@@ -307,6 +318,120 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             Tolerance(rtol=2.0e-4, atol=2.0e-6),
         )
 
+    if name == "fg_max":
+        mid_size = 63
+        block = 64
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "mid_size", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1, 1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1", "1"),
+            ("BLOCK_MID",),
+            32.0,
+            Tolerance(rtol=0.0, atol=0.0),
+        )
+
+    if name == "fg_min":
+        mid_size = 64
+        block = 64
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "mid_size", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1, 1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1", "1"),
+            ("BLOCK_MID",),
+            32.0,
+            Tolerance(rtol=0.0, atol=0.0),
+        )
+
+    if name == "fg_prod":
+        mid_size = 17
+        block = 32
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "mid_size", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1, 1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1", "1"),
+            ("BLOCK_MID",),
+            0.125,
+            Tolerance(rtol=2.0e-4, atol=2.0e-6),
+            {"mid": InputDistribution.NEAR_ONE},
+        )
+
+    if name == "fg_vector_l2":
+        mid_size = 37
+        block = 64
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "Mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("Out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "MID_SIZE", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1,),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1",),
+            ("BLOCK_MID",),
+            4.0,
+            Tolerance(rtol=2.0e-4, atol=2.0e-6),
+            {"Mid": InputDistribution.POSITIVE},
+        )
+
     raise AssertionError(name)
 
 
@@ -327,13 +452,24 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 1,
+        "schema": 2,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
         "lift_repairs": args.lift_repairs,
         "rewrite_repairs": args.rewrite_repairs,
         "diagnose_rejected": bool(args.diagnose_rejected),
+        "gate2_input_policy": {
+            "default_distribution": InputDistribution.NORMAL.value,
+            "argument_distributions": {
+                name: InputDistribution(distribution).value
+                for name, distribution in sorted(
+                    case.input_distributions.items()
+                )
+            },
+            "scale": case.input_scale,
+            "tolerance": asdict(case.tolerance),
+        },
         "source_sha256": source_sha,
         "compiler_view": case.compiler_view().to_json(),
         "rule_registry_digest": registry.digest,

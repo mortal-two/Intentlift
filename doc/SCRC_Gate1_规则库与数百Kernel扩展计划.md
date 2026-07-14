@@ -85,6 +85,12 @@ J tensor 一致，并与可信 compiler view 的真实 tensor dtype 一致。它
 kernel 签名；`kind=compiler` 的 `num_warps/num_stages` 等槽只在 launch/compile
 时注入，不能成为函数参数或 kernel body 变量。
 
+后续 final-stage `fg_prod` 没有触发新卡，而是把已有 `realize_reduce` 升到 v4：
+当 J 明确为 `reduce(fn=prod)` 时，规则卡要求在同一 replay 模块定义纯
+`@triton.jit` 二元乘法 combiner 并交给 `tl.reduce`。相应安全策略只允许经过同一
+AST 白名单验证、调用图无递归的 sibling JIT helper，仍拒绝任意 global/free
+name。`fg_max/fg_min/fg_vector_l2` 直接复用 flattened-reduce 与 elementwise 卡。
+
 这些卡分别由 `fg_dot` 和 `fg_addr` 的真实失败触发。因此两例证明规则库已经能
 沿真实外部 Kernel 的 diff 增长并最终让 normal replay 闭合，但不能被表述为
 “冻结规则库上的独立 held-out 验证”。冻结后的复用能力仍要由后续 queued 样本
@@ -200,15 +206,18 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
   的 rejected 对照，不改变 Gate1 裁决；
 - 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
 - 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前 `fg_dot`、
-  `fg_addr`、`fg_ones`、final-stage `fg_sum`、final-stage `fg_mean` 已完成
-  compiler/execution contract 并实际运行，其余 19 个仍为 queued；
-- 五例 normal replay 均达到 TTIR 硬闭合；masked score 依次为 `1.0`、
-  `0.763387`、`0.925`、`1.0`、`1.0`，所以正式状态全部是
+  `fg_addr`、`fg_ones`、final-stage `fg_sum`、final-stage `fg_mean`、
+  final-stage `fg_max/fg_min/fg_prod/fg_vector_l2` 已完成 compiler/execution
+  contract 并实际运行，其余 15 个仍为 queued；
+- 九例 normal replay 均达到 TTIR 硬闭合；masked score 依次为 `1.0`、
+  `0.763387`、`0.925`、`1.0`、`1.0`、`0.507692`、`0.507692`、
+  `0.509470`、`0.917544`，所以正式状态全部是
   `LEAKAGE_REJECTED`；
-- 五个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
+- 九个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
   `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
-- `fg_dot/fg_addr` 是规则增长样本，后三例没有新增卡并直接复用了已有 19 张卡；
-  这开始提供冻结后复用证据，但仍不足以报告总体准确率；
+- `fg_dot/fg_addr` 是新增规则卡的增长样本；`fg_prod` 只补齐既有 reduce 卡的
+  已规划 prod 映射，其余六例没有新增卡并复用了已有 19 张卡；这开始提供冻结后
+  复用证据，但仍不足以报告总体准确率；
 - `fg_arange/fg_trace/fg_eye` 继续 queued：现有 production Lower2C 分别缺 iota、
   gather 和二维对角 predicate realization，本轮没有越过计划擅自补新 op；
 - 覆盖五核同类和现有 corpus 中可执行 source；

@@ -352,7 +352,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_reduce",
             Frontend.TRITON,
-            version="3",
+            version="4",
             applies_to=["reduce", "boundary.reductions"],
             reads=[
                 "fn", "global axes", "tile_axis", "identity",
@@ -362,6 +362,10 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "sum": "tl.sum",
                 "max": "tl.max",
                 "min": "tl.min",
+                "prod": (
+                    "define a @triton.jit binary multiply combiner and call "
+                    "tl.reduce(tile, axis=tile_axis, combine_fn=combiner)"
+                ),
                 "mean": "tl.sum(tile, axis=tile_axis) / semantic_extent(global_axis)",
             },
             example=(
@@ -372,6 +376,8 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not substitute a different reduction identity.",
                 "Do not pass the global J tensor axis when the local tile rank differs.",
                 "For mean, divide by the logical J-axis extent, never a C tile size.",
+                "For prod, emit the multiply combiner in the replay module; do not "
+                "replace the reduction with a Python loop.",
             ],
         ),
         RuleCard(

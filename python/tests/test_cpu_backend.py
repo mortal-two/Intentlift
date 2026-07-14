@@ -90,3 +90,30 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
 
     assert actual.shape == (3,)
     np.testing.assert_allclose(actual, x.sum(axis=1), rtol=1.0e-6, atol=1.0e-6)
+
+
+def test_cpu_runner_reads_back_exact_f32_bits() -> None:
+    from intentir.backend.cpu import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": "identity_rank0",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": []}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+    value = np.asarray(91.181175, dtype=np.float32)
+
+    actual = run_on_cpu(fn, {}, [value])
+
+    assert actual.shape == ()
+    assert actual.view(np.uint32) == value.view(np.uint32)

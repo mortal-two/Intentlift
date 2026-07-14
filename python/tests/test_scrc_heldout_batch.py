@@ -4,6 +4,7 @@ import hashlib
 import json
 import sys
 from argparse import Namespace
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,10 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_ones",
         "fg_sum",
         "fg_mean",
+        "fg_max",
+        "fg_min",
+        "fg_prod",
+        "fg_vector_l2",
     )
     assert all(item.module.startswith("flag_gems.") for item in CANDIDATES)
     assert all(item.function.isidentifier() for item in CANDIDATES)
@@ -138,6 +143,62 @@ def test_real_flag_gems_mean_case_keeps_total_distinct_from_mid_size() -> None:
     assert view["schedule_values"]["BLOCK_MID"] == 64
 
 
+@pytest.mark.parametrize(
+    ("name", "source_file", "function", "mid_size", "block", "grid"),
+    [
+        ("fg_max", "max.py", "max_kernel_2", 63, 64, [1, 1, 1]),
+        ("fg_min", "min.py", "min_kernel_2", 64, 64, [1, 1, 1]),
+        (
+            "fg_prod",
+            "prod.py",
+            "prod_kernel_result",
+            17,
+            32,
+            [1, 1, 1],
+        ),
+        (
+            "fg_vector_l2",
+            "vector_norm.py",
+            "l2_norm_kernel_2",
+            37,
+            64,
+            [1],
+        ),
+    ],
+)
+def test_next_reduction_cases_use_whole_tensor_final_stages(
+    name: str,
+    source_file: str,
+    function: str,
+    mid_size: int,
+    block: int,
+    grid: list[int],
+) -> None:
+    case = build_heldout_case(name)
+    view = case.compiler_view().to_json()
+
+    assert case.source_path.name == source_file
+    assert case.function_name == function
+    assert f"def {function}" in case.source_text
+    assert view["arguments"][0]["shape"] == [mid_size]
+    assert view["arguments"][1]["shape"] == []
+    assert view["arguments"][2]["value"] == mid_size
+    assert view["grid"] == grid
+    assert view["schedule_values"]["BLOCK_MID"] == block
+
+
+def test_prod_and_l2_gate2_inputs_respect_intermediate_value_domains() -> None:
+    prod = build_heldout_case("fg_prod")
+    l2 = build_heldout_case("fg_vector_l2")
+
+    assert prod.input_distributions == {
+        "mid": "near_one"
+    }
+    assert l2.input_distributions == {
+        "Mid": "positive"
+    }
+
+
 def test_batch_status_uses_existing_gate_verdicts() -> None:
     assert _result_status(
         {"preflight": {"ok": False}}
@@ -199,6 +260,12 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         _resume_row({"batch": {"terminal": True, "row": row}}, identity)
         is None
     )
+    changed_input = _batch_identity(
+        replace(build_heldout_case("fg_dot"), input_scale=0.5),
+        _batch_args(),
+    )
+    assert changed_input != identity
+    assert _resume_row(saved, changed_input) is None
 
 
 def test_lift_cache_rejects_a_different_rule_registry(tmp_path: Path) -> None:

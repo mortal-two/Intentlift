@@ -111,21 +111,48 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
     lines.append(
         f"    %y = call @{fn.name}({', '.join(call_args)}) : "
         f"({', '.join(call_tys)}) -> {oty}")
-    mref = f"memref<{'x'.join(str(s) for s in out_shape)}xf32>" if out_shape else "memref<f32>"
-    lines.append(f"    %m = bufferization.to_memref %y : {oty} to {mref}")
-    lines.append(f"    %u = memref.cast %m : {mref} to memref<*xf32>")
-    lines.append("    call @printMemrefF32(%u) : (memref<*xf32>) -> ()")
+    # RunnerUtils prints f32 values with limited decimal precision.  Bitcast
+    # the result to i32 before printing so Gate2 reads back the exact produced
+    # IEEE-754 bits instead of comparing against a rounded text rendering.
+    ity = _tt(out_shape, "i32")
+    rank = len(out_shape)
+    dims = ", ".join(f"d{i}" for i in range(rank))
+    identity_map = f"affine_map<({dims}) -> ({dims})>"
+    iterators = ", ".join('"parallel"' for _ in range(rank))
+    lines.append(f"    %bits_init = tensor.empty() : {ity}")
+    lines.append("    %bits = linalg.generic {")
+    lines.append(
+        f"      indexing_maps = [{identity_map}, {identity_map}],"
+    )
+    lines.append(f"      iterator_types = [{iterators}]")
+    lines.append(
+        f"    }} ins(%y : {oty}) outs(%bits_init : {ity}) {{"
+    )
+    lines.append("    ^bb0(%value: f32, %unused: i32):")
+    lines.append("      %bit = arith.bitcast %value : f32 to i32")
+    lines.append("      linalg.yield %bit : i32")
+    lines.append(f"    }} -> {ity}")
+    mref = (
+        f"memref<{'x'.join(str(s) for s in out_shape)}xi32>"
+        if out_shape
+        else "memref<i32>"
+    )
+    lines.append(
+        f"    %m = bufferization.to_memref %bits : {ity} to {mref}"
+    )
+    lines.append(f"    %u = memref.cast %m : {mref} to memref<*xi32>")
+    lines.append("    call @printMemrefI32(%u) : (memref<*xi32>) -> ()")
     lines.append("    return")
     lines.append("  }")
-    lines.append("  func.func private @printMemrefF32(%a: memref<*xf32>)")
+    lines.append("  func.func private @printMemrefI32(%a: memref<*xi32>)")
     lines.append("}")
     return "\n".join(lines)
 
 
 def _parse_memref(stdout: str, shape) -> np.ndarray:
     idx = stdout.index("data =")
-    nums = re.findall(r"-?\d+\.?\d*(?:[eE][-+]?\d+)?", stdout[idx + 6:])
-    vals = np.array([float(x) for x in nums], dtype=np.float32)
+    nums = re.findall(r"-?\d+", stdout[idx + 6:])
+    vals = np.array([int(x) for x in nums], dtype=np.int32).view(np.float32)
     return vals.reshape(shape) if shape else vals.reshape(())
 
 

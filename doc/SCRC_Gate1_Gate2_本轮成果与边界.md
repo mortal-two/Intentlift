@@ -117,6 +117,11 @@ Triton 默认规则库由原来的 7 张扩到 19 张，覆盖当前 A/B/C 主�
 - loop carry；
 - output mapping。
 
+规则卡总数仍为 19。最新 `fg_prod` 没有新增卡，只把已有显式轴 reduce 卡升级到
+v4，补齐 J 已规划的 `fn=prod` 到纯 sibling `@triton.jit` 乘法 combiner 的实现；
+安全策略同步允许经过完整 AST 校验且调用图无递归的 sibling helper，任意 Python
+global/free name 仍拒绝。
+
 prompt 不再只是塞卡片，而是显式记录：
 
 ```text
@@ -145,6 +150,17 @@ prompt 不再只是塞卡片，而是显式记录：
 - 按 tolerance 两两比较并机械归属；
 - lower 不支持时明确返回 `LOWERING_UNSUPPORTED`，不会退回旧解释器伪装成功。
 
+本轮又把输入值生成抽到 production Gate2 模块，显式支持 normal、uniform、
+positive、near-one、large-dynamic 和 IEEE-special 六种可复现分布。真实 L2 final
+stage 使用 nonnegative partial-sum 域，prod 使用 near-one 域，避免“输入本身不符
+中间 buffer 契约、三条腿一起 NaN/下溢”形成假通过。batch identity 绑定 seed、
+distribution、scale 与 tolerance；完整 shape×value×seed matrix 仍未完成。
+
+CPU Lower2C 还修复了一个真实 Gate2 观测接缝：RunnerUtils 的 f32 文本打印会把
+`91.181175` 舍入成 `91.1812`，造成 max 的假 `LOWERING_DIVERGED`。runner 现在
+通过可 bufferize 的逐元素 f32→i32 bitcast 打印精确位模式并原位恢复，没有放宽
+容差。
+
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
 add、collapsed row-sum、softmax、RMSNorm 与 matmul 的三方一致。RMSNorm 还用
 `eps=1e-5/1e-2` 两个值证明 production lower2c 真正消费 runtime scalar。
@@ -171,8 +187,8 @@ source-only compile preflight
 ```
 
 批处理显式登记 24 个 Kernel；当前 `fg_dot`、`fg_addr`、`fg_ones`、final-stage
-`fg_sum` 与 final-stage `fg_mean` 已具备审核过的 compiler/execution contract
-并真实运行，其余 19 个保持 queued。结果为：
+`fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 已具备审核过的
+compiler/execution contract 并真实运行，其余 15 个保持 queued。结果为：
 
 | Kernel | normal | masked | 正式 Gate1 | rejected-sample 离线 Gate2 |
 |---|---:|---:|---|---|
@@ -181,6 +197,10 @@ source-only compile preflight
 | FlagGems `ones_kernel` | `1.0` | `0.925` | `LEAKAGE_REJECTED` | PASS |
 | FlagGems `sum_kernel_2` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
 | FlagGems `mean_kernel_2` | `1.0` | `1.0` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `max_kernel_2` | `1.0` | `0.507692` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `min_kernel_2` | `1.0` | `0.507692` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `prod_kernel_result` | `1.0` | `0.509470` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `l2_norm_kernel_2` | `1.0` | `0.917544` | `LEAKAGE_REJECTED` | PASS |
 
 真实扩展还暴露并修复了三个工程接缝：FlagGems `LibEntry → JITFunction` wrapper、
 rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/stride scalar
@@ -189,8 +209,9 @@ rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/strid
 
 `fg_dot`/`fg_addr` 的 diff 又触发 wide program domain、flattened reduce、
 staged mask tile 与 outer product 四张通用规则卡。它们因此是五核之后的首批
-真实规则增长样本；`fg_ones/fg_sum/fg_mean` 没有新增卡并直接复用当前 19 张卡，
-但五例规模仍不能当作总体 held-out 成功率。
+真实规则增长样本；`fg_prod` 只完善已有 reduce 卡，
+`fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 没有新增卡并直接复用当前
+19 张卡，但九例规模仍不能当作总体 held-out 成功率。
 
 后三例还补齐两个真实 Lower2C 接缝：零输入 symbolic-shape const 的 dims 传递，
 以及 rank-0 i32 semantic scalar 经真实 `intent.cast` 转 f32。`fg_mean` 首次
@@ -230,6 +251,11 @@ Gate1 闭合，但 Gate2 失败 = false accept
 - source n-gram 误扫 J.B：已改为只扫描 π；
 - Triton 把普通 shape/stride scalar 从 TTIR signature 专门化消去：已改为验证
   surviving ABI subsequence，语义 binding 仍 fail-closed；
+- FlagGems floating `get_dtype_max` 被误解为最大有限值：已按真实 helper 定义
+  提升为 `+inf`；
+- prod replay 的纯 sibling JIT combiner 被安全策略误拒：已在完整 AST 白名单和
+  无递归调用图约束下开放；
+- Lower2C f32 文本读回舍入造成假 divergence：已改为精确位模式读回；
 - π API 泄漏：仍按 SCRC 有意拒绝。
 
 因此剩余 raw false reject 主要是反作弊边界，不再是 TTIR 表达覆盖问题。
@@ -242,7 +268,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
   add、row-sum、softmax、RMSNorm、matmul、FlagGems dot 与 FlagGems addr
-  以及 FlagGems ones/sum-final/mean-final 上结构闭合；十者最终接收目前都被
+  以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final
+  上结构闭合；十四者最终接收目前都被
   模型先验和 π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
@@ -257,11 +284,12 @@ Gate1 闭合，但 Gate2 失败 = false accept
   无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
   有序拓扑结合仍公开的结构信息，可成为语义替代编码；matmul 还证明 masked
   无需完全硬闭合也可能超过当前泄漏比阈值；
-- 规则卡已在五核与五个真实外部 Kernel 上证过，其中后三个直接复用 19 张卡；
+- 规则卡已在五核与九个真实外部 Kernel 上证过；除 `fg_dot/fg_addr` 的新卡和
+  `fg_prod` 对已有 reduce 卡的映射补齐外，其余真实样本直接复用 19 张卡；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；
 - 已有 24 个真实 Kernel 的批处理队列、逐 case 报告、resume/Lift cache 与失败
-  分诊，但只实际完成前五例；还缺其余 19 个及后续数百 Kernel 的运行证据。
+  分诊，但只实际完成前九例；还缺其余 15 个及后续数百 Kernel 的运行证据。
 
 因此最准确的称呼是：
 

@@ -56,6 +56,12 @@ production lowering 执行腿。
 
 这些输入属于 Gate2，不参与 Gate1 TTIR 裁决。
 
+`python/intentir/verify/gate2/inputs.py` 提供显式、确定性的 normal、uniform、
+positive、near-one、large-dynamic 与 IEEE-special tensor 生成。真实中间-stage
+Kernel 必须按其合法输入域选分布，例如 L2 final 的 partial sum 非负，prod final
+用 near-one 避免普遍下溢。当前模块和单例 live wiring 已完成；完整
+shape×value×seed matrix 仍待继续接入，不能只凭分布生成器宣称 Phase 3 完成。
+
 ## 当前实现
 
 代码入口：`python/intentir/verify/gate2/`。
@@ -64,7 +70,8 @@ production lowering 执行腿。
 - production lowering 执行已实现；
 - 三方 tolerance 比较与机械归属已实现；
 - `python/tests/test_gate2.py` 已真实跑通 add、row-sum、softmax、RMSNorm、matmul、
-  FlagGems dot、FlagGems ones 与 FlagGems mean-final 的
+  FlagGems dot、FlagGems ones、FlagGems mean-final 以及 FlagGems
+  max/min/prod/L2-final 的
   source/replay/lowering 三方；
 - `test/scrc_live_add_e2e.py` 已进一步跑通真实 LLM lift + 真实 source-blind
   replay 后的完整三方 add：`N=1003, BLOCK=256`，source↔replay 最大误差 0，
@@ -72,9 +79,10 @@ production lowering 执行腿。
 - 其余 op 能否进入 Gate2，由现有 A/B/C 表达和 production lowering 的真实
   支持情况决定；不引入“verify-ready op”概念。
 
-2026-07-15 首批真实外部样本中，`fg_dot/fg_addr/fg_ones/fg_sum/fg_mean` 都因
+2026-07-15 首批真实外部样本中，
+`fg_dot/fg_addr/fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 都因
 masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执行 Gate2 后，
-五例均三方 PASS。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
+九例均三方 PASS。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
 
 为这些真实样本补齐的 production Lower2C 接缝包括：
 
@@ -85,6 +93,11 @@ masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执�
   `ReduceLowering` 使用 leading-unit parallel reduction 后的
   collapse→extract→`tensor.from_elements` 生成 rank-0 tensor，源码、重建后的
   `intent-opt` 与 MLIR regression 已一致。
+- Lower2C 输出不再经有限精度的 `printMemrefF32` 十进制文本读回；CPU wrapper
+  使用可 bufferize 的逐元素 f32→i32 bitcast 打印精确 IEEE-754 位模式，再恢复
+  f32。max/min 的零容差三方比较因此不会被文本舍入伪造 divergence。
+- `reduce(fn=prod)`、`reduce(max/min)` 与 `sqrt(reduce(sum))` 的 rank-0 final-stage
+  已经在真实 FlagGems source/replay/lowering 三腿上执行通过。
 
 当前明确未闭合的既有能力也必须原样报告：通用 CPU Lower2C 尚无 iota/gather
 lowering，integer output 仍没有通用 read-back；因此 `fg_arange/fg_trace` 继续

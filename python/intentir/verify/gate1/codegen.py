@@ -276,10 +276,10 @@ def _stored_names(nodes: list[ast.stmt]) -> set[str]:
     return names
 
 
-def _validate_call(node: ast.Call) -> None:
+def _validate_call(node: ast.Call, jit_functions: set[str]) -> None:
     target = node.func
     if isinstance(target, ast.Name):
-        if target.id not in _SAFE_BUILTIN_CALLS:
+        if target.id not in _SAFE_BUILTIN_CALLS | jit_functions:
             _fail(node, f"call to Python name {target.id!r} is forbidden")
         return
 
@@ -312,7 +312,9 @@ def _validate_loop(node: ast.For) -> None:
         _fail(node, "for-else is not allowed in replay kernels")
 
 
-def _validate_function(node: ast.FunctionDef) -> None:
+def _validate_function(
+    node: ast.FunctionDef, *, jit_functions: set[str]
+) -> None:
     _check_identifier(node.name, node, "function name")
     args = node.args
     if args.posonlyargs or args.vararg or args.kwonlyargs or args.kwarg:
@@ -331,7 +333,9 @@ def _validate_function(node: ast.FunctionDef) -> None:
     _validate_jit_decorator(node.decorator_list[0], arg_names)
 
     local_names = arg_names | _stored_names(node.body)
-    allowed_load_names = local_names | _SAFE_BUILTIN_CALLS | {"tl"}
+    allowed_load_names = (
+        local_names | _SAFE_BUILTIN_CALLS | jit_functions | {"tl"}
+    )
 
     for statement in node.body:
         for child in ast.walk(statement):
@@ -351,7 +355,7 @@ def _validate_function(node: ast.FunctionDef) -> None:
                 elif child.attr != "to":
                     _fail(child, f"attribute access {child.attr!r} is forbidden")
             elif isinstance(child, ast.Call):
-                _validate_call(child)
+                _validate_call(child, jit_functions)
                 if any(keyword.arg is None for keyword in child.keywords):
                     _fail(child, "dynamic **keyword expansion is forbidden")
             elif isinstance(child, ast.For):
@@ -363,6 +367,40 @@ def _validate_function(node: ast.FunctionDef) -> None:
                     _fail(child, f"literal type {type(child.value).__name__} is forbidden")
                 if isinstance(child.value, str) and "__" in child.value:
                     _fail(child, "dunder strings are forbidden")
+
+
+def _validate_jit_call_graph(
+    functions: list[ast.FunctionDef], names: set[str]
+) -> None:
+    """Reject recursive sibling-JIT calls while allowing pure helper DAGs."""
+
+    graph: dict[str, set[str]] = {}
+    nodes = {node.name: node for node in functions}
+    for function in functions:
+        graph[function.name] = {
+            child.func.id
+            for child in ast.walk(function)
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id in names
+        }
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            _fail(nodes[name], "recursive Triton helper calls are forbidden")
+        visiting.add(name)
+        for target in graph[name]:
+            visit(target)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in graph:
+        visit(name)
 
 
 def validate_triton_module(
@@ -383,7 +421,7 @@ def validate_triton_module(
         where = f"line {exc.lineno}: " if exc.lineno is not None else ""
         raise UnsafeReplayCodeError(f"{where}invalid Python syntax: {exc.msg}") from exc
 
-    functions: list[str] = []
+    function_nodes: list[ast.FunctionDef] = []
     saw_triton = False
     saw_tl = False
     for node in tree.body:
@@ -400,10 +438,9 @@ def validate_triton_module(
                 saw_tl = True
             continue
         if isinstance(node, ast.FunctionDef):
-            _validate_function(node)
-            if node.name in functions:
+            if any(existing.name == node.name for existing in function_nodes):
                 _fail(node, f"duplicate function definition {node.name!r}")
-            functions.append(node.name)
+            function_nodes.append(node)
             continue
         _fail(node, "top level may contain only Triton imports and `@triton.jit` functions")
 
@@ -411,13 +448,18 @@ def validate_triton_module(
         raise UnsafeReplayCodeError("module must contain `import triton`")
     if not saw_tl:
         raise UnsafeReplayCodeError("module must import `triton.language as tl`")
-    if not functions:
+    if not function_nodes:
         raise UnsafeReplayCodeError("module contains no `@triton.jit` function")
-    if required_function is not None and required_function not in functions:
+    function_names = {node.name for node in function_nodes}
+    for node in function_nodes:
+        _validate_function(node, jit_functions=function_names)
+    _validate_jit_call_graph(function_nodes, function_names)
+    functions = tuple(node.name for node in function_nodes)
+    if required_function is not None and required_function not in function_names:
         raise UnsafeReplayCodeError(
             f"required Triton function {required_function!r} is missing"
         )
-    return ModuleValidation(tuple(functions), tree)
+    return ModuleValidation(functions, tree)
 
 
 # Naming used by the Gate1 design document and early callers.
