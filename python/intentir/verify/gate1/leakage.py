@@ -224,7 +224,9 @@ def scan_static_leakage(
 
     Invalid raw pi JSON is returned as a schema violation.  Code that persists
     artifacts should still parse with :class:`ReplayPlan` first so malformed pi
-    never enters the normal pipeline.
+    never enters the normal pipeline.  API spellings are forbidden in both J
+    and pi, while source n-grams are checked only in pi: J.B deliberately owns
+    source-derived bounds, masks, and index expressions.
     """
 
     policy = policy or LeakagePolicy()
@@ -311,7 +313,7 @@ def scan_static_leakage(
             _tokens(source, policy.min_source_token_chars), policy.source_ngram_size,
         )
         seen_matches: set[tuple[str, tuple[str, ...]]] = set()
-        for path, literal in all_literals:
+        for path, literal in plan_literals:
             for ngram in _ngrams(
                 _tokens(literal, policy.min_source_token_chars), policy.source_ngram_size,
             ):

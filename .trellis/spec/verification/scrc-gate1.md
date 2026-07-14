@@ -23,6 +23,10 @@ IntentIR 是否忠于源码，最终由 Gate1 结构闭合与 Gate2 三方实跑
 源码、定位表、源 TTIR 与 C 的具体值。`do_not_specialize` 等 JIT 策略元数据
 不属于 SCRC 的语义接口硬项。
 
+接口中的 `tensor_ref` 必须引用存在的 J tensor，且 dtype 与被引用 J tensor
+一致；真实 LLM extraction 还必须与可信 compiler view 中对应实参 dtype 一致。
+该交叉约束防止 f16/f32 等类型在 Lift 接缝漂移，不引入第三套 verifier。
+
 ## 主流程
 
 ```text
@@ -74,7 +78,11 @@ tile、masked/unmasked access、elementwise、reduce、broadcast、tiled dot、
 runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 张卡。
 其中 runtime scalar 支持通过 `tensor_ref` 连到 J `shape=[]` 输入；reduce
 卡的 `mean` 除数取全局 J 轴语义长度，elementwise 卡支持
-`sqrt+recip`。
+`sqrt+recip`。tiled-dot 卡从 contraction/J.B 读取 K 语义 extent、K tile
+slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 matmul
+的 schedule-only K loop 不得重复表示成 J `loop/reduce/broadcast`。二维 access
+中的 coordinate component 也不得任意重组为完整 offset，向量 predicate 使用
+源码声明的 `&`。
 后续只根据真实 LLM 提取 Kernel 的
 失败补卡，不按想象中的特性枚举扩张。
 
@@ -83,7 +91,9 @@ runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 
 - 重放编译失败或结构未闭合时，J 冻结，重写侧最多小修 2 次；
 - 判断 J 本身有遗漏时，差异报告回到可看源码的提升官重提，最多 3～5 轮；
 - 始终保留不回退的最优候选；
-- π 每轮做静态 API/source 泄漏扫描；
+- π 每轮做静态 API/source 泄漏扫描：frontend API 拼写扫描 J+π，source
+  n-gram 只扫描 π；J.B 本来就负责保存源码提取的 bounds、mask 和 index
+  expression，不能被 source n-gram 系统性误杀；
 - 最终闭合前按方案执行不透明重命名后的 masked-J 消融，泄漏比阈值沿用主方案。
 
 这些是 SCRC 本身的信息归属证明，不是额外 verifier。
@@ -108,12 +118,15 @@ runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 15 
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
 PK 只能作为 lowering 单元测试或早期探针，不能算 SCRC 端到端证据。
 
-2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax
-和 RMSNorm 的 normal source-blind replay 都已达到 TTIR 硬闭合；在完整不透明
-ABI/C 消融下，四者最终都是 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
+2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
+RMSNorm 和 matmul 的 normal source-blind replay 都已达到 TTIR 硬闭合；在
+完整不透明 ABI/C 消融下，五者最终都是 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
 `eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
-验证；该被拒绝 live 样本的离线 Gate2 对照三方 PASS，但不改变
-Gate1 结论。下一个五核主线样本是 matmul。
+验证；matmul 的单一 `mk,kn->mn` contraction、二维 tail mask、两轮 K tile、
+f16 input/f32 output 接缝与 staged pointer 路径也已经过真实 Lift/replay
+验证。两者被拒绝 live 样本的离线 Gate2 对照均三方 PASS，但不改变 Gate1
+结论。五核只完成 normal replay 可行性探针，下一阶段是首批 20～40 个真实
+LLM extraction held-out kernel，而不是宣称已具备数百 Kernel 覆盖。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1
 不得导入它。

@@ -480,3 +480,168 @@ def test_gate2_rmsnorm_attributes_baked_eps_to_replay() -> None:
     assert result.source_lowering.passed
     assert result.source_replay is not None
     assert not result.source_replay.passed
+
+
+def _matmul_intent() -> IntentFunction:
+    return IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "matmul_gate2",
+                "inputs": [
+                    {"name": "A", "dtype": "f16", "shape": ["M", "K"]},
+                    {"name": "B", "dtype": "f16", "shape": ["K", "N"]},
+                ],
+                "outputs": [
+                    {"name": "O", "dtype": "f32", "shape": ["M", "N"]}
+                ],
+                "body": [
+                    {
+                        "op": "contraction",
+                        "result": "O",
+                        "operands": ["A", "B"],
+                        "attrs": {"subscripts": "mk,kn->mn"},
+                    }
+                ],
+            }
+        }
+    )
+
+
+def _matmul_gate2_case(a: np.ndarray, b: np.ndarray) -> Gate2Case:
+    m, k = a.shape
+    other_k, n = b.shape
+    assert k == other_k
+    return Gate2Case(
+        f"matmul.f16.tail-{m}x{n}x{k}",
+        {"A": a, "B": b, "M": m, "N": n, "K": k},
+        TritonExecutionSpec(
+            (
+                TritonArgument("a_ptr", ArgumentRole.INPUT, "A", "f16"),
+                TritonArgument("b_ptr", ArgumentRole.INPUT, "B", "f16"),
+                TritonArgument(
+                    "out_ptr",
+                    ArgumentRole.OUTPUT,
+                    dtype="f32",
+                    shape=(m, n),
+                    output_key="O",
+                ),
+                TritonArgument("M", ArgumentRole.SCALAR, "M"),
+                TritonArgument("N", ArgumentRole.SCALAR, "N"),
+                TritonArgument("K", ArgumentRole.SCALAR, "K"),
+            ),
+            ((m + 15) // 16, (n + 15) // 16),
+            {
+                "BLOCK_M": 16,
+                "BLOCK_N": 16,
+                "BLOCK_K": 16,
+                "num_warps": 4,
+                "num_stages": 2,
+            },
+        ),
+        Lower2CSpec(
+            _matmul_intent(),
+            {"M": m, "N": n, "K": k},
+            {"A": "A", "B": "B"},
+            "O",
+        ),
+        ("O",),
+        {"O": Tolerance(rtol=2.0e-3, atol=2.0e-3)},
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_matmul_uses_f16_quantized_values_with_f32_output() -> None:
+    rng = np.random.default_rng(41)
+    a = (rng.standard_normal((17, 19)) * 0.25).astype(np.float16)
+    b = (rng.standard_normal((19, 13)) * 0.25).astype(np.float16)
+    result = Lower2CRunner().run(
+        Lower2CSpec(
+            _matmul_intent(),
+            {"M": 17, "N": 13, "K": 19},
+            {"A": "A", "B": "B"},
+            "O",
+        ),
+        {"A": a, "B": b},
+    )
+
+    assert result.ok, result.error
+    assert result.outputs["O"].dtype == np.float32
+    np.testing.assert_allclose(
+        result.outputs["O"],
+        a.astype(np.float32) @ b.astype(np.float32),
+        rtol=2.0e-3,
+        atol=2.0e-3,
+    )
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_real_matmul_f16_tail_three_way() -> None:
+    max_source_lowering_error = []
+    for seed in (0, 1, 2):
+        rng = np.random.default_rng(seed)
+        a = (rng.standard_normal((17, 19)) * 0.25).astype(np.float16)
+        b = (rng.standard_normal((19, 13)) * 0.25).astype(np.float16)
+        result = Gate2Runner().run(
+            KernelSource.from_file(
+                ROOT / "test/scrc_probe_sources.py",
+                "matmul_kernel",
+                trusted=True,
+            ),
+            KernelSource.from_file(
+                ROOT / "test/scrc_probe_replays.py", "matmul_kernel"
+            ),
+            _matmul_gate2_case(a, b),
+        )
+
+        assert result.status is Gate2Status.PASS, (
+            seed,
+            result.source.error,
+            result.replay.error,
+            result.lowering.error,
+        )
+        assert result.source_lowering is not None
+        error = result.source_lowering.outputs[0].max_abs_error
+        assert error is not None
+        max_source_lowering_error.append(error)
+
+    assert max(max_source_lowering_error) < 2.0e-3
+
+
+@pytest.mark.skipif(
+    not HAVE_CPU_LOWERING or not _have_cuda_triton(),
+    reason="needs CUDA/Triton + intent-opt + mlir-runner",
+)
+def test_gate2_matmul_attributes_wrong_b_address_to_replay() -> None:
+    rng = np.random.default_rng(43)
+    a = (rng.standard_normal((17, 19)) * 0.25).astype(np.float16)
+    b = (rng.standard_normal((19, 13)) * 0.25).astype(np.float16)
+    replay_text = (ROOT / "test/scrc_probe_replays.py").read_text()
+    wrong = replay_text.replace(
+        "            b_ptr + k[:, None] * N + n[None, :],",
+        "            b_ptr + n[None, :] * K + k[:, None],",
+        1,
+    )
+    assert wrong != replay_text
+
+    result = Gate2Runner().run(
+        KernelSource.from_file(
+            ROOT / "test/scrc_probe_sources.py",
+            "matmul_kernel",
+            trusted=True,
+        ),
+        KernelSource.from_code(wrong, "matmul_kernel"),
+        _matmul_gate2_case(a, b),
+    )
+
+    assert result.status is Gate2Status.REPLAY_DIVERGED, (
+        result.source.error,
+        result.replay.error,
+        result.lowering.error,
+    )
+    assert result.source_lowering is not None
+    assert result.source_lowering.passed
+    assert result.source_replay is not None
+    assert not result.source_replay.passed

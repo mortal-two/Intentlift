@@ -26,6 +26,7 @@ from scrc_live_e2e import (  # noqa: E402
     _gate2_case,
     _gate1_evidence_json,
     _lift_attempt_evidence,
+    _parser,
     _write_report,
     build_case,
 )
@@ -36,7 +37,11 @@ def _args(kernel: str, **overrides) -> Namespace:
         "kernel": kernel,
         "m": 7,
         "n": 1003,
+        "k": 19,
         "block": None,
+        "block_m": 16,
+        "block_n": 16,
+        "block_k": 16,
         "num_warps": 4,
         "num_stages": 2,
         "eps": 1.0e-5,
@@ -180,6 +185,77 @@ def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
     assert eps_arg.value_key == "eps"
     assert gate2.lowering.input_bindings["eps"] == "eps"
     assert gate2.lowering.dims == {"M": 4, "N": 37}
+
+
+def test_matmul_case_preserves_runtime_dims_three_c_slots_and_2d_grid() -> None:
+    case = build_case(_args("matmul", m=17, n=13, k=19))
+    view = case.compiler_view().to_json()
+    compile_case = _compile_case(case)
+
+    assert [item["name"] for item in view["arguments"]] == [
+        "a_ptr",
+        "b_ptr",
+        "out_ptr",
+        "M",
+        "N",
+        "K",
+    ]
+    assert [item["dtype"] for item in view["arguments"][:3]] == [
+        "f16",
+        "f16",
+        "f32",
+    ]
+    assert [item["shape"] for item in view["arguments"][:3]] == [
+        [17, 19],
+        [19, 13],
+        [17, 13],
+    ]
+    assert view["grid"] == [2, 1]
+    assert view["grid_contract"] == [
+        "ceil_div(M, BLOCK_M)",
+        "ceil_div(N, BLOCK_N)",
+    ]
+    assert view["parameter_order"] == [
+        "a_ptr",
+        "b_ptr",
+        "out_ptr",
+        "M",
+        "N",
+        "K",
+        "BLOCK_M",
+        "BLOCK_N",
+        "BLOCK_K",
+    ]
+    assert view["constexpr_parameters"] == [
+        "BLOCK_M",
+        "BLOCK_N",
+        "BLOCK_K",
+    ]
+    assert view["schedule_values"] == {
+        "BLOCK_M": 16,
+        "BLOCK_N": 16,
+        "BLOCK_K": 16,
+        "num_warps": 4,
+        "num_stages": 2,
+    }
+    assert compile_case.arguments["M"].value == 17
+    assert compile_case.arguments["N"].value == 13
+    assert compile_case.arguments["K"].value == 19
+    assert case.tolerance.rtol == 2.0e-3
+    assert case.tolerance.atol == 2.0e-3
+
+
+def test_matmul_case_rejects_nonpositive_logical_or_block_extent() -> None:
+    with pytest.raises(ValueError, match="K must be positive"):
+        build_case(_args("matmul", k=0))
+    with pytest.raises(ValueError, match="block sizes must be positive"):
+        build_case(_args("matmul", block_k=0))
+
+
+def test_matmul_entry_uses_reviewed_probe_defaults() -> None:
+    args = _parser("matmul").parse_args([])
+    assert (args.m, args.n, args.k) == (17, 13, 19)
+    assert (args.block_m, args.block_n, args.block_k) == (16, 16, 16)
 
 
 def test_add_compatibility_case_keeps_existing_defaults() -> None:

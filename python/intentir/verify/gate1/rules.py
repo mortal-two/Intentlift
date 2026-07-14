@@ -252,6 +252,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "materialize_pointer_tile",
             Frontend.TRITON,
+            version="2",
             applies_to=["boundary.accesses"],
             reads=["index_expression", "schedule slot"],
             api_mapping={"lane_range": "tl.arange"},
@@ -260,20 +261,27 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "base + lane tile; do not pre-sum base and lanes into one integer tile."
             ),
             pitfalls=[
-                "Use the same staged pointer association independently for every buffer."
+                "Use the same staged pointer association independently for every buffer.",
+                "Precomputed coordinate components are not a complete integer offset; "
+                "preserve pointer + row-term + column-term association.",
             ],
         ),
         RuleCard(
             "realize_masked_access",
             Frontend.TRITON,
-            version="2",
+            version="3",
             applies_to=["boundary.accesses", "boundary.effects"],
             reads=["kind", "index_expression", "predicate", "fill_value"],
-            api_mapping={"load": "tl.load", "store": "tl.store"},
+            api_mapping={
+                "load": "tl.load",
+                "store": "tl.store",
+                "vector_conjunction": "&",
+            },
             example="Use the declared predicate/fill for loads and guard for stores.",
             pitfalls=[
                 "A store guard is independent from a load fill value.",
                 "Do not strengthen a declared predicate with redundant domain facts.",
+                "Use vector conjunction &, never scalar and or &&.",
             ],
         ),
         RuleCard(
@@ -347,12 +355,30 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_k_tiled_dot",
             Frontend.TRITON,
-            version="2",
+            version="3",
             applies_to=["contraction", "loop"],
-            reads=["subscripts", "operands", "loop carry", "boundary accesses"],
-            api_mapping={"dot": "tl.dot", "zeros": "tl.zeros", "ceil_div": "tl.cdiv"},
-            example="Accumulate the declared contraction over a symbolic K tile loop.",
-            pitfalls=["Preserve lhs/rhs order and both address expressions."],
+            reads=[
+                "subscripts", "operands", "result dtype", "output tile slots",
+                "contracted K semantic extent", "K tile slot", "K tile domain",
+                "lhs/rhs access expressions", "lhs/rhs masks", "lhs/rhs fills",
+            ],
+            api_mapping={
+                "dot": "tl.dot",
+                "zeros": "tl.zeros",
+                "ceil_div": "tl.cdiv",
+                "float32": "tl.float32",
+            },
+            example=(
+                "Initialize one output tile in the J result dtype, iterate symbolic "
+                "K-tile indices up to ceil-div(K, BLOCK_K), materialize the referenced "
+                "masked lhs/rhs accesses, and accumulate dot(lhs, rhs) in operand order."
+            ),
+            pitfalls=[
+                "Preserve lhs/rhs order and both address expressions.",
+                "Use a tile-index loop with unit step; do not replace ceil-div with floor.",
+                "Keep the accumulator and dot result in the declared J result dtype.",
+                "Do not model schedule-only K tiling as a J reduce or loop node.",
+            ],
         ),
         RuleCard(
             "bind_runtime_scalar",

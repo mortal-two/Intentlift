@@ -1284,9 +1284,11 @@ class Gate1Artifact(StrictJSONMixin):
         if self.j.kernel_id != self.interface.kernel_id:
             raise SchemaError("Gate1Artifact J and interface kernel_id values must match")
 
-        tensor_names = {
-            tensor.name for tensor in [*self.j.intent.inputs, *self.j.intent.outputs]
+        tensors = {
+            tensor.name: tensor
+            for tensor in [*self.j.intent.inputs, *self.j.intent.outputs]
         }
+        tensor_names = set(tensors)
         bad_tensor_refs = sorted(
             parameter.tensor_ref for parameter in self.interface.parameters
             if parameter.tensor_ref is not None and parameter.tensor_ref not in tensor_names
@@ -1314,12 +1316,14 @@ class Gate1Artifact(StrictJSONMixin):
                     f"scalar parameter {parameter.name!r} tensor_ref must "
                     "have shape=[]"
                 )
-            if parameter.dtype is not None and (
-                _dtype_key(parameter.dtype) != _dtype_key(tensor.dtype)
-            ):
+        for parameter in self.interface.parameters:
+            if parameter.tensor_ref is None or parameter.dtype is None:
+                continue
+            tensor = tensors[parameter.tensor_ref]
+            if _dtype_key(parameter.dtype) != _dtype_key(tensor.dtype):
                 raise SchemaError(
-                    f"scalar parameter {parameter.name!r} tensor_ref dtype "
-                    "must match the J scalar input"
+                    f"parameter {parameter.name!r} tensor_ref dtype must "
+                    "match the J tensor"
                 )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())

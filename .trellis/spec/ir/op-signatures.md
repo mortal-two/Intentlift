@@ -48,12 +48,22 @@
 | `segment_reduce` | `data, segment_ids` | `fn` | tensor | A |
 | `loop` | `<carry inits>` | `trip`{axis, tile_hint}; `carry`; `yield` | `<carry outs>` | A 语义 + C tiling |
 
+对普通 tiled matmul，源码中的 K 分块循环、accumulator 和 pointer advancement
+是单个 whole-tensor `contraction` 的 Layer-C/前端 realization。canonical J
+只保留例如 `subscripts="mk,kn->mn"` 的一个 contraction，不再附加 `loop` 或
+`reduce`；局部 `[:,None] / [None,:]` 只用于构造二维 access tile，也不产生
+`Boundary.broadcasts`。只有循环携带了 contraction 本身之外、会改变 whole-
+tensor 语义的递推状态时，才使用 J `loop/scan`。普通 contraction 的 K 累加
+同样不产生 `Boundary.reductions`，A/B/out 的地址、mask、fill 与 store guard
+分别保存在 Layer B。
+
 SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 的实际归约轴
 记录在 `Boundary.reductions.tile_axis`。例如 `[M,N]` 的逐行归约在 J 中是
 `axes=[1]`，但一整个 row 被物化为一维 Triton tile 时，本地归约调用使用
 `tile_axis=0`。同理，`Boundary.broadcasts.axes` 描述全局语义 broadcast，不等于
 强制生成本地 `expand_dims`；标量归约结果对同一一维 tile 可直接隐式广播。
 
+所有 interface `tensor_ref` 的 dtype 必须与被引用 J tensor 的 dtype 一致。
 参与数值计算的 runtime scalar 使用 J 的 `shape=[]` 输入表示，并由
 Gate1 interface scalar 参数的 `tensor_ref` 连接；只提供 symbolic shape
 extent 的 M/N 类参数不是 J 输入。`reduce(fn=mean)` 在前端本地 tile

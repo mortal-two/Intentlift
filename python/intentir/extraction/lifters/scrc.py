@@ -314,6 +314,14 @@ Cross-field rules:
 - when the source spells a mean as local sum divided by the runtime logical
   extent, encode J as reduce fn=mean. The divisor is the semantic extent of the
   global J axis, never a Layer-C tile size;
+- re-roll a schedule-only tiled-K accumulator loop into one J contraction. For
+  the probe's row-major A[M,K] and B[K,N], use subscripts mk,kn->mn. The local
+  K-tile loop and accumulator are frontend realization, not a J loop, scan, or
+  reduce node;
+- local rank insertion used to form 2-D access tiles (for example lane vectors
+  indexed with [:,None] or [None,:]) is not a global semantic broadcast and does
+  not create boundary.broadcasts. A contraction also does not create
+  boundary.reductions;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
 - interface runtime parameters copy the trusted compiler-view argument order,
@@ -344,6 +352,15 @@ pi/plan rules:
   expression (for example `offset = row*N + lane`) and later uses `ptr + offset`.
   Inspect the source association; the semantic index_expression string alone
   does not distinguish these two frontend mechanisms.
+- for a tiled contraction, precomputed m/n/k coordinate components are not a
+  complete per-access integer offset. If the source later forms
+  `pointer + row_term + column_term`, select materialize_pointer_tile and retain
+  that association; do not regroup it into base-pointer plus a combined offset;
+- copy compound vector predicates with the source conjunction operator `&`, not
+  scalar-language `and` or `&&`;
+- a contraction plan selects realize_k_tiled_dot for the contraction node and
+  its K domain/accesses. Do not also select realize_reduce, realize_loop_carry,
+  or realize_broadcast for schedule-only K tiling and local rank insertion.
 
 Registered rule ids (API spellings intentionally omitted):
 {_rule_catalog(registry)}
@@ -539,6 +556,13 @@ def extract_scrc_artifact(
                                 raise ValueError(
                                     f"interface parameter {parameter.name!r} "
                                     "tensor_ref rank differs from compiler view"
+                                )
+                            if _canonical_dtype(tensor.dtype) != _canonical_dtype(
+                                argument.dtype
+                            ):
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    "J tensor dtype differs from compiler view"
                                 )
                             for declared, concrete in zip(
                                 tensor.shape, argument.shape, strict=True

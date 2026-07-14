@@ -61,6 +61,19 @@ API、源码表达式、自由 action/code/comment 或完整计算图。任何�
   前端隐式完成，不因全局 axes=[1] 自动增加本地维度
 - C:block 大小、向量宽度、流水深度
 
+**示例:普通 tiled matmul**
+- A:`contraction(A,B,"mk,kn->mn")`，包含 whole-tensor K contraction 语义
+- B:A/B/out 的二维 index expression、两侧 K/M/N tail mask、load fill 与
+  store guard；局部 `[:,None] / [None,:]` 是 access tile 构造，不是语义
+  broadcast
+- C:`BLOCK_M/BLOCK_N/BLOCK_K`、warp/stage 与 K tiling hint
+- π:选择 K-tiled-dot、staged pointer tile 和 masked access 的实现卡
+
+源码里的 K tile loop、accumulator 与 pointer advancement 是上述 contraction
+在给定 C 下的前端 realization，不得为了贴近 Triton 源码再灌成 J
+`loop/reduce/broadcast`。这与下述 FlashAttention 不同：普通 matmul 没有
+contraction 之外的 online state recurrence。
+
 **示例:FlashAttention**(分层的关键案例,必须支持)
 - 它的 K 维循环**同时**是两件事:
   - **tiling**(把 K 切块流式处理)→ 属于 **C**

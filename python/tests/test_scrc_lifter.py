@@ -135,6 +135,13 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "canonicalize reciprocal square root" in prompt
     assert "semantic extent" in prompt
     assert "global J axis" in prompt
+    assert "re-roll a schedule-only tiled-K accumulator loop" in prompt
+    assert "mk,kn->mn" in prompt
+    assert "does not create" in prompt
+    assert "boundary.reductions" in prompt
+    assert "coordinate components are not a" in prompt
+    assert "scalar-language `and` or `&&`" in prompt
+    assert "Do not also select realize_reduce" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
 
@@ -330,6 +337,38 @@ def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
         )
 
     assert "tensor_ref must have shape=[]" in str(caught.value)
+
+
+def test_scrc_lift_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["j"]["intent"]["intent_function"]["inputs"][0]["dtype"] = "f16"
+    payload["interface"]["parameters"][0]["dtype"] = "f16"
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-j-dtype"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    view = scrc.SCRCCompilerView(
+        {"BLOCK": 64, "num_warps": 4},
+        ("num_warps",),
+        (),
+        (
+            scrc.SCRCCompilerArgument("a_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("b_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("N", "scalar", "i32", value=65),
+        ),
+        (2,),
+        ("ceil_div(N, BLOCK)",),
+        ("a_ptr", "b_ptr", "out_ptr", "N", "BLOCK"),
+        ("BLOCK",),
+    )
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source", "add_kernel", compiler_view=view, max_repairs=0
+        )
+
+    assert "interface parameter 'a_ptr' dtype differs" in str(caught.value)
 
 
 def test_scrc_lift_rejects_concrete_c_inside_j(monkeypatch) -> None:

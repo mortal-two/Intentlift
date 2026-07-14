@@ -71,6 +71,15 @@ runtime `eps` 到 J `shape=[]` 输入的 `tensor_ref` 连接、`mean` 的语义
 9.1 离线执行 Gate2，三方 PASS，但不改变门禁结论。详见
 `test/scrc_live_rmsnorm_report.md`。
 
+matmul 最后沿同一入口完成五核探针。最终 J 只包含一个
+`contraction("mk,kn->mn")`，源码 K-tile loop 被正确还原为 contraction 的
+Layer-C/前端实现，而不是 J `loop/reduce`。本轮还根据真实失败补全 staged
+二维 pointer association、向量 mask conjunction、K extent/tile/result dtype
+规则，并把 source n-gram 扫描纠正为只约束 π，不再误伤依法保存源码边界的
+J.B。normal replay 首候选 score `1.0`；masked replay 虽未硬闭合，仍以
+`0.804518 > 0.5` 被 `LEAKAGE_REJECTED`。真实 live 被拒绝样本的离线 Gate2
+三方 PASS。详见 `test/scrc_live_matmul_report.md`。
+
 ### 1.3 Gate1 收回 SCRC 主线
 
 保留了方案要求的硬项：
@@ -137,10 +146,16 @@ prompt 不再只是塞卡片，而是显式记录：
 - lower 不支持时明确返回 `LOWERING_UNSUPPORTED`，不会退回旧解释器伪装成功。
 
 `python/tests/test_gate2.py` 已在真实 CUDA/Triton 和真实 MLIR lowering 上跑通
-add、collapsed row-sum、softmax 与 RMSNorm 的三方一致。RMSNorm 还用
+add、collapsed row-sum、softmax、RMSNorm 与 matmul 的三方一致。RMSNorm 还用
 `eps=1e-5/1e-2` 两个值证明 production lower2c 真正消费 runtime scalar。
+matmul 使用 `M=17,N=13,K=19` 的 f16 输入/f32 输出和三个随机 seed 覆盖
+M/N/K 尾块；错误 B 地址会被机械归属为 `REPLAY_DIVERGED`。
 这些固定 J 测试是
 production lowering 能力证据，不代替每个 live artifact 的 Gate1 接收。
+
+matmul 当前 Lower2C 会消费已经量化为 f16 的输入数值并产生 f32 输出，但其
+production MLIR 仍统一发射为 f32；因此这是数值语义第三腿，不是
+mixed-f16/f32 dtype-faithful lowering 已完成的证据。
 
 ## 2. False reject 是什么意思
 
@@ -165,11 +180,12 @@ Gate1 闭合，但 Gate2 失败 = false accept
 2. SCRC 有意拒绝：例如 π 偷写 `tl.load`。候选代码可能碰巧行为正确，但它
    破坏了“语义必须住在 J”这一实验前提，不能为了覆盖率放行。
 
-本轮修正后，上一轮的 4 个 raw false reject 中：
+累计到本轮，已经修正或明确保留的 raw false reject 来源为：
 
 - `+0`：已修；
 - `rsqrt ↔ 1/sqrt`：已修；
 - 缺 `do_not_specialize`：不再拒绝；
+- source n-gram 误扫 J.B：已改为只扫描 π；
 - π API 泄漏：仍按 SCRC 有意拒绝。
 
 因此剩余 raw false reject 主要是反作弊边界，不再是 TTIR 表达覆盖问题。
@@ -181,8 +197,8 @@ Gate1 闭合，但 Gate2 失败 = false accept
 已经真实发生的事情包括：
 
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
-  add、row-sum、softmax、RMSNorm 上结构闭合；最终接收目前被低熵先验和
-  π 结构可识别性阻塞；
+  add、row-sum、softmax、RMSNorm、matmul 上结构闭合；最终接收目前被模型
+  先验和 π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
 - 真实 GPU source/replay launch；
@@ -192,9 +208,10 @@ Gate1 闭合，但 Gate2 失败 = false accept
 所以核心机制已经不是“差得远到只剩接口”。差距主要在覆盖与工程闭环：
 
 - 尚未把数百个真实 Kernel 全部重新走一遍新的 `extract_scrc_artifact`；
-- live add/row-sum/softmax/RMSNorm 的 normal 路径已收敛，但一次性 masked-J
+- live 五核的 normal 路径已收敛，但一次性 masked-J
   无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
-  有序拓扑结合仍公开的结构信息，可成为语义替代编码；
+  有序拓扑结合仍公开的结构信息，可成为语义替代编码；matmul 还证明 masked
+  无需完全硬闭合也可能超过当前泄漏比阈值；
 - 规则卡只在五核和当前变异集上证过；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；

@@ -48,6 +48,7 @@ from intentir.verify.gate2 import (
 
 from scrc_probe_sources import (
     add_kernel,
+    matmul_kernel,
     rmsnorm_kernel,
     row_sum_kernel,
     softmax_kernel,
@@ -216,6 +217,50 @@ def build_case(args: argparse.Namespace) -> LiveKernelCase:
             ("BLOCK_N",),
             0.25,
             Tolerance(rtol=3.0e-4, atol=3.0e-5),
+        )
+    if args.kernel == "matmul":
+        m = int(args.m)
+        k = int(args.k)
+        if m <= 0:
+            raise ValueError("M must be positive")
+        if k <= 0:
+            raise ValueError("K must be positive")
+        block_m = int(args.block_m)
+        block_n = int(args.block_n)
+        block_k = int(args.block_k)
+        if min(block_m, block_n, block_k) <= 0:
+            raise ValueError("matmul block sizes must be positive")
+        arguments = (
+            SCRCCompilerArgument("a_ptr", "tensor", "f16", (m, k)),
+            SCRCCompilerArgument("b_ptr", "tensor", "f16", (k, n)),
+            SCRCCompilerArgument("out_ptr", "tensor", "f32", (m, n)),
+            SCRCCompilerArgument("M", "scalar", "i32", value=m),
+            SCRCCompilerArgument("N", "scalar", "i32", value=n),
+            SCRCCompilerArgument("K", "scalar", "i32", value=k),
+        )
+        return LiveKernelCase(
+            "matmul",
+            matmul_kernel,
+            arguments,
+            (
+                (m + block_m - 1) // block_m,
+                (n + block_n - 1) // block_n,
+            ),
+            {
+                "BLOCK_M": block_m,
+                "BLOCK_N": block_n,
+                "BLOCK_K": block_k,
+                "num_warps": args.num_warps,
+                "num_stages": args.num_stages,
+            },
+            ("num_warps", "num_stages"),
+            (
+                "ceil_div(M, BLOCK_M)",
+                "ceil_div(N, BLOCK_N)",
+            ),
+            ("BLOCK_M", "BLOCK_N", "BLOCK_K"),
+            0.25,
+            Tolerance(rtol=2.0e-3, atol=2.0e-3),
         )
     raise KeyError(args.kernel)
 
@@ -611,21 +656,27 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--kernel",
-        choices=("add", "row_sum", "softmax", "rmsnorm"),
+        choices=("add", "row_sum", "softmax", "rmsnorm", "matmul"),
         default=default_kernel,
     )
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--effort", default="xhigh")
     parser.add_argument("--m", type=int, default=7)
     parser.add_argument("--n", type=int, default=1003)
+    parser.add_argument("--k", type=int, default=19)
     parser.add_argument("--eps", type=float, default=1.0e-5)
     parser.add_argument("--block", type=int)
+    parser.add_argument("--block-m", type=int, default=16)
+    parser.add_argument("--block-n", type=int, default=16)
+    parser.add_argument("--block-k", type=int, default=16)
     parser.add_argument("--num-warps", type=int, default=4)
     parser.add_argument("--num-stages", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260715)
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--rewrite-repairs", type=int, default=2)
     parser.add_argument("--report")
+    if default_kernel == "matmul":
+        parser.set_defaults(m=17, n=13, k=19)
     return parser
 
 

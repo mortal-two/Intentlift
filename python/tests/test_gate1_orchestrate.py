@@ -477,7 +477,13 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_k_tiled_dot",
     } <= {card.id for card in first.cards}
     cards = {card.id: card for card in first.cards}
-    assert cards["materialize_pointer_tile"].version == "1"
+    assert cards["materialize_pointer_tile"].version == "2"
+    assert any(
+        "coordinate components" in item
+        for item in cards["materialize_pointer_tile"].pitfalls
+    )
+    assert cards["realize_masked_access"].version == "3"
+    assert cards["realize_masked_access"].api_mapping["vector_conjunction"] == "&"
     assert cards["realize_elementwise"].version == "3"
     assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
     assert cards["realize_reduce"].version == "3"
@@ -488,6 +494,9 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert "tl.sum" in first.api_tokens(Frontend.TRITON)
     assert "+" not in first.api_tokens(Frontend.TRITON)
     assert "*" not in first.api_tokens(Frontend.TRITON)
+    assert cards["realize_k_tiled_dot"].version == "3"
+    assert "result dtype" in cards["realize_k_tiled_dot"].reads
+    assert cards["realize_k_tiled_dot"].api_mapping["float32"] == "tl.float32"
     assert cards["realize_broadcast"].api_mapping["scalar_to_tile"] == (
         "use the scalar operand directly"
     )

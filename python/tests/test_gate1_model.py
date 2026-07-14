@@ -240,6 +240,11 @@ def test_semantic_scalar_tensor_ref_requires_scalar_j_input_and_matching_dtype()
     with pytest.raises(SchemaError, match="tensor_ref dtype must match"):
         Gate1Artifact.from_json(bad_dtype)
 
+    pointer_dtype = _artifact().to_json()
+    pointer_dtype["j"]["intent"]["intent_function"]["inputs"][0]["dtype"] = "f16"
+    with pytest.raises(SchemaError, match="tensor_ref dtype must match"):
+        Gate1Artifact.from_json(pointer_dtype)
+
 
 def test_unknown_keys_are_rejected_at_every_closed_boundary() -> None:
     payload = _artifact().to_json()
@@ -367,6 +372,38 @@ def test_static_leakage_scan_catches_api_source_ngram_and_budget() -> None:
         {"steps": [{"rule": "x", "node_ref": "n0", "semantic_hint": "sum"}]}
     )
     assert malformed.violations[0].kind is LeakageKind.SCHEMA
+
+
+def test_source_ngram_scan_targets_pi_not_semantic_boundary_expressions() -> None:
+    artifact = _artifact()
+    source = (
+        "address = row_offset * N + column_offset\n"
+        "valid = column_offset < N"
+    )
+    clean = scan_static_leakage(
+        ReplayPlan([ReplayStep("masked_load", refs=["input_masked_load"])]),
+        source=source,
+        j=artifact.j,
+    )
+    assert not any(
+        item.kind is LeakageKind.SOURCE_NGRAM for item in clean.violations
+    )
+
+    leaked = scan_static_leakage(
+        ReplayPlan(
+            [
+                ReplayStep(
+                    "row_offset * N + column_offset",
+                    refs=["input_masked_load"],
+                )
+            ]
+        ),
+        source=source,
+        j=artifact.j,
+    )
+    assert any(
+        item.kind is LeakageKind.SOURCE_NGRAM for item in leaked.violations
+    )
 
 
 def test_artifact_scan_and_prompts_preserve_isolation() -> None:

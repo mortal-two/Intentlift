@@ -54,6 +54,21 @@ RMSNorm 没有新增规则卡，而是完善三张已有通用卡：
 - `realize_elementwise`：补全 `recip` 和已有 binary/unary 构造映射，
   语义仍只从 J 节点读取。
 
+matmul 同样没有新增专用卡，而是用真实 v2 diff 完善三张已有卡：
+
+- `materialize_pointer_tile` v2：预计算的 m/n/k coordinate component 不是完整
+  integer offset，必须保留 `pointer + row-term + column-term` 的结合方式；
+- `realize_masked_access` v3：二维向量 predicate 使用 `&`，不得改写为标量
+  `and` 或 `&&`；
+- `realize_k_tiled_dot` v3：从 contraction/J.B 读取 subscripts、operand 顺序、
+  result dtype、K 语义 extent、K tile slot/domain、两侧 access/mask/fill 和
+  output tile，且禁止把普通 matmul 的 schedule-only K loop 再建成 J
+  `reduce/loop/broadcast`。
+
+同一轮还收紧了 artifact 接缝：interface `tensor_ref` 的 dtype 必须与引用的
+J tensor 一致，并与可信 compiler view 的真实 tensor dtype 一致。它防止提升官
+把 f16 matmul 输入漂成 f32 后仍进入重放，不是新的独立 verifier。
+
 检索过程已经显式化：
 
 ```text
@@ -157,16 +172,22 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 ### 第一批：20～40 个 Triton
 
-- live add、row-sum、softmax、RMSNorm 的 normal replay 已结构闭合，四者都因
-  masked-J 消融被最终拒绝；add 的历史正式 Gate2 与四者的独立
+- live add、row-sum、softmax、RMSNorm、matmul 的 normal replay 已结构闭合，
+  五者都因 masked-J 消融被最终拒绝；add 的历史正式 Gate2 与五者的独立
   production lower2c 三方预检均已跑通；
-- RMSNorm 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.4
+- RMSNorm 和 matmul 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.1
   的 rejected 对照，不改变 Gate1 裁决；
-- 下一步按同一入口推进 matmul，不改 masked 裁决；
+- 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
+- 下一步从现有可执行真实 source 中选择首批 20～40 个 held-out kernel，
+  不改 masked 裁决；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；
 - 建立第一版真实失败集。
+
+首批统计必须单独记录 Lower2C 能力边界。例如当前 matmul 第三腿会消费已经
+量化为 f16 的输入值并输出 f32，但 production MLIR 仍统一发射为 f32；在没有
+获批的 A/B/C 或 lowering 扩展报告前，不把它表述为 mixed-dtype faithful。
 
 ### 第二批：约 100 个
 
