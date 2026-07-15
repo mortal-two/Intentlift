@@ -12,6 +12,7 @@ The orchestrator keeps the trust split explicit:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import Any, Protocol
 
 from .compare import TTIRComparator, TTIRComparison
@@ -53,6 +54,15 @@ from .ttir import (
 
 @dataclass(frozen=True)
 class Gate1Config:
+    """Bounded Gate1 budgets.
+
+    ``max_relifts`` is retained as the historical public field name, but its
+    value is the total number of artifact evaluation rounds including the
+    initial Lift.  Therefore the maximum number of source-aware relift calls is
+    ``max_relifts - 1``.  Inner replay repairs use the separate
+    ``max_repairs`` budget.
+    """
+
     max_repairs: int = 2
     max_relifts: int = 5
     stable_closures: int = 1
@@ -163,6 +173,87 @@ class CandidateRecord:
         }
 
 
+class ReliftTrigger(str, Enum):
+    """Why the source-aware Lift agent is being invoked again.
+
+    This is deliberately narrower than :class:`Gate1Status`.  A semantic
+    relift is currently authorized for persistent normal source/replay hard
+    differences after bounded replay repair.  Static or masked-J leakage is a
+    distinct anti-leakage failure and is not silently converted into the same
+    optimization loop.
+    """
+
+    NORMAL_NO_CLOSURE = "normal_no_closure"
+
+
+@dataclass(frozen=True)
+class ReliftRequest:
+    """Stable, auditable reason for one outer-loop semantic relift."""
+
+    trigger: ReliftTrigger
+    evaluation_round: int
+    candidate_count: int
+    compiled_candidate_count: int
+    best_generation_round: int | None
+    hard_difference_categories: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.evaluation_round < 0:
+            raise ValueError("evaluation_round must be non-negative")
+        if self.candidate_count < 1:
+            raise ValueError("candidate_count must be positive")
+        if not 0 <= self.compiled_candidate_count <= self.candidate_count:
+            raise ValueError(
+                "compiled_candidate_count must be within candidate_count"
+            )
+        if self.best_generation_round is not None and (
+            self.best_generation_round < 0
+        ):
+            raise ValueError("best_generation_round must be non-negative")
+        if len(set(self.hard_difference_categories)) != len(
+            self.hard_difference_categories
+        ):
+            raise ValueError("hard_difference_categories must be unique")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "trigger": self.trigger.value,
+            "evaluation_round": self.evaluation_round,
+            "candidate_count": self.candidate_count,
+            "compiled_candidate_count": self.compiled_candidate_count,
+            "best_generation_round": self.best_generation_round,
+            "hard_difference_categories": list(
+                self.hard_difference_categories
+            ),
+        }
+
+
+def _normal_relift_request(
+    evaluation_round: int,
+    records: tuple[CandidateRecord, ...],
+    best: CandidateRecord | None,
+) -> ReliftRequest:
+    if not records:
+        raise ValueError("semantic relift requires at least one replay candidate")
+    hard_categories: tuple[str, ...] = ()
+    if best is not None and best.comparison is not None:
+        hard_categories = tuple(
+            component.category
+            for component in best.comparison.components
+            if component.hard and not component.passed
+        )
+    return ReliftRequest(
+        trigger=ReliftTrigger.NORMAL_NO_CLOSURE,
+        evaluation_round=evaluation_round,
+        candidate_count=len(records),
+        compiled_candidate_count=sum(record.compiled for record in records),
+        best_generation_round=(
+            None if best is None else best.generation_round
+        ),
+        hard_difference_categories=hard_categories,
+    )
+
+
 class Relifter(Protocol):
     def relift(
         self,
@@ -170,6 +261,7 @@ class Relifter(Protocol):
         *,
         source_fingerprint: TTIRFingerprint,
         history: tuple[CandidateRecord, ...],
+        request: ReliftRequest,
     ) -> Gate1Artifact: ...
 
 
@@ -881,11 +973,20 @@ class Gate1Runner:
             if relifter is None or relift_round + 1 >= self.config.max_relifts:
                 break
             assert source_fp is not None
+            round_records = tuple(
+                record
+                for record in history
+                if record.relift_round == relift_round
+            )
+            request = _normal_relift_request(
+                relift_round, round_records, round_best
+            )
             try:
                 current = relifter.relift(
                     current,
                     source_fingerprint=source_fp,
                     history=tuple(history),
+                    request=request,
                 )
             except Exception as exc:
                 diagnostics.append(
@@ -911,5 +1012,7 @@ __all__ = [
     "Gate1Config",
     "Gate1ExecutionResult",
     "Gate1Runner",
+    "ReliftRequest",
+    "ReliftTrigger",
     "Relifter",
 ]

@@ -329,8 +329,9 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 4
+    assert identity["schema"] == 5
     assert identity["relift_rounds"] == 3
+    assert identity["relift_protocol"] == "normal_no_closure_v1"
     assert relift_identity["relift_rounds"] == 1
     assert _resume_row(saved, relift_identity) is None
 

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from intentir.extraction.lifters.scrc import (
+    SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
     scrc_lift_prompt_sha256,
 )
@@ -504,13 +505,14 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 4,
+        "schema": 5,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
         "lift_repairs": args.lift_repairs,
         "rewrite_repairs": args.rewrite_repairs,
         "relift_rounds": args.relift_rounds,
+        "relift_protocol": SCRC_RELIFT_PROTOCOL,
         "diagnose_rejected": bool(args.diagnose_rejected),
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,

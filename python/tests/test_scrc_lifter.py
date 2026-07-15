@@ -8,6 +8,7 @@ import pytest
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters import scrc
 from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.orchestrate import ReliftRequest, ReliftTrigger
 from intentir.verify.gate1.rules import default_triton_rule_registry
 
 
@@ -476,8 +477,22 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
     candidate = SimpleNamespace(
         relift_round=0,
         generation_round=1,
-        compiled=False,
-        comparison=None,
+        compiled=True,
+        comparison=SimpleNamespace(
+            to_dict=lambda: {
+                "hard_pass": False,
+                "primary_difference_category": "op_multiset",
+                "differences": [
+                    {
+                        "category": "op_multiset",
+                        "kind": "missing",
+                        "item": "SOURCE_EXPECTED_OP_CANARY",
+                        "expected_count": 1,
+                        "actual_count": 0,
+                    }
+                ],
+            }
+        ),
         diagnosis=diagnosis,
         adopted=True,
         regressed=False,
@@ -496,6 +511,14 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
         trusted,
         source_fingerprint=fingerprint,
         history=(candidate,),
+        request=ReliftRequest(
+            ReliftTrigger.NORMAL_NO_CLOSURE,
+            evaluation_round=0,
+            candidate_count=1,
+            compiled_candidate_count=1,
+            best_generation_round=1,
+            hard_difference_categories=("op_multiset",),
+        ),
     )
 
     assert result.interface.to_json() == trusted.interface.to_json()
@@ -506,10 +529,13 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
     assert "outer-loop semantic relift" in captured["instructions"]
     assert "ORIGINAL_SOURCE_CANARY" in captured["user_input"]
     assert '"arith.extsi": 3' in captured["user_input"]
+    assert '"trigger": "normal_no_closure"' in captured["user_input"]
+    assert "SOURCE_EXPECTED_OP_CANARY" in captured["user_input"]
     assert "REPLAY_SOURCE_CANARY" not in captured["user_input"]
     assert len(relifter.records) == 1
     assert relifter.records[0].extraction is not None
     assert relifter.records[0].extraction.provenance.response_id == "resp-relift"
+    assert relifter.records[0].request["trigger"] == "normal_no_closure"
 
 
 def test_semantic_relift_rejects_trusted_interface_drift(monkeypatch) -> None:

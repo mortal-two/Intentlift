@@ -2,6 +2,7 @@
 
 from .scrc import (
     ResponsesSCRCRelifter,
+    SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
     SCRCCompilerView,
     SCRCExtraction,
@@ -18,6 +19,7 @@ from .scrc_schema import scrc_artifact_json_schema, scrc_artifact_text_format
 
 __all__ = [
     "ResponsesSCRCRelifter",
+    "SCRC_RELIFT_PROTOCOL",
     "SCRCExtraction",
     "SCRCCompilerArgument",
     "SCRCCompilerView",

@@ -39,6 +39,7 @@ from intentir.verify.gate1.orchestrate import (
     CandidateRecord,
     Gate1Config,
     Gate1Runner,
+    ReliftTrigger,
     _validate_compiled_interface,
 )
 from intentir.verify.gate1.replay import (
@@ -382,13 +383,24 @@ def test_bounded_repair_stability_and_masked_ablation_close() -> None:
 
 
 def test_runner_restores_opaque_masked_code_and_rejects_real_leakage() -> None:
+    class ForbiddenLeakageRelifter:
+        def relift(self, *args, **kwargs):
+            raise AssertionError(
+                "masked-J leakage is not a normal source/replay relift trigger"
+            )
+
     compiler = FakeCompiler()
     writer = CaptureWriter(["GOOD"], masked=REAL_MASKED_FAILURE_CODE)
     result = Gate1Runner(
         compiler=compiler,
-        config=Gate1Config(stable_closures=1),
+        config=Gate1Config(stable_closures=1, max_relifts=2),
     ).run(
-        _source(), _artifact(), _case(), default_triton_rule_registry(), writer
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+        relifter=ForbiddenLeakageRelifter(),
     )
 
     assert result.status is Gate1Status.LEAKAGE_REJECTED
@@ -412,9 +424,13 @@ def test_initial_plus_two_repairs_is_exactly_three_candidates() -> None:
 
 def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
     class FailingRelifter:
-        def relift(self, artifact, *, source_fingerprint, history):
+        def relift(
+            self, artifact, *, source_fingerprint, history, request
+        ):
             assert source_fingerprint is not None
             assert history
+            assert request.trigger is ReliftTrigger.NORMAL_NO_CLOSURE
+            assert request.hard_difference_categories
             raise RuntimeError("relift provider unavailable")
 
     writer = CaptureWriter(["BAD"])
@@ -444,11 +460,17 @@ def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
 def test_outer_relift_round_replays_the_revised_artifact() -> None:
     class RecordingRelifter:
         calls = 0
+        requests = []
 
-        def relift(self, artifact, *, source_fingerprint, history):
+        def relift(
+            self, artifact, *, source_fingerprint, history, request
+        ):
             self.calls += 1
             assert source_fingerprint is not None
             assert [item.relift_round for item in history] == [0]
+            assert history[0].comparison is not None
+            assert history[0].comparison.differences
+            self.requests.append(request)
             return artifact
 
     writer = CaptureWriter(["BAD", "GOOD"])
@@ -469,6 +491,17 @@ def test_outer_relift_round_replays_the_revised_artifact() -> None:
 
     assert result.status is Gate1Status.REPLAY_CLOSED
     assert relifter.calls == 1
+    assert len(relifter.requests) == 1
+    request = relifter.requests[0]
+    assert request.trigger is ReliftTrigger.NORMAL_NO_CLOSURE
+    assert request.evaluation_round == 0
+    assert request.candidate_count == 1
+    assert request.compiled_candidate_count == 1
+    assert request.best_generation_round == 0
+    assert request.hard_difference_categories == (
+        "op_multiset",
+        "dataflow",
+    )
     assert [item.relift_round for item in result.candidates] == [0, 1]
 
 

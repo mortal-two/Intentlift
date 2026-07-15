@@ -22,6 +22,7 @@ import numpy as np
 
 from intentir.extraction.lifters.scrc import (
     ResponsesSCRCRelifter,
+    SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
     SCRCCompilerView,
     SCRCLiftError,
@@ -774,6 +775,7 @@ def _relift_evidence_json(
         item: dict[str, Any] = {
             "relift_round": record.relift_round,
             "ok": record.extraction is not None,
+            "request": dict(record.request),
         }
         if record.extraction is not None:
             extraction = record.extraction
@@ -876,6 +878,7 @@ def run_case(
         "effort": args.effort,
         "seed": args.seed,
         "relift_policy": {
+            "protocol": SCRC_RELIFT_PROTOCOL,
             "artifact_rounds": relift_rounds,
             "maximum_semantic_relifts": relift_rounds - 1,
         },

@@ -7,7 +7,9 @@ Gate1 只回答 SCRC 方案规定的问题：重写员在看不到源 Kernel 的
 源与重放在同一前端编译所得的中层结构是否闭合。
 
 Gate1 不执行 Kernel，不解释 IntentIR JSON，也不是另一套通用 verifier。
-IntentIR 是否忠于源码，最终由 Gate1 结构闭合与 Gate2 三方实跑共同回答。
+Gate1 与 Gate2 是两类独立证据，不是包含关系：Gate1 检查结构、
+信息来源与重放闭包，Gate2 检查有限输入矩阵上的三方动态行为。
+Gate2 通过不推导 Gate1 应通过，也不得覆盖 Gate1 拒绝。
 
 ## 输入与信息边界
 
@@ -50,6 +52,43 @@ specialization，不恢复 `do_not_specialize` metadata 门禁。
 
 source TTIR / replay TTIR ──> 纯代码指纹与裁判 ──> CLOSED 或差异报告
 ```
+
+Gate1 normal 结构判定是一个有界外层循环，不是单次检查：
+
+```text
+initial Lift(source) → artifact_0
+
+for artifact evaluation round:
+  source-blind replay(artifact_i)
+  compile source/replay with the same frontend and C
+  deterministic hard comparison
+
+  if every normal hard component closes:
+      run final masked-J check
+      if masked-J passes: return REPLAY_CLOSED
+      else: return LEAKAGE_REJECTED
+
+  run bounded inner replay repair
+  if hard differences remain and relift budget remains:
+      relift_input = original source
+                   + source fingerprint
+                   + allowlisted deterministic difference history
+                   + current J/pi/location_map
+      artifact_{i+1} = source-aware SCRC Relift(relift_input)
+      require interface_{i+1} == interface_i
+      require C_{i+1} == C_i
+      continue
+
+return NO_CLOSURE
+```
+
+“差异较大”不用 fuzzy score 定义：只要 interface/A/B 任一硬项不闭合，
+内层小修预算耗尽后就进入外层重提。score 只用于最优失败候选排序和
+masked-J 量化，不得将硬差异改判为通过。
+
+外层 Lift 可重新阅读原始 source，但 replay writer 仍始终看不到源码。回流
+证据不包含 replay 源码或 Gate2 结果。当前 `LEAKAGE_REJECTED` 是独立的
+反作弊终止状态，不自动伪装成 normal source/replay 差异进入同一 relift。
 
 同一 C、同一前端是本次结构实验的控制条件，不延伸成额外的环境锁、版本资格
 审查或另一套正确性等级。
@@ -132,7 +171,8 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 - 计划—检索—生成规则库；
 - 源与重放 compile-only、TTIR 提取；
 - interface/A/B 纯代码比较；
-- 有界小修/重提接口；
+- 有界内层小修与真实 source-aware 外层重提；normal 硬差异、
+  原始 source 与当前 J/π 会进入下一轮 Lift，interface/C 冻结；
 - 静态泄漏与 masked-J 消融；
 - add、row-sum、softmax、RMSNorm、matmul 的随机/边界变异探针。
 - 24 个真实 FlagGems Kernel 的非 Trellis 批处理队列、逐 case 原子报告、按完整
@@ -141,6 +181,19 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
   `fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage 已具备真实
   contract 并运行。batch identity 还绑定 Gate2 seed、distribution、scale 与
   tolerance，输入策略变化后不得 resume 旧结果。
+
+当前覆盖不等于全部情况：
+
+| 层次 | 已有真实端到端证据 | 部分覆盖 | 尚未覆盖 |
+|---|---|---|---|
+| A | 基础 elementwise/const、sum/mean/max/min/prod、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype、broadcast、mixed precision、常量敏感性 | RNG、scan/sort/top-k、量化/复数/稀疏、多输出、大型 attention |
+| B | 基础 1-D/2-D 仿射索引、tail mask、masked load/store、fill/guard、row reduction | 多 program axis、非末轴/多重归约、动态 stride、复合 mask | structured/online loop、scan carry、atomic、gather/scatter、block pointer/descriptor、alias-sensitive effects |
+| C/前端 | 单一 reviewed profile 的 constexpr/compiler slots/K tile、Triton/FlagGems compile-only | specialization 影响、grid/编译属性、region/loop 指纹 | 多 C/多 specialization 聚合、TileLang/CUDA 正式 Gate1、跨版本规范化、atomics/内存序 |
+
+早期五核手写 J/π 是机制探针；后续同五个族加 9 个 FlagGems 已重走
+真实 `gpt-5.6-sol/xhigh` Lift，14 个 normal replay 硬闭合。但 14/14 最终
+都被 masked-J 拒绝，所以真实 LLM artifact 的正式 `REPLAY_CLOSED` 样本仍为
+0。24 个 FlagGems 队列只完成 9 个，不得从样本数量推导特性完备性。
 
 当前仍是 Triton 研究原型，不应声称已经覆盖数百 Kernel。正式规模化样本必须
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定

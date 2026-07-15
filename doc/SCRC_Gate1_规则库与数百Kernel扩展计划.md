@@ -19,6 +19,18 @@ J + π + 接口 + C 槽 + 规则卡
 - 对齐、缓存、版本等政策的总门禁；
 - 人工判断“这个 op 是否 verify-ready”的体系。
 
+当前结论必须保守且明确：**Gate1 还没有覆盖全部可能的
+Kernel 形态**。现有证据是一个可执行的 Triton SCRC MVP，不是一般
+Triton 语义等价判定器：
+
+- 早期 add/row-sum/softmax/RMSNorm/matmul 手写 J/π 只用于机制探针；
+- 后续已将这五个族和 9 个 FlagGems 样本重新走真实
+  `gpt-5.6-sol/xhigh` Lift，14 个 normal replay 均达到 TTIR 硬闭合；
+- 14/14 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
+  `REPLAY_CLOSED` 真实 LLM artifact 样本仍为 0；
+- 24 个真实 FlagGems 队列完成 9 个、剩余 15 个 queued；9/24 是
+  进度，不是覆盖率。
+
 ## 2. 当前规则库
 
 实现位置：`python/intentir/verify/gate1/rules.py`。
@@ -167,6 +179,20 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 只沿用项目已经规划的 A/B/C 和 op-signatures，不另造体系。
 
+当前覆盖矩阵如下。“有规则卡”、“有手写单测”和“有真实 LLM
+Lift 端到端证据”是三个不同层次，不能互相代替。
+
+| 分层 | 已有真实证据 | 部分覆盖 | 尚无端到端证据 |
+|---|---|---|---|
+| A：算子/值数据流 | 常量 fill、基础 elementwise、sum/mean/max/min/prod、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype promotion、广播、多步融合、常量敏感性、混合精度 | RNG/dropout、scan/sort/top-k、量化/位运算组合、稀疏、多输出、大型 attention/跨 Kernel 图 |
+| B：域/索引/mask/effect | 一维 tail mask、基础二维仿射索引、masked load/store、fill/guard、row reduction、staged mask tile | 多 program axis、非末轴/多重归约、动态 stride、转置访问、复合/因果 mask、整数宽度 | online/structured loop、scan carry、atomic、gather/scatter/间接寻址、block pointer/descriptor、别名敏感副作用顺序 |
+| C：实现/调度 | 单个 reviewed profile 的 constexpr block、num_warps/num_stages 槽、K tile、wide program id | `do_not_specialize` 的实际 TTIR 影响、grid 合同、编译属性 | 同一 Kernel 的多 C/多 specialization 聚合门禁、descriptor ABI、架构专属约束、跨 Triton 版本系统规范化 |
+| 前端/裁判基础设施 | Triton compile-only、FlagGems wrapper、rank-0 pointer、TTIR interface/op/dataflow/reduce/predicate/effect 比较 | 复杂 region/loop 指纹、编译失败的安全差异摘要、masked-J 可识别性 | TileLang TIR、CUDA AST/PTX 正式 Gate1、atomics/内存序指纹、shape-parametric 等价 |
+
+当前 comparator 更准确的定位是：对“无复杂结构化循环、仿射索引、
+基础 mask/归约/dot”的 TTIR 结构闭包工具。`fg_log_softmax` 使用 online
+结构化循环，不能因为名字中有 softmax 就认为已被当前 softmax 样本覆盖。
+
 ### A 层
 
 通过真实样本逐步覆盖现有计划中的：
@@ -194,6 +220,38 @@ Intent/MLIR 起点。因此扩展时优先选择“有真实 source_file、能�
 
 如果某个真实 Kernel 不能用这些现有结构表达，先出 A/B/C 扩展报告，经批准
 后再改，不能由 Gate1 实现自行补 op。
+
+### Gate1 normal 差异的外层重提循环
+
+Gate1 不是只判一次就丢弃 artifact。对可编译但尚存任何硬差异的
+normal source/replay，当前实现已按下列循环工作：
+
+```text
+原始 source
+  → SCRC Lift 产生 J/π/C/接口/定位表
+  → 源码隔离 normal replay
+  → source/replay 同前端编译与纯代码硬比较
+  → 内层有界 replay repair 仍未闭合
+  → 提取 interface/op/dataflow/reduction/predicate-effect 结构差异
+  → 原始 source + source fingerprint + 差异历史 + 当前 J/π
+      交回可看源码的 SCRC Lift
+  → 只修改 J/π/location_map，冻结 interface 与 C
+  → 从新 artifact 重新进行源码隔离 replay
+  → normal 硬闭合或重提预算耗尽
+```
+
+这里的“差异较大”不引入新的模糊分数阈值：只要任一 Gate1
+硬项仍失败，内层小修耗尽后就进入外层重提。score 只用来保留最优
+失败候选，不决定是否闭合。
+
+回流给 Lift 的内容不包含 replay 源码；它包含原始 source、源指纹和
+经白名单序列化的纯代码差异。Gate2 输出不进入该循环，不能用动态
+PASS 覆盖 Gate1 差异。
+
+normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
+`LEAKAGE_REJECTED` 自动伪装成 normal source/replay 语义差异；如需建立
+专门的信息重分配循环，必须先在方案中单独定义反作弊反馈与防刷分
+约束，不与本次 normal diff relift 混在一起。
 
 ## 7. 分批推进
 

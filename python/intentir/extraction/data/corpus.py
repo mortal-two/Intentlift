@@ -1,4 +1,4 @@
-"""Kernel corpus: real high-performance-library Triton kernels lifted end-to-end.
+"""Legacy pre-SCRC corpus: library Triton kernels lifted by the old pipeline.
 
 Each entry names a REAL kernel source (FlagGems / Triton tutorials), a runnable
 entry point (the library's own wrapper), and an input contract. The pipeline for
@@ -25,7 +25,7 @@ import numpy as np
 
 from intentir.frontend.emit_mlir import emit_loop_module, emit_module
 from intentir.ir.model import IntentFunction
-from intentir.verify.interpret import interpret
+from intentir.verify.back.legacy_v0.interpret import interpret
 from intentir.extraction.lifters.extract import extract_intent
 from intentir.extraction.providers.provider import REPO_ROOT
 

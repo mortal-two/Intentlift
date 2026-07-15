@@ -9,6 +9,7 @@ from .providers.client import LLMReply, ProviderError, call_responses
 from .lifters.extract import Extraction, Provenance, extract_intent, smoke_interpret
 from .lifters.scrc import (
     ResponsesSCRCRelifter,
+    SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
     SCRCCompilerView,
     SCRCExtraction,
@@ -39,6 +40,7 @@ __all__ = [
     "Provenance",
     "smoke_interpret",
     "ResponsesSCRCRelifter",
+    "SCRC_RELIFT_PROTOCOL",
     "SCRCExtraction",
     "SCRCCompilerArgument",
     "SCRCCompilerView",

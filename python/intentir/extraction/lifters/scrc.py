@@ -29,11 +29,16 @@ from .scrc_schema import scrc_artifact_text_format
 
 
 if TYPE_CHECKING:
-    from intentir.verify.gate1.orchestrate import CandidateRecord
+    from intentir.verify.gate1.orchestrate import CandidateRecord, ReliftRequest
     from intentir.verify.gate1.ttir import TTIRFingerprint
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+# Binds held-out resume/report identity to the relift feedback contract.  This
+# is not a Gate score or acceptance rule; it only prevents replaying cached
+# evidence produced by an older outer-loop prompt/schema.
+SCRC_RELIFT_PROTOCOL = "normal_no_closure_v1"
 
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -80,10 +85,12 @@ class SCRCReliftContext:
     relift_round: int
     source_fingerprint: Mapping[str, Any]
     history: tuple[Mapping[str, Any], ...]
+    request: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.relift_round < 1:
             raise ValueError("relift_round must be positive")
+        object.__setattr__(self, "request", dict(self.request))
         # Fail before a provider call if a caller tries to smuggle a non-JSON
         # object or a non-finite value into the auditable relift prompt.
         json.dumps(self.to_json(), allow_nan=False)
@@ -93,6 +100,7 @@ class SCRCReliftContext:
             "relift_round": self.relift_round,
             "source_fingerprint": dict(self.source_fingerprint),
             "history": [dict(item) for item in self.history],
+            "request": dict(self.request),
         }
 
 
@@ -104,6 +112,7 @@ class SCRCReliftRecord:
     extraction: SCRCExtraction | None = None
     rejected_attempts: tuple["SCRCLiftAttempt", ...] = ()
     diagnostic: str | None = None
+    request: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -478,6 +487,13 @@ def _scrc_relift_prompt(
 This invocation is an outer-loop semantic relift, not a replay-code repair.
 Re-read SOURCE and use the source fingerprint plus prior deterministic Gate1
 reports to correct the semantic archive J and the dependent replay plan pi.
+
+RELIFT_EVIDENCE.request records why the outer loop was entered.  The current
+authorized trigger is normal_no_closure: bounded source-blind replay repair
+still left one or more hard source/replay TTIR differences.  Use the complete
+deterministic comparison records to decide whether J omitted/misstated source
+semantics or pi selected the wrong realization mechanism.  Scores are ranking
+evidence only; every remaining hard difference must be addressed.
 
 You may change exactly these fields:
 - j
@@ -969,8 +985,15 @@ class ResponsesSCRCRelifter:
         *,
         source_fingerprint: "TTIRFingerprint",
         history: tuple["CandidateRecord", ...],
+        request: "ReliftRequest",
     ) -> Gate1Artifact:
         relift_round = len(self._records) + 1
+        request_json = request.to_json()
+        if request_json.get("trigger") != "normal_no_closure":
+            raise ValueError(
+                "unsupported semantic relift trigger: "
+                f"{request_json.get('trigger')!r}"
+            )
         try:
             if artifact.source is None:
                 raise ValueError("semantic relift requires retained source text")
@@ -981,6 +1004,7 @@ class ResponsesSCRCRelifter:
                     _candidate_relift_evidence(candidate)
                     for candidate in history
                 ),
+                request=request_json,
             )
             extraction = extract_scrc_artifact(
                 artifact.source,
@@ -999,6 +1023,7 @@ class ResponsesSCRCRelifter:
                     relift_round,
                     rejected_attempts=exc.attempts,
                     diagnostic=str(exc),
+                    request=request_json,
                 )
             )
             raise
@@ -1007,15 +1032,23 @@ class ResponsesSCRCRelifter:
                 SCRCReliftRecord(
                     relift_round,
                     diagnostic=f"{type(exc).__name__}: {exc}",
+                    request=request_json,
                 )
             )
             raise
-        self._records.append(SCRCReliftRecord(relift_round, extraction=extraction))
+        self._records.append(
+            SCRCReliftRecord(
+                relift_round,
+                extraction=extraction,
+                request=request_json,
+            )
+        )
         return extraction.artifact
 
 
 __all__ = [
     "ResponsesSCRCRelifter",
+    "SCRC_RELIFT_PROTOCOL",
     "SCRCCompilerArgument",
     "SCRCCompilerView",
     "SCRCExtraction",

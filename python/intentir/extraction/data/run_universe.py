@@ -1,4 +1,9 @@
-"""C1 universe harness: batch, resumable extract -> lower -> verify with STAGED
+"""Legacy C1 universe harness: resumable extract -> lower -> interpreter check.
+
+Historical behavior and reports remain reproducible, but this module is not a
+Gate1/Gate2 entry point.  The original staged failure description follows.
+
+Batch, resumable extract -> lower -> verify with STAGED
 failure attribution + a coverage manifest. Gates whether C2 can blindly scale.
 
     PYTHONPATH=python IIR_LIVE_LLM=1 python -m intentir.extraction.data.run_universe
@@ -27,7 +32,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 
 from intentir.ir.model import IntentFunction
-from intentir.verify.interpret import interpret
+from intentir.verify.back.legacy_v0.interpret import interpret
 from intentir.extraction.lifters.extract import extract_intent, _concretize_dims
 from intentir.extraction.providers.provider import REPO_ROOT
 from .corpus import (GPU_PASS_OPS, KernelSpec, _dims_from, _relerr, _src,

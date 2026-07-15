@@ -108,6 +108,8 @@ from .orchestrate import (
     Gate1Config,
     Gate1ExecutionResult,
     Gate1Runner,
+    ReliftRequest,
+    ReliftTrigger,
     Relifter,
 )
 
@@ -131,7 +133,8 @@ __all__ = [
     "CompileResult", "ComponentComparison", "Diagnosis", "FailureAnalysis",
     "FailureCause", "FingerprintDifference", "Gate1Config",
     "Gate1ExecutionResult", "Gate1Runner", "KernelSource", "OutcomeClass",
-    "Relifter", "RepairFeedback", "ReplayGeneration", "ReplayWriter",
+    "ReliftRequest", "ReliftTrigger", "Relifter", "RepairFeedback",
+    "ReplayGeneration", "ReplayWriter",
     "ResponsesReplayWriter", "Responsibility", "StaticReplayWriter",
     "TTIRComparator", "TTIRComparison", "TTIRFingerprint", "TTIRParseError",
     "TTIRParser", "TritonCompilationError", "TritonCompileCase",

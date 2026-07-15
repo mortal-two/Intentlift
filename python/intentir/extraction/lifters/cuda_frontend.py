@@ -1,4 +1,4 @@
-"""Multi-frontend demo: the extractor is input-LANGUAGE-agnostic.
+"""Legacy multi-frontend demo: the old extractor is language-agnostic.
 
 The same LLM extractor that lifts Triton kernels lifts hand-written CUDA C++ to
 the SAME IntentIR. This file holds faithful, optimization-bearing CUDA kernels
@@ -9,7 +9,8 @@ nvcc is not installed in this environment, so the dynamic check here compares
 interpret(JSON) against the torch reference op (each kernel computes a named op).
 That verifies the FRONTEND-LANGUAGE handling -- the extractor recovered the right
 tensor math from CUDA source; it is a language-pluggability demo, distinct from
-the Triton corpus where we run the actual kernel.
+the Triton corpus where we run the actual kernel.  It is retained as historical
+extraction evidence and is not the current SCRC CUDA verification path.
 """
 
 from __future__ import annotations
@@ -123,7 +124,7 @@ def cuda_specs():
 
 def run_cuda_frontend(save: bool = True):
     """Lift each CUDA kernel and check interpret(JSON) vs the torch reference."""
-    from intentir.verify.interpret import interpret
+    from intentir.verify.back.legacy_v0.interpret import interpret
 
     rows = []
     for name, src, hint, ti, ref in cuda_specs():

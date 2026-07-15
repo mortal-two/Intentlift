@@ -30,6 +30,7 @@ from scrc_live_e2e import (  # noqa: E402
     _gate1_evidence_json,
     _lift_attempt_evidence,
     _parser,
+    _relift_evidence_json,
     _write_report,
     build_case,
 )
@@ -362,6 +363,7 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
     assert relifter_kwargs["effort"] == "xhigh"
     assert captured["gate1_relifter"] is not None
     assert captured["gate1_config"].max_relifts == 4
+    assert report["relift_policy"]["protocol"] == "normal_no_closure_v1"
     assert report["relift_policy"]["maximum_semantic_relifts"] == 3
     assert report["relifts"] == []
     assert code == 3
@@ -423,6 +425,35 @@ def test_lift_failure_evidence_hashes_raw_model_response() -> None:
     assert "response_text" not in evidence
     assert evidence["response_bytes"] == len("SECRET_MODEL_RESPONSE")
     assert len(evidence["response_sha256"]) == 64
+
+
+def test_relift_report_links_the_normal_no_closure_request() -> None:
+    relifter = SimpleNamespace(
+        records=(
+            SimpleNamespace(
+                relift_round=1,
+                extraction=None,
+                request={
+                    "trigger": "normal_no_closure",
+                    "evaluation_round": 0,
+                    "candidate_count": 3,
+                    "compiled_candidate_count": 3,
+                    "best_generation_round": 0,
+                    "hard_difference_categories": ["dataflow"],
+                },
+                diagnostic="relift failed",
+                rejected_attempts=(),
+            ),
+        )
+    )
+
+    evidence = _relift_evidence_json(relifter)
+
+    assert evidence[0]["request"]["trigger"] == "normal_no_closure"
+    assert evidence[0]["request"]["hard_difference_categories"] == [
+        "dataflow"
+    ]
+    assert evidence[0]["diagnostic"] == "relift failed"
 
 
 def test_report_write_is_atomic_private_and_creates_explicit_parent(tmp_path) -> None:
