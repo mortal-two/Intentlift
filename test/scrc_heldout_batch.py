@@ -37,6 +37,7 @@ from scrc_live_e2e import (
     LiveKernelCase,
     _compile_case,
     _gate2_matrix_policy_json,
+    _positive_int,
     _selected_gate2_seeds,
     _write_report,
     run_case,
@@ -490,6 +491,7 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         seed=args.seed,
         lift_repairs=args.lift_repairs,
         rewrite_repairs=args.rewrite_repairs,
+        relift_rounds=args.relift_rounds,
         diagnose_rejected=args.diagnose_rejected,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
@@ -502,12 +504,13 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 3,
+        "schema": 4,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
         "lift_repairs": args.lift_repairs,
         "rewrite_repairs": args.rewrite_repairs,
+        "relift_rounds": args.relift_rounds,
         "diagnose_rejected": bool(args.diagnose_rejected),
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,
@@ -581,6 +584,17 @@ def _response_ids(report: dict[str, Any]) -> tuple[list[str], str | None]:
     return normal, masked_id
 
 
+def _relift_response_ids(report: dict[str, Any]) -> list[str]:
+    relifts = report.get("relifts")
+    if not isinstance(relifts, list):
+        return []
+    return [
+        str(item["response_id"])
+        for item in relifts
+        if isinstance(item, dict) and item.get("response_id")
+    ]
+
+
 def _load_cached_lift(
     path: Path,
     case: LiveKernelCase,
@@ -628,6 +642,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--rewrite-repairs", type=int, default=2)
+    parser.add_argument(
+        "--relift-rounds",
+        type=_positive_int,
+        default=3,
+        help="total Gate1 artifact rounds, including the initial Lift",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("/tmp/scrc_heldout_batch"))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--lift-cache-dir", type=Path)
@@ -708,12 +728,14 @@ def main() -> int:
                 }
             status = _result_status(report)
             normal_ids, masked_id = _response_ids(report)
+            relift_ids = _relift_response_ids(report)
             row = {
                 "case": name,
                 "status": status,
                 "individual_exit_code": code,
                 "report": str(path),
                 "lift_response_id": report.get("lift", {}).get("response_id"),
+                "relift_response_ids": relift_ids,
                 "normal_replay_response_ids": normal_ids,
                 "masked_response_id": masked_id,
             }

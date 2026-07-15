@@ -18,7 +18,10 @@ from scrc_heldout_batch import (  # noqa: E402
     CANDIDATES,
     READY_CASES,
     _batch_identity,
+    _case_args,
     _load_cached_lift,
+    _parser,
+    _relift_response_ids,
     _response_ids,
     _resume_row,
     _result_status,
@@ -281,6 +284,7 @@ def _batch_args(**overrides) -> Namespace:
         "seed": 20260715,
         "lift_repairs": 2,
         "rewrite_repairs": 2,
+        "relift_rounds": 3,
         "diagnose_rejected": False,
         "gate2_matrix": False,
         "gate2_seeds": None,
@@ -321,6 +325,36 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         20260717,
     ]
     assert _resume_row(saved, matrix_identity) is None
+    relift_identity = _batch_identity(
+        build_heldout_case("fg_dot"),
+        _batch_args(relift_rounds=1),
+    )
+    assert identity["schema"] == 4
+    assert identity["relift_rounds"] == 3
+    assert relift_identity["relift_rounds"] == 1
+    assert _resume_row(saved, relift_identity) is None
+
+
+def test_batch_parser_and_case_args_preserve_relift_policy() -> None:
+    parsed = _parser().parse_args([])
+    assert parsed.model == "gpt-5.6-sol"
+    assert parsed.effort == "xhigh"
+    assert parsed.relift_rounds == 3
+    assert _case_args(parsed).relift_rounds == 3
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["--relift-rounds", "0"])
+
+
+def test_batch_collects_relift_response_ids() -> None:
+    assert _relift_response_ids(
+        {
+            "relifts": [
+                {"ok": True, "response_id": "relift-1"},
+                {"ok": False},
+                {"ok": True, "response_id": "relift-2"},
+            ]
+        }
+    ) == ["relift-1", "relift-2"]
 
 
 def test_lift_cache_rejects_a_different_rule_registry(tmp_path: Path) -> None:

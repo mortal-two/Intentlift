@@ -881,11 +881,18 @@ class Gate1Runner:
             if relifter is None or relift_round + 1 >= self.config.max_relifts:
                 break
             assert source_fp is not None
-            current = relifter.relift(
-                current,
-                source_fingerprint=source_fp,
-                history=tuple(history),
-            )
+            try:
+                current = relifter.relift(
+                    current,
+                    source_fingerprint=source_fp,
+                    history=tuple(history),
+                )
+            except Exception as exc:
+                diagnostics.append(
+                    "semantic relift failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                break
 
         return Gate1ExecutionResult(
             Gate1Status.NO_CLOSURE,

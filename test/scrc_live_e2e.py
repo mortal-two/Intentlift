@@ -21,6 +21,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from intentir.extraction.lifters.scrc import (
+    ResponsesSCRCRelifter,
     SCRCCompilerArgument,
     SCRCCompilerView,
     SCRCLiftError,
@@ -765,6 +766,37 @@ def _lift_attempt_evidence(item) -> dict[str, Any]:
     }
 
 
+def _relift_evidence_json(
+    relifter: ResponsesSCRCRelifter,
+) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for record in relifter.records:
+        item: dict[str, Any] = {
+            "relift_round": record.relift_round,
+            "ok": record.extraction is not None,
+        }
+        if record.extraction is not None:
+            extraction = record.extraction
+            item.update(
+                {
+                    "model": extraction.provenance.model,
+                    "prompt_sha256": extraction.provenance.prompt_sha256,
+                    "attempts": extraction.provenance.attempts,
+                    "repairs": list(extraction.provenance.repairs),
+                    "response_id": extraction.provenance.response_id,
+                    "artifact": _artifact_evidence_json(extraction.artifact),
+                }
+            )
+        else:
+            item["diagnostic"] = record.diagnostic
+            item["attempts"] = [
+                _lift_attempt_evidence(attempt)
+                for attempt in record.rejected_attempts
+            ]
+        evidence.append(item)
+    return evidence
+
+
 def _selected_gate2_seeds(args: argparse.Namespace) -> tuple[int, ...]:
     requested = tuple(getattr(args, "gate2_seeds", ()) or ())
     if requested:
@@ -835,11 +867,18 @@ def run_case(
     registry = default_triton_rule_registry()
     gate2_matrix_enabled = bool(getattr(args, "gate2_matrix", False))
     gate2_seeds = _selected_gate2_seeds(args)
+    relift_rounds = int(getattr(args, "relift_rounds", 3))
+    if relift_rounds < 1:
+        raise ValueError("relift_rounds must be positive")
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
+        "relift_policy": {
+            "artifact_rounds": relift_rounds,
+            "maximum_semantic_relifts": relift_rounds - 1,
+        },
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,
             "argument_distributions": {
@@ -924,11 +963,18 @@ def run_case(
         effort=args.effort,
         max_retries=1,
     )
+    relifter = ResponsesSCRCRelifter(
+        registry=registry,
+        provider=provider,
+        compiler_view=compiler_view,
+        max_repairs=args.lift_repairs,
+        effort=args.effort,
+    )
     _progress("gate1_start", kernel=case.name)
     gate1 = Gate1Runner(
         config=Gate1Config(
             max_repairs=args.rewrite_repairs,
-            max_relifts=1,
+            max_relifts=relift_rounds,
             stable_closures=1,
             run_masked_ablation=True,
         )
@@ -938,8 +984,10 @@ def run_case(
         _compile_case(case),
         registry,
         writer,
+        relifter=relifter,
     )
     report["gate1"] = _gate1_evidence_json(gate1)
+    report["relifts"] = _relift_evidence_json(relifter)
     _progress("gate1_complete", kernel=case.name, status=gate1.status.value)
     closed = next(
         (
@@ -1060,6 +1108,13 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     return run_case(build_case(args), args)
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1086,6 +1141,12 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--rewrite-repairs", type=int, default=2)
+    parser.add_argument(
+        "--relift-rounds",
+        type=_positive_int,
+        default=3,
+        help="total Gate1 artifact rounds, including the initial Lift",
+    )
     parser.add_argument("--report")
     if default_kernel == "matmul":
         parser.set_defaults(m=17, n=13, k=19)
@@ -1103,6 +1164,7 @@ def main(default_kernel: str = "add") -> int:
         "gate1": report.get("gate1", {}).get("status"),
         "gate2": report.get("gate2", {}).get("status"),
         "gate2_suite": report.get("gate2_suite", {}).get("passed"),
+        "relifts": len(report.get("relifts", [])),
         "report": args.report,
     }
     print(json.dumps(summary, ensure_ascii=False))

@@ -10,7 +10,9 @@ import numpy as np
 import pytest
 
 from intentir.ir.model import IntentFunction
+from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import (
+    Gate1Status,
     KernelParameter,
     ParameterKind,
     ParameterMode,
@@ -21,6 +23,7 @@ from intentir.verify.gate1.replay import ReplayGeneration
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test"))
 
+import scrc_live_e2e as live  # noqa: E402
 from scrc_live_e2e import (  # noqa: E402
     _compile_case,
     _gate2_case,
@@ -256,6 +259,112 @@ def test_matmul_entry_uses_reviewed_probe_defaults() -> None:
     args = _parser("matmul").parse_args([])
     assert (args.m, args.n, args.k) == (17, 13, 19)
     assert (args.block_m, args.block_n, args.block_k) == (16, 16, 16)
+    assert args.model == "gpt-5.6-sol"
+    assert args.effort == "xhigh"
+    assert args.relift_rounds == 3
+
+
+def test_live_parser_rejects_nonpositive_relift_rounds() -> None:
+    with pytest.raises(SystemExit):
+        _parser("add").parse_args(["--relift-rounds", "0"])
+
+
+def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
+    case = build_case(_args("add"))
+    provider = ProviderConfig(
+        "test",
+        "https://example.invalid",
+        "secret",
+        "base-model",
+    )
+    artifact = SimpleNamespace(
+        interface=SimpleNamespace(function_name=case.function_name),
+        to_json=lambda: {
+            "kernel_id": case.function_name,
+            "source": case.source_text,
+        },
+    )
+    extraction = SimpleNamespace(
+        artifact=artifact,
+        provenance=SimpleNamespace(
+            model="gpt-5.6-sol",
+            prompt_sha256="lift-prompt",
+            attempts=1,
+            repairs=(),
+            response_id="lift-response",
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(live, "get_provider", lambda: provider)
+
+    def fake_extract(*args, **kwargs):
+        captured["lift_provider"] = kwargs["provider"]
+        captured["lift_effort"] = kwargs["effort"]
+        return extraction
+
+    monkeypatch.setattr(live, "extract_scrc_artifact", fake_extract)
+    monkeypatch.setattr(
+        live,
+        "ResponsesReplayWriter",
+        lambda **kwargs: SimpleNamespace(),
+    )
+
+    class FakeRelifter:
+        def __init__(self, **kwargs):
+            captured["relifter_kwargs"] = kwargs
+            self.records = ()
+
+    class FakeRunner:
+        def __init__(self, *, config):
+            captured["gate1_config"] = config
+
+        def run(self, *args, relifter=None, **kwargs):
+            captured["gate1_relifter"] = relifter
+            return SimpleNamespace(
+                status=Gate1Status.NO_CLOSURE,
+                replay_closed=False,
+                candidates=(),
+                masked_generation=None,
+                to_json=lambda: {
+                    "status": Gate1Status.NO_CLOSURE.value,
+                    "artifact": artifact.to_json(),
+                    "candidates": [],
+                    "masked_generation": None,
+                    "diagnostics": [],
+                },
+            )
+
+    monkeypatch.setattr(live, "ResponsesSCRCRelifter", FakeRelifter)
+    monkeypatch.setattr(live, "Gate1Runner", FakeRunner)
+    args = Namespace(
+        model="gpt-5.6-sol",
+        effort="xhigh",
+        seed=20260715,
+        lift_repairs=2,
+        rewrite_repairs=2,
+        relift_rounds=4,
+        gate2_matrix=False,
+        gate2_seeds=None,
+        diagnose_rejected=False,
+    )
+
+    code, report = live.run_case(case, args)
+
+    configured_provider = captured["lift_provider"]
+    assert isinstance(configured_provider, ProviderConfig)
+    assert configured_provider.model == "gpt-5.6-sol"
+    assert configured_provider.reasoning_effort == "xhigh"
+    assert captured["lift_effort"] == "xhigh"
+    relifter_kwargs = captured["relifter_kwargs"]
+    assert isinstance(relifter_kwargs, dict)
+    assert relifter_kwargs["provider"] is configured_provider
+    assert relifter_kwargs["effort"] == "xhigh"
+    assert captured["gate1_relifter"] is not None
+    assert captured["gate1_config"].max_relifts == 4
+    assert report["relift_policy"]["maximum_semantic_relifts"] == 3
+    assert report["relifts"] == []
+    assert code == 3
 
 
 def test_add_compatibility_case_keeps_existing_defaults() -> None:

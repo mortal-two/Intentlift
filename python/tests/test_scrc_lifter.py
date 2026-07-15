@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters import scrc
+from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.rules import default_triton_rule_registry
 
 
@@ -115,6 +117,20 @@ def _artifact_payload() -> dict:
             ]
         },
     }
+
+
+def _trusted_artifact() -> Gate1Artifact:
+    payload = _artifact_payload()
+    payload["source"] = "ORIGINAL_SOURCE_CANARY"
+    payload["provenance"] = [
+        {
+            "role": "lifter",
+            "producer": "initial-test-lifter",
+            "model": "gpt-initial",
+            "source_digest": "initial-digest",
+        }
+    ]
+    return Gate1Artifact.from_json(payload)
 
 
 def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None:
@@ -429,3 +445,112 @@ def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
     assert caught.value.attempts[0].response_text == '{"bad": 1}'
     assert "attempt 1" in str(caught.value)
     assert "attempt 2" in str(caught.value)
+
+
+def test_real_relifter_sees_source_evidence_but_never_replay_source(
+    monkeypatch,
+) -> None:
+    captured: dict[str, str] = {}
+    response = LLMReply(
+        json.dumps(_artifact_payload()),
+        "gpt-5.6-sol",
+        {"id": "resp-relift"},
+    )
+
+    def fake_call(instructions, user_input, **kwargs):
+        captured["instructions"] = instructions
+        captured["user_input"] = user_input
+        return response
+
+    monkeypatch.setattr(scrc, "call_responses", fake_call)
+    diagnosis = SimpleNamespace(
+        to_json=lambda: {
+            "cause": "replay_compile",
+            "responsibility": "replay_code",
+            "mismatches": ["REPLAY_SOURCE_CANARY"],
+            "confirmed_fields": [],
+            "allowed_modifications": ["replay code"],
+            "explanation": "inner repair only",
+        }
+    )
+    candidate = SimpleNamespace(
+        relift_round=0,
+        generation_round=1,
+        compiled=False,
+        comparison=None,
+        diagnosis=diagnosis,
+        adopted=True,
+        regressed=False,
+        generation=SimpleNamespace(code="REPLAY_SOURCE_CANARY"),
+    )
+    fingerprint = SimpleNamespace(
+        to_dict=lambda: {
+            "schema_version": "test",
+            "op_multiset": {"arith.extsi": 3},
+        }
+    )
+    trusted = _trusted_artifact()
+    relifter = scrc.ResponsesSCRCRelifter(max_repairs=0, effort="xhigh")
+
+    result = relifter.relift(
+        trusted,
+        source_fingerprint=fingerprint,
+        history=(candidate,),
+    )
+
+    assert result.interface.to_json() == trusted.interface.to_json()
+    assert result.schedule.to_json() == trusted.schedule.to_json()
+    assert len(result.provenance) == 2
+    assert result.provenance[-1].metadata["kind"] == "semantic_relift"
+    assert result.provenance[-1].metadata["relift_round"] == 1
+    assert "outer-loop semantic relift" in captured["instructions"]
+    assert "ORIGINAL_SOURCE_CANARY" in captured["user_input"]
+    assert '"arith.extsi": 3' in captured["user_input"]
+    assert "REPLAY_SOURCE_CANARY" not in captured["user_input"]
+    assert len(relifter.records) == 1
+    assert relifter.records[0].extraction is not None
+    assert relifter.records[0].extraction.provenance.response_id == "resp-relift"
+
+
+def test_semantic_relift_rejects_trusted_interface_drift(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["interface"]["grid"] = ["N"]
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-interface-drift"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    trusted = _trusted_artifact()
+    context = scrc.SCRCReliftContext(1, {"schema_version": "test"}, ())
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            trusted.source or "",
+            trusted.j.kernel_id,
+            relift_context=context,
+            trusted_artifact=trusted,
+            max_repairs=0,
+        )
+
+    assert "semantic relift changed trusted interface" in str(caught.value)
+
+
+def test_semantic_relift_rejects_trusted_schedule_drift(monkeypatch) -> None:
+    payload = _artifact_payload()
+    payload["schedule"]["values"]["BLOCK"] = 128
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-schedule-drift"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+    trusted = _trusted_artifact()
+    context = scrc.SCRCReliftContext(1, {"schema_version": "test"}, ())
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            trusted.source or "",
+            trusted.j.kernel_id,
+            relift_context=context,
+            trusted_artifact=trusted,
+            max_repairs=0,
+        )
+
+    assert "semantic relift changed trusted schedule C" in str(caught.value)

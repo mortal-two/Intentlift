@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
@@ -26,6 +26,11 @@ from intentir.verify.gate1.rules import RuleRegistry, default_triton_rule_regist
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
 from .scrc_schema import scrc_artifact_text_format
+
+
+if TYPE_CHECKING:
+    from intentir.verify.gate1.orchestrate import CandidateRecord
+    from intentir.verify.gate1.ttir import TTIRFingerprint
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -66,6 +71,39 @@ class SCRCProvenance:
 class SCRCExtraction:
     artifact: Gate1Artifact
     provenance: SCRCProvenance
+
+
+@dataclass(frozen=True)
+class SCRCReliftContext:
+    """Source-side evidence available only to the semantic lift agent."""
+
+    relift_round: int
+    source_fingerprint: Mapping[str, Any]
+    history: tuple[Mapping[str, Any], ...]
+
+    def __post_init__(self) -> None:
+        if self.relift_round < 1:
+            raise ValueError("relift_round must be positive")
+        # Fail before a provider call if a caller tries to smuggle a non-JSON
+        # object or a non-finite value into the auditable relift prompt.
+        json.dumps(self.to_json(), allow_nan=False)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "relift_round": self.relift_round,
+            "source_fingerprint": dict(self.source_fingerprint),
+            "history": [dict(item) for item in self.history],
+        }
+
+
+@dataclass(frozen=True)
+class SCRCReliftRecord:
+    """One bounded outer-loop relift attempt for live evidence reporting."""
+
+    relift_round: int
+    extraction: SCRCExtraction | None = None
+    rejected_attempts: tuple["SCRCLiftAttempt", ...] = ()
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -425,6 +463,62 @@ def _scrc_lift_prompt(
     return instructions, user + "\n\nSOURCE:\n" + source
 
 
+def _scrc_relift_prompt(
+    source: str,
+    name_hint: str,
+    registry: RuleRegistry,
+    compiler_view: SCRCCompilerView | None,
+    trusted_artifact: Gate1Artifact,
+    context: SCRCReliftContext,
+) -> tuple[str, str]:
+    instructions = (
+        build_scrc_lift_instructions(registry)
+        + """
+
+This invocation is an outer-loop semantic relift, not a replay-code repair.
+Re-read SOURCE and use the source fingerprint plus prior deterministic Gate1
+reports to correct the semantic archive J and the dependent replay plan pi.
+
+You may change exactly these fields:
+- j
+- plan
+- location_map
+
+You must copy interface and schedule byte-for-byte as JSON values from
+TRUSTED_IMMUTABLE_FIELDS.  Do not infer, improve, reorder or otherwise edit
+them.  The driver rejects any drift.  Replay source is deliberately not
+provided; do not invent or discuss a previous replay implementation.  Emit the
+complete corrected Gate1Artifact JSON only.
+"""
+    )
+    immutable = {
+        "interface": trusted_artifact.interface.to_json(),
+        "schedule": trusted_artifact.schedule.to_json(),
+    }
+    editable = {
+        "j": trusted_artifact.j.to_json(),
+        "plan": trusted_artifact.plan.to_json(),
+        "location_map": trusted_artifact.location_map.to_json(),
+    }
+    user = (
+        f'Relift the kernel with kernel_id "{name_hint}".\n\n'
+        "TRUSTED_IMMUTABLE_FIELDS:\n"
+        + json.dumps(immutable, ensure_ascii=False, sort_keys=True)
+        + "\n\nCURRENT_EDITABLE_FIELDS:\n"
+        + json.dumps(editable, ensure_ascii=False, sort_keys=True)
+        + "\n\nRELIFT_EVIDENCE:\n"
+        + json.dumps(context.to_json(), ensure_ascii=False, sort_keys=True)
+    )
+    if compiler_view is not None:
+        user += (
+            "\n\nTRUSTED_COMPILER_VIEW (a second immutable cross-check):\n"
+            + json.dumps(
+                compiler_view.to_json(), ensure_ascii=False, sort_keys=True
+            )
+        )
+    return instructions, user + "\n\nSOURCE:\n" + source
+
+
 def scrc_lift_prompt_sha256(
     source: str,
     name_hint: str,
@@ -443,6 +537,31 @@ def scrc_lift_prompt_sha256(
     ).hexdigest()
 
 
+def scrc_relift_prompt_sha256(
+    source: str,
+    name_hint: str,
+    trusted_artifact: Gate1Artifact,
+    context: SCRCReliftContext,
+    *,
+    registry: RuleRegistry | None = None,
+    compiler_view: SCRCCompilerView | None = None,
+) -> str:
+    """Hash the exact semantic relift prompt used for live evidence."""
+
+    active_registry = registry or default_triton_rule_registry()
+    instructions, user = _scrc_relift_prompt(
+        source,
+        name_hint,
+        active_registry,
+        compiler_view,
+        trusted_artifact,
+        context,
+    )
+    return hashlib.sha256(
+        (instructions + "\x00" + user).encode("utf-8")
+    ).hexdigest()
+
+
 def extract_scrc_artifact(
     source: str,
     name_hint: str,
@@ -452,13 +571,30 @@ def extract_scrc_artifact(
     compiler_view: SCRCCompilerView | None = None,
     max_repairs: int = 3,
     effort: str | None = None,
+    relift_context: SCRCReliftContext | None = None,
+    trusted_artifact: Gate1Artifact | None = None,
 ) -> SCRCExtraction:
     """Lift a real source kernel to the full SCRC artifact through the LLM."""
 
     registry = registry or default_triton_rule_registry()
-    instructions, user = _scrc_lift_prompt(
-        source, name_hint, registry, compiler_view
-    )
+    if (relift_context is None) != (trusted_artifact is None):
+        raise ValueError(
+            "relift_context and trusted_artifact must be supplied together"
+        )
+    if relift_context is None:
+        instructions, user = _scrc_lift_prompt(
+            source, name_hint, registry, compiler_view
+        )
+    else:
+        assert trusted_artifact is not None
+        instructions, user = _scrc_relift_prompt(
+            source,
+            name_hint,
+            registry,
+            compiler_view,
+            trusted_artifact,
+            relift_context,
+        )
     prompt_sha = hashlib.sha256(
         (instructions + "\x00" + user).encode("utf-8")
     ).hexdigest()
@@ -515,17 +651,31 @@ def extract_scrc_artifact(
                 ):
                     effect.pop(extra, None)
             payload["source"] = source
+            metadata: dict[str, Any] = {
+                "prompt_sha256": prompt_sha,
+                "response_id": reply.raw.get("id"),
+            }
+            previous_provenance: list[dict[str, Any]] = []
+            if trusted_artifact is not None:
+                assert relift_context is not None
+                metadata.update(
+                    {
+                        "kind": "semantic_relift",
+                        "relift_round": relift_context.relift_round,
+                    }
+                )
+                previous_provenance = [
+                    item.to_json() for item in trusted_artifact.provenance
+                ]
             payload["provenance"] = [
+                *previous_provenance,
                 ProvenanceRecord(
                     ProvenanceRole.LIFTER,
                     "intentir.extraction.lifters.scrc",
                     model=reply.model,
                     source_digest=source_digest,
-                    metadata={
-                        "prompt_sha256": prompt_sha,
-                        "response_id": reply.raw.get("id"),
-                    },
-                ).to_json()
+                    metadata=metadata,
+                ).to_json(),
             ]
             artifact = Gate1Artifact.from_json(payload)
             if artifact.j.intent.layer_c:
@@ -533,6 +683,19 @@ def extract_scrc_artifact(
                     "J.intent.layer_c must be empty; concrete C belongs only "
                     "in schedule.values"
                 )
+            if trusted_artifact is not None:
+                if artifact.interface.to_json() != (
+                    trusted_artifact.interface.to_json()
+                ):
+                    raise ValueError(
+                        "semantic relift changed trusted interface"
+                    )
+                if artifact.schedule.to_json() != (
+                    trusted_artifact.schedule.to_json()
+                ):
+                    raise ValueError(
+                        "semantic relift changed trusted schedule C"
+                    )
             if compiler_view is not None:
                 if compiler_view.parameter_order:
                     actual_order = [
@@ -749,14 +912,120 @@ def extract_scrc_artifact(
     raise AssertionError("unreachable")
 
 
+def _candidate_relift_evidence(candidate: "CandidateRecord") -> dict[str, Any]:
+    """Return semantic evidence without replay source or compiler source lines."""
+
+    diagnosis = None
+    if candidate.diagnosis is not None:
+        diagnosis = candidate.diagnosis.to_json()
+        if diagnosis.get("cause") == "replay_compile":
+            # Compile diagnostics may quote model-generated source lines.  They
+            # belong to the inner replay repair loop, not semantic relifting.
+            diagnosis.pop("mismatches", None)
+    return {
+        "relift_round": candidate.relift_round,
+        "generation_round": candidate.generation_round,
+        "compiled": candidate.compiled,
+        "comparison": (
+            None
+            if candidate.comparison is None
+            else candidate.comparison.to_dict()
+        ),
+        "diagnosis": diagnosis,
+        "adopted": candidate.adopted,
+        "regressed": candidate.regressed,
+    }
+
+
+@dataclass
+class ResponsesSCRCRelifter:
+    """Real source-aware outer-loop relifter for :class:`Gate1Runner`.
+
+    The rewriter remains source-blind.  This class is the separate lift-agent
+    channel described by SCRC section 7: it sees source-side fingerprints and
+    deterministic comparison history, but never receives replay source.
+    """
+
+    registry: RuleRegistry = field(default_factory=default_triton_rule_registry)
+    provider: ProviderConfig | None = None
+    compiler_view: SCRCCompilerView | None = None
+    max_repairs: int = 2
+    effort: str | None = None
+    _records: list[SCRCReliftRecord] = field(
+        default_factory=list, init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        if self.max_repairs < 0:
+            raise ValueError("max_repairs must be non-negative")
+
+    @property
+    def records(self) -> tuple[SCRCReliftRecord, ...]:
+        return tuple(self._records)
+
+    def relift(
+        self,
+        artifact: Gate1Artifact,
+        *,
+        source_fingerprint: "TTIRFingerprint",
+        history: tuple["CandidateRecord", ...],
+    ) -> Gate1Artifact:
+        relift_round = len(self._records) + 1
+        try:
+            if artifact.source is None:
+                raise ValueError("semantic relift requires retained source text")
+            context = SCRCReliftContext(
+                relift_round=relift_round,
+                source_fingerprint=source_fingerprint.to_dict(),
+                history=tuple(
+                    _candidate_relift_evidence(candidate)
+                    for candidate in history
+                ),
+            )
+            extraction = extract_scrc_artifact(
+                artifact.source,
+                artifact.j.kernel_id,
+                registry=self.registry,
+                provider=self.provider,
+                compiler_view=self.compiler_view,
+                max_repairs=self.max_repairs,
+                effort=self.effort,
+                relift_context=context,
+                trusted_artifact=artifact,
+            )
+        except SCRCLiftError as exc:
+            self._records.append(
+                SCRCReliftRecord(
+                    relift_round,
+                    rejected_attempts=exc.attempts,
+                    diagnostic=str(exc),
+                )
+            )
+            raise
+        except Exception as exc:
+            self._records.append(
+                SCRCReliftRecord(
+                    relift_round,
+                    diagnostic=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            raise
+        self._records.append(SCRCReliftRecord(relift_round, extraction=extraction))
+        return extraction.artifact
+
+
 __all__ = [
+    "ResponsesSCRCRelifter",
     "SCRCCompilerArgument",
     "SCRCCompilerView",
     "SCRCExtraction",
     "SCRCLiftAttempt",
     "SCRCLiftError",
     "SCRCProvenance",
+    "SCRCReliftContext",
+    "SCRCReliftRecord",
     "build_scrc_lift_instructions",
     "extract_scrc_artifact",
     "scrc_lift_prompt_sha256",
+    "scrc_relift_prompt_sha256",
 ]

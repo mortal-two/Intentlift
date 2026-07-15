@@ -410,6 +410,68 @@ def test_initial_plus_two_repairs_is_exactly_three_candidates() -> None:
     assert result.best_candidate is not None
 
 
+def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
+    class FailingRelifter:
+        def relift(self, artifact, *, source_fingerprint, history):
+            assert source_fingerprint is not None
+            assert history
+            raise RuntimeError("relift provider unavailable")
+
+    writer = CaptureWriter(["BAD"])
+    result = _runner(
+        max_repairs=0,
+        max_relifts=2,
+        stable_closures=1,
+        run_masked_ablation=False,
+    ).run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+        relifter=FailingRelifter(),
+    )
+
+    assert result.status is Gate1Status.NO_CLOSURE
+    assert len(result.candidates) == 1
+    assert any(
+        "semantic relift failed: RuntimeError: relift provider unavailable"
+        in diagnostic
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_outer_relift_round_replays_the_revised_artifact() -> None:
+    class RecordingRelifter:
+        calls = 0
+
+        def relift(self, artifact, *, source_fingerprint, history):
+            self.calls += 1
+            assert source_fingerprint is not None
+            assert [item.relift_round for item in history] == [0]
+            return artifact
+
+    writer = CaptureWriter(["BAD", "GOOD"])
+    relifter = RecordingRelifter()
+    result = _runner(
+        max_repairs=0,
+        max_relifts=2,
+        stable_closures=1,
+        run_masked_ablation=False,
+    ).run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+        relifter=relifter,
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert relifter.calls == 1
+    assert [item.relift_round for item in result.candidates] == [0, 1]
+
+
 def test_regressed_candidate_does_not_replace_best_repair_base() -> None:
     writer = CaptureWriter(["BAD", "COMPILE_FAIL", "COMPILE_FAIL"])
     result = _runner(stable_closures=1, run_masked_ablation=False).run(

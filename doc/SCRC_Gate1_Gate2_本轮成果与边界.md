@@ -1,5 +1,16 @@
 # SCRC Gate1 / Gate2：本轮成果、False Reject 与原型边界
 
+## 0. 当前整合状态
+
+| 部分 | 当前状态 | 已有真实证据 | 主要剩余问题 |
+|---|---|---|---|
+| SCRC Lift | 已可执行 | `gpt-5.6-sol / xhigh` 能从真实 Triton 源码生成 J/π/C/接口/定位表 | 复杂 Kernel 仍会暴露 IntentIR 表达或规则卡覆盖缺口 |
+| Gate1 内层小修 | 已可执行 | 源码隔离 replay、有界 repair、真实 Triton 编译与 TTIR 硬比较已跑通 | 需继续通过真实 diff 扩充可枚举规则，不能用模糊规范化吞掉差异 |
+| Gate1 外层重提 | 已打通首个真实闭环 | `fg_ones` 的错误 π 经一次重提从 `0.558333` 修正到 normal `1.0` | 目前只有一个真实重提样本，还需在更复杂语义缺失上验证稳定性 |
+| masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批九个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会导致 raw false reject；现有单次比值不能区分真泄漏、模型先验与机制拓扑可识别性 |
+| Gate2 三方执行 | 已是真实 Lower2C 原型 | source/replay 在 GPU 运行，J 经 production IntentIR→MLIR→LLVM CPU 链运行；已覆盖边界 shape、对抗值和多 seed | 当前 PASS 是 rejected-sample 离线对照或固定 J 回归，正式 Gate1→Gate2 正样本仍为 0；Lower2C 还未覆盖全部 A/B/C 特性，mixed-f16/f32 仍不是 dtype-faithful lowering |
+| 规模化 | 已启动 | 24 个真实 Kernel 队列中 9 个已完成真实 Lift/normal/masked/离线 Gate2 | 剩余 15 个 queued，离数百 Kernel 的覆盖、缓存和失败分诊目标仍有距离 |
+
 ## 1. 这轮到底做了什么
 
 这轮不是继续修补旧 `verify`，而是把项目验证主线改成了 SCRC 文档规定的
@@ -230,6 +241,60 @@ diagnostic 因 CPU wrapper 把输入硬编码为 f32 而 `EXECUTION_FAILED`；�
 `3.6089e-9`。这些修复属于既有 const/cast/reduce lowering，不新增 IntentIR op。
 详细证据见 `doc/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
 
+### 1.8 第七章外层语义重提
+
+Gate1 现在已经不再是“内层 replay 小修用尽后直接失败”。新增的
+外层 relifter 与方案第七章一致：
+
+- 重写员仍然看不到源码；
+- 只有提升官能看源码、源 TTIR 指纹和经白名单编码的历史裁决；
+- 重提只允许修改 J、π 和定位表；
+- 接口与 C 必须与受信 artifact 完全相同，任何漂移都在本地拒绝；
+- provenance 只追加不覆盖，可以区分初始 Lift 与每轮重提；
+- live 与 held-out batch 默认总共最多 3 版 artifact，即初始 Lift
+  加最多 2 次语义重提；
+- provider/schema 失败会收敛为可审计的 `NO_CLOSURE`，不会让整个
+  Gate1 runner 崩溃。
+
+首个真实证据使用历史上真实错误的 `fg_ones` 初始 LLM artifact，
+不是人工篡改 J 或 π：
+
+```text
+初始 artifact:
+  3 个 normal replay 候选均可编译
+  score = 0.558333，硬项失败
+  错误机制 = bind_program_domain
+
+第 1 次外层重提:
+  gpt-5.6-sol / xhigh，1 次响应、0 次 schema repair
+  关键机制从 bind_program_domain 改为 bind_wide_program_domain
+  J 仍表达输出常量 1，只补齐了规范输出绑定
+  interface 不变，schedule/C 不变，source hash 不变
+  normal replay score = 1.0，所有硬项通过
+
+最终 masked-J:
+  重放成功编译，但生成的是常量 0 而非 J 中的常量 1
+  dataflow 硬项失败，其他结构项全过
+  masked score = L = 0.925 > 0.5
+  Gate1 = LEAKAGE_REJECTED
+```
+
+本次重提的 response id 为
+`resp_0223585c072743d5016a56cd508354819ba4a5158466eeecda`，prompt SHA-256 为
+`83dcabc02b34b22fa4f612a81de409a3614fa390af84fae611d628148049fb70`；源码
+SHA-256 仍为
+`ef4549cb35849f36a14a98ce789f38ee47e4a0e09c55570ae078119a7c2e0028`，artifact
+provenance 记录从 1 条追加到 2 条。闭合 normal replay 与 masked replay
+的 response id 分别为
+`resp_039eebb5b5953bd6016a56cd987624819ab392735bbdb0c60d` 和
+`resp_07320e35aeac0a75016a56cda97f408198a1e4df5ba3c0f86b`。
+
+这次实验把两个问题明确分开了：外层重提确实修正了 J/π 与源结构
+的不一致；最后没有放行的原因只剩第八章 masked-J 终检。因为
+正式 Gate1 未闭合，本次 live 流程按方案没有进入 Gate2；历史上对
+`fg_ones` 的 rejected-sample 离线三方 PASS 只是 raw false reject 的评估证据，
+不会覆盖这次门禁结果。
+
 ## 2. False reject 是什么意思
 
 在能力实验里，用后续实际执行结果作为行为标签：
@@ -266,9 +331,19 @@ Gate1 闭合，但 Gate2 失败 = false accept
 - prod replay 的纯 sibling JIT combiner 被安全策略误拒：已在完整 AST 白名单和
   无递归调用图约束下开放；
 - Lower2C f32 文本读回舍入造成假 divergence：已改为精确位模式读回；
+- `fg_ones` 的 masked replay 已在常量语义上明确错误（0 而非 1），
+  但因接口、算子名、mask 和调度结构均一样，现有加权闭合得分
+  仍为 `0.925`。这是当前消融裁决对低熵常量语义不够可识别的实证；
 - π API 泄漏：仍按 SCRC 有意拒绝。
 
-因此剩余 raw false reject 主要是反作弊边界，不再是 TTIR 表达覆盖问题。
+因此剩余 raw false reject 主要是反作弊边界，不再是 normal TTIR
+表达覆盖问题。其中需严格区分：
+
+- 对当前 SCRC 文档而言，`0.925 > 0.5` 的拒绝是正确执行既定规则；
+- 对已观测的 Gate2 行为标签而言，它是 raw false reject；
+- 根因不能简化为“把阈值调低”，而是第八章的单次全局加权比值
+  尚不能区分真泄漏、模型先验、π 拓扑可识别性与已明确的
+  J-dependent 语义失败。
 
 ## 3. 现在是不是“只是原型”
 
@@ -286,6 +361,14 @@ Gate1 闭合，但 Gate2 失败 = false accept
 - 真实 GPU source/replay launch；
 - 真实 IntentIR→MLIR→LLVM lowering 与执行；
 - 随机、tail、block±1、大动态范围、多 K tile 等边界样例。
+- 真实错误的 LLM artifact 已经能在外层重提中修正 J/π，且接口、C
+  与 provenance 护栏有可重放证据。
+
+但必须同时写清：当前 14 个真实 LLM artifact 虽然 normal TTIR 都已
+硬闭合，但 14/14 都因 masked-J 的 `L > 0.5` 被正式拒绝。因此，
+目前真实 LLM artifact 在严格正式流程中的 Gate1→Gate2 正样本数仍为 0；
+现有 Gate2 PASS 来自方案 9.1 允许的 rejected-sample 离线对照与固定 J
+Lower2C 回归，不得表述为“已有真实 artifact 正式通过两道门禁”。
 
 所以核心机制已经不是“差得远到只剩接口”。差距主要在覆盖与工程闭环：
 
