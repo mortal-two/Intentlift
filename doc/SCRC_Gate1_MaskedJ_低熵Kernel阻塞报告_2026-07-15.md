@@ -348,6 +348,7 @@ L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概�
 
 `fg_min` 随后严格复用同一 Lift artifact，再生成 normal/masked replay，并执行
 `3 shapes × 4 value profiles × 3 seeds = 36` 个 Gate2 case；36/36 全部三方零误差
-PASS，而 masked 比仍为 `0.507692`。因此该样本的 raw false reject 不能再解释为
-“单个幸运输入”：行为矩阵增强了 Gate2 标签，但按当前主方案仍不足以越过逐
-Kernel masked-J 门槛。
+PASS，而 masked 比仍为 `0.507692`。因此这个“Gate1 拒绝、Gate2
+通过”象限不能再解释为“单个幸运输入”：行为矩阵增强了 Gate2
+的有限样例证据，但 Gate2 不是 Gate1 的真值标签，按当前主方案仍不足以
+越过逐 Kernel masked-J 门槛。

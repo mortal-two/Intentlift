@@ -1,4 +1,4 @@
-# SCRC Gate1 / Gate2：本轮成果、False Reject 与原型边界
+# SCRC Gate1 / Gate2：本轮成果、两道门禁关系与原型边界
 
 ## 0. 当前整合状态
 
@@ -7,7 +7,7 @@
 | SCRC Lift | 已可执行 | `gpt-5.6-sol / xhigh` 能从真实 Triton 源码生成 J/π/C/接口/定位表 | 复杂 Kernel 仍会暴露 IntentIR 表达或规则卡覆盖缺口 |
 | Gate1 内层小修 | 已可执行 | 源码隔离 replay、有界 repair、真实 Triton 编译与 TTIR 硬比较已跑通 | 需继续通过真实 diff 扩充可枚举规则，不能用模糊规范化吞掉差异 |
 | Gate1 外层重提 | 已打通首个真实闭环 | `fg_ones` 的错误 π 经一次重提从 `0.558333` 修正到 normal `1.0` | 目前只有一个真实重提样本，还需在更复杂语义缺失上验证稳定性 |
-| masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批九个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会导致 raw false reject；现有单次比值不能区分真泄漏、模型先验与机制拓扑可识别性 |
+| masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批九个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会产生大量“Gate1 拒绝、离线 Gate2 通过”样本；这不等于 Gate1 判错，但说明现有单次比值不能区分真泄漏、模型先验与机制拓扑可识别性 |
 | Gate2 三方执行 | 已是真实 Lower2C 原型 | source/replay 在 GPU 运行，J 经 production IntentIR→MLIR→LLVM CPU 链运行；已覆盖边界 shape、对抗值和多 seed | 当前 PASS 是 rejected-sample 离线对照或固定 J 回归，正式 Gate1→Gate2 正样本仍为 0；Lower2C 还未覆盖全部 A/B/C 特性，mixed-f16/f32 仍不是 dtype-faithful lowering |
 | 规模化 | 已启动 | 24 个真实 Kernel 队列中 9 个已完成真实 Lift/normal/masked/离线 Gate2 | 剩余 15 个 queued，离数百 Kernel 的覆盖、缓存和失败分诊目标仍有距离 |
 
@@ -143,7 +143,7 @@ prompt 不再只是塞卡片，而是显式记录：
 
 ### 1.5 两条真实 TTIR 规范化规则
 
-根据上一轮实际 false reject，只加入了两条可枚举规则：
+根据上一轮 Gate1 比较器的实现侧误拒，只加入了两条可枚举规则：
 
 - 冗余 `x + 0`；
 - `1 / sqrt(x)` 与 `rsqrt(x)`。
@@ -292,58 +292,92 @@ provenance 记录从 1 条追加到 2 条。闭合 normal replay 与 masked repl
 这次实验把两个问题明确分开了：外层重提确实修正了 J/π 与源结构
 的不一致；最后没有放行的原因只剩第八章 masked-J 终检。因为
 正式 Gate1 未闭合，本次 live 流程按方案没有进入 Gate2；历史上对
-`fg_ones` 的 rejected-sample 离线三方 PASS 只是 raw false reject 的评估证据，
+`fg_ones` 的 rejected-sample 离线三方 PASS 只是“Gate1 拒绝、
+Gate2 通过”象限的评估证据，
 不会覆盖这次门禁结果。
 
-## 2. False reject 是什么意思
+## 2. Gate1 与 Gate2 不是包含关系
 
-在能力实验里，用后续实际执行结果作为行为标签：
+Gate1 和 Gate2 验证的不是同一个命题：
 
-```text
-Gate1 拒绝，但 Gate2 行为通过 = raw false reject
+- Gate1 问的是：在重写员看不到源码的条件下，J+π 能否在同一 C 下
+  重建源编译结构，并满足语义分层、信息隔离和反作弊契约。
+- Gate2 问的是：在有限的 shape/value/seed 测试矩阵上，source、replay 和
+  production lowering 的输出是否一致。
+
+因此，Gate2 通过不推导 Gate1 应该通过，Gate1 通过也不推导
+Gate2 必然通过。四个象限都有独立含义：
+
+| Gate1 | Gate2 | 含义 |
+|---|---|---|
+| 通过 | 通过 | 结构/来源闭包证据和当前行为证据同时成立 |
+| 通过 | 不通过 | Gate2 抓到了 Gate1 的理论盲区、replay/lowering 工程错误，或测试中才显现的数值/边界问题 |
+| 不通过 | 通过 | 完全可以合理：例如 π 泄漏、masked-J 不可识别、结构不同但当前输入上行为相同，或 Gate2 矩阵尚未覆盖反例 |
+| 不通过 | 不通过 | 两道门禁都找到了问题，但失败责任仍需三方关系分析 |
+
+所以“false reject”必须指定相对于什么标签。只有在论文能力统计中，
+人为把“Gate2 矩阵通过”定义成二分类的行为标签时，才可以把
+“Gate1 拒绝、Gate2 通过”记为 `behavior-label false reject`。这只是
+统计名称，不表示 Gate1 的 SCRC 裁决错了，也不表示 Gate2 是 Gate1 的
+真值裁判器。项目文档默认应写成“Gate1-rejected / Gate2-pass 象限”。
+
+例如 `fg_ones`：它的 normal replay 和离线 Gate2 都通过，但 masked-J
+`L=0.925 > 0.5`。按当前方案，Gate1 必须拒绝；Gate2 PASS 只证明
+当前行为矩阵一致，不能证明 J/π 的信息分区和反作弊契约成立。
+
+目前已修复的 Gate1 实现侧误拒包括：
+
+- TTIR `+0` 规范化缺口；
+- `rsqrt ↔ 1/sqrt` 的已知局部等价形态；
+- 把 `do_not_specialize` 原始 metadata 误当语义接口硬项；
+- source n-gram 误扫合法的 J.B；
+- Triton 专门化消去普通 shape/stride scalar 时的 ABI 子序列处理。
+
+以下则不能称为 Gate1 判错：
+
+- π 中出现被禁止的前端 API；
+- masked-J 泄漏比高于方案阈值；
+- Gate2 在有限样例上通过，但 Gate1 的结构或来源契约不成立。
+
+### 2.1 `do_not_specialize` 到底是什么
+
+当前环境使用 Triton 3.6.0。对非 `tl.constexpr` 的 runtime 参数，Triton
+JIT 默认会根据实际值或对齐特征生成专门化缓存变体。在这一版中：
+
+- integer 值为 1 时可被提升成编译期常量；
+- integer 能被 16 整除，或 pointer 满足 16-byte 对齐时，可生成
+  `tt.divisibility = 16` 专门化属性；
+- 这些专门化信息参与 JIT cache key，因而可能产生多个编译变体。
+
+```python
+@triton.jit(do_not_specialize=["n"])
+def kernel(x, n):
+    ...
 ```
 
-它表示 Gate1 没放过一个在当前测试域里表现正确的候选，损失的是覆盖率，
-不是“已放行样本的准确率”。相反：
+这里的 `do_not_specialize=["n"]` 表示：`n` 仍是 runtime scalar，不要因为
+本次调用恰好是 1、16 或其他可专门化值，就把它提升为常量或
+绑定对齐假设。参数可以按名称或位置索引列出。
 
-```text
-Gate1 闭合，但 Gate2 失败 = false accept
-```
+它与 `tl.constexpr` 正好相反：
 
-这是更危险的问题，因为错误 lifting 被门禁放行。
+- `tl.constexpr` 明确要求该参数是编译期值；
+- `do_not_specialize` 要求普通 runtime 参数保持动态；
+- Triton 3.6.0 会拒绝将同一参数同时标成 `tl.constexpr` 和
+  `do_not_specialize`。
 
-需要再区分两类 raw false reject：
+它的工程取舍是：可以减少编译变体和 cache 膨胀，保持更稳定的
+runtime ABI；但也可能失去常量折叠、对齐优化等性能机会。
 
-1. 真正的规范化缺口：例如 `+0`、`1/sqrt`；应该沉淀固定规则；
-2. SCRC 有意拒绝：例如 π 偷写 `tl.load`。候选代码可能碰巧行为正确，但它
-   破坏了“语义必须住在 J”这一实验前提，不能为了覆盖率放行。
+在当前 TianchenIR Gate1 中：
 
-累计到本轮，已经修正或明确保留的 raw false reject 来源为：
+1. 它仍保存在 artifact/编译 metadata 中，便于审计和兼容旧材料；
+2. 不把这份 decorator 列表本身交给重写员，也不将其当成 A/B 语义接口硬项；
+3. source 和 replay 仍在同一 `CompileCase` 下实际编译，它对 TTIR 参数、
+   属性或数据流造成的真实差异仍由 Gate1 硬比较抓取。
 
-- `+0`：已修；
-- `rsqrt ↔ 1/sqrt`：已修；
-- 缺 `do_not_specialize`：不再拒绝；
-- source n-gram 误扫 J.B：已改为只扫描 π；
-- Triton 把普通 shape/stride scalar 从 TTIR signature 专门化消去：已改为验证
-  surviving ABI subsequence，语义 binding 仍 fail-closed；
-- FlagGems floating `get_dtype_max` 被误解为最大有限值：已按真实 helper 定义
-  提升为 `+inf`；
-- prod replay 的纯 sibling JIT combiner 被安全策略误拒：已在完整 AST 白名单和
-  无递归调用图约束下开放；
-- Lower2C f32 文本读回舍入造成假 divergence：已改为精确位模式读回；
-- `fg_ones` 的 masked replay 已在常量语义上明确错误（0 而非 1），
-  但因接口、算子名、mask 和调度结构均一样，现有加权闭合得分
-  仍为 `0.925`。这是当前消融裁决对低熵常量语义不够可识别的实证；
-- π API 泄漏：仍按 SCRC 有意拒绝。
-
-因此剩余 raw false reject 主要是反作弊边界，不再是 normal TTIR
-表达覆盖问题。其中需严格区分：
-
-- 对当前 SCRC 文档而言，`0.925 > 0.5` 的拒绝是正确执行既定规则；
-- 对已观测的 Gate2 行为标签而言，它是 raw false reject；
-- 根因不能简化为“把阈值调低”，而是第八章的单次全局加权比值
-  尚不能区分真泄漏、模型先验、π 拓扑可识别性与已明确的
-  J-dependent 语义失败。
+换句话说，当前策略是“不比较 `do_not_specialize` 这串原始标签，
+但比较它对实际编译结果造成的影响”。
 
 ## 3. 现在是不是“只是原型”
 

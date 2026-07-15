@@ -46,14 +46,18 @@ PYTHONPATH=python python test/scrc_gate1_capability.py \
 | 七个行为错误变异 | 0/7 闭合 | 0/7 通过 |
 | π 中出现 `tl.load` | 编译前拒绝 | 行为通过 |
 
-混淆矩阵：
+两道检查的联合计数：
 
 ```text
-true accept  = 10
-false accept = 0
-false reject = 1
-true reject  = 7
+Gate1 closed   + Gate2 proxy pass = 10
+Gate1 closed   + Gate2 proxy fail = 0
+Gate1 rejected + Gate2 proxy pass = 1
+Gate1 rejected + Gate2 proxy fail = 7
 ```
+
+只有当本能力实验为了二分类统计，临时把 `Gate2 proxy pass`
+当作行为标签时，第三行才可记为一个 `behavior-label false reject`。
+Gate1 与 Gate2 不是包含关系；这个名称不表示 Gate1 的 SCRC 裁决错误。
 
 关键结果：
 
@@ -63,7 +67,7 @@ Gate1 coverage of behavior-pass cases = 10 / 11 = 0.909
 P(Gate2 proxy pass | Gate1 rejected)  = 1 / 8   = 0.125
 ```
 
-没有出现“Gate1 闭合、动态失败”的 false accept。七个行为错误变异仍全部被
+没有出现“Gate1 闭合、动态失败”象限。七个行为错误变异仍全部被
 Gate1 拒绝。
 
 ## 3. 本轮修复对应的根因
@@ -87,13 +91,15 @@ zero 仍被真实 mask fill 使用，则保留该常量节点。
 
 ### 3.3 `do_not_specialize`
 
-它改变 Triton JIT 的特化策略，但不改变本次 SCRC 要比较的 callable signature、
-J.A、J.B 或同一 CompileCase 下的 TTIR 结构。因此保留为编译 metadata，不再作为
-硬接口项。
+它是 Triton JIT 的专门化策略，不是 J.A/J.B 语义或 callable signature
+本身。它可能改变某个 `CompileCase` 下的 TTIR 参数、对齐属性或数据流；
+因此项目保留该 metadata 供审计，但不再硬比较原始 decorator 列表，
+而是继续硬比较它对 source/replay 实际编译结果造成的影响。
 
 ### 3.4 π API 泄漏
 
-这是唯一剩余 raw false reject：候选代码行为正确，但 π 写入 `tl.load`，破坏了
+这是唯一个“Gate1 拒绝、Gate2 proxy 通过”样本：候选代码行为正确，
+但 π 写入 `tl.load`，破坏了
 “具体 API 只能来自规则卡、语义必须来自 J”的信息分区。它是 SCRC 有意拒绝，
 不是继续放宽 TTIR 规范化的问题。
 
