@@ -24,11 +24,11 @@ Kernel 形态**。现有证据是一个可执行的 Triton SCRC MVP，不是一�
 Triton 语义等价判定器：
 
 - 早期 add/row-sum/softmax/RMSNorm/matmul 手写 J/π 只用于机制探针；
-- 后续已将这五个族和 9 个 FlagGems 样本重新走真实
-  `gpt-5.6-sol/xhigh` Lift，14 个 normal replay 均达到 TTIR 硬闭合；
-- 14/14 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
+- 后续已将这五个族和 10 个 FlagGems 样本重新走真实
+  `gpt-5.6-sol/xhigh` Lift，15 个 normal replay 均达到 TTIR 硬闭合；
+- 15/15 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
   `REPLAY_CLOSED` 真实 LLM artifact 样本仍为 0；
-- 24 个真实 FlagGems 队列完成 9 个、剩余 15 个 queued；9/24 是
+- 24 个真实 FlagGems 队列完成 10 个、剩余 14 个 queued；10/24 是
   进度，不是覆盖率。
 
 ## 2. 当前规则库
@@ -102,6 +102,13 @@ kernel 签名；`kind=compiler` 的 `num_warps/num_stages` 等槽只在 launch/c
 `@triton.jit` 二元乘法 combiner 并交给 `tl.reduce`。相应安全策略只允许经过同一
 AST 白名单验证、调用图无递归的 sibling JIT helper，仍拒绝任意 global/free
 name。`fg_max/fg_min/fg_vector_l2` 直接复用 flattened-reduce 与 elementwise 卡。
+
+`fg_vector_l1` 也没有新增规则卡，而是由真实 replay-policy 失败把已有
+`realize_elementwise` 升到 v4：补齐 IntentIR 已有 `abs/pow` 到
+`tl.abs/libdevice.pow` 的 Triton 映射。AST 策略只放行受信
+`triton.language.extra.cuda.libdevice.pow`，其他 `libdevice.*` 仍拒绝。
+同时，source-aware relift 现在只在已经产生可编译 source/replay comparison
+且存在 normal 硬差异时触发；纯 replay policy/生成失败不能伪装成 J/π 问题。
 
 这些卡分别由 `fg_dot` 和 `fg_addr` 的真实失败触发。因此两例证明规则库已经能
 沿真实外部 Kernel 的 diff 增长并最终让 normal replay 闭合，但不能被表述为
@@ -265,21 +272,28 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
 - 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
 - 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前 `fg_dot`、
   `fg_addr`、`fg_ones`、final-stage `fg_sum`、final-stage `fg_mean`、
-  final-stage `fg_max/fg_min/fg_prod/fg_vector_l2` 已完成 compiler/execution
-  contract 并实际运行，其余 15 个仍为 queued；
-- 九例 normal replay 均达到 TTIR 硬闭合；masked score 依次为 `1.0`、
+  final-stage `fg_max/fg_min/fg_prod/fg_vector_l2` 与 first-stage
+  `fg_vector_l1` 已完成 compiler/execution contract 并实际运行，其余 14 个仍为
+  queued；
+- 十例 normal replay 均达到 TTIR 硬闭合；前九例 masked score 依次为 `1.0`、
   `0.763387`、`0.925`、`1.0`、`1.0`、`0.507692`、`0.507692`、
-  `0.509470`、`0.917544`，所以正式状态全部是
+  `0.509470`、`0.917544`；`fg_vector_l1` 的两次独立 masked-J 为
+  `0.906140` 与 `1.0`，所以正式状态全部是
   `LEAKAGE_REJECTED`；
-- 九个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
+- 十个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
   `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
 - Gate2 已从单 case 扩成严格 suite；首个 `fg_min` live matrix 覆盖固定 C 下
   `{1,63,64}` 三种 shape、四种值域和三个 seed，共 36 个三方 case 全部零误差
   PASS。该结果增强行为对照，但不把单一 Gate1 compile specialization 偷换成
   “整个 Kernel 已结构闭合”；
 - `fg_dot/fg_addr` 是新增规则卡的增长样本；`fg_prod` 只补齐既有 reduce 卡的
-  已规划 prod 映射，其余六例没有新增卡并复用了已有 19 张卡；这开始提供冻结后
+  已规划 prod 映射，`fg_vector_l1` 只补齐既有 elementwise 卡的 abs/pow 映射与
+  受限 replay 安全路径，其余六例没有新增卡并复用了已有 19 张卡；这开始提供冻结后
   复用证据，但仍不足以报告总体准确率；
+- `fg_vector_l1` 的 rejected-sample Gate2 还覆盖
+  `M={1,1023,1024}`、`ord={1.0,1.5,2.0}`、normal/uniform 与 3 seeds，
+  18/18 三方 PASS；source/replay 始终零误差，两者对 Lower2C 最大绝对误差
+  `0.005859375`；
 - `fg_arange/fg_trace/fg_eye` 继续 queued：现有 production Lower2C 分别缺 iota、
   gather 和二维对角 predicate realization，本轮没有越过计划擅自补新 op；
 - 覆盖五核同类和现有 corpus 中可执行 source；

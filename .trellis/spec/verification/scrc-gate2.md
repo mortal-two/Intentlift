@@ -81,7 +81,7 @@ Lower2C case，全部 PASS 且三对最大误差均为 0。该矩阵仍是 Gate1
 - `Gate2Suite` 的严格全 case 聚合、逐 case metadata/status/error 保存已实现；
 - `python/tests/test_gate2.py` 已真实跑通 add、row-sum、softmax、RMSNorm、matmul、
   FlagGems dot、FlagGems ones、FlagGems mean-final 以及 FlagGems
-  max/min/prod/L2-final 的
+  max/min/prod/L2-final/L1-first 的
   source/replay/lowering 三方；
 - `test/scrc_live_add_e2e.py` 已进一步跑通真实 LLM lift + 真实 source-blind
   replay 后的完整三方 add：`N=1003, BLOCK=256`，source↔replay 最大误差 0，
@@ -90,9 +90,13 @@ Lower2C case，全部 PASS 且三对最大误差均为 0。该矩阵仍是 Gate1
   支持情况决定；不引入“verify-ready op”概念。
 
 2026-07-15 首批真实外部样本中，
-`fg_dot/fg_addr/fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 都因
+`fg_dot/fg_addr/fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 与
+`fg_vector_l1` 都因
 masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执行 Gate2 后，
-九例均三方 PASS。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
+十例均三方 PASS。`fg_vector_l1` 还运行
+`3 shape/runtime-order profiles × 2 value profiles × 3 seeds = 18` 个严格 case，
+18/18 PASS，source/replay 最大误差始终为 0，两者对 Lower2C 的最大绝对误差为
+`0.005859375`。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
 
 为这些真实样本补齐的 production Lower2C 接缝包括：
 

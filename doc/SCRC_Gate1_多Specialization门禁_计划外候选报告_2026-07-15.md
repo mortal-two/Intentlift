@@ -17,12 +17,15 @@ Gate2 matrix 属于 SCRC 主方案 Phase 3；Gate1 跨 profile 聚合没有在�
 
 ## 2. 为什么会出现这个候选需求
 
-当前 9 个 ready FlagGems Kernel 的 normal replay 都在一个具体 specialization 上
+当前 10 个 ready FlagGems Kernel 的 normal replay 都在一个具体 specialization 上
 闭合。新 Gate2 suite 已证明同一 replay 可以进一步覆盖：
 
 - `fg_ones`：1、BLOCK−1、BLOCK、BLOCK+1、非整除、远多 tile；
 - `fg_min`：固定 `BLOCK_MID=64` 下 3 个 shape × 4 个 value profile × 3 seeds，
   共 36 个三方 case 全部通过。
+- `fg_vector_l1`：固定 `BLOCK_SIZE=1024` 下
+  `M={1,1023,1024}`、runtime `ord={1.0,1.5,2.0}`、2 个 value profile ×
+  3 seeds，共 18 个三方 case 全部通过。
 
 这些证据增强行为可信度，但不能反推“所有 specialization 的 source/replay TTIR
 都已结构闭合”。constexpr、runtime scalar specialization 和不同 grid 可能改变

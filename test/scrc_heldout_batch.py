@@ -117,6 +117,7 @@ CANDIDATES = (
         "flag_gems.ops.vector_norm",
         "l1_norm_kernel_1",
         "reduce",
+        "ready",
     ),
     HeldoutCandidate("fg_sort", "flag_gems.ops.sort", "sort_kernel", "sort"),
     HeldoutCandidate(
@@ -480,6 +481,62 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             4.0,
             Tolerance(rtol=2.0e-4, atol=2.0e-6),
             {"Mid": InputDistribution.POSITIVE},
+        )
+
+    if name == "fg_vector_l1":
+        n = 1003
+        block = 1024
+        order = 1.5
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument("X", "tensor", "f32", (n,)),
+                SCRCCompilerArgument("Mid", "tensor", "f32", (1,)),
+                SCRCCompilerArgument(
+                    "ord", "scalar", "f32", value=order
+                ),
+                SCRCCompilerArgument("M", "scalar", "i32", value=n),
+            ),
+            (1,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(M, BLOCK_SIZE)",),
+            ("BLOCK_SIZE",),
+            2.0,
+            Tolerance(rtol=3.0e-4, atol=3.0e-4),
+            gate2_shape_profiles=(
+                Gate2ShapeProfile(
+                    "one_ord1",
+                    {"X": (1,), "Mid": (1,)},
+                    {"ord": 1.0, "M": 1},
+                    (1,),
+                ),
+                Gate2ShapeProfile(
+                    "block_minus_one_ord15",
+                    {"X": (block - 1,), "Mid": (1,)},
+                    {"ord": 1.5, "M": block - 1},
+                    (1,),
+                ),
+                Gate2ShapeProfile(
+                    "block_ord2",
+                    {"X": (block,), "Mid": (1,)},
+                    {"ord": 2.0, "M": block},
+                    (1,),
+                ),
+            ),
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "normal", {"X": InputDistribution.NORMAL}, 2.0
+                ),
+                Gate2ValueProfile(
+                    "uniform", {"X": InputDistribution.UNIFORM}, 2.0
+                ),
+            ),
         )
 
     raise AssertionError(name)

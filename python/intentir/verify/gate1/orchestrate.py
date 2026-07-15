@@ -972,6 +972,12 @@ class Gate1Runner:
 
             if relifter is None or relift_round + 1 >= self.config.max_relifts:
                 break
+            if round_best is None or round_best.comparison is None:
+                diagnostics.append(
+                    "semantic relift skipped because this artifact produced no "
+                    "compiled source/replay comparison"
+                )
+                break
             assert source_fp is not None
             round_records = tuple(
                 record

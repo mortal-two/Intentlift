@@ -43,6 +43,7 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_min",
         "fg_prod",
         "fg_vector_l2",
+        "fg_vector_l1",
     )
     assert all(item.module.startswith("flag_gems.") for item in CANDIDATES)
     assert all(item.function.isidentifier() for item in CANDIDATES)
@@ -212,6 +213,42 @@ def test_prod_and_l2_gate2_inputs_respect_intermediate_value_domains() -> None:
     assert l2.input_distributions == {
         "Mid": "positive"
     }
+
+
+def test_real_flag_gems_vector_l1_case_keeps_runtime_order_unspecialized() -> None:
+    case = build_heldout_case("fg_vector_l1")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "vector_norm.py"
+    assert case.function_name == "l1_norm_kernel_1"
+    assert "@triton.jit(do_not_specialize=[\"ord\"])" in case.source_text
+    assert "tl.sum(pow(tl.abs(x), ord))" in case.source_text
+    assert by_name["X"]["shape"] == [1003]
+    assert by_name["Mid"]["shape"] == [1]
+    assert by_name["ord"] == {
+        "name": "ord",
+        "kind": "scalar",
+        "dtype": "f32",
+        "value": 1.5,
+    }
+    assert by_name["M"]["value"] == 1003
+    assert view["grid"] == [1]
+    assert view["grid_contract"] == ["ceil_div(M, BLOCK_SIZE)"]
+    assert view["schedule_values"]["BLOCK_SIZE"] == 1024
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one_ord1",
+        "block_minus_one_ord15",
+        "block_ord2",
+    ]
+    assert [
+        (profile.tensor_shapes["X"][0], profile.scalar_values["ord"])
+        for profile in case.gate2_shape_profiles
+    ] == [(1, 1.0), (1023, 1.5), (1024, 2.0)]
+    assert [profile.profile_id for profile in case.gate2_value_profiles] == [
+        "normal",
+        "uniform",
+    ]
 
 
 def test_min_gate2_matrix_declares_shape_value_cross_product() -> None:

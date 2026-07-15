@@ -7,9 +7,9 @@
 | SCRC Lift | 已可执行 | `gpt-5.6-sol / xhigh` 能从真实 Triton 源码生成 J/π/C/接口/定位表 | 复杂 Kernel 仍会暴露 IntentIR 表达或规则卡覆盖缺口 |
 | Gate1 内层小修 | 已可执行 | 源码隔离 replay、有界 repair、真实 Triton 编译与 TTIR 硬比较已跑通 | 需继续通过真实 diff 扩充可枚举规则，不能用模糊规范化吞掉差异 |
 | Gate1 外层重提 | 已打通首个真实闭环 | `fg_ones` 的错误 π 经一次重提从 `0.558333` 修正到 normal `1.0` | 目前只有一个真实重提样本，还需在更复杂语义缺失上验证稳定性 |
-| masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批九个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会产生大量“Gate1 拒绝、离线 Gate2 通过”样本；这不等于 Gate1 判错，但说明现有单次比值不能区分真泄漏、模型先验与机制拓扑可识别性 |
+| masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批十个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会产生大量“Gate1 拒绝、离线 Gate2 通过”样本；同一 `fg_vector_l1` artifact 的两次独立 masked-J 还得到 `0.906140/1.0`，说明单次比值也含模型随机性；这不等于 Gate1 判错，但说明现有单次比值不能区分真泄漏、模型先验、机制拓扑可识别性与采样波动 |
 | Gate2 三方执行 | 已是真实 Lower2C 原型 | source/replay 在 GPU 运行，J 经 production IntentIR→MLIR→LLVM CPU 链运行；已覆盖边界 shape、对抗值和多 seed | 当前 PASS 是 rejected-sample 离线对照或固定 J 回归，正式 Gate1→Gate2 正样本仍为 0；Lower2C 还未覆盖全部 A/B/C 特性，mixed-f16/f32 仍不是 dtype-faithful lowering |
-| 规模化 | 已启动 | 24 个真实 Kernel 队列中 9 个已完成真实 Lift/normal/masked/离线 Gate2 | 剩余 15 个 queued，离数百 Kernel 的覆盖、缓存和失败分诊目标仍有距离 |
+| 规模化 | 已启动 | 24 个真实 Kernel 队列中 10 个已完成真实 Lift/normal/masked/离线 Gate2 | 剩余 14 个 queued，离数百 Kernel 的覆盖、缓存和失败分诊目标仍有距离 |
 
 ## 1. 这轮到底做了什么
 
@@ -128,10 +128,14 @@ Triton 默认规则库由原来的 7 张扩到 19 张，覆盖当前 A/B/C 主�
 - loop carry；
 - output mapping。
 
-规则卡总数仍为 19。最新 `fg_prod` 没有新增卡，只把已有显式轴 reduce 卡升级到
+规则卡总数仍为 19。`fg_prod` 没有新增卡，只把已有显式轴 reduce 卡升级到
 v4，补齐 J 已规划的 `fn=prod` 到纯 sibling `@triton.jit` 乘法 combiner 的实现；
 安全策略同步允许经过完整 AST 校验且调用图无递归的 sibling helper，任意 Python
-global/free name 仍拒绝。
+global/free name 仍拒绝。随后 `fg_vector_l1` 也没有新增卡，只把已有
+elementwise 卡升级到 v4，补齐 `abs/pow` 到 `tl.abs/libdevice.pow`；AST 只允许
+受信 `triton.language.extra.cuda.libdevice.pow`，其他 namespace 调用仍拒绝。
+纯 replay policy/生成失败不再触发 source-aware relift；外层重提必须有已编译的
+normal source/replay 硬差异。
 
 prompt 不再只是塞卡片，而是显式记录：
 
@@ -208,8 +212,9 @@ source-only compile preflight
 ```
 
 批处理显式登记 24 个 Kernel；当前 `fg_dot`、`fg_addr`、`fg_ones`、final-stage
-`fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 已具备审核过的
-compiler/execution contract 并真实运行，其余 15 个保持 queued。结果为：
+`fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 与 first-stage
+`fg_vector_l1` 已具备审核过的 compiler/execution contract 并真实运行，其余
+14 个保持 queued。结果为：
 
 | Kernel | normal | masked | 正式 Gate1 | rejected-sample 离线 Gate2 |
 |---|---:|---:|---|---|
@@ -222,6 +227,7 @@ compiler/execution contract 并真实运行，其余 15 个保持 queued。结�
 | FlagGems `min_kernel_2` | `1.0` | `0.507692` | `LEAKAGE_REJECTED` | PASS |
 | FlagGems `prod_kernel_result` | `1.0` | `0.509470` | `LEAKAGE_REJECTED` | PASS |
 | FlagGems `l2_norm_kernel_2` | `1.0` | `0.917544` | `LEAKAGE_REJECTED` | PASS |
+| FlagGems `l1_norm_kernel_1` | `1.0` | `0.906140`；独立重跑 `1.0` | `LEAKAGE_REJECTED` | PASS，18/18 matrix |
 
 真实扩展还暴露并修复了三个工程接缝：FlagGems `LibEntry → JITFunction` wrapper、
 rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/stride scalar
@@ -231,8 +237,14 @@ rank-0 tensor pointer，以及 Triton 从 TTIR 签名中消去普通 shape/strid
 `fg_dot`/`fg_addr` 的 diff 又触发 wide program domain、flattened reduce、
 staged mask tile 与 outer product 四张通用规则卡。它们因此是五核之后的首批
 真实规则增长样本；`fg_prod` 只完善已有 reduce 卡，
+`fg_vector_l1` 只完善已有 elementwise 卡和受限 libdevice 安全路径，
 `fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 没有新增卡并直接复用当前
-19 张卡，但九例规模仍不能当作总体 held-out 成功率。
+19 张卡，但十例规模仍不能当作总体 held-out 成功率。
+
+`fg_vector_l1` 的 rejected-sample suite 覆盖 `M={1,1023,1024}`、
+runtime `ord={1.0,1.5,2.0}`、normal/uniform 与 3 seeds，共 18 个三方 case，
+18/18 PASS；source/replay 始终零误差，两者对 Lower2C 的最大绝对误差为
+`0.005859375`。
 
 后三例还补齐两个真实 Lower2C 接缝：零输入 symbolic-shape const 的 dims 传递，
 以及 rank-0 i32 semantic scalar 经真实 `intent.cast` 转 f32。`fg_mean` 首次
@@ -388,7 +400,7 @@ runtime ABI；但也可能失去常量折叠、对齐优化等性能机会。
 - 真实 `gpt-5.6-sol/xhigh` Lift artifact 与 normal replay 已在
   add、row-sum、softmax、RMSNorm、matmul、FlagGems dot 与 FlagGems addr
   以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final
-  上结构闭合；十四者最终接收目前都被
+  和 L1-first 上结构闭合；十五者最终接收目前都被
   模型先验和 π 结构可识别性阻塞；
 - 真实 Triton frontend 编译；
 - 真实 TTIR 提取和纯代码结构比较；
@@ -398,8 +410,8 @@ runtime ABI；但也可能失去常量折叠、对齐优化等性能机会。
 - 真实错误的 LLM artifact 已经能在外层重提中修正 J/π，且接口、C
   与 provenance 护栏有可重放证据。
 
-但必须同时写清：当前 14 个真实 LLM artifact 虽然 normal TTIR 都已
-硬闭合，但 14/14 都因 masked-J 的 `L > 0.5` 被正式拒绝。因此，
+但必须同时写清：当前 15 个真实 LLM artifact 虽然 normal TTIR 都已
+硬闭合，但 15/15 都因 masked-J 的 `L > 0.5` 被正式拒绝。因此，
 目前真实 LLM artifact 在严格正式流程中的 Gate1→Gate2 正样本数仍为 0；
 现有 Gate2 PASS 来自方案 9.1 允许的 rejected-sample 离线对照与固定 J
 Lower2C 回归，不得表述为“已有真实 artifact 正式通过两道门禁”。
@@ -411,12 +423,13 @@ Lower2C 回归，不得表述为“已有真实 artifact 正式通过两道门�
   无法稳定区分 π 泄漏和模型先验猜测，且 softmax 已实测出 π
   有序拓扑结合仍公开的结构信息，可成为语义替代编码；matmul 还证明 masked
   无需完全硬闭合也可能超过当前泄漏比阈值；
-- 规则卡已在五核与九个真实外部 Kernel 上证过；除 `fg_dot/fg_addr` 的新卡和
-  `fg_prod` 对已有 reduce 卡的映射补齐外，其余真实样本直接复用 19 张卡；
+- 规则卡已在五核与十个真实外部 Kernel 上证过；除 `fg_dot/fg_addr` 的新卡、
+  `fg_prod` 对已有 reduce 卡和 `fg_vector_l1` 对已有 elementwise 卡/安全路径的
+  映射补齐外，其余真实样本直接复用 19 张卡；
 - production lowering 不是所有现有 A/B/C 结构都能走 CPU 腿；
 - TileLang/CUDA 是方案后续阶段；
 - 已有 24 个真实 Kernel 的批处理队列、逐 case 报告、resume/Lift cache 与失败
-  分诊，但只实际完成前九例；还缺其余 15 个及后续数百 Kernel 的运行证据。
+  分诊，但只实际完成前十例；还缺其余 14 个及后续数百 Kernel 的运行证据。
 
 因此最准确的称呼是：
 

@@ -327,7 +327,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_elementwise",
             Frontend.TRITON,
-            version="3",
+            version="4",
             applies_to=["map_unary", "map_binary", "cast", "select"],
             reads=["fn", "operands", "dtype"],
             api_mapping={
@@ -335,18 +335,25 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "sub": "-",
                 "mul": "*",
                 "div": "/",
+                "abs": "tl.abs",
                 "exp": "tl.exp",
                 "log": "tl.log",
                 "sqrt": "tl.sqrt",
                 "rsqrt": "tl.rsqrt",
                 "recip": "1.0 / operand",
                 "sigmoid": "tl.sigmoid",
+                "pow": (
+                    "from triton.language.extra.cuda import libdevice; "
+                    "libdevice.pow(lhs, rhs)"
+                ),
                 "where": "tl.where",
             },
             example="Select the concrete operation only from the referenced J node.",
             pitfalls=[
                 "Preserve non-commutative operand order.",
                 "A J scalar input remains a runtime operand; never bake its sampled value.",
+                "For pow, use only the allowlisted Triton libdevice import and "
+                "keep a runtime exponent as a runtime operand.",
             ],
         ),
         RuleCard(

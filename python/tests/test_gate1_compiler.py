@@ -84,6 +84,42 @@ def product_kernel(x, out, BLOCK: tl.constexpr):
     assert validation.function_names == ("product_combine", "product_kernel")
 
 
+def test_accepts_allowlisted_triton_libdevice_pow() -> None:
+    module = """import triton
+import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+@triton.jit
+def pow_kernel(x, exponent, out, BLOCK: tl.constexpr):
+    offsets = tl.arange(0, BLOCK)
+    values = tl.load(x + offsets)
+    powered = libdevice.pow(tl.abs(values), exponent)
+    tl.store(out, tl.sum(powered))
+"""
+
+    validation = validate_triton_module(
+        module, required_function="pow_kernel"
+    )
+
+    assert validation.function_names == ("pow_kernel",)
+
+
+def test_rejects_non_allowlisted_libdevice_calls() -> None:
+    module = """import triton
+import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+@triton.jit
+def bad(x):
+    return libdevice.sin(x)
+"""
+
+    with pytest.raises(
+        UnsafeReplayCodeError, match=r"libdevice\.sin.*forbidden"
+    ):
+        validate_triton_module(module)
+
+
 def test_rejects_recursive_sibling_jit_helpers() -> None:
     module = """import triton
 import triton.language as tl

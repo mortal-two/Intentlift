@@ -8,10 +8,12 @@ Python subset before replay code is handed to the isolated compiler process.
 
 The accepted subset is sufficient for ordinary, self-contained Triton kernels:
 
-* imports are limited to ``triton`` and ``triton.language as tl``;
+* imports are limited to ``triton``, ``triton.language as tl`` and the
+  explicitly allowlisted pure Triton ``libdevice`` namespace;
 * every top-level definition is decorated only with ``@triton.jit``;
-* function calls are limited to public ``tl`` functions, ``range`` and simple
-  scalar constructors (plus Triton's tensor ``.to`` conversion);
+* function calls are limited to public ``tl`` functions, explicitly
+  allowlisted pure ``libdevice`` functions, ``range`` and simple scalar
+  constructors (plus Triton's tensor ``.to`` conversion);
 * Python facilities that can perform host I/O, reflection, dynamic execution,
   non-terminating loops, or hidden imports are rejected.
 
@@ -63,6 +65,12 @@ _PYTHON_FENCE_LABELS = {"", "py", "python", "python3"}
 # These are the only non-Triton call targets admitted in a kernel body.  They
 # are constructors/iteration helpers with no I/O or reflection capability.
 _SAFE_BUILTIN_CALLS = {"bool", "float", "int", "range"}
+
+# A small set of pure Triton frontend helpers that are not re-exported as
+# direct ``tl.*`` functions.  Keep this namespace/function allowlist explicit:
+# importing the trusted Triton module is safe, while arbitrary nested Python
+# attribute dispatch remains forbidden.
+_SAFE_LIBDEVICE_CALLS = {"pow"}
 
 # Public ``tl`` calls are generally dataflow-building operations.  The handful
 # below are intentionally excluded because they accept executable/opaque code
@@ -226,7 +234,19 @@ def _validate_import(node: ast.Import | ast.ImportFrom) -> None:
         and node.names[0].asname == "tl"
     ):
         return
-    _fail(node, "from-imports are limited to `from triton import language as tl`")
+    if (
+        node.module == "triton.language.extra.cuda"
+        and node.level == 0
+        and len(node.names) == 1
+        and node.names[0].name == "libdevice"
+        and node.names[0].asname is None
+    ):
+        return
+    _fail(
+        node,
+        "from-imports are limited to `from triton import language as tl` "
+        "and `from triton.language.extra.cuda import libdevice`",
+    )
 
 
 def _validate_annotation(node: ast.AST | None) -> None:
@@ -276,7 +296,11 @@ def _stored_names(nodes: list[ast.stmt]) -> set[str]:
     return names
 
 
-def _validate_call(node: ast.Call, jit_functions: set[str]) -> None:
+def _validate_call(
+    node: ast.Call,
+    jit_functions: set[str],
+    imported_namespaces: set[str],
+) -> None:
     target = node.func
     if isinstance(target, ast.Name):
         if target.id not in _SAFE_BUILTIN_CALLS | jit_functions:
@@ -289,11 +313,22 @@ def _validate_call(node: ast.Call, jit_functions: set[str]) -> None:
             if target.attr.startswith("_") or target.attr in _FORBIDDEN_TL_CALLS:
                 _fail(node, f"call to `tl.{target.attr}` is forbidden")
             return
+        if _is_name(target.value, "libdevice"):
+            if (
+                "libdevice" not in imported_namespaces
+                or target.attr not in _SAFE_LIBDEVICE_CALLS
+            ):
+                _fail(node, f"call to `libdevice.{target.attr}` is forbidden")
+            return
         # Triton tensors expose ``.to(dtype)`` as a frontend conversion.  No
         # other arbitrary Python method dispatch is permitted.
         if target.attr == "to" and len(node.args) <= 1 and not node.keywords:
             return
-    _fail(node, "calls must target a public `tl` function, range/scalar constructor, or `.to`")
+    _fail(
+        node,
+        "calls must target a public `tl` function, allowlisted Triton "
+        "namespace function, range/scalar constructor, or `.to`",
+    )
 
 
 def _validate_loop(node: ast.For) -> None:
@@ -313,7 +348,10 @@ def _validate_loop(node: ast.For) -> None:
 
 
 def _validate_function(
-    node: ast.FunctionDef, *, jit_functions: set[str]
+    node: ast.FunctionDef,
+    *,
+    jit_functions: set[str],
+    imported_namespaces: set[str],
 ) -> None:
     _check_identifier(node.name, node, "function name")
     args = node.args
@@ -334,7 +372,11 @@ def _validate_function(
 
     local_names = arg_names | _stored_names(node.body)
     allowed_load_names = (
-        local_names | _SAFE_BUILTIN_CALLS | jit_functions | {"tl"}
+        local_names
+        | _SAFE_BUILTIN_CALLS
+        | jit_functions
+        | {"tl"}
+        | imported_namespaces
     )
 
     for statement in node.body:
@@ -352,10 +394,19 @@ def _validate_function(
                 if _is_name(child.value, "tl"):
                     if child.attr.startswith("_"):
                         _fail(child, f"private Triton attribute {child.attr!r} is forbidden")
+                elif _is_name(child.value, "libdevice"):
+                    if (
+                        "libdevice" not in imported_namespaces
+                        or child.attr not in _SAFE_LIBDEVICE_CALLS
+                    ):
+                        _fail(
+                            child,
+                            f"attribute access `libdevice.{child.attr}` is forbidden",
+                        )
                 elif child.attr != "to":
                     _fail(child, f"attribute access {child.attr!r} is forbidden")
             elif isinstance(child, ast.Call):
-                _validate_call(child, jit_functions)
+                _validate_call(child, jit_functions, imported_namespaces)
                 if any(keyword.arg is None for keyword in child.keywords):
                     _fail(child, "dynamic **keyword expansion is forbidden")
             elif isinstance(child, ast.For):
@@ -424,6 +475,7 @@ def validate_triton_module(
     function_nodes: list[ast.FunctionDef] = []
     saw_triton = False
     saw_tl = False
+    imported_namespaces: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             if "__" in node.value.value:
@@ -435,7 +487,10 @@ def validate_triton_module(
                 saw_triton |= any(alias.name == "triton" for alias in node.names)
                 saw_tl |= any(alias.name == "triton.language" for alias in node.names)
             else:
-                saw_tl = True
+                if node.module == "triton":
+                    saw_tl = True
+                elif node.module == "triton.language.extra.cuda":
+                    imported_namespaces.add("libdevice")
             continue
         if isinstance(node, ast.FunctionDef):
             if any(existing.name == node.name for existing in function_nodes):
@@ -452,7 +507,11 @@ def validate_triton_module(
         raise UnsafeReplayCodeError("module contains no `@triton.jit` function")
     function_names = {node.name for node in function_nodes}
     for node in function_nodes:
-        _validate_function(node, jit_functions=function_names)
+        _validate_function(
+            node,
+            jit_functions=function_names,
+            imported_namespaces=imported_namespaces,
+        )
     _validate_jit_call_graph(function_nodes, function_names)
     functions = tuple(node.name for node in function_nodes)
     if required_function is not None and required_function not in function_names:

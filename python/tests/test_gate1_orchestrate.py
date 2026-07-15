@@ -457,6 +457,40 @@ def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
     )
 
 
+def test_replay_policy_failure_does_not_trigger_semantic_relift() -> None:
+    class PolicyRejectingWriter:
+        def generate(self, *args, **kwargs):
+            raise UnsafeReplayCodeError("libdevice call is not allowlisted")
+
+    class ForbiddenRelifter:
+        def relift(self, *args, **kwargs):
+            raise AssertionError(
+                "semantic relift requires a compiled hard comparison"
+            )
+
+    result = _runner(
+        max_repairs=2,
+        max_relifts=3,
+        stable_closures=1,
+        run_masked_ablation=False,
+    ).run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        PolicyRejectingWriter(),
+        relifter=ForbiddenRelifter(),
+    )
+
+    assert result.status is Gate1Status.NO_CLOSURE
+    assert len(result.candidates) == 1
+    assert result.candidates[0].comparison is None
+    assert result.diagnostics == (
+        "semantic relift skipped because this artifact produced no compiled "
+        "source/replay comparison",
+    )
+
+
 def test_outer_relift_round_replays_the_revised_artifact() -> None:
     class RecordingRelifter:
         calls = 0
@@ -599,8 +633,10 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     )
     assert cards["realize_masked_access"].version == "3"
     assert cards["realize_masked_access"].api_mapping["vector_conjunction"] == "&"
-    assert cards["realize_elementwise"].version == "3"
+    assert cards["realize_elementwise"].version == "4"
     assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
+    assert cards["realize_elementwise"].api_mapping["abs"] == "tl.abs"
+    assert "libdevice.pow" in cards["realize_elementwise"].api_mapping["pow"]
     assert cards["realize_reduce"].version == "4"
     assert "tile_axis" in cards["realize_reduce"].reads
     assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]

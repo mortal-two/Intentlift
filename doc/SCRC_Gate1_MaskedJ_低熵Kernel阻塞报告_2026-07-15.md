@@ -337,14 +337,22 @@ fg_max:  masked score = 0.507692  → LEAKAGE_REJECTED
 fg_min:  masked score = 0.507692  → LEAKAGE_REJECTED
 fg_prod: masked score = 0.509470  → LEAKAGE_REJECTED
 fg_l2:   masked score = 0.917544  → LEAKAGE_REJECTED
+fg_l1:   masked score = 0.906140；独立重跑 1.0 → LEAKAGE_REJECTED
 ```
 
-九例 rejected-sample 离线 Gate2 均三方 PASS。新增 max/min/prod 三例尤其接近
+十例 rejected-sample 离线 Gate2 均三方 PASS。新增 max/min/prod 三例尤其接近
 `0.5` 阈值，但主方案判定是 `L <= 0.5` 才通过，因此不能因“只差一点”改写裁决；
-L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概率猜中。它们进一步说明当前 masked-J
+L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概率猜中；L1
+则在同一 Lift artifact 上两次独立得到 `0.906140` 和 `1.0`，说明单次 masked-J
+还带有重写模型采样波动。它们进一步说明当前 masked-J
 阻塞不只存在于最初五个探针；outer product、runtime scalar、显式 stride 和
 二维 mask staging 也没有自然消除 π/接口/模型先验的可识别性。该证据仍不授权
 修改 `0.5` 阈值或实现路线 B/C/D，正式流程继续 fail-closed。
+
+`fg_vector_l1` 随后运行 18-case rejected-sample Gate2 matrix，覆盖
+`M={1,1023,1024}`、runtime `ord={1.0,1.5,2.0}`、normal/uniform 和三个 seed；
+18/18 三方 PASS，source/replay 始终零误差。该行为矩阵与两次高 masked score
+并存，进一步证明 Gate2 通过不能作为 masked-J 的真值标签。
 
 `fg_min` 随后严格复用同一 Lift artifact，再生成 normal/masked replay，并执行
 `3 shapes × 4 value profiles × 3 seeds = 36` 个 Gate2 case；36/36 全部三方零误差

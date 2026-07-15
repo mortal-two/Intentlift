@@ -126,7 +126,9 @@ elementwise、显式轴/flattened reduce、broadcast、K-tiled dot、outer produ
 runtime scalar、C 槽、cast、select、loop carry 与 output mapping，共 19 张卡。
 其中 runtime scalar 支持通过 `tensor_ref` 连到 J `shape=[]` 输入；reduce
 卡的 `mean` 除数取全局 J 轴语义长度，elementwise 卡支持
-`sqrt+recip`。tiled-dot 卡从 contraction/J.B 读取 K 语义 extent、K tile
+`sqrt+recip`，并通过受限 Triton libdevice 路径支持已有 `abs/pow`。AST 只允许
+`from triton.language.extra.cuda import libdevice` 与 `libdevice.pow`；其他
+`libdevice.*` 仍拒绝。tiled-dot 卡从 contraction/J.B 读取 K 语义 extent、K tile
 slot/domain、两侧 access/mask/fill、result dtype 与 output tile；普通 matmul
 的 schedule-only K loop 不得重复表示成 J `loop/reduce/broadcast`。二维 access
 中的 coordinate component 也不得任意重组为完整 offset，向量 predicate 使用
@@ -173,13 +175,16 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 - interface/A/B 纯代码比较；
 - 有界内层小修与真实 source-aware 外层重提；normal 硬差异、
   原始 source 与当前 J/π 会进入下一轮 Lift，interface/C 冻结；
+- 外层重提必须以已编译的 source/replay comparison 和 normal 硬差异为前提；
+  replay policy、生成或编译失败本身不触发 semantic relift；
 - 静态泄漏与 masked-J 消融；
 - add、row-sum、softmax、RMSNorm、matmul 的随机/边界变异探针。
 - 24 个真实 FlagGems Kernel 的非 Trellis 批处理队列、逐 case 原子报告、按完整
   batch identity 恢复的 resume，以及同时绑定 source/compiler view/model/effort/
   registry/Lift-prompt 的 Lift cache；其中 `fg_dot`、`fg_addr`、`fg_ones`、
-  `fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage 已具备真实
-  contract 并运行。batch identity 还绑定 Gate2 seed、distribution、scale 与
+  `fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage 以及
+  `fg_vector_l1` first stage 已具备真实 contract 并运行。batch identity 还绑定
+  Gate2 seed、distribution、scale 与
   tolerance，输入策略变化后不得 resume 旧结果。
 
 当前覆盖不等于全部情况：
@@ -190,10 +195,10 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 | B | 基础 1-D/2-D 仿射索引、tail mask、masked load/store、fill/guard、row reduction | 多 program axis、非末轴/多重归约、动态 stride、复合 mask | structured/online loop、scan carry、atomic、gather/scatter、block pointer/descriptor、alias-sensitive effects |
 | C/前端 | 单一 reviewed profile 的 constexpr/compiler slots/K tile、Triton/FlagGems compile-only | specialization 影响、grid/编译属性、region/loop 指纹 | 多 C/多 specialization 聚合、TileLang/CUDA 正式 Gate1、跨版本规范化、atomics/内存序 |
 
-早期五核手写 J/π 是机制探针；后续同五个族加 9 个 FlagGems 已重走
-真实 `gpt-5.6-sol/xhigh` Lift，14 个 normal replay 硬闭合。但 14/14 最终
+早期五核手写 J/π 是机制探针；后续同五个族加 10 个 FlagGems 已重走
+真实 `gpt-5.6-sol/xhigh` Lift，15 个 normal replay 硬闭合。但 15/15 最终
 都被 masked-J 拒绝，所以真实 LLM artifact 的正式 `REPLAY_CLOSED` 样本仍为
-0。24 个 FlagGems 队列只完成 9 个，不得从样本数量推导特性完备性。
+0。24 个 FlagGems 队列只完成 10 个，不得从样本数量推导特性完备性。
 
 当前仍是 Triton 研究原型，不应声称已经覆盖数百 Kernel。正式规模化样本必须
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
@@ -210,15 +215,18 @@ Gate1 verdict。候选条件与最小实现范围记录在
 2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
 RMSNorm、matmul、FlagGems dot 和 FlagGems addr 的 normal source-blind replay
 以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final
-都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，十四者最终都是
+与 L1-first 都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，十五者最终都是
 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
 `eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
 验证；matmul 的单一 `mk,kn->mn` contraction、二维 tail mask、两轮 K tile、
 f16 input/f32 output 接缝与 staged pointer 路径也已经过真实 Lift/replay
-验证。RMSNorm、matmul 与九个已运行 FlagGems rejected live 样本的离线 Gate2
+验证。RMSNorm、matmul 与十个已运行 FlagGems rejected live 样本的离线 Gate2
 对照均三方 PASS，但不改变 Gate1 结论。`fg_dot/fg_addr` 触发四张新卡；后续
 `fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 直接复用 19 张卡，`fg_prod`
-只补齐既有 reduce 卡的 prod 映射。24 个真实外部 Kernel 只完成前九例，
+只补齐既有 reduce 卡的 prod 映射，`fg_vector_l1` 只补齐既有 elementwise 卡的
+abs/pow 映射与受限 libdevice 安全路径。其 18-case Gate2 matrix 覆盖
+`M={1,1023,1024}` 与 runtime `ord={1.0,1.5,2.0}`，18/18 PASS；两次独立
+masked-J 为 `0.906140/1.0`，均拒绝。24 个真实外部 Kernel 只完成前十例，
 仍不能宣称已具备数百 Kernel 覆盖。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1
