@@ -135,6 +135,7 @@ class LiveKernelCase:
     input_distributions: Mapping[str, InputDistribution] = field(
         default_factory=dict
     )
+    input_scales: Mapping[str, float] = field(default_factory=dict)
     gate2_shape_profiles: tuple[Gate2ShapeProfile, ...] = ()
     gate2_value_profiles: tuple[Gate2ValueProfile, ...] = ()
 
@@ -474,12 +475,13 @@ def _gate2_case(
             distribution = case.input_distributions.get(
                 parameter.name, InputDistribution.NORMAL
             )
+            scale = case.input_scales.get(parameter.name, case.input_scale)
             values[tensor_ref] = generate_tensor_input(
                 TensorInputSpec(
                     concrete.shape,
                     str(dtype),
                     distribution,
-                    case.input_scale,
+                    scale,
                 ),
                 rng=rng,
             )
@@ -891,6 +893,7 @@ def run_case(
                 )
             },
             "scale": case.input_scale,
+            "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
         "gate2_matrix_policy": _gate2_matrix_policy_json(

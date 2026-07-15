@@ -75,6 +75,19 @@ class _FakeLowerRunner:
         return ExecutionResult("lowering", True, {"Y": self.output})
 
 
+class _FailedLowerRunner:
+    def __init__(self, *, unsupported: bool) -> None:
+        self.unsupported = unsupported
+
+    def run(self, spec, values):
+        return ExecutionResult(
+            "lowering",
+            False,
+            error="synthetic lowering failure",
+            unsupported=self.unsupported,
+        )
+
+
 def _case() -> Gate2Case:
     return Gate2Case(
         "classification",
@@ -108,6 +121,33 @@ def test_gate2_mechanical_attribution(source, replay, lowering, status) -> None:
     dummy = KernelSource.from_code("", "kernel")
     result = runner.run(dummy, dummy, _case())
     assert result.status is status
+
+
+@pytest.mark.parametrize(
+    "unsupported,status",
+    [
+        (True, Gate2Status.LOWERING_UNSUPPORTED),
+        (False, Gate2Status.EXECUTION_FAILED),
+    ],
+)
+def test_gate2_retains_available_pairwise_evidence_when_lowering_fails(
+    unsupported, status
+) -> None:
+    output = np.array([3.0], dtype=np.float32)
+    runner = Gate2Runner(
+        source_runner=_FakeTritonRunner(output),
+        replay_runner=_FakeTritonRunner(output.copy()),
+        lowering_runner=_FailedLowerRunner(unsupported=unsupported),
+    )
+    dummy = KernelSource.from_code("", "kernel")
+
+    result = runner.run(dummy, dummy, _case())
+
+    assert result.status is status
+    assert result.source_replay is not None
+    assert result.source_replay.passed
+    assert result.source_lowering is None
+    assert result.replay_lowering is None
 
 
 class _EchoTritonRunner:
@@ -204,6 +244,42 @@ def test_lower2c_uses_real_intent_lowering_not_legacy_interpreter() -> None:
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["Y"], a + b)
     assert "mlir-runner" in result.metadata["path"]
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_executes_embedding_take_gather() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "embedding_take_gate2",
+                "inputs": [
+                    {"name": "W", "dtype": "f32", "shape": [5, 3]},
+                    {"name": "I", "dtype": "i64", "shape": [4]},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 3]}
+                ],
+                "body": [
+                    {
+                        "op": "gather",
+                        "result": "Y",
+                        "operands": ["W", "I"],
+                        "attrs": {"axis": 0, "mode": "take"},
+                    }
+                ],
+            }
+        }
+    )
+    weight = np.arange(15, dtype=np.float32).reshape(5, 3)
+    indices = np.array([4, 0, 2, 4], dtype=np.int64)
+
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {}, {"W": "W", "I": "I"}, "Y"),
+        {"W": weight, "I": indices},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["Y"], weight[indices])
 
 
 @pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")

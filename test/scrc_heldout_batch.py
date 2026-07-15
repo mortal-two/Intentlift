@@ -78,6 +78,7 @@ CANDIDATES = (
         "flag_gems.ops.embedding",
         "embedding_kernel",
         "gather",
+        "ready",
     ),
     HeldoutCandidate(
         "fg_count_nonzero",
@@ -539,6 +540,60 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ),
         )
 
+    if name == "fg_embedding":
+        vocab, count, width = 97, 17, 13
+        block = 16
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "out_ptr", "tensor", "f32", (count, width)
+                ),
+                SCRCCompilerArgument(
+                    "in_ptr", "tensor", "i64", (count,)
+                ),
+                SCRCCompilerArgument(
+                    "weight_ptr", "tensor", "f32", (vocab, width)
+                ),
+            ),
+            (count,),
+            {
+                "N": width,
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("K",),
+            ("N", "BLOCK_SIZE"),
+            2.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            {
+                "in_ptr": InputDistribution.POSITIVE,
+                "weight_ptr": InputDistribution.NORMAL,
+            },
+            {"in_ptr": float(vocab - 1), "weight_ptr": 2.0},
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "random_index_normal_weight",
+                    {
+                        "in_ptr": InputDistribution.POSITIVE,
+                        "weight_ptr": InputDistribution.NORMAL,
+                    },
+                    2.0,
+                ),
+                Gate2ValueProfile(
+                    "boundary_index_uniform_weight",
+                    {
+                        "in_ptr": InputDistribution.INTEGER_BOUNDARY,
+                        "weight_ptr": InputDistribution.UNIFORM,
+                    },
+                    2.0,
+                ),
+            ),
+        )
+
     raise AssertionError(name)
 
 
@@ -580,6 +635,7 @@ def _batch_identity(
                 )
             },
             "scale": case.input_scale,
+            "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
         "gate2_matrix_policy": _gate2_matrix_policy_json(

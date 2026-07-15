@@ -89,6 +89,43 @@ class Gate2Runner:
         )
         lowering_result = self.lowering_runner.run(case.lowering, case.values)
 
+        source_replay = (
+            compare_outputs(
+                "source",
+                source_result.outputs,
+                "replay",
+                replay_result.outputs,
+                case.output_keys,
+                case.tolerances,
+            )
+            if source_result.ok and replay_result.ok
+            else None
+        )
+        source_lowering = (
+            compare_outputs(
+                "source",
+                source_result.outputs,
+                "lowering",
+                lowering_result.outputs,
+                case.output_keys,
+                case.tolerances,
+            )
+            if source_result.ok and lowering_result.ok
+            else None
+        )
+        replay_lowering = (
+            compare_outputs(
+                "replay",
+                replay_result.outputs,
+                "lowering",
+                lowering_result.outputs,
+                case.output_keys,
+                case.tolerances,
+            )
+            if replay_result.ok and lowering_result.ok
+            else None
+        )
+
         if lowering_result.unsupported:
             return Gate2Result(
                 case.case_id,
@@ -96,6 +133,9 @@ class Gate2Runner:
                 source_result,
                 replay_result,
                 lowering_result,
+                source_replay,
+                source_lowering,
+                replay_lowering,
                 metadata=dict(case.metadata),
             )
         if not source_result.ok or not replay_result.ok or not lowering_result.ok:
@@ -105,33 +145,15 @@ class Gate2Runner:
                 source_result,
                 replay_result,
                 lowering_result,
+                source_replay,
+                source_lowering,
+                replay_lowering,
                 metadata=dict(case.metadata),
             )
 
-        source_replay = compare_outputs(
-            "source",
-            source_result.outputs,
-            "replay",
-            replay_result.outputs,
-            case.output_keys,
-            case.tolerances,
-        )
-        source_lowering = compare_outputs(
-            "source",
-            source_result.outputs,
-            "lowering",
-            lowering_result.outputs,
-            case.output_keys,
-            case.tolerances,
-        )
-        replay_lowering = compare_outputs(
-            "replay",
-            replay_result.outputs,
-            "lowering",
-            lowering_result.outputs,
-            case.output_keys,
-            case.tolerances,
-        )
+        assert source_replay is not None
+        assert source_lowering is not None
+        assert replay_lowering is not None
         status = _classify(
             source_replay.passed,
             source_lowering.passed,

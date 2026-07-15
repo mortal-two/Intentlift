@@ -22,6 +22,7 @@ class InputDistribution(str, Enum):
     NEAR_ONE = "near_one"
     LARGE_DYNAMIC = "large_dynamic"
     IEEE_SPECIAL = "ieee_special"
+    INTEGER_BOUNDARY = "integer_boundary"
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,8 @@ def _floating_values(
         )
         count = int(np.prod(shape, dtype=np.int64))
         values = np.resize(pattern, count).reshape(shape)
+    elif distribution is InputDistribution.INTEGER_BOUNDARY:
+        raise ValueError("integer_boundary requires an integer dtype")
     else:  # pragma: no cover - exhaustive enum guard
         raise AssertionError(distribution)
     return np.asarray(values, dtype=dtype)
@@ -185,9 +188,18 @@ def generate_tensor_input(
             f"distribution {spec.distribution.value!r} requires a floating dtype"
         )
     if np.issubdtype(dtype, np.bool_):
+        if spec.distribution is InputDistribution.INTEGER_BOUNDARY:
+            raise ValueError("integer_boundary requires an integer dtype")
         return generator.integers(0, 2, size=shape, dtype=np.int8).astype(dtype)
     if np.issubdtype(dtype, np.integer):
         bound = max(1, int(spec.scale))
+        if spec.distribution is InputDistribution.INTEGER_BOUNDARY:
+            pattern = np.asarray(
+                [0, bound, bound // 2, 1, max(0, bound - 1), 0],
+                dtype=dtype,
+            )
+            count = int(np.prod(shape, dtype=np.int64))
+            return np.resize(pattern, count).reshape(shape)
         low = 0 if spec.distribution is InputDistribution.POSITIVE else -bound
         return generator.integers(low, bound + 1, size=shape, dtype=dtype)
     raise ValueError(f"unsupported Gate2 input dtype {spec.dtype!r}")

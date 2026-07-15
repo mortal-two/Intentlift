@@ -24,11 +24,11 @@ Kernel 形态**。现有证据是一个可执行的 Triton SCRC MVP，不是一�
 Triton 语义等价判定器：
 
 - 早期 add/row-sum/softmax/RMSNorm/matmul 手写 J/π 只用于机制探针；
-- 后续已将这五个族和 10 个 FlagGems 样本重新走真实
-  `gpt-5.6-sol/xhigh` Lift，15 个 normal replay 均达到 TTIR 硬闭合；
-- 15/15 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
+- 后续已将这五个族和 11 个 FlagGems 样本重新走真实
+  `gpt-5.6-sol/xhigh` Lift，16 个 normal replay 均达到 TTIR 硬闭合；
+- 16/16 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
   `REPLAY_CLOSED` 真实 LLM artifact 样本仍为 0；
-- 24 个真实 FlagGems 队列完成 10 个、剩余 14 个 queued；10/24 是
+- 24 个真实 FlagGems 队列完成 11 个、剩余 13 个 queued；11/24 是
   进度，不是覆盖率。
 
 ## 2. 当前规则库
@@ -192,7 +192,7 @@ Lift 端到端证据”是三个不同层次，不能互相代替。
 | 分层 | 已有真实证据 | 部分覆盖 | 尚无端到端证据 |
 |---|---|---|---|
 | A：算子/值数据流 | 常量 fill、基础 elementwise、sum/mean/max/min/prod、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype promotion、广播、多步融合、常量敏感性、混合精度 | RNG/dropout、scan/sort/top-k、量化/位运算组合、稀疏、多输出、大型 attention/跨 Kernel 图 |
-| B：域/索引/mask/effect | 一维 tail mask、基础二维仿射索引、masked load/store、fill/guard、row reduction、staged mask tile | 多 program axis、非末轴/多重归约、动态 stride、转置访问、复合/因果 mask、整数宽度 | online/structured loop、scan carry、atomic、gather/scatter/间接寻址、block pointer/descriptor、别名敏感副作用顺序 |
+| B：域/索引/mask/effect | 一维 tail mask、基础二维仿射索引、masked load/store、fill/guard、row reduction、staged mask tile、axis-0 take gather | 多 program axis、非末轴/多重归约、动态 stride、转置访问、复合/因果 mask、整数宽度、一般 along-axis gather | online/structured loop、scan carry、atomic、scatter、block pointer/descriptor、别名敏感副作用顺序 |
 | C：实现/调度 | 单个 reviewed profile 的 constexpr block、num_warps/num_stages 槽、K tile、wide program id | `do_not_specialize` 的实际 TTIR 影响、grid 合同、编译属性 | 同一 Kernel 的多 C/多 specialization 聚合门禁、descriptor ABI、架构专属约束、跨 Triton 版本系统规范化 |
 | 前端/裁判基础设施 | Triton compile-only、FlagGems wrapper、rank-0 pointer、TTIR interface/op/dataflow/reduce/predicate/effect 比较 | 复杂 region/loop 指纹、编译失败的安全差异摘要、masked-J 可识别性 | TileLang TIR、CUDA AST/PTX 正式 Gate1、atomics/内存序指纹、shape-parametric 等价 |
 
@@ -271,16 +271,17 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
   的 rejected 对照，不改变 Gate1 裁决；
 - 五核探针到此只完成机制探路，不作为数百 Kernel 覆盖率；
 - 已建立 24 个真实 FlagGems Triton kernel 的显式队列；当前 `fg_dot`、
-  `fg_addr`、`fg_ones`、final-stage `fg_sum`、final-stage `fg_mean`、
+  `fg_addr`、`fg_ones`、`fg_embedding`、final-stage `fg_sum`、final-stage `fg_mean`、
   final-stage `fg_max/fg_min/fg_prod/fg_vector_l2` 与 first-stage
-  `fg_vector_l1` 已完成 compiler/execution contract 并实际运行，其余 14 个仍为
+  `fg_vector_l1` 已完成 compiler/execution contract 并实际运行，其余 13 个仍为
   queued；
-- 十例 normal replay 均达到 TTIR 硬闭合；前九例 masked score 依次为 `1.0`、
+- 十一例 normal replay 均达到 TTIR 硬闭合；除 embedding 外原十例 masked score
+  依次为 `1.0`、
   `0.763387`、`0.925`、`1.0`、`1.0`、`0.507692`、`0.507692`、
   `0.509470`、`0.917544`；`fg_vector_l1` 的两次独立 masked-J 为
-  `0.906140` 与 `1.0`，所以正式状态全部是
+  `0.906140` 与 `1.0`，`fg_embedding` masked-J 为 `1.0`，所以正式状态全部是
   `LEAKAGE_REJECTED`；
-- 十个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
+- 十一个 rejected 样本的离线 Gate2 三方执行均 PASS，只计入
   `P(Gate2 pass | Gate1 rejected)` 对照，不覆盖 Gate1；
 - Gate2 已从单 case 扩成严格 suite；首个 `fg_min` live matrix 覆盖固定 C 下
   `{1,63,64}` 三种 shape、四种值域和三个 seed，共 36 个三方 case 全部零误差
@@ -288,14 +289,20 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
   “整个 Kernel 已结构闭合”；
 - `fg_dot/fg_addr` 是新增规则卡的增长样本；`fg_prod` 只补齐既有 reduce 卡的
   已规划 prod 映射，`fg_vector_l1` 只补齐既有 elementwise 卡的 abs/pow 映射与
-  受限 replay 安全路径，其余六例没有新增卡并复用了已有 19 张卡；这开始提供冻结后
-  复用证据，但仍不足以报告总体准确率；
+  受限 replay 安全路径，`fg_embedding` 和其余六例没有新增卡并复用了已有 19 张
+  卡；embedding 的数据依赖 access expression 来自 J/B，不把具体拓扑塞进规则卡。
+  这开始提供冻结后复用证据，但仍不足以报告总体准确率；
 - `fg_vector_l1` 的 rejected-sample Gate2 还覆盖
   `M={1,1023,1024}`、`ord={1.0,1.5,2.0}`、normal/uniform 与 3 seeds，
   18/18 三方 PASS；source/replay 始终零误差，两者对 Lower2C 最大绝对误差
   `0.005859375`；
-- `fg_arange/fg_trace/fg_eye` 继续 queued：现有 production Lower2C 分别缺 iota、
-  gather 和二维对角 predicate realization，本轮没有越过计划擅自补新 op；
+- `fg_embedding` 在静态 `indices[17]`、`weight[97,13]` J 下运行 2 个合法
+  index/weight value profile × 3 seeds，6/6 三方零误差 PASS；因为 compiler view
+  不提供 runtime shape scalar，不能把这个证据扩大成动态 shape 支持；
+- `fg_arange/fg_trace/fg_eye` 继续 queued：production Lower2C 仍分别缺 iota、
+  gather+reduce 的端到端 contract 和二维对角 predicate realization；本轮加入的
+  通用 take/along-axis gather lowering 只消除了 `fg_embedding` 已实际触发的接缝，
+  没有替未运行候选制造结果；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑小修、重提、规则检索、Gate2；

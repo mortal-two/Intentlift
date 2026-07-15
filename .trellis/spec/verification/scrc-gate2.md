@@ -57,9 +57,11 @@ production lowering 执行腿。
 这些输入属于 Gate2，不参与 Gate1 TTIR 裁决。
 
 `python/intentir/verify/gate2/inputs.py` 提供显式、确定性的 normal、uniform、
-positive、near-one、large-dynamic 与 IEEE-special tensor 生成。真实中间-stage
+positive、near-one、large-dynamic、IEEE-special 与 integer-boundary tensor
+生成。真实中间-stage
 Kernel 必须按其合法输入域选分布，例如 L2 final 的 partial sum 非负，prod final
-用 near-one 避免普遍下溢。`InputCaseTemplate × seeds` 生成稳定 case id 与输入
+用 near-one 避免普遍下溢，embedding index 必须落在 vocabulary 合法边界内。
+`InputCaseTemplate × seeds` 生成稳定 case id 与输入
 metadata；`Gate2Suite` 完整运行所有 case，只有每个子 case 都是 `GATE2_PASS`
 时 suite 才通过，不能用平均误差或多数票掩盖一个边界失败。
 
@@ -77,12 +79,15 @@ Lower2C case，全部 PASS 且三对最大误差均为 0。该矩阵仍是 Gate1
 
 - source/replay 实际拆分执行已实现；
 - production lowering 执行已实现；
-- 三方 tolerance 比较与机械归属已实现；
+- 三方 tolerance 比较与机械归属已实现；某一执行腿失败或 lowering unsupported
+  时，仍保存其余成功执行腿之间可计算的 pairwise agreement，不丢失已获得证据；
 - `Gate2Suite` 的严格全 case 聚合、逐 case metadata/status/error 保存已实现；
 - `python/tests/test_gate2.py` 已真实跑通 add、row-sum、softmax、RMSNorm、matmul、
   FlagGems dot、FlagGems ones、FlagGems mean-final 以及 FlagGems
   max/min/prod/L2-final/L1-first 的
   source/replay/lowering 三方；
+- live held-out batch 已用真实 `fg_embedding` artifact 跑通 axis-0 take gather
+  的 reviewed case 与 6-case fixed-shape value/seed matrix；
 - `test/scrc_live_add_e2e.py` 已进一步跑通真实 LLM lift + 真实 source-blind
   replay 后的完整三方 add：`N=1003, BLOCK=256`，source↔replay 最大误差 0，
   source/replay↔lowering 最大误差约 `5.01e-6`，状态 `GATE2_PASS`；
@@ -91,12 +96,15 @@ Lower2C case，全部 PASS 且三对最大误差均为 0。该矩阵仍是 Gate1
 
 2026-07-15 首批真实外部样本中，
 `fg_dot/fg_addr/fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` 与
-`fg_vector_l1` 都因
+`fg_vector_l1/fg_embedding` 都因
 masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执行 Gate2 后，
-十例均三方 PASS。`fg_vector_l1` 还运行
+十一例均三方 PASS。`fg_vector_l1` 还运行
 `3 shape/runtime-order profiles × 2 value profiles × 3 seeds = 18` 个严格 case，
 18/18 PASS，source/replay 最大误差始终为 0，两者对 Lower2C 的最大绝对误差为
-`0.005859375`。该结果只进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
+`0.005859375`。`fg_embedding` 在静态 `indices[17]`、`weight[97,13]` J 下运行
+随机合法索引/normal 权重与整数边界索引/uniform 权重两类 profile，各 3 seeds，
+6/6 PASS 且三对最大误差均为 0；同一 artifact 不能伪装成可变 shape J。该结果只
+进入 `P(Gate2 pass | Gate1 rejected)`，不覆盖 Gate1。
 
 为这些真实样本补齐的 production Lower2C 接缝包括：
 
@@ -119,11 +127,16 @@ masked-J 在 Gate1 被拒；按方案的 rejected-sample 诊断例外离线执�
   IEEE-special 回归也输出 `-inf`。
 - `reduce(fn=prod)`、`reduce(max/min)` 与 `sqrt(reduce(sum))` 的 rank-0 final-stage
   已经在真实 FlagGems source/replay/lowering 三腿上执行通过。
+- 通用 `GatherLowering` 支持静态结果的 `take` 与 `along_axis`，用
+  `linalg.generic` region 内的 index/data `tensor.extract` 执行数据依赖寻址；
+  MLIR regression 覆盖两种 mode，真实 `fg_embedding` 覆盖 axis-0 take。
 
-当前明确未闭合的既有能力也必须原样报告：通用 CPU Lower2C 尚无 iota/gather
-lowering，integer output 仍没有通用 read-back；因此 `fg_arange/fg_trace` 继续
-queued。`fg_eye` 还缺合法的二维 index/predicate shape realization。本轮没有为
-这些 queued 样本擅自增加新 op 或回退解释器。
+当前明确未闭合的既有能力也必须原样报告：通用 CPU Lower2C 尚无 iota lowering，
+integer output 仍没有通用 read-back，因此 `fg_arange` 继续 queued；`fg_trace`
+虽然可复用 gather lowering，但 gather+reduce 的真实 compiler/execution contract
+尚未建立，不能借 `fg_embedding` 的结果提前标 ready。`fg_eye` 还缺合法的二维
+index/predicate shape realization。本轮没有为这些 queued 样本伪造结果或回退
+解释器。
 
 若 lower 当前不支持某个真实 LLM 提取 artifact，Gate2 返回
 `LOWERING_UNSUPPORTED`。这是一条需要补 A/B/C 或 lowering 的具体失败证据，

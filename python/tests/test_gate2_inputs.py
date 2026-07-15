@@ -74,6 +74,19 @@ def test_gate2_integer_and_boolean_generation_uses_declared_dtype() -> None:
     assert booleans.dtype == np.bool_
 
 
+def test_gate2_integer_boundary_distribution_is_explicit_and_repeatable() -> None:
+    values = generate_tensor_input(
+        TensorInputSpec(
+            (12,), "i64", InputDistribution.INTEGER_BOUNDARY, 96.0
+        ),
+        seed=41,
+    )
+
+    expected = np.array([0, 96, 48, 1, 95, 0] * 2, dtype=np.int64)
+    assert values.dtype == np.int64
+    np.testing.assert_array_equal(values, expected)
+
+
 def test_gate2_input_spec_rejects_ambiguous_or_invalid_requests() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         TensorInputSpec((-1,), "f32")
@@ -83,6 +96,18 @@ def test_gate2_input_spec_rejects_ambiguous_or_invalid_requests() -> None:
         generate_tensor_input(
             TensorInputSpec((4,), "i32", InputDistribution.IEEE_SPECIAL),
             seed=43,
+        )
+    with pytest.raises(ValueError, match="integer dtype"):
+        generate_tensor_input(
+            TensorInputSpec(
+                (4,), "f32", InputDistribution.INTEGER_BOUNDARY
+            ),
+            seed=47,
+        )
+    with pytest.raises(ValueError, match="integer dtype"):
+        generate_tensor_input(
+            TensorInputSpec((4,), "i1", InputDistribution.INTEGER_BOUNDARY),
+            seed=53,
         )
 
 

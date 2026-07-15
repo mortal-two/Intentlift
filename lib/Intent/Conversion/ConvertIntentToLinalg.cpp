@@ -362,6 +362,102 @@ struct SelectLowering : OpRewritePattern<SelectOp> {
   }
 };
 
+/// Lower `intent.gather` to a parallel linalg.generic whose scalar body reads
+/// the runtime index tensor and then performs a data-dependent tensor.extract.
+/// This is the correctness-oriented CPU/linalg path; the specialized GPU path
+/// remains `convert-intent-gather-to-gpu`.
+struct GatherLowering : OpRewritePattern<GatherOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(GatherOp op,
+                                PatternRewriter &rewriter) const override {
+    auto dataTy = cast<RankedTensorType>(op.getData().getType());
+    auto indexTy = cast<RankedTensorType>(op.getIndex().getType());
+    auto resultTy = cast<RankedTensorType>(op.getResult().getType());
+    if (!resultTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "dynamic gather result unsupported");
+
+    int64_t axis = op.getAxis();
+    int64_t dataRank = dataTy.getRank();
+    if (axis < 0)
+      axis += dataRank;
+    if (axis < 0 || axis >= dataRank)
+      return rewriter.notifyMatchFailure(op, "gather axis out of range");
+
+    bool alongAxis = op.getMode() == "along_axis";
+    if (!alongAxis && op.getMode() != "take")
+      return rewriter.notifyMatchFailure(op, "unknown gather mode");
+
+    Type indexElementTy = indexTy.getElementType();
+    if (!isa<IntegerType, IndexType>(indexElementTy))
+      return rewriter.notifyMatchFailure(op,
+                                         "gather index must be integer/index");
+
+    unsigned resultRank = resultTy.getRank();
+    unsigned indexRank = indexTy.getRank();
+    if (alongAxis) {
+      if (indexRank != static_cast<unsigned>(dataRank) ||
+          resultRank != static_cast<unsigned>(dataRank))
+        return rewriter.notifyMatchFailure(
+            op, "along_axis gather requires equal data/index/result ranks");
+    } else if (resultRank !=
+               static_cast<unsigned>(dataRank - 1) + indexRank) {
+      return rewriter.notifyMatchFailure(
+          op, "take gather result rank does not match data/index ranks");
+    }
+
+    Location loc = op.getLoc();
+    Value init = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultTy.getElementType());
+    SmallVector<AffineMap> maps{
+        rewriter.getMultiDimIdentityMap(resultRank)};
+    SmallVector<utils::IteratorType> iters(
+        resultRank, utils::IteratorType::parallel);
+
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resultTy}, ValueRange{}, ValueRange{init}, maps, iters,
+        [&](OpBuilder &b, Location l, ValueRange) {
+          SmallVector<Value> resultCoords;
+          for (unsigned d = 0; d < resultRank; ++d)
+            resultCoords.push_back(b.create<linalg::IndexOp>(l, d));
+
+          SmallVector<Value> indexCoords;
+          if (alongAxis) {
+            indexCoords.append(resultCoords.begin(), resultCoords.end());
+          } else {
+            for (unsigned d = 0; d < indexRank; ++d)
+              indexCoords.push_back(resultCoords[axis + d]);
+          }
+          Value rawIndex =
+              b.create<tensor::ExtractOp>(l, op.getIndex(), indexCoords);
+          Value gathered = rawIndex;
+          if (!isa<IndexType>(rawIndex.getType()))
+            gathered = b.create<arith::IndexCastOp>(
+                l, b.getIndexType(), rawIndex);
+
+          SmallVector<Value> dataCoords;
+          if (alongAxis) {
+            dataCoords.append(resultCoords.begin(), resultCoords.end());
+            dataCoords[axis] = gathered;
+          } else {
+            for (unsigned d = 0; d < dataTy.getRank(); ++d) {
+              if (d < static_cast<unsigned>(axis))
+                dataCoords.push_back(resultCoords[d]);
+              else if (d == static_cast<unsigned>(axis))
+                dataCoords.push_back(gathered);
+              else
+                dataCoords.push_back(resultCoords[d - 1 + indexRank]);
+            }
+          }
+          Value value =
+              b.create<tensor::ExtractOp>(l, op.getData(), dataCoords);
+          b.create<linalg::YieldOp>(l, value);
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
 /// Scalar combiner for a `reduce` fn. Float sum/max/min/prod plus the boolean
 /// reductions all (and) / any (or) over i1 (C2c).
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
@@ -855,8 +951,8 @@ struct ConvertIntentToLinalgPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<MapUnaryLowering, MapBinaryLowering, SelectLowering,
-                 ReduceLowering, ContractionLowering, LoopLowering,
-                 CastLowering>(&getContext());
+                 GatherLowering, ReduceLowering, ContractionLowering,
+                 LoopLowering, CastLowering>(&getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

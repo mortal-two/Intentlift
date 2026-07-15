@@ -338,9 +338,10 @@ fg_min:  masked score = 0.507692  → LEAKAGE_REJECTED
 fg_prod: masked score = 0.509470  → LEAKAGE_REJECTED
 fg_l2:   masked score = 0.917544  → LEAKAGE_REJECTED
 fg_l1:   masked score = 0.906140；独立重跑 1.0 → LEAKAGE_REJECTED
+fg_embedding: masked score = 1.0 → LEAKAGE_REJECTED
 ```
 
-十例 rejected-sample 离线 Gate2 均三方 PASS。新增 max/min/prod 三例尤其接近
+十一例 rejected-sample 离线 Gate2 均三方 PASS。新增 max/min/prod 三例尤其接近
 `0.5` 阈值，但主方案判定是 `L <= 0.5` 才通过，因此不能因“只差一点”改写裁决；
 L2 又表明由 reduce+unary 组成的低熵 final stage 仍可被模型高概率猜中；L1
 则在同一 Lift artifact 上两次独立得到 `0.906140` 和 `1.0`，说明单次 masked-J
@@ -360,3 +361,12 @@ PASS，而 masked 比仍为 `0.507692`。因此这个“Gate1 拒绝、Gate2
 通过”象限不能再解释为“单个幸运输入”：行为矩阵增强了 Gate2
 的有限样例证据，但 Gate2 不是 Gate1 的真值标签，按当前主方案仍不足以
 越过逐 Kernel masked-J 门槛。
+
+`fg_embedding` 随后提供了首个真实 data-dependent gather 样本。真实
+`gpt-5.6-sol/xhigh` Lift 的 J 为 axis-0 `take`，normal 与独立 masked-J 均为
+`1.0`，所以仍按原阈值 `LEAKAGE_REJECTED`。通用 CPU GatherLowering 补齐后，
+reviewed case 和固定静态 J 下的 2 value profiles × 3 seeds 均三方 PASS，三对
+最大误差为 0。这里的行为对照覆盖随机合法索引和 `0/V-1` 整数边界索引，但不
+覆盖动态 shape；compiler view 不含 runtime K/V/D，shape matrix 对静态 extent
+不一致会直接拒绝。这一结果继续扩大“masked=1.0、有限 Gate2 全通过”的样本族，
+但不授权修改 masked-J 裁决。

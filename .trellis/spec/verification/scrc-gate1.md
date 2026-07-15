@@ -182,9 +182,9 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 - 24 个真实 FlagGems Kernel 的非 Trellis 批处理队列、逐 case 原子报告、按完整
   batch identity 恢复的 resume，以及同时绑定 source/compiler view/model/effort/
   registry/Lift-prompt 的 Lift cache；其中 `fg_dot`、`fg_addr`、`fg_ones`、
-  `fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage 以及
-  `fg_vector_l1` first stage 已具备真实 contract 并运行。batch identity 还绑定
-  Gate2 seed、distribution、scale 与
+  `fg_embedding`、`fg_sum/fg_mean/fg_max/fg_min/fg_prod/fg_vector_l2` final stage
+  以及 `fg_vector_l1` first stage 已具备真实 contract 并运行。batch identity
+  还绑定 Gate2 seed、distribution、逐参数 scale 与
   tolerance，输入策略变化后不得 resume 旧结果。
 
 当前覆盖不等于全部情况：
@@ -192,13 +192,13 @@ wrapper chain 查找唯一 ABI metadata owner，检测环并 fail-closed；wrapp
 | 层次 | 已有真实端到端证据 | 部分覆盖 | 尚未覆盖 |
 |---|---|---|---|
 | A | 基础 elementwise/const、sum/mean/max/min/prod、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype、broadcast、mixed precision、常量敏感性 | RNG、scan/sort/top-k、量化/复数/稀疏、多输出、大型 attention |
-| B | 基础 1-D/2-D 仿射索引、tail mask、masked load/store、fill/guard、row reduction | 多 program axis、非末轴/多重归约、动态 stride、复合 mask | structured/online loop、scan carry、atomic、gather/scatter、block pointer/descriptor、alias-sensitive effects |
+| B | 基础 1-D/2-D 仿射索引、tail mask、masked load/store、fill/guard、row reduction、axis-0 take gather | 多 program axis、非末轴/多重归约、动态 stride、复合 mask、一般 along-axis gather | structured/online loop、scan carry、atomic、scatter、block pointer/descriptor、alias-sensitive effects |
 | C/前端 | 单一 reviewed profile 的 constexpr/compiler slots/K tile、Triton/FlagGems compile-only | specialization 影响、grid/编译属性、region/loop 指纹 | 多 C/多 specialization 聚合、TileLang/CUDA 正式 Gate1、跨版本规范化、atomics/内存序 |
 
-早期五核手写 J/π 是机制探针；后续同五个族加 10 个 FlagGems 已重走
-真实 `gpt-5.6-sol/xhigh` Lift，15 个 normal replay 硬闭合。但 15/15 最终
+早期五核手写 J/π 是机制探针；后续同五个族加 11 个 FlagGems 已重走
+真实 `gpt-5.6-sol/xhigh` Lift，16 个 normal replay 硬闭合。但 16/16 最终
 都被 masked-J 拒绝，所以真实 LLM artifact 的正式 `REPLAY_CLOSED` 样本仍为
-0。24 个 FlagGems 队列只完成 10 个，不得从样本数量推导特性完备性。
+0。24 个 FlagGems 队列只完成 11 个，不得从样本数量推导特性完备性。
 
 当前仍是 Triton 研究原型，不应声称已经覆盖数百 Kernel。正式规模化样本必须
 从真实 Kernel 经 LLM extraction 产生 J/π/C；手写 J、手写 Intent MLIR 与固定
@@ -214,19 +214,22 @@ Gate1 verdict。候选条件与最小实现范围记录在
 
 2026-07-15 最新真实 `gpt-5.6-sol/xhigh` 证据中，add、row-sum、softmax、
 RMSNorm、matmul、FlagGems dot 和 FlagGems addr 的 normal source-blind replay
-以及 FlagGems ones/sum-final/mean-final/max-final/min-final/prod-final/L2-final
-与 L1-first 都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，十五者最终都是
-`LEAKAGE_REJECTED`。RMSNorm 的 runtime
+以及 FlagGems ones/embedding/sum-final/mean-final/max-final/min-final/prod-final/
+L2-final 与 L1-first 都已达到 TTIR 硬闭合；在完整不透明 ABI/C 消融下，十六者
+最终都是 `LEAKAGE_REJECTED`。RMSNorm 的 runtime
 `eps`、`mean`、`sqrt+recip` 和 staged pointer 路径已经过真实 Lift/replay
 验证；matmul 的单一 `mk,kn->mn` contraction、二维 tail mask、两轮 K tile、
 f16 input/f32 output 接缝与 staged pointer 路径也已经过真实 Lift/replay
-验证。RMSNorm、matmul 与十个已运行 FlagGems rejected live 样本的离线 Gate2
+验证。RMSNorm、matmul 与十一个已运行 FlagGems rejected live 样本的离线 Gate2
 对照均三方 PASS，但不改变 Gate1 结论。`fg_dot/fg_addr` 触发四张新卡；后续
-`fg_ones/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 直接复用 19 张卡，`fg_prod`
-只补齐既有 reduce 卡的 prod 映射，`fg_vector_l1` 只补齐既有 elementwise 卡的
-abs/pow 映射与受限 libdevice 安全路径。其 18-case Gate2 matrix 覆盖
+`fg_ones/fg_embedding/fg_sum/fg_mean/fg_max/fg_min/fg_vector_l2` 直接复用 19 张卡，
+`fg_prod` 只补齐既有 reduce 卡的 prod 映射，`fg_vector_l1` 只补齐既有
+elementwise 卡的 abs/pow 映射与受限 libdevice 安全路径。`fg_embedding` 的 J/B
+显式保存 data-dependent index expression，因而无需为 gather 发明专用 replay 卡；
+其固定静态 J 下 2 个 value profile × 3 seeds 的 Gate2 matrix 为 6/6 PASS，三对
+最大误差均为 0。`fg_vector_l1` 的 18-case Gate2 matrix 覆盖
 `M={1,1023,1024}` 与 runtime `ord={1.0,1.5,2.0}`，18/18 PASS；两次独立
-masked-J 为 `0.906140/1.0`，均拒绝。24 个真实外部 Kernel 只完成前十例，
+masked-J 为 `0.906140/1.0`，均拒绝。24 个真实外部 Kernel 只完成前十一例，
 仍不能宣称已具备数百 Kernel 覆盖。
 
 旧 NumPy JSON 解释器已归档到 `python/intentir/verify/back/legacy_v0/`，Gate1

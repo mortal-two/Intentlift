@@ -37,6 +37,7 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_dot",
         "fg_addr",
         "fg_ones",
+        "fg_embedding",
         "fg_sum",
         "fg_mean",
         "fg_max",
@@ -248,6 +249,36 @@ def test_real_flag_gems_vector_l1_case_keeps_runtime_order_unspecialized() -> No
     assert [profile.profile_id for profile in case.gate2_value_profiles] == [
         "normal",
         "uniform",
+    ]
+
+
+def test_real_flag_gems_embedding_case_records_take_gather_contract() -> None:
+    case = build_heldout_case("fg_embedding")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "embedding.py"
+    assert case.function_name == "embedding_kernel"
+    assert "weight_ptr += row_idx * N" in case.source_text
+    assert by_name["out_ptr"]["shape"] == [17, 13]
+    assert by_name["in_ptr"] == {
+        "name": "in_ptr",
+        "kind": "tensor",
+        "dtype": "i64",
+        "shape": [17],
+    }
+    assert by_name["weight_ptr"]["shape"] == [97, 13]
+    assert view["grid"] == [17]
+    assert view["grid_contract"] == ["K"]
+    assert view["constexpr_parameters"] == ["N", "BLOCK_SIZE"]
+    assert view["schedule_values"]["N"] == 13
+    assert view["schedule_values"]["BLOCK_SIZE"] == 16
+    assert case.input_distributions["in_ptr"] == "positive"
+    assert case.input_scales["in_ptr"] == 96.0
+    assert case.gate2_shape_profiles == ()
+    assert [profile.profile_id for profile in case.gate2_value_profiles] == [
+        "random_index_normal_weight",
+        "boundary_index_uniform_weight",
     ]
 
 

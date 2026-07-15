@@ -17,7 +17,7 @@ Gate2 matrix 属于 SCRC 主方案 Phase 3；Gate1 跨 profile 聚合没有在�
 
 ## 2. 为什么会出现这个候选需求
 
-当前 10 个 ready FlagGems Kernel 的 normal replay 都在一个具体 specialization 上
+当前 11 个 ready FlagGems Kernel 的 normal replay 都在一个具体 specialization 上
 闭合。新 Gate2 suite 已证明同一 replay 可以进一步覆盖：
 
 - `fg_ones`：1、BLOCK−1、BLOCK、BLOCK+1、非整除、远多 tile；
@@ -26,11 +26,19 @@ Gate2 matrix 属于 SCRC 主方案 Phase 3；Gate1 跨 profile 聚合没有在�
 - `fg_vector_l1`：固定 `BLOCK_SIZE=1024` 下
   `M={1,1023,1024}`、runtime `ord={1.0,1.5,2.0}`、2 个 value profile ×
   3 seeds，共 18 个三方 case 全部通过。
+- `fg_embedding`：静态 `indices[17]`、`weight[97,13]` J 下，2 个合法索引/权重
+  value profile × 3 seeds，共 6 个三方 case 全部零误差通过；尝试把 K 改为
+  `{1,15,16,17}` 时，matrix builder 因静态 J extent 不同而 fail-fast。
 
 这些证据增强行为可信度，但不能反推“所有 specialization 的 source/replay TTIR
 都已结构闭合”。constexpr、runtime scalar specialization 和不同 grid 可能改变
 TTIR；若论文要把结论从“该 specialization 闭合”提升为“该 Kernel 闭合”，需要
 额外定义 Gate1 的 profile 语义。
+
+`fg_embedding` 还给出更具体的边界：其 compiler view 没有 runtime K/V/D scalar，
+Lift 因而正确生成静态 tensor extent。Gate2 value matrix 可以验证数据依赖地址与
+词表上下界，却不能仅靠替换 host tensor shape 把静态 J 变成动态 J；这类 shape
+扩展必须先有不同 compiler profile 或重新定义 artifact/profile 关系。
 
 ## 3. 不能直接实现的三个未决条件
 
