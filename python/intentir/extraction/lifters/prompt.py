@@ -53,6 +53,10 @@ Atomic ops (each is one JSON object in a "body" list):
                row-sum [M,N] -> [M]). fn in {sum,mean,max,min,prod,any,all}.
      {"op":"reduce","result":R,"operands":[A],"attrs":{"fn":F,"axes":[i,...],
        "assoc":"associative"|"float_nondeterministic"}}
+  iota       : a rank-1 INTEGER vector [0,1,...,n-1]. `n` is a static integer
+               extent and dtype defaults to i32. Use cast/map ops to express
+               affine arange(start,step); do not encode program tiles in Layer A.
+     {"op":"iota","result":R,"attrs":{"n":<int>,"dtype":"i32"|"i64"}}
   const      : a literal value, splat over an optional shape (default scalar []).
      {"op":"const","result":R,"attrs":{"value":<number>,"dtype":"f32","shape":[]}}
   contraction: einsum. attrs.subscripts is a numpy einsum string.

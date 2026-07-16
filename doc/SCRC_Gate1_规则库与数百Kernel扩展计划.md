@@ -238,17 +238,17 @@ normal source/replay，当前实现已按下列循环工作：
   → SCRC Lift 产生 J/π/C/接口/定位表
   → 源码隔离 normal replay
   → source/replay 同前端编译与纯代码硬比较
-  → 内层有界 replay repair 仍未闭合
-  → 提取 interface/op/dataflow/reduction/predicate-effect 结构差异
+  → generation/compile/interface/硬比较任一失败
+  → 提取失败类别或 interface/op/dataflow/reduction/predicate-effect 结构差异
   → 原始 source + source fingerprint + 差异历史 + 当前 J/π
       交回可看源码的 SCRC Lift
   → 只修改 J/π/location_map，冻结 interface 与 C
-  → 从新 artifact 重新进行源码隔离 replay
+  → 从静态扫描、源编译和全新源码隔离 replay 重新进行
   → normal 硬闭合或重提预算耗尽
 ```
 
 这里的“差异较大”不引入新的模糊分数阈值：只要任一 Gate1
-硬项仍失败，内层小修耗尽后就进入外层重提。score 只用来保留最优
+正常阶段失败就进入外层重提。禁止原地修 replay code。score 只用来保留最优
 失败候选，不决定是否闭合。
 
 回流给 Lift 的内容不包含 replay 源码；它包含原始 source、源指纹和
@@ -305,7 +305,7 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
   没有替未运行候选制造结果；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
-- 跑小修、重提、规则检索、Gate2；
+- 跑 relift-only Gate1、规则检索、最终 π audit 与 Gate2；
 - 建立第一版真实失败集。
 
 首批统计必须单独记录 Lower2C 能力边界。例如当前 matmul 第三腿会消费已经
@@ -332,7 +332,7 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
 - Gate1 闭合；
 - `P(Gate2 pass | Gate1 closed)`；
 - `P(Gate2 pass | Gate1 rejected)` 对照；
-- 小修/重提与规则卡成本；
+- Lift/relift 轮次与规则卡成本；
 - 泄漏消融。
 
 最重要的质量线不是“手写 fixture 全过”，而是同一套规则卡能否让未参与规则

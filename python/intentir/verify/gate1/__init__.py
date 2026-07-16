@@ -55,7 +55,29 @@ from .prompt import (
     build_rewriter_payload,
     build_rewriter_prompt,
 )
-from .rules import RuleCard, RuleRegistry, default_triton_rule_registry
+from .rules import (
+    RuleCard,
+    RuleRegistry,
+    RuleSelectionMode,
+    default_triton_rule_registry,
+)
+from .interventions import (
+    InterventionKind,
+    InterventionRecord,
+    InterventionStatus,
+    InterventionVerdict,
+    SemanticIntervention,
+    build_semantic_interventions,
+    evaluate_semantic_intervention,
+)
+from .pi_ablations import (
+    PiAblationKind,
+    PiAblationRecord,
+    PiAblationSpec,
+    PiAblationStatus,
+    build_pi_ablations,
+    run_pi_ablations,
+)
 from .compiler import (
     CompileCase as TritonCompileCase,
     CompileResult,
@@ -81,7 +103,6 @@ from .compare import (
 )
 from .diagnose import (
     Diagnosis,
-    RepairFeedback,
     Responsibility,
     diagnose_comparison,
     diagnose_compile_failure,
@@ -121,6 +142,7 @@ __all__ = [
     "LeakageReport", "LeakageViolation", "LocationEntry", "LocationMap",
     "OutputMapping", "ParameterKind", "ParameterMode", "ProvenanceRecord",
     "ProvenanceRole", "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuleCard", "RuleRegistry",
+    "RuleSelectionMode",
     "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec",
     "SchemaError", "SemanticArchive", "SourceSpan",
     "opaque_replay_abi", "restore_masked_replay_module",
@@ -133,13 +155,19 @@ __all__ = [
     "CompileResult", "ComponentComparison", "Diagnosis", "FailureAnalysis",
     "FailureCause", "FingerprintDifference", "Gate1Config",
     "Gate1ExecutionResult", "Gate1Runner", "KernelSource", "OutcomeClass",
-    "ReliftRequest", "ReliftTrigger", "Relifter", "RepairFeedback",
+    "InterventionKind", "InterventionRecord", "InterventionStatus",
+    "InterventionVerdict", "SemanticIntervention",
+    "PiAblationKind", "PiAblationRecord", "PiAblationSpec",
+    "PiAblationStatus",
+    "ReliftRequest", "ReliftTrigger", "Relifter",
     "ReplayGeneration", "ReplayWriter",
     "ResponsesReplayWriter", "Responsibility", "StaticReplayWriter",
     "TTIRComparator", "TTIRComparison", "TTIRFingerprint", "TTIRParseError",
     "TTIRParser", "TritonCompilationError", "TritonCompileCase",
     "TritonCompiler", "TritonRuntimeArgument", "analyze_failure",
     "compare_fingerprints", "compare_ttir", "default_triton_rule_registry",
+    "build_semantic_interventions", "evaluate_semantic_intervention",
+    "build_pi_ablations", "run_pi_ablations",
     "diagnose_comparison", "diagnose_compile_failure", "fingerprint_ttir",
     "parse_ttir", "sanitize_replay_diagnostic", "summarize_capability",
 ]

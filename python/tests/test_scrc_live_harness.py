@@ -18,6 +18,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.replay import ReplayGeneration
+from intentir.verify.gate2 import Gate2Status
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,8 +29,11 @@ from scrc_live_e2e import (  # noqa: E402
     _compile_case,
     _gate2_case,
     _gate1_evidence_json,
+    _independent_gate2_candidate,
     _lift_attempt_evidence,
     _parser,
+    _pi_ablation_control_evidence,
+    _pi_ablation_evidence_json,
     _relift_evidence_json,
     _write_report,
     build_case,
@@ -343,7 +347,6 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         effort="xhigh",
         seed=20260715,
         lift_repairs=2,
-        rewrite_repairs=2,
         relift_rounds=4,
         gate2_matrix=False,
         gate2_seeds=None,
@@ -363,8 +366,48 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
     assert relifter_kwargs["effort"] == "xhigh"
     assert captured["gate1_relifter"] is not None
     assert captured["gate1_config"].max_relifts == 4
-    assert report["relift_policy"]["protocol"] == "normal_no_closure_v1"
+    assert captured["gate1_config"].run_semantic_interventions
+    assert captured["gate1_config"].max_semantic_interventions == 3
+    assert report["relift_policy"]["protocol"] == (
+        "relift_only_pi_audit_on_strict_opaque_refs_causal_v7"
+    )
     assert report["relift_policy"]["maximum_semantic_relifts"] == 3
+    assert report["relift_policy"]["normal_recovery"] == (
+        "relift_only_restart_full_pipeline"
+    )
+    assert report["relift_policy"]["replay_code_repair"] == "disabled"
+    assert report["gate1_anti_leakage_policy"] == {
+        "paired_semantic_interventions": True,
+        "maximum_interventions": 3,
+        "paired_replay_control": "normal_model_generated_candidate",
+        "maximum_provider_attempts_per_generation": 3,
+        "masked_j_role": "diagnostic_or_fallback",
+        "masked_j_fallback_policy": "exact_semantic_hard_degradation_v1",
+        "masked_j_score_role": "diagnostic_only",
+        "ttir_score_semantics": "active_evidence_weighted_v2",
+        "replay_reference_naming": "opaque_replay_refs_v1",
+        "pi_ablations": {
+            "enabled": True,
+            "default_policy": "enabled_for_formal_live_evidence",
+            "maximum": 3,
+            "maximum_replay_repairs": 0,
+            "requires_full_pi_replay_closed": True,
+            "kinds": [
+                "j_only",
+                "plan_step_dropout",
+                "plan_mechanism_substitution",
+            ],
+            "verdict_role": "diagnostic",
+            "opaque_reference_discipline": "resolve_handles_never_emit_v1",
+            "replay_code_repair": "disabled",
+        },
+    }
+    assert report["pi_ablation_control"] == {
+        "valid": False,
+        "reason": "source_fingerprint_unavailable",
+        "gate1_status": "no_closure",
+    }
+    assert report["pi_ablations"] == []
     assert report["relifts"] == []
     assert code == 3
 
@@ -378,6 +421,205 @@ def test_add_compatibility_case_keeps_existing_defaults() -> None:
     assert view["schedule_values"]["BLOCK"] == 256
     assert case.source_path == ROOT / "test" / "scrc_probe_sources.py"
     assert case.function_name == "add_kernel"
+
+
+def test_live_parser_records_independent_gate2_for_rejected_replays_by_default() -> None:
+    assert _parser("add").parse_args([]).diagnose_rejected
+    assert not _parser("add").parse_args(
+        ["--no-diagnose-rejected"]
+    ).diagnose_rejected
+
+
+def test_live_parser_enables_final_pi_audit_by_default() -> None:
+    assert _parser("add").parse_args([]).pi_ablations
+    assert not _parser("add").parse_args(
+        ["--no-pi-ablations"]
+    ).pi_ablations
+
+
+def test_pi_ablation_report_keeps_source_blind_generated_code() -> None:
+    generation = ReplayGeneration(
+        code="import triton\n",
+        prompt_sha256="prompt",
+        requested_model="model",
+        generation_id="generation",
+        code_sha256="code",
+    )
+    record = SimpleNamespace(
+        generation=generation,
+        to_json=lambda: {"generation": {"code_sha256": "code"}},
+    )
+
+    payload = _pi_ablation_evidence_json((record,))[0]
+    assert payload["generation"]["code"] == "import triton\n"
+    assert payload["generation"]["code_bytes"] == 14
+
+
+def test_pi_ablation_requires_a_closed_full_pi_control() -> None:
+    rejected = SimpleNamespace(
+        source_fingerprint=object(),
+        replay_closed=False,
+        status=Gate1Status.NO_CLOSURE,
+    )
+    accepted = SimpleNamespace(
+        source_fingerprint=object(),
+        replay_closed=True,
+        status=Gate1Status.REPLAY_CLOSED,
+    )
+
+    assert _pi_ablation_control_evidence(rejected) == {
+        "valid": False,
+        "reason": "full_pi_control_not_replay_closed",
+        "gate1_status": "no_closure",
+    }
+    assert _pi_ablation_control_evidence(accepted)["valid"]
+
+
+def test_independent_gate2_candidate_prefers_hard_close_then_final_round_best() -> None:
+    earlier_best = SimpleNamespace(
+        generation=object(),
+        comparison=None,
+        compiled=True,
+        relift_round=0,
+        rank_tuple=(1,),
+    )
+    final_weaker = SimpleNamespace(
+        generation=object(),
+        comparison=None,
+        compiled=True,
+        relift_round=1,
+        rank_tuple=(2,),
+    )
+    final_best = SimpleNamespace(
+        generation=object(),
+        comparison=None,
+        compiled=True,
+        relift_round=1,
+        rank_tuple=(3,),
+    )
+    gate1 = SimpleNamespace(
+        candidates=(earlier_best, final_weaker, final_best)
+    )
+    assert _independent_gate2_candidate(gate1) is final_best
+
+    hard_closed = SimpleNamespace(
+        generation=object(),
+        comparison=SimpleNamespace(hard_pass=True),
+        compiled=True,
+        relift_round=0,
+        rank_tuple=(0,),
+    )
+    gate1 = SimpleNamespace(candidates=(final_best, hard_closed))
+    assert _independent_gate2_candidate(gate1) is hard_closed
+
+
+def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
+    monkeypatch,
+) -> None:
+    case = build_case(_args("add"))
+    provider = ProviderConfig(
+        "test", "https://example.invalid", "secret", "base-model"
+    )
+    artifact = SimpleNamespace(
+        interface=SimpleNamespace(function_name=case.function_name),
+        to_json=lambda: {
+            "kernel_id": case.function_name,
+            "source": case.source_text,
+        },
+    )
+    extraction = SimpleNamespace(
+        artifact=artifact,
+        provenance=SimpleNamespace(
+            model="gpt-5.6-sol",
+            prompt_sha256="lift-prompt",
+            attempts=1,
+            repairs=(),
+            response_id="lift-response",
+        ),
+    )
+    generation = _generation(
+        "import triton\nimport triton.language as tl\n\n"
+        "@triton.jit\ndef add_kernel(a_ptr, b_ptr, out_ptr, n_elements, "
+        "BLOCK: tl.constexpr):\n    return\n",
+        masked=False,
+    )
+    candidate = SimpleNamespace(
+        generation=generation,
+        comparison=SimpleNamespace(hard_pass=True),
+        compiled=True,
+        relift_round=0,
+        rank_tuple=(1,),
+    )
+    gate1 = SimpleNamespace(
+        status=Gate1Status.LEAKAGE_REJECTED,
+        replay_closed=False,
+        artifact=artifact,
+        candidates=(candidate,),
+        masked_generation=None,
+        to_json=lambda: {
+            "status": Gate1Status.LEAKAGE_REJECTED.value,
+            "artifact": artifact.to_json(),
+            "candidates": [{"generation": {"code_sha256": "digest"}}],
+            "masked_generation": None,
+            "diagnostics": [],
+        },
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(live, "get_provider", lambda: provider)
+    monkeypatch.setattr(live, "extract_scrc_artifact", lambda *a, **k: extraction)
+    monkeypatch.setattr(
+        live, "ResponsesReplayWriter", lambda **kwargs: SimpleNamespace()
+    )
+
+    class FakeRelifter:
+        def __init__(self, **kwargs):
+            self.records = ()
+
+    class FakeGate1Runner:
+        def __init__(self, *, config):
+            pass
+
+        def run(self, *args, **kwargs):
+            return gate1
+
+    class FakeGate2Runner:
+        def run(self, source, replay, gate2_case):
+            captured["gate2_case"] = gate2_case
+            captured["replay"] = replay
+            return SimpleNamespace(status=Gate2Status.PASS)
+
+    monkeypatch.setattr(live, "ResponsesSCRCRelifter", FakeRelifter)
+    monkeypatch.setattr(live, "Gate1Runner", FakeGate1Runner)
+    monkeypatch.setattr(live, "Gate2Runner", FakeGate2Runner)
+    monkeypatch.setattr(live, "_gate2_case", lambda *args: "gate2-case")
+    monkeypatch.setattr(
+        live,
+        "_gate2_evidence_json",
+        lambda result: {"status": result.status.value},
+    )
+    args = Namespace(
+        model="gpt-5.6-sol",
+        effort="xhigh",
+        seed=20260715,
+        lift_repairs=2,
+        relift_rounds=2,
+        gate2_matrix=False,
+        gate2_seeds=None,
+        diagnose_rejected=True,
+    )
+
+    code, report = live.run_case(case, args)
+
+    assert code == 3
+    assert report["gate1"]["status"] == Gate1Status.LEAKAGE_REJECTED.value
+    assert report["gate2_diagnostic"] == {
+        "kind": "offline_gate2_for_gate1_rejected_sample",
+        "independent": True,
+        "gate1_status": Gate1Status.LEAKAGE_REJECTED.value,
+        "status": Gate2Status.PASS.value,
+    }
+    assert captured["gate2_case"] == "gate2-case"
 
 
 def _generation(code: str, *, masked: bool) -> ReplayGeneration:

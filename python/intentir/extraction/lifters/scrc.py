@@ -22,7 +22,10 @@ from intentir.verify.gate1.model import (
     ProvenanceRecord,
     ProvenanceRole,
 )
-from intentir.verify.gate1.rules import RuleRegistry, default_triton_rule_registry
+from intentir.verify.gate1.rules import (
+    RuleRegistry,
+    default_triton_rule_registry,
+)
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
 from .scrc_schema import scrc_artifact_text_format
@@ -35,10 +38,10 @@ if TYPE_CHECKING:
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
-# Binds held-out resume/report identity to the relift feedback contract.  This
-# is not a Gate score or acceptance rule; it only prevents replaying cached
-# evidence produced by an older outer-loop prompt/schema.
-SCRC_RELIFT_PROTOCOL = "normal_no_closure_v1"
+# Binds held-out resume/report identity to the complete strict-pi and causal
+# evidence contract.  This is not a Gate score; it prevents cached artifacts or
+# terminal reports from silently crossing prompt/schema/intervention protocols.
+SCRC_RELIFT_PROTOCOL = "relift_only_pi_audit_on_strict_opaque_refs_causal_v7"
 
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -304,6 +307,8 @@ def _rule_catalog(registry: RuleRegistry) -> str:
     cards = [
         {
             "id": card.id,
+            "selection_mode": card.selection_mode.value,
+            "override_family": card.override_family,
             "applies_to": list(card.applies_to),
             "reads": list(card.reads),
         }
@@ -354,6 +359,12 @@ Cross-field rules:
   `0 <= col < N`);
 - node_ids contains only IntentIR body-node ids mapped to paths such as
   body[0], never domain/access/effect/output-mapping ids;
+- all Lift-owned reference ids are declaration-order opaque handles: node_ids
+  are exactly n0,n1,...; boundary domain ids are d0,d1,...; access_id values
+  are a0,a1,... . Never encode operation, tensor, load/store, reduction, source
+  variable or source-line hints in an id. plan node_ref/refs must use these
+  opaque handles; only trusted interface parameter and schedule-slot names may
+  retain their required ABI spelling;
 - a scalar kernel parameter that only supplies a symbolic extent is not an
   IntentIR tensor input;
 - a runtime scalar consumed by the computation is an IntentIR scalar input with
@@ -372,9 +383,8 @@ Cross-field rules:
   not create boundary.broadcasts. A contraction also does not create
   boundary.reductions;
 - if a source helper explicitly widens a frontend program coordinate before
-  offset arithmetic, preserve that as pi mechanism by selecting
-  bind_wide_program_domain; otherwise select bind_program_domain. J/B remain
-  API-free in both cases;
+  offset arithmetic, select bind_wide_program_domain for that domain; otherwise
+  explicitly instantiate bind_program_domain. J/B remain API-free in both cases;
 - in FlagGems sources, an import of
   `flag_gems.utils.triton_lang_extension as tle` makes `tle.program_id(...)` a
   visible helper whose defined result is `tl.program_id(...).to(tl.int64)`;
@@ -387,12 +397,12 @@ Cross-field rules:
   Keep the source helper spelling out of J/B and pi free text;
 - if the source reduction call omits its axis and therefore flattens the local
   tile, keep the global J axes and BoundaryReduction.tile_axis semantic facts
-  but select realize_flattened_reduce. An explicit source axis selects
-  realize_reduce;
-- inspect contraction subscripts before selecting a realization card. A form
-  such as m,n->mn has no contracted label and selects realize_outer_product;
-  only a contraction with an actual tiled contracted dimension selects
-  realize_k_tiled_dot;
+  but select realize_flattened_reduce. An explicit source axis must explicitly
+  instantiate realize_reduce for the referenced J node;
+- inspect contraction subscripts and encode them completely in J. A form such
+  as m,n->mn has no contracted label and selects realize_outer_product; a
+  contraction with an actual tiled contracted dimension selects
+  realize_k_tiled_dot. The rule carries only a J node reference, not subscripts;
 - if the source computes one-dimensional mask components and later rank-inserts
   and reuses them for compound access masks, select materialize_mask_tile with
   refs to both component and compound accesses. Do not replace that staging by
@@ -411,44 +421,107 @@ Cross-field rules:
   the trusted compiler-view values exactly;
 - boundary.aliases copies the trusted compiler-view alias contract exactly;
 - plan node_ref/refs may reference only node_ids, J tensor names, domain ids,
-  or access_id values. Effects and output mappings have no standalone ids.
+  access_id values, interface parameter names, or schedule slot names. Effects
+  and output mappings have no standalone ids.
 
 pi/plan rules:
-- every step selects one registered rule id below;
-- node_ref/refs point only to identifiers declared in J;
-- never copy source text, expressions or frontend API names into plan;
-- semantics live in J, implementation mechanism selection lives in plan.
-- select materialize_index_tile when the source computes a complete integer tile
-  offset before adding it to a pointer; select materialize_pointer_tile when the
-  source keeps pointer + scalar base + lane tile as staged pointer additions.
-  In particular, an inline source access such as `load(ptr + row*N + lane)` or
-  `store(ptr + row*N + lane, ...)` selects materialize_pointer_tile. Select
-  materialize_index_tile only when the source first assigns the complete integer
-  expression (for example `offset = row*N + lane`) and later uses `ptr + offset`.
-  Inspect the source association; the semantic index_expression string alone
-  does not distinguish these two frontend mechanisms.
+- pi is the complete ordered replay construction plan. It must instantiate every
+  required canonical or override rule for program domains, runtime scalars,
+  schedule slots, J nodes, accesses and output mappings. The replay writer is
+  forbidden to invent omitted default steps.
+- each step selects one registered rule id below and targets one J/B/C/interface
+  identifier through node_ref, or through refs[0] when node_ref is absent.
+  Remaining refs are ordered context bindings.
+- list steps in dependency/construction order. Order may describe realization
+  dependencies but must never duplicate J semantic values.
+- every non-empty kernel needs a non-empty complete plan. Canonical mechanisms
+  such as bind_program_domain, materialize_index_tile, realize_elementwise,
+  realize_reduce, realize_broadcast, realize_k_tiled_dot/realize_outer_product,
+  bind_runtime_scalar, declare_schedule_slot, realize_cast/select/loop carry,
+  access rules and realize_output_mapping must be instantiated where applicable.
+- never repeat the same rule/target/context instance, and never select two rules
+  from the same override_family for the same target.
+- never copy source text, expressions, semantics, constants, operands, reduction
+  functions/axes/identities, predicates, fills, effects, output mappings, or
+  frontend API names into plan. All of those belong to J/B.
+- select materialize_pointer_tile only when the source keeps pointer + scalar
+  base + lane tile as staged pointer additions. In particular, an inline source
+  access such as `load(ptr + row*N + lane)` or
+  `store(ptr + row*N + lane, ...)` selects materialize_pointer_tile. When the
+  source first assigns the complete integer expression (for example
+  `offset = row*N + lane`) and later uses `ptr + offset`, instantiate
+  materialize_index_tile for that access. Inspect source association; the
+  semantic index_expression string alone does not distinguish the mechanisms.
 - for a tiled contraction, precomputed m/n/k coordinate components are not a
   complete per-access integer offset. If the source later forms
   `pointer + row_term + column_term`, select materialize_pointer_tile and retain
   that association; do not regroup it into base-pointer plus a combined offset;
 - copy compound vector predicates with the source conjunction operator `&`, not
   scalar-language `and` or `&&`;
-- a contraction plan selects realize_k_tiled_dot for the contraction node and
-  its K domain/accesses. Do not also select realize_reduce, realize_loop_carry,
-  or realize_broadcast for schedule-only K tiling and local rank insertion.
-- select exactly one program-domain card for each source coordinate mechanism,
-  and exactly one of realize_reduce/realize_flattened_reduce for each source
-  reduction mechanism; do not emit both variants for the same operation.
-- select exactly one contraction realization that matches the subscripts;
-  realize_outer_product and realize_k_tiled_dot are mutually exclusive for one
-  J node. Select materialize_mask_tile only when the source actually stages and
-  reuses predicate components.
+- contractions are always derived from J subscripts and C: contracted labels
+  select realize_k_tiled_dot, while forms such as m,n->mn select
+  realize_outer_product. Do not add reduce/loop/broadcast steps for schedule-only
+  K tiling.
+- native-width program coordinates instantiate bind_program_domain; explicitly
+  widened coordinates use bind_wide_program_domain. Explicit-axis reductions
+  instantiate realize_reduce; axis-omitted reductions use
+  realize_flattened_reduce.
+- select materialize_mask_tile only when the source actually stages and reuses
+  predicate components; direct predicates still instantiate the appropriate
+  realize_masked_access rule without this additional staging rule.
 
-Registered rule ids (API spellings intentionally omitted):
+Registered replay rule ids (API spellings intentionally omitted):
 {_rule_catalog(registry)}
 
 Do not emit source or provenance fields; the driver attaches them itself.
 """
+
+
+def _validate_opaque_lift_references(artifact: Gate1Artifact) -> None:
+    """Reject source-semantic spellings in Lift-owned pi reference ids."""
+
+    def require_declaration_order(
+        actual: list[str], prefix: str, label: str
+    ) -> None:
+        expected = [f"{prefix}{index}" for index in range(len(actual))]
+        if actual != expected:
+            raise ValueError(
+                f"{label} must use declaration-order opaque ids: "
+                f"{actual!r} != {expected!r}"
+            )
+
+    node_ids = list(artifact.j.node_ids)
+    domain_ids = list(artifact.j.boundary.domains)
+    access_ids = [access.access_id for access in artifact.j.boundary.accesses]
+    require_declaration_order(node_ids, "n", "j.node_ids")
+    require_declaration_order(domain_ids, "d", "j.boundary.domains")
+    require_declaration_order(access_ids, "a", "j.boundary.accesses.access_id")
+
+    opaque_targets = set(node_ids) | set(domain_ids) | set(access_ids)
+    abi_targets = {
+        parameter.name for parameter in artifact.interface.parameters
+    } | {slot.name for slot in artifact.schedule.slots}
+    tensor_targets = {
+        tensor.name
+        for tensor in [
+            *artifact.j.intent.inputs,
+            *artifact.j.intent.outputs,
+        ]
+    }
+    for index, step in enumerate(artifact.plan.steps):
+        references = [
+            *([step.node_ref] if step.node_ref is not None else []),
+            *step.refs,
+        ]
+        for ref in references:
+            if ref in opaque_targets or ref in abi_targets:
+                continue
+            if ref in tensor_targets and re.fullmatch(r"t\d+", ref):
+                continue
+            raise ValueError(
+                f"plan.steps[{index}] reference {ref!r} is not an opaque "
+                "Lift-owned id or a trusted ABI/C name"
+            )
 
 
 def _scrc_lift_prompt(
@@ -489,10 +562,11 @@ Re-read SOURCE and use the source fingerprint plus prior deterministic Gate1
 reports to correct the semantic archive J and the dependent replay plan pi.
 
 RELIFT_EVIDENCE.request records why the outer loop was entered.  The current
-authorized trigger is normal_no_closure: bounded source-blind replay repair
-still left one or more hard source/replay TTIR differences.  Use the complete
-deterministic comparison records to decide whether J omitted/misstated source
-semantics or pi selected the wrong realization mechanism.  Scores are ranking
+authorized triggers are replay_generation_failed, replay_compile_failed,
+replay_evaluation_failed and normal_no_closure.  No replay candidate is ever
+patched in place.  Use the sanitized failure diagnosis or deterministic TTIR
+comparison to decide whether J omitted/misstated source semantics or pi failed
+to provide a complete/correct realization contract.  Scores are ranking
 evidence only; every remaining hard difference must be addressed.
 
 You may change exactly these fields:
@@ -699,6 +773,7 @@ def extract_scrc_artifact(
                     "J.intent.layer_c must be empty; concrete C belongs only "
                     "in schedule.values"
                 )
+            _validate_opaque_lift_references(artifact)
             if trusted_artifact is not None:
                 if artifact.interface.to_json() != (
                     trusted_artifact.interface.to_json()
@@ -891,8 +966,10 @@ def extract_scrc_artifact(
                     raise ValueError(
                         "boundary.aliases differs from trusted compiler view"
                     )
-            registry.resolve(
-                artifact.plan, frontend=artifact.interface.frontend
+            registry.validate_strict_plan(
+                artifact.plan,
+                frontend=artifact.interface.frontend,
+                artifact=artifact,
             )
             return SCRCExtraction(
                 artifact,
@@ -929,15 +1006,14 @@ def extract_scrc_artifact(
 
 
 def _candidate_relift_evidence(candidate: "CandidateRecord") -> dict[str, Any]:
-    """Return semantic evidence without replay source or compiler source lines."""
+    """Return Lift feedback without replay source text."""
 
     diagnosis = None
     if candidate.diagnosis is not None:
         diagnosis = candidate.diagnosis.to_json()
-        if diagnosis.get("cause") == "replay_compile":
-            # Compile diagnostics may quote model-generated source lines.  They
-            # belong to the inner replay repair loop, not semantic relifting.
-            diagnosis.pop("mismatches", None)
+        # Compile mismatches have already been reduced by
+        # sanitize_replay_diagnostic() to path-free exception summaries.  Keep
+        # that deterministic guidance while never serializing candidate.code.
     return {
         "relift_round": candidate.relift_round,
         "generation_round": candidate.generation_round,
@@ -989,7 +1065,12 @@ class ResponsesSCRCRelifter:
     ) -> Gate1Artifact:
         relift_round = len(self._records) + 1
         request_json = request.to_json()
-        if request_json.get("trigger") != "normal_no_closure":
+        if request_json.get("trigger") not in {
+            "replay_generation_failed",
+            "replay_compile_failed",
+            "replay_evaluation_failed",
+            "normal_no_closure",
+        }:
             raise ValueError(
                 "unsupported semantic relift trigger: "
                 f"{request_json.get('trigger')!r}"

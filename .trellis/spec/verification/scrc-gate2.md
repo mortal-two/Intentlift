@@ -141,3 +141,38 @@ index/predicate shape realization。本轮没有为这些 queued 样本伪造结
 若 lower 当前不支持某个真实 LLM 提取 artifact，Gate2 返回
 `LOWERING_UNSUPPORTED`。这是一条需要补 A/B/C 或 lowering 的具体失败证据，
 不能退回解释器后伪报通过。
+
+## Gate1/Gate2 成对统计
+
+held-out batch 必须保留两个独立 verdict，不能把它们压成一个 overall pass。
+正式实现位于 `python/intentir/verify/gate2/metrics.py`；
+`test/scrc_heldout_batch.py` 从正式 Gate2 或 rejected-sample diagnostic 中调用它
+统一提取：
+
+- Gate1 原始状态与是否 `REPLAY_CLOSED`；
+- Gate2 证据来自 production 还是独立 diagnostic、单 case 还是 suite；
+- Gate2 是否尝试、是否完成了可归属的三方比较、最终是否 PASS；
+- suite 内每个 case 的原始 Gate2 状态。
+
+批报告按 `REPLAY_CLOSED`、非闭合总体及每个 Gate1 原始状态分别给出：样本数、
+Gate2 attempt/completion coverage、PASS/non-PASS 数，以及
+`P(Gate2 PASS | Gate1 group, three-way completed)`。`LOWERING_UNSUPPORTED`、
+`EXECUTION_FAILED`、diagnostic setup failure 或完全未运行会保留原状态，但不被
+伪装成一次已完成的语义 non-PASS；因此概率必须和 completion coverage 一起解释。
+这直接实现主方案 9.4 的成对报告，并允许如实出现
+`Gate1 LEAKAGE_REJECTED + Gate2 PASS`，任何一方都不得覆盖另一方。
+
+加入该字段后 held-out batch identity schema 升为 6，旧 row 因没有成对 observation
+不得直接 resume 后混入新汇总。首个真实 causal-v3 样本 `fg_ones` 已由新 summary
+机械报告：Gate1 `REPLAY_CLOSED` 组 1 个样本，Gate2 attempt/completion coverage
+均为 1.0，三方 PASS 为 1/1；该单样本只验证统计接线，不构成条件概率结论。后续
+必须在其余 held-out 样本重跑 causal-v3 后同时报告闭合组与非闭合组。
+
+将同一汇总器离线应用到当前可复核的 causal-v3 add、row-sum、RMSNorm、softmax
+与 FlagGems ones 五份报告，得到 `REPLAY_CLOSED` 组 4/4 Gate2 PASS、非闭合组
+1/1 Gate2 PASS，两组条件值暂时都是 1.0。matmul 的旧序列化报告仍保存收紧合同
+前的 verdict，虽已用当前 evaluator 重新裁决闭合，但在生成新完整报告前不混入
+该统计。上述五例结果不能证明 Gate1 对 Gate2 有区分度；它只表明 softmax 的
+paired off-target 结构失败可与 normal replay 的有限输入行为 PASS 同时成立。
+下一轮必须扩大 causal-v3 held-out 样本并保持 rejected diagnostic 常开，不能通过
+删除该失败样本或让 Gate2 覆盖 Gate1 来制造概率间隔。

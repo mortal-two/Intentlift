@@ -14,7 +14,8 @@ from intentir.verify.gate1.compiler import (
     RuntimeArgument,
     TritonCompiler,
 )
-from intentir.verify.gate1.diagnose import RepairFeedback
+from intentir.verify.gate1.diagnose import sanitize_replay_diagnostic
+from intentir.verify.gate1.interventions import InterventionStatus
 from intentir.verify.gate1.compare import compare_ttir
 from intentir.verify.gate1.model import (
     AccessKind,
@@ -42,9 +43,11 @@ from intentir.verify.gate1.orchestrate import (
     ReliftTrigger,
     _validate_compiled_interface,
 )
+from intentir.verify.gate1.pi_ablations import _case_with_artifact_schedule
 from intentir.verify.gate1.replay import (
     ReplayGeneration,
     StaticReplayWriter,
+    _augment_prompt,
     restore_masked_replay_module,
 )
 from intentir.verify.gate1.rules import default_triton_rule_registry
@@ -72,6 +75,19 @@ module {
   }
 }
 '''
+
+ADD_TTIR = r'''
+module {
+  tt.func public @kernel(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %value = tt.load %x : !tt.ptr<f32>
+    %sum = arith.addf %value, %value : f32
+    tt.store %out, %sum : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+SUB_TTIR = ADD_TTIR.replace("arith.addf", "arith.subf")
 
 SPECIALIZED_SCALAR_TTIR = r'''
 module {
@@ -119,6 +135,15 @@ import triton.language as tl
 @triton.jit(do_not_specialize=["scrc_p2"])
 def scrc_k0(scrc_p0, scrc_p1, scrc_p2, scrc_p3: tl.constexpr):
     "MASKED_FAIL"
+    return
+'''
+
+OPAQUE_MASKED_SEMANTIC_DRIFT = '''import triton
+import triton.language as tl
+
+@triton.jit(do_not_specialize=["scrc_p2"])
+def scrc_k0(scrc_p0, scrc_p1, scrc_p2, scrc_p3: tl.constexpr):
+    "BAD"
     return
 '''
 
@@ -207,8 +232,14 @@ def _artifact() -> Gate1Artifact:
         plan=ReplayPlan(
             [
                 ReplayStep("bind_program_domain", refs=["lane_domain"]),
-                ReplayStep("realize_masked_access", refs=["load_x", "store_out"]),
-                ReplayStep("realize_elementwise", node_ref="identity_node"),
+                ReplayStep("bind_runtime_scalar", refs=["n"]),
+                ReplayStep("declare_schedule_slot", refs=["BLOCK"]),
+                ReplayStep("declare_schedule_slot", refs=["num_warps"]),
+                ReplayStep("materialize_index_tile", refs=["load_x"]),
+                ReplayStep("realize_masked_access", refs=["load_x"]),
+                ReplayStep("realize_cast", node_ref="identity_node"),
+                ReplayStep("materialize_index_tile", refs=["store_out"]),
+                ReplayStep("realize_masked_access", refs=["store_out"]),
             ]
         ),
         location_map=LocationMap("private.py", []),
@@ -238,7 +269,12 @@ class FakeCompiler:
         self.calls.append(code)
         if "COMPILE_FAIL" in code or "MASKED_FAIL" in code:
             return CompileResult(ok=False, diagnostic='File "/secret/worker.py", line 7: bad replay')
-        ttir = BAD_TTIR if "BAD" in code else GOOD_TTIR
+        if "REPLAY_SUB" in code:
+            ttir = SUB_TTIR
+        elif "SOURCE_ADD" in code or "REPLAY_ADD" in code:
+            ttir = ADD_TTIR
+        else:
+            ttir = BAD_TTIR if "BAD" in code else GOOD_TTIR
         return CompileResult(
             ok=True,
             ttir=ttir,
@@ -268,18 +304,21 @@ class CaptureWriter:
         self.repeated_id = repeated_id
         self.normal_index = 0
         self.masked_index = 0
-        self.calls: list[tuple[RepairFeedback | None, ReplayGeneration | None, bool]] = []
+        self.calls: list[tuple[ReplayGeneration | None, bool]] = []
+        self.artifacts: list[Gate1Artifact] = []
 
     def generate(
         self,
         artifact: Gate1Artifact,
         registry,
         *,
-        feedback: RepairFeedback | None = None,
         base_candidate: ReplayGeneration | None = None,
         masked: bool = False,
+        plan_override: ReplayPlan | None = None,
+        ablation_kind: str | None = None,
     ) -> ReplayGeneration:
-        self.calls.append((feedback, base_candidate, masked))
+        self.calls.append((base_candidate, masked))
+        self.artifacts.append(artifact)
         if masked:
             code = self.masked
             index = self.masked_index
@@ -299,11 +338,44 @@ class CaptureWriter:
             code_sha256=digest,
             response_model="capture",
             masked=masked,
-            feedback=feedback,
+            base_generation_id=(
+                None if base_candidate is None else base_candidate.generation_id
+            ),
+            ablation_kind=ablation_kind,
         )
 
 
+def test_controlled_replay_prompt_preserves_unchanged_strict_pi_steps() -> None:
+    baseline = ReplayGeneration(
+        code="MODEL_GENERATED_BASELINE",
+        prompt_sha256="baseline-prompt",
+        requested_model="capture",
+        generation_id="normal:0",
+        code_sha256="baseline-code",
+    )
+    prompt = _augment_prompt(
+        "CURRENT_PACKET",
+        base_candidate=baseline,
+    )
+
+    assert "MODEL_GENERATED_BASELINE" in prompt
+    assert "complete pi is the construction contract" in prompt
+    assert "do not introduce redundant predicates" in prompt
+    assert "ALLOWLISTED_REPAIR_FEEDBACK" not in prompt
+
+
+def test_pi_ablation_compile_case_uses_the_frozen_artifact_schedule() -> None:
+    unscheduled = replace(_case(), schedule={})
+    scheduled = _case_with_artifact_schedule(unscheduled, _artifact())
+    assert scheduled.schedule == {"BLOCK": 64, "num_warps": 4}
+
+    conflicting = replace(_case(), schedule={"BLOCK": 32, "num_warps": 4})
+    with pytest.raises(ValueError, match="differs from the frozen artifact"):
+        _case_with_artifact_schedule(conflicting, _artifact())
+
+
 def _runner(**config) -> Gate1Runner:
+    config.setdefault("run_semantic_interventions", False)
     return Gate1Runner(
         compiler=FakeCompiler(),
         config=Gate1Config(**config),
@@ -312,6 +384,37 @@ def _runner(**config) -> Gate1Runner:
 
 def _source(function: str = "kernel") -> KernelSource:
     return KernelSource.from_code("SOURCE", function, trusted=True)
+
+
+def _binary_artifact() -> Gate1Artifact:
+    artifact = _artifact()
+    intent = IntentFunction.from_json(
+        {
+            "name": "binary_semantics",
+            "inputs": [{"name": "x", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "out", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "map_binary",
+                    "result": "out",
+                    "operands": ["x", "x"],
+                    "attrs": {"fn": "add"},
+                }
+            ],
+        }
+    )
+    return replace(
+        artifact,
+        j=replace(artifact.j, intent=intent),
+        plan=ReplayPlan(
+            [
+                replace(step, rule="realize_elementwise")
+                if step.rule == "realize_cast"
+                else step
+                for step in artifact.plan.steps
+            ]
+        ),
+    )
 
 
 def test_static_masked_writer_preserves_opaque_evidence_for_runner() -> None:
@@ -325,6 +428,55 @@ def test_static_masked_writer_preserves_opaque_evidence_for_runner() -> None:
     restored = restore_masked_replay_module(generation.code, _artifact())
     assert "def kernel(x, out, n, BLOCK: tl.constexpr):" in restored
     assert 'do_not_specialize=[\'n\']' in restored
+
+
+def test_paired_intervention_is_the_deterministic_anti_leakage_basis() -> None:
+    writer = CaptureWriter(["REPLAY_ADD", "REPLAY_SUB"])
+    result = _runner(
+        stable_closures=1, run_semantic_interventions=True
+    ).run(
+        KernelSource.from_code("SOURCE_ADD", "kernel", trusted=True),
+        _binary_artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.anti_leakage_basis == "paired_intervention"
+    assert len(result.interventions) == 1
+    assert result.interventions[0].status is InterventionStatus.PASS
+    assert [item.j.intent.body[0].attrs["fn"] for item in writer.artifacts[:2]] == [
+        "add",
+        "sub",
+    ]
+    assert writer.artifacts[0].plan.to_json() == writer.artifacts[1].plan.to_json()
+    assert writer.artifacts[0].schedule.to_json() == (
+        writer.artifacts[1].schedule.to_json()
+    )
+    assert [masked for _, masked in writer.calls] == [False, False, True]
+    assert writer.calls[1][0] is not None
+    assert writer.calls[1][0].generation_id == "normal:0"
+    assert result.interventions[0].generation is not None
+    assert result.interventions[0].generation.base_generation_id == "normal:0"
+
+
+def test_paired_intervention_rejects_a_writer_that_ignores_changed_j() -> None:
+    writer = CaptureWriter(["REPLAY_ADD", "REPLAY_ADD"])
+    result = _runner(
+        stable_closures=1, run_semantic_interventions=True
+    ).run(
+        KernelSource.from_code("SOURCE_ADD", "kernel", trusted=True),
+        _binary_artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+    )
+
+    assert result.status is Gate1Status.LEAKAGE_REJECTED
+    assert result.anti_leakage_basis == "paired_intervention"
+    assert result.interventions[0].status is InterventionStatus.IGNORED_J
+    assert [masked for _, masked in writer.calls] == [False, False]
 
 
 def test_masked_abi_restore_renames_model_locals_that_collide() -> None:
@@ -355,24 +507,42 @@ def test_masked_abi_restore_rejects_a_wrong_public_signature() -> None:
         restore_masked_replay_module(wrong_signature, _artifact())
 
 
-def test_bounded_repair_stability_and_masked_ablation_close() -> None:
+def test_failed_replay_relifts_then_restarts_stability_and_ablation() -> None:
+    class RecordingRelifter:
+        requests = []
+
+        def relift(
+            self, artifact, *, source_fingerprint, history, request
+        ):
+            self.requests.append(request)
+            return artifact
+
     writer = CaptureWriter(["BAD", "GOOD", "GOOD"])
-    result = _runner(stable_closures=2).run(
-        _source(), _artifact(), _case(), default_triton_rule_registry(), writer
+    relifter = RecordingRelifter()
+    runner = _runner(stable_closures=2, max_relifts=2)
+    result = runner.run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+        relifter=relifter,
     )
 
     assert result.status is Gate1Status.REPLAY_CLOSED
     assert len(result.candidates) == 3
     assert [item.comparison is not None and item.comparison.hard_pass for item in result.candidates] == [False, True, True]
-    assert writer.calls[0][0] is None and writer.calls[0][1] is None
-    feedback, base, masked = writer.calls[1]
-    assert not masked and feedback is not None and base is not None
-    feedback_text = str(feedback.to_json())
-    assert "SOURCE_CANARY_91F7" not in feedback_text
-    assert "源=" not in feedback_text
-    assert "arith.addf" not in feedback_text
-    assert writer.calls[2][0] is None and writer.calls[2][1] is None
-    assert writer.calls[3][2]
+    assert relifter.requests[0].trigger is ReliftTrigger.NORMAL_NO_CLOSURE
+    assert [item.relift_round for item in result.candidates] == [0, 1, 1]
+    assert writer.calls[:3] == [(None, False), (None, False), (None, False)]
+    assert writer.calls[3][1]
+    assert runner.compiler.calls[:5] == [
+        "SOURCE",
+        "BAD",
+        "SOURCE",
+        "GOOD",
+        "GOOD",
+    ]
     assert result.masked_compile is not None and not result.masked_compile.ok
     assert result.masked_generation is not None
     assert result.masked_generation.masked
@@ -393,7 +563,11 @@ def test_runner_restores_opaque_masked_code_and_rejects_real_leakage() -> None:
     writer = CaptureWriter(["GOOD"], masked=REAL_MASKED_FAILURE_CODE)
     result = Gate1Runner(
         compiler=compiler,
-        config=Gate1Config(stable_closures=1, max_relifts=2),
+        config=Gate1Config(
+            stable_closures=1,
+            max_relifts=2,
+            run_semantic_interventions=False,
+        ),
     ).run(
         _source(),
         _artifact(),
@@ -410,16 +584,66 @@ def test_runner_restores_opaque_masked_code_and_rejects_real_leakage() -> None:
     assert "def kernel(x, out, n, BLOCK: tl.constexpr):" in compiler.calls[-1]
 
 
-def test_initial_plus_two_repairs_is_exactly_three_candidates() -> None:
+def test_masked_fallback_uses_exact_semantic_degradation_not_score_threshold() -> None:
+    writer = CaptureWriter(
+        ["GOOD"], masked=OPAQUE_MASKED_SEMANTIC_DRIFT
+    )
+    result = Gate1Runner(
+        compiler=FakeCompiler(),
+        config=Gate1Config(
+            stable_closures=1,
+            run_semantic_interventions=False,
+            leakage_threshold=0.0,
+        ),
+    ).run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.anti_leakage_basis == "masked_j_fallback"
+    assert result.masked_comparison is not None
+    assert not result.masked_comparison.hard_pass
+    assert result.leakage_ratio is not None and result.leakage_ratio > 0.0
+    assert any(
+        "deterministically lost semantic hard component" in diagnostic
+        for diagnostic in result.diagnostics
+    )
+    assert any(
+        "score ratio=" in diagnostic and "diagnostic only" in diagnostic
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_compile_failure_has_no_replay_side_retry() -> None:
     writer = CaptureWriter(["COMPILE_FAIL"])
     result = _runner(stable_closures=1, run_masked_ablation=False).run(
         _source(), _artifact(), _case(), default_triton_rule_registry(), writer
     )
 
     assert result.status is Gate1Status.NO_CLOSURE
-    assert len(result.candidates) == 3
-    assert len(writer.calls) == 3
+    assert len(result.candidates) == 1
+    assert len(writer.calls) == 1
     assert result.best_candidate is not None
+    assert result.best_candidate.diagnosis is not None
+    assert result.best_candidate.diagnosis.mismatches == ("bad replay",)
+
+
+def test_compile_diagnostic_guides_lift_without_replay_source() -> None:
+    summary = sanitize_replay_diagnostic(
+        '''Traceback (most recent call last):
+  File "/secret/worker.py", line 7
+    output_value = tl.load(error_ptr)
+                   ^
+NameError: output_value is not defined'''
+    )
+
+    assert summary == "NameError: output_value is not defined"
+    assert "/secret/worker.py" not in summary
+    assert "tl.load" not in summary
 
 
 def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
@@ -435,7 +659,6 @@ def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
 
     writer = CaptureWriter(["BAD"])
     result = _runner(
-        max_repairs=0,
         max_relifts=2,
         stable_closures=1,
         run_masked_ablation=False,
@@ -457,20 +680,39 @@ def test_semantic_relift_failure_is_audited_as_no_closure() -> None:
     )
 
 
-def test_replay_policy_failure_does_not_trigger_semantic_relift() -> None:
+def test_replay_policy_failure_triggers_fresh_source_aware_relift() -> None:
     class PolicyRejectingWriter:
-        def generate(self, *args, **kwargs):
-            raise UnsafeReplayCodeError("libdevice call is not allowlisted")
+        calls = 0
 
-    class ForbiddenRelifter:
-        def relift(self, *args, **kwargs):
-            raise AssertionError(
-                "semantic relift requires a compiled hard comparison"
+        def generate(self, *args, **kwargs):
+            self.calls += 1
+            assert kwargs.get("base_candidate") is None
+            if self.calls == 1:
+                raise UnsafeReplayCodeError("libdevice call is not allowlisted")
+            code = GOOD_CODE
+            digest = hashlib.sha256(code.encode()).hexdigest()
+            return ReplayGeneration(
+                code=code,
+                prompt_sha256="prompt",
+                requested_model="capture",
+                generation_id=f"normal:{self.calls}",
+                code_sha256=digest,
             )
 
+    class RecordingRelifter:
+        requests = []
+
+        def relift(
+            self, artifact, *, source_fingerprint, history, request
+        ):
+            self.requests.append(request)
+            assert history[-1].generation is None
+            return artifact
+
+    writer = PolicyRejectingWriter()
+    relifter = RecordingRelifter()
     result = _runner(
-        max_repairs=2,
-        max_relifts=3,
+        max_relifts=2,
         stable_closures=1,
         run_masked_ablation=False,
     ).run(
@@ -478,17 +720,15 @@ def test_replay_policy_failure_does_not_trigger_semantic_relift() -> None:
         _artifact(),
         _case(),
         default_triton_rule_registry(),
-        PolicyRejectingWriter(),
-        relifter=ForbiddenRelifter(),
+        writer,
+        relifter=relifter,
     )
 
-    assert result.status is Gate1Status.NO_CLOSURE
-    assert len(result.candidates) == 1
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert len(result.candidates) == 2
     assert result.candidates[0].comparison is None
-    assert result.diagnostics == (
-        "semantic relift skipped because this artifact produced no compiled "
-        "source/replay comparison",
-    )
+    assert relifter.requests[0].trigger is ReliftTrigger.REPLAY_GENERATION_FAILED
+    assert writer.calls == 2
 
 
 def test_outer_relift_round_replays_the_revised_artifact() -> None:
@@ -510,7 +750,6 @@ def test_outer_relift_round_replays_the_revised_artifact() -> None:
     writer = CaptureWriter(["BAD", "GOOD"])
     relifter = RecordingRelifter()
     result = _runner(
-        max_repairs=0,
         max_relifts=2,
         stable_closures=1,
         run_masked_ablation=False,
@@ -539,16 +778,34 @@ def test_outer_relift_round_replays_the_revised_artifact() -> None:
     assert [item.relift_round for item in result.candidates] == [0, 1]
 
 
-def test_regressed_candidate_does_not_replace_best_repair_base() -> None:
-    writer = CaptureWriter(["BAD", "COMPILE_FAIL", "COMPILE_FAIL"])
-    result = _runner(stable_closures=1, run_masked_ablation=False).run(
-        _source(), _artifact(), _case(), default_triton_rule_registry(), writer
+def test_compile_failure_relifts_and_never_reuses_failed_replay_as_base() -> None:
+    class RecordingRelifter:
+        requests = []
+
+        def relift(
+            self, artifact, *, source_fingerprint, history, request
+        ):
+            self.requests.append(request)
+            return artifact
+
+    writer = CaptureWriter(["COMPILE_FAIL", "GOOD"])
+    relifter = RecordingRelifter()
+    result = _runner(
+        max_relifts=2,
+        stable_closures=1,
+        run_masked_ablation=False,
+    ).run(
+        _source(),
+        _artifact(),
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+        relifter=relifter,
     )
 
-    assert result.status is Gate1Status.NO_CLOSURE
-    assert result.best_candidate is result.candidates[0]
-    assert result.candidates[1].regressed
-    assert writer.calls[2][1] is result.candidates[0].generation
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert relifter.requests[0].trigger is ReliftTrigger.REPLAY_COMPILE_FAILED
+    assert writer.calls == [(None, False), (None, False)]
 
 
 def test_reused_generation_id_cannot_satisfy_stability() -> None:
@@ -626,6 +883,20 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_outer_product",
     } <= {card.id for card in first.cards}
     cards = {card.id: card for card in first.cards}
+    assert {
+        card.id for card in first.cards if card.selection_mode.value == "override"
+    } == {
+        "bind_wide_program_domain",
+        "materialize_pointer_tile",
+        "materialize_mask_tile",
+        "realize_flattened_reduce",
+    }
+    assert all(
+        card.override_family is not None
+        for card in first.cards
+        if card.selection_mode.value == "override"
+    )
+    assert cards["realize_k_tiled_dot"].selection_mode.value == "derived"
     assert cards["materialize_pointer_tile"].version == "2"
     assert any(
         "coordinate components" in item
@@ -763,7 +1034,7 @@ def test_real_triton_runner_closes_without_launching(tmp_path) -> None:
     )
     runner = Gate1Runner(
         compiler=TritonCompiler(cache_dir=tmp_path, timeout=180.0),
-        config=Gate1Config(),
+            config=Gate1Config(run_semantic_interventions=False),
     )
     result = runner.run(
         KernelSource.from_code(REAL_COPY_CODE, "kernel", trusted=True),

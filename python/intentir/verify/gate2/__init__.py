@@ -12,6 +12,7 @@ from .inputs import (
     generate_tensor_input,
 )
 from .lower2c import Lower2CRunner, Lower2CSpec
+from .metrics import extract_gate1_gate2_observation, summarize_gate1_gate2
 from .model import (
     ExecutionResult,
     Gate2Result,
@@ -53,6 +54,8 @@ __all__ = [
     "TritonRunner",
     "boundary_1d_extents",
     "compare_outputs",
+    "extract_gate1_gate2_observation",
     "generate_input_matrix",
     "generate_tensor_input",
+    "summarize_gate1_gate2",
 ]

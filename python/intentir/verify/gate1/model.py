@@ -949,7 +949,13 @@ class ScheduleSpec(StrictJSONMixin):
 
 @dataclass
 class ReplayStep(StrictJSONMixin):
-    """One pi step.  Its persisted schema permits exactly three fields."""
+    """One ordered rule instance in the complete strict replay plan.
+
+    ``node_ref`` is the preferred target.  The first ``refs`` entry is the
+    target when ``node_ref`` is absent; remaining refs are ordered context
+    bindings.  The instance selects a mechanism card, while semantic values
+    remain owned by and referenced from J/B/C or the interface.
+    """
 
     rule: str
     node_ref: str | None = None
@@ -985,16 +991,29 @@ class ReplayStep(StrictJSONMixin):
             result["refs"] = list(self.refs)
         return result
 
+    @property
+    def target_ref(self) -> str | None:
+        return self.node_ref or (self.refs[0] if self.refs else None)
+
 
 @dataclass
 class ReplayPlan(StrictJSONMixin):
+    """Complete ordered replay-rule instances for one source implementation.
+
+    The order is part of pi's construction contract.  Semantic values remain
+    owned by J/B/C and are referenced by each step rather than copied here.
+    """
+
     steps: list[ReplayStep] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.steps = [
+        parsed = [
             item if isinstance(item, ReplayStep) else ReplayStep.from_json(item)
             for item in self.steps
         ]
+        # A strict replay plan is ordered.  Keep the Lift-produced construction
+        # order exactly; individual refs are ordered typed/context bindings too.
+        self.steps = parsed
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "ReplayPlan":
@@ -1345,6 +1364,8 @@ class Gate1Artifact(StrictJSONMixin):
             | tensor_names
             | set(self.j.boundary.domains)
             | {item.access_id for item in self.j.boundary.accesses}
+            | {parameter.name for parameter in self.interface.parameters}
+            | {slot.name for slot in self.schedule.slots}
         )
         plan_refs = [
             *(step.node_ref for step in self.plan.steps if step.node_ref is not None),
@@ -1467,12 +1488,22 @@ class Gate1Artifact(StrictJSONMixin):
 
         if masked:
             return _masked_rewriter_view(self)
-        return {
-            "j": self.j.to_json(),
-            "interface": self.interface.rewriter_view(),
-            "schedule": self.schedule.rewriter_view(),
-            "plan": self.plan.to_json(),
-        }
+        return _opaque_normal_rewriter_view(self)
+
+    def opaque_plan_view(self, plan: ReplayPlan | None = None) -> dict[str, Any]:
+        """Render a replay plan with deterministic, source-neutral references."""
+
+        aliases, _, _ = _opaque_reference_data(self)
+        selected = self.plan if plan is None else plan
+        return _opaque_plan_json(selected, aliases)
+
+    def opaque_selection_view(
+        self, selection: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Alpha-rename rule-selection trace references like the plan view."""
+
+        aliases, _, _ = _opaque_reference_data(self)
+        return _opaque_selection_json(selection, aliases)
 
 
 @dataclass
@@ -1574,6 +1605,483 @@ def opaque_replay_abi(
         schedule_names[slot.name] = allocate(f"scrc_c{compiler_index}")
         compiler_index += 1
     return function_name, parameter_names, schedule_names
+
+
+_OPAQUE_EXPRESSION_RESERVED = frozenset(
+    {
+        "and",
+        "or",
+        "not",
+        "True",
+        "False",
+        "None",
+        "inf",
+        "nan",
+    }
+)
+
+
+def _intent_ops_with_paths(
+    body: list[dict[str, Any]], prefix: str = "body"
+) -> list[tuple[dict[str, Any], str]]:
+    result: list[tuple[dict[str, Any], str]] = []
+    for index, op in enumerate(body):
+        path = f"{prefix}[{index}]"
+        result.append((op, path))
+        nested = op.get("body", [])
+        if isinstance(nested, list):
+            result.extend(_intent_ops_with_paths(nested, f"{path}.body"))
+    return result
+
+
+def _intent_result_names(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def _expression_identifiers(value: str) -> list[tuple[str, int, int]]:
+    return [
+        (match.group(0), match.start(), match.end())
+        for match in re.finditer(r"\b[A-Za-z_][A-Za-z0-9_]*\b", value)
+    ]
+
+
+def _is_expression_function_or_qualified(
+    value: str, start: int, end: int
+) -> bool:
+    before = value[:start].rstrip()
+    after = value[end:].lstrip()
+    return before.endswith(".") or after.startswith(".") or after.startswith("(")
+
+
+def _boundary_expression_fields(
+    artifact: Gate1Artifact,
+) -> list[tuple[str, str]]:
+    fields: list[tuple[str, str]] = []
+    for index, expression in enumerate(artifact.j.boundary.domains.values()):
+        fields.append((expression, f"j.boundary.domains[{index}]"))
+    for index, access in enumerate(artifact.j.boundary.accesses):
+        if access.index_expression is not None:
+            fields.append(
+                (
+                    access.index_expression,
+                    f"j.boundary.accesses[{index}].index_expression",
+                )
+            )
+        if access.predicate is not None:
+            fields.append(
+                (access.predicate, f"j.boundary.accesses[{index}].predicate")
+            )
+    for index, mapping in enumerate(artifact.j.boundary.output_mappings):
+        fields.append(
+            (mapping.value, f"j.boundary.output_mappings[{index}].value")
+        )
+    for index, broadcast in enumerate(artifact.j.boundary.broadcasts):
+        for axis_index, axis in enumerate(broadcast.axes):
+            if isinstance(axis, str):
+                fields.append(
+                    (
+                        axis,
+                        f"j.boundary.broadcasts[{index}].axes[{axis_index}]",
+                    )
+                )
+    for index, reduction in enumerate(artifact.j.boundary.reductions):
+        if isinstance(reduction.tile_axis, str):
+            fields.append(
+                (
+                    reduction.tile_axis,
+                    f"j.boundary.reductions[{index}].tile_axis",
+                )
+            )
+    return fields
+
+
+def _opaque_reference_data(
+    artifact: Gate1Artifact,
+) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
+    """Build declaration-order aliases without exposing the original spelling."""
+
+    intent_json = artifact.j.intent.to_json()["intent_function"]
+    body = intent_json.get("body", [])
+    expression_fields = _boundary_expression_fields(artifact)
+    occupied: set[str] = {
+        artifact.j.kernel_id,
+        artifact.j.intent.name,
+        *(tensor.name for tensor in artifact.j.intent.inputs),
+        *(tensor.name for tensor in artifact.j.intent.outputs),
+        *artifact.j.node_ids,
+        *artifact.j.node_ids.values(),
+        *artifact.j.boundary.domains,
+        *(access.access_id for access in artifact.j.boundary.accesses),
+        *(parameter.name for parameter in artifact.interface.parameters),
+        *(slot.name for slot in artifact.schedule.slots),
+    }
+    for op, _ in _intent_ops_with_paths(body):
+        occupied.update(_intent_result_names(op.get("result")))
+    for expression, _ in expression_fields:
+        occupied.update(token for token, _, _ in _expression_identifiers(expression))
+
+    aliases: dict[str, str] = {}
+    owners: dict[str, list[dict[str, str]]] = {}
+    alias_order: list[str] = []
+
+    def allocate(original: str, stem: str, kind: str, path: str) -> str:
+        if original in aliases:
+            alias = aliases[original]
+        else:
+            candidate = stem
+            suffix = 0
+            while (
+                candidate in owners
+                or (candidate in occupied and candidate != original)
+            ):
+                suffix += 1
+                candidate = f"{stem}_{suffix}"
+            alias = candidate
+            aliases[original] = alias
+            owners[alias] = []
+            alias_order.append(alias)
+        owner = {"kind": kind, "path": path}
+        if owner not in owners[alias]:
+            owners[alias].append(owner)
+        return alias
+
+    tensor_index = 0
+    for collection_name, tensors in (
+        ("inputs", artifact.j.intent.inputs),
+        ("outputs", artifact.j.intent.outputs),
+    ):
+        for index, tensor in enumerate(tensors):
+            allocate(
+                tensor.name,
+                f"t{tensor_index}",
+                "j_tensor",
+                f"j.intent.intent_function.{collection_name}[{index}]",
+            )
+            tensor_index += 1
+
+    for index, (node_id, path) in enumerate(artifact.j.node_ids.items()):
+        alias = allocate(node_id, f"n{index}", "j_node", f"j.intent.{path}")
+        aliases[path] = alias
+
+    for index, name in enumerate(artifact.j.boundary.domains):
+        allocate(name, f"d{index}", "boundary_domain", f"j.boundary.domains[{index}]")
+    for index, access in enumerate(artifact.j.boundary.accesses):
+        allocate(
+            access.access_id,
+            f"a{index}",
+            "boundary_access",
+            f"j.boundary.accesses[{index}]",
+        )
+
+    value_index = 0
+    for op, path in _intent_ops_with_paths(body):
+        for result_index, name in enumerate(_intent_result_names(op.get("result"))):
+            allocate(
+                name,
+                f"v{value_index}",
+                "j_value",
+                f"j.intent.{path}.result[{result_index}]",
+            )
+            value_index += 1
+
+    for index, parameter in enumerate(artifact.interface.parameters):
+        allocate(
+            parameter.name,
+            f"p{index}",
+            "interface_parameter",
+            f"interface.parameters[{index}]",
+        )
+    compiler_index = 0
+    for index, slot in enumerate(artifact.schedule.slots):
+        stem = f"c{compiler_index}"
+        if slot.name not in aliases:
+            compiler_index += 1
+        allocate(
+            slot.name,
+            stem,
+            "schedule_slot",
+            f"schedule.slots[{index}]",
+        )
+
+    for expression, path in expression_fields:
+        for token, start, end in _expression_identifiers(expression):
+            if token in aliases or token in _OPAQUE_EXPRESSION_RESERVED:
+                continue
+            if _is_expression_function_or_qualified(expression, start, end):
+                continue
+            allocate(token, f"v{value_index}", "boundary_symbol", path)
+            value_index += 1
+
+    bindings = [
+        {"ref": alias, "owners": copy.deepcopy(owners[alias])}
+        for alias in alias_order
+    ]
+    return aliases, bindings, alias_order
+
+
+def _opaque_reference(value: str, aliases: dict[str, str]) -> str:
+    try:
+        return aliases[value]
+    except KeyError as exc:
+        raise SchemaError(
+            f"replay reference {value!r} has no opaque alias"
+        ) from exc
+
+
+def _opaque_expression(value: str, aliases: dict[str, str]) -> str:
+    return re.sub(
+        r"\b[A-Za-z_][A-Za-z0-9_]*\b",
+        lambda match: aliases.get(match.group(0), match.group(0)),
+        value,
+    )
+
+
+def _opaque_json_exact(value: Any, aliases: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return aliases.get(value, value)
+    if isinstance(value, list):
+        return [_opaque_json_exact(item, aliases) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _opaque_json_exact(item, aliases)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
+
+def _opaque_intent_op(
+    op: dict[str, Any], aliases: dict[str, str]
+) -> dict[str, Any]:
+    result = copy.deepcopy(op)
+    if "result" in result:
+        result["result"] = _opaque_json_exact(result["result"], aliases)
+    for key in ("operands", "out", "carry", "trip", "scan", "yield"):
+        if key in result:
+            result[key] = _opaque_json_exact(result[key], aliases)
+    for key in ("attrs", "type", "layer_b"):
+        if key in result:
+            result[key] = _opaque_json_exact(result[key], aliases)
+    if "body" in result:
+        result["body"] = [
+            _opaque_intent_op(item, aliases) for item in result["body"]
+        ]
+    return result
+
+
+def _opaque_plan_json(
+    plan: ReplayPlan, aliases: dict[str, str]
+) -> dict[str, Any]:
+    return {
+        "steps": [
+            {
+                "rule": step.rule,
+                **(
+                    {"node_ref": _opaque_reference(step.node_ref, aliases)}
+                    if step.node_ref is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "refs": [
+                            _opaque_reference(ref, aliases) for ref in step.refs
+                        ]
+                    }
+                    if step.refs
+                    else {}
+                ),
+            }
+            for step in plan.steps
+        ]
+    }
+
+
+def _opaque_selection_json(
+    selection: list[dict[str, Any]], aliases: dict[str, str]
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in selection:
+        opaque = copy.deepcopy(item)
+        for key in ("target_ref", "node_ref"):
+            if key in opaque:
+                opaque[key] = _opaque_reference(opaque[key], aliases)
+        if "refs" in opaque:
+            opaque["refs"] = [
+                _opaque_reference(ref, aliases) for ref in opaque["refs"]
+            ]
+        result.append(opaque)
+    return result
+
+
+def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
+    """Preserve J/B semantics while removing source-derived identifier hints."""
+
+    aliases, bindings, _ = _opaque_reference_data(artifact)
+    intent = artifact.j.intent.to_json()["intent_function"]
+    opaque_intent = {
+        "intent_function": {
+            "name": "scrc_intent0",
+            "inputs": [
+                {
+                    "name": _opaque_reference(tensor.name, aliases),
+                    "dtype": tensor.dtype,
+                    "shape": [
+                        aliases.get(dim, dim) if isinstance(dim, str) else dim
+                        for dim in tensor.shape
+                    ],
+                }
+                for tensor in artifact.j.intent.inputs
+            ],
+            "outputs": [
+                {
+                    "name": _opaque_reference(tensor.name, aliases),
+                    "dtype": tensor.dtype,
+                    "shape": [
+                        aliases.get(dim, dim) if isinstance(dim, str) else dim
+                        for dim in tensor.shape
+                    ],
+                }
+                for tensor in artifact.j.intent.outputs
+            ],
+            "layer_c": {},
+            "body": [
+                _opaque_intent_op(op, aliases) for op in intent.get("body", [])
+            ],
+        }
+    }
+
+    boundary = artifact.j.boundary
+    opaque_boundary = {
+        "domains": {
+            _opaque_reference(name, aliases): _opaque_expression(expression, aliases)
+            for name, expression in boundary.domains.items()
+        },
+        "accesses": [
+            {
+                "access_id": _opaque_reference(access.access_id, aliases),
+                "kind": access.kind.value,
+                "tensor": _opaque_reference(access.tensor, aliases),
+                "index_expression": (
+                    _opaque_expression(access.index_expression, aliases)
+                    if access.index_expression is not None
+                    else None
+                ),
+                **(
+                    {"predicate": _opaque_expression(access.predicate, aliases)}
+                    if access.predicate is not None
+                    else {}
+                ),
+                **(
+                    {"fill_value": copy.deepcopy(access.fill_value)}
+                    if access.fill_value is not None
+                    else {}
+                ),
+                **(
+                    {"node_ref": _opaque_reference(access.node_ref, aliases)}
+                    if access.node_ref is not None
+                    else {}
+                ),
+            }
+            for access in boundary.accesses
+        ],
+        "broadcasts": [
+            {
+                "node_ref": _opaque_reference(item.node_ref, aliases),
+                "operand": _opaque_reference(item.operand, aliases),
+                "axes": [
+                    _opaque_expression(axis, aliases)
+                    if isinstance(axis, str)
+                    else axis
+                    for axis in item.axes
+                ],
+            }
+            for item in boundary.broadcasts
+        ],
+        "aliases": [
+            {
+                "left": _opaque_reference(item.left, aliases),
+                "right": _opaque_reference(item.right, aliases),
+                "kind": item.kind.value,
+            }
+            for item in boundary.aliases
+        ],
+        "effects": [
+            {
+                "kind": item.kind.value,
+                "target": _opaque_reference(item.target, aliases),
+                **(
+                    {"node_ref": _opaque_reference(item.node_ref, aliases)}
+                    if item.node_ref is not None
+                    else {}
+                ),
+            }
+            for item in boundary.effects
+        ],
+        "output_mappings": [
+            {
+                "output": _opaque_reference(item.output, aliases),
+                "value": _opaque_expression(item.value, aliases),
+                **(
+                    {"node_ref": _opaque_reference(item.node_ref, aliases)}
+                    if item.node_ref is not None
+                    else {}
+                ),
+            }
+            for item in boundary.output_mappings
+        ],
+        "reductions": [
+            {
+                "node_ref": _opaque_reference(item.node_ref, aliases),
+                "tile_axis": (
+                    _opaque_expression(item.tile_axis, aliases)
+                    if isinstance(item.tile_axis, str)
+                    else item.tile_axis
+                ),
+                **(
+                    {"identity": copy.deepcopy(item.identity)}
+                    if item.identity is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "masked_contribution": copy.deepcopy(
+                            item.masked_contribution
+                        )
+                    }
+                    if item.masked_contribution is not None
+                    else {}
+                ),
+            }
+            for item in boundary.reductions
+        ],
+    }
+
+    interface = artifact.interface.rewriter_view()
+    for parameter in interface["parameters"]:
+        if parameter.get("tensor_ref") is not None:
+            parameter["tensor_ref"] = _opaque_reference(
+                parameter["tensor_ref"], aliases
+            )
+
+    return {
+        "j": {
+            "kernel_id": "scrc_j0",
+            "intent": opaque_intent,
+            "node_ids": {
+                _opaque_reference(node_id, aliases): path
+                for node_id, path in artifact.j.node_ids.items()
+            },
+            "boundary": opaque_boundary,
+        },
+        "interface": interface,
+        "schedule": artifact.schedule.rewriter_view(),
+        "plan": _opaque_plan_json(artifact.plan, aliases),
+        "reference_naming": "opaque_replay_refs_v1",
+        "reference_bindings": bindings,
+    }
 
 
 def _rename_identifier_tokens(value: str, aliases: dict[str, str]) -> str:

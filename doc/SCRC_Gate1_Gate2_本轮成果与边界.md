@@ -5,8 +5,7 @@
 | 部分 | 当前状态 | 已有真实证据 | 主要剩余问题 |
 |---|---|---|---|
 | SCRC Lift | 已可执行 | `gpt-5.6-sol / xhigh` 能从真实 Triton 源码生成 J/π/C/接口/定位表 | 复杂 Kernel 仍会暴露 IntentIR 表达或规则卡覆盖缺口 |
-| Gate1 内层小修 | 已可执行 | 源码隔离 replay、有界 repair、真实 Triton 编译与 TTIR 硬比较已跑通 | 需继续通过真实 diff 扩充可枚举规则，不能用模糊规范化吞掉差异 |
-| Gate1 外层重提 | 已打通首个真实闭环 | `fg_ones` 的错误 π 经一次重提从 `0.558333` 修正到 normal `1.0` | 目前只有一个真实重提样本，还需在更复杂语义缺失上验证稳定性 |
+| Gate1 relift-only 外循环 | 已可执行 | normal replay 生成/编译/接口/硬差异均只回流 source-aware Lift；旧 replay 不修补、不复用 | 真实 relift-only v7 仍需继续补复杂 Kernel 证据 |
 | masked-J 终检 | 已按方案实现并 fail-closed | 五核与首批十一个 FlagGems 真实样本都有报告 | 低熵 Kernel 和可识别 π 拓扑会产生大量“Gate1 拒绝、离线 Gate2 通过”样本；同一 `fg_vector_l1` artifact 的两次独立 masked-J 还得到 `0.906140/1.0`，说明单次比值也含模型随机性；这不等于 Gate1 判错，但说明现有单次比值不能区分真泄漏、模型先验、机制拓扑可识别性与采样波动 |
 | Gate2 三方执行 | 已是真实 Lower2C 原型 | source/replay 在 GPU 运行，J 经 production IntentIR→MLIR→LLVM CPU 链运行；已覆盖边界 shape、对抗值和多 seed | 当前 PASS 是 rejected-sample 离线对照或固定 J 回归，正式 Gate1→Gate2 正样本仍为 0；Lower2C 还未覆盖全部 A/B/C 特性，mixed-f16/f32 仍不是 dtype-faithful lowering |
 | 规模化 | 已启动 | 24 个真实 Kernel 队列中 11 个已完成真实 Lift/normal/masked/离线 Gate2 | 剩余 13 个 queued，离数百 Kernel 的覆盖、缓存和失败分诊目标仍有距离 |
@@ -272,13 +271,14 @@ diagnostic 因 CPU wrapper 把输入硬编码为 f32 而 `EXECUTION_FAILED`；�
 `3.6089e-9`。这些修复属于既有 const/cast/reduce lowering，不新增 IntentIR op。
 详细证据见 `doc/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
 
-### 1.8 第七章外层语义重提
+### 1.8 第七章 relift-only 语义重提
 
-Gate1 现在已经不再是“内层 replay 小修用尽后直接失败”。新增的
-外层 relifter 与方案第七章一致：
+当前 v7 已取消内层 replay 小修。任何 normal replay 的生成、编译、接口或硬指纹
+失败都形成 Lift feedback，并从 source-aware 外层重新产出 J/π 后全流程重跑：
 
 - 重写员仍然看不到源码；
-- 只有提升官能看源码、源 TTIR 指纹和经白名单编码的历史裁决；
+- 只有提升官能看源码、源 TTIR 指纹以及净化后的失败类别/确定性历史裁决；
+- 旧 replay code、compiler/comparator repair feedback 不回喂重写员；
 - 重提只允许修改 J、π 和定位表；
 - 接口与 C 必须与受信 artifact 完全相同，任何漂移都在本地拒绝；
 - provenance 只追加不覆盖，可以区分初始 Lift 与每轮重提；

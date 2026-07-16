@@ -34,13 +34,18 @@ from intentir.verify.gate1.compiler import (
     KernelSource,
     RuntimeArgument,
 )
+from intentir.verify.gate1.compare import TTIR_SCORE_SEMANTICS
 from intentir.verify.gate1.model import (
     Gate1Artifact,
-    Gate1Status,
     ParameterKind,
     ParameterMode,
 )
-from intentir.verify.gate1.orchestrate import Gate1Config, Gate1Runner
+from intentir.verify.gate1.orchestrate import (
+    MASKED_J_FALLBACK_POLICY,
+    Gate1Config,
+    Gate1Runner,
+)
+from intentir.verify.gate1.pi_ablations import PiAblationKind, run_pi_ablations
 from intentir.verify.gate1.replay import ResponsesReplayWriter
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate2 import (
@@ -754,7 +759,52 @@ def _gate1_evidence_json(gate1) -> dict[str, Any]:
         payload["masked_generation"].update(
             _generation_evidence(gate1.masked_generation)
         )
+    for serialized, intervention in zip(
+        payload.get("interventions", []),
+        getattr(gate1, "interventions", ()),
+        strict=True,
+    ):
+        if intervention.generation is not None:
+            serialized["generation"].update(
+                _generation_evidence(intervention.generation)
+            )
     return payload
+
+
+def _pi_ablation_evidence_json(records) -> list[dict[str, Any]]:
+    """Preserve source-blind ablation code for reproducible failure analysis."""
+
+    payloads: list[dict[str, Any]] = []
+    for record in records:
+        payload = record.to_json()
+        if record.generation is not None:
+            payload["generation"].update(
+                _generation_evidence(record.generation)
+            )
+        payloads.append(payload)
+    return payloads
+
+
+def _pi_ablation_control_evidence(gate1) -> dict[str, Any]:
+    """Require a valid full-pi structural control before causal ablation."""
+
+    if getattr(gate1, "source_fingerprint", None) is None:
+        return {
+            "valid": False,
+            "reason": "source_fingerprint_unavailable",
+            "gate1_status": gate1.status.value,
+        }
+    if not gate1.replay_closed:
+        return {
+            "valid": False,
+            "reason": "full_pi_control_not_replay_closed",
+            "gate1_status": gate1.status.value,
+        }
+    return {
+        "valid": True,
+        "reason": "full_pi_control_replay_closed",
+        "gate1_status": gate1.status.value,
+    }
 
 
 def _lift_attempt_evidence(item) -> dict[str, Any]:
@@ -854,6 +904,40 @@ def _gate2_matrix_policy_json(
     }
 
 
+def _independent_gate2_candidate(gate1: Any) -> Any | None:
+    """Choose a replay for Gate2 without changing the Gate1 verdict.
+
+    Prefer a normal hard-closed candidate.  When Gate1 has no structural
+    closure, use the best compiled replay from the final artifact round so the
+    independent dynamic evidence remains aligned with ``gate1.artifact``.
+    """
+
+    candidates = tuple(gate1.candidates)
+    for candidate in candidates:
+        if (
+            candidate.generation is not None
+            and candidate.comparison is not None
+            and candidate.comparison.hard_pass
+        ):
+            return candidate
+    compiled = [
+        candidate
+        for candidate in candidates
+        if candidate.generation is not None and candidate.compiled
+    ]
+    if not compiled:
+        return None
+    final_round = max(candidate.relift_round for candidate in compiled)
+    return max(
+        (
+            candidate
+            for candidate in compiled
+            if candidate.relift_round == final_round
+        ),
+        key=lambda candidate: candidate.rank_tuple,
+    )
+
+
 def run_case(
     case: LiveKernelCase,
     args: argparse.Namespace,
@@ -874,6 +958,20 @@ def run_case(
     relift_rounds = int(getattr(args, "relift_rounds", 3))
     if relift_rounds < 1:
         raise ValueError("relift_rounds must be positive")
+    semantic_interventions = int(
+        getattr(args, "semantic_interventions", 3)
+    )
+    if semantic_interventions < 1:
+        raise ValueError("semantic_interventions must be positive")
+    pi_ablations_enabled = bool(getattr(args, "pi_ablations", True))
+    pi_ablation_limit = int(getattr(args, "pi_ablation_limit", 3))
+    if pi_ablation_limit < 1:
+        raise ValueError("pi_ablation_limit must be positive")
+    requested_pi_ablation_kinds = tuple(
+        PiAblationKind(value)
+        for value in (getattr(args, "pi_ablation_kinds", None) or ())
+    )
+    pi_ablation_kinds = requested_pi_ablation_kinds or tuple(PiAblationKind)
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
@@ -883,6 +981,32 @@ def run_case(
             "protocol": SCRC_RELIFT_PROTOCOL,
             "artifact_rounds": relift_rounds,
             "maximum_semantic_relifts": relift_rounds - 1,
+            "normal_recovery": "relift_only_restart_full_pipeline",
+            "replay_code_repair": "disabled",
+        },
+        "gate1_anti_leakage_policy": {
+            "paired_semantic_interventions": True,
+            "maximum_interventions": semantic_interventions,
+            "paired_replay_control": "normal_model_generated_candidate",
+            "maximum_provider_attempts_per_generation": 3,
+            "masked_j_role": "diagnostic_or_fallback",
+            "masked_j_fallback_policy": MASKED_J_FALLBACK_POLICY,
+            "masked_j_score_role": "diagnostic_only",
+            "ttir_score_semantics": TTIR_SCORE_SEMANTICS,
+            "replay_reference_naming": "opaque_replay_refs_v1",
+            "pi_ablations": {
+                "enabled": pi_ablations_enabled,
+                "default_policy": "enabled_for_formal_live_evidence",
+                "maximum": pi_ablation_limit,
+                "maximum_replay_repairs": 0,
+                "requires_full_pi_replay_closed": True,
+                "kinds": [kind.value for kind in pi_ablation_kinds],
+                "verdict_role": "diagnostic",
+                "opaque_reference_discipline": (
+                    "resolve_handles_never_emit_v1"
+                ),
+                "replay_code_repair": "disabled",
+            },
         },
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,
@@ -967,7 +1091,7 @@ def run_case(
         provider=provider,
         model_candidates=(args.model,),
         effort=args.effort,
-        max_retries=1,
+        max_retries=3,
     )
     relifter = ResponsesSCRCRelifter(
         registry=registry,
@@ -977,14 +1101,16 @@ def run_case(
         effort=args.effort,
     )
     _progress("gate1_start", kernel=case.name)
-    gate1 = Gate1Runner(
+    gate1_runner = Gate1Runner(
         config=Gate1Config(
-            max_repairs=args.rewrite_repairs,
             max_relifts=relift_rounds,
             stable_closures=1,
+            run_semantic_interventions=True,
+            max_semantic_interventions=semantic_interventions,
             run_masked_ablation=True,
         )
-    ).run(
+    )
+    gate1 = gate1_runner.run(
         case.kernel_source,
         artifact,
         _compile_case(case),
@@ -995,25 +1121,53 @@ def run_case(
     report["gate1"] = _gate1_evidence_json(gate1)
     report["relifts"] = _relift_evidence_json(relifter)
     _progress("gate1_complete", kernel=case.name, status=gate1.status.value)
-    closed = next(
-        (
-            candidate
-            for candidate in gate1.candidates
-            if candidate.comparison is not None
-            and candidate.comparison.hard_pass
-            and candidate.generation is not None
-        ),
-        None,
-    )
+    replay_candidate = _independent_gate2_candidate(gate1)
+    verified_artifact = getattr(gate1, "artifact", artifact)
+    if pi_ablations_enabled:
+        pi_ablation_control = _pi_ablation_control_evidence(gate1)
+        report["pi_ablation_control"] = pi_ablation_control
+    else:
+        pi_ablation_control = None
+    if pi_ablation_control is not None and pi_ablation_control["valid"]:
+        _progress("pi_ablation_start", kernel=case.name)
+        pi_ablations = run_pi_ablations(
+            verified_artifact,
+            gate1.source_fingerprint,
+            _compile_case(case),
+            registry,
+            writer,
+            compiler=gate1_runner.compiler,
+            comparator=gate1_runner.comparator,
+            limit=pi_ablation_limit,
+            kinds=pi_ablation_kinds,
+            control_candidate=(
+                None
+                if replay_candidate is None
+                else replay_candidate.generation
+            ),
+        )
+        report["pi_ablations"] = _pi_ablation_evidence_json(pi_ablations)
+        _progress(
+            "pi_ablation_complete",
+            kernel=case.name,
+            statuses=[item.status.value for item in pi_ablations],
+        )
+    elif pi_ablation_control is not None:
+        report["pi_ablations"] = []
+        _progress(
+            "pi_ablation_skipped",
+            kernel=case.name,
+            reason=pi_ablation_control["reason"],
+        )
     if not gate1.replay_closed:
         if (
             getattr(args, "diagnose_rejected", False)
-            and gate1.status is Gate1Status.LEAKAGE_REJECTED
-            and closed is not None
-            and closed.generation is not None
+            and replay_candidate is not None
+            and replay_candidate.generation is not None
         ):
             replay = KernelSource.from_code(
-                closed.generation.code, artifact.interface.function_name
+                replay_candidate.generation.code,
+                verified_artifact.interface.function_name,
             )
             _progress("gate2_diagnostic_start", kernel=case.name)
             try:
@@ -1022,10 +1176,11 @@ def run_case(
                     diagnostic_suite = runner.run_suite(
                         case.kernel_source,
                         replay,
-                        _gate2_suite(artifact, case, gate2_seeds),
+                        _gate2_suite(verified_artifact, case, gate2_seeds),
                     )
                     report["gate2_diagnostic_suite"] = {
                         "kind": "offline_gate2_for_gate1_rejected_sample",
+                        "independent": True,
                         "gate1_status": gate1.status.value,
                         **_gate2_suite_evidence_json(diagnostic_suite),
                     }
@@ -1043,10 +1198,11 @@ def run_case(
                     diagnostic = runner.run(
                         case.kernel_source,
                         replay,
-                        _gate2_case(artifact, case, args.seed),
+                        _gate2_case(verified_artifact, case, args.seed),
                     )
                     report["gate2_diagnostic"] = {
                         "kind": "offline_gate2_for_gate1_rejected_sample",
+                        "independent": True,
                         "gate1_status": gate1.status.value,
                         **_gate2_evidence_json(diagnostic),
                     }
@@ -1063,25 +1219,27 @@ def run_case(
                 )
                 report[key] = {
                     "kind": "offline_gate2_for_gate1_rejected_sample",
+                    "independent": True,
                     "gate1_status": gate1.status.value,
                     "status": "setup_failed",
                     "error": f"{type(exc).__name__}: {exc}",
                 }
         return 3, report
 
-    if closed is None or closed.generation is None:
+    if replay_candidate is None or replay_candidate.generation is None:
         report["gate1"]["diagnostics"].append(
             "Gate1 closed without a recoverable replay candidate"
         )
         return 3, report
     replay = KernelSource.from_code(
-        closed.generation.code, artifact.interface.function_name
+        replay_candidate.generation.code,
+        verified_artifact.interface.function_name,
     )
     report["replay"] = {
-        "response_id": closed.generation.response_id,
-        "model": closed.generation.response_model,
-        "code_sha256": closed.generation.code_sha256,
-        "code": closed.generation.code,
+        "response_id": replay_candidate.generation.response_id,
+        "model": replay_candidate.generation.response_model,
+        "code_sha256": replay_candidate.generation.code_sha256,
+        "code": replay_candidate.generation.code,
     }
 
     _progress("gate2_start", kernel=case.name)
@@ -1090,7 +1248,7 @@ def run_case(
         gate2_suite = runner.run_suite(
             case.kernel_source,
             replay,
-            _gate2_suite(artifact, case, gate2_seeds),
+            _gate2_suite(verified_artifact, case, gate2_seeds),
         )
         report["gate2_suite"] = _gate2_suite_evidence_json(gate2_suite)
         _progress(
@@ -1103,7 +1261,7 @@ def run_case(
     gate2 = runner.run(
         case.kernel_source,
         replay,
-        _gate2_case(artifact, case, args.seed),
+        _gate2_case(verified_artifact, case, args.seed),
     )
     report["gate2"] = _gate2_evidence_json(gate2)
     _progress("gate2_complete", kernel=case.name, status=gate2.status.value)
@@ -1146,12 +1304,42 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
         "--gate2-seed", dest="gate2_seeds", action="append", type=int
     )
     parser.add_argument("--lift-repairs", type=int, default=2)
-    parser.add_argument("--rewrite-repairs", type=int, default=2)
+    parser.add_argument(
+        "--semantic-interventions",
+        type=_positive_int,
+        default=3,
+        help="maximum deterministic J/B coordinates checked after normal closure",
+    )
+    parser.add_argument(
+        "--pi-ablations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "run the final J-only/step-drop/mechanism-substitution pi audit; "
+            "formal live evidence enables it by default"
+        ),
+    )
+    parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)
+    parser.add_argument(
+        "--pi-ablation-kind",
+        dest="pi_ablation_kinds",
+        action="append",
+        choices=tuple(kind.value for kind in PiAblationKind),
+    )
     parser.add_argument(
         "--relift-rounds",
         type=_positive_int,
         default=3,
         help="total Gate1 artifact rounds, including the initial Lift",
+    )
+    parser.add_argument(
+        "--diagnose-rejected",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "record independent Gate2 evidence for the final compiled replay "
+            "even when Gate1 rejects it"
+        ),
     )
     parser.add_argument("--report")
     if default_kernel == "matmul":
@@ -1168,8 +1356,15 @@ def main(default_kernel: str = "add") -> int:
         "kernel": report.get("case"),
         "lift": report.get("lift", {}).get("ok"),
         "gate1": report.get("gate1", {}).get("status"),
+        "anti_leakage_basis": report.get("gate1", {}).get(
+            "anti_leakage_basis"
+        ),
         "gate2": report.get("gate2", {}).get("status"),
         "gate2_suite": report.get("gate2_suite", {}).get("passed"),
+        "gate2_diagnostic": report.get("gate2_diagnostic", {}).get("status"),
+        "gate2_diagnostic_suite": report.get(
+            "gate2_diagnostic_suite", {}
+        ).get("passed"),
         "relifts": len(report.get("relifts", [])),
         "report": args.report,
     }

@@ -269,8 +269,19 @@ def _plan_schema() -> dict[str, Any]:
             "refs": _STRING_ARRAY,
         },
         ("rule",),
+        description=(
+            "One ordered replay-rule instance. The first target is "
+            "node_ref when present, otherwise refs[0]."
+        ),
     )
-    return _closed_object({"steps": _array(step)}, ("steps",))
+    return _closed_object(
+        {"steps": _array(step)},
+        ("steps",),
+        description=(
+            "Complete ordered replay plan. Every required source realization "
+            "is instantiated by a rule that references J/B/C/interface fields."
+        ),
+    )
 
 
 def _location_map_schema() -> dict[str, Any]:

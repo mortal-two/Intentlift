@@ -151,7 +151,7 @@ Gate1/Gate2 失败出发，不以手写 PK 成功替代 extraction 证据。
 ### 阶段四：数百 Kernel
 
 - 批量运行真实 LLM extraction；
-- Gate1 小修/重提；
+- Gate1 relift-only 外循环；
 - Gate2 边界输入；
 - 失败按 J/π/replay/lowering/A-B-C 缺口归档；
 - 规则库继续由真实 diff 增长。

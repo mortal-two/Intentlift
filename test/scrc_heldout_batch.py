@@ -24,12 +24,17 @@ from intentir.extraction.lifters.scrc import (
     scrc_lift_prompt_sha256,
 )
 from intentir.verify.gate1.compiler import TritonCompiler
+from intentir.verify.gate1.compare import TTIR_SCORE_SEMANTICS
 from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.orchestrate import MASKED_J_FALLBACK_POLICY
+from intentir.verify.gate1.pi_ablations import PiAblationKind
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate2 import (
     InputDistribution,
     Tolerance,
     boundary_1d_extents,
+    extract_gate1_gate2_observation,
+    summarize_gate1_gate2,
 )
 
 from scrc_live_e2e import (
@@ -68,7 +73,13 @@ CANDIDATES = (
     HeldoutCandidate(
         "fg_ones", "flag_gems.ops.ones", "ones_kernel", "fill", "ready"
     ),
-    HeldoutCandidate("fg_arange", "flag_gems.ops.arange", "arange_func", "iota"),
+    HeldoutCandidate(
+        "fg_arange",
+        "flag_gems.ops.arange",
+        "arange_func",
+        "iota",
+        "ready",
+    ),
     HeldoutCandidate("fg_eye", "flag_gems.ops.eye_m", "eye_kernel", "select"),
     HeldoutCandidate(
         "fg_trace", "flag_gems.ops.trace", "trace_kernel", "gather_reduce"
@@ -278,6 +289,77 @@ def build_heldout_case(name: str) -> LiveKernelCase:
                     ((boundary.extent + block - 1) // block,),
                 )
                 for boundary in boundary_1d_extents(block)
+            ),
+        )
+
+    if name == "fg_arange":
+        size = 1003
+        block = 128
+        start = -3.25
+        step = 0.125
+        end = start + step * size
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "y_ptr", "tensor", "f32", (size,)
+                ),
+                SCRCCompilerArgument(
+                    "start", "scalar", "f32", value=start
+                ),
+                SCRCCompilerArgument(
+                    "end", "scalar", "f32", value=end
+                ),
+                SCRCCompilerArgument(
+                    "step", "scalar", "f32", value=step
+                ),
+                SCRCCompilerArgument(
+                    "size", "scalar", "i32", value=size
+                ),
+            ),
+            ((size + block - 1) // block,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(size, BLOCK_SIZE)",),
+            ("BLOCK_SIZE",),
+            1.0,
+            Tolerance(rtol=1.0e-6, atol=1.0e-6),
+            gate2_shape_profiles=(
+                Gate2ShapeProfile(
+                    "forward_fractional",
+                    {},
+                    {
+                        "start": start,
+                        "end": end,
+                        "step": step,
+                        "size": size,
+                    },
+                ),
+                Gate2ShapeProfile(
+                    "descending_fractional",
+                    {},
+                    {
+                        "start": 10.0,
+                        "end": 10.0 - 0.5 * size,
+                        "step": -0.5,
+                        "size": size,
+                    },
+                ),
+                Gate2ShapeProfile(
+                    "forward_unit",
+                    {},
+                    {
+                        "start": 0.0,
+                        "end": float(size),
+                        "step": 1.0,
+                        "size": size,
+                    },
+                ),
             ),
         )
 
@@ -603,8 +685,11 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         effort=args.effort,
         seed=args.seed,
         lift_repairs=args.lift_repairs,
-        rewrite_repairs=args.rewrite_repairs,
         relift_rounds=args.relift_rounds,
+        semantic_interventions=args.semantic_interventions,
+        pi_ablations=args.pi_ablations,
+        pi_ablation_limit=args.pi_ablation_limit,
+        pi_ablation_kinds=args.pi_ablation_kinds,
         diagnose_rejected=args.diagnose_rejected,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
@@ -617,13 +702,29 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 5,
+        "schema": 17,
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
         "lift_repairs": args.lift_repairs,
-        "rewrite_repairs": args.rewrite_repairs,
         "relift_rounds": args.relift_rounds,
+        "normal_recovery": "relift_only_restart_full_pipeline",
+        "replay_code_repair": "disabled",
+        "semantic_interventions": args.semantic_interventions,
+        "pi_ablations": bool(args.pi_ablations),
+        "pi_ablation_limit": args.pi_ablation_limit,
+        "pi_ablation_kinds": list(args.pi_ablation_kinds or ()),
+        "pi_ablation_replay_repairs": 0,
+        "pi_ablation_requires_closed_control": True,
+        "pi_ablation_opaque_reference_discipline": (
+            "resolve_handles_never_emit_v1"
+        ),
+        "pi_ablation_replay_code_repair": "disabled",
+        "maximum_provider_attempts_per_generation": 3,
+        "ttir_score_semantics": TTIR_SCORE_SEMANTICS,
+        "masked_j_fallback_policy": MASKED_J_FALLBACK_POLICY,
+        "masked_j_score_role": "diagnostic_only",
+        "replay_reference_naming": "opaque_replay_refs_v1",
         "relift_protocol": SCRC_RELIFT_PROTOCOL,
         "diagnose_rejected": bool(args.diagnose_rejected),
         "gate2_input_policy": {
@@ -756,7 +857,23 @@ def _parser() -> argparse.ArgumentParser:
         "--gate2-seed", dest="gate2_seeds", action="append", type=int
     )
     parser.add_argument("--lift-repairs", type=int, default=2)
-    parser.add_argument("--rewrite-repairs", type=int, default=2)
+    parser.add_argument(
+        "--semantic-interventions",
+        type=_positive_int,
+        default=3,
+    )
+    parser.add_argument(
+        "--pi-ablations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)
+    parser.add_argument(
+        "--pi-ablation-kind",
+        dest="pi_ablation_kinds",
+        action="append",
+        choices=tuple(kind.value for kind in PiAblationKind),
+    )
     parser.add_argument(
         "--relift-rounds",
         type=_positive_int,
@@ -766,7 +883,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path, default=Path("/tmp/scrc_heldout_batch"))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--lift-cache-dir", type=Path)
-    parser.add_argument("--diagnose-rejected", action="store_true")
+    parser.add_argument(
+        "--diagnose-rejected",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return parser
 
 
@@ -844,6 +965,7 @@ def main() -> int:
             status = _result_status(report)
             normal_ids, masked_id = _response_ids(report)
             relift_ids = _relift_response_ids(report)
+            gate1_gate2 = extract_gate1_gate2_observation(report)
             row = {
                 "case": name,
                 "status": status,
@@ -853,6 +975,7 @@ def main() -> int:
                 "relift_response_ids": relift_ids,
                 "normal_replay_response_ids": normal_ids,
                 "masked_response_id": masked_id,
+                "gate1_gate2": gate1_gate2,
             }
             report["batch"] = {
                 "terminal": True,
@@ -889,6 +1012,7 @@ def main() -> int:
         "effort": args.effort,
         "selected": list(selected),
         "counts": dict(sorted(counts.items())),
+        "gate1_gate2_metrics": summarize_gate1_gate2(rows),
         "results": rows,
     }
     _write_report(str(args.out_dir / "summary.json"), summary)

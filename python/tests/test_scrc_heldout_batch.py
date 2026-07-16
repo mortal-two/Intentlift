@@ -9,6 +9,10 @@ from pathlib import Path
 
 import pytest
 from intentir.verify.gate1.rules import default_triton_rule_registry
+from intentir.verify.gate2 import (
+    extract_gate1_gate2_observation,
+    summarize_gate1_gate2,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +41,7 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_dot",
         "fg_addr",
         "fg_ones",
+        "fg_arange",
         "fg_embedding",
         "fg_sum",
         "fg_mean",
@@ -67,6 +72,35 @@ def test_real_flag_gems_dot_case_preserves_rank_zero_output_contract() -> None:
     assert view["grid"] == [1]
     assert view["schedule_values"]["BLOCK_SIZE"] == 1024
     assert compile_case.arguments["out_ptr"].shape == ()
+
+
+def test_real_flag_gems_arange_case_records_iota_runtime_contract() -> None:
+    case = build_heldout_case("fg_arange")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "arange.py"
+    assert case.function_name == "arange_func"
+    assert "arange_val = cols * step + step_offset + start" in case.source_text
+    assert by_name["y_ptr"]["shape"] == [1003]
+    assert by_name["start"]["value"] == -3.25
+    assert by_name["end"]["value"] == 122.125
+    assert by_name["step"]["value"] == 0.125
+    assert by_name["size"]["value"] == 1003
+    assert view["grid"] == [8]
+    assert view["grid_contract"] == ["ceil_div(size, BLOCK_SIZE)"]
+    assert view["constexpr_parameters"] == ["BLOCK_SIZE"]
+    assert view["schedule_values"]["BLOCK_SIZE"] == 128
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "forward_fractional",
+        "descending_fractional",
+        "forward_unit",
+    ]
+    assert [profile.scalar_values["step"] for profile in case.gate2_shape_profiles] == [
+        0.125,
+        -0.5,
+        1.0,
+    ]
 
 
 def test_real_flag_gems_addr_case_records_runtime_scalars_and_strides() -> None:
@@ -309,6 +343,13 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
     assert _result_status(
         {
             "lift": {"ok": True},
+            "gate1": {"status": "leakage_rejected"},
+            "gate2_diagnostic": {"status": "gate2_pass"},
+        }
+    ) == "leakage_rejected"
+    assert _result_status(
+        {
+            "lift": {"ok": True},
             "gate1": {"status": "replay_closed"},
             "gate2": {"status": "lowering_unsupported"},
         }
@@ -327,6 +368,107 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
             "gate2_suite": {"passed": False},
         }
     ) == "gate2_suite_failed"
+
+
+def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
+    observation = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "leakage_rejected"},
+            "gate2_diagnostic": {
+                "kind": "offline_gate2_for_gate1_rejected_sample",
+                "independent": True,
+                "status": "gate2_pass",
+            },
+        }
+    )
+
+    assert observation == {
+        "gate1_status": "leakage_rejected",
+        "gate1_closed": False,
+        "gate2_evidence_kind": "diagnostic",
+        "gate2_attempted": True,
+        "gate2_three_way_completed": True,
+        "gate2_status": "gate2_pass",
+        "gate2_pass": True,
+        "gate2_case_statuses": ["gate2_pass"],
+    }
+
+
+def test_batch_does_not_count_unsupported_or_setup_failure_as_semantic_nonpass() -> None:
+    unsupported = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2": {"status": "lowering_unsupported"},
+        }
+    )
+    setup_failed = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "no_closure"},
+            "gate2_diagnostic_suite": {"status": "setup_failed"},
+        }
+    )
+
+    assert unsupported["gate2_attempted"]
+    assert not unsupported["gate2_three_way_completed"]
+    assert unsupported["gate2_pass"] is None
+    assert setup_failed["gate2_attempted"]
+    assert not setup_failed["gate2_three_way_completed"]
+    assert setup_failed["gate2_status"] == "setup_failed"
+    assert setup_failed["gate2_pass"] is None
+
+
+def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() -> None:
+    reports = [
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2": {"status": "gate2_pass"},
+        },
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2": {"status": "replay_diverged"},
+        },
+        {
+            "gate1": {"status": "leakage_rejected"},
+            "gate2_diagnostic_suite": {
+                "passed": True,
+                "cases": [
+                    {"status": "gate2_pass"},
+                    {"status": "gate2_pass"},
+                ],
+            },
+        },
+        {"gate1": {"status": "no_closure"}},
+    ]
+    rows = [
+        {"gate1_gate2": extract_gate1_gate2_observation(report)}
+        for report in reports
+    ]
+
+    metrics = summarize_gate1_gate2(rows)
+
+    assert metrics["replay_closed"] == {
+        "samples": 2,
+        "gate2_attempted": 2,
+        "gate2_three_way_completed": 2,
+        "gate2_pass": 1,
+        "gate2_nonpass": 1,
+        "attempt_coverage": 1.0,
+        "completion_coverage": 1.0,
+        "pass_probability_given_completed": 0.5,
+    }
+    assert metrics["not_replay_closed"] == {
+        "samples": 2,
+        "gate2_attempted": 1,
+        "gate2_three_way_completed": 1,
+        "gate2_pass": 1,
+        "gate2_nonpass": 0,
+        "attempt_coverage": 0.5,
+        "completion_coverage": 0.5,
+        "pass_probability_given_completed": 1.0,
+    }
+    assert metrics["by_gate1_status"]["no_closure"][
+        "pass_probability_given_completed"
+    ] is None
 
 
 def test_batch_response_ids_tolerate_failed_generation_and_absent_masked() -> None:
@@ -351,8 +493,11 @@ def _batch_args(**overrides) -> Namespace:
         "effort": "xhigh",
         "seed": 20260715,
         "lift_repairs": 2,
-        "rewrite_repairs": 2,
         "relift_rounds": 3,
+        "semantic_interventions": 3,
+        "pi_ablations": True,
+        "pi_ablation_limit": 3,
+        "pi_ablation_kinds": None,
         "diagnose_rejected": False,
         "gate2_matrix": False,
         "gate2_seeds": None,
@@ -397,9 +542,30 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 5
+    assert identity["schema"] == 17
     assert identity["relift_rounds"] == 3
-    assert identity["relift_protocol"] == "normal_no_closure_v1"
+    assert identity["semantic_interventions"] == 3
+    assert identity["normal_recovery"] == "relift_only_restart_full_pipeline"
+    assert identity["replay_code_repair"] == "disabled"
+    assert identity["pi_ablations"]
+    assert identity["pi_ablation_limit"] == 3
+    assert identity["pi_ablation_kinds"] == []
+    assert identity["pi_ablation_replay_repairs"] == 0
+    assert identity["pi_ablation_requires_closed_control"] is True
+    assert identity["pi_ablation_opaque_reference_discipline"] == (
+        "resolve_handles_never_emit_v1"
+    )
+    assert identity["pi_ablation_replay_code_repair"] == "disabled"
+    assert identity["maximum_provider_attempts_per_generation"] == 3
+    assert identity["ttir_score_semantics"] == "active_evidence_weighted_v2"
+    assert identity["masked_j_fallback_policy"] == (
+        "exact_semantic_hard_degradation_v1"
+    )
+    assert identity["masked_j_score_role"] == "diagnostic_only"
+    assert identity["replay_reference_naming"] == "opaque_replay_refs_v1"
+    assert identity["relift_protocol"] == (
+        "relift_only_pi_audit_on_strict_opaque_refs_causal_v7"
+    )
     assert relift_identity["relift_rounds"] == 1
     assert _resume_row(saved, relift_identity) is None
 
@@ -409,6 +575,8 @@ def test_batch_parser_and_case_args_preserve_relift_policy() -> None:
     assert parsed.model == "gpt-5.6-sol"
     assert parsed.effort == "xhigh"
     assert parsed.relift_rounds == 3
+    assert parsed.pi_ablations
+    assert not _parser().parse_args(["--no-pi-ablations"]).pi_ablations
     assert _case_args(parsed).relift_rounds == 3
     with pytest.raises(SystemExit):
         _parser().parse_args(["--relift-rounds", "0"])

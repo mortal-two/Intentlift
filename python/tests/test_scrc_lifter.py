@@ -101,10 +101,17 @@ def _artifact_payload() -> dict:
         "plan": {
             "steps": [
                 {"rule": "bind_program_domain", "refs": ["d0"]},
+                {"rule": "bind_runtime_scalar", "refs": ["N"]},
+                {"rule": "declare_schedule_slot", "refs": ["BLOCK"]},
+                {"rule": "declare_schedule_slot", "refs": ["num_warps"]},
                 {"rule": "materialize_index_tile", "refs": ["a0"]},
-                {"rule": "realize_masked_access", "refs": ["a0", "a1"]},
+                {"rule": "realize_masked_access", "refs": ["a0"]},
+                {"rule": "materialize_index_tile", "refs": ["a1"]},
+                {"rule": "realize_masked_access", "refs": ["a1"]},
                 {"rule": "realize_elementwise", "node_ref": "n0"},
+                {"rule": "materialize_index_tile", "refs": ["a2"]},
                 {"rule": "realize_masked_access", "refs": ["a2"]},
+                {"rule": "realize_output_mapping", "node_ref": "n0"}
             ]
         },
         "location_map": {
@@ -136,7 +143,14 @@ def _trusted_artifact() -> Gate1Artifact:
 
 def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None:
     prompt = scrc.build_scrc_lift_instructions(default_triton_rule_registry())
-    assert "realize_reduce" in prompt
+    assert "Registered replay rule ids" in prompt
+    assert '"id": "bind_wide_program_domain"' in prompt
+    assert '"id": "materialize_pointer_tile"' in prompt
+    assert '"id": "materialize_mask_tile"' in prompt
+    assert '"id": "realize_flattened_reduce"' in prompt
+    assert '"id": "realize_reduce"' in prompt
+    assert '"id": "realize_elementwise"' in prompt
+    assert '"id": "realize_const"' in prompt
     assert "COLLAPSED" in prompt
     assert "at least one of" in prompt
     assert "global [M,N] row reduce" in prompt
@@ -146,7 +160,7 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "staged pointer additions" in prompt
     assert "load(ptr + row*N + lane)" in prompt
     assert "offset = row*N + lane" in prompt
-    assert "semantic index_expression string alone" in prompt
+    assert "index_expression string alone" in prompt
     assert "runtime scalar consumed by the computation" in prompt
     assert "shape=[]" in prompt
     assert "canonicalize reciprocal square root" in prompt
@@ -158,7 +172,7 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "boundary.reductions" in prompt
     assert "coordinate components are not a" in prompt
     assert "scalar-language `and` or `&&`" in prompt
-    assert "Do not also select realize_reduce" in prompt
+    assert "reduce/loop/broadcast steps" in prompt
     assert "bind_wide_program_domain" in prompt
     assert "flag_gems.utils.triton_lang_extension as tle" in prompt
     assert "`get_dtype_min` returns negative" in prompt
@@ -166,11 +180,15 @@ def test_scrc_lift_prompt_uses_rule_ids_without_frontend_api_spellings() -> None
     assert "do not substitute the largest finite value" in prompt
     assert "tle.program_id" in prompt
     assert "select realize_flattened_reduce" in prompt
-    assert "exactly one of realize_reduce/realize_flattened_reduce" in prompt
+    assert "explicit source axis must explicitly" in prompt
     assert "m,n->mn" in prompt
     assert "selects realize_outer_product" in prompt
     assert "select materialize_mask_tile" in prompt
-    assert "mutually exclusive" in prompt
+    assert "complete ordered replay construction plan" in prompt
+    assert "forbidden to invent omitted default steps" in prompt
+    assert "declaration-order opaque handles" in prompt
+    assert "access_id values" in prompt
+    assert "Never encode operation, tensor, load/store" in prompt
     assert "tl.load" not in prompt
     assert "tl.sum" not in prompt
 
@@ -300,6 +318,9 @@ def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
             "tensor_ref": "eps",
         },
     )
+    payload["plan"]["steps"].insert(
+        2, {"rule": "bind_runtime_scalar", "refs": ["eps"]}
+    )
     response = LLMReply(
         json.dumps(payload), "gpt-test", {"id": "resp-scalar"}
     )
@@ -425,6 +446,27 @@ def test_scrc_lift_rejects_concrete_c_inside_j(monkeypatch) -> None:
     assert "J.intent.layer_c must be empty" in str(caught.value)
 
 
+def test_scrc_lift_rejects_semantic_names_in_pi_reference_ids(
+    monkeypatch,
+) -> None:
+    payload = _artifact_payload()
+    payload["j"]["boundary"]["accesses"][0]["access_id"] = "a_load"
+    for step in payload["plan"]["steps"]:
+        if step.get("refs") == ["a0"]:
+            step["refs"] = ["a_load"]
+    payload["location_map"]["entries"][0]["access_refs"][0] = "a_load"
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-semantic-ref"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact("source", "add_kernel", max_repairs=0)
+
+    assert "must use declaration-order opaque ids" in str(caught.value)
+    assert "a_load" in str(caught.value)
+
+
 def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
     replies = iter(
         [
@@ -467,11 +509,13 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
     diagnosis = SimpleNamespace(
         to_json=lambda: {
             "cause": "replay_compile",
-            "responsibility": "replay_code",
-            "mismatches": ["REPLAY_SOURCE_CANARY"],
+            "responsibility": "replay_plan",
+            "mismatches": [
+                "NameError: replay-local dependency is undefined"
+            ],
             "confirmed_fields": [],
-            "allowed_modifications": ["replay code"],
-            "explanation": "inner repair only",
+            "allowed_modifications": ["j", "pi", "location_map"],
+            "explanation": "return the compile diagnosis to Lift",
         }
     )
     candidate = SimpleNamespace(
@@ -531,6 +575,7 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
     assert '"arith.extsi": 3' in captured["user_input"]
     assert '"trigger": "normal_no_closure"' in captured["user_input"]
     assert "SOURCE_EXPECTED_OP_CANARY" in captured["user_input"]
+    assert "replay-local dependency is undefined" in captured["user_input"]
     assert "REPLAY_SOURCE_CANARY" not in captured["user_input"]
     assert len(relifter.records) == 1
     assert relifter.records[0].extraction is not None

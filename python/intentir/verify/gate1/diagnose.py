@@ -19,54 +19,58 @@ from .evaluation import FailureCause
 class Responsibility(str, Enum):
     INTENT = "intent"
     REPLAY_PLAN = "replay_plan"
-    REPLAY_CODE = "replay_code"
     INTERFACE_SCHEDULE = "interface_schedule"
     COMPARATOR = "comparator"
     UNKNOWN = "unknown"
 
 
-@dataclass(frozen=True)
-class RepairFeedback:
-    """Allowlisted replay-side feedback; never contains source fingerprints."""
-
-    cause: FailureCause
-    responsibility: Responsibility
-    confirmed_fields: tuple[str, ...]
-    allowed_modifications: tuple[str, ...]
-    instruction: str
-    replay_compiler_diagnostic: str | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "cause": self.cause.value,
-            "responsibility": self.responsibility.value,
-            "confirmed_fields": list(self.confirmed_fields),
-            "allowed_modifications": list(self.allowed_modifications),
-            "instruction": self.instruction,
-        }
-        if self.replay_compiler_diagnostic is not None:
-            payload["replay_compiler_diagnostic"] = self.replay_compiler_diagnostic
-        return payload
-
-
 _ABSOLUTE_PATH_RE = re.compile(r'(?P<prefix>File\s+["\'])/[^"\']+(?P<suffix>["\'])')
+_FILE_LOCATION_RE = re.compile(
+    r'^\s*File\s+["\'][^"\']+["\'],\s*line\s+\d+(?::\d+)?(?P<detail>:.*)?$'
+)
+_DIAGNOSTIC_SUMMARY_RE = re.compile(
+    r"(?:error|exception|failed|failure|forbidden|invalid|unsupported|"
+    r"mismatch|undefined|not defined|requires|expected)",
+    re.IGNORECASE,
+)
 
 
 def sanitize_replay_diagnostic(diagnostic: str, *, limit: int = 2000) -> str:
-    """Bound replay diagnostics and remove host paths before model feedback."""
+    """Return bounded compiler guidance without replay source or host paths.
+
+    Triton diagnostics commonly contain a traceback followed by replay source
+    lines and a final exception summary.  Lift needs the deterministic failure
+    class/reason, not the failed implementation.  Keep only summary-like lines
+    (plus an inline detail attached to a ``File ... line N:`` record), so the
+    next Lift can revise J/pi without seeing a replay body.
+    """
 
     text = str(diagnostic or "unknown replay compile error")
     text = _ABSOLUTE_PATH_RE.sub(r"\g<prefix><path>\g<suffix>", text)
-    lines = [line.rstrip() for line in text.splitlines()]
-    # Tracebacks repeat framework internals heavily.  Preserve the exception,
-    # candidate line reference and nearby compiler message, not the host stack.
-    useful = [
-        line
-        for line in lines
-        if line.strip()
-        and not line.lstrip().startswith(("Traceback (most recent call last):",))
-    ]
-    rendered = "\n".join(useful[-24:])
+    summaries: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("Traceback (most recent call last):"):
+            continue
+        location = _FILE_LOCATION_RE.match(line)
+        if location is not None:
+            detail = (location.group("detail") or "").lstrip(": ")
+            if detail:
+                summaries.append(detail)
+            continue
+        # Compiler-quoted replay statements and caret context are indented;
+        # exception summaries are not.  Never forward the quoted statement.
+        if raw[:1].isspace():
+            continue
+        if set(line) <= {"^", "~", "-", " "}:
+            continue
+        if _DIAGNOSTIC_SUMMARY_RE.search(line):
+            summaries.append(line)
+    if not summaries:
+        summaries.append(
+            "replay frontend rejected candidate; detailed replay text was redacted"
+        )
+    rendered = "\n".join(summaries[-8:])
     return rendered[-limit:]
 
 
@@ -89,36 +93,6 @@ class Diagnosis:
             "explanation": self.explanation,
         }
 
-    def to_rewriter_feedback(self) -> RepairFeedback:
-        """Return the only diagnosis view allowed back to the replay writer.
-
-        Comparator mismatches are derived from the privileged source TTIR.  The
-        full :meth:`to_json` payload is therefore for the lifter/diagnostician
-        side only: it can contain source-side operation signatures, constants,
-        predicates and counts.  A replay repair receives only the mismatch
-        class and the already-declared repair scope, and must recover the
-        concrete implementation by rereading J, pi and the rule cards.
-
-        Replay compiler diagnostics are safe to include because they describe
-        model-generated code rather than the source kernel.
-        """
-
-        diagnostic: str | None = None
-        if (
-            self.cause is FailureCause.REPLAY_COMPILE
-            and self.responsibility is Responsibility.REPLAY_CODE
-        ):
-            diagnostic = sanitize_replay_diagnostic("\n".join(self.mismatches))
-        return RepairFeedback(
-            cause=self.cause,
-            responsibility=self.responsibility,
-            confirmed_fields=self.confirmed_fields,
-            allowed_modifications=self.allowed_modifications,
-            instruction=self.explanation,
-            replay_compiler_diagnostic=diagnostic,
-        )
-
-
 _CAUSE_BY_CATEGORY = {
     "interface": FailureCause.INTERFACE,
     "op_multiset": FailureCause.OPERATOR,
@@ -132,11 +106,14 @@ _CAUSE_BY_CATEGORY = {
 def diagnose_compile_failure(diagnostic: str) -> Diagnosis:
     return Diagnosis(
         cause=FailureCause.REPLAY_COMPILE,
-        responsibility=Responsibility.REPLAY_CODE,
+        responsibility=Responsibility.REPLAY_PLAN,
         mismatches=(sanitize_replay_diagnostic(diagnostic),),
         confirmed_fields=(),
-        allowed_modifications=("replay code",),
-        explanation="重放代码未通过同前端编译；J 冻结，只允许依据编译诊断小修代码。",
+        allowed_modifications=("j", "pi", "location_map"),
+        explanation=(
+            "重放未通过同前端编译；禁止原地修 replay code。将净化后的编译诊断"
+            "回流 Lift，重新检查 J/π 合同并从完整流程重新生成。"
+        ),
     )
 
 
@@ -155,15 +132,18 @@ def diagnose_comparison(comparison: TTIRComparison) -> Diagnosis:
         allowed = ("schedule C",)
         explanation = "只有调度视图不同；A/B 闭合，差异只报告、不否决。"
     elif primary == "interface":
-        responsibility = Responsibility.INTERFACE_SCHEDULE
-        allowed = ("replay signature", "interface contract")
-        explanation = "运行时/constexpr 接口不一致；先修重放签名或接口合同，不修改 J.A。"
+        responsibility = Responsibility.REPLAY_PLAN
+        allowed = ("j", "pi", "location_map")
+        explanation = (
+            "重放接口与冻结 interface 不一致；禁止原地修签名。回流 Lift 检查"
+            "J/π 是否给 writer 提供了完整施工约束，然后从头重放。"
+        )
     else:
         responsibility = Responsibility.REPLAY_PLAN
-        allowed = ("pi referenced steps", "replay code")
+        allowed = ("j", "pi", "location_map")
         explanation = (
-            "源与重放的硬指纹不闭合。当前 artifact 冻结时优先归入 π/重放实现；"
-            "若后续对照 J 发现源指纹中的语义在 J 中不存在，再升级为重提 J。"
+            "源与重放的硬指纹不闭合。将确定性差分与源码回流 Lift，重新判断"
+            "J 是否漏/错以及 π 是否选择了错误施工机制；不修改当前 replay code。"
         )
     return Diagnosis(
         cause=cause,
@@ -177,7 +157,6 @@ def diagnose_comparison(comparison: TTIRComparison) -> Diagnosis:
 
 __all__ = [
     "Diagnosis",
-    "RepairFeedback",
     "Responsibility",
     "diagnose_compile_failure",
     "diagnose_comparison",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .model import Gate1Artifact, ReplayPlan, SchemaError
@@ -12,25 +13,36 @@ from .rules import RuleRegistry
 _PROMPT_PREAMBLE = """You are the replay agent in the SCRC Gate1 pipeline.
 Generate one parameterized kernel for the declared frontend using only the JSON
 packet below. You have no source-kernel access. Treat J as the sole authority
-for semantics and boundary behavior, pi as implementation-mechanism references,
-and rule_cards as the sole authority for concrete frontend API spellings.
+for semantics and boundary behavior; treat pi as the complete ordered list of
+replay-rule instances for this source implementation. rule_cards are the sole
+authority for concrete frontend API spellings. Execute every pi step in order,
+read its semantic values from referenced J/B/C/interface fields, and do not
+invent hidden default steps.
 
 Hard constraints:
 1. Preserve function_name, parameter order/modes/dtypes/ranks, constexpr slots,
    and the declared grid contract.
-2. Implement every J node and every boundary access/effect referenced by pi.
+2. Implement every J node and every declared boundary access/effect/output
+   mapping by following the complete pi construction plan and the referenced J
+   DAG. pi rule ids select mechanisms but never duplicate J semantic values.
 3. Keep every schedule slot symbolic. Never invent or bake in a C value. Only
    interface parameters with kind=constexpr belong in the kernel signature or
    body; schedule kind=compiler and interface.compiler_slots are launch-only
    options and must never be referenced as kernel variables.
-4. Do not infer extra semantics from identifier spelling.
+4. Every J-local identifier and every pi node_ref/refs entry is an opaque,
+   declaration-order handle. Resolve it only through the J/B object that owns
+   it or through reference_bindings. When a handle is bound to an interface
+   parameter or schedule slot, emit the concrete name stored at that path in
+   the generated ABI/body. Never infer semantics from handle spelling.
 5. J reduction axes are global tensor axes; frontend reduction calls use the
    matching boundary.reductions.tile_axis for the local tile value.
 6. A semantic broadcast may be implicit on a local tile. Do not emit an explicit
    rank change unless the selected rule and local operand ranks require it.
 7. Reproduce each declared access predicate exactly; do not strengthen it with
    redundant domain bounds.
-8. Return kernel source only, with no Markdown fence or explanatory prose.
+8. Apply each pi rule only to its declared target and in listed construction
+   order. An empty pi is valid only when the artifact has no replay work.
+9. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 
 _MASKED_NOTE = """
@@ -42,12 +54,50 @@ same compile case. Do not reverse or guess masked names. Produce the best replay
 possible from the remaining packet.
 """
 
+_PLAN_ABLATION_NOTES = {
+    "j_only": """
+PI ABLATION RUN (J-only): the complete pi was deliberately removed after the
+original artifact passed strict-plan validation. The full frontend rule-card
+library is supplied only for this diagnostic. Reconstruct from J/B, interface
+and symbolic C slots without source access. Do not assume an omitted source
+implementation choice. The interface itself is not ablated: reproduce the
+declared function signature exactly, including every constexpr parameter even
+when the generated body does not otherwise use it.
+""",
+    "plan_step_dropout": """
+PI ABLATION RUN (step dropout): one validated pi rule instance was deliberately
+removed. Execute only the remaining ordered plan. Do not recreate an omitted
+construction step from source expectations or identifier spelling. J remains
+the semantic authority, but this diagnostic measures whether the removed pi
+step had observable replay value.
+""",
+    "plan_mechanism_substitution": """
+PI ABLATION RUN (mechanism substitution): one validated pi rule instance was
+replaced by another registered mechanism while the plan remained complete.
+Apply the substituted mechanism to its declared target, preserve every other pi
+step and J/B fact, and do not refactor unrelated code. This is a source-blind
+causal test of pi mechanism control.
+""",
+}
+
+_OPAQUE_ABLATION_NOTE = """
+OPAQUE REFERENCE DISCIPLINE: handles such as t2, n0, a1, p3 and c0 are JSON
+references, not Python identifiers. Never emit a handle directly unless the
+generated body explicitly defines that local. Resolve tensor handles by finding
+the interface parameter whose tensor_ref owns the handle; resolve p/c handles
+through reference_bindings and then use the concrete name stored in the target
+interface parameter or schedule slot. Preserve every declared interface
+parameter, including unused constexpr positions.
+"""
+
 
 def build_rewriter_payload(
     artifact: Gate1Artifact,
     registry: RuleRegistry,
     *,
     masked: bool = False,
+    plan_override: ReplayPlan | None = None,
+    ablation_kind: str | None = None,
 ) -> dict[str, Any]:
     """Build the only payload that may cross the lift/replay isolation boundary."""
 
@@ -55,16 +105,53 @@ def build_rewriter_payload(
         artifact = Gate1Artifact.from_json(artifact)
     if not isinstance(registry, RuleRegistry):
         registry = RuleRegistry.from_json(registry)
+    # Validate the unmasked artifact first.  The masked packet intentionally
+    # replaces J/B identifiers and contents, so coverage cannot be reconstructed
+    # from that ablation view alone.
+    registry.validate_strict_plan(
+        artifact.plan,
+        frontend=artifact.interface.frontend,
+        artifact=artifact,
+    )
+    if ablation_kind not in {None, *_PLAN_ABLATION_NOTES}:
+        raise ValueError(f"unknown replay ablation kind: {ablation_kind!r}")
+    if masked and plan_override is not None:
+        raise ValueError("masked-J and pi-plan ablations must run separately")
+    if (plan_override is None) != (ablation_kind is None):
+        raise ValueError(
+            "plan_override and ablation_kind must be supplied together"
+        )
     view = artifact.rewriter_view(masked=masked)
     selected_plan = (
-        ReplayPlan.from_json(view["plan"]) if masked else artifact.plan
+        plan_override
+        if plan_override is not None
+        else ReplayPlan.from_json(view["plan"])
+        if masked
+        else artifact.plan
     )
     retrieval = registry.rewriter_view(
-        selected_plan, frontend=artifact.interface.frontend,
+        selected_plan,
+        frontend=artifact.interface.frontend,
+        artifact=None if masked or plan_override is not None else artifact,
     )
-    view["rule_selection"] = retrieval["selection"]
+    if ablation_kind == "j_only":
+        retrieval["cards"] = [
+            card.to_json()
+            for card in registry.cards
+            if card.frontend is artifact.interface.frontend
+        ]
+    if masked:
+        view["plan"] = retrieval["plan"]
+        view["rule_selection"] = retrieval["selection"]
+    else:
+        view["plan"] = artifact.opaque_plan_view(selected_plan)
+        view["rule_selection"] = artifact.opaque_selection_view(
+            retrieval["selection"]
+        )
     view["rule_cards"] = retrieval["cards"]
     view["rule_registry_digest"] = registry.digest
+    if ablation_kind is not None:
+        view["ablation"] = {"kind": ablation_kind}
     assert_source_isolated_payload(view)
     return view
 
@@ -111,16 +198,96 @@ def assert_source_isolated_payload(payload: dict[str, Any]) -> None:
             "rewriter payload contains privileged field(s): " + ", ".join(forbidden_paths)
         )
 
+    if payload.get("reference_naming") == "opaque_replay_refs_v1":
+        bindings = payload.get("reference_bindings")
+        if not isinstance(bindings, list):
+            raise SchemaError(
+                "opaque replay payload requires reference_bindings array"
+            )
+        opaque_pattern = re.compile(r"^[tndavpc]\d+(?:_\d+)?$")
+        known: set[str] = set()
+        for index, binding in enumerate(bindings):
+            if not isinstance(binding, dict) or set(binding) != {"ref", "owners"}:
+                raise SchemaError(
+                    f"reference_bindings[{index}] must contain ref/owners"
+                )
+            ref = binding["ref"]
+            owners = binding["owners"]
+            if (
+                not isinstance(ref, str)
+                or opaque_pattern.fullmatch(ref) is None
+                or ref in known
+            ):
+                raise SchemaError(
+                    f"reference_bindings[{index}].ref is not a unique opaque id"
+                )
+            if not isinstance(owners, list) or not owners:
+                raise SchemaError(
+                    f"reference_bindings[{index}].owners must be non-empty"
+                )
+            for owner in owners:
+                if (
+                    not isinstance(owner, dict)
+                    or set(owner) != {"kind", "path"}
+                    or not all(isinstance(value, str) and value for value in owner.values())
+                ):
+                    raise SchemaError(
+                        f"reference_bindings[{index}] has an invalid owner"
+                    )
+            known.add(ref)
+
+        def check_reference(value: Any, path: str) -> None:
+            if not isinstance(value, str) or value not in known:
+                raise SchemaError(
+                    f"{path} must use a declared opaque replay reference"
+                )
+
+        plan = payload.get("plan", {})
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not isinstance(steps, list):
+            raise SchemaError("opaque replay plan.steps must be an array")
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                raise SchemaError(f"plan.steps[{index}] must be an object")
+            if "node_ref" in step:
+                check_reference(step["node_ref"], f"plan.steps[{index}].node_ref")
+            for ref_index, ref in enumerate(step.get("refs", [])):
+                check_reference(ref, f"plan.steps[{index}].refs[{ref_index}]")
+
+        selection = payload.get("rule_selection", [])
+        if not isinstance(selection, list):
+            raise SchemaError("opaque rule_selection must be an array")
+        for index, item in enumerate(selection):
+            if not isinstance(item, dict):
+                raise SchemaError(f"rule_selection[{index}] must be an object")
+            for key in ("target_ref", "node_ref"):
+                if key in item:
+                    check_reference(item[key], f"rule_selection[{index}].{key}")
+            for ref_index, ref in enumerate(item.get("refs", [])):
+                check_reference(
+                    ref, f"rule_selection[{index}].refs[{ref_index}]"
+                )
+
 
 def build_rewriter_prompt(
     artifact: Gate1Artifact,
     registry: RuleRegistry,
     *,
     masked: bool = False,
+    plan_override: ReplayPlan | None = None,
+    ablation_kind: str | None = None,
     indent: int | None = 2,
 ) -> str:
-    payload = build_rewriter_payload(artifact, registry, masked=masked)
+    payload = build_rewriter_payload(
+        artifact,
+        registry,
+        masked=masked,
+        plan_override=plan_override,
+        ablation_kind=ablation_kind,
+    )
     preamble = _PROMPT_PREAMBLE + (_MASKED_NOTE if masked else "")
+    if ablation_kind is not None:
+        preamble += _PLAN_ABLATION_NOTES[ablation_kind] + _OPAQUE_ABLATION_NOTE
     return preamble + "\nREPLAY_PACKET_JSON:\n" + json.dumps(
         payload,
         indent=indent,

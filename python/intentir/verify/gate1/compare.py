@@ -19,11 +19,15 @@ from .ttir import TTIRFingerprint, fingerprint_ttir
 __all__ = [
     "ComponentComparison",
     "FingerprintDifference",
+    "TTIR_SCORE_SEMANTICS",
     "TTIRComparator",
     "TTIRComparison",
     "compare_fingerprints",
     "compare_ttir",
 ]
+
+
+TTIR_SCORE_SEMANTICS = "active_evidence_weighted_v2"
 
 
 _CATEGORY_WEIGHTS = {
@@ -69,7 +73,8 @@ class ComponentComparison:
     category: str
     hard: bool
     passed: bool
-    score: float
+    score: float | None
+    applicable: bool
     differences: tuple[FingerprintDifference, ...]
 
     @property
@@ -82,6 +87,7 @@ class ComponentComparison:
             "hard": self.hard,
             "passed": self.passed,
             "score": self.score,
+            "applicable": self.applicable,
             "differences": [difference.to_dict() for difference in self.differences],
         }
 
@@ -110,6 +116,30 @@ class TTIRComparison:
             for component in self.components
             if component.hard
         }
+
+    @property
+    def active_categories(self) -> tuple[str, ...]:
+        """Hard categories that contain source or replay evidence."""
+
+        return tuple(
+            component.category
+            for component in self.components
+            if component.hard and component.applicable
+        )
+
+    @property
+    def inactive_categories(self) -> tuple[str, ...]:
+        """Hard categories whose source and replay evidence are both empty."""
+
+        return tuple(
+            component.category
+            for component in self.components
+            if component.hard and not component.applicable
+        )
+
+    @property
+    def active_weight(self) -> float:
+        return sum(_CATEGORY_WEIGHTS[category] for category in self.active_categories)
 
     @property
     def differences(self) -> tuple[FingerprintDifference, ...]:
@@ -153,6 +183,10 @@ class TTIRComparison:
             "hard_pass": self.hard_pass,
             "passed": self.passed,
             "score": self.score,
+            "score_semantics": TTIR_SCORE_SEMANTICS,
+            "active_categories": list(self.active_categories),
+            "inactive_categories": list(self.inactive_categories),
+            "active_weight": self.active_weight,
             "rank_tuple": list(self.rank_tuple),
             "primary_difference_category": self.primary_difference_category,
             "hard_passes": self.hard_passes,
@@ -161,11 +195,20 @@ class TTIRComparison:
         }
 
 
-def _counter_similarity(expected: Counter[Any], actual: Counter[Any]) -> float:
+def _counter_similarity(
+    expected: Counter[Any], actual: Counter[Any]
+) -> float | None:
+    """Return multiset Jaccard similarity, or ``None`` without evidence.
+
+    Two empty counters are exactly equal for the hard verdict, but they do not
+    provide positive similarity evidence and therefore must not receive a
+    fixed category weight in the aggregate diagnostic score.
+    """
+
     keys = expected.keys() | actual.keys()
     union = sum(max(expected[key], actual[key]) for key in keys)
     if union == 0:
-        return 1.0
+        return None
     intersection = sum(min(expected[key], actual[key]) for key in keys)
     return intersection / union
 
@@ -198,11 +241,13 @@ def _compare_counter(
                 ),
             )
         )
+    similarity = _counter_similarity(expected, actual)
     return ComponentComparison(
         category=category,
         hard=hard,
         passed=not differences,
-        score=_counter_similarity(expected, actual),
+        score=similarity,
+        applicable=similarity is not None,
         differences=tuple(differences),
     )
 
@@ -294,9 +339,22 @@ def compare_fingerprints(
     )
     hard_components = [component for component in components if component.hard]
     hard_pass = all(component.passed for component in hard_components)
-    score = sum(
-        component.score * _CATEGORY_WEIGHTS[component.category]
-        for component in hard_components
+    active_components = [
+        component for component in hard_components if component.applicable
+    ]
+    active_weight = sum(
+        _CATEGORY_WEIGHTS[component.category]
+        for component in active_components
+    )
+    score = (
+        sum(
+            component.score * _CATEGORY_WEIGHTS[component.category]
+            for component in active_components
+            if component.score is not None
+        )
+        / active_weight
+        if active_weight
+        else 0.0
     )
     score = min(1.0, max(0.0, score))
     hard_difference_count = sum(

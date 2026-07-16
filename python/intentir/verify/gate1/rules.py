@@ -6,10 +6,13 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from .model import (
     Frontend,
+    Gate1Artifact,
+    ParameterKind,
     ReplayPlan,
     SchemaError,
     StrictJSONMixin,
@@ -20,13 +23,21 @@ from .model import (
 )
 
 
+class RuleSelectionMode(str, Enum):
+    """Whether a rule is the canonical mechanism or a source-specific alternative."""
+
+    DERIVED = "derived"
+    OVERRIDE = "override"
+
+
 @dataclass
 class RuleCard(StrictJSONMixin):
-    """A system-owned implementation card selected by ``ReplayStep.rule``.
+    """One system-owned replay mechanism card.
 
     Concrete frontend API spellings are allowed here and only here.  The
-    lift-produced replay plan contains just the card identifier and references
-    back into J.
+    lift-produced strict replay plan explicitly instantiates canonical and
+    override cards, while carrying only card ids and references into J/B/C or
+    the interface.
     """
 
     id: str
@@ -37,6 +48,8 @@ class RuleCard(StrictJSONMixin):
     api_mapping: dict[str, str] = field(default_factory=dict)
     example: str = ""
     pitfalls: list[str] = field(default_factory=list)
+    selection_mode: RuleSelectionMode = RuleSelectionMode.DERIVED
+    override_family: str | None = None
 
     def __post_init__(self) -> None:
         self.id = _string(self.id, "RuleCard.id")
@@ -52,6 +65,28 @@ class RuleCard(StrictJSONMixin):
         }
         self.example = _string(self.example, "RuleCard.example", nonempty=False)
         self.pitfalls = _string_list(self.pitfalls, "RuleCard.pitfalls", unique=True)
+        self.selection_mode = _enum(
+            RuleSelectionMode,
+            self.selection_mode,
+            "RuleCard.selection_mode",
+        )
+        if self.override_family is not None:
+            self.override_family = _string(
+                self.override_family, "RuleCard.override_family"
+            )
+            if re.fullmatch(r"[a-z][a-z0-9_]*", self.override_family) is None:
+                raise SchemaError(
+                    "RuleCard.override_family must be a lower_snake_case identifier"
+                )
+        if self.selection_mode is RuleSelectionMode.DERIVED:
+            if self.override_family is not None:
+                raise SchemaError(
+                    "derived RuleCard must not declare override_family"
+                )
+        elif self.override_family is None:
+            raise SchemaError(
+                "override RuleCard requires override_family"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "RuleCard":
@@ -60,7 +95,8 @@ class RuleCard(StrictJSONMixin):
             path="RuleCard",
             allowed={
                 "id", "frontend", "version", "applies_to", "reads",
-                "api_mapping", "example", "pitfalls",
+                "api_mapping", "example", "pitfalls", "selection_mode",
+                "override_family",
             },
             required={"id", "frontend"},
         )
@@ -76,10 +112,12 @@ class RuleCard(StrictJSONMixin):
             api_mapping=dict(api_mapping),
             example=data.get("example", ""),
             pitfalls=_string_list(data.get("pitfalls", []), "RuleCard.pitfalls", unique=True),
+            selection_mode=data.get("selection_mode", RuleSelectionMode.DERIVED.value),
+            override_family=data.get("override_family"),
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        result = {
             "id": self.id,
             "frontend": self.frontend.value,
             "version": self.version,
@@ -88,7 +126,11 @@ class RuleCard(StrictJSONMixin):
             "api_mapping": dict(self.api_mapping),
             "example": self.example,
             "pitfalls": list(self.pitfalls),
+            "selection_mode": self.selection_mode.value,
         }
+        if self.override_family is not None:
+            result["override_family"] = self.override_family
+        return result
 
 
 class RuleRegistry(StrictJSONMixin):
@@ -145,7 +187,7 @@ class RuleRegistry(StrictJSONMixin):
         *,
         frontend: Frontend | str | None = None,
     ) -> list[RuleCard]:
-        """Resolve cards in first-use order, deduplicating repeated steps."""
+        """Resolve cards in canonical plan order, deduplicating rule ids."""
 
         if not isinstance(plan, ReplayPlan):
             plan = ReplayPlan.from_json(plan)
@@ -158,22 +200,318 @@ class RuleRegistry(StrictJSONMixin):
             seen.add(step.rule)
         return result
 
+    def validate_strict_plan(
+        self,
+        plan: ReplayPlan,
+        *,
+        frontend: Frontend | str | None = None,
+        artifact: Gate1Artifact | None = None,
+    ) -> ReplayPlan:
+        """Validate pi as a complete ordered list of replay-rule instances."""
+
+        if not isinstance(plan, ReplayPlan):
+            plan = ReplayPlan.from_json(plan)
+        seen_steps: set[tuple[str, str, tuple[str, ...]]] = set()
+        seen_overrides: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+        for index, step in enumerate(plan.steps):
+            card = self.get(step.rule, frontend=frontend)
+            target_ref = step.node_ref or (step.refs[0] if step.refs else None)
+            if target_ref is None:
+                raise SchemaError(
+                    f"replay rule {step.rule!r} requires a target reference "
+                    f"(plan.steps[{index}])"
+                )
+            if step.node_ref is not None and step.node_ref in step.refs:
+                raise SchemaError(
+                    f"plan target {step.node_ref!r} must not be repeated "
+                    f"inside refs (plan.steps[{index}])"
+                )
+            marker = (step.rule, target_ref, tuple(step.refs))
+            if marker in seen_steps:
+                raise SchemaError(
+                    f"duplicate replay rule {step.rule!r} for target {target_ref!r}"
+                )
+            seen_steps.add(marker)
+            if card.selection_mode is not RuleSelectionMode.OVERRIDE:
+                continue
+            assert card.override_family is not None
+            key = (card.override_family, target_ref)
+            value = (step.rule, tuple(step.refs))
+            if key in seen_overrides:
+                previous_rule, previous_refs = seen_overrides[key]
+                kind = "duplicate" if value == (previous_rule, previous_refs) else "conflicting"
+                raise SchemaError(
+                    f"{kind} pi override for family {card.override_family!r} "
+                    f"and target {target_ref!r}"
+                )
+            seen_overrides[key] = value
+        if artifact is not None:
+            self._validate_strict_coverage(plan, artifact, frontend=frontend)
+        return plan
+
+    def _validate_strict_coverage(
+        self,
+        plan: ReplayPlan,
+        artifact: Gate1Artifact,
+        *,
+        frontend: Frontend | str | None = None,
+    ) -> None:
+        """Fail closed when a known J/B/C realization is absent from strict pi."""
+
+        if not isinstance(artifact, Gate1Artifact):
+            artifact = Gate1Artifact.from_json(artifact)
+        selected: dict[str, set[str]] = {}
+        for step in plan.steps:
+            target = step.target_ref
+            assert target is not None
+            selected.setdefault(step.rule, set()).add(target)
+
+        def require(
+            rules: set[str],
+            targets: set[str],
+            description: str,
+        ) -> None:
+            if any(selected.get(rule, set()) & targets for rule in rules):
+                return
+            raise SchemaError(
+                f"strict pi is missing {description}; expected one of "
+                f"{sorted(rules)!r} targeting one of {sorted(targets)!r}"
+            )
+
+        function_json = artifact.j.intent.to_json()["intent_function"]
+
+        def operation_at(path: str) -> dict[str, Any]:
+            indices = [int(value) for value in re.findall(r"body\[(\d+)\]", path)]
+            if not indices:
+                raise SchemaError(f"unsupported J node path in strict pi: {path!r}")
+            operations = function_json.get("body", [])
+            operation: dict[str, Any] | None = None
+            for depth, index in enumerate(indices):
+                if index >= len(operations):
+                    raise SchemaError(f"J node path is out of range: {path!r}")
+                operation = operations[index]
+                if depth + 1 < len(indices):
+                    operations = operation.get("body", [])
+            assert operation is not None
+            return operation
+
+        target_tags: dict[str, set[str]] = {}
+
+        def tag(target: str | None, *tags: str) -> None:
+            if target is None:
+                return
+            target_tags.setdefault(target, set()).update(tags)
+
+        for node_id, path in artifact.j.node_ids.items():
+            op_name = operation_at(path).get("op")
+            if isinstance(op_name, str):
+                tag(node_id, op_name)
+                tag(path, op_name)
+        for tensor in artifact.j.intent.inputs:
+            tag(tensor.name, "intent.inputs")
+        for tensor in artifact.j.intent.outputs:
+            tag(tensor.name, "intent.outputs")
+        for domain_id in artifact.j.boundary.domains:
+            tag(domain_id, "boundary.domains", "interface.grid")
+        for access in artifact.j.boundary.accesses:
+            tag(access.access_id, "boundary.accesses")
+        for broadcast in artifact.j.boundary.broadcasts:
+            tag(broadcast.node_ref, "boundary.broadcasts")
+        for reduction in artifact.j.boundary.reductions:
+            tag(reduction.node_ref, "boundary.reductions")
+        for mapping in artifact.j.boundary.output_mappings:
+            tag(mapping.output, "boundary.output_mappings")
+            tag(mapping.value, "boundary.output_mappings")
+            tag(mapping.node_ref, "boundary.output_mappings")
+        for parameter in artifact.interface.parameters:
+            tag(parameter.name, "interface.parameters")
+        for slot in artifact.schedule.slots:
+            tag(slot.name, "schedule.slots")
+
+        selected_by_target: dict[str, set[str]] = {}
+        for step in plan.steps:
+            target = step.target_ref
+            assert target is not None
+            card = self.get(step.rule, frontend=frontend)
+            tags = target_tags.get(target, set())
+            if card.applies_to and not (set(card.applies_to) & tags):
+                raise SchemaError(
+                    f"strict pi rule {step.rule!r} is not applicable to target "
+                    f"{target!r}; target categories are {sorted(tags)!r}"
+                )
+            selected_by_target.setdefault(target, set()).add(step.rule)
+
+        exclusive_mechanisms = (
+            {"bind_program_domain", "bind_wide_program_domain"},
+            {"materialize_index_tile", "materialize_pointer_tile"},
+            {"realize_masked_access", "realize_unmasked_access"},
+            {"realize_reduce", "realize_flattened_reduce"},
+            {"realize_k_tiled_dot", "realize_outer_product"},
+        )
+        for target, rules_for_target in selected_by_target.items():
+            for alternatives in exclusive_mechanisms:
+                conflict = rules_for_target & alternatives
+                if len(conflict) > 1:
+                    raise SchemaError(
+                        f"strict pi selects mutually exclusive replay mechanisms "
+                        f"{sorted(conflict)!r} for target {target!r}"
+                    )
+
+        rule_by_op = {
+            "map_unary": {"realize_elementwise"},
+            "map_binary": {"realize_elementwise"},
+            "const": {"realize_const"},
+            "reduce": {"realize_reduce", "realize_flattened_reduce"},
+            "contraction": {"realize_k_tiled_dot", "realize_outer_product"},
+            "cast": {"realize_cast"},
+            "select": {"realize_select"},
+            "loop": {"realize_loop_carry"},
+            "gather": {"realize_indexed_access"},
+        }
+        for node_id, path in artifact.j.node_ids.items():
+            operation = operation_at(path)
+            op_name = operation.get("op")
+            rules = rule_by_op.get(op_name)
+            if rules is None:
+                raise SchemaError(
+                    f"strict pi has no registered coverage rule for IntentIR op "
+                    f"{op_name!r} at {node_id!r}"
+                )
+            require(rules, {node_id, path}, f"J node {node_id!r} ({op_name})")
+
+        for access in artifact.j.boundary.accesses:
+            target = {access.access_id}
+            require(
+                {"materialize_index_tile", "materialize_pointer_tile"},
+                target,
+                f"address materialization for access {access.access_id!r}",
+            )
+            access_rule = (
+                "realize_masked_access"
+                if access.predicate is not None
+                else "realize_unmasked_access"
+            )
+            require(
+                {access_rule},
+                target,
+                f"{access_rule} for access {access.access_id!r}",
+            )
+
+        for broadcast in artifact.j.boundary.broadcasts:
+            require(
+                {"realize_broadcast"},
+                {broadcast.node_ref},
+                f"broadcast for node {broadcast.node_ref!r}",
+            )
+
+        for mapping in artifact.j.boundary.output_mappings:
+            targets = {mapping.output, mapping.value}
+            if mapping.node_ref is not None:
+                targets.add(mapping.node_ref)
+            require(
+                {"realize_output_mapping"},
+                targets,
+                f"output mapping for {mapping.output!r}",
+            )
+
+        scalar_parameters = [
+            parameter
+            for parameter in artifact.interface.parameters
+            if parameter.kind is ParameterKind.SCALAR
+        ]
+        for parameter in scalar_parameters:
+            targets = {parameter.name}
+            if parameter.tensor_ref is not None:
+                targets.add(parameter.tensor_ref)
+            require(
+                {"bind_runtime_scalar"},
+                targets,
+                f"runtime scalar {parameter.name!r}",
+            )
+
+        for slot in artifact.schedule.slots:
+            require(
+                {"declare_schedule_slot"},
+                {slot.name},
+                f"schedule slot {slot.name!r}",
+            )
+
+        domain_rules = (
+            selected.get("bind_program_domain", set())
+            | selected.get("bind_wide_program_domain", set())
+        ) & set(artifact.j.boundary.domains)
+        if len(domain_rules) < len(artifact.interface.grid):
+            raise SchemaError(
+                "strict pi must bind at least one boundary domain for every grid axis"
+            )
+
+    def canonicalize_overrides(
+        self,
+        plan: ReplayPlan,
+        *,
+        frontend: Frontend | str | None = None,
+    ) -> ReplayPlan:
+        """Compatibility alias for callers from the historical sparse-pi protocol."""
+
+        return self.validate_strict_plan(plan, frontend=frontend)
+
+    def baseline_cards(
+        self,
+        *,
+        frontend: Frontend | str | None = None,
+    ) -> list[RuleCard]:
+        """Return canonical mechanism cards for registry inspection.
+
+        Strict pi must still instantiate these cards explicitly; this method no
+        longer injects hidden replay steps into the writer payload.
+        """
+
+        expected = (
+            _enum(Frontend, frontend, "RuleRegistry.frontend")
+            if frontend is not None
+            else None
+        )
+        return [
+            card
+            for card in self._cards.values()
+            if card.selection_mode is RuleSelectionMode.DERIVED
+            and (expected is None or card.frontend is expected)
+        ]
+
     def rewriter_view(
         self,
         plan: ReplayPlan,
         *,
         frontend: Frontend | str | None = None,
+        artifact: Gate1Artifact | None = None,
     ) -> dict[str, Any]:
-        cards = self.resolve(plan, frontend=frontend)
+        strict_plan = self.validate_strict_plan(
+            plan, frontend=frontend, artifact=artifact
+        )
+        cards = self.resolve(strict_plan, frontend=frontend)
         return {
+            "plan": strict_plan.to_json(),
             "selection": [
                 {
-                    "step": index,
                     "rule": step.rule,
+                    "selection_mode": self.get(
+                        step.rule, frontend=frontend
+                    ).selection_mode.value,
+                    **(
+                        {
+                            "override_family": self.get(
+                                step.rule, frontend=frontend
+                            ).override_family
+                        }
+                        if self.get(step.rule, frontend=frontend).override_family
+                        is not None
+                        else {}
+                    ),
+                    "target_ref": step.node_ref or step.refs[0],
                     **({"node_ref": step.node_ref} if step.node_ref is not None else {}),
                     **({"refs": list(step.refs)} if step.refs else {}),
                 }
-                for index, step in enumerate(plan.steps)
+                for step in strict_plan.steps
             ],
             "cards": [card.to_json() for card in cards],
         }
@@ -216,7 +554,7 @@ class RuleRegistry(StrictJSONMixin):
 
 
 def default_triton_rule_registry() -> RuleRegistry:
-    """Return the reviewed Triton MVP cards used by the five-kernel probe.
+    """Return the reviewed Triton cards used by the strict SCRC replay plan.
 
     Cards deliberately describe mechanisms and expose all relevant frontend
     spellings.  They do not choose an operator or boundary value: those choices
@@ -236,6 +574,8 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "bind_wide_program_domain",
             Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="program_coordinate_width",
             applies_to=["boundary.domains", "interface.grid"],
             reads=["domain expression", "grid axis", "coordinate integer width"],
             api_mapping={
@@ -270,6 +610,8 @@ def default_triton_rule_registry() -> RuleRegistry:
             "materialize_pointer_tile",
             Frontend.TRITON,
             version="2",
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="address_association",
             applies_to=["boundary.accesses"],
             reads=["index_expression", "schedule slot"],
             api_mapping={"lane_range": "tl.arange"},
@@ -304,6 +646,8 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "materialize_mask_tile",
             Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="mask_materialization",
             applies_to=["boundary.accesses"],
             reads=[
                 "component predicates", "compound predicate",
@@ -328,7 +672,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             "realize_elementwise",
             Frontend.TRITON,
             version="4",
-            applies_to=["map_unary", "map_binary", "cast", "select"],
+            applies_to=["map_unary", "map_binary"],
             reads=["fn", "operands", "dtype"],
             api_mapping={
                 "add": "+",
@@ -354,6 +698,20 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "A J scalar input remains a runtime operand; never bake its sampled value.",
                 "For pow, use only the allowlisted Triton libdevice import and "
                 "keep a runtime exponent as a runtime operand.",
+            ],
+        ),
+        RuleCard(
+            "realize_const",
+            Frontend.TRITON,
+            applies_to=["const"],
+            reads=["value", "dtype", "shape", "result"],
+            api_mapping={"tensor_splat": "tl.full"},
+            example=(
+                "Materialize the referenced J constant in its declared dtype and "
+                "local output tile shape."
+            ),
+            pitfalls=[
+                "Read the value from J; never infer it from the kernel name or output name."
             ],
         ),
         RuleCard(
@@ -390,6 +748,8 @@ def default_triton_rule_registry() -> RuleRegistry:
         RuleCard(
             "realize_flattened_reduce",
             Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_call_shape",
             applies_to=["reduce", "boundary.reductions"],
             reads=[
                 "fn", "global axes", "local tile rank", "identity",
@@ -433,7 +793,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             "realize_k_tiled_dot",
             Frontend.TRITON,
             version="3",
-            applies_to=["contraction", "loop"],
+            applies_to=["contraction"],
             reads=[
                 "subscripts", "operands", "result dtype", "output tile slots",
                 "contracted K semantic extent", "K tile slot", "K tile domain",
@@ -478,6 +838,23 @@ def default_triton_rule_registry() -> RuleRegistry:
             pitfalls=[
                 "Do not introduce a K loop when no subscript label is contracted.",
                 "Preserve lhs/rhs axis order from the declared subscripts.",
+            ],
+        ),
+        RuleCard(
+            "realize_indexed_access",
+            Frontend.TRITON,
+            applies_to=["gather"],
+            reads=[
+                "operands", "mode", "axis", "data-dependent index expression",
+                "result dtype and shape",
+            ],
+            api_mapping={"indexed_load": "tl.load"},
+            example=(
+                "Realize the J gather through the referenced B access and its "
+                "data-dependent index value."
+            ),
+            pitfalls=[
+                "Do not replace a runtime index with its current sampled value."
             ],
         ),
         RuleCard(
@@ -569,4 +946,7 @@ def default_triton_rule_registry() -> RuleRegistry:
     return RuleRegistry(cards)
 
 
-__all__ = ["RuleCard", "RuleRegistry", "default_triton_rule_registry"]
+__all__ = [
+    "RuleCard", "RuleRegistry", "RuleSelectionMode",
+    "default_triton_rule_registry",
+]

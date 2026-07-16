@@ -933,6 +933,30 @@ class TTIRParser:
 
         memory_effects: list[MemoryEffect] = []
         effect_counts: Counter[str] = Counter()
+
+        def value_ref(value: str) -> str:
+            """Expose typed constants while keeping other SSA values opaque."""
+
+            node_id = result_to_node.get(value)
+            if node_id is not None:
+                producer = node_by_id[node_id]
+                if producer.name == "arith.constant":
+                    return producer.local_signature
+            return operand_ref(value, semantic=True)
+
+        def direct_constant_ref(value: str) -> str | None:
+            """Return an exact typed constant only for a direct SSA producer."""
+
+            node_id = result_to_node.get(value)
+            if node_id is None:
+                return None
+            producer = node_by_id[node_id]
+            return (
+                producer.local_signature
+                if producer.name == "arith.constant"
+                else None
+            )
+
         for operation in operations:
             if operation.name == "tt.load":
                 masked = operation.header_operand_count >= 2
@@ -940,7 +964,7 @@ class TTIRParser:
                     operand_ref(operation.operands[1], semantic=True) if masked else None
                 )
                 other = (
-                    operand_ref(operation.operands[2], semantic=True)
+                    value_ref(operation.operands[2])
                     if operation.header_operand_count >= 3
                     else None
                 )
@@ -955,7 +979,11 @@ class TTIRParser:
                     operand_ref(operation.operands[2], semantic=True) if masked else None
                 )
                 effect = MemoryEffect(
-                    "store", masked, predicate, None, operation.local_signature
+                    "store",
+                    masked,
+                    predicate,
+                    direct_constant_ref(operation.operands[1]),
+                    operation.local_signature,
                 )
                 memory_effects.append(effect)
                 effect_counts["write.masked" if masked else "write"] += 1

@@ -238,6 +238,13 @@ def scan_static_leakage(
             [LeakageViolation(LeakageKind.SCHEMA, "plan", str(exc))],
             {"steps": 0, "literal_chars": 0, "distinct_literals": 0},
         )
+    if registry is not None:
+        try:
+            parsed_plan = registry.validate_strict_plan(parsed_plan)
+        except (SchemaError, TypeError) as exc:
+            violations.append(
+                LeakageViolation(LeakageKind.SCHEMA, "plan", str(exc))
+            )
 
     parsed_j: SemanticArchive | None = None
     if j is not None:
@@ -375,6 +382,12 @@ def masked_ablation_passes(
     *,
     threshold: float = 0.5,
 ) -> bool:
+    """Legacy ratio helper retained for artifact/tooling compatibility.
+
+    Gate1 no longer uses this fuzzy threshold for a verdict; masked-J fallback
+    is decided by exact semantic hard-component degradation in orchestrate.py.
+    """
+
     if threshold < 0:
         raise ValueError("threshold must be non-negative")
     return leakage_ratio(normal_score, masked_score) <= threshold

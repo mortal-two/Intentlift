@@ -5,8 +5,11 @@ The orchestrator keeps the trust split explicit:
 * LLM/static writers propose replay source;
 * :class:`TritonCompiler` compiles in an isolated process without launching;
 * :mod:`.ttir` and :mod:`.compare` alone decide structural closure;
-* diagnosis scopes repairs but cannot override the verdict;
-* the final masked-J ablation measures whether pi/interface channels leaked J.
+* diagnosis scopes the next Lift update but cannot override the verdict;
+* paired J interventions reuse the normal model-generated replay as a
+  controlled structural baseline and deterministically test whether semantics
+  obey J without unrelated regeneration drift;
+* masked-J remains a diagnostic/fallback for artifacts without an intervention.
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ from .compare import TTIRComparator, TTIRComparison
 from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
 from .diagnose import (
     Diagnosis,
-    RepairFeedback,
     Responsibility,
     diagnose_comparison,
     diagnose_compile_failure,
@@ -29,8 +31,13 @@ from .leakage import (
     LeakagePolicy,
     LeakageReport,
     leakage_ratio,
-    masked_ablation_passes,
     scan_static_leakage,
+)
+from .interventions import (
+    InterventionRecord,
+    InterventionStatus,
+    build_semantic_interventions,
+    evaluate_semantic_intervention,
 )
 from .model import (
     Frontend,
@@ -59,23 +66,27 @@ class Gate1Config:
     ``max_relifts`` is retained as the historical public field name, but its
     value is the total number of artifact evaluation rounds including the
     initial Lift.  Therefore the maximum number of source-aware relift calls is
-    ``max_relifts - 1``.  Inner replay repairs use the separate
-    ``max_repairs`` budget.
+    ``max_relifts - 1``.  Normal replay has no inner repair loop: every failed
+    generation/compile/interface/fingerprint result is returned to Lift and the
+    next artifact round restarts the complete pipeline.
     """
 
-    max_repairs: int = 2
     max_relifts: int = 5
     stable_closures: int = 1
+    run_semantic_interventions: bool = True
+    max_semantic_interventions: int = 1
     run_masked_ablation: bool = True
+    # Retained for configuration/artifact compatibility.  The ratio is now
+    # diagnostic only; masked-J fallback uses exact semantic hard components.
     leakage_threshold: float = 0.5
 
     def __post_init__(self) -> None:
-        if self.max_repairs < 0:
-            raise ValueError("max_repairs must be non-negative")
         if self.max_relifts < 1:
             raise ValueError("max_relifts must be positive")
         if self.stable_closures < 1:
             raise ValueError("stable_closures must be positive")
+        if self.max_semantic_interventions < 0:
+            raise ValueError("max_semantic_interventions must be non-negative")
         if self.leakage_threshold < 0:
             raise ValueError("leakage_threshold must be non-negative")
 
@@ -150,6 +161,8 @@ class CandidateRecord:
                 "response_model": self.generation.response_model,
                 "response_id": self.generation.response_id,
                 "masked": self.generation.masked,
+                "base_generation_id": self.generation.base_generation_id,
+                "ablation_kind": self.generation.ablation_kind,
             },
             "compile": None
             if self.compile is None
@@ -176,13 +189,14 @@ class CandidateRecord:
 class ReliftTrigger(str, Enum):
     """Why the source-aware Lift agent is being invoked again.
 
-    This is deliberately narrower than :class:`Gate1Status`.  A semantic
-    relift is currently authorized for persistent normal source/replay hard
-    differences after bounded replay repair.  Static or masked-J leakage is a
-    distinct anti-leakage failure and is not silently converted into the same
-    optimization loop.
+    Every normal replay failure returns to the source-aware Lift agent. Static
+    or masked-J leakage remains a distinct anti-leakage failure and is not
+    silently converted into the same optimization loop.
     """
 
+    REPLAY_GENERATION_FAILED = "replay_generation_failed"
+    REPLAY_COMPILE_FAILED = "replay_compile_failed"
+    REPLAY_EVALUATION_FAILED = "replay_evaluation_failed"
     NORMAL_NO_CLOSURE = "normal_no_closure"
 
 
@@ -228,7 +242,7 @@ class ReliftRequest:
         }
 
 
-def _normal_relift_request(
+def _relift_request_for_round(
     evaluation_round: int,
     records: tuple[CandidateRecord, ...],
     best: CandidateRecord | None,
@@ -242,8 +256,16 @@ def _normal_relift_request(
             for component in best.comparison.components
             if component.hard and not component.passed
         )
+    if any(record.comparison is not None for record in records):
+        trigger = ReliftTrigger.NORMAL_NO_CLOSURE
+    elif any(record.compiled for record in records):
+        trigger = ReliftTrigger.REPLAY_EVALUATION_FAILED
+    elif any(record.generation is not None for record in records):
+        trigger = ReliftTrigger.REPLAY_COMPILE_FAILED
+    else:
+        trigger = ReliftTrigger.REPLAY_GENERATION_FAILED
     return ReliftRequest(
-        trigger=ReliftTrigger.NORMAL_NO_CLOSURE,
+        trigger=trigger,
         evaluation_round=evaluation_round,
         candidate_count=len(records),
         compiled_candidate_count=sum(record.compiled for record in records),
@@ -279,6 +301,8 @@ class Gate1ExecutionResult:
     leakage_ratio: float | None = None
     diagnostics: tuple[str, ...] = ()
     masked_generation: ReplayGeneration | None = None
+    interventions: tuple[InterventionRecord, ...] = ()
+    anti_leakage_basis: str = "masked_j_fallback"
 
     @property
     def replay_closed(self) -> bool:
@@ -326,11 +350,15 @@ class Gate1ExecutionResult:
                 "response_model": self.masked_generation.response_model,
                 "response_id": self.masked_generation.response_id,
                 "masked": self.masked_generation.masked,
+                "base_generation_id": self.masked_generation.base_generation_id,
+                "ablation_kind": self.masked_generation.ablation_kind,
             },
             "masked_comparison": None
             if self.masked_comparison is None
             else self.masked_comparison.to_dict(),
             "leakage_ratio": self.leakage_ratio,
+            "interventions": [item.to_json() for item in self.interventions],
+            "anti_leakage_basis": self.anti_leakage_basis,
             "diagnostics": list(self.diagnostics),
         }
 
@@ -581,6 +609,158 @@ def _interface_for_fingerprint(
     return interface
 
 
+_MASKED_SEMANTIC_CATEGORIES = (
+    "op_multiset",
+    "dataflow",
+    "reduction",
+    "predicate_effect",
+)
+MASKED_J_FALLBACK_POLICY = "exact_semantic_hard_degradation_v1"
+
+
+def _masked_semantic_degradation(
+    comparison: TTIRComparison,
+) -> tuple[bool, tuple[str, ...]]:
+    """Return exact A/B categories lost by a compiled masked-J replay."""
+
+    failed = tuple(
+        category
+        for category in _MASKED_SEMANTIC_CATEGORIES
+        if not comparison.component(category).passed
+    )
+    return bool(failed), failed
+
+
+def _run_semantic_interventions(
+    *,
+    artifact: Gate1Artifact,
+    baseline_record: CandidateRecord,
+    compile_case: CompileCase,
+    registry: RuleRegistry,
+    writer: ReplayWriter,
+    compiler: TritonCompiler,
+    seen_generation_ids: set[str],
+    limit: int,
+) -> tuple[InterventionRecord, ...]:
+    """Run source-blind paired interventions against a closed replay."""
+
+    if (
+        limit == 0
+        or baseline_record.compile is None
+        or not baseline_record.compile.ok
+        or not baseline_record.compile.ttir
+    ):
+        return ()
+    specs = build_semantic_interventions(artifact, limit=limit)
+    if not specs:
+        return ()
+    baseline_fp = fingerprint_ttir(
+        baseline_record.compile.ttir,
+        python_interface=_interface_for_fingerprint(
+            baseline_record.compile, compile_case, artifact
+        ),
+        schedule=compile_case.schedule,
+    )
+    records: list[InterventionRecord] = []
+    for spec in specs:
+        try:
+            generation = writer.generate(
+                spec.artifact,
+                registry,
+                base_candidate=baseline_record.generation,
+                masked=False,
+            )
+            if generation.generation_id in seen_generation_ids:
+                raise RuntimeError(
+                    "semantic intervention reused an existing generation_id"
+                )
+            seen_generation_ids.add(generation.generation_id)
+        except Exception as exc:
+            records.append(
+                InterventionRecord(
+                    spec,
+                    InterventionStatus.GENERATION_FAILED,
+                    diagnostic=(
+                        "semantic intervention generation failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            )
+            continue
+
+        function_name = spec.artifact.interface.function_name
+        try:
+            compiled = compiler.compile(
+                KernelSource.from_code(generation.code, function_name),
+                compile_case,
+            )
+        except Exception as exc:
+            records.append(
+                InterventionRecord(
+                    spec,
+                    InterventionStatus.COMPILE_FAILED,
+                    generation=generation,
+                    diagnostic=(
+                        "semantic intervention compiler raised: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            )
+            continue
+        if not compiled.ok or not compiled.ttir:
+            records.append(
+                InterventionRecord(
+                    spec,
+                    InterventionStatus.COMPILE_FAILED,
+                    generation=generation,
+                    compile=compiled,
+                    diagnostic=(
+                        "semantic intervention replay did not compile: "
+                        f"{compiled.diagnostic}"
+                    ),
+                )
+            )
+            continue
+        try:
+            intervention_fp = fingerprint_ttir(
+                compiled.ttir,
+                python_interface=_interface_for_fingerprint(
+                    compiled, compile_case, spec.artifact
+                ),
+                schedule=compile_case.schedule,
+            )
+            _validate_compiled_interface(
+                compiled, intervention_fp, spec.artifact
+            )
+            verdict = evaluate_semantic_intervention(
+                spec, baseline_fp, intervention_fp
+            )
+            records.append(
+                InterventionRecord(
+                    spec,
+                    verdict.status,
+                    generation=generation,
+                    compile=compiled,
+                    verdict=verdict,
+                    diagnostic=verdict.diagnostic,
+                )
+            )
+        except Exception as exc:
+            records.append(
+                InterventionRecord(
+                    spec,
+                    InterventionStatus.EVALUATION_FAILED,
+                    generation=generation,
+                    compile=compiled,
+                    diagnostic=(
+                        "semantic intervention evaluation failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            )
+    return tuple(records)
+
+
 class Gate1Runner:
     def __init__(
         self,
@@ -617,7 +797,11 @@ class Gate1Runner:
             try:
                 compile_case = _case_with_artifact_schedule(case, current)
                 _validate_artifact_compile_contract(source, current, compile_case)
-                registry.resolve(current.plan, frontend=current.interface.frontend)
+                registry.validate_strict_plan(
+                    current.plan,
+                    frontend=current.interface.frontend,
+                    artifact=current,
+                )
                 source_text, _ = source.read_code()
                 leakage_report = scan_static_leakage(
                     current.plan,
@@ -686,23 +870,17 @@ class Gate1Runner:
                     diagnostics=tuple(diagnostics),
                 )
 
-            feedback: RepairFeedback | None = None
-            repair_base: ReplayGeneration | None = None
             stable = 0
             closed_record: CandidateRecord | None = None
             seen_generation_ids: set[str] = set()
-            repairs_generated = 0
             generation_round = 0
             round_best: CandidateRecord | None = None
 
-            # ``max_repairs`` counts generations that receive repair feedback;
-            # the initial proposal and independent stability proposals do not
-            # consume that budget.
-            while True:
-                if feedback is not None:
-                    if repairs_generated >= self.config.max_repairs:
-                        break
-                    repairs_generated += 1
+            # One fresh source-blind replay proposal is evaluated for this
+            # artifact. Additional proposals exist only when an independent
+            # stability confirmation is explicitly requested. A failure is
+            # never repaired in-place; it returns to the outer Lift loop.
+            while stable < self.config.stable_closures:
                 generation: ReplayGeneration | None = None
                 compile_result: CompileResult | None = None
                 comparison: TTIRComparison | None = None
@@ -711,8 +889,6 @@ class Gate1Runner:
                     generation = writer.generate(
                         current,
                         registry,
-                        feedback=feedback,
-                        base_candidate=repair_base,
                         masked=False,
                     )
                     if generation.generation_id in seen_generation_ids:
@@ -751,11 +927,12 @@ class Gate1Runner:
                         except ValueError as exc:
                             diagnosis = Diagnosis(
                                 FailureCause.INTERFACE,
-                                Responsibility.INTERFACE_SCHEDULE,
+                                Responsibility.REPLAY_PLAN,
                                 (str(exc),),
                                 (),
-                                ("replay signature",),
-                                "重放编译接口不符合 artifact 声明；只修签名。",
+                                ("j", "pi", "location_map"),
+                                "重放接口不符合冻结 interface；禁止原地修签名，"
+                                "回流 Lift 后从头重放。",
                             )
                         else:
                             comparison = self.comparator.compare(
@@ -767,11 +944,12 @@ class Gate1Runner:
                         if generation is None or "generation_id" in str(exc):
                             diagnosis = Diagnosis(
                                 FailureCause.REPLAY_POLICY,
-                                Responsibility.REPLAY_CODE,
+                                Responsibility.REPLAY_PLAN,
                                 (f"{type(exc).__name__}: {exc}",),
                                 (),
-                                (),
-                                "重写服务未产生可审计候选；记录失败并停止该版 artifact。",
+                                ("j", "pi", "location_map"),
+                                "重写服务未产生可审计候选；将失败类别回流 Lift，"
+                                "重新生成完整 artifact 后从头重放。",
                             )
                         else:
                             diagnosis = diagnose_compile_failure(
@@ -811,47 +989,60 @@ class Gate1Runner:
                     assert generation is not None
                     stable += 1
                     closed_record = record
-                    if stable >= self.config.stable_closures:
-                        break
-                    # A stability rerun is an independent source-blind proposal,
-                    # not a repair of the just-closed code.
-                    feedback = None
-                    repair_base = None
                     generation_round += 1
                     continue
 
+                # Any normal replay failure invalidates this artifact round.
+                # The diagnosis/history are passed only to the source-aware
+                # Lift agent; the failed replay is never a writer repair base.
                 stable = 0
-                # If generation itself failed there is no candidate source on
-                # which to base a bounded repair. Provider/model fallback is
-                # already handled inside the writer, so stop this artifact.
-                if generation is None or diagnosis is None:
-                    break
-                if diagnosis.cause is FailureCause.LOWERING:
+                closed_record = None
+                if diagnosis is not None and diagnosis.cause is FailureCause.LOWERING:
                     diagnostics.append(diagnosis.explanation)
-                    break
-                feedback_record = round_best or record
-                if feedback_record.generation is None:
-                    break
-                repair_base = feedback_record.generation
-                if (
-                    feedback_record.comparison is not None
-                    and feedback_record.comparison.hard_pass
-                    and record is not feedback_record
-                ):
-                    feedback = RepairFeedback(
-                        FailureCause.REPLAY_POLICY,
-                        Responsibility.REPLAY_CODE,
-                        tuple(feedback_record.comparison.hard_passes),
-                        ("replay code",),
-                        "稳定性重写发生回退；以给定的已闭合候选为基准，"
-                        "保持 J/π 与接口不变并重新发出完整模块。",
-                    )
-                else:
-                    feedback_diagnosis = feedback_record.diagnosis or diagnosis
-                    feedback = feedback_diagnosis.to_rewriter_feedback()
-                generation_round += 1
+                break
 
             if closed_record is not None and stable >= self.config.stable_closures:
+                intervention_records: tuple[InterventionRecord, ...] = ()
+                paired_intervention_passed = False
+                if self.config.run_semantic_interventions:
+                    intervention_records = _run_semantic_interventions(
+                        artifact=current,
+                        baseline_record=closed_record,
+                        compile_case=compile_case,
+                        registry=registry,
+                        writer=writer,
+                        compiler=self.compiler,
+                        seen_generation_ids=seen_generation_ids,
+                        limit=self.config.max_semantic_interventions,
+                    )
+                    if intervention_records:
+                        paired_intervention_passed = all(
+                            item.passed for item in intervention_records
+                        )
+                        if not paired_intervention_passed:
+                            diagnostics.extend(
+                                "paired semantic intervention "
+                                f"{item.spec.intervention_id} failed: "
+                                f"{item.status.value}: {item.diagnostic}"
+                                for item in intervention_records
+                                if not item.passed
+                            )
+                            return Gate1ExecutionResult(
+                                Gate1Status.LEAKAGE_REJECTED,
+                                current,
+                                source_compile,
+                                source_fp,
+                                tuple(history),
+                                best,
+                                leakage_report,
+                                diagnostics=tuple(diagnostics),
+                                interventions=intervention_records,
+                                anti_leakage_basis="paired_intervention",
+                            )
+                        diagnostics.append(
+                            "paired semantic intervention passed with an exact "
+                            "registered TTIR delta"
+                        )
                 if not self.config.run_masked_ablation:
                     return Gate1ExecutionResult(
                         Gate1Status.REPLAY_CLOSED,
@@ -863,6 +1054,12 @@ class Gate1Runner:
                         leakage_report,
                         leakage_ratio=0.0,
                         diagnostics=tuple(diagnostics),
+                        interventions=intervention_records,
+                        anti_leakage_basis=(
+                            "paired_intervention"
+                            if paired_intervention_passed
+                            else "disabled"
+                        ),
                     )
 
                 masked_compile: CompileResult | None = None
@@ -914,7 +1111,31 @@ class Gate1Runner:
                     )
                 if not masked_attempted:
                     diagnostics.append(
-                        "masked-J ablation was unavailable; Gate1 fails closed"
+                        "masked-J ablation was unavailable"
+                    )
+                    if paired_intervention_passed:
+                        diagnostics.append(
+                            "paired intervention remains the deterministic "
+                            "anti-leakage basis"
+                        )
+                        return Gate1ExecutionResult(
+                            Gate1Status.REPLAY_CLOSED,
+                            current,
+                            source_compile,
+                            source_fp,
+                            tuple(history),
+                            best,
+                            leakage_report,
+                            masked_compile,
+                            masked_comparison,
+                            None,
+                            tuple(diagnostics),
+                            masked_generation=masked_generation,
+                            interventions=intervention_records,
+                            anti_leakage_basis="paired_intervention",
+                        )
+                    diagnostics.append(
+                        "no paired intervention passed; Gate1 fails closed"
                     )
                     return Gate1ExecutionResult(
                         Gate1Status.LEAKAGE_REJECTED,
@@ -929,18 +1150,50 @@ class Gate1Runner:
                         None,
                         tuple(diagnostics),
                         masked_generation=masked_generation,
+                        interventions=intervention_records,
+                        anti_leakage_basis="masked_j_fallback",
                     )
                 normal_score = closed_record.comparison.score  # type: ignore[union-attr]
                 ratio = leakage_ratio(normal_score, masked_score)
-                if not masked_ablation_passes(
-                    normal_score,
-                    masked_score,
-                    threshold=self.config.leakage_threshold,
-                ):
+                if masked_comparison is None:
+                    masked_semantically_degraded = True
+                    masked_failed_categories: tuple[str, ...] = ()
                     diagnostics.append(
-                        f"masked-J leakage ratio {ratio:.6f} exceeds "
-                        f"threshold {self.config.leakage_threshold:.6f}"
+                        "masked-J could not produce a compiled, interface-valid "
+                        "semantic fingerprint"
                     )
+                else:
+                    (
+                        masked_semantically_degraded,
+                        masked_failed_categories,
+                    ) = _masked_semantic_degradation(masked_comparison)
+
+                if not masked_semantically_degraded:
+                    diagnostics.append(
+                        "masked-J preserved every semantic hard component; "
+                        f"diagnostic score ratio={ratio:.6f}"
+                    )
+                    if paired_intervention_passed:
+                        diagnostics.append(
+                            "blank-J guessability is diagnostic only because "
+                            "the paired intervention proved causal J control"
+                        )
+                        return Gate1ExecutionResult(
+                            Gate1Status.REPLAY_CLOSED,
+                            current,
+                            source_compile,
+                            source_fp,
+                            tuple(history),
+                            best,
+                            leakage_report,
+                            masked_compile,
+                            masked_comparison,
+                            ratio,
+                            tuple(diagnostics),
+                            masked_generation=masked_generation,
+                            interventions=intervention_records,
+                            anti_leakage_basis="paired_intervention",
+                        )
                     return Gate1ExecutionResult(
                         Gate1Status.LEAKAGE_REJECTED,
                         current,
@@ -954,7 +1207,17 @@ class Gate1Runner:
                         ratio,
                         tuple(diagnostics),
                         masked_generation=masked_generation,
+                        interventions=intervention_records,
+                        anti_leakage_basis="masked_j_fallback",
                     )
+                if masked_failed_categories:
+                    diagnostics.append(
+                        "masked-J deterministically lost semantic hard "
+                        "component(s): " + ", ".join(masked_failed_categories)
+                    )
+                diagnostics.append(
+                    f"masked-J score ratio={ratio:.6f} is diagnostic only"
+                )
                 return Gate1ExecutionResult(
                     Gate1Status.REPLAY_CLOSED,
                     current,
@@ -968,15 +1231,15 @@ class Gate1Runner:
                     ratio,
                     tuple(diagnostics),
                     masked_generation=masked_generation,
+                    interventions=intervention_records,
+                    anti_leakage_basis=(
+                        "paired_intervention"
+                        if paired_intervention_passed
+                        else "masked_j_fallback"
+                    ),
                 )
 
             if relifter is None or relift_round + 1 >= self.config.max_relifts:
-                break
-            if round_best is None or round_best.comparison is None:
-                diagnostics.append(
-                    "semantic relift skipped because this artifact produced no "
-                    "compiled source/replay comparison"
-                )
                 break
             assert source_fp is not None
             round_records = tuple(
@@ -984,8 +1247,12 @@ class Gate1Runner:
                 for record in history
                 if record.relift_round == relift_round
             )
-            request = _normal_relift_request(
+            request = _relift_request_for_round(
                 relift_round, round_records, round_best
+            )
+            diagnostics.append(
+                "normal replay failed; restarting from source-aware Lift with "
+                f"trigger={request.trigger.value}"
             )
             try:
                 current = relifter.relift(

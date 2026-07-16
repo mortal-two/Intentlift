@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import json
 from dataclasses import dataclass, replace
 from typing import Protocol, Sequence
 
@@ -22,8 +21,12 @@ from .codegen import (
     extract_python_module,
     validate_triton_module,
 )
-from .diagnose import RepairFeedback
-from .model import Gate1Artifact, ParameterKind, opaque_replay_abi
+from .model import (
+    Gate1Artifact,
+    ParameterKind,
+    ReplayPlan,
+    opaque_replay_abi,
+)
 from .prompt import build_rewriter_prompt
 from .rules import RuleRegistry
 
@@ -38,7 +41,8 @@ class ReplayGeneration:
     response_model: str | None = None
     response_id: str | None = None
     masked: bool = False
-    feedback: RepairFeedback | None = None
+    base_generation_id: str | None = None
+    ablation_kind: str | None = None
 
 
 class ReplayWriter(Protocol):
@@ -47,18 +51,20 @@ class ReplayWriter(Protocol):
         artifact: Gate1Artifact,
         registry: RuleRegistry,
         *,
-        feedback: RepairFeedback | None = None,
         base_candidate: ReplayGeneration | None = None,
         masked: bool = False,
+        plan_override: ReplayPlan | None = None,
+        ablation_kind: str | None = None,
     ) -> ReplayGeneration: ...
 
 
 _SYSTEM = """You are the source-blind replay writer in IntentIR SCRC Gate1.
 Use only the supplied replay packet and selected rule cards. Never request,
 infer, or reproduce source text. Return exactly one importable Triton Python
-module with no Markdown fence or prose. Compiler/comparator feedback may be
-used only to repair the requested implementation; J remains the semantic
-authority and concrete schedule values remain unavailable."""
+module with no Markdown fence or prose. Compiler/comparator feedback must
+never be used to patch replay code. J remains the semantic authority and
+concrete schedule values remain unavailable. A failed replay is handled by a
+new source-aware Lift round outside this writer."""
 
 
 class _RenameTargetBindings(ast.NodeTransformer):
@@ -319,20 +325,28 @@ def _extract_replay_module(
 def _augment_prompt(
     prompt: str,
     *,
-    feedback: RepairFeedback | None,
     base_candidate: ReplayGeneration | None,
 ) -> str:
-    if feedback is None:
-        return prompt
     if base_candidate is None:
-        raise ValueError("repair feedback requires a base replay candidate")
-    return (
+        return prompt
+    augmented = (
         prompt
         + "\n\nCURRENT_REPLAY_CANDIDATE (model-generated, not source):\n"
         + base_candidate.code
-        + "\n\nALLOWLISTED_REPAIR_FEEDBACK:\n"
-        + json.dumps(feedback.to_json(), ensure_ascii=False, sort_keys=True)
-        + "\nRepair only the allowed scope and re-emit the complete module."
+    )
+    return (
+        augmented
+        + "\n\nCONTROLLED_REPLAY_UPDATE:\n"
+        + "Use the prior model-generated replay only as a structural starting "
+        + "point for the current replay packet. It is not authoritative. "
+        + "Re-read the current J and complete pi, preserve every construction "
+        + "choice that remains consistent with them, and change only code "
+        + "strictly required by the current packet. The complete pi is the "
+        + "construction contract: do not add, remove, regroup, or refactor an "
+        + "unchanged plan step; do not introduce redundant predicates, selects, "
+        + "fills, casts, constants, or reduction guards. Preserve prior "
+        + "intermediate staging and access structure unless the current J or pi "
+        + "directly makes it inconsistent. Re-emit the complete module."
     )
 
 
@@ -362,13 +376,19 @@ class ResponsesReplayWriter:
         artifact: Gate1Artifact,
         registry: RuleRegistry,
         *,
-        feedback: RepairFeedback | None = None,
         base_candidate: ReplayGeneration | None = None,
         masked: bool = False,
+        plan_override: ReplayPlan | None = None,
+        ablation_kind: str | None = None,
     ) -> ReplayGeneration:
         user_input = _augment_prompt(
-            build_rewriter_prompt(artifact, registry, masked=masked),
-            feedback=feedback,
+            build_rewriter_prompt(
+                artifact,
+                registry,
+                masked=masked,
+                plan_override=plan_override,
+                ablation_kind=ablation_kind,
+            ),
             base_candidate=base_candidate,
         )
         prompt_sha = hashlib.sha256(
@@ -407,7 +427,12 @@ class ResponsesReplayWriter:
                     response_model=reply.raw.get("model"),
                     response_id=response_id,
                     masked=masked,
-                    feedback=feedback,
+                    base_generation_id=(
+                        None
+                        if base_candidate is None
+                        else base_candidate.generation_id
+                    ),
+                    ablation_kind=ablation_kind,
                 )
             except ProviderError as exc:
                 last_error = exc
@@ -446,15 +471,21 @@ class StaticReplayWriter:
         artifact: Gate1Artifact,
         registry: RuleRegistry,
         *,
-        feedback: RepairFeedback | None = None,
         base_candidate: ReplayGeneration | None = None,
         masked: bool = False,
+        plan_override: ReplayPlan | None = None,
+        ablation_kind: str | None = None,
     ) -> ReplayGeneration:
         # Build the prompt even for static fixtures so isolation/registry errors
         # are exercised exactly as they are for a live writer.
         prompt = _augment_prompt(
-            build_rewriter_prompt(artifact, registry, masked=masked),
-            feedback=feedback,
+            build_rewriter_prompt(
+                artifact,
+                registry,
+                masked=masked,
+                plan_override=plan_override,
+                ablation_kind=ablation_kind,
+            ),
             base_candidate=base_candidate,
         )
         if masked:
@@ -478,7 +509,10 @@ class StaticReplayWriter:
             code_sha256=code_sha,
             response_model="static",
             masked=masked,
-            feedback=feedback,
+            base_generation_id=(
+                None if base_candidate is None else base_candidate.generation_id
+            ),
+            ablation_kind=ablation_kind,
         )
 
 

@@ -154,6 +154,55 @@ def test_schedule_difference_is_reported_but_not_a_hard_failure():
     assert verdict.primary_difference_category == "schedule-only"
 
 
+def test_empty_hard_component_is_equal_but_not_similarity_evidence() -> None:
+    verdict = compare_ttir(DATAFLOW_TTIR, DATAFLOW_TTIR)
+    reduction = verdict.component("reduction")
+
+    assert reduction.passed
+    assert not reduction.applicable
+    assert reduction.score is None
+    assert verdict.inactive_categories == ("reduction",)
+    assert verdict.active_categories == (
+        "interface",
+        "op_multiset",
+        "dataflow",
+        "predicate_effect",
+    )
+    assert verdict.active_weight == pytest.approx(0.8)
+    assert verdict.score == pytest.approx(1.0)
+    serialized = verdict.to_dict()
+    assert serialized["inactive_categories"] == ["reduction"]
+    assert serialized["active_weight"] == pytest.approx(0.8)
+    assert next(
+        component
+        for component in serialized["components"]
+        if component["category"] == "reduction"
+    )["applicable"] is False
+
+
+def test_score_renormalizes_only_categories_with_observed_evidence() -> None:
+    changed = DATAFLOW_TTIR.replace(
+        "arith.constant 2.000000e+00", "arith.constant 3.000000e+00"
+    )
+    verdict = compare_ttir(DATAFLOW_TTIR, changed)
+    weights = {
+        "interface": 0.15,
+        "op_multiset": 0.20,
+        "dataflow": 0.25,
+        "predicate_effect": 0.20,
+    }
+    weighted_active = sum(
+        weights[category] * verdict.component(category).score
+        for category in verdict.active_categories
+    )
+
+    assert verdict.inactive_categories == ("reduction",)
+    assert verdict.score == pytest.approx(weighted_active / 0.8)
+    # The historical fixed-weight formula awarded the empty reduction category
+    # a free 0.20, which strictly inflated every imperfect comparison here.
+    assert weighted_active + 0.20 > verdict.score
+
+
 def test_runtime_interface_dtype_change_is_hard_failure():
     replay = EQUIVALENT_REPLAY.replace("%arg0: !tt.ptr<f32>", "%arg0: !tt.ptr<f16>")
     verdict = compare_ttir(EQUIVALENT_SOURCE, replay)
