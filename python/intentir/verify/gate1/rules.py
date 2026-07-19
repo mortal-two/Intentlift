@@ -965,6 +965,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "realize_iota",
             Frontend.TRITON,
+            version="2",
             applies_to=["iota"],
             reads=[
                 "semantic extent n",
@@ -974,7 +975,11 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "consumer output/access index expressions",
             ],
             api_mapping={
-                "lane_coordinate": "tl.arange",
+                "static_lane_coordinate": "tl.arange(0, exact J attrs.n literal)",
+                "symbolic_lane_coordinate": (
+                    "tl.arange(0, the exact J symbolic extent after proving it "
+                    "is the selected compile-time extent)"
+                ),
                 "integer_cast": "value.to(dtype)",
             },
             example=(
@@ -990,6 +995,9 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "not emit a second independent program_id/arange topology.",
                 "n is the semantic bound and may be runtime. Do not substitute "
                 "a C tile size for n or bake the sampled extent into source.",
+                "When J attrs.n is a static integer, the tl.arange upper bound "
+                "must be that exact integer. Never replace it with hd, pad_hd, "
+                "BLOCK_SIZE, or another interface/C slot even when related.",
             ],
         ),
         _default_triton_card(
@@ -1153,24 +1161,26 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "realize_concat",
             Frontend.TRITON,
+            version="2",
             applies_to=["concat"],
             reads=["ordered operands", "static concatenation axis", "result shape"],
             api_mapping={
-                "last_axis_pair": "tl.cat(lhs, rhs, can_reorder=False)",
-                "arbitrary_axis": (
-                    "tl.permute axis to the last dimension, apply an ordered "
-                    "tl.cat chain, then apply the inverse permutation"
+                "external_partitioned_writeback": (
+                    "do not materialize a concatenated tile; emit each operand "
+                    "through its declared disjoint BoundaryAccess store interval"
                 ),
             },
             example=(
-                "Concatenate operands in their declared J order along exactly "
-                "attrs.axis; use can_reorder=False for every tl.cat."
+                "For an external concat result, preserve J operand order by "
+                "storing each operand into the exact non-overlapping axis slice "
+                "proved by Layer B."
             ),
             pitfalls=[
-                "Never reorder operands or set can_reorder=True.",
+                "Current Triton tl.cat requires can_reorder=True and therefore "
+                "cannot prove ordered semantic concatenation; do not emit it.",
                 "Do not replace concatenation with interleaving tl.join semantics.",
-                "For a non-last axis, preserve all other axis positions through "
-                "an explicit permutation and its inverse.",
+                "If Layer B does not prove complete, ordered, disjoint writeback "
+                "slices, fail closed instead of inventing an internal concat.",
             ],
         ),
         _default_triton_card(

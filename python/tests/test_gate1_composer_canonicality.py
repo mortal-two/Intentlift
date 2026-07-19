@@ -736,6 +736,11 @@ def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
         frontend=artifact.interface.frontend,
         artifact=artifact,
     )
+    iota_card = registry.get("realize_iota", frontend=Frontend.TRITON)
+    assert "exact J attrs.n literal" in iota_card.api_mapping[
+        "static_lane_coordinate"
+    ]
+    assert any("BLOCK_SIZE" in item for item in iota_card.pitfalls)
 
 
 def test_iota_fails_closed_when_its_shared_rule_is_absent() -> None:
@@ -811,6 +816,11 @@ def test_concat_has_one_canonical_rule_and_complete_pi_provenance() -> None:
         frontend=artifact.interface.frontend,
         artifact=artifact,
     )
+    concat_card = registry.get("realize_concat", frontend=Frontend.TRITON)
+    assert "BoundaryAccess store interval" in concat_card.api_mapping[
+        "external_partitioned_writeback"
+    ]
+    assert all("tl.cat(" not in value for value in concat_card.api_mapping.values())
 
 
 def test_concat_fails_closed_when_its_rule_is_absent() -> None:
