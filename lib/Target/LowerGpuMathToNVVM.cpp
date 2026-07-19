@@ -346,6 +346,60 @@ struct Exp2ToEx2Approx : OpRewritePattern<math::Exp2Op> {
   }
 };
 
+/// `math.tanh %x : f32` -> a stable native-ex2/reciprocal approximation.
+///
+/// The stock GPU lowering emits an unresolved `__nv_tanhf` libdevice call.
+/// Use
+///
+///   tanh(x) = sign(x) * (1 - exp(-2 * abs(x))) /
+///                         (1 + exp(-2 * abs(x)))
+///
+/// so the exponential argument is always non-positive.  This avoids overflow
+/// for large negative inputs while mapping entirely to arithmetic plus the
+/// native `ex2.approx.ftz.f32` and `rcp.approx.ftz.f32` instructions already
+/// used by the exp/sigmoid fast paths.
+struct TanhToEx2Approx : OpRewritePattern<math::TanhOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::TanhOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+
+    Location loc = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(0.0));
+    Value one = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(1.0));
+    Value negative = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, op.getOperand(), zero);
+    Value negated = rewriter.create<arith::NegFOp>(loc, op.getOperand());
+    Value magnitude = rewriter.create<arith::SelectOp>(
+        loc, negative, negated, op.getOperand());
+    Value scale = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(-2.0 * kLog2E));
+    Value exponent = rewriter.create<arith::MulFOp>(loc, magnitude, scale);
+    auto exponential = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
+        ValueRange{exponent});
+    Value numerator = rewriter.create<arith::SubFOp>(
+        loc, one, exponential.getResult(0));
+    Value denominator = rewriter.create<arith::AddFOp>(
+        loc, one, exponential.getResult(0));
+    auto reciprocal = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.nvvm.rcp.approx.ftz.f"),
+        ValueRange{denominator});
+    Value magnitudeResult = rewriter.create<arith::MulFOp>(
+        loc, numerator, reciprocal.getResult(0));
+    Value negativeResult =
+        rewriter.create<arith::NegFOp>(loc, magnitudeResult);
+    rewriter.replaceOpWithNewOp<arith::SelectOp>(
+        op, negative, negativeResult, magnitudeResult);
+    return success();
+  }
+};
+
 /// `math.fma %a, %b, %c : f32` -> LLVM's target-independent fused multiply-add
 /// intrinsic.  Leaving the math op to the stock GPU pipeline produces a
 /// `__nv_fmaf` libdevice extern, which has the same unresolved-symbol failure
@@ -380,6 +434,7 @@ struct LowerGpuMathToNVVM
     patterns.add<LogToLg2Approx>(&getContext());
     patterns.add<LogF64Polynomial>(&getContext());
     patterns.add<Exp2ToEx2Approx>(&getContext());
+    patterns.add<TanhToEx2Approx>(&getContext());
     patterns.add<FmaToLLVMIntrinsic>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
