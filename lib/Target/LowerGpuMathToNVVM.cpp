@@ -400,6 +400,233 @@ struct TanhToEx2Approx : OpRewritePattern<math::TanhOp> {
   }
 };
 
+/// `math.absf %x : f32` -> LLVM fabs.  The stock NVIDIA conversion currently
+/// materializes `__nv_fabsf`, even though PTX has a native absolute-value
+/// modifier and LLVM already models it without libdevice.
+struct AbsFToLLVMIntrinsic : OpRewritePattern<math::AbsFOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::AbsFOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    auto absolute = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32, rewriter.getStringAttr("llvm.fabs"),
+        ValueRange{op.getOperand()});
+    rewriter.replaceOp(op, absolute.getResults());
+    return success();
+  }
+};
+
+/// Return the IEEE-754 sign bit, including for negative zero.  Floating-point
+/// ordered comparisons deliberately treat `-0.0 < 0.0` as false, so atan2 and
+/// other sign-sensitive functions need to inspect the bit representation.
+static Value emitF32SignBit(PatternRewriter &rewriter, Location loc, Value x) {
+  Type i32 = rewriter.getI32Type();
+  Value bits = rewriter.create<arith::BitcastOp>(loc, i32, x);
+  Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  return rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::slt, bits, zero);
+}
+
+/// Emit atan(x) without libdevice.  Two exact range-reduction identities keep
+/// the Taylor argument in [-tan(pi/8), tan(pi/8)], where the degree-17 odd
+/// series has an error below 3e-9 before f32 rounding.
+static Value emitAtanApprox(PatternRewriter &rewriter, Location loc, Value x) {
+  auto c = [&](double value) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(value));
+  };
+  Value zero = c(0.0);
+  Value one = c(1.0);
+  Value negative = rewriter.create<arith::CmpFOp>(
+      loc, arith::CmpFPredicate::OLT, x, zero);
+  Value negated = rewriter.create<arith::NegFOp>(loc, x);
+  Value magnitude =
+      rewriter.create<arith::SelectOp>(loc, negative, negated, x);
+  Value reciprocal = rewriter.create<arith::DivFOp>(loc, one, magnitude);
+  Value aboveOne = rewriter.create<arith::CmpFOp>(
+      loc, arith::CmpFPredicate::OGT, magnitude, one);
+  Value z = rewriter.create<arith::SelectOp>(
+      loc, aboveOne, reciprocal, magnitude);
+
+  Value tanPiOver8 = c(0.4142135623730950488);
+  Value useQuarterTurn = rewriter.create<arith::CmpFOp>(
+      loc, arith::CmpFPredicate::OGT, z, tanPiOver8);
+  Value shiftedNumerator = rewriter.create<arith::SubFOp>(loc, z, one);
+  Value shiftedDenominator = rewriter.create<arith::AddFOp>(loc, z, one);
+  Value shifted = rewriter.create<arith::DivFOp>(
+      loc, shiftedNumerator, shiftedDenominator);
+  Value u = rewriter.create<arith::SelectOp>(
+      loc, useQuarterTurn, shifted, z);
+  Value u2 = rewriter.create<arith::MulFOp>(loc, u, u);
+
+  constexpr double coefficients[] = {
+      1.0 / 17.0, -1.0 / 15.0, 1.0 / 13.0, -1.0 / 11.0,
+      1.0 / 9.0,  -1.0 / 7.0,  1.0 / 5.0,  -1.0 / 3.0,
+      1.0,
+  };
+  Value polynomial = c(coefficients[0]);
+  for (double coefficient : llvm::ArrayRef(coefficients).drop_front()) {
+    polynomial = rewriter.create<arith::AddFOp>(
+        loc, rewriter.create<arith::MulFOp>(loc, polynomial, u2),
+        c(coefficient));
+  }
+  Value angle = rewriter.create<arith::MulFOp>(loc, u, polynomial);
+  Value quarterTurn = rewriter.create<arith::SelectOp>(
+      loc, useQuarterTurn, c(0.7853981633974483096), zero);
+  angle = rewriter.create<arith::AddFOp>(loc, quarterTurn, angle);
+  Value complement = rewriter.create<arith::SubFOp>(
+      loc, c(1.5707963267948966192), angle);
+  angle = rewriter.create<arith::SelectOp>(
+      loc, aboveOne, complement, angle);
+  Value negativeAngle = rewriter.create<arith::NegFOp>(loc, angle);
+  Value signedAngle = rewriter.create<arith::SelectOp>(
+      loc, negative, negativeAngle, angle);
+  Value isZero = rewriter.create<arith::CmpFOp>(
+      loc, arith::CmpFPredicate::OEQ, x, zero);
+  return rewriter.create<arith::SelectOp>(loc, isZero, x, signedAngle);
+}
+
+struct AtanToPolynomial : OpRewritePattern<math::AtanOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::AtanOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isa<Float32Type>(op.getOperand().getType()))
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    rewriter.replaceOp(op,
+                       emitAtanApprox(rewriter, op.getLoc(), op.getOperand()));
+    return success();
+  }
+};
+
+/// f32 atan2 built from the self-contained atan approximation plus explicit
+/// IEEE-754 quadrant, signed-zero, infinity, and NaN handling.
+struct Atan2ToPolynomial : OpRewritePattern<math::Atan2Op> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::Atan2Op op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getLhs().getType());
+    if (!f32 || op.getRhs().getType() != f32)
+      return rewriter.notifyMatchFailure(op, "operands are not scalar f32");
+    Location loc = op.getLoc();
+    auto c = [&](double value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF32FloatAttr(value));
+    };
+    Value y = op.getLhs();
+    Value x = op.getRhs();
+    Value zero = c(0.0);
+    Value ySign = emitF32SignBit(rewriter, loc, y);
+    Value xSign = emitF32SignBit(rewriter, loc, x);
+    Value ratio = rewriter.create<arith::DivFOp>(loc, y, x);
+    Value angle = emitAtanApprox(rewriter, loc, ratio);
+    Value pi = c(3.1415926535897932385);
+    Value signedPi = rewriter.create<arith::SelectOp>(
+        loc, ySign, rewriter.create<arith::NegFOp>(loc, pi), pi);
+    Value quadrantAdjusted = rewriter.create<arith::AddFOp>(loc, angle, signedPi);
+    angle = rewriter.create<arith::SelectOp>(
+        loc, xSign, quadrantAdjusted, angle);
+
+    Value xZero = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OEQ, x, zero);
+    Value yZero = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OEQ, y, zero);
+    Value halfPi = c(1.5707963267948966192);
+    Value vertical = rewriter.create<arith::SelectOp>(
+        loc, ySign, rewriter.create<arith::NegFOp>(loc, halfPi), halfPi);
+    Value zeroPair = rewriter.create<arith::SelectOp>(
+        loc, xSign, signedPi, y);
+    Value xZeroResult = rewriter.create<arith::SelectOp>(
+        loc, yZero, zeroPair, vertical);
+
+    Value positiveInfinity = c(std::numeric_limits<float>::infinity());
+    Value negativeInfinity = c(-std::numeric_limits<float>::infinity());
+    auto isInfinity = [&](Value value) -> Value {
+      Value positive = rewriter.create<arith::CmpFOp>(
+          loc, arith::CmpFPredicate::OEQ, value, positiveInfinity);
+      Value negative = rewriter.create<arith::CmpFOp>(
+          loc, arith::CmpFPredicate::OEQ, value, negativeInfinity);
+      return rewriter.create<arith::OrIOp>(loc, positive, negative);
+    };
+    Value bothInfinite = rewriter.create<arith::AndIOp>(
+        loc, isInfinity(x), isInfinity(y));
+    Value diagonalMagnitude = rewriter.create<arith::SelectOp>(
+        loc, xSign, c(2.3561944901923449288), c(0.7853981633974483096));
+    Value diagonal = rewriter.create<arith::SelectOp>(
+        loc, ySign, rewriter.create<arith::NegFOp>(loc, diagonalMagnitude),
+        diagonalMagnitude);
+    Value result = rewriter.create<arith::SelectOp>(
+        loc, bothInfinite, diagonal, angle);
+    result = rewriter.create<arith::SelectOp>(
+        loc, xZero, xZeroResult, result);
+
+    Value unordered = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::UNO, x, y);
+    Value nan = c(std::numeric_limits<float>::quiet_NaN());
+    rewriter.replaceOpWithNewOp<arith::SelectOp>(op, unordered, nan, result);
+    return success();
+  }
+};
+
+/// Abramowitz-Stegun 7.1.26 erf approximation.  It is self-contained, stable
+/// for the complete finite f32 range, and has max absolute error ~1.5e-7 before
+/// the native ex2 approximation used by the existing backend.
+struct ErfToPolynomial : OpRewritePattern<math::ErfOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::ErfOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    Location loc = op.getLoc();
+    auto c = [&](double value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF32FloatAttr(value));
+    };
+    Value x = op.getOperand();
+    Value zero = c(0.0);
+    Value one = c(1.0);
+    Value negative = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, x, zero);
+    Value magnitude = rewriter.create<arith::SelectOp>(
+        loc, negative, rewriter.create<arith::NegFOp>(loc, x), x);
+    Value denominator = rewriter.create<arith::AddFOp>(
+        loc, one,
+        rewriter.create<arith::MulFOp>(loc, c(0.3275911), magnitude));
+    Value t = rewriter.create<arith::DivFOp>(loc, one, denominator);
+
+    Value polynomial = c(1.061405429);
+    for (double coefficient : {-1.453152027, 1.421413741, -0.284496736,
+                               0.254829592}) {
+      polynomial = rewriter.create<arith::AddFOp>(
+          loc, rewriter.create<arith::MulFOp>(loc, polynomial, t),
+          c(coefficient));
+    }
+    polynomial = rewriter.create<arith::MulFOp>(loc, polynomial, t);
+    Value square = rewriter.create<arith::MulFOp>(loc, magnitude, magnitude);
+    Value exponent = rewriter.create<arith::MulFOp>(
+        loc, square, c(-kLog2E));
+    auto exponential = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
+        ValueRange{exponent});
+    Value tail = rewriter.create<arith::MulFOp>(
+        loc, polynomial, exponential.getResult(0));
+    Value result = rewriter.create<arith::SubFOp>(loc, one, tail);
+    Value negativeResult = rewriter.create<arith::NegFOp>(loc, result);
+    result = rewriter.create<arith::SelectOp>(
+        loc, negative, negativeResult, result);
+    Value isZero = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OEQ, x, zero);
+    rewriter.replaceOpWithNewOp<arith::SelectOp>(op, isZero, x, result);
+    return success();
+  }
+};
+
 /// `math.fma %a, %b, %c : f32` -> LLVM's target-independent fused multiply-add
 /// intrinsic.  Leaving the math op to the stock GPU pipeline produces a
 /// `__nv_fmaf` libdevice extern, which has the same unresolved-symbol failure
@@ -435,6 +662,10 @@ struct LowerGpuMathToNVVM
     patterns.add<LogF64Polynomial>(&getContext());
     patterns.add<Exp2ToEx2Approx>(&getContext());
     patterns.add<TanhToEx2Approx>(&getContext());
+    patterns.add<AbsFToLLVMIntrinsic>(&getContext());
+    patterns.add<AtanToPolynomial>(&getContext());
+    patterns.add<Atan2ToPolynomial>(&getContext());
+    patterns.add<ErfToPolynomial>(&getContext());
     patterns.add<FmaToLLVMIntrinsic>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
