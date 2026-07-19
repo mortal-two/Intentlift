@@ -698,3 +698,188 @@ module {
         equal_nan=True,
     )
     assert output[0, 2].item() == min_subnormal.item()
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type"),
+    ((torch.float16, "f16"), (torch.bfloat16, "bf16")),
+)
+@pytest.mark.parametrize("pipeline_kind", ("generic", "specialized"))
+def test_half_add_executes_with_the_declared_storage_dtype(
+    dtype: torch.dtype,
+    mlir_type: str,
+    pipeline_kind: str,
+) -> None:
+    source = f"""
+module {{
+  func.func @half_add(
+      %a: tensor<7x33x{mlir_type}>, %b: tensor<7x33x{mlir_type}>)
+      -> tensor<7x33x{mlir_type}> {{
+    %y = intent.map_binary %a, %b {{fn = "add"}}
+      : (tensor<7x33x{mlir_type}>, tensor<7x33x{mlir_type}>)
+        -> tensor<7x33x{mlir_type}>
+    return %y : tensor<7x33x{mlir_type}>
+  }}
+}}
+"""
+    torch.manual_seed(7)
+    a = torch.randn((7, 33), device="cuda", dtype=dtype)
+    b = torch.randn_like(a)
+    if pipeline_kind == "generic":
+        program = lower_to_cuda(source, allow_specialized=False)
+    else:
+        fast_path_id = "cuda.elementwise.row.vectorized.v1"
+        program = lower_to_cuda(
+            source,
+            only_fast_path=fast_path_id,
+            pass_overrides={
+                fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=33"
+            },
+        )
+
+    output = execute_cuda_artifact(program, source, {"a": a, "b": b})["out0"]
+
+    assert program.selection.pipeline_kind == pipeline_kind
+    assert output.dtype == dtype
+    assert torch.equal(output, a + b)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type"),
+    ((torch.float16, "f16"), (torch.bfloat16, "bf16")),
+)
+def test_direct_half_vector_dag_rounds_each_typed_map_result(
+    dtype: torch.dtype,
+    mlir_type: str,
+) -> None:
+    source = f"""
+module {{
+  func.func @half_chain(
+      %a: tensor<4x128x{mlir_type}>,
+      %b: tensor<4x128x{mlir_type}>,
+      %c: tensor<4x128x{mlir_type}>) -> tensor<4x128x{mlir_type}> {{
+    %sum = intent.map_binary %a, %b {{fn = "add"}}
+      : (tensor<4x128x{mlir_type}>, tensor<4x128x{mlir_type}>)
+        -> tensor<4x128x{mlir_type}>
+    %out = intent.map_binary %sum, %c {{fn = "mul"}}
+      : (tensor<4x128x{mlir_type}>, tensor<4x128x{mlir_type}>)
+        -> tensor<4x128x{mlir_type}>
+    return %out : tensor<4x128x{mlir_type}>
+  }}
+}}
+"""
+    torch.manual_seed(8)
+    a = torch.randn((4, 128), device="cuda", dtype=dtype)
+    b = torch.randn_like(a)
+    c = torch.randn_like(a)
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+        },
+    )
+
+    output = execute_cuda_artifact(
+        program,
+        source,
+        {"a": a, "b": b, "c": c},
+    )["out0"]
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert torch.equal(output, (a + b) * c)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol"),
+    (
+        (torch.float16, "f16", 1.0e-3),
+        (torch.bfloat16, "bf16", 8.0e-3),
+    ),
+)
+def test_direct_half_math_accepts_an_f32_broadcast_scalar(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @half_math(%x: tensor<4x128x{mlir_type}>, %scale: tensor<f32>)
+      -> (tensor<4x128x{mlir_type}>, tensor<4x128x{mlir_type}>) {{
+    %tanh = intent.map_unary %x {{fn = "tanh"}}
+      : (tensor<4x128x{mlir_type}>) -> tensor<4x128x{mlir_type}>
+    %scaled = intent.map_binary %x, %scale {{fn = "mul"}}
+      : (tensor<4x128x{mlir_type}>, tensor<f32>)
+        -> tensor<4x128x{mlir_type}>
+    return %tanh, %scaled
+      : tensor<4x128x{mlir_type}>, tensor<4x128x{mlir_type}>
+  }}
+}}
+"""
+    torch.manual_seed(9)
+    x = torch.randn((4, 128), device="cuda", dtype=dtype)
+    scale = torch.tensor(1.2345, device="cuda", dtype=torch.float32)
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+        },
+    )
+
+    outputs = execute_cuda_artifact(program, source, {"x": x, "scale": scale})
+
+    assert outputs["out0"].dtype == dtype
+    assert outputs["out1"].dtype == dtype
+    torch.testing.assert_close(
+        outputs["out0"],
+        torch.tanh(x),
+        rtol=0.0,
+        atol=atol,
+    )
+    assert torch.equal(outputs["out1"], (x.float() * scale).to(dtype))
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol"),
+    (
+        (torch.float16, "f16", 2.0e-3),
+        (torch.bfloat16, "bf16", 1.0e-2),
+    ),
+)
+def test_direct_half_inplace_alias_preserves_pointer_and_dtype(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @half_inplace_exp(%x: tensor<4x128x{mlir_type}>)
+      -> tensor<4x128x{mlir_type}>
+      attributes {{intent.inplace = array<i64: 0>}} {{
+    %y = intent.map_unary %x {{fn = "exp"}}
+      : (tensor<4x128x{mlir_type}>) -> tensor<4x128x{mlir_type}>
+    return %y : tensor<4x128x{mlir_type}>
+  }}
+}}
+"""
+    torch.manual_seed(10)
+    x = torch.randn((4, 128), device="cuda", dtype=dtype)
+    expected = torch.exp(x.clone())
+    pointer = x.data_ptr()
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+        },
+    )
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+
+    assert output.data_ptr() == pointer
+    assert output.dtype == dtype
+    torch.testing.assert_close(output, expected, rtol=0.0, atol=atol)
