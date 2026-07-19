@@ -245,9 +245,10 @@ inline mlir::Value emitScalarBinary(mlir::OpBuilder &b, mlir::Location loc,
   return nullptr;
 }
 
-/// Is `fn` a `map_binary` comparison (gt/ge/lt/le/eq -> i1)?
+/// Is `fn` a `map_binary` comparison (gt/ge/lt/le/eq/ne -> i1)?
 inline bool isCmpFn(llvm::StringRef fn) {
-  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq";
+  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" ||
+         fn == "eq" || fn == "ne";
 }
 
 /// Scalar arith.cmpf for one `map_binary` comparison fn (-> i1). nullptr if not
@@ -267,6 +268,8 @@ inline mlir::Value emitScalarCmp(mlir::OpBuilder &b, mlir::Location loc,
     p = arith::CmpFPredicate::OLE;
   else if (fn == "eq")
     p = arith::CmpFPredicate::OEQ;
+  else if (fn == "ne")
+    p = arith::CmpFPredicate::UNE;
   else
     return nullptr;
   return b.create<arith::CmpFOp>(loc, p, a, c);
@@ -291,6 +294,8 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
     p = arith::CmpIPredicate::sle;
   else if (fn == "eq")
     p = arith::CmpIPredicate::eq;
+  else if (fn == "ne")
+    p = arith::CmpIPredicate::ne;
   else
     return nullptr;
   return b.create<arith::CmpIOp>(loc, p, a, c);
@@ -309,7 +314,9 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
 ///               arg-attr (e.g. col floordiv SPATIAL + group*CPG). A structured
 ///               data-independent gather (the index is affine in (group,col)),
 ///               general over any affine-broadcast Col — NOT a per-kernel branch.
-enum class Role { Row, Col, Scalar, RowInt, ColSeg };
+///   ParamVector[P] — a small parameter vector addressed only through a
+///                    structurally validated scalar/per-column intent.gather.
+enum class Role { Row, Col, Scalar, RowInt, PerRow, ColSeg, ParamVector };
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

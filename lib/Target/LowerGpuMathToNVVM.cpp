@@ -26,6 +26,8 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include <limits>
+
 namespace intent {
 #define GEN_PASS_DEF_LOWERGPUMATHTONVVM
 #include "Target/Passes.h.inc"
@@ -40,6 +42,41 @@ namespace {
 static constexpr double kLog2E = 1.4426950408889634;
 /// ln(2) as an f32 — the change-of-base constant for log(x) = log2(x)*ln2.
 static constexpr double kLn2 = 0.6931471805599453;
+
+/// `math.log(%x) - %y` -> `fma(lg2.approx(%x), ln2, -%y)`.
+///
+/// The generic log rewrite would materialize `lg2 * ln2` followed by a
+/// subtraction.  When the log has exactly this single consumer, one native FMA
+/// preserves the same approximate-log policy with one fewer dependent FP32
+/// instruction.  The match is purely SSA-structural and applies equally to any
+/// row loss/divergence graph.
+struct LogSubToLg2Fma : OpRewritePattern<arith::SubFOp> {
+  explicit LogSubToLg2Fma(MLIRContext *ctx)
+      : OpRewritePattern<arith::SubFOp>(ctx, /*benefit=*/2) {}
+
+  LogicalResult matchAndRewrite(arith::SubFOp op,
+                                PatternRewriter &rewriter) const override {
+    auto log = op.getLhs().getDefiningOp<math::LogOp>();
+    auto f32 = dyn_cast<Float32Type>(op.getType());
+    if (!log || !log->hasOneUse() || !f32 || op.getRhs().getType() != f32)
+      return rewriter.notifyMatchFailure(
+          op, "requires a single-use scalar f32 log minuend");
+
+    Location loc = op.getLoc();
+    auto lg2 = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.nvvm.lg2.approx.f"),
+        ValueRange{log.getOperand()});
+    Value ln2 = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(kLn2));
+    Value negativeRhs = rewriter.create<arith::NegFOp>(loc, op.getRhs());
+    auto fused = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32, rewriter.getStringAttr("llvm.fma"),
+        ValueRange{lg2.getResult(0), ln2, negativeRhs});
+    rewriter.replaceOp(op, fused.getResults());
+    rewriter.eraseOp(log);
+    return success();
+  }
+};
 
 /// `math.exp %x : f32`  ->  `ex2.approx.ftz.f32 (%x * log2e)`.
 struct ExpToEx2Approx : OpRewritePattern<math::ExpOp> {
@@ -61,6 +98,52 @@ struct ExpToEx2Approx : OpRewritePattern<math::ExpOp> {
         loc, f32, rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
         ValueRange{scaled});
     rewriter.replaceOp(op, approx.getResults());
+    return success();
+  }
+};
+
+static bool isF32One(Value value) {
+  auto constant = value.getDefiningOp<arith::ConstantOp>();
+  if (!constant)
+    return false;
+  auto attr = dyn_cast<FloatAttr>(constant.getValue());
+  return attr && attr.getType().isF32() && attr.getValueAsDouble() == 1.0;
+}
+
+/// `1 / (1 + ex2.approx(x))` -> `rcp.approx.ftz(1 + ex2.approx(x))`.
+///
+/// This is the normalized scalar shape of sigmoid after ExpToEx2Approx. The
+/// matcher is deliberately structural and narrow: it does not inspect function
+/// names, and it cannot rewrite unrelated reciprocal scales whose denominator
+/// is not the native approximate exponential plus one.
+struct SigmoidReciprocalToNVVMApprox : OpRewritePattern<arith::DivFOp> {
+  explicit SigmoidReciprocalToNVVMApprox(MLIRContext *ctx)
+      : OpRewritePattern<arith::DivFOp>(ctx, /*benefit=*/2) {}
+
+  LogicalResult matchAndRewrite(arith::DivFOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getType());
+    auto add = op.getRhs().getDefiningOp<arith::AddFOp>();
+    if (!f32 || !isF32One(op.getLhs()) || !add)
+      return rewriter.notifyMatchFailure(
+          op, "requires scalar f32 one divided by an addition");
+    Value exponential;
+    if (isF32One(add.getLhs()))
+      exponential = add.getRhs();
+    else if (isF32One(add.getRhs()))
+      exponential = add.getLhs();
+    else
+      return rewriter.notifyMatchFailure(op, "denominator has no f32 one");
+    auto intrinsic = exponential.getDefiningOp<LLVM::CallIntrinsicOp>();
+    if (!intrinsic ||
+        intrinsic.getIntrin() != "llvm.nvvm.ex2.approx.ftz.f")
+      return rewriter.notifyMatchFailure(
+          op, "denominator is not one plus native approximate exp2");
+    auto reciprocal = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32,
+        rewriter.getStringAttr("llvm.nvvm.rcp.approx.ftz.f"),
+        ValueRange{op.getRhs()});
+    rewriter.replaceOp(op, reciprocal.getResults());
     return success();
   }
 };
@@ -87,6 +170,130 @@ struct LogToLg2Approx : OpRewritePattern<math::LogOp> {
     Value ln2 =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(kLn2));
     rewriter.replaceOpWithNewOp<arith::MulFOp>(op, lg2.getResult(0), ln2);
+    return success();
+  }
+};
+
+/// `math.log %x : f64` -> a self-contained range-reduced f64 polynomial.
+///
+/// Standalone ptxas cannot resolve the stock `__nv_log` libdevice call.  Unlike
+/// f32, PTX has no native f64 lg2 instruction, so use IEEE-754 exponent/mantissa
+/// decomposition and the atanh series
+///
+///   log(m) = 2 * (z + z^3/3 + ... + z^17/17), z = (m-1)/(m+1),
+///
+/// after reducing m to [1/sqrt(2), sqrt(2)].  On that interval |z|<=0.1716 and
+/// nine terms are comfortably below double precision needs for the paper's f32
+/// state promoted to an f64 LSE destination.  The implementation also preserves
+/// zero, negative, infinity and NaN behavior without any external symbol.
+struct LogF64Polynomial : OpRewritePattern<math::LogOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::LogOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f64 = dyn_cast<Float64Type>(op.getOperand().getType());
+    if (!f64)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f64");
+
+    Location loc = op.getLoc();
+    Type i64 = rewriter.getI64Type();
+    auto cF64 = [&](double value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF64FloatAttr(value));
+    };
+    auto cI64 = [&](int64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(loc, value, i64);
+    };
+
+    Value x = op.getOperand();
+    Value zero = cF64(0.0);
+    Value one = cF64(1.0);
+    Value two = cF64(2.0);
+    Value isZero = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OEQ, x, zero);
+    Value isNegative = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, x, zero);
+
+    // Normalize positive subnormals by 2^54, then compensate the exponent.
+    Value originalBits = rewriter.create<arith::BitcastOp>(loc, i64, x);
+    Value shift52 = cI64(52);
+    Value exponentMask = cI64(0x7ff);
+    Value originalExponent = rewriter.create<arith::AndIOp>(
+        loc,
+        rewriter.create<arith::ShRUIOp>(loc, originalBits, shift52),
+        exponentMask);
+    Value exponentZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, originalExponent, cI64(0));
+    Value positive = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, x, zero);
+    Value isSubnormal = rewriter.create<arith::AndIOp>(loc, exponentZero,
+                                                       positive);
+    Value scaledSubnormal = rewriter.create<arith::MulFOp>(
+        loc, x, cF64(18014398509481984.0)); // 2^54
+    Value normalized = rewriter.create<arith::SelectOp>(
+        loc, isSubnormal, scaledSubnormal, x);
+
+    Value bits = rewriter.create<arith::BitcastOp>(loc, i64, normalized);
+    Value exponentBits = rewriter.create<arith::AndIOp>(
+        loc, rewriter.create<arith::ShRUIOp>(loc, bits, shift52),
+        exponentMask);
+    Value isNonFinite = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, exponentBits, cI64(0x7ff));
+    Value exponent = rewriter.create<arith::SubIOp>(loc, exponentBits,
+                                                    cI64(1023));
+    Value exponentSubnormal = rewriter.create<arith::SubIOp>(
+        loc, exponent, cI64(54));
+    exponent = rewriter.create<arith::SelectOp>(
+        loc, isSubnormal, exponentSubnormal, exponent);
+
+    constexpr uint64_t kMantissaMask = (uint64_t{1} << 52) - 1;
+    constexpr uint64_t kOneExponent = uint64_t{1023} << 52;
+    Value mantissaBits = rewriter.create<arith::OrIOp>(
+        loc,
+        rewriter.create<arith::AndIOp>(
+            loc, bits, cI64(static_cast<int64_t>(kMantissaMask))),
+        cI64(static_cast<int64_t>(kOneExponent)));
+    Value mantissa = rewriter.create<arith::BitcastOp>(loc, f64, mantissaBits);
+    Value aboveSqrt2 = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, mantissa,
+        cF64(1.4142135623730950488));
+    Value reducedMantissa = rewriter.create<arith::SelectOp>(
+        loc, aboveSqrt2,
+        rewriter.create<arith::MulFOp>(loc, mantissa, cF64(0.5)), mantissa);
+    exponent = rewriter.create<arith::SelectOp>(
+        loc, aboveSqrt2,
+        rewriter.create<arith::AddIOp>(loc, exponent, cI64(1)), exponent);
+
+    Value numerator = rewriter.create<arith::SubFOp>(loc, reducedMantissa, one);
+    Value denominator = rewriter.create<arith::AddFOp>(loc, reducedMantissa, one);
+    Value z = rewriter.create<arith::DivFOp>(loc, numerator, denominator);
+    Value z2 = rewriter.create<arith::MulFOp>(loc, z, z);
+    Value power = z;
+    Value series = z;
+    for (int denominatorValue = 3; denominatorValue <= 17;
+         denominatorValue += 2) {
+      power = rewriter.create<arith::MulFOp>(loc, power, z2);
+      Value term = rewriter.create<arith::DivFOp>(
+          loc, power, cF64(static_cast<double>(denominatorValue)));
+      series = rewriter.create<arith::AddFOp>(loc, series, term);
+    }
+    Value logMantissa = rewriter.create<arith::MulFOp>(loc, two, series);
+    Value exponentF64 =
+        rewriter.create<arith::SIToFPOp>(loc, f64, exponent);
+    Value exponentTerm = rewriter.create<arith::MulFOp>(
+        loc, exponentF64, cF64(kLn2));
+    Value approximate = rewriter.create<arith::AddFOp>(
+        loc, exponentTerm, logMantissa);
+
+    Value positiveOrSpecial = rewriter.create<arith::SelectOp>(
+        loc, isNonFinite, x, approximate);
+    Value negativeInfinity = cF64(-std::numeric_limits<double>::infinity());
+    Value nan = cF64(std::numeric_limits<double>::quiet_NaN());
+    Value zeroHandled = rewriter.create<arith::SelectOp>(
+        loc, isZero, negativeInfinity, positiveOrSpecial);
+    Value result = rewriter.create<arith::SelectOp>(
+        loc, isNegative, nan, zeroHandled);
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -139,15 +346,41 @@ struct Exp2ToEx2Approx : OpRewritePattern<math::Exp2Op> {
   }
 };
 
+/// `math.fma %a, %b, %c : f32` -> LLVM's target-independent fused multiply-add
+/// intrinsic.  Leaving the math op to the stock GPU pipeline produces a
+/// `__nv_fmaf` libdevice extern, which has the same unresolved-symbol failure
+/// as the transcendental calls above.  `llvm.fma` lowers directly to PTX
+/// `fma.rn.f32` and preserves the single-rounding semantics requested by the
+/// row-reduction accumulator.
+struct FmaToLLVMIntrinsic : OpRewritePattern<math::FmaOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::FmaOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getA().getType());
+    if (!f32 || op.getB().getType() != f32 || op.getC().getType() != f32)
+      return rewriter.notifyMatchFailure(op, "operands are not scalar f32");
+    auto fused = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32, rewriter.getStringAttr("llvm.fma"),
+        ValueRange{op.getA(), op.getB(), op.getC()});
+    rewriter.replaceOp(op, fused.getResults());
+    return success();
+  }
+};
+
 struct LowerGpuMathToNVVM
     : ::intent::impl::LowerGpuMathToNVVMBase<LowerGpuMathToNVVM> {
   using LowerGpuMathToNVVMBase::LowerGpuMathToNVVMBase;
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
+    patterns.add<LogSubToLg2Fma>(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
+    patterns.add<SigmoidReciprocalToNVVMApprox>(&getContext());
     patterns.add<LogToLg2Approx>(&getContext());
+    patterns.add<LogF64Polynomial>(&getContext());
     patterns.add<Exp2ToEx2Approx>(&getContext());
+    patterns.add<FmaToLLVMIntrinsic>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
     patterns.add<UnaryToNVVMApprox<math::RsqrtOp>>(&getContext(),

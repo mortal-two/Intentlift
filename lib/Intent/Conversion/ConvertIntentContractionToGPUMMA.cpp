@@ -53,6 +53,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace intent {
@@ -82,8 +83,10 @@ struct ContractionMMALowering {
   unsigned aArgIdx = 0, wArgIdx = 0;
   ContractionOp con;
   Type f16, f32;
-  Value retVal;
+  SmallVector<Value> retVals;
   bool hasEpilogue = false;
+  bool hasRegisterBiasSavedEpilogue = false;
+  unsigned biasArgIdx = 0;
   SmallVector<Role> argRoles;
   DenseMap<Value, Value> argMemref;
 
@@ -92,10 +95,10 @@ struct ContractionMMALowering {
       : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN),
         reqBK(reqBK), padK(padK) {}
 
-  // ---- recognition (identical to the WMMA pass) -------------------------- //
+  // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     auto fty = fn.getFunctionType();
-    if (fty.getNumResults() != 1)
+    if (fty.getNumResults() == 0)
       return failure();
     if (!fn.getBody().hasOneBlock())
       return failure();
@@ -107,8 +110,8 @@ struct ContractionMMALowering {
         if (c)
           return failure();
         c = cc;
-      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, arith::ConstantOp>(
-                     &op)) {
+      } else if (!isa<CastOp, MapUnaryOp, MapBinaryOp, SelectOp,
+                           arith::ConstantOp>(&op)) {
         return failure();
       }
     }
@@ -116,31 +119,59 @@ struct ContractionMMALowering {
       return failure();
     con = c;
     auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
-    if (!ret || ret.getNumOperands() != 1)
+    if (!ret || ret.getNumOperands() == 0 ||
+        ret.getNumOperands() != fty.getNumResults())
       return failure();
-    retVal = ret.getOperand(0);
-    hasEpilogue = retVal != c.getResult();
+    retVals.assign(ret.getOperands().begin(), ret.getOperands().end());
+    hasEpilogue = retVals.size() != 1 || retVals.front() != c.getResult();
     if (c.getSubscripts() != "mk,nk->mn")
       return failure();
 
-    auto aArg = dyn_cast<BlockArgument>(c.getA());
-    auto wArg = dyn_cast<BlockArgument>(c.getB());
+    // The canonical live-linear graph makes exact f16->f32 widening explicit
+    // before the contraction.  Peel only that lossless cast so the generated
+    // tensor-core kernel still reads the original f16 ABI operands and
+    // accumulates in f32.  Direct f16 contraction operands remain supported.
+    auto peelF16Input = [&](Value operand) -> BlockArgument {
+      if (auto arg = dyn_cast<BlockArgument>(operand))
+        return arg;
+      auto castOp = operand.getDefiningOp<CastOp>();
+      if (!castOp)
+        return {};
+      auto srcTy = dyn_cast<RankedTensorType>(castOp.getInput().getType());
+      auto dstTy = dyn_cast<RankedTensorType>(castOp.getResult().getType());
+      if (!srcTy || !dstTy || srcTy.getShape() != dstTy.getShape() ||
+          !isa<Float16Type>(srcTy.getElementType()) ||
+          !isa<Float32Type>(dstTy.getElementType()))
+        return {};
+      return dyn_cast<BlockArgument>(castOp.getInput());
+    };
+    auto aArg = peelF16Input(c.getA());
+    auto wArg = peelF16Input(c.getB());
     if (!aArg || !wArg || aArg.getOwner() != &body || wArg.getOwner() != &body)
       return failure();
     aArgIdx = aArg.getArgNumber();
     wArgIdx = wArg.getArgNumber();
 
-    auto aTy = dyn_cast<RankedTensorType>(c.getA().getType());
-    auto wTy = dyn_cast<RankedTensorType>(c.getB().getType());
+    auto aTy = dyn_cast<RankedTensorType>(aArg.getType());
+    auto wTy = dyn_cast<RankedTensorType>(wArg.getType());
+    auto conATy = dyn_cast<RankedTensorType>(c.getA().getType());
+    auto conWTy = dyn_cast<RankedTensorType>(c.getB().getType());
     auto yTy = dyn_cast<RankedTensorType>(c.getResult().getType());
-    if (!aTy || !wTy || !yTy || !aTy.hasStaticShape() ||
-        !wTy.hasStaticShape() || !yTy.hasStaticShape())
+    if (!aTy || !wTy || !conATy || !conWTy || !yTy ||
+        !aTy.hasStaticShape() || !wTy.hasStaticShape() ||
+        !conATy.hasStaticShape() || !conWTy.hasStaticShape() ||
+        !yTy.hasStaticShape())
       return failure();
     if (aTy.getRank() != 2 || wTy.getRank() != 2 || yTy.getRank() != 2)
       return failure();
     if (!isa<Float16Type>(aTy.getElementType()) ||
         !isa<Float16Type>(wTy.getElementType()) ||
         !isa<Float32Type>(yTy.getElementType()))
+      return failure();
+    if (conATy.getShape() != aTy.getShape() ||
+        conWTy.getShape() != wTy.getShape() ||
+        !isa<Float16Type, Float32Type>(conATy.getElementType()) ||
+        !isa<Float16Type, Float32Type>(conWTy.getElementType()))
       return failure();
     f16 = aTy.getElementType();
     f32 = yTy.getElementType();
@@ -151,6 +182,63 @@ struct ContractionMMALowering {
     if (wTy.getDimSize(1) != K || yTy.getDimSize(0) != M ||
         yTy.getDimSize(1) != N)
       return failure();
+    for (auto [index, value] : llvm::enumerate(retVals)) {
+      auto resultTy = dyn_cast<RankedTensorType>(value.getType());
+      auto declaredTy = dyn_cast<RankedTensorType>(fty.getResult(index));
+      if (!resultTy || !declaredTy || !resultTy.hasStaticShape() ||
+          resultTy != declaredTy || resultTy.getRank() != 2 ||
+          resultTy.getDimSize(0) != M || resultTy.getDimSize(1) != N ||
+          !isa<Float16Type, Float32Type>(resultTy.getElementType()))
+        return failure();
+    }
+
+    // Exact captured fast epilogue: both external f16 results are casts of the
+    // same f32 (contraction + widened f16 Col bias) value.  The register-level
+    // mma.sync accumulator has a known lane layout, so this case can add bias,
+    // round once, and store to both destinations directly from registers.  It
+    // avoids the generic activation DAG's full f32 shared spill + barrier while
+    // preserving the unchanged live graph and its saved-activation ABI.
+    if (retVals.size() == 2) {
+      auto firstCast = retVals[0].getDefiningOp<CastOp>();
+      auto secondCast = retVals[1].getDefiningOp<CastOp>();
+      if (firstCast && secondCast &&
+          firstCast.getInput() == secondCast.getInput() &&
+          isa<Float16Type>(cast<RankedTensorType>(
+                               firstCast.getResult().getType())
+                               .getElementType()) &&
+          isa<Float16Type>(cast<RankedTensorType>(
+                               secondCast.getResult().getType())
+                               .getElementType())) {
+        auto add = firstCast.getInput().getDefiningOp<MapBinaryOp>();
+        if (add && add.getFn() == "add") {
+          Value other;
+          if (add.getLhs() == c.getResult())
+            other = add.getRhs();
+          else if (add.getRhs() == c.getResult())
+            other = add.getLhs();
+          auto biasCast = other ? other.getDefiningOp<CastOp>() : CastOp();
+          auto biasArg =
+              biasCast ? dyn_cast<BlockArgument>(biasCast.getInput())
+                       : BlockArgument();
+          auto biasTy = biasArg
+                            ? dyn_cast<RankedTensorType>(biasArg.getType())
+                            : RankedTensorType();
+          auto widenedTy = biasCast
+                               ? dyn_cast<RankedTensorType>(
+                                     biasCast.getResult().getType())
+                               : RankedTensorType();
+          if (biasArg && biasArg.getOwner() == &body && biasTy && widenedTy &&
+              biasTy.hasStaticShape() && biasTy.getRank() == 1 &&
+              biasTy.getDimSize(0) == N &&
+              isa<Float16Type>(biasTy.getElementType()) &&
+              widenedTy.getShape() == biasTy.getShape() &&
+              isa<Float32Type>(widenedTy.getElementType())) {
+            hasRegisterBiasSavedEpilogue = true;
+            biasArgIdx = biasArg.getArgNumber();
+          }
+        }
+      }
+    }
 
     // BK must be a positive multiple of the MMA K step (m16n8k16); reject an
     // illegal knob value rather than silently mis-tiling.
@@ -188,7 +276,8 @@ struct ContractionMMALowering {
         continue;
       }
       auto t = dyn_cast<RankedTensorType>(inputs[i]);
-      if (!t || !t.hasStaticShape() || !isa<Float32Type>(t.getElementType()))
+      if (!t || !t.hasStaticShape() ||
+          !isa<Float16Type, Float32Type>(t.getElementType()))
         return failure();
       if (t.getRank() == 1 && t.getDimSize(0) == N)
         argRoles[i] = Role::Col;
@@ -222,6 +311,25 @@ struct ContractionMMALowering {
           return b.create<arith::ConstantOp>(
               loc, b.getF32FloatAttr(
                        dense.getSplatValue<APFloat>().convertToDouble()));
+      return nullptr;
+    }
+    if (auto castOp = dyn_cast<CastOp>(def)) {
+      Value source =
+          emitEpilogue(b, loc, castOp.getInput(), cScalar, gcol);
+      if (!source)
+        return nullptr;
+      auto resultTy = cast<RankedTensorType>(castOp.getResult().getType());
+      Type target = resultTy.getElementType();
+      if (source.getType() == target)
+        return source;
+      auto sourceFloat = dyn_cast<FloatType>(source.getType());
+      auto targetFloat = dyn_cast<FloatType>(target);
+      if (!sourceFloat || !targetFloat)
+        return nullptr;
+      if (sourceFloat.getWidth() < targetFloat.getWidth())
+        return b.create<arith::ExtFOp>(loc, target, source);
+      if (sourceFloat.getWidth() > targetFloat.getWidth())
+        return b.create<arith::TruncFOp>(loc, target, source);
       return nullptr;
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
@@ -259,7 +367,10 @@ struct ContractionMMALowering {
       auto t = cast<RankedTensorType>(at);
       inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
     }
-    inTys.push_back(MemRefType::get({M, N}, f32));
+    for (Type resultType : fn.getFunctionType().getResults()) {
+      auto t = cast<RankedTensorType>(resultType);
+      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -272,7 +383,11 @@ struct ContractionMMALowering {
 
     Value aMem = entry->getArgument(aArgIdx);
     Value wMem = entry->getArgument(wArgIdx);
-    Value yMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+    unsigned outputBase = fn.getFunctionType().getNumInputs();
+    SmallVector<Value> outputMems;
+    for (unsigned i = 0; i < fn.getFunctionType().getNumResults(); ++i)
+      outputMems.push_back(entry->getArgument(outputBase + i));
+    Value yMem = outputMems.front();
 
     Block &srcBlock = fn.getBody().front();
     for (unsigned i = 0; i < argRoles.size(); ++i)
@@ -294,7 +409,8 @@ struct ContractionMMALowering {
 
     int64_t aBytes = BM * BKs * 2, wBytes = BN * BKs * 2;
     int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
-    int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
+    int64_t cBytes =
+        hasEpilogue && !hasRegisterBiasSavedEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
         loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
 
@@ -365,7 +481,7 @@ struct ContractionMMALowering {
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
     Value cSh;
-    if (hasEpilogue) {
+    if (hasEpilogue && !hasRegisterBiasSavedEpilogue) {
       auto cShTy = MemRefType::get({BM, BN}, f32, nullptr, wgSpace);
       Value cOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes + wAllBytes);
       cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
@@ -517,6 +633,27 @@ struct ContractionMMALowering {
                    nb.create<memref::StoreOp>(nl, v, yMem, ValueRange{row, col});
                  });
       }
+    } else if (hasRegisterBiasSavedEpilogue) {
+      Value biasMem = entry->getArgument(biasArgIdx);
+      for (int j = 0; j < nFrag; ++j) {
+        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        Value colBase = b.create<arith::AddIOp>(loc, colBlk, nbase);
+        storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
+                 [&](OpBuilder &nb, Location nl, Value v, Value row,
+                     Value col) {
+                   Value biasF16 = nb.create<memref::LoadOp>(
+                       nl, biasMem, ValueRange{col});
+                   Value biasF32 =
+                       nb.create<arith::ExtFOp>(nl, f32, biasF16);
+                   Value preactivation =
+                       nb.create<arith::AddFOp>(nl, v, biasF32);
+                   Value stored =
+                       nb.create<arith::TruncFOp>(nl, f16, preactivation);
+                   for (Value output : outputMems)
+                     nb.create<memref::StoreOp>(nl, stored, output,
+                                                ValueRange{row, col});
+                 });
+      }
     } else {
       // Spill the accumulators to the [BM,BN] shared tile, then cooperatively
       // reload + evaluate the bias/activation epilogue + write Y.
@@ -539,10 +676,16 @@ struct ContractionMMALowering {
         Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
         Value gcol = b.create<arith::AddIOp>(loc, colBlk, cc);
         Value grow = b.create<arith::AddIOp>(loc, rowBlk, r);
-        Value out = emitEpilogue(b, loc, retVal, cScalar, gcol);
-        if (!out)
-          return failure();
-        b.create<memref::StoreOp>(loc, out, yMem, ValueRange{grow, gcol});
+        for (unsigned outputIndex = 0; outputIndex < retVals.size();
+             ++outputIndex) {
+          Value out =
+              emitEpilogue(b, loc, retVals[outputIndex], cScalar, gcol);
+          auto outputTy = cast<MemRefType>(outputMems[outputIndex].getType());
+          if (!out || out.getType() != outputTy.getElementType())
+            return failure();
+          b.create<memref::StoreOp>(loc, out, outputMems[outputIndex],
+                                    ValueRange{grow, gcol});
+        }
       }
     }
 

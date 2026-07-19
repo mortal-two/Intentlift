@@ -20,6 +20,7 @@ add_mlir_library(MLIRIntentConversion
   ConvertIntentFlashMMAToGPU.cpp
   ConvertIntentAttentionBackwardToGPU.cpp
   ConvertIntentSplitKReduceToGPU.cpp
+  ConvertIntentSplitKReduceVarargsToGPU.cpp
   ConvertIntentSplitKReduceBackwardToGPU.cpp
 
   ADDITIONAL_HEADER_DIRS

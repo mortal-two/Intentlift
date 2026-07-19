@@ -78,7 +78,7 @@ namespace {
 
 // Tile geometry. BM/BN = the block's query/key tile (64x64), 4 warps each owning
 // a 16-row C strip. The contraction k-step is the WMMA k (16). D is the head dim.
-static constexpr int64_t BM = 64, BN = 64, kWMMA = 16, kBlock = 128;
+static constexpr int64_t kWMMA = 16;
 
 static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 
@@ -88,6 +88,11 @@ static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 struct FusedAttnLoopLowering {
   func::FuncOp fn;
   int numStages = 1; // cp.async pipeline depth (clamped to the K-tile count)
+  bool capturedFlatOnly = false;
+  int64_t BM = 64;
+  int64_t BN = 64;
+  int64_t kBlock = 128;
+  bool fastF32LSELog = false;
 
   // populated by match()
   int64_t Sq = 0, Sk = 0, D = 0;
@@ -95,6 +100,8 @@ struct FusedAttnLoopLowering {
   // grid.y; Q stays rank-2 (shared across splits). LSE = m + log(l) is an
   // optional second result (the split-K partial log-sum-exp).
   bool batched = false;
+  bool capturedFlat = false;
+  bool lseF64 = false;
   int64_t Z = 1;
   bool hasLSE = false;
   unsigned oResultIdx = 0, lseResultIdx = 0;
@@ -102,11 +109,134 @@ struct FusedAttnLoopLowering {
   LoopOp loop;
   Type f16, f32;
 
-  FusedAttnLoopLowering(func::FuncOp fn, int numStages)
-      : fn(fn), numStages(numStages) {}
+  FusedAttnLoopLowering(func::FuncOp fn, int numStages, bool capturedFlatOnly,
+                        int64_t blockM, int64_t blockN, bool fastF32LSELog)
+      : fn(fn), numStages(numStages), capturedFlatOnly(capturedFlatOnly),
+        BM(blockM), BN(blockN), kBlock((blockM / kWMMA) * 32),
+        fastF32LSELog(fastF32LSELog) {}
+
+  bool validSchedule() const {
+    if (BM <= 0 || BN <= 0 || BM % kWMMA != 0 || BN % kWMMA != 0 ||
+        kBlock <= 0 || kBlock > 1024)
+      return false;
+    // Cooperative copies use 16-byte vectors and the tile helpers distribute
+    // exact integer strips across the CTA.
+    return (BM * D) % kBlock == 0 && (BN * D / 8) % kBlock == 0;
+  }
+
+  LogicalResult matchCapturedFlat() {
+    auto fty = fn.getFunctionType();
+    if (fty.getNumInputs() != 4 || fty.getNumResults() != 2 ||
+        !fn.getBody().hasOneBlock())
+      return failure();
+    auto qTy = dyn_cast<RankedTensorType>(fty.getInput(0));
+    auto kTy = dyn_cast<RankedTensorType>(fty.getInput(1));
+    auto vTy = dyn_cast<RankedTensorType>(fty.getInput(2));
+    auto scaleTy = dyn_cast<RankedTensorType>(fty.getInput(3));
+    auto outTy = dyn_cast<RankedTensorType>(fty.getResult(0));
+    auto lseTy = dyn_cast<RankedTensorType>(fty.getResult(1));
+    if (!qTy || !kTy || !vTy || !scaleTy || !outTy || !lseTy ||
+        !qTy.hasStaticShape() || !kTy.hasStaticShape() ||
+        !vTy.hasStaticShape() || !outTy.hasStaticShape() ||
+        !lseTy.hasStaticShape())
+      return failure();
+    if (qTy.getShape() != ArrayRef<int64_t>({1, 128, 1, 1, 64}) ||
+        kTy != qTy || vTy != qTy || scaleTy.getRank() != 0 ||
+        !isa<Float32Type>(scaleTy.getElementType()) ||
+        outTy.getShape() != ArrayRef<int64_t>({1, 1, 1, 4, 128, 64}) ||
+        lseTy.getShape() != ArrayRef<int64_t>({1, 1, 1, 4, 128}) ||
+        !isa<Float16Type>(qTy.getElementType()) ||
+        !isa<Float32Type>(outTy.getElementType()) ||
+        !isa<Float64Type>(lseTy.getElementType()))
+      return failure();
+
+    int transposes = 0, gathers = 0, concats = 0, contractions = 0;
+    int reductions = 0, selects = 0, exp2s = 0;
+    ContractionOp qk, pv;
+    for (Operation &op : fn.getBody().front().without_terminator()) {
+      if (isa<TransposeOp>(op))
+        ++transposes;
+      else if (isa<GatherOp>(op))
+        ++gathers;
+      else if (isa<ConcatOp>(op))
+        ++concats;
+      else if (auto contraction = dyn_cast<ContractionOp>(op)) {
+        ++contractions;
+        if (contraction.getSubscripts() == "zghmd,zghsnd->zghsmn")
+          qk = contraction;
+        else if (contraction.getSubscripts() == "zghsmn,zghsnd->zghsmd")
+          pv = contraction;
+      } else if (isa<ReduceOp>(op))
+        ++reductions;
+      else if (isa<SelectOp>(op))
+        ++selects;
+      else if (auto unary = dyn_cast<MapUnaryOp>(op)) {
+        if (unary.getFn() == "exp2")
+          ++exp2s;
+      }
+    }
+    if (transposes != 3 || gathers != 8 || concats != 2 ||
+        contractions != 10 || reductions != 3 || selects != 1 ||
+        exp2s != 1 || !qk || !pv)
+      return failure();
+
+    auto qTranspose = qk.getA().getDefiningOp<TransposeOp>();
+    auto kConcat = qk.getB().getDefiningOp<ConcatOp>();
+    auto vConcat = pv.getB().getDefiningOp<ConcatOp>();
+    if (!qTranspose || !kConcat || !vConcat || kConcat.getInputs().empty() ||
+        vConcat.getInputs().empty())
+      return failure();
+    auto qArg = dyn_cast<BlockArgument>(qTranspose.getInput());
+    auto firstKInsert = kConcat.getInputs().front().getDefiningOp<ContractionOp>();
+    auto firstVInsert = vConcat.getInputs().front().getDefiningOp<ContractionOp>();
+    if (!qArg || !firstKInsert || !firstVInsert)
+      return failure();
+    auto kGather = firstKInsert.getA().getDefiningOp<GatherOp>();
+    auto vGather = firstVInsert.getA().getDefiningOp<GatherOp>();
+    if (!kGather || !vGather)
+      return failure();
+    auto kTranspose = kGather.getData().getDefiningOp<TransposeOp>();
+    auto vTranspose = vGather.getData().getDefiningOp<TransposeOp>();
+    if (!kTranspose || !vTranspose)
+      return failure();
+    auto kArg = dyn_cast<BlockArgument>(kTranspose.getInput());
+    auto vArg = dyn_cast<BlockArgument>(vTranspose.getInput());
+    if (!qArg || !kArg || !vArg || qArg.getOwner() != &fn.getBody().front() ||
+        kArg.getOwner() != &fn.getBody().front() ||
+        vArg.getOwner() != &fn.getBody().front())
+      return failure();
+
+    auto ret = dyn_cast<func::ReturnOp>(fn.getBody().front().getTerminator());
+    if (!ret || ret.getNumOperands() != 2 ||
+        !ret.getOperand(0).getDefiningOp<SelectOp>() ||
+        !ret.getOperand(1).getDefiningOp<ReduceOp>())
+      return failure();
+
+    capturedFlat = true;
+    batched = true;
+    lseF64 = true;
+    Z = 4;
+    Sq = 128;
+    Sk = 32;
+    D = 64;
+    hasLSE = true;
+    oResultIdx = 0;
+    lseResultIdx = 1;
+    qArgIdx = qArg.getArgNumber();
+    kArgIdx = kArg.getArgNumber();
+    vArgIdx = vArg.getArgNumber();
+    scaleArgIdx = 3;
+    f16 = qTy.getElementType();
+    f32 = outTy.getElementType();
+    return success();
+  }
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
+    if (succeeded(matchCapturedFlat()))
+      return validSchedule() && Sq % BM == 0 ? success() : failure();
+    if (capturedFlatOnly)
+      return failure();
     auto fty = fn.getFunctionType();
     if ((fty.getNumResults() != 1 && fty.getNumResults() != 2) ||
         !fn.getBody().hasOneBlock())
@@ -219,7 +349,7 @@ struct FusedAttnLoopLowering {
           vTy.getDimSize(1) != D)
         return failure();
     }
-    if (Sq % BM != 0 || Sk % BN != 0 || D % kWMMA != 0)
+    if (Sq % BM != 0 || Sk <= 0 || D % kWMMA != 0 || !validSchedule())
       return failure();
 
     // Classify the func results: O is the f32 [.,Sq,D] result; an optional
@@ -287,7 +417,9 @@ struct FusedAttnLoopLowering {
     OpBuilder b(ctx);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
 
-    // New signature: Q,K,V memrefs + scale f32 + destination-passing O[Sq,D] f32.
+    // New signature: Q,K,V + scale and destination-passing outputs. The live
+    // captured-flat path preserves its exact rank-5/rank-6 public ABI; the
+    // historical normalized-loop path keeps the compact rank-2/rank-3 ABI.
     SmallVector<Type> inTys;
     for (Type at : fn.getFunctionType().getInputs()) {
       if (auto t = dyn_cast<RankedTensorType>(at))
@@ -297,13 +429,22 @@ struct FusedAttnLoopLowering {
     }
     // Destination-passing outputs appended in a fixed order: O then (optional)
     // LSE. Shapes carry the leading split dim Z when batched.
-    SmallVector<int64_t> oShape = batched ? SmallVector<int64_t>{Z, Sq, D}
-                                          : SmallVector<int64_t>{Sq, D};
-    inTys.push_back(MemRefType::get(oShape, f32));
-    if (hasLSE) {
-      SmallVector<int64_t> lseShape = batched ? SmallVector<int64_t>{Z, Sq, 1}
-                                              : SmallVector<int64_t>{Sq, 1};
-      inTys.push_back(MemRefType::get(lseShape, f32));
+    if (capturedFlat) {
+      for (Type result : fn.getFunctionType().getResults()) {
+        auto tensor = cast<RankedTensorType>(result);
+        inTys.push_back(
+            MemRefType::get(tensor.getShape(), tensor.getElementType()));
+      }
+    } else {
+      SmallVector<int64_t> oShape = batched ? SmallVector<int64_t>{Z, Sq, D}
+                                            : SmallVector<int64_t>{Sq, D};
+      inTys.push_back(MemRefType::get(oShape, f32));
+      if (hasLSE) {
+        SmallVector<int64_t> lseShape = batched
+                                            ? SmallVector<int64_t>{Z, Sq, 1}
+                                            : SmallVector<int64_t>{Sq, 1};
+        inTys.push_back(MemRefType::get(lseShape, f32));
+      }
     }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
@@ -318,13 +459,16 @@ struct FusedAttnLoopLowering {
     Value qMem = entry->getArgument(qArgIdx);
     Value kMem = entry->getArgument(kArgIdx);
     Value vMem = entry->getArgument(vArgIdx);
-    Value scale = entry->getArgument(scaleArgIdx);
+    Value scaleArg = entry->getArgument(scaleArgIdx);
+    Value scale = capturedFlat
+                      ? b.create<memref::LoadOp>(loc, scaleArg, ValueRange{})
+                      : scaleArg;
     unsigned numIn = fn.getFunctionType().getNumInputs();
     Value oMem = entry->getArgument(numIn);
     Value lseMem = hasLSE ? entry->getArgument(numIn + 1) : Value();
 
     int64_t gridM = Sq / BM;
-    int64_t numKT = Sk / BN;
+    int64_t numKT = (Sk + BN - 1) / BN;
     int64_t nColQK = BN / kWMMA; // # column MMA tiles for S (per warp)
     int64_t nColPV = D / kWMMA;  // # column MMA tiles for PV (per warp)
     int64_t kSubQK = D / kWMMA;  // # k-subtiles for QK^T (contraction = D)
@@ -427,7 +571,10 @@ struct FusedAttnLoopLowering {
     // Stage Q[rowBlk:+BM, :] -> qSh (f16), once.
     forEachElem(BM, D, [&](OpBuilder &nb, Value r, Value c) {
       Value gr = nb.create<arith::AddIOp>(loc, rowBlk, r);
-      Value v = nb.create<memref::LoadOp>(loc, qMem, ValueRange{gr, c});
+      SmallVector<Value> qIdx = capturedFlat
+                                    ? SmallVector<Value>{c0, gr, c0, c0, c}
+                                    : SmallVector<Value>{gr, c};
+      Value v = nb.create<memref::LoadOp>(loc, qMem, qIdx);
       nb.create<memref::StoreOp>(loc, v, qSh, ValueRange{r, c});
     });
     // Init O=0, m=-inf, l=0.
@@ -470,6 +617,8 @@ struct FusedAttnLoopLowering {
     Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
     Value cNm1 = b.create<arith::ConstantIndexOp>(loc, nStages - 1);
     Value cBNl = b.create<arith::ConstantIndexOp>(loc, BN);
+    Value cSk = b.create<arith::ConstantIndexOp>(loc, Sk);
+    Value cSkMinusOne = b.create<arith::ConstantIndexOp>(loc, Sk - 1);
 
     // Issue the K+V async copies for key tile starting at row `keyBase` into
     // buffer `stageVal`; return the group token. Vectorized 8-wide along D
@@ -484,15 +633,28 @@ struct FusedAttnLoopLowering {
         Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
         Value cc = nb.create<arith::MulIOp>(nl, colg, c8);
         Value gr = nb.create<arith::AddIOp>(nl, keyBase, r);
-        // batched: K/V are [Z,Sk,D]; index the split chunk with blockIdx.y.
-        SmallVector<Value> src = batched ? SmallVector<Value>{by, gr, cc}
-                                         : SmallVector<Value>{gr, cc};
+        Value validRow = nb.create<arith::CmpIOp>(
+            nl, arith::CmpIPredicate::ult, gr, cSk);
+        Value safeRow =
+            nb.create<arith::SelectOp>(nl, validRow, gr, cSkMinusOne);
+        Value srcElements =
+            nb.create<arith::SelectOp>(nl, validRow, c8, c0);
+        SmallVector<Value> src;
+        if (capturedFlat) {
+          Value splitBase = nb.create<arith::MulIOp>(nl, by, cSk);
+          Value globalRow = nb.create<arith::AddIOp>(nl, splitBase, safeRow);
+          src = {c0, globalRow, c0, c0, cc};
+        } else {
+          // batched: K/V are [Z,Sk,D]; index the split chunk with blockIdx.y.
+          src = batched ? SmallVector<Value>{by, safeRow, cc}
+                        : SmallVector<Value>{safeRow, cc};
+        }
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, kSh, ValueRange{stageVal, r, cc}, kMem, src, dstElems,
-            /*srcElements=*/Value(), bypassL1));
+            srcElements, bypassL1));
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, vSh, ValueRange{stageVal, r, cc}, vMem, src, dstElems,
-            /*srcElements=*/Value(), bypassL1));
+            srcElements, bypassL1));
       }
       return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
     };
@@ -501,7 +663,8 @@ struct FusedAttnLoopLowering {
     // cooperative online softmax -> PV=P@Vj via WMMA -> cooperative O rescale.
     // Same arithmetic as M8a; the only change is the rank-3 staged K/V src.
     IntegerAttr ldDpv = b.getIndexAttr(D);
-    auto computeTile = [&](OpBuilder &lb, Location cl, Value stageR) {
+    auto computeTile = [&](OpBuilder &lb, Location cl, Value stageR,
+                           Value keyBase) {
       // (2) S = Q@Kj^T via WMMA. Per warp: nColQK COp accumulators over kSubQK.
       SmallVector<Value> sAcc;
       for (int64_t j = 0; j < nColQK; ++j)
@@ -541,6 +704,10 @@ struct FusedAttnLoopLowering {
           Value cc = nb.create<arith::ConstantIndexOp>(nl, c);
           Value s = nb.create<memref::LoadOp>(nl, sSh, ValueRange{row, cc});
           Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+          Value globalKey = nb.create<arith::AddIOp>(nl, keyBase, cc);
+          Value valid = nb.create<arith::CmpIOp>(
+              nl, arith::CmpIPredicate::ult, globalKey, cSk);
+          ss = nb.create<arith::SelectOp>(nl, valid, ss, ninf);
           rmax = nb.create<arith::MaxNumFOp>(nl, rmax, ss);
         }
         Value mNew = rmax;
@@ -551,6 +718,10 @@ struct FusedAttnLoopLowering {
           Value cc = nb.create<arith::ConstantIndexOp>(nl, c);
           Value s = nb.create<memref::LoadOp>(nl, sSh, ValueRange{row, cc});
           Value ss = nb.create<arith::MulFOp>(nl, s, scale);
+          Value globalKey = nb.create<arith::AddIOp>(nl, keyBase, cc);
+          Value valid = nb.create<arith::CmpIOp>(
+              nl, arith::CmpIPredicate::ult, globalKey, cSk);
+          ss = nb.create<arith::SelectOp>(nl, valid, ss, ninf);
           Value sd = nb.create<arith::SubFOp>(nl, ss, mNew);
           Value p = nb.create<math::ExpOp>(nl, sd);
           Value ph = nb.create<arith::TruncFOp>(nl, f16, p);
@@ -638,7 +809,8 @@ struct FusedAttnLoopLowering {
       lb.create<nvgpu::DeviceAsyncWaitOp>(loc, grp, waitNm1);
       lb.create<gpu::BarrierOp>(loc); // async tile ki visible to all warps
       Value stageR = lb.create<arith::RemUIOp>(loc, ki, cNStages);
-      computeTile(lb, loc, stageR);
+      Value keyCurrent = lb.create<arith::MulIOp>(loc, ki, cBNl);
+      computeTile(lb, loc, stageR, keyCurrent);
     }
 
     // EPILOGUE: compute the last N-1 (already-prefetched) tiles, draining one
@@ -649,7 +821,8 @@ struct FusedAttnLoopLowering {
       b.create<nvgpu::DeviceAsyncWaitOp>(loc, prologTok,
                                          b.getI32IntegerAttr(nStages - 2 - j));
       b.create<gpu::BarrierOp>(loc);
-      computeTile(b, loc, stageR);
+      Value keyCurrent = b.create<arith::ConstantIndexOp>(loc, tile * BN);
+      computeTile(b, loc, stageR, keyCurrent);
     }
 
     // ---- epilogue: O_global[r,c] = O_sh[r,c] / l[r] ---------------------- //
@@ -658,8 +831,12 @@ struct FusedAttnLoopLowering {
       Value l = nb.create<memref::LoadOp>(loc, lSh, ValueRange{r});
       Value out = nb.create<arith::DivFOp>(loc, oo, l);
       Value gr = nb.create<arith::AddIOp>(loc, rowBlk, r);
-      SmallVector<Value> oIdx = batched ? SmallVector<Value>{by, gr, c}
-                                        : SmallVector<Value>{gr, c};
+      SmallVector<Value> oIdx;
+      if (capturedFlat)
+        oIdx = {c0, c0, c0, by, gr, c};
+      else
+        oIdx = batched ? SmallVector<Value>{by, gr, c}
+                       : SmallVector<Value>{gr, c};
       nb.create<memref::StoreOp>(loc, out, oMem, oIdx);
     });
 
@@ -670,13 +847,31 @@ struct FusedAttnLoopLowering {
       b.create<scf::IfOp>(loc, isRow, [&](OpBuilder &nb, Location nl) {
         Value m = nb.create<memref::LoadOp>(nl, mSh, ValueRange{tx});
         Value l = nb.create<memref::LoadOp>(nl, lSh, ValueRange{tx});
-        Value logl = nb.create<math::LogOp>(nl, l);
-        Value lse = nb.create<arith::AddFOp>(nl, m, logl);
+        Value lse;
+        if (lseF64) {
+          Type f64 = nb.getF64Type();
+          Value m64 = nb.create<arith::ExtFOp>(nl, f64, m);
+          Value logl64;
+          if (fastF32LSELog) {
+            Value logl = nb.create<math::LogOp>(nl, l);
+            logl64 = nb.create<arith::ExtFOp>(nl, f64, logl);
+          } else {
+            Value l64 = nb.create<arith::ExtFOp>(nl, f64, l);
+            logl64 = nb.create<math::LogOp>(nl, l64);
+          }
+          lse = nb.create<arith::AddFOp>(nl, m64, logl64);
+        } else {
+          Value logl = nb.create<math::LogOp>(nl, l);
+          lse = nb.create<arith::AddFOp>(nl, m, logl);
+        }
         Value gr = nb.create<arith::AddIOp>(nl, rowBlk, tx);
         Value c0i = nb.create<arith::ConstantIndexOp>(nl, 0);
-        SmallVector<Value> lseIdx = batched
-                                        ? SmallVector<Value>{by, gr, c0i}
-                                        : SmallVector<Value>{gr, c0i};
+        SmallVector<Value> lseIdx;
+        if (capturedFlat)
+          lseIdx = {c0i, c0i, c0i, by, gr};
+        else
+          lseIdx = batched ? SmallVector<Value>{by, gr, c0i}
+                           : SmallVector<Value>{gr, c0i};
         nb.create<memref::StoreOp>(nl, lse, lseMem, lseIdx);
         nb.create<scf::YieldOp>(nl);
       });
@@ -701,12 +896,14 @@ struct ConvertIntentLoopContractionToGPUPass
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
-      FusedAttnLoopLowering probe(fn, (int)numStages);
+      FusedAttnLoopLowering probe(fn, (int)numStages, capturedFlatOnly,
+                                  blockM, blockN, fastF32LSELog);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
-      FusedAttnLoopLowering low(fn, (int)numStages);
+      FusedAttnLoopLowering low(fn, (int)numStages, capturedFlatOnly, blockM,
+                                blockN, fastF32LSELog);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("fused-attn loop lowering failed after match");
         return signalPassFailure();

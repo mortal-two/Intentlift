@@ -302,12 +302,27 @@ def Intent_MaskedScatterOp : Intent_Op<"masked_scatter"> {
 // Structural layout ops (Layer A). Pure DATA MOVEMENT: every output element is a
 // source element chosen by a STATIC structural rule (an affine index / a
 // piecewise-by-offset select) or a pad constant — no arithmetic. Only
-// broadcast/reshape were implicit before; these make concat/pad/tile/flip/triu
-// (cat/stack/hstack/vstack, pad, repeat/tile, flip, triu) first-class. Lowered by
+// broadcast/reshape were implicit before; these make transpose/concat/pad/tile/
+// flip/triu (permute, cat/stack/hstack/vstack, pad, repeat/tile, flip, triu)
+// first-class. Lowered by
 // `convert-intent-layout-to-gpu`: one block per output row, cols over threads,
 // each output element's SOURCE coord computed by the rule then `memref.load`ed
 // (or set to the pad constant). See spec/ir/atomic-ops.md (C4).
 //===----------------------------------------------------------------------===//
+
+def Intent_TransposeOp : Intent_Op<"transpose"> {
+  let summary = "Permute tensor dimensions by a static permutation (Layer A).";
+  let description = [{
+    Apply the numpy/torch transpose convention: result dimension `i` is input
+    dimension `perm[i]`, and `out[o0,...]` reads the input coordinate obtained
+    by applying the inverse permutation. `perm` must contain every axis exactly
+    once. This is pure data movement and preserves the element type.
+  }];
+  let arguments = (ins AnyRankedTensor:$input, I64ArrayAttr:$perm);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
 
 def Intent_ConcatOp : Intent_Op<"concat"> {
   let summary = "Variadic concatenation along one axis (Layer A).";
