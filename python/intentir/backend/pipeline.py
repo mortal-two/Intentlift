@@ -24,6 +24,7 @@ from intentir.backend.selection import (
     residual_intent_ops,
     select_variant,
 )
+from intentir.backend.schedules import ScheduleDecision
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentFunction
 
@@ -111,6 +112,7 @@ def lower_to_cuda(
     target: LoweringTarget | None = None,
     pass_overrides: Mapping[str, str] | None = None,
     only_fast_path: str | None = None,
+    schedule_decision: ScheduleDecision | None = None,
     allow_specialized: bool = True,
 ) -> LoweredProgram:
     """Compile accepted Intent dialect MLIR through generic or direct CUDA.
@@ -129,10 +131,23 @@ def lower_to_cuda(
             f"requested {selected_target.chip!r}, configured "
             f"{backend_compile.CHIP!r}"
         )
+    effective_overrides = dict(pass_overrides or {})
+    if schedule_decision is not None:
+        if only_fast_path not in (None, schedule_decision.fast_path_id):
+            raise ValueError(
+                "schedule decision and only_fast_path identify different variants"
+            )
+        existing = effective_overrides.get(schedule_decision.fast_path_id)
+        if existing not in (None, schedule_decision.pass_argument):
+            raise ValueError(
+                "schedule decision conflicts with an explicit pass override"
+            )
+        only_fast_path = schedule_decision.fast_path_id
+        effective_overrides[only_fast_path] = schedule_decision.pass_argument
     selection = select_variant(
         source,
         target=selected_target,
-        pass_overrides=pass_overrides,
+        pass_overrides=effective_overrides,
         only_fast_path=only_fast_path,
         allow_specialized=allow_specialized,
     )
@@ -175,6 +190,7 @@ def lower_function_to_cuda(
     target: LoweringTarget | None = None,
     pass_overrides: Mapping[str, str] | None = None,
     only_fast_path: str | None = None,
+    schedule_decision: ScheduleDecision | None = None,
     allow_specialized: bool = True,
     fold: int = 0,
 ) -> LoweredProgram:
@@ -195,6 +211,7 @@ def lower_function_to_cuda(
         target=target,
         pass_overrides=pass_overrides,
         only_fast_path=only_fast_path,
+        schedule_decision=schedule_decision,
         allow_specialized=allow_specialized,
     )
 
