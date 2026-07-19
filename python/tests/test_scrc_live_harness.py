@@ -19,7 +19,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.replay import ReplayGeneration
-from intentir.verify.gate2 import Gate2Status
+from intentir.verify.gate2 import CudaLoweringSpec, Gate2Status
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +29,7 @@ import scrc_live_e2e as live  # noqa: E402
 from scrc_live_e2e import (  # noqa: E402
     Gate2ShapeProfile,
     _compile_case,
+    _gate1_config,
     _gate1_family_evidence_json,
     _gate1_specialization_family,
     _gate1_specialization_policy_json,
@@ -201,6 +202,53 @@ def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
     assert gate2.lowering.dims == {"M": 4, "N": 37}
 
 
+def test_rmsnorm_gate2_cuda_case_uses_canonical_gate_bundle() -> None:
+    case = build_case(_args("rmsnorm", m=4, n=37, block=64, eps=1.0e-5))
+    intent = IntentFunction.from_json(
+        json.loads((ROOT / "corpus/kernels/rms_norm/intent.json").read_text())
+    )
+    parameters = [
+        KernelParameter(
+            "x_ptr", ParameterKind.POINTER, ParameterMode.INPUT,
+            "f32", 2, tensor_ref="X",
+        ),
+        KernelParameter(
+            "w_ptr", ParameterKind.POINTER, ParameterMode.INPUT,
+            "f32", 1, tensor_ref="W",
+        ),
+        KernelParameter(
+            "out_ptr", ParameterKind.POINTER, ParameterMode.OUTPUT,
+            "f32", 2, tensor_ref="Y",
+        ),
+        KernelParameter("M", ParameterKind.SCALAR, dtype="i32", rank=0),
+        KernelParameter("N", ParameterKind.SCALAR, dtype="i32", rank=0),
+        KernelParameter(
+            "eps", ParameterKind.SCALAR, dtype="f32", rank=0,
+            tensor_ref="eps",
+        ),
+        KernelParameter("BLOCK_N", ParameterKind.CONSTEXPR, dtype="i32", rank=0),
+    ]
+    artifact = SimpleNamespace(
+        interface=SimpleNamespace(parameters=parameters),
+        schedule=SimpleNamespace(values=case.schedule_values),
+        j=SimpleNamespace(intent=intent),
+    )
+
+    gate2 = _gate2_case(
+        artifact, case, 20260715, lowering_backend="cuda"
+    )
+
+    assert isinstance(gate2.lowering, CudaLoweringSpec)
+    assert gate2.lowering.bundle.input_bindings == {
+        "X": "X",
+        "W": "W",
+        "eps": "eps",
+    }
+    assert gate2.lowering.bundle.output_bindings == {"Y": "Y"}
+    assert gate2.output_keys == ("Y",)
+    assert gate2.metadata["lowering_backend"] == "cuda"
+
+
 def test_matmul_case_preserves_runtime_dims_three_c_slots_and_2d_grid() -> None:
     case = build_case(_args("matmul", m=17, n=13, k=19))
     view = case.compiler_view().to_json()
@@ -273,11 +321,25 @@ def test_matmul_entry_uses_reviewed_probe_defaults() -> None:
     assert args.model == "gpt-5.6-sol"
     assert args.effort == "xhigh"
     assert args.relift_rounds == 3
+    assert args.gate1_profile == "formal"
+    assert args.lowering_backend == "cpu"
 
 
 def test_live_parser_rejects_nonpositive_relift_rounds() -> None:
     with pytest.raises(SystemExit):
         _parser("add").parse_args(["--relift-rounds", "0"])
+
+
+def test_normal_gate1_profile_keeps_real_closure_without_ablations() -> None:
+    config = _gate1_config(
+        "normal", relift_rounds=3, semantic_interventions=3
+    )
+
+    assert config.max_relifts == 3
+    assert not config.run_semantic_interventions
+    assert config.max_semantic_interventions == 0
+    assert not config.run_masked_ablation
+    assert not config.run_composer_shadow
 
 
 def test_live_case_builds_an_ordered_fixed_c_family() -> None:
@@ -574,10 +636,12 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         "family": None,
     }
     assert report["gate2_lowering_policy"] == {
+        "backend": "cpu",
         "protocol": (
             "intent_linalg_cpu_symbolic_iota_integer_readback_"
             "boundary_broadcast_compressed_gather_v5"
         ),
+        "cuda_only_fast_path": None,
         "unsupported_status": "lowering_unsupported",
         "legacy_interpreter_fallback": "disabled",
     }
@@ -977,7 +1041,9 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
         "canonical_artifact_digest",
         lambda artifact, registry: "final-artifact",
     )
-    monkeypatch.setattr(live, "_gate2_case", lambda *args: "gate2-case")
+    monkeypatch.setattr(
+        live, "_gate2_case", lambda *args, **kwargs: "gate2-case"
+    )
     monkeypatch.setattr(
         live,
         "_gate2_evidence_json",
@@ -1009,6 +1075,18 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
     }
     assert captured["gate2_case"] == "gate2-case"
     assert report["gate2_replay_alignment"]["status"] == "aligned"
+
+    # The production CUDA path is gated strictly by Gate1 closure.  Rejected
+    # artifacts may retain evidence, but must never invoke CUDA Gate2/lowering.
+    args.lowering_backend = "cuda"
+    captured.clear()
+    code, report = live.run_case(case, args)
+
+    assert code == 3
+    assert "gate2_case" not in captured
+    assert "gate2_diagnostic" not in report
+    assert report["gate2_lowering_policy"]["backend"] == "cuda"
+    args.lowering_backend = "cpu"
 
     # A later Relift may replace the final artifact and fail before producing
     # any candidate.  The older compiled replay must then remain unavailable

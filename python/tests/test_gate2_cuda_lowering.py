@@ -210,6 +210,24 @@ def test_gate_bundle_requires_exact_multi_output_bindings() -> None:
         )
 
 
+def test_gate_bundle_derives_bindings_from_live_interface() -> None:
+    artifact = _artifact(_two_output_intent(), num_warps=4)
+
+    bundle = GateIntentBundle.from_artifact_interface(artifact, dims={})
+
+    assert bundle.input_bindings == {"X": "X"}
+    assert bundle.output_bindings == {"Y": "Y", "Z": "Z"}
+    assert bundle.declared_schedule == {"num_warps": 4}
+
+
+def test_gate_bundle_live_interface_fails_closed_without_tensor_ref() -> None:
+    artifact = _artifact(_two_output_intent())
+    artifact.interface.parameters[0].tensor_ref = None
+
+    with pytest.raises(ValueError, match="no input interface binding"):
+        GateIntentBundle.from_artifact_interface(artifact, dims={})
+
+
 def test_cuda_lower_materializes_boundary_broadcast_axes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

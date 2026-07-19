@@ -31,7 +31,12 @@ from intentir.backend.cuda.schedules import (
 from intentir.backend.layer_c import LayerCResolutionError, resolve_layer_c_scalar
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentFunction, Tensor
-from intentir.verify.gate1.model import AliasKind, Gate1Artifact, SemanticArchive
+from intentir.verify.gate1.model import (
+    AliasKind,
+    Gate1Artifact,
+    ParameterMode,
+    SemanticArchive,
+)
 
 from .lower2c import boundary_broadcast_axes
 from .model import ExecutionResult
@@ -269,6 +274,76 @@ class GateIntentBundle:
             semantic_archive=artifact.j,
             output_aliases=dict(output_aliases or {}),
             declared_schedule=dict(artifact.schedule.values),
+        )
+
+    @classmethod
+    def from_artifact_interface(
+        cls,
+        artifact: Gate1Artifact,
+        *,
+        dims: Mapping[str, int],
+        output_aliases: Mapping[str, str] | None = None,
+    ) -> "GateIntentBundle":
+        """Derive backend bindings from a real Lift ``KernelInterface``.
+
+        Live Lift artifacts already bind source parameters to canonical J
+        tensors through ``tensor_ref`` and classify them with ``mode``.  Make
+        that persisted interface the single binding source instead of asking a
+        Gate2 caller to manually restate tensor-to-argument mappings.  Missing
+        or ambiguous references fail closed before MLIR emission.
+        """
+
+        if not isinstance(artifact, Gate1Artifact):
+            artifact = Gate1Artifact.from_json(artifact)
+
+        def binding_for(
+            tensor_name: str,
+            *,
+            modes: frozenset[ParameterMode],
+            role: str,
+        ) -> str:
+            matches = [
+                parameter.name
+                for parameter in artifact.interface.parameters
+                if parameter.tensor_ref == tensor_name
+                and parameter.mode in modes
+            ]
+            unique = tuple(dict.fromkeys(matches))
+            if not unique:
+                raise ValueError(
+                    f"live Gate artifact has no {role} interface binding for "
+                    f"Intent tensor {tensor_name!r}"
+                )
+            if len(unique) != 1:
+                raise ValueError(
+                    f"live Gate artifact has ambiguous {role} interface "
+                    f"bindings for Intent tensor {tensor_name!r}: "
+                    f"{list(unique)!r}"
+                )
+            return unique[0]
+
+        input_modes = frozenset(
+            {ParameterMode.INPUT, ParameterMode.INOUT, ParameterMode.VALUE}
+        )
+        output_modes = frozenset(
+            {ParameterMode.OUTPUT, ParameterMode.INOUT}
+        )
+        return cls.from_artifact(
+            artifact,
+            dims=dims,
+            input_bindings={
+                tensor.name: binding_for(
+                    tensor.name, modes=input_modes, role="input"
+                )
+                for tensor in artifact.j.intent.inputs
+            },
+            output_bindings={
+                tensor.name: binding_for(
+                    tensor.name, modes=output_modes, role="output"
+                )
+                for tensor in artifact.j.intent.outputs
+            },
+            output_aliases=output_aliases,
         )
 
     def semantic_contract_metadata(self) -> dict[str, Any]:

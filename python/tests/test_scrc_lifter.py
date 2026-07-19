@@ -346,7 +346,16 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     response = LLMReply(
         json.dumps(payload),
         "gpt-test",
-        {"id": "resp-test"},
+        {
+            "id": "resp-test",
+            "model": "gpt-test-2026-07-19",
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 456,
+                "total_tokens": 579,
+                "input_tokens_details": {"cached_tokens": 0},
+            },
+        },
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
     source = "@triton.jit\ndef add_kernel(...): pass"
@@ -356,6 +365,18 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     assert result.artifact.compose_provenance is not None
     assert result.artifact.provenance[0].model == "gpt-test"
     assert result.provenance.response_id == "resp-test"
+    assert result.provenance.response_ids == ("resp-test",)
+    assert result.provenance.response_model == "gpt-test-2026-07-19"
+    assert result.provenance.usage == {
+        "input_tokens": 123,
+        "output_tokens": 456,
+        "total_tokens": 579,
+    }
+    assert result.artifact.provenance[0].metadata["usage"] == {
+        "input_tokens": 123,
+        "output_tokens": 456,
+        "total_tokens": 579,
+    }
     assert result.provenance.prompt_sha256 == scrc.scrc_lift_prompt_sha256(
         source, "add_kernel"
     )

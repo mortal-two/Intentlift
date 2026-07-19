@@ -76,6 +76,38 @@ class SCRCProvenance:
     attempts: int
     response_id: str | None = None
     repairs: tuple[str, ...] = ()
+    response_ids: tuple[str, ...] = ()
+    response_model: str | None = None
+    usage: Mapping[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "repairs", tuple(self.repairs))
+        object.__setattr__(self, "response_ids", tuple(self.response_ids))
+        usage = dict(self.usage)
+        for name, value in usage.items():
+            if (
+                not isinstance(name, str)
+                or isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    "SCRC provenance usage must map string names to "
+                    "non-negative integers"
+                )
+        object.__setattr__(self, "usage", usage)
+
+
+def _sanitized_response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
+    usage = raw.get("usage")
+    if not isinstance(usage, Mapping):
+        return {}
+    result: dict[str, int] = {}
+    for name in ("input_tokens", "output_tokens", "total_tokens"):
+        value = usage.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            result[name] = value
+    return result
 
 
 @dataclass(frozen=True)
@@ -1056,6 +1088,8 @@ def extract_scrc_artifact(
             metadata: dict[str, Any] = {
                 "prompt_sha256": prompt_sha,
                 "response_id": reply.raw.get("id"),
+                "response_model": reply.raw.get("model"),
+                "usage": _sanitized_response_usage(reply.raw),
             }
             previous_provenance: list[dict[str, Any]] = []
             if trusted_artifact is not None:
@@ -1297,6 +1331,23 @@ def extract_scrc_artifact(
                     attempt + 1,
                     response_id=reply.raw.get("id"),
                     repairs=tuple(repairs),
+                    response_ids=tuple(
+                        response_id
+                        for response_id in (
+                            *(
+                                item.response_id
+                                for item in rejected_attempts
+                            ),
+                            reply.raw.get("id"),
+                        )
+                        if isinstance(response_id, str) and response_id
+                    ),
+                    response_model=(
+                        reply.raw.get("model")
+                        if isinstance(reply.raw.get("model"), str)
+                        else None
+                    ),
+                    usage=_sanitized_response_usage(reply.raw),
                 ),
             )
         except Exception as exc:
