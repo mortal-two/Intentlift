@@ -59,6 +59,8 @@ lowering pass 的隐式输入。反过来，paper receipt 也不得成为 Gate l
 11. `5d12cf3 test: cover neutral variant planning and ablation`
 12. `de1e41f backend: preserve variant bundles and guarded dispatch`
 13. `ce46632 test: cover variant bundles fallback and dispatch`
+14. `0fdc820 backend: connect structural schedules to CUDA lowering`
+15. `0d76bfd test: cover structural schedule policies and overrides`
 
 中间两次文档提交只记录合并边界与回归结果，不含编译器逻辑。
 
@@ -164,8 +166,8 @@ paper verifier。
 - 发现并修复 row-reduction 中临时 `ValueRange` 悬空引用：旧 Debug 构建会掩盖，
   `-O2` 下会在 `memref.store` 构造时崩溃；
 - MLIR lit：109/109 通过；
-- frontend/backend/orchestrate/neutral bridge 及 variant/dispatch：
-  104 passed，1 skipped；
+- frontend/backend/orchestrate/neutral bridge、schedule、variant/dispatch 与
+  split-K PK：114 passed，1 skipped；
 - xFormers split-K CUDA PK：10/10 通过；
 - 中立 generic 路径真实生成 `add_kernel` ELF cubin；
 - 中立 direct elementwise 路径真实完成 structural probe、specialized MLIR、
