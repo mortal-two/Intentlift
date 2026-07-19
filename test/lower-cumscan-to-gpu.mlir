@@ -12,7 +12,7 @@
 // CHECK:         gpu.dynamic_shared_memory
 // CHECK-NOT:     gpu.all_reduce
 // CHECK:         arith.maxnumf
-// CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<2x4xf32>
+// CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}]{{.*}} : memref<2x4xf32>
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.
 func.func @cummax_row(%x: tensor<2x4xf32>) -> tensor<2x4xf32> {

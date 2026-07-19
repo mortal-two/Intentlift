@@ -6,8 +6,8 @@
 // softmax); the target logit X[row, Y[row]] is gathered as a masked row-sum
 // (sum(select(iota == Y, X, 0))); loss = (lse - ori)/n is a per-row scalar; the
 // gradient (softmax - one-hot(Y))/n is written back in place over X. The whole
-// DAG lowers to ONE read-once block-cooperative gpu.launch: three gpu.all_reduce
-// (max, sum, sum), the register tile loaded once and reused for the grad
+// DAG lowers to ONE read-once block-cooperative gpu.launch: three grouped
+// warp/shared reductions (max, sum, sum), the register tile reused for the grad
 // epilogue, an integer arith.cmpi eq for the one-hot, arith.select, math.log for
 // the lse, a thread-0 guarded loss store to memref<Mxf32>, and the grad store
 // back into the X memref (in place). No new pass: this is the M1 register-tile
@@ -18,13 +18,13 @@
 // CHECK:         gpu.launch
 // CHECK-NOT:     memref.alloca
 // CHECK-NOT:     scf.for
-// CHECK:         gpu.all_reduce{{.*}}maxnumf
+// CHECK:         gpu.shuffle xor
 // CHECK:         math.exp
-// CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         math.log
+// CHECK:         gpu.shuffle xor
 // CHECK:         arith.cmpi eq
 // CHECK:         arith.select
-// CHECK:         gpu.all_reduce{{.*}}add
+// CHECK:         gpu.shuffle xor
+// CHECK:         math.log
 // CHECK:         scf.if
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<4xf32>
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
