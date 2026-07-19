@@ -53,10 +53,13 @@ Atomic ops (each is one JSON object in a "body" list):
                row-sum [M,N] -> [M]). fn in {sum,mean,max,min,prod,any,all}.
      {"op":"reduce","result":R,"operands":[A],"attrs":{"fn":F,"axes":[i,...],
        "assoc":"associative"|"float_nondeterministic"}}
-  iota       : a rank-1 INTEGER vector [0,1,...,n-1]. `n` is a static integer
-               extent and dtype defaults to i32. Use cast/map ops to express
-               affine arange(start,step); do not encode program tiles in Layer A.
-     {"op":"iota","result":R,"attrs":{"n":<int>,"dtype":"i32"|"i64"}}
+  iota       : a rank-1 INTEGER vector [0,1,...,n-1]. `n` is either a static
+               integer extent or the exact symbolic runtime extent name used
+               by the tensor shape; dtype defaults to i32. Use cast/map ops to
+               express affine arange(start,step). Never substitute a sampled
+               runtime value, C tile size, program id, block base or lane
+               decomposition into Layer A.
+     {"op":"iota","result":R,"attrs":{"n":<int-or-symbol>,"dtype":"i32"|"i64"}}
   const      : a literal value, splat over an optional shape (default scalar []).
      {"op":"const","result":R,"attrs":{"value":<number>,"dtype":"f32","shape":[]}}
   contraction: einsum. attrs.subscripts is a numpy einsum string.
@@ -153,13 +156,26 @@ Atomic ops (each is one JSON object in a "body" list):
 
 Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   {"op":"loop",
-   "result":[<carry names produced>],
-   "carry":[{"name":C,"init":"NEG_INF"|"zeros"|"ones"|"ZERO"|"<number>"}, ...],
-   "trip":{"axis":<dim name being scanned>,"tile_hint":<dim name>},
+   "scope_id":<opaque semantic scope id>,
+   "result":[<post-loop result values>],
+   "carry":[{
+      "state_id":<opaque state id>,
+      "init_value":<outer value or typed literal>,
+      "body_argument":<loop-local current value>,
+      "next_value":<value defined by the body>,
+      "result_value":<post-loop value>,
+      "type":{"dtype":<dtype>,"shape":[<semantic dims>]}
+   }, ...],
+   "trip":{"axis":<semantic dim name being scanned>},
    "scan":[{"name":<slice name>,"from":<input>,"axis":<int>}, ...],
    "body":[ <ops over scan slices + carries> ],
    "yield":[<next-iteration carry values, one per carry>] }
-  Body block sees: the scan slices (by name) ++ the current carries (by name).
+  result must exactly equal carry.result_value order; yield must exactly equal
+  carry.next_value order. Body sees scan names and body_argument names only;
+  body_argument must not escape the loop. The body op that defines each
+  next_value must carry an explicit type exactly equal to the state type. Keep
+  tile/block choices out of trip:
+  they are Layer C, not J semantics.
   Use a loop ONLY for genuine loop-carried state; plain tiling is Layer C and
   should be re-rolled away (the math is the same whole-tensor op).
 

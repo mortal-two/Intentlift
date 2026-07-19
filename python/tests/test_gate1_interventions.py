@@ -4,6 +4,8 @@ from intentir.verify.gate1 import (
     Gate1Artifact,
     InterventionStatus,
     build_semantic_interventions,
+    compose_replay_plan,
+    default_triton_rule_registry,
     evaluate_semantic_intervention,
     fingerprint_ttir,
 )
@@ -303,7 +305,10 @@ def test_binary_intervention_changes_only_the_registered_j_coordinate() -> None:
     assert (spec.before, spec.after) == ("add", "sub")
     assert spec.artifact.interface == artifact.interface
     assert spec.artifact.schedule == artifact.schedule
-    assert spec.artifact.plan == artifact.plan
+    assert spec.artifact.plan == compose_replay_plan(
+        spec.artifact, default_triton_rule_registry()
+    ).plan
+    assert spec.artifact.compose_provenance is not None
     assert spec.artifact.j.boundary == artifact.j.boundary
     assert spec.artifact.j.intent.body[0].attrs["fn"] == "sub"
     assert spec.baseline_j_digest != spec.intervention_j_digest
@@ -331,7 +336,10 @@ def test_output_constant_intervention_is_unique_and_changes_only_j_value() -> No
     assert (spec.before, spec.after) == ("1", "0")
     assert spec.artifact.interface == artifact.interface
     assert spec.artifact.schedule == artifact.schedule
-    assert spec.artifact.plan == artifact.plan
+    assert spec.artifact.plan == compose_replay_plan(
+        spec.artifact, default_triton_rule_registry()
+    ).plan
+    assert spec.artifact.compose_provenance is not None
     assert spec.artifact.j.boundary == artifact.j.boundary
     assert spec.artifact.j.intent.body[0].attrs["value"] == 0.0
 

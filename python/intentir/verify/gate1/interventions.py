@@ -18,14 +18,24 @@ from enum import Enum
 from typing import Any
 
 from .compare import TTIRComparison, compare_fingerprints
+from .composer import materialize_replay_plan
 from .compiler import CompileResult
 from .model import Gate1Artifact, SchemaError
 from .replay import ReplayGeneration
+from .rules import RuleRegistry, default_triton_rule_registry
 from .ttir import TTIRFingerprint
 
 
 _BODY_PATH = re.compile(
     r"^(?:intent_function\.)?body\[(\d+)\](?:\.body\[(\d+)\])*$"
+)
+
+
+PAIRED_INTERVENTION_FAMILY_POLICY = (
+    "fixed_c_family_exact_delta_all_profiles_v1"
+)
+PAIRED_INTERVENTION_FAMILY_DIGEST_SCHEMA = (
+    "paired_intervention_fixed_c_family_evidence_v2"
 )
 
 
@@ -60,6 +70,17 @@ class InterventionStatus(str, Enum):
     GENERATION_FAILED = "generation_failed"
     COMPILE_FAILED = "compile_failed"
     EVALUATION_FAILED = "evaluation_failed"
+
+
+INTERVENTION_SEMANTIC_FAILURE_STATUSES = frozenset(
+    {
+        InterventionStatus.IGNORED_J,
+        InterventionStatus.WRONG_OPERATOR_DELTA,
+        InterventionStatus.WRONG_CONSTANT_DELTA,
+        InterventionStatus.WRONG_FILL_DELTA,
+        InterventionStatus.OFF_TARGET_DRIFT,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -127,6 +148,49 @@ class InterventionVerdict:
     def passed(self) -> bool:
         return self.status is InterventionStatus.PASS
 
+    def exact_delta_payload(self) -> dict[str, Any]:
+        """Return score-free, prose-free semantic evidence for hashing."""
+
+        hard_components: list[dict[str, Any]] = []
+        for component in sorted(
+            (item for item in self.comparison.components if item.hard),
+            key=lambda item: item.category,
+        ):
+            differences = [
+                {
+                    "kind": difference.kind,
+                    "item": difference.item,
+                    "expected_count": difference.expected_count,
+                    "actual_count": difference.actual_count,
+                }
+                for difference in component.differences
+            ]
+            differences.sort(key=_stable_json)
+            hard_components.append(
+                {
+                    "category": component.category,
+                    "applicable": component.applicable,
+                    "passed": component.passed,
+                    "differences": differences,
+                }
+            )
+        return {
+            "status": self.status.value,
+            "changed_categories": list(self.changed_categories),
+            "operator_delta": [list(item) for item in self.operator_delta],
+            "memory_fill_delta": [
+                list(item) for item in self.memory_fill_delta
+            ],
+            "store_value_delta": [
+                list(item) for item in self.store_value_delta
+            ],
+            "reduction_delta": [
+                list(item) for item in self.reduction_delta
+            ],
+            "hard_pass": self.comparison.hard_pass,
+            "hard_components": hard_components,
+        }
+
     def to_json(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
@@ -149,10 +213,70 @@ class InterventionRecord:
     compile: CompileResult | None = None
     verdict: InterventionVerdict | None = None
     diagnostic: str = ""
+    profile_records: tuple["InterventionProfileRecord", ...] = ()
+    family_policy: str | None = None
+    baseline_code_sha256: str | None = None
+    family_id: str | None = None
+    family_contract_digest: str | None = None
+    family_outcome: str | None = None
 
     @property
     def passed(self) -> bool:
-        return self.status is InterventionStatus.PASS
+        return bool(
+            self.status is InterventionStatus.PASS
+            and (
+                not self.profile_records
+                or all(item.passed for item in self.profile_records)
+            )
+        )
+
+    @property
+    def family_evidence_complete(self) -> bool:
+        return bool(
+            self.profile_records
+            and all(item.verdict is not None for item in self.profile_records)
+        )
+
+    @property
+    def family_digest(self) -> str | None:
+        if (
+            not self.profile_records
+            or self.generation is None
+            or self.baseline_code_sha256 is None
+            or self.family_id is None
+            or self.family_contract_digest is None
+            or self.family_outcome is None
+        ):
+            return None
+        return _digest(
+            {
+                "digest_schema": PAIRED_INTERVENTION_FAMILY_DIGEST_SCHEMA,
+                "policy": self.family_policy,
+                "family_id": self.family_id,
+                "family_contract_digest": self.family_contract_digest,
+                "family_outcome": self.family_outcome,
+                "intervention_id": self.spec.intervention_id,
+                "baseline_j_digest": self.spec.baseline_j_digest,
+                "intervention_j_digest": self.spec.intervention_j_digest,
+                "baseline_code_sha256": self.baseline_code_sha256,
+                "mutant_code_sha256": self.generation.code_sha256,
+                "profiles": [
+                    {
+                        "profile_id": item.profile_id,
+                        "status": item.status.value,
+                        "exact_delta": (
+                            None
+                            if item.verdict is None
+                            else item.verdict.exact_delta_payload()
+                        ),
+                    }
+                    for item in sorted(
+                        self.profile_records,
+                        key=lambda record: record.profile_id,
+                    )
+                ],
+            }
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -169,7 +293,6 @@ class InterventionRecord:
                 "response_model": self.generation.response_model,
                 "response_id": self.generation.response_id,
                 "masked": self.generation.masked,
-                "base_generation_id": self.generation.base_generation_id,
                 "ablation_kind": self.generation.ablation_kind,
             },
             "compile": None
@@ -182,6 +305,82 @@ class InterventionRecord:
                 "elapsed_ms": self.compile.elapsed_ms,
             },
             "verdict": None if self.verdict is None else self.verdict.to_json(),
+            "diagnostic": self.diagnostic,
+            "family_policy": self.family_policy,
+            "baseline_code_sha256": self.baseline_code_sha256,
+            "family_id": self.family_id,
+            "family_contract_digest": self.family_contract_digest,
+            "family_outcome": self.family_outcome,
+            "family_evidence_complete": self.family_evidence_complete,
+            "family_digest": self.family_digest,
+            "profile_records": [
+                item.to_json()
+                for item in sorted(
+                    self.profile_records,
+                    key=lambda record: record.profile_id,
+                )
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class InterventionProfileRecord:
+    """One fixed-C profile observation for a shared mutant replay.
+
+    The parent :class:`InterventionRecord` owns the single replay generation.
+    Per-profile records contain only the two compilations and the exact delta
+    verdict, so they cannot be mistaken for profile-local writer invocations.
+    """
+
+    profile_id: str
+    status: InterventionStatus
+    baseline_compile: CompileResult | None = None
+    compile: CompileResult | None = None
+    verdict: InterventionVerdict | None = None
+    diagnostic: str = ""
+    baseline_compile_reused: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.profile_id, str) or not self.profile_id:
+            raise ValueError(
+                "intervention profile_id must be a non-empty string"
+            )
+        if not isinstance(self.status, InterventionStatus):
+            object.__setattr__(
+                self, "status", InterventionStatus(self.status)
+            )
+
+    @property
+    def passed(self) -> bool:
+        return self.status is InterventionStatus.PASS
+
+    @staticmethod
+    def _compile_json(
+        result: CompileResult | None,
+    ) -> dict[str, Any] | None:
+        if result is None:
+            return None
+        return {
+            "ok": result.ok,
+            "diagnostic": result.diagnostic,
+            "cache_key": result.cache_key,
+            "cache_hit": result.cache_hit,
+            "elapsed_ms": result.elapsed_ms,
+        }
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "status": self.status.value,
+            "passed": self.passed,
+            "baseline_compile": self._compile_json(
+                self.baseline_compile
+            ),
+            "baseline_compile_reused": self.baseline_compile_reused,
+            "compile": self._compile_json(self.compile),
+            "verdict": (
+                None if self.verdict is None else self.verdict.to_json()
+            ),
             "diagnostic": self.diagnostic,
         }
 
@@ -370,13 +569,15 @@ def build_semantic_interventions(
     artifact: Gate1Artifact,
     *,
     limit: int = 1,
+    registry: RuleRegistry | None = None,
 ) -> tuple[SemanticIntervention, ...]:
-    """Return deterministic, type-preserving interventions for one artifact."""
+    """Return deterministic, type-preserving J→recompose interventions."""
 
     if limit < 0:
         raise ValueError("intervention limit must be non-negative")
     if not isinstance(artifact, Gate1Artifact):
         artifact = Gate1Artifact.from_json(artifact)
+    registry = registry or default_triton_rule_registry()
     if limit == 0:
         return ()
 
@@ -408,7 +609,7 @@ def build_semantic_interventions(
         for frozen in (
             "interface",
             "schedule",
-            "plan",
+            "strategy",
             "location_map",
             "source",
             "provenance",
@@ -420,7 +621,9 @@ def build_semantic_interventions(
         if changed["j"]["boundary"] != baseline["j"]["boundary"]:
             raise AssertionError("binary semantic intervention changed J boundary")
 
-        changed_artifact = Gate1Artifact.from_json(changed)
+        changed_artifact, _ = materialize_replay_plan(
+            Gate1Artifact.from_json(changed), registry
+        )
         result.append(
             SemanticIntervention(
                 intervention_id=f"binary_fn:{node_ref}:{binary_fn}_to_{replacement}",
@@ -494,7 +697,7 @@ def build_semantic_interventions(
         for frozen in (
             "interface",
             "schedule",
-            "plan",
+            "strategy",
             "location_map",
             "source",
             "provenance",
@@ -506,7 +709,9 @@ def build_semantic_interventions(
         if changed["j"]["boundary"] != baseline["j"]["boundary"]:
             raise AssertionError("constant intervention changed J boundary")
 
-        changed_artifact = Gate1Artifact.from_json(changed)
+        changed_artifact, _ = materialize_replay_plan(
+            Gate1Artifact.from_json(changed), registry
+        )
         result.append(
             SemanticIntervention(
                 intervention_id=f"output_const:{node_ref}:1_to_0",
@@ -586,7 +791,7 @@ def build_semantic_interventions(
         for frozen in (
             "interface",
             "schedule",
-            "plan",
+            "strategy",
             "location_map",
             "source",
             "provenance",
@@ -596,7 +801,9 @@ def build_semantic_interventions(
         if changed["j"]["node_ids"] != baseline["j"]["node_ids"]:
             raise AssertionError("reduction intervention changed J node identities")
 
-        changed_artifact = Gate1Artifact.from_json(changed)
+        changed_artifact, _ = materialize_replay_plan(
+            Gate1Artifact.from_json(changed), registry
+        )
         result.append(
             SemanticIntervention(
                 intervention_id=f"reduction:{node_ref}:sum_to_max",
@@ -684,7 +891,7 @@ def build_semantic_interventions(
         for frozen in (
             "interface",
             "schedule",
-            "plan",
+            "strategy",
             "location_map",
             "source",
             "provenance",
@@ -696,7 +903,9 @@ def build_semantic_interventions(
         if changed["j"]["node_ids"] != baseline["j"]["node_ids"]:
             raise AssertionError("fill intervention changed J node identities")
 
-        changed_artifact = Gate1Artifact.from_json(changed)
+        changed_artifact, _ = materialize_replay_plan(
+            Gate1Artifact.from_json(changed), registry
+        )
         access_id = access["access_id"]
         result.append(
             SemanticIntervention(
@@ -1037,7 +1246,11 @@ def evaluate_semantic_intervention(
 
 
 __all__ = [
+    "INTERVENTION_SEMANTIC_FAILURE_STATUSES",
+    "PAIRED_INTERVENTION_FAMILY_DIGEST_SCHEMA",
+    "PAIRED_INTERVENTION_FAMILY_POLICY",
     "InterventionKind",
+    "InterventionProfileRecord",
     "InterventionRecord",
     "InterventionStatus",
     "InterventionVerdict",

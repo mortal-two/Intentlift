@@ -48,7 +48,9 @@ def test_flash_json_round_trips() -> None:
     assert fn.name == "flash_attention_fwd"
     loop = fn.body[0]
     assert loop.op == "loop"
-    assert [c["name"] for c in loop.carry] == ["m", "l", "Oacc"]
+    assert [c.state_id for c in loop.carry] == ["state0", "state1", "state2"]
+    assert [c.body_argument for c in loop.carry] == ["m_iter", "l_iter", "Oacc_iter"]
+    assert [c.result_value for c in loop.carry] == ["m", "l", "Oacc"]
     assert [s["name"] for s in loop.scan] == ["Kj", "Vj"]
     # JSON -> model -> JSON is lossless (scan/carry/yield survive).
     assert IntentFunction.from_json(fn.to_json()).to_json() == fn.to_json()

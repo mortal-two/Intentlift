@@ -1,9 +1,8 @@
-"""Plan-aligned diagnostic ablations for the strict replay plan ``pi``.
+"""Canonical pi negative tests and C.strategy causal interventions.
 
-These experiments intentionally run an incomplete replay packet after the
-original artifact has passed strict-plan validation.  They do not change the
-Gate1 verdict yet; they provide deterministic evidence for the original SCRC
-J-only and step-dropout experiments.
+Direct pi deletion/addition/substitution is rejected by deterministic compose
+equality before any writer call.  A legal implementation-mechanism change is
+expressed only through C.strategy, followed by a fresh deterministic compose.
 """
 
 from __future__ import annotations
@@ -13,8 +12,20 @@ from enum import Enum
 from typing import Any
 
 from .compare import TTIRComparator, TTIRComparison
+from .composer import (
+    ComposeMismatchError,
+    assert_replay_plan_matches,
+    materialize_replay_plan,
+)
 from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
-from .model import Gate1Artifact, ReplayPlan
+from .model import (
+    Gate1Artifact,
+    ReplayPlan,
+    StrategyBinding,
+    StrategyChoice,
+    StrategyFamily,
+    StrategySpec,
+)
 from .replay import ReplayGeneration, ReplayWriter
 from .rules import RuleRegistry, RuleSelectionMode
 from .ttir import TTIRFingerprint, fingerprint_ttir
@@ -29,6 +40,9 @@ class PiAblationKind(str, Enum):
 class PiAblationStatus(str, Enum):
     DEGRADED = "degraded"
     UNEXPECTED_CLOSURE = "unexpected_closure"
+    CANONICALITY_REJECTED = "canonicality_rejected"
+    SEMANTICS_PRESERVED = "semantics_preserved"
+    OFF_TARGET_DRIFT = "off_target_drift"
     GENERATION_FAILED = "generation_failed"
     COMPILE_FAILED = "compile_failed"
     EVALUATION_FAILED = "evaluation_failed"
@@ -43,6 +57,9 @@ class PiAblationSpec:
     dropped_rule: str | None = None
     dropped_target: str | None = None
     replacement_rule: str | None = None
+    artifact: Gate1Artifact | None = None
+    strategy_before: dict[str, Any] | None = None
+    strategy_after: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -53,6 +70,8 @@ class PiAblationSpec:
             "dropped_rule": self.dropped_rule,
             "dropped_target": self.dropped_target,
             "replacement_rule": self.replacement_rule,
+            "strategy_before": self.strategy_before,
+            "strategy_after": self.strategy_after,
         }
 
 
@@ -68,7 +87,10 @@ class PiAblationRecord:
 
     @property
     def supports_pi_necessity(self) -> bool:
-        return self.status is PiAblationStatus.DEGRADED
+        return self.status in {
+            PiAblationStatus.DEGRADED,
+            PiAblationStatus.CANONICALITY_REJECTED,
+        }
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -105,6 +127,7 @@ class PiAblationRecord:
 _COMPUTE_RULES = {
     "realize_elementwise",
     "realize_const",
+    "realize_iota",
     "realize_reduce",
     "realize_flattened_reduce",
     "realize_broadcast",
@@ -148,7 +171,14 @@ def build_pi_ablations(
         raise ValueError("pi ablation limit must be non-negative")
     if limit == 0:
         return ()
-    requested = tuple(kinds or tuple(PiAblationKind))
+    requested = tuple(
+        kinds
+        if kinds is not None
+        else (
+            PiAblationKind.PLAN_STEP_DROPOUT,
+            PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
+        )
+    )
     if len(set(requested)) != len(requested):
         raise ValueError("pi ablation kinds must be unique")
     if not isinstance(artifact, Gate1Artifact):
@@ -158,6 +188,7 @@ def build_pi_ablations(
         frontend=artifact.interface.frontend,
         artifact=artifact,
     )
+    assert_replay_plan_matches(artifact, registry)
 
     specs: list[PiAblationSpec] = []
     if PiAblationKind.J_ONLY in requested:
@@ -227,22 +258,52 @@ def build_pi_ablations(
             )
             original = artifact.plan.steps[substitution_index]
             replacement = _MECHANISM_SUBSTITUTIONS[original.rule]
-            substituted = ReplayPlan(
-                [
-                    type(step)(
-                        replacement,
-                        node_ref=step.node_ref,
-                        refs=list(step.refs),
+            family_choice = {
+                "bind_program_domain": (
+                    StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+                    StrategyChoice.WIDE,
+                ),
+                "materialize_index_tile": (
+                    StrategyFamily.ADDRESS_ASSOCIATION,
+                    StrategyChoice.POINTER_STAGED,
+                ),
+                "realize_reduce": (
+                    StrategyFamily.REDUCTION_CALL_SHAPE,
+                    StrategyChoice.FLATTENED,
+                ),
+            }.get(original.rule)
+            bindings = list(artifact.strategy.bindings)
+            if family_choice is not None:
+                family, choice = family_choice
+                bindings = [
+                    binding
+                    for binding in bindings
+                    if not (
+                        binding.target_ref == original.target_ref
+                        and binding.family is family
                     )
-                    if index == substitution_index
-                    else step
-                    for index, step in enumerate(artifact.plan.steps)
                 ]
-            )
-            registry.validate_strict_plan(
-                substituted,
-                frontend=artifact.interface.frontend,
-                artifact=artifact,
+                bindings.append(
+                    StrategyBinding(original.target_ref, family, choice)
+                )
+            else:
+                reverse_family = {
+                    "bind_wide_program_domain": StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+                    "materialize_pointer_tile": StrategyFamily.ADDRESS_ASSOCIATION,
+                    "realize_flattened_reduce": StrategyFamily.REDUCTION_CALL_SHAPE,
+                }.get(original.rule)
+                if reverse_family is None:
+                    return tuple(specs[:limit])
+                bindings = [
+                    binding
+                    for binding in bindings
+                    if not (
+                        binding.target_ref == original.target_ref
+                        and binding.family is reverse_family
+                    )
+                ]
+            changed, _ = materialize_replay_plan(
+                replace(artifact, strategy=StrategySpec(bindings)), registry
             )
             specs.append(
                 PiAblationSpec(
@@ -251,11 +312,14 @@ def build_pi_ablations(
                         f"{replacement}:{original.target_ref}"
                     ),
                     PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
-                    substituted,
+                    changed.plan,
                     dropped_step_index=substitution_index,
                     dropped_rule=original.rule,
                     dropped_target=original.target_ref,
                     replacement_rule=replacement,
+                    artifact=changed,
+                    strategy_before=artifact.strategy.to_json(),
+                    strategy_after=changed.strategy.to_json(),
                 )
             )
     return tuple(specs[:limit])
@@ -307,7 +371,6 @@ def run_pi_ablations(
     comparator: TTIRComparator | None = None,
     limit: int = 2,
     kinds: tuple[PiAblationKind, ...] | None = None,
-    control_candidate: ReplayGeneration | None = None,
 ) -> tuple[PiAblationRecord, ...]:
     """Generate, compile and compare diagnostic incomplete-pi replays."""
 
@@ -318,19 +381,48 @@ def run_pi_ablations(
     for spec in build_pi_ablations(
         artifact, registry, limit=limit, kinds=kinds
     ):
-        base_candidate = (
-            control_candidate
-            if spec.kind is PiAblationKind.PLAN_MECHANISM_SUBSTITUTION
-            else None
-        )
+        if spec.kind in {
+            PiAblationKind.J_ONLY,
+            PiAblationKind.PLAN_STEP_DROPOUT,
+        }:
+            try:
+                assert_replay_plan_matches(
+                    artifact, registry, plan=spec.plan
+                )
+            except ComposeMismatchError as exc:
+                records.append(
+                    PiAblationRecord(
+                        spec,
+                        PiAblationStatus.CANONICALITY_REJECTED,
+                        diagnostic=str(exc),
+                        attempts=0,
+                    )
+                )
+            else:
+                records.append(
+                    PiAblationRecord(
+                        spec,
+                        PiAblationStatus.UNEXPECTED_CLOSURE,
+                        diagnostic="tampered pi unexpectedly passed exact compose equality",
+                        attempts=0,
+                    )
+                )
+            continue
+
+        intervention_artifact = spec.artifact or artifact
+        # A mechanism substitution is not a direct pi mutation.  It changes
+        # C.strategy, deterministically composes a new canonical pi, and then
+        # invokes the writer through the ordinary replay path.  Keeping an old
+        # plan-ablation flag here would incorrectly couple the legal C path to
+        # the legacy plan_override diagnostic interface.
+        assert_replay_plan_matches(intervention_artifact, registry)
         try:
             generation = writer.generate(
-                artifact,
+                intervention_artifact,
                 registry,
-                base_candidate=base_candidate,
                 masked=False,
-                plan_override=spec.plan,
-                ablation_kind=spec.kind.value,
+                plan_override=None,
+                ablation_kind=None,
             )
         except Exception as exc:
             records.append(
@@ -346,7 +438,7 @@ def run_pi_ablations(
         try:
             compiled = compiler.compile(
                 KernelSource.from_code(
-                    generation.code, artifact.interface.function_name
+                    generation.code, intervention_artifact.interface.function_name
                 ),
                 compile_case,
             )
@@ -384,14 +476,14 @@ def run_pi_ablations(
             )
             comparison = comparator.compare(source_fingerprint, fingerprint)
             status = (
-                PiAblationStatus.UNEXPECTED_CLOSURE
+                PiAblationStatus.SEMANTICS_PRESERVED
                 if comparison.hard_pass
-                else PiAblationStatus.DEGRADED
+                else PiAblationStatus.OFF_TARGET_DRIFT
             )
             diagnostic = (
-                "pi ablation replay still hard-closes"
+                "C.strategy intervention preserved all J semantic hard components"
                 if comparison.hard_pass
-                else "pi ablation replay loses at least one hard component"
+                else "C.strategy intervention changed J semantic hard components"
             )
             records.append(
                 PiAblationRecord(

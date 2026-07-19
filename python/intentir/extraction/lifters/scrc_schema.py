@@ -2,10 +2,11 @@
 
 The local :class:`Gate1Artifact` parser remains authoritative.  This schema is
 the wire contract given to the model so closed Gate1 objects do not drift into
-invented field names.  IntentIR operation payloads intentionally retain their
-existing open ``attrs``/``layer_b`` representation.  ``J.intent.layer_c`` is
-forced empty because SCRC stores concrete C only in ``schedule``.  The Responses
-format is non-strict and the project parser performs the final validation.
+invented field names.  IntentIR operation payloads retain extensible
+``attrs``/``layer_b`` vocabularies, while semantic loop state is closed because
+it crosses region boundaries.  ``J.intent.layer_c`` is forced empty because
+SCRC stores concrete C only outside J.  The Responses format is non-strict and
+the project parser performs the final cross-field validation.
 """
 
 from __future__ import annotations
@@ -42,6 +43,14 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 _STRING = {"type": "string", "minLength": 1}
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
+_LOOP_INIT_VALUE = {
+    "anyOf": [
+        _STRING,
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+    ]
+}
 
 
 def _tensor_schema() -> dict[str, Any]:
@@ -56,9 +65,47 @@ def _tensor_schema() -> dict[str, Any]:
 
 
 def _intent_op_schema() -> dict[str, Any]:
-    # ``attrs``, ``type``, ``layer_b`` and loop records are open JSON objects in
-    # the current IntentIR model.  Their enclosing objects are nevertheless
-    # closed here, matching ``_strict_intent`` in Gate1's model.
+    loop_value_type = _closed_object(
+        {
+            "dtype": _STRING,
+            "shape": _array(_INT_OR_STRING),
+        },
+        ("dtype", "shape"),
+    )
+    state_binding = _closed_object(
+        {
+            "state_id": _STRING,
+            "init_value": _LOOP_INIT_VALUE,
+            "body_argument": _STRING,
+            "next_value": _STRING,
+            "result_value": _STRING,
+            "type": loop_value_type,
+        },
+        (
+            "state_id", "init_value", "body_argument", "next_value",
+            "result_value", "type",
+        ),
+        description=(
+            "One explicit semantic loop binding. result/yield arrays must "
+            "repeat result_value/next_value in exactly the same order."
+        ),
+    )
+    trip = _closed_object(
+        {"axis": _STRING},
+        ("axis",),
+        description=(
+            "Semantic trip dimension only. Tile/block choices belong to "
+            "C.schedule and must not be copied into J."
+        ),
+    )
+    scan_input = _closed_object(
+        {
+            "name": _STRING,
+            "from": _STRING,
+            "axis": {"type": "integer", "minimum": 0},
+        },
+        ("name", "from", "axis"),
+    )
     return _closed_object(
         {
             "op": _STRING,
@@ -70,9 +117,10 @@ def _intent_op_schema() -> dict[str, Any]:
             "type": _nullable({"type": "object"}),
             "layer_b": {"type": "object"},
             "out": _nullable(_STRING),
-            "carry": _array({"type": "object"}),
-            "trip": _nullable({"type": "object"}),
-            "scan": _array({"type": "object"}),
+            "scope_id": _nullable(_STRING),
+            "carry": _array(state_binding),
+            "trip": _nullable(trip),
+            "scan": _array(scan_input),
             "body": _array({"$ref": "#/$defs/intent_op"}),
             "yield": _STRING_ARRAY,
         },
@@ -133,6 +181,7 @@ def _boundary_schema() -> dict[str, Any]:
     )
     effect = _closed_object(
         {
+            "effect_id": _STRING,
             "kind": {
                 "type": "string",
                 "enum": [
@@ -145,8 +194,9 @@ def _boundary_schema() -> dict[str, Any]:
             },
             "target": _STRING,
             "node_ref": _nullable(_STRING),
+            "access_ref": _nullable(_STRING),
         },
-        ("kind", "target"),
+        ("effect_id", "kind", "target", "access_ref"),
     )
     output_mapping = _closed_object(
         {
@@ -261,25 +311,98 @@ def _schedule_schema() -> dict[str, Any]:
     )
 
 
-def _plan_schema() -> dict[str, Any]:
-    step = _closed_object(
-        {
-            "rule": _STRING,
-            "node_ref": _nullable(_STRING),
-            "refs": _STRING_ARRAY,
-        },
-        ("rule",),
+def _strategy_schema() -> dict[str, Any]:
+    bindings = [
+        ("program_coordinate_width", "wide"),
+        ("address_association", "pointer_staged"),
+        ("mask_materialization", "staged_reuse"),
+        ("reduction_call_shape", "flattened"),
+    ]
+    binding = {
+        "oneOf": [
+            _closed_object(
+                {
+                    "target_ref": _STRING,
+                    "family": {"type": "string", "enum": [family]},
+                    "choice": {"type": "string", "enum": [choice]},
+                },
+                ("target_ref", "family", "choice"),
+            )
+            for family, choice in bindings
+        ]
+    }
+    return _closed_object(
+        {"bindings": _array(binding)},
+        ("bindings",),
         description=(
-            "One ordered replay-rule instance. The first target is "
-            "node_ref when present, otherwise refs[0]."
+            "Source-specific non-canonical C strategy choices. Absence of a "
+            "target/family binding selects the canonical RuleCard."
         ),
     )
+
+
+def _portable_scope_schema() -> dict[str, Any]:
     return _closed_object(
-        {"steps": _array(step)},
-        ("steps",),
+        {
+            "scope_id": _STRING,
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "function", "program_instance", "loop_region",
+                    "branch_region",
+                ],
+            },
+            "parent_scope": _nullable(_STRING),
+            "captures": _STRING_ARRAY,
+            "definitions": _STRING_ARRAY,
+            "effects": _STRING_ARRAY,
+        },
+        (
+            "scope_id", "kind", "parent_scope", "captures", "definitions",
+            "effects",
+        ),
         description=(
-            "Complete ordered replay plan. Every required source realization "
-            "is instantiated by a rule that references J/B/C/interface fields."
+            "Portable dominance/capture/effect scope. Contains no source AST, "
+            "line information, helper names, or frontend API spellings."
+        ),
+    )
+
+
+def _storage_schema() -> dict[str, Any]:
+    event = _closed_object(
+        {
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "scope_entry", "scope_exit", "node", "access", "state",
+                    "effect",
+                ],
+            },
+            "ref": _STRING,
+        },
+        ("kind", "ref"),
+    )
+    return _closed_object(
+        {
+            "storage_id": _STRING,
+            "members": _STRING_ARRAY,
+            "scope_id": _STRING,
+            "mutability": {
+                "type": "string",
+                "enum": ["immutable", "write_once", "mutable"],
+            },
+            "init_event": event,
+            "last_use_event": event,
+            "escapes": {"type": "boolean"},
+            "crosses_iteration": {"type": "boolean"},
+        },
+        (
+            "storage_id", "members", "scope_id", "mutability", "init_event",
+            "last_use_event", "escapes", "crosses_iteration",
+        ),
+        description=(
+            "Semantic storage identity/lifetime only. Physical allocation, "
+            "register/shared/global placement and double buffering belong to C."
         ),
     )
 
@@ -308,8 +431,13 @@ def _location_map_schema() -> dict[str, Any]:
     )
 
 
-def scrc_artifact_json_schema() -> dict[str, Any]:
-    """Return the model-produced portion of ``Gate1Artifact``."""
+def scrc_lift_core_json_schema() -> dict[str, Any]:
+    """Return the source-aware LLM subresponse schema inside Lift.
+
+    This is deliberately not the schema of the completed Lift artifact.  The
+    enclosing Lift operation deterministically materializes pi and compose
+    provenance before returning ``SCRCExtraction.artifact`` to Gate1.
+    """
 
     semantic_archive = _closed_object(
         {
@@ -320,34 +448,57 @@ def scrc_artifact_json_schema() -> dict[str, Any]:
                 "additionalProperties": {"type": "string"},
             },
             "boundary": _boundary_schema(),
+            "scopes": {
+                "type": "array",
+                "minItems": 1,
+                "items": _portable_scope_schema(),
+            },
+            "storage": _array(_storage_schema()),
         },
-        ("kernel_id", "intent", "node_ids", "boundary"),
+        ("kernel_id", "intent", "node_ids", "boundary", "scopes", "storage"),
     )
     schema = _closed_object(
         {
             "j": semantic_archive,
             "interface": _interface_schema(),
             "schedule": _schedule_schema(),
-            "plan": _plan_schema(),
+            "strategy": _strategy_schema(),
             "location_map": _location_map_schema(),
         },
-        ("j", "interface", "schedule", "plan", "location_map"),
+        ("j", "interface", "schedule", "strategy", "location_map"),
     )
     schema["$defs"] = {"intent_op": _intent_op_schema()}
     return copy.deepcopy(schema)
 
 
-def scrc_artifact_text_format() -> dict[str, Any]:
-    """Return a Responses ``text.format`` value for the lift call."""
+def scrc_lift_core_text_format() -> dict[str, Any]:
+    """Return the Responses format for Lift's source-aware LLM substage."""
 
     return {
         "type": "json_schema",
-        "name": "scrc_gate1_artifact",
+        "name": "scrc_lift_core",
         # IntentIR keeps op-specific attrs and Layer B JSON open. J.layer_c is
         # empty; concrete C is carried by the separate schedule object.
         "strict": False,
-        "schema": scrc_artifact_json_schema(),
+        "schema": scrc_lift_core_json_schema(),
     }
 
 
-__all__ = ["scrc_artifact_json_schema", "scrc_artifact_text_format"]
+def scrc_artifact_json_schema() -> dict[str, Any]:
+    """Compatibility alias for the historical LiftCore schema name."""
+
+    return scrc_lift_core_json_schema()
+
+
+def scrc_artifact_text_format() -> dict[str, Any]:
+    """Compatibility alias for the historical LiftCore format name."""
+
+    return scrc_lift_core_text_format()
+
+
+__all__ = [
+    "scrc_artifact_json_schema",
+    "scrc_artifact_text_format",
+    "scrc_lift_core_json_schema",
+    "scrc_lift_core_text_format",
+]

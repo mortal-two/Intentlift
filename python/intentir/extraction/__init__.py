@@ -25,6 +25,8 @@ from .lifters.scrc import (
 from .lifters.scrc_schema import (
     scrc_artifact_json_schema,
     scrc_artifact_text_format,
+    scrc_lift_core_json_schema,
+    scrc_lift_core_text_format,
 )
 from .providers.provider import ProviderConfig, get_provider, load_providers
 
@@ -54,4 +56,6 @@ __all__ = [
     "scrc_relift_prompt_sha256",
     "scrc_artifact_json_schema",
     "scrc_artifact_text_format",
+    "scrc_lift_core_json_schema",
+    "scrc_lift_core_text_format",
 ]

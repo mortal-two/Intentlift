@@ -17,6 +17,7 @@ from .model import (
     SchemaError,
     StrictJSONMixin,
     _enum,
+    _integer,
     _strict_object,
     _string,
     _string_list,
@@ -50,6 +51,13 @@ class RuleCard(StrictJSONMixin):
     pitfalls: list[str] = field(default_factory=list)
     selection_mode: RuleSelectionMode = RuleSelectionMode.DERIVED
     override_family: str | None = None
+    strategy_family: str | None = None
+    strategy_choice: str | None = None
+    target_kinds: list[str] = field(default_factory=list)
+    construction_phase: int | str | None = None
+    required_fields: list[str] = field(default_factory=list)
+    provides: list[str] = field(default_factory=list)
+    requires: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.id = _string(self.id, "RuleCard.id")
@@ -87,6 +95,63 @@ class RuleCard(StrictJSONMixin):
             raise SchemaError(
                 "override RuleCard requires override_family"
             )
+        for name in ("strategy_family", "strategy_choice"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            value = _string(value, f"RuleCard.{name}")
+            if re.fullmatch(r"[a-z][a-z0-9_]*", value) is None:
+                raise SchemaError(
+                    f"RuleCard.{name} must be a lower_snake_case identifier"
+                )
+            setattr(self, name, value)
+        if (self.strategy_family is None) != (self.strategy_choice is None):
+            raise SchemaError(
+                "RuleCard strategy_family and strategy_choice must be declared together"
+            )
+        if (
+            self.override_family is not None
+            and self.strategy_family is not None
+            and self.override_family != self.strategy_family
+        ):
+            raise SchemaError(
+                "RuleCard strategy_family must match override_family"
+            )
+        self.target_kinds = _string_list(
+            self.target_kinds, "RuleCard.target_kinds", unique=True
+        )
+        if self.construction_phase is not None:
+            if isinstance(self.construction_phase, bool) or not isinstance(
+                self.construction_phase, (int, str)
+            ):
+                raise SchemaError(
+                    "RuleCard.construction_phase must be an integer or string"
+                )
+            if isinstance(self.construction_phase, int):
+                self.construction_phase = _integer(
+                    self.construction_phase,
+                    "RuleCard.construction_phase",
+                    minimum=0,
+                )
+            else:
+                self.construction_phase = _string(
+                    self.construction_phase, "RuleCard.construction_phase"
+                )
+        self.required_fields = _string_list(
+            self.required_fields, "RuleCard.required_fields", unique=True
+        )
+        for field_name in self.required_fields:
+            if re.fullmatch(r"!?[A-Za-z_][A-Za-z0-9_.]*", field_name) is None:
+                raise SchemaError(
+                    "RuleCard.required_fields entries must be dotted field paths "
+                    "optionally prefixed by !"
+                )
+        self.provides = _string_list(
+            self.provides, "RuleCard.provides", unique=True
+        )
+        self.requires = _string_list(
+            self.requires, "RuleCard.requires", unique=True
+        )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "RuleCard":
@@ -96,7 +161,9 @@ class RuleCard(StrictJSONMixin):
             allowed={
                 "id", "frontend", "version", "applies_to", "reads",
                 "api_mapping", "example", "pitfalls", "selection_mode",
-                "override_family",
+                "override_family", "strategy_family", "strategy_choice",
+                "target_kinds", "construction_phase", "required_fields",
+                "provides", "requires",
             },
             required={"id", "frontend"},
         )
@@ -114,6 +181,23 @@ class RuleCard(StrictJSONMixin):
             pitfalls=_string_list(data.get("pitfalls", []), "RuleCard.pitfalls", unique=True),
             selection_mode=data.get("selection_mode", RuleSelectionMode.DERIVED.value),
             override_family=data.get("override_family"),
+            strategy_family=data.get("strategy_family"),
+            strategy_choice=data.get("strategy_choice"),
+            target_kinds=_string_list(
+                data.get("target_kinds", []), "RuleCard.target_kinds", unique=True
+            ),
+            construction_phase=data.get("construction_phase"),
+            required_fields=_string_list(
+                data.get("required_fields", []),
+                "RuleCard.required_fields",
+                unique=True,
+            ),
+            provides=_string_list(
+                data.get("provides", []), "RuleCard.provides", unique=True
+            ),
+            requires=_string_list(
+                data.get("requires", []), "RuleCard.requires", unique=True
+            ),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -127,9 +211,18 @@ class RuleCard(StrictJSONMixin):
             "example": self.example,
             "pitfalls": list(self.pitfalls),
             "selection_mode": self.selection_mode.value,
+            "target_kinds": list(self.target_kinds),
+            "required_fields": list(self.required_fields),
+            "provides": list(self.provides),
+            "requires": list(self.requires),
         }
         if self.override_family is not None:
             result["override_family"] = self.override_family
+        if self.strategy_family is not None:
+            result["strategy_family"] = self.strategy_family
+            result["strategy_choice"] = self.strategy_choice
+        if self.construction_phase is not None:
+            result["construction_phase"] = self.construction_phase
         return result
 
 
@@ -361,6 +454,7 @@ class RuleRegistry(StrictJSONMixin):
             "map_unary": {"realize_elementwise"},
             "map_binary": {"realize_elementwise"},
             "const": {"realize_const"},
+            "iota": {"realize_iota"},
             "reduce": {"realize_reduce", "realize_flattened_reduce"},
             "contraction": {"realize_k_tiled_dot", "realize_outer_product"},
             "cast": {"realize_cast"},
@@ -553,6 +647,145 @@ class RuleRegistry(StrictJSONMixin):
         return {"cards": [card.to_json() for card in self._cards.values()]}
 
 
+_TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
+    "bind_program_domain": {
+        "target_kinds": ["boundary.domain"],
+        "construction_phase": 10,
+        "required_fields": ["expression"],
+    },
+    "bind_wide_program_domain": {
+        "strategy_family": "program_coordinate_width",
+        "strategy_choice": "wide",
+        "target_kinds": ["boundary.domain"],
+        "construction_phase": 10,
+        "required_fields": ["expression"],
+    },
+    "materialize_index_tile": {
+        "target_kinds": ["boundary.access.address"],
+        "construction_phase": 40,
+        "required_fields": ["index_expression"],
+    },
+    "materialize_pointer_tile": {
+        "strategy_family": "address_association",
+        "strategy_choice": "pointer_staged",
+        "target_kinds": ["boundary.access.address"],
+        "construction_phase": 40,
+        "required_fields": ["index_expression"],
+    },
+    "realize_masked_access": {
+        "target_kinds": ["boundary.access.effect"],
+        "construction_phase": 50,
+        "required_fields": ["predicate"],
+    },
+    "materialize_mask_tile": {
+        "strategy_family": "mask_materialization",
+        "strategy_choice": "staged_reuse",
+        "target_kinds": ["boundary.access.effect"],
+        "construction_phase": 45,
+        "required_fields": ["predicate"],
+    },
+    "realize_elementwise": {
+        "target_kinds": ["intent_op:map_unary", "intent_op:map_binary"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.fn"],
+    },
+    "realize_const": {
+        "target_kinds": ["intent_op:const"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.value"],
+    },
+    "realize_iota": {
+        "target_kinds": ["intent_op:iota"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.n", "attrs.dtype"],
+    },
+    "realize_reduce": {
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.fn"],
+    },
+    "realize_flattened_reduce": {
+        "strategy_family": "reduction_call_shape",
+        "strategy_choice": "flattened",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.fn"],
+    },
+    "realize_broadcast": {
+        "target_kinds": ["boundary.broadcast"],
+        "construction_phase": 55,
+        "required_fields": ["operand", "axes"],
+    },
+    "realize_k_tiled_dot": {
+        "target_kinds": ["intent_op:contraction"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.subscripts"],
+    },
+    "realize_outer_product": {
+        "target_kinds": ["intent_op:contraction"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.subscripts"],
+    },
+    "realize_indexed_access": {
+        "target_kinds": ["intent_op:gather"],
+        "construction_phase": 60,
+        "required_fields": ["operands"],
+    },
+    "bind_runtime_scalar": {
+        "target_kinds": ["interface.runtime_scalar"],
+        "construction_phase": 20,
+        "required_fields": ["name", "kind"],
+    },
+    "declare_schedule_slot": {
+        "target_kinds": ["schedule.slot"],
+        "construction_phase": 30,
+        "required_fields": ["name", "kind"],
+    },
+    "realize_cast": {
+        "target_kinds": ["intent_op:cast"],
+        "construction_phase": 60,
+        "required_fields": ["attrs"],
+    },
+    "realize_select": {
+        "target_kinds": ["intent_op:select"],
+        "construction_phase": 60,
+        "required_fields": ["operands"],
+    },
+    "realize_loop_carry": {
+        "target_kinds": ["intent_op:loop", "intent_op:scan"],
+        "construction_phase": 60,
+        "required_fields": ["carry", "trip", "body", "yield"],
+    },
+    "realize_unmasked_access": {
+        "target_kinds": ["boundary.access.effect"],
+        "construction_phase": 50,
+        "required_fields": ["!predicate"],
+    },
+    "realize_output_mapping": {
+        "target_kinds": ["boundary.output_mapping"],
+        "construction_phase": 80,
+        "required_fields": ["output", "value"],
+    },
+}
+
+
+def _default_triton_card(
+    rule_id: str,
+    frontend: Frontend,
+    **kwargs: Any,
+) -> RuleCard:
+    """Construct a reviewed card with complete executable composer metadata."""
+
+    try:
+        metadata = dict(_TRITON_EXECUTABLE_METADATA[rule_id])
+    except KeyError as exc:  # pragma: no cover - guarded by registry tests
+        raise SchemaError(
+            f"default Triton RuleCard {rule_id!r} has no executable metadata"
+        ) from exc
+    metadata.update(kwargs)
+    return RuleCard(rule_id, frontend, **metadata)
+
+
 def default_triton_rule_registry() -> RuleRegistry:
     """Return the reviewed Triton cards used by the strict SCRC replay plan.
 
@@ -562,7 +795,7 @@ def default_triton_rule_registry() -> RuleRegistry:
     """
 
     cards = [
-        RuleCard(
+        _default_triton_card(
             "bind_program_domain",
             Frontend.TRITON,
             applies_to=["boundary.domains", "interface.grid"],
@@ -571,7 +804,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             example="Bind each declared grid axis with tl.program_id(axis).",
             pitfalls=["Do not infer grid rank from a tensor shape."],
         ),
-        RuleCard(
+        _default_triton_card(
             "bind_wide_program_domain",
             Frontend.TRITON,
             selection_mode=RuleSelectionMode.OVERRIDE,
@@ -590,7 +823,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not widen a source that uses the frontend's native coordinate type.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "materialize_index_tile",
             Frontend.TRITON,
             version="2",
@@ -606,26 +839,29 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not use this card when pi selects staged pointer-base addition.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "materialize_pointer_tile",
             Frontend.TRITON,
-            version="2",
+            version="3",
             selection_mode=RuleSelectionMode.OVERRIDE,
             override_family="address_association",
             applies_to=["boundary.accesses"],
             reads=["index_expression", "schedule slot"],
             api_mapping={"lane_range": "tl.arange"},
             example=(
-                "Preserve staged row-major address construction as pointer + scalar "
-                "base + lane tile; do not pre-sum base and lanes into one integer tile."
+                "Treat each named J domain coordinate as an atomic value. Split the "
+                "access index_expression only at its top-level additive terms, then "
+                "add those terms to the pointer exactly once each, from left to right."
             ),
             pitfalls=[
                 "Use the same staged pointer association independently for every buffer.",
-                "Precomputed coordinate components are not a complete integer offset; "
-                "preserve pointer + row-term + column-term association.",
+                "Do not expand a named coordinate into its program-base and lane "
+                "construction; a term such as m*K remains one pointer addition.",
+                "Do not combine top-level terms into one integer tile and do not split "
+                "multiplicative or coordinate-internal subexpressions into extra addptrs.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_masked_access",
             Frontend.TRITON,
             version="3",
@@ -643,7 +879,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Use vector conjunction &, never scalar and or &&.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "materialize_mask_tile",
             Frontend.TRITON,
             selection_mode=RuleSelectionMode.OVERRIDE,
@@ -668,7 +904,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not merge predicates whose source staging is independent.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_elementwise",
             Frontend.TRITON,
             version="4",
@@ -700,7 +936,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "keep a runtime exponent as a runtime operand.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_const",
             Frontend.TRITON,
             applies_to=["const"],
@@ -714,7 +950,37 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Read the value from J; never infer it from the kernel name or output name."
             ],
         ),
-        RuleCard(
+        _default_triton_card(
+            "realize_iota",
+            Frontend.TRITON,
+            applies_to=["iota"],
+            reads=[
+                "semantic extent n",
+                "integer dtype",
+                "result shape",
+                "boundary domain coordinates",
+                "consumer output/access index expressions",
+            ],
+            api_mapping={
+                "lane_coordinate": "tl.arange",
+                "integer_cast": "value.to(dtype)",
+            },
+            example=(
+                "Realize the rank-1 semantic ordinal from the matching global "
+                "J/B domain coordinate. For a tiled domain this is the declared "
+                "program-base plus lane coordinate; cast that value to the J "
+                "iota dtype."
+            ),
+            pitfalls=[
+                "The semantic iota is global 0..n-1, never a fresh local "
+                "0..BLOCK-1 vector for every program.",
+                "Reuse the already declared global coordinate construction; do "
+                "not emit a second independent program_id/arange topology.",
+                "n is the semantic bound and may be runtime. Do not substitute "
+                "a C tile size for n or bake the sampled extent into source.",
+            ],
+        ),
+        _default_triton_card(
             "realize_reduce",
             Frontend.TRITON,
             version="4",
@@ -745,7 +1011,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "replace the reduction with a Python loop.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_flattened_reduce",
             Frontend.TRITON,
             selection_mode=RuleSelectionMode.OVERRIDE,
@@ -771,7 +1037,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Global J axes and masked contribution remain binding semantics.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_broadcast",
             Frontend.TRITON,
             version="2",
@@ -789,7 +1055,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Semantic broadcast axes do not automatically imply a local expand_dims."
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_k_tiled_dot",
             Frontend.TRITON,
             version="3",
@@ -817,7 +1083,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not model schedule-only K tiling as a J reduce or loop node.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_outer_product",
             Frontend.TRITON,
             applies_to=["contraction"],
@@ -840,7 +1106,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Preserve lhs/rhs axis order from the declared subscripts.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_indexed_access",
             Frontend.TRITON,
             applies_to=["gather"],
@@ -857,7 +1123,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not replace a runtime index with its current sampled value."
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "bind_runtime_scalar",
             Frontend.TRITON,
             version="2",
@@ -876,7 +1142,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Do not replace a semantic scalar with its current specialization value.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "declare_schedule_slot",
             Frontend.TRITON,
             version="2",
@@ -896,7 +1162,7 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "A compiler slot is not a kernel parameter and must not appear in the body.",
             ],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_cast",
             Frontend.TRITON,
             applies_to=["cast"],
@@ -909,7 +1175,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             },
             example="Cast only when the referenced J node requests a dtype change.",
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_select",
             Frontend.TRITON,
             applies_to=["select"],
@@ -917,7 +1183,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             api_mapping={"select": "tl.where"},
             example="Preserve the J operand order in conditional value selection.",
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_loop_carry",
             Frontend.TRITON,
             applies_to=["loop", "scan"],
@@ -926,7 +1192,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             example="Rebuild the declared recurrence while keeping C symbolic.",
             pitfalls=["A semantic carry is not a schedule-only loop variable."],
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_unmasked_access",
             Frontend.TRITON,
             applies_to=["boundary.accesses", "boundary.effects"],
@@ -934,7 +1200,7 @@ def default_triton_rule_registry() -> RuleRegistry:
             api_mapping={"load": "tl.load", "store": "tl.store"},
             example="Use an unmasked access only when B declares the domain legal.",
         ),
-        RuleCard(
+        _default_triton_card(
             "realize_output_mapping",
             Frontend.TRITON,
             applies_to=["boundary.output_mappings"],

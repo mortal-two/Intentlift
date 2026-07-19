@@ -113,6 +113,184 @@ module {
 '''
 
 
+SIBLING_REGION_SSA_REUSE_TTIR = r'''
+module {
+  tt.func public @sibling_reuse(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %one = arith.constant 1.000000e+00 : f32
+    %value = tt.load %x : !tt.ptr<f32>
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      %value = arith.addf %value, %one : f32
+      scf.yield
+    }
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      %value = arith.addf %value, %one : f32
+      scf.yield
+    }
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+RENAMED_SIBLING_REGION_SSA_TTIR = r'''
+module {
+  tt.func public @sibling_reuse(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %lower = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    %unit = arith.constant 1.000000e+00 : f32
+    %outer = tt.load %x : !tt.ptr<f32>
+    scf.for %first_iv = %lower to %n step %step : i32 {
+      %first_local = arith.addf %outer, %unit : f32
+      scf.yield
+    }
+    scf.for %second_iv = %lower to %n step %step : i32 {
+      %second_local = arith.addf %outer, %unit : f32
+      scf.yield
+    }
+    tt.store %out, %outer : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+SIBLING_SCOPE_NORMALIZATION_REUSE_TTIR = r'''
+module {
+  tt.func public @sibling_normalize(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %zero = arith.constant 0.000000e+00 : f32
+    %value = tt.load %x : !tt.ptr<f32>
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      %same = arith.addf %value, %zero : f32
+      scf.yield
+    }
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      %same = arith.addf %value, %zero : f32
+      scf.yield
+    }
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+RENAMED_SIBLING_SCOPE_NORMALIZATION_TTIR = r'''
+module {
+  tt.func public @sibling_normalize(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %lower = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    %neutral = arith.constant 0.000000e+00 : f32
+    %outer = tt.load %x : !tt.ptr<f32>
+    scf.for %first_iv = %lower to %n step %step : i32 {
+      %first_same = arith.addf %outer, %neutral : f32
+      scf.yield
+    }
+    scf.for %second_iv = %lower to %n step %step : i32 {
+      %second_same = arith.addf %outer, %neutral : f32
+      scf.yield
+    }
+    tt.store %out, %outer : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+NESTED_SCOPE_SHADOW_TTIR = r'''
+module {
+  tt.func public @nested_shadow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %one = arith.constant 1.000000e+00 : f32
+    %value = tt.load %x : !tt.ptr<f32>
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      %local = arith.addf %value, %one : f32
+      scf.for %iv = %c0 to %n step %c1 : i32 {
+        %local = arith.mulf %local, %one : f32
+        scf.yield
+      }
+      %after = arith.subf %local, %one : f32
+      scf.yield
+    }
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+RENAMED_NESTED_SCOPE_SHADOW_TTIR = r'''
+module {
+  tt.func public @nested_shadow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %lower = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    %unit = arith.constant 1.000000e+00 : f32
+    %outer = tt.load %x : !tt.ptr<f32>
+    scf.for %outer_iv = %lower to %n step %step : i32 {
+      %outer_local = arith.addf %outer, %unit : f32
+      scf.for %inner_iv = %lower to %n step %step : i32 {
+        %inner_local = arith.mulf %outer_local, %unit : f32
+        scf.yield
+      }
+      %outer_after = arith.subf %outer_local, %unit : f32
+      scf.yield
+    }
+    tt.store %out, %outer : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+SIBLING_REDUCE_BLOCK_ARG_REUSE_TTIR = r'''
+module {
+  tt.func public @two_reduces(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
+    %values = tt.load %x : !tt.ptr<f32>
+    %left_total = "tt.reduce"(%values) <{axis = 0 : i32}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      %combined = arith.addf %lhs, %rhs : f32
+      tt.reduce.return %combined : f32
+    }) : (tensor<8xf32>) -> f32
+    %right_total = "tt.reduce"(%values) <{axis = 0 : i32}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      %combined = arith.addf %lhs, %rhs : f32
+      tt.reduce.return %combined : f32
+    }) : (tensor<8xf32>) -> f32
+    %answer = arith.addf %left_total, %right_total : f32
+    tt.store %out, %answer : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+RENAMED_SIBLING_REDUCE_BLOCK_ARG_TTIR = r'''
+module {
+  tt.func public @two_reduces(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
+    %loaded = tt.load %x : !tt.ptr<f32>
+    %first_total = "tt.reduce"(%loaded) <{axis = 0 : i32}> ({
+    ^bb0(%first_lhs: f32, %first_rhs: f32):
+      %first_combined = arith.addf %first_lhs, %first_rhs : f32
+      tt.reduce.return %first_combined : f32
+    }) : (tensor<8xf32>) -> f32
+    %second_total = "tt.reduce"(%loaded) <{axis = 0 : i32}> ({
+    ^bb0(%second_lhs: f32, %second_rhs: f32):
+      %second_combined = arith.addf %second_lhs, %second_rhs : f32
+      tt.reduce.return %second_combined : f32
+    }) : (tensor<8xf32>) -> f32
+    %result = arith.addf %first_total, %second_total : f32
+    tt.store %out, %result : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
 def test_runtime_argument_names_preserve_surviving_specialized_subsequence() -> None:
     text = r'''
 module {
@@ -307,6 +485,105 @@ def test_scf_for_dot_and_effects_are_fingerprinted():
     assert fingerprint.dots[0].operand_count == 3
     assert len(fingerprint.loops) == 1
     assert fingerprint.loops[0].body_effects == (("read", 2),)
+    assert fingerprint.loops[0].block_argument_count == 2
+    assert fingerprint.loops[0].induction_use_count == 0
+    assert fingerprint.loops[0].carried_argument_use_counts == (1,)
+    assert len(fingerprint.loops[0].captured_values) == 2
+    assert dict(fingerprint.loops[0].body_op_multiset) == {
+        "tt.dot": 1,
+        "tt.load": 2,
+    }
+
+
+def test_sibling_regions_may_reuse_ssa_names_without_cross_scope_capture() -> None:
+    reused = fingerprint_ttir(SIBLING_REGION_SSA_REUSE_TTIR)
+    renamed = fingerprint_ttir(RENAMED_SIBLING_REGION_SSA_TTIR)
+
+    assert reused == renamed
+    assert dict(reused.op_multiset)["scf.for"] == 2
+    assert dict(reused.op_multiset)["arith.addf"] == 2
+    assert len(reused.loops) == 2
+    assert [argument.access for argument in reused.interface.arguments] == [
+        "input",
+        "output",
+        "value",
+    ]
+
+
+def test_bounded_normalization_is_independent_of_scope_local_ssa_reuse() -> None:
+    reused = fingerprint_ttir(SIBLING_SCOPE_NORMALIZATION_REUSE_TTIR)
+    renamed = fingerprint_ttir(RENAMED_SIBLING_SCOPE_NORMALIZATION_TTIR)
+
+    assert reused == renamed
+    assert "arith.addf" not in dict(reused.op_multiset)
+    assert dict(reused.op_multiset)["scf.for"] == 2
+
+
+def test_nested_region_shadowing_resolves_rhs_capture_before_local_definition() -> None:
+    shadowed = fingerprint_ttir(NESTED_SCOPE_SHADOW_TTIR)
+    renamed = fingerprint_ttir(RENAMED_NESTED_SCOPE_SHADOW_TTIR)
+
+    assert shadowed == renamed
+    assert len(shadowed.loops) == 2
+    assert dict(shadowed.op_multiset)["arith.addf"] == 1
+    assert dict(shadowed.op_multiset)["arith.mulf"] == 1
+    assert dict(shadowed.op_multiset)["arith.subf"] == 1
+
+
+def test_sibling_reduce_regions_may_reuse_block_arguments_and_locals() -> None:
+    reused = fingerprint_ttir(SIBLING_REDUCE_BLOCK_ARG_REUSE_TTIR)
+    renamed = fingerprint_ttir(RENAMED_SIBLING_REDUCE_BLOCK_ARG_TTIR)
+
+    assert reused == renamed
+    assert len(reused.reductions) == 2
+    assert dict(reused.op_multiset)["tt.reduce"] == 2
+
+
+def test_value_defined_in_one_sibling_region_is_not_visible_in_another() -> None:
+    malformed = SIBLING_REGION_SSA_REUSE_TTIR.replace(
+        "      %value = arith.addf %value, %one : f32\n      scf.yield\n    }\n"
+        "    scf.for %iv = %c0 to %n step %c1 : i32 {\n"
+        "      %value = arith.addf %value, %one : f32",
+        "      %first_only = arith.addf %value, %one : f32\n      scf.yield\n    }\n"
+        "    scf.for %iv = %c0 to %n step %c1 : i32 {\n"
+        "      %value = arith.addf %first_only, %one : f32",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="unresolved SSA value .*first_only"):
+        fingerprint_ttir(malformed)
+
+
+def test_unregistered_region_operation_fails_closed_instead_of_flattening_scope() -> None:
+    unsupported = r'''
+module {
+  tt.func public @branch(%x: f32, %cond: i1) -> f32 {
+    %result = scf.if %cond -> (f32) {
+      scf.yield %x : f32
+    } else {
+      scf.yield %x : f32
+    }
+    tt.return %result : f32
+  }
+}
+'''
+
+    with pytest.raises(
+        TTIRParseError,
+        match="unsupported region-bearing TTIR operation 'scf.if'",
+    ):
+        fingerprint_ttir(unsupported)
+
+
+def test_duplicate_ssa_definition_in_the_same_region_is_still_rejected() -> None:
+    malformed = SIBLING_REGION_SSA_REUSE_TTIR.replace(
+        "    %one = arith.constant 1.000000e+00 : f32",
+        "    %one = arith.constant 1.000000e+00 : f32\n"
+        "    %one = arith.constant 2.000000e+00 : f32",
+    )
+
+    with pytest.raises(TTIRParseError, match="duplicate SSA definition %one"):
+        fingerprint_ttir(malformed)
 
 
 def test_unresolved_ssa_is_rejected_instead_of_weakening_fingerprint():

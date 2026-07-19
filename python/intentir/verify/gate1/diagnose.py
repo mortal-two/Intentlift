@@ -1,8 +1,9 @@
 """Structured, non-authoritative diagnosis for Gate1 failures.
 
 Only :mod:`.compare` decides pass/fail.  Diagnosis translates deterministic
-differences into a repair scope; callers may replace it with an LLM explanation
-without granting that model any authority over the verdict.
+differences into an outer source-aware relift scope; callers may replace it
+with an LLM explanation without granting that model any authority over the
+verdict.  It never authorizes replay-code editing.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from .evaluation import FailureCause
 
 class Responsibility(str, Enum):
     INTENT = "intent"
+    LIFT_ARTIFACT = "lift_artifact"
+    # Historical reports may still contain this legacy value.
     REPLAY_PLAN = "replay_plan"
     INTERFACE_SCHEDULE = "interface_schedule"
     COMPARATOR = "comparator"
@@ -42,7 +45,7 @@ def sanitize_replay_diagnostic(diagnostic: str, *, limit: int = 2000) -> str:
     lines and a final exception summary.  Lift needs the deterministic failure
     class/reason, not the failed implementation.  Keep only summary-like lines
     (plus an inline detail attached to a ``File ... line N:`` record), so the
-    next Lift can revise J/pi without seeing a replay body.
+    next Lift can revise J/C.strategy without seeing a replay body.
     """
 
     text = str(diagnostic or "unknown replay compile error")
@@ -106,13 +109,14 @@ _CAUSE_BY_CATEGORY = {
 def diagnose_compile_failure(diagnostic: str) -> Diagnosis:
     return Diagnosis(
         cause=FailureCause.REPLAY_COMPILE,
-        responsibility=Responsibility.REPLAY_PLAN,
+        responsibility=Responsibility.LIFT_ARTIFACT,
         mismatches=(sanitize_replay_diagnostic(diagnostic),),
         confirmed_fields=(),
-        allowed_modifications=("j", "pi", "location_map"),
+        allowed_modifications=("j", "strategy", "location_map"),
         explanation=(
             "重放未通过同前端编译；禁止原地修 replay code。将净化后的编译诊断"
-            "回流 Lift，重新检查 J/π 合同并从完整流程重新生成。"
+            "回流 Lift，重新检查 J/C.strategy 并从完整流程重新生成；π 由"
+            "composer 自动重算。"
         ),
     )
 
@@ -132,18 +136,20 @@ def diagnose_comparison(comparison: TTIRComparison) -> Diagnosis:
         allowed = ("schedule C",)
         explanation = "只有调度视图不同；A/B 闭合，差异只报告、不否决。"
     elif primary == "interface":
-        responsibility = Responsibility.REPLAY_PLAN
-        allowed = ("j", "pi", "location_map")
+        responsibility = Responsibility.LIFT_ARTIFACT
+        allowed = ("j", "strategy", "location_map")
         explanation = (
             "重放接口与冻结 interface 不一致；禁止原地修签名。回流 Lift 检查"
-            "J/π 是否给 writer 提供了完整施工约束，然后从头重放。"
+            "J/C.strategy 是否给 writer 提供了完整语义与实现约束，然后由"
+            "composer 重算 π 并从头重放。"
         )
     else:
-        responsibility = Responsibility.REPLAY_PLAN
-        allowed = ("j", "pi", "location_map")
+        responsibility = Responsibility.LIFT_ARTIFACT
+        allowed = ("j", "strategy", "location_map")
         explanation = (
             "源与重放的硬指纹不闭合。将确定性差分与源码回流 Lift，重新判断"
-            "J 是否漏/错以及 π 是否选择了错误施工机制；不修改当前 replay code。"
+            "J 是否漏/错以及 C.strategy 是否选择了错误实现机制；π 自动重算，"
+            "不修改当前 replay code。"
         )
     return Diagnosis(
         cause=cause,

@@ -14,8 +14,6 @@ from intentir.verify.gate1 import (
     CompileCase,
     Frontend,
     Gate1Artifact,
-    Gate1Result,
-    Gate1Status,
     KernelInterface,
     KernelParameter,
     LeakageKind,
@@ -37,6 +35,12 @@ from intentir.verify.gate1 import (
     SchemaError,
     SemanticArchive,
     SourceSpan,
+    StrategyBinding,
+    StrategyChoice,
+    StrategyFamily,
+    StrategySpec,
+    ComposeMismatchError,
+    assert_replay_plan_matches,
     assert_source_isolated_payload,
     build_masked_rewriter_prompt,
     build_pi_ablations,
@@ -45,8 +49,7 @@ from intentir.verify.gate1 import (
     build_rewriter_payload,
     build_rewriter_prompt,
     default_triton_rule_registry,
-    leakage_ratio,
-    masked_ablation_passes,
+    materialize_replay_plan,
     scan_artifact_leakage,
     scan_static_leakage,
 )
@@ -174,21 +177,70 @@ def test_artifact_strict_json_roundtrip() -> None:
     assert Gate1Artifact.from_json(artifact.to_json()) == artifact
     assert Gate1Artifact.from_json_str(artifact.to_json_str()) == artifact
 
-    result = Gate1Result(
-        Gate1Status.REPLAY_CLOSED,
-        artifact=artifact,
-        diagnostics=["closed"],
-        relift_attempts=1,
-        repair_attempts=0,
-        leakage_ratio=0.25,
-    )
-    assert Gate1Result.from_json_str(result.to_json_str()) == result
-
     case = CompileCase(
         arguments=[RuntimeArgument("M", value=32, dtype="i32")],
         grid=[32],
     )
     assert CompileCase.from_json_str(case.to_json_str()) == case
+
+
+def test_strategy_is_closed_override_only_c_and_legacy_defaults_empty() -> None:
+    artifact = _artifact()
+    assert artifact.strategy == StrategySpec()
+    assert artifact.to_json()["strategy"] == {"bindings": []}
+
+    legacy = artifact.to_json()
+    legacy.pop("strategy")
+    assert Gate1Artifact.from_json(legacy).strategy == StrategySpec()
+
+    strategy = StrategySpec(
+        [
+            StrategyBinding(
+                "column_domain",
+                StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+                StrategyChoice.WIDE,
+            ),
+            StrategyBinding(
+                "input_masked_load",
+                StrategyFamily.ADDRESS_ASSOCIATION,
+                StrategyChoice.POINTER_STAGED,
+            ),
+            StrategyBinding(
+                "input_masked_load",
+                StrategyFamily.MASK_MATERIALIZATION,
+                StrategyChoice.STAGED_REUSE,
+            ),
+            StrategyBinding(
+                "reduce_sum_node",
+                StrategyFamily.REDUCTION_CALL_SHAPE,
+                StrategyChoice.FLATTENED,
+            ),
+        ]
+    )
+    updated = replace(artifact, strategy=strategy)
+    assert Gate1Artifact.from_json(updated.to_json()) == updated
+
+    with pytest.raises(SchemaError, match="requires choice 'wide'"):
+        StrategyBinding(
+            "column_domain",
+            StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+            StrategyChoice.POINTER_STAGED,
+        )
+    with pytest.raises(SchemaError, match="duplicate binding"):
+        StrategySpec([strategy.bindings[0], strategy.bindings[0]])
+    with pytest.raises(SchemaError, match="is not valid for family"):
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [
+                    StrategyBinding(
+                        "column_domain",
+                        StrategyFamily.ADDRESS_ASSOCIATION,
+                        StrategyChoice.POINTER_STAGED,
+                    )
+                ]
+            ),
+        )
 
 
 def test_reduction_boundary_rejects_c_slot_as_tile_axis() -> None:
@@ -455,6 +507,56 @@ def test_rule_registry_resolves_only_cards_used_by_plan() -> None:
         registry.resolve(ReplayPlan([ReplayStep("missing", node_ref="n0")]))
 
 
+def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
+    registry = default_triton_rule_registry()
+    assert all(card.target_kinds for card in registry.cards)
+    assert all(card.construction_phase is not None for card in registry.cards)
+
+    alternatives = {
+        card.id: (card.strategy_family, card.strategy_choice)
+        for card in registry.cards
+        if card.strategy_family is not None
+    }
+    assert alternatives == {
+        "bind_wide_program_domain": ("program_coordinate_width", "wide"),
+        "materialize_pointer_tile": (
+            "address_association",
+            "pointer_staged",
+        ),
+        "materialize_mask_tile": (
+            "mask_materialization",
+            "staged_reuse",
+        ),
+        "realize_flattened_reduce": (
+            "reduction_call_shape",
+            "flattened",
+        ),
+    }
+    cards = {card.id: card for card in registry.cards}
+    assert cards["realize_masked_access"].required_fields == ["predicate"]
+    assert cards["realize_unmasked_access"].required_fields == ["!predicate"]
+    assert set(registry.to_json()["cards"][0]) >= {
+        "target_kinds",
+        "required_fields",
+        "provides",
+        "requires",
+        "construction_phase",
+    }
+
+    legacy = RuleCard.from_json({"id": "legacy", "frontend": "triton"})
+    assert legacy.target_kinds == []
+    assert legacy.construction_phase is None
+    assert legacy.required_fields == []
+    assert legacy.provides == []
+    assert legacy.requires == []
+    with pytest.raises(SchemaError, match="declared together"):
+        RuleCard(
+            "broken",
+            Frontend.TRITON,
+            strategy_family="address_association",
+        )
+
+
 def test_strict_pi_accepts_canonical_rules_and_requires_targets() -> None:
     registry = default_triton_rule_registry()
     parsed = registry.validate_strict_plan(
@@ -564,56 +666,41 @@ def test_empty_pi_has_no_hidden_baseline_and_fails_nontrivial_coverage() -> None
 
 
 def test_pi_ablation_specs_are_deterministic_and_keep_normal_validation() -> None:
-    artifact = _artifact()
     registry = default_triton_rule_registry()
+    artifact, _ = materialize_replay_plan(
+        replace(
+            _artifact(),
+            strategy=StrategySpec(
+                [
+                    StrategyBinding(
+                        "column_domain",
+                        StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+                        StrategyChoice.WIDE,
+                    )
+                ]
+            ),
+        ),
+        registry,
+    )
     specs = build_pi_ablations(artifact, registry, limit=2)
 
     assert [spec.kind.value for spec in specs] == [
-        "j_only",
         "plan_step_dropout",
+        "plan_mechanism_substitution",
     ]
-    assert specs[0].plan.steps == []
-    assert specs[1].dropped_step_index == 0
-    assert specs[1].dropped_rule == "bind_wide_program_domain"
-    assert specs[1].dropped_target == "column_domain"
-    assert len(specs[1].plan.steps) == len(artifact.plan.steps) - 1
+    assert specs[0].dropped_step_index == 0
+    assert specs[0].dropped_rule == "bind_wide_program_domain"
+    assert specs[0].dropped_target == "column_domain"
+    assert len(specs[0].plan.steps) == len(artifact.plan.steps) - 1
 
-    j_only = build_rewriter_payload(
-        artifact,
-        registry,
-        plan_override=specs[0].plan,
-        ablation_kind=specs[0].kind.value,
-    )
-    assert j_only["plan"] == {"steps": []}
-    assert len(j_only["rule_cards"]) == 21
-    assert j_only["ablation"] == {"kind": "j_only"}
-    assert "TOP_SECRET_SOURCE" not in str(j_only)
-    j_only_prompt = build_rewriter_prompt(
-        artifact,
-        registry,
-        plan_override=specs[0].plan,
-        ablation_kind=specs[0].kind.value,
-    )
-    assert "handles such as t2, n0, a1, p3 and c0" in j_only_prompt
-    assert "not Python identifiers" in j_only_prompt
-    assert "unused constexpr positions" in j_only_prompt
-
-    dropout = build_rewriter_payload(
-        artifact,
-        registry,
-        plan_override=specs[1].plan,
-        ablation_kind=specs[1].kind.value,
-    )
-    assert dropout["ablation"] == {"kind": "plan_step_dropout"}
-    assert "bind_wide_program_domain" not in {
-        card["id"] for card in dropout["rule_cards"]
-    }
+    with pytest.raises(ComposeMismatchError):
+        assert_replay_plan_matches(artifact, registry, specs[0].plan)
 
     dropout_only = build_pi_ablations(
         artifact,
         registry,
         limit=1,
-        kinds=(specs[1].kind,),
+        kinds=(specs[0].kind,),
     )
     assert len(dropout_only) == 1
     assert dropout_only[0].kind.value == "plan_step_dropout"
@@ -628,6 +715,15 @@ def test_pi_ablation_specs_are_deterministic_and_keep_normal_validation() -> Non
     assert substitution[0].dropped_rule == "materialize_index_tile"
     assert substitution[0].replacement_rule == "materialize_pointer_tile"
     assert substitution[0].dropped_target == "input_masked_load"
+    assert substitution[0].artifact is not None
+    assert substitution[0].strategy_before != substitution[0].strategy_after
+    assert substitution[0].artifact.j == artifact.j
+    assert substitution[0].artifact.interface == artifact.interface
+    assert substitution[0].artifact.schedule == artifact.schedule
+    assert any(
+        step.rule == "materialize_pointer_tile"
+        for step in substitution[0].artifact.plan.steps
+    )
 
 
 def test_semantic_intervention_changes_j_but_not_the_pi_channel() -> None:
@@ -754,8 +850,29 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "interface.compiler_slots are launch-only" in masked
 
 
-def test_leakage_ratio_has_fixed_threshold_semantics() -> None:
-    assert leakage_ratio(1.0, 0.5) == 0.5
-    assert masked_ablation_passes(1.0, 0.5)
-    assert not masked_ablation_passes(1.0, 0.5001)
-    assert leakage_ratio(0.0, 0.0) == 0.0
+def test_free_form_j_attr_cannot_be_used_as_a_source_ngram_channel() -> None:
+    artifact = _artifact()
+    intent_json = artifact.j.intent.to_json()
+    intent_json["intent_function"]["body"][0]["attrs"]["debug"] = (
+        "private_helper secret_accumulator source_lane"
+    )
+    leaky = replace(
+        artifact,
+        j=replace(
+            artifact.j,
+            intent=IntentFunction.from_json(intent_json),
+        ),
+        source=(
+            "private_helper secret_accumulator source_lane = "
+            "tl.load(pointer)"
+        ),
+    )
+
+    report = scan_artifact_leakage(
+        leaky, registry=default_triton_rule_registry()
+    )
+    assert not report.passed
+    assert any(
+        item.kind is LeakageKind.SOURCE_NGRAM and ".attrs.debug" in item.path
+        for item in report.violations
+    )

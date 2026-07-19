@@ -15,7 +15,12 @@ from .scrc import (
     scrc_lift_prompt_sha256,
     scrc_relift_prompt_sha256,
 )
-from .scrc_schema import scrc_artifact_json_schema, scrc_artifact_text_format
+from .scrc_schema import (
+    scrc_artifact_json_schema,
+    scrc_artifact_text_format,
+    scrc_lift_core_json_schema,
+    scrc_lift_core_text_format,
+)
 
 __all__ = [
     "ResponsesSCRCRelifter",
@@ -33,4 +38,6 @@ __all__ = [
     "scrc_relift_prompt_sha256",
     "scrc_artifact_json_schema",
     "scrc_artifact_text_format",
+    "scrc_lift_core_json_schema",
+    "scrc_lift_core_text_format",
 ]

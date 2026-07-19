@@ -204,7 +204,7 @@ def assert_source_isolated_payload(payload: dict[str, Any]) -> None:
             raise SchemaError(
                 "opaque replay payload requires reference_bindings array"
             )
-        opaque_pattern = re.compile(r"^[tndavpc]\d+(?:_\d+)?$")
+        opaque_pattern = re.compile(r"^[tndavpcexqsb]\d+(?:_\d+)?$")
         known: set[str] = set()
         for index, binding in enumerate(bindings):
             if not isinstance(binding, dict) or set(binding) != {"ref", "owners"}:

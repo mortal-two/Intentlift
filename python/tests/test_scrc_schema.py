@@ -3,6 +3,8 @@ from __future__ import annotations
 from intentir.extraction.lifters.scrc_schema import (
     scrc_artifact_json_schema,
     scrc_artifact_text_format,
+    scrc_lift_core_json_schema,
+    scrc_lift_core_text_format,
 )
 
 
@@ -21,12 +23,35 @@ def test_scrc_wire_schema_closes_gate1_objects() -> None:
         "j",
         "interface",
         "schedule",
-        "plan",
+        "strategy",
         "location_map",
     }
     assert _parameter_schema()["additionalProperties"] is False
     assert "referenced_dimension" not in _parameter_schema()["properties"]
     assert "tensor_ref" in _parameter_schema()["properties"]
+    assert "strategy" in schema["properties"]
+    assert "strategy" in schema["required"]
+    assert "plan" not in schema["properties"]
+
+
+def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
+    strategy = scrc_artifact_json_schema()["properties"]["strategy"]
+    assert strategy["additionalProperties"] is False
+    variants = strategy["properties"]["bindings"]["items"]["oneOf"]
+    pairs = {
+        (
+            variant["properties"]["family"]["enum"][0],
+            variant["properties"]["choice"]["enum"][0],
+        )
+        for variant in variants
+    }
+    assert pairs == {
+        ("program_coordinate_width", "wide"),
+        ("address_association", "pointer_staged"),
+        ("mask_materialization", "staged_reuse"),
+        ("reduction_call_shape", "flattened"),
+    }
+    assert all(variant["additionalProperties"] is False for variant in variants)
 
 
 def test_scrc_wire_schema_preserves_open_intent_payloads() -> None:
@@ -48,12 +73,14 @@ def test_scrc_wire_schema_preserves_open_intent_payloads() -> None:
 
 
 def test_scrc_text_format_uses_schema_guidance_plus_local_validation() -> None:
-    text_format = scrc_artifact_text_format()
+    text_format = scrc_lift_core_text_format()
 
     assert text_format["type"] == "json_schema"
-    assert text_format["name"] == "scrc_gate1_artifact"
+    assert text_format["name"] == "scrc_lift_core"
     assert text_format["strict"] is False
-    assert text_format["schema"] == scrc_artifact_json_schema()
+    assert text_format["schema"] == scrc_lift_core_json_schema()
+    assert scrc_artifact_json_schema() == scrc_lift_core_json_schema()
+    assert scrc_artifact_text_format() == scrc_lift_core_text_format()
 
 
 def test_scrc_schema_calls_do_not_share_mutable_nodes() -> None:

@@ -256,8 +256,10 @@ def scan_static_leakage(
     plan_json = parsed_plan.to_json()
     plan_literals = _literal_items(plan_json, "plan")
     all_literals = list(plan_literals)
+    j_literals: list[tuple[str, str]] = []
     if parsed_j is not None:
-        all_literals.extend(_literal_items(parsed_j.to_json(), "j"))
+        j_literals = _literal_items(parsed_j.to_json(), "j")
+        all_literals.extend(j_literals)
 
     literal_chars = sum(len(value) for _, value in plan_literals)
     distinct_literals = len({value for _, value in plan_literals})
@@ -320,17 +322,48 @@ def scan_static_leakage(
             _tokens(source, policy.min_source_token_chars), policy.source_ngram_size,
         )
         seen_matches: set[tuple[str, tuple[str, ...]]] = set()
-        for path, literal in plan_literals:
-            for ngram in _ngrams(
-                _tokens(literal, policy.min_source_token_chars), policy.source_ngram_size,
+        source_checked_literals = list(plan_literals)
+        for path, literal in j_literals:
+            # Layer-B expressions are expected to preserve exact semantic
+            # predicates/indexing from the source.  Other free-form J strings
+            # are not an authorized source-text channel and are checked too.
+            if path.startswith("j.boundary.domains"):
+                continue
+            if path.startswith("j.boundary.accesses") and path.endswith(
+                (".index_expression", ".predicate")
             ):
+                continue
+            if path.startswith("j.boundary.output_mappings") and path.endswith(
+                ".value"
+            ):
+                continue
+            source_checked_literals.append((path, literal))
+        for path, literal in source_checked_literals:
+            literal_tokens = _tokens(literal, policy.min_source_token_chars)
+            # A short free-form J attribute is still a useful covert channel.
+            # Requiring the full plan-sized n-gram would let three source
+            # identifiers pass merely because the literal has no fourth token.
+            # Keep one/two-token semantic vocabulary out of this heuristic, but
+            # scan any longer literal at the strongest size it can support.
+            match_size = min(policy.source_ngram_size, len(literal_tokens))
+            if path.startswith("j.") and match_size >= 3:
+                candidate_ngrams = _ngrams(literal_tokens, match_size)
+                candidate_source_ngrams = _ngrams(
+                    _tokens(source, policy.min_source_token_chars), match_size,
+                )
+            else:
+                candidate_ngrams = _ngrams(
+                    literal_tokens, policy.source_ngram_size,
+                )
+                candidate_source_ngrams = source_ngrams
+            for ngram in candidate_ngrams:
                 marker = (path, ngram)
-                if ngram in source_ngrams and marker not in seen_matches:
+                if ngram in candidate_source_ngrams and marker not in seen_matches:
                     evidence = " ".join(ngram)
                     violations.append(
                         LeakageViolation(
                             LeakageKind.SOURCE_NGRAM, path,
-                            f"literal contains a {policy.source_ngram_size}-token source n-gram",
+                            f"literal contains a {len(ngram)}-token source n-gram",
                             evidence[:160],
                         )
                     )
@@ -365,36 +398,7 @@ def scan_artifact_leakage(
     )
 
 
-def leakage_ratio(normal_score: float, masked_score: float) -> float:
-    """Return ``masked / normal``; zero normal score is conservatively infinite."""
-
-    for name, value in (("normal_score", normal_score), ("masked_score", masked_score)):
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-            raise ValueError(f"{name} must be a non-negative number")
-    if normal_score == 0:
-        return float("inf") if masked_score > 0 else 0.0
-    return float(masked_score) / float(normal_score)
-
-
-def masked_ablation_passes(
-    normal_score: float,
-    masked_score: float,
-    *,
-    threshold: float = 0.5,
-) -> bool:
-    """Legacy ratio helper retained for artifact/tooling compatibility.
-
-    Gate1 no longer uses this fuzzy threshold for a verdict; masked-J fallback
-    is decided by exact semantic hard-component degradation in orchestrate.py.
-    """
-
-    if threshold < 0:
-        raise ValueError("threshold must be non-negative")
-    return leakage_ratio(normal_score, masked_score) <= threshold
-
-
 __all__ = [
     "DEFAULT_API_TOKENS", "LeakageKind", "LeakagePolicy", "LeakageReport",
-    "LeakageViolation", "leakage_ratio", "masked_ablation_passes",
-    "scan_artifact_leakage", "scan_static_leakage",
+    "LeakageViolation", "scan_artifact_leakage", "scan_static_leakage",
 ]

@@ -36,6 +36,7 @@ __all__ = [
     "ReductionFingerprint",
     "RuntimeInterface",
     "TTIRFingerprint",
+    "TTIR_FINGERPRINT_SCHEMA",
     "TTIRParseError",
     "TTIRParser",
     "extract_ttir_fingerprint",
@@ -44,7 +45,8 @@ __all__ = [
 ]
 
 
-_SCHEMA_VERSION = "triton-ttir-3.6-gate1-v1"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v3"
+_SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
 _OP_RE = re.compile(
@@ -301,6 +303,11 @@ class LoopFingerprint:
     init_values: tuple[str, ...]
     yielded_values: tuple[str, ...]
     body_effects: tuple[tuple[str, int], ...]
+    block_argument_count: int
+    induction_use_count: int
+    carried_argument_use_counts: tuple[int, ...]
+    captured_values: tuple[str, ...]
+    body_op_multiset: tuple[tuple[str, int], ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -310,6 +317,13 @@ class LoopFingerprint:
             "init_values": list(self.init_values),
             "yielded_values": list(self.yielded_values),
             "body_effects": dict(self.body_effects),
+            "block_argument_count": self.block_argument_count,
+            "induction_use_count": self.induction_use_count,
+            "carried_argument_use_counts": list(
+                self.carried_argument_use_counts
+            ),
+            "captured_values": list(self.captured_values),
+            "body_op_multiset": dict(self.body_op_multiset),
         }
 
 
@@ -363,6 +377,7 @@ class _Operation:
     header_operand_count: int = 0
     region_results: list[str] = field(default_factory=list)
     region_block_args: list[str] = field(default_factory=list)
+    constant_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -523,70 +538,58 @@ def _scalar_constant(tail: str) -> float | None:
         return None
 
 
-def _bounded_normalize_ttir(text: str) -> str:
-    """Apply the two observed, enumerable Gate1 normalization rules.
+def _bounded_normalize_operations(
+    operations: list[_Operation],
+    result_to_node: dict[str, int],
+) -> tuple[list[_Operation], dict[str, int]]:
+    """Apply the two registered rewrites after lexical SSA resolution.
 
-    The capability probe exposed exactly two stable false-reject patterns:
-    ``x + 0`` and ``1 / sqrt(x)`` versus ``rsqrt(x)``.  Normalize those SSA
-    fragments before fingerprinting; no general algebraic simplifier is hidden
-    here.  Gate2 remains responsible for numerical agreement.
+    Gate1 deliberately has only two bounded false-reject normalizations:
+    neutral ``x + 0`` and ``1 / sqrt(x)`` versus ``rsqrt(x)``.  Applying them
+    to the parsed graph is essential: MLIR SSA spellings are region-scoped, so
+    a textual whole-function substitution would otherwise depend on whether
+    sibling or nested regions happened to reuse the same local name.
     """
 
-    lines = text.splitlines()
-    definitions: dict[str, tuple[int, str, str, list[str]]] = {}
-    uses: Counter[str] = Counter()
-    constants: dict[str, float] = {}
-    for index, line in enumerate(lines):
-        head = _operation_head(line)
-        if head is None:
-            continue
-        results, name, tail = head
-        operands = _SSA_RE.findall(tail)
-        uses.update(operands)
-        if len(results) == 1:
-            definitions[results[0]] = (index, name, tail, operands)
-            if name == "arith.constant":
-                value = _scalar_constant(tail)
-                if value is not None:
-                    constants[results[0]] = value
+    node_by_id = {operation.node_id: operation for operation in operations}
+    original_uses: Counter[str] = Counter()
+    for operation in operations:
+        original_uses.update(operation.operands)
+        original_uses.update(operation.region_results)
 
-    removed: set[int] = set()
+    def direct_constant(name: str) -> float | None:
+        node_id = result_to_node.get(name)
+        if node_id is None:
+            return None
+        producer = node_by_id[node_id]
+        if producer.name != "arith.constant":
+            return None
+        return producer.constant_value
+
     substitutions: dict[str, str] = {}
-    normalization_constants: set[str] = set()
+    removed_nodes: set[int] = set()
+    normalization_constant_nodes: set[int] = set()
 
-    # Rule N1: scalar floating/integer neutral addition.
-    for result, (index, name, _tail, operands) in definitions.items():
-        if name not in {"arith.addf", "arith.addi"} or len(operands) != 2:
+    # Rule N1: scalar/tensor floating or integer neutral addition.
+    for operation in operations:
+        if (
+            operation.name not in {"arith.addf", "arith.addi"}
+            or len(operation.result_names) != 1
+            or len(operation.operands) != 2
+        ):
             continue
-        left, right = operands
-        if constants.get(left) == 0.0:
-            substitutions[result] = right
-            normalization_constants.add(left)
-            removed.add(index)
-        elif constants.get(right) == 0.0:
-            substitutions[result] = left
-            normalization_constants.add(right)
-            removed.add(index)
-
-    # Rule N2: 1 / sqrt(x) is represented by the same semantic node as rsqrt(x).
-    for result, (index, name, tail, operands) in definitions.items():
-        if name != "arith.divf" or len(operands) != 2:
+        left, right = operation.operands
+        neutral: str | None = None
+        replacement: str | None = None
+        if direct_constant(left) == 0.0:
+            neutral, replacement = left, right
+        elif direct_constant(right) == 0.0:
+            neutral, replacement = right, left
+        if neutral is None or replacement is None:
             continue
-        numerator, denominator = operands
-        sqrt_def = definitions.get(denominator)
-        if constants.get(numerator) != 1.0 or sqrt_def is None:
-            continue
-        sqrt_index, sqrt_name, _sqrt_tail, sqrt_operands = sqrt_def
-        if sqrt_name != "math.sqrt" or len(sqrt_operands) != 1:
-            continue
-        result_type = tail.rsplit(":", 1)[-1].strip()
-        indentation = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
-        lines[index] = (
-            f"{indentation}{result} = math.rsqrt {sqrt_operands[0]} : {result_type}"
-        )
-        normalization_constants.add(numerator)
-        if uses[denominator] == 1:
-            removed.add(sqrt_index)
+        substitutions[operation.result_names[0]] = replacement
+        removed_nodes.add(operation.node_id)
+        normalization_constant_nodes.add(result_to_node[neutral])
 
     def resolve(name: str) -> str:
         seen: set[str] = set()
@@ -595,28 +598,67 @@ def _bounded_normalize_ttir(text: str) -> str:
             name = substitutions[name]
         return name
 
-    normalized: list[str] = []
-    for index, line in enumerate(lines):
-        if index in removed:
-            continue
-        normalized.append(_SSA_RE.sub(lambda match: resolve(match.group(0)), line))
+    for operation in operations:
+        operation.operands = [resolve(name) for name in operation.operands]
+        operation.region_results = [
+            resolve(name) for name in operation.region_results
+        ]
 
-    # Drop a zero/one constant only when the normalized program no longer uses
-    # it. Constants shared with a real mask fill or another computation remain.
+    # Rule N2: direct 1 / sqrt(x) is represented as the same semantic node as
+    # direct rsqrt(x).  This stays deliberately narrower than algebraic
+    # simplification and does not chase arbitrary producer chains.
+    for operation in operations:
+        if (
+            operation.node_id in removed_nodes
+            or operation.name != "arith.divf"
+            or len(operation.result_names) != 1
+            or len(operation.operands) != 2
+        ):
+            continue
+        numerator, denominator = operation.operands
+        sqrt_node_id = result_to_node.get(denominator)
+        if sqrt_node_id is None or direct_constant(numerator) != 1.0:
+            continue
+        sqrt_operation = node_by_id[sqrt_node_id]
+        if (
+            sqrt_operation.name != "math.sqrt"
+            or len(sqrt_operation.result_names) != 1
+            or len(sqrt_operation.operands) != 1
+        ):
+            continue
+        operation.name = "math.rsqrt"
+        operation.operands = [sqrt_operation.operands[0]]
+        result_type = operation.local_signature.rsplit(":", 1)[-1]
+        operation.local_signature = _normalize_space(
+            f"math.rsqrt % : {result_type}"
+        )
+        operation.header_operand_count = 1
+        normalization_constant_nodes.add(result_to_node[numerator])
+        if original_uses[denominator] == 1:
+            removed_nodes.add(sqrt_node_id)
+
     remaining_uses: Counter[str] = Counter()
-    for line in normalized:
-        head = _operation_head(line)
-        if head is not None:
-            remaining_uses.update(_SSA_RE.findall(head[2]))
-    output: list[str] = []
-    for line in normalized:
-        head = _operation_head(line)
-        if head is not None and len(head[0]) == 1:
-            result = head[0][0]
-            if result in normalization_constants and remaining_uses[result] == 0:
-                continue
-        output.append(line)
-    return "\n".join(output)
+    for operation in operations:
+        if operation.node_id in removed_nodes:
+            continue
+        remaining_uses.update(operation.operands)
+        remaining_uses.update(operation.region_results)
+    for node_id in normalization_constant_nodes:
+        operation = node_by_id[node_id]
+        if all(remaining_uses[result] == 0 for result in operation.result_names):
+            removed_nodes.add(node_id)
+
+    normalized = [
+        operation
+        for operation in operations
+        if operation.node_id not in removed_nodes
+    ]
+    normalized_result_to_node = {
+        result: operation.node_id
+        for operation in normalized
+        for result in operation.result_names
+    }
+    return normalized, normalized_result_to_node
 
 
 def _cmp_info(name: str, tail: str) -> tuple[str | None, bool]:
@@ -735,9 +777,12 @@ class TTIRParser:
         python_interface: Mapping[str, Any] | None = None,
         schedule: Mapping[str, Any] | None = None,
     ) -> TTIRFingerprint:
-        cleaned = _bounded_normalize_ttir(_strip_locations(text))
+        cleaned = _strip_locations(text)
         function = _parse_function(cleaned)
         operations, result_to_node, leaf_labels = self._parse_operations(function)
+        operations, result_to_node = _bounded_normalize_operations(
+            operations, result_to_node
+        )
         return self._fingerprint(
             function,
             operations,
@@ -757,6 +802,50 @@ class TTIRParser:
             for index, (name, type_text, _) in enumerate(function.arguments)
         }
         region_stack: list[tuple[int, int]] = []
+        # One lexical binding map for the function and one for every active
+        # operation region.  MLIR SSA names need only be unique within their
+        # region; sibling scf.for/tt.reduce bodies may legally reuse spellings
+        # such as ``%n_offset``.  Internal qualified keys keep the existing
+        # fingerprint graph globally addressable without exposing SSA spelling
+        # in the final fingerprint.
+        scope_bindings: list[dict[str, str]] = [
+            {name: name for name, _, _ in function.arguments}
+        ]
+
+        def qualified_name(name: str, owner_node: int | None) -> str:
+            if owner_node is None:
+                return name
+            if "#" in name:
+                base, suffix = name.rsplit("#", 1)
+                return f"{base}$r{owner_node}#{suffix}"
+            return f"{name}$r{owner_node}"
+
+        def define(
+            name: str,
+            *,
+            line_number: int,
+            bindings: dict[str, str] | None = None,
+            owner_node: int | None = None,
+        ) -> str:
+            selected = scope_bindings[-1] if bindings is None else bindings
+            if name in selected:
+                raise TTIRParseError(
+                    f"line {line_number}: duplicate SSA definition {name}"
+                )
+            if owner_node is None and bindings is None and region_stack:
+                owner_node = region_stack[-1][0]
+            qualified = qualified_name(name, owner_node)
+            selected[name] = qualified
+            return qualified
+
+        def resolve(name: str) -> str:
+            for bindings in reversed(scope_bindings):
+                qualified = bindings.get(name)
+                if qualified is not None:
+                    return qualified
+            # Preserve the original spelling so the existing final unresolved
+            # check emits a deterministic parse error with useful context.
+            return name
 
         for line_number, line in enumerate(function.body.splitlines(), 1):
             stripped = line.strip()
@@ -766,6 +855,7 @@ class TTIRParser:
             if stripped.startswith(("})", "}")):
                 while region_stack and indent <= region_stack[-1][1]:
                     region_stack.pop()
+                    scope_bindings.pop()
                 continue
 
             block_args = _parse_block_args(line)
@@ -775,9 +865,13 @@ class TTIRParser:
                         f"line {line_number}: block arguments outside a region"
                     )
                 parent = operations[region_stack[-1][0]]
-                parent.region_block_args.extend(block_args)
+                qualified_args = [
+                    define(name, line_number=line_number)
+                    for name in block_args
+                ]
+                parent.region_block_args.extend(qualified_args)
                 path = "/".join(operations[node].name for node, _ in region_stack)
-                for index, name in enumerate(block_args):
+                for index, name in enumerate(qualified_args):
                     leaf_labels[name] = f"region[{path}].arg[{index}]"
                 continue
 
@@ -785,15 +879,28 @@ class TTIRParser:
             if head is None:
                 continue
             results, name, tail = head
-            operands = _SSA_RE.findall(tail)
-            block_args_for_op: list[str] = []
+            if (
+                name not in {"tt.reduce", "scf.for"}
+                and stripped.endswith("{")
+            ):
+                raise TTIRParseError(
+                    f"line {line_number}: unsupported region-bearing TTIR "
+                    f"operation {name!r}; Gate1 refuses to flatten an unknown "
+                    "SSA scope"
+                )
+            raw_operands = _SSA_RE.findall(tail)
+            raw_block_args: list[str] = []
             if name == "scf.for":
-                operands, block_args_for_op = _parse_for_header(tail)
+                raw_operands, raw_block_args = _parse_for_header(tail)
+            operands = [resolve(operand) for operand in raw_operands]
+            qualified_results = tuple(
+                define(result, line_number=line_number) for result in results
+            )
             axis_match = re.search(r"\baxis\s*=\s*(-?[0-9]+)", tail)
             operation = _Operation(
                 node_id=len(operations),
                 name=name,
-                result_names=results,
+                result_names=qualified_results,
                 operands=list(operands),
                 local_signature=_local_signature(name, tail),
                 context=tuple(node for node, _ in region_stack),
@@ -801,13 +908,18 @@ class TTIRParser:
                 cmp_predicate=_cmp_info(name, tail)[0],
                 cmp_flipped=_cmp_info(name, tail)[1],
                 header_operand_count=len(operands),
-                region_block_args=list(block_args_for_op),
+                region_block_args=[],
+                constant_value=(
+                    _scalar_constant(tail)
+                    if name == "arith.constant"
+                    else None
+                ),
             )
             operations.append(operation)
-            for result in results:
+            for result in qualified_results:
                 if result in result_to_node or result in leaf_labels:
                     raise TTIRParseError(
-                        f"line {line_number}: duplicate SSA definition {result}"
+                        f"line {line_number}: duplicate internal SSA key {result}"
                     )
                 result_to_node[result] = operation.node_id
 
@@ -819,9 +931,21 @@ class TTIRParser:
                 path = "/".join(
                     [*(operations[node].name for node, _ in region_stack), name]
                 )
-                for index, block_name in enumerate(block_args_for_op):
+                child_bindings: dict[str, str] = {}
+                qualified_block_args = [
+                    define(
+                        block_name,
+                        line_number=line_number,
+                        bindings=child_bindings,
+                        owner_node=operation.node_id,
+                    )
+                    for block_name in raw_block_args
+                ]
+                operation.region_block_args.extend(qualified_block_args)
+                for index, block_name in enumerate(qualified_block_args):
                     leaf_labels[block_name] = f"region[{path}].arg[{index}]"
                 region_stack.append((operation.node_id, indent))
+                scope_bindings.append(child_bindings)
 
         if region_stack:
             raise TTIRParseError("unterminated operation region")
@@ -1017,9 +1141,34 @@ class TTIRParser:
             if len(header) < 3:
                 raise TTIRParseError("scf.for has fewer than lower/upper/step operands")
             body_effects = Counter()
+            body_ops: Counter[str] = Counter()
+            local_region_arguments = set(operation.region_block_args)
+            for nested_region in operations:
+                if operation.node_id in nested_region.context:
+                    local_region_arguments.update(
+                        nested_region.region_block_args
+                    )
+            captured_values: set[str] = set()
+            region_argument_use_counts: Counter[str] = Counter()
             for nested in operations:
                 if operation.node_id not in nested.context:
                     continue
+                if nested.name not in _TERMINATORS:
+                    body_ops[
+                        _semantic_op_name(
+                            nested, node_by_id, result_to_node
+                        )
+                    ] += 1
+                for operand in [*nested.operands, *nested.region_results]:
+                    if operand in local_region_arguments:
+                        region_argument_use_counts[operand] += 1
+                        continue
+                    producer_id = result_to_node.get(operand)
+                    if producer_id is not None:
+                        producer = node_by_id[producer_id]
+                        if operation.node_id in producer.context:
+                            continue
+                    captured_values.add(operand_ref(operand, semantic=True))
                 if nested.name == "tt.load":
                     body_effects[
                         "read.masked" if nested.header_operand_count >= 2 else "read"
@@ -1041,6 +1190,20 @@ class TTIRParser:
                         for name in operation.region_results
                     ),
                     body_effects=tuple(sorted(body_effects.items())),
+                    block_argument_count=len(operation.region_block_args),
+                    induction_use_count=(
+                        0
+                        if not operation.region_block_args
+                        else region_argument_use_counts[
+                            operation.region_block_args[0]
+                        ]
+                    ),
+                    carried_argument_use_counts=tuple(
+                        region_argument_use_counts[name]
+                        for name in operation.region_block_args[1:]
+                    ),
+                    captured_values=tuple(sorted(captured_values)),
+                    body_op_multiset=tuple(sorted(body_ops.items())),
                 )
             )
 
@@ -1191,7 +1354,7 @@ def runtime_argument_names(text: str) -> tuple[str, ...]:
     without pretending that specialization changed the public Python ABI.
     """
 
-    cleaned = _bounded_normalize_ttir(_strip_locations(text))
+    cleaned = _strip_locations(text)
     function = _parse_function(cleaned)
     return tuple(name.removeprefix("%") for name, _, _ in function.arguments)
 

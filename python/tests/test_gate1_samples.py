@@ -12,7 +12,7 @@ from intentir.verify.gate1.leakage import LeakageKind, scan_static_leakage
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CAPABILITY_SCRIPT = ROOT / "test" / "scrc_gate1_capability.py"
+CAPABILITY_SCRIPT = ROOT / "test" / "back" / "scrc_gate1_capability_v5.py"
 
 
 def _load_capability_module():
