@@ -17,6 +17,12 @@ from typing import Any, Mapping
 from .provider import ProviderConfig, get_provider
 
 
+DEFAULT_RESPONSES_MAX_RETRIES = 4
+DEFAULT_RESPONSES_TIMEOUT_SECONDS = 600.0
+XHIGH_RESPONSES_MAX_RETRIES = 2
+XHIGH_RESPONSES_TIMEOUT_SECONDS = 1800.0
+
+
 class ProviderError(RuntimeError):
     """Raised when the provider call fails after retries. Never carries the key."""
 
@@ -61,6 +67,42 @@ def _responses_payload(
     return payload
 
 
+def _resolve_responses_request_policy(
+    provider: ProviderConfig,
+    effort: str | None,
+    max_retries: int | None,
+    timeout: float | None,
+) -> tuple[int, float]:
+    """Resolve request limits without duplicating long-running xhigh calls.
+
+    ``xhigh`` responses can legitimately take longer than the ordinary request
+    window.  Give them one long window plus one retry, while preserving the
+    historical defaults for every other effort.  Explicit caller values always
+    win.
+    """
+    effective_effort = (effort or provider.reasoning_effort).strip().lower()
+    is_xhigh = effective_effort == "xhigh"
+    resolved_retries = max_retries
+    if resolved_retries is None:
+        resolved_retries = (
+            XHIGH_RESPONSES_MAX_RETRIES
+            if is_xhigh
+            else DEFAULT_RESPONSES_MAX_RETRIES
+        )
+    resolved_timeout = timeout
+    if resolved_timeout is None:
+        resolved_timeout = (
+            XHIGH_RESPONSES_TIMEOUT_SECONDS
+            if is_xhigh
+            else DEFAULT_RESPONSES_TIMEOUT_SECONDS
+        )
+    if resolved_retries < 1:
+        raise ValueError("max_retries must be at least 1")
+    if resolved_timeout <= 0:
+        raise ValueError("timeout must be positive")
+    return int(resolved_retries), float(resolved_timeout)
+
+
 def call_responses(
     instructions: str,
     user_input: str,
@@ -68,11 +110,14 @@ def call_responses(
     provider: ProviderConfig | None = None,
     effort: str | None = None,
     text_format: Mapping[str, Any] | None = None,
-    max_retries: int = 4,
-    timeout: float = 600.0,
+    max_retries: int | None = None,
+    timeout: float | None = None,
 ) -> LLMReply:
     """One ``/responses`` round-trip. ``instructions`` is the system prompt."""
     p = provider or get_provider()
+    max_retries, timeout = _resolve_responses_request_policy(
+        p, effort, max_retries, timeout
+    )
     url = p.base_url.rstrip("/") + "/responses"
     payload = _responses_payload(
         instructions, user_input, p, effort, text_format
