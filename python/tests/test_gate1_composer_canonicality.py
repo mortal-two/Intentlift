@@ -274,6 +274,56 @@ def _iota_artifact() -> Gate1Artifact:
     )
 
 
+def _transpose_artifact() -> Gate1Artifact:
+    return Gate1Artifact(
+        j=SemanticArchive(
+            kernel_id="transpose_kernel",
+            intent=IntentFunction.from_json(
+                {
+                    "name": "transpose_kernel",
+                    "inputs": [
+                        {"name": "x", "dtype": "f32", "shape": ["M", "N"]}
+                    ],
+                    "outputs": [
+                        {"name": "out", "dtype": "f32", "shape": ["N", "M"]}
+                    ],
+                    "body": [
+                        {
+                            "op": "transpose",
+                            "result": "out",
+                            "operands": ["x"],
+                            "attrs": {"perm": [1, 0]},
+                        }
+                    ],
+                }
+            ),
+            node_ids={"transpose_node": "body[0]"},
+            boundary=Boundary(domains={"program": "program_id(0) < 1"}),
+        ),
+        interface=KernelInterface(
+            kernel_id="transpose_kernel",
+            function_name="transpose_kernel",
+            frontend=Frontend.TRITON,
+            parameters=[
+                KernelParameter(
+                    "x", ParameterKind.POINTER, ParameterMode.INPUT,
+                    "f32", 2, tensor_ref="x",
+                ),
+                KernelParameter(
+                    "out", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                    "f32", 2, tensor_ref="out",
+                ),
+            ],
+            grid=["1"],
+        ),
+        schedule=ScheduleSpec(),
+        plan=ReplayPlan(
+            [ReplayStep("realize_transpose", node_ref="transpose_node")]
+        ),
+        location_map=LocationMap("private.py", []),
+    )
+
+
 def _multi_broadcast_artifact(
     broadcasts: list[BroadcastSpec] | None = None,
 ) -> Gate1Artifact:
@@ -615,7 +665,7 @@ def test_materialized_artifact_persists_exact_compose_provenance() -> None:
 
 def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
     registry = default_triton_rule_registry()
-    assert len(registry.cards) == 22
+    assert len(registry.cards) == 23
     artifact, result = materialize_replay_plan(_iota_artifact(), registry)
     iota_steps = [
         step
@@ -658,6 +708,37 @@ def test_iota_is_classified_as_compute_for_pi_dropout_diagnostics() -> None:
 
     assert dropout.dropped_rule == "realize_iota"
     assert dropout.dropped_target == "iota_node"
+
+
+def test_transpose_has_one_canonical_rule_and_complete_pi_provenance() -> None:
+    registry = default_triton_rule_registry()
+    artifact, result = materialize_replay_plan(_transpose_artifact(), registry)
+    transpose_steps = [
+        step
+        for step in artifact.plan.steps
+        if step.node_ref == "transpose_node"
+    ]
+
+    assert [(step.rule, step.refs) for step in transpose_steps] == [
+        ("realize_transpose", [])
+    ]
+    assert result.provenance.coverage == 1.0
+    assert result.provenance.orphan_leaf_count == 0
+    registry.validate_strict_plan(
+        artifact.plan,
+        frontend=artifact.interface.frontend,
+        artifact=artifact,
+    )
+
+
+def test_transpose_fails_closed_when_its_rule_is_absent() -> None:
+    registry = default_triton_rule_registry()
+    without_transpose = RuleRegistry(
+        [card for card in registry.cards if card.id != "realize_transpose"]
+    )
+
+    with pytest.raises(ZeroRuleMatchError, match="intent_op:transpose"):
+        compose_replay_plan(_transpose_artifact(), without_transpose)
 
 
 def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:

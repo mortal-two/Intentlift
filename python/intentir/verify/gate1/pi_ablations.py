@@ -134,6 +134,7 @@ _COMPUTE_RULES = {
     "realize_k_tiled_dot",
     "realize_outer_product",
     "realize_indexed_access",
+    "realize_transpose",
     "realize_cast",
     "realize_select",
     "realize_loop_carry",

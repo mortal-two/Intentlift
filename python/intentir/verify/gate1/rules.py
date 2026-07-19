@@ -457,6 +457,7 @@ class RuleRegistry(StrictJSONMixin):
             "iota": {"realize_iota"},
             "reduce": {"realize_reduce", "realize_flattened_reduce"},
             "contraction": {"realize_k_tiled_dot", "realize_outer_product"},
+            "transpose": {"realize_transpose"},
             "cast": {"realize_cast"},
             "select": {"realize_select"},
             "loop": {"realize_loop_carry"},
@@ -730,6 +731,11 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "target_kinds": ["intent_op:gather"],
         "construction_phase": 60,
         "required_fields": ["operands"],
+    },
+    "realize_transpose": {
+        "target_kinds": ["intent_op:transpose"],
+        "construction_phase": 60,
+        "required_fields": ["operands", "attrs.perm"],
     },
     "bind_runtime_scalar": {
         "target_kinds": ["interface.runtime_scalar"],
@@ -1121,6 +1127,21 @@ def default_triton_rule_registry() -> RuleRegistry:
             ),
             pitfalls=[
                 "Do not replace a runtime index with its current sampled value."
+            ],
+        ),
+        _default_triton_card(
+            "realize_transpose",
+            Frontend.TRITON,
+            applies_to=["transpose"],
+            reads=["operand", "static permutation", "result rank"],
+            api_mapping={"static_permutation": "tl.permute"},
+            example=(
+                "Apply tl.permute to the referenced operand with exactly the "
+                "static axis permutation declared by the J node."
+            ),
+            pitfalls=[
+                "Do not infer a different permutation from tensor extents.",
+                "Do not replace a semantic transpose with reshape or broadcast.",
             ],
         ),
         _default_triton_card(
