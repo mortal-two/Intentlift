@@ -6,6 +6,12 @@ implementation is moved in a dedicated compatibility-preserving commit.
 """
 
 from intentir.backend.abi import LogicalABIError, LogicalArgument
+from intentir.backend.common.capabilities import (
+    CapabilityRegistryError,
+    HighPerformanceCapabilityRegistry,
+    KernelLoweringCapability,
+    load_high_performance_registry,
+)
 from intentir.backend.runtime_contract import (
     ContractMatch,
     PredicateResult,
@@ -18,6 +24,9 @@ from intentir.backend.runtime_contract import (
 
 __all__ = [
     "ContractMatch",
+    "CapabilityRegistryError",
+    "HighPerformanceCapabilityRegistry",
+    "KernelLoweringCapability",
     "LogicalABIError",
     "LogicalArgument",
     "PredicateResult",
@@ -25,5 +34,6 @@ __all__ = [
     "RuntimeContractError",
     "RuntimeLaunchFacts",
     "RuntimePredicate",
+    "load_high_performance_registry",
     "runtime_launch_facts_from_tensors",
 ]
