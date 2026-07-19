@@ -293,15 +293,31 @@ def _load_xformers_splitk():
     import importlib.util
     import sys
     import types
-    for nm in ("xformers", "xformers.triton", "xformers.triton.vararg_kernel"):
-        sys.modules.setdefault(nm, types.ModuleType(nm))
-    vk = sys.modules["xformers.triton.vararg_kernel"]
-    vk.unroll_varargs = lambda fn, N=1: fn
-    vk.VAR_ARGS_ARRAY = list
-    spec = importlib.util.spec_from_file_location("xf_splitk", _XF_SPLITK)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    names = ("xformers", "xformers.triton", "xformers.triton.vararg_kernel")
+    missing = object()
+    previous = {name: sys.modules.get(name, missing) for name in names}
+    try:
+        # Keep the source-only import shim local to this helper. Leaving these
+        # stubs in sys.modules makes later tests mistake the lambda below for
+        # xformers' real unroll_varargs implementation, corrupting the Triton
+        # JIT signature in an order-dependent way.
+        sys.modules["xformers"] = types.ModuleType("xformers")
+        sys.modules["xformers.triton"] = types.ModuleType("xformers.triton")
+        vk = types.ModuleType("xformers.triton.vararg_kernel")
+        vk.unroll_varargs = lambda fn, N=1: fn
+        vk.VAR_ARGS_ARRAY = list
+        sys.modules["xformers.triton.vararg_kernel"] = vk
+
+        spec = importlib.util.spec_from_file_location("xf_splitk", _XF_SPLITK)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+    finally:
+        for name, module in previous.items():
+            if module is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 # Real-xformers head-to-head for the REDUCE deliverable: the plain @triton.jit
