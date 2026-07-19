@@ -25,8 +25,8 @@ func.func @usin(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // tan = sin/cos (no math.tan / __nv_tanf).
 // CHECK-LABEL: func.func @utan
-// CHECK: math.sin
-// CHECK: math.cos
+// CHECK-DAG: math.sin
+// CHECK-DAG: math.cos
 // CHECK: arith.divf
 func.func @utan(%a: tensor<256xf32>) -> tensor<256xf32> {
   %r = intent.map_unary %a {fn = "tan"} : (tensor<256xf32>) -> tensor<256xf32>
@@ -44,8 +44,8 @@ func.func @uexp2(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
-// erf via the accurate math.erf on the CPU/linalg path (the GPU pass uses the
-// libdevice-safe A&S poly in MapEmit.h).
+// erf via the accurate math.erf on the CPU/linalg path; the direct GPU emitter
+// now preserves the same semantic op for the shared libdevice-free target pass.
 // CHECK-LABEL: func.func @uerf
 // CHECK: math.erf
 func.func @uerf(%a: tensor<256xf32>) -> tensor<256xf32> {
@@ -55,8 +55,8 @@ func.func @uerf(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
-// atan via the accurate math.atan on the CPU/linalg path (the GPU pass uses the
-// libdevice-safe minimax poly in MapEmit.h). Complex angle = atan2(imag, real).
+// atan via the accurate math.atan on the CPU/linalg path; direct GPU lowering
+// preserves it until the shared target polynomial. Complex angle = atan2.
 // CHECK-LABEL: func.func @uatan
 // CHECK: math.atan
 func.func @uatan(%a: tensor<256xf32>) -> tensor<256xf32> {
@@ -104,4 +104,23 @@ func.func @ucast_down(%a: tensor<8x8xf32>) -> tensor<8x8xf16> {
 func.func @ucast_id(%a: tensor<8x8xf32>) -> tensor<8x8xf32> {
   %r = intent.cast %a {to_dtype = "f32"} : (tensor<8x8xf32>) -> tensor<8x8xf32>
   return %r : tensor<8x8xf32>
+}
+
+// -----
+
+// Boolean casts are 0/1 conversions, never signed-i1 (-1 for true).
+// CHECK-LABEL: func.func @ucast_bool_float
+// CHECK: arith.uitofp {{.*}} : i1 to f32
+func.func @ucast_bool_float(%a: tensor<8xi1>) -> tensor<8xf32> {
+  %r = intent.cast %a {to_dtype = "f32"} : (tensor<8xi1>) -> tensor<8xf32>
+  return %r : tensor<8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @ucast_bool_int
+// CHECK: arith.extui {{.*}} : i1 to i32
+func.func @ucast_bool_int(%a: tensor<8xi1>) -> tensor<8xi32> {
+  %r = intent.cast %a {to_dtype = "i32"} : (tensor<8xi1>) -> tensor<8xi32>
+  return %r : tensor<8xi32>
 }

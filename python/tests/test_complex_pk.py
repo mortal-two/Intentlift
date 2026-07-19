@@ -11,9 +11,9 @@ planes, lowered through -convert-intent-elementwise-to-gpu to an sm_120a cubin:
   complex_add    -> (re1+re2, im1+im2)
   complex_mul    -> (re1*re2 - im1*im2, re1*im2 + im1*re2)
 
-The ONE genuinely-new primitive is atan2 (angle): a libdevice-safe minimax atan
-(7-term poly + reciprocal reduction) with the quadrant correction, expanded in
-arith in MapEmit.h — NEVER a __nv_atan2f libdevice extern (ptxas dead end).
+The ONE genuinely-new primitive is atan2 (angle). The direct emitter preserves
+`math.atan2`, and the shared target lowering expands it into a libdevice-free
+range-reduced polynomial with explicit IEEE special-value handling.
 
 Run: export PATH=/usr/local/cuda-12.8/bin:$PATH; PYTHONPATH=python \
      python3 -m pytest python/tests/test_complex_pk.py -q -s
@@ -98,7 +98,7 @@ def test_angle_atan2():
     abs_err = float((Y - ref).abs().max())
     print(f"\nangle(atan2): rel={r:.2e} max_abs_err={abs_err:.2e}")
     assert r < 1e-3
-    assert abs_err < 1e-4  # the minimax atan poly budget
+    assert abs_err < 1e-4  # the shared target polynomial budget
     # real flag_gems.angle parity (the classified-miss kernel).
     import flag_gems
     fg = flag_gems.angle(z)

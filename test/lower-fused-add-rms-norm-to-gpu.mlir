@@ -7,7 +7,7 @@
 // are full [M,N] RowOut outputs written from the SAME read-once register tile —
 // S = X + R is an [M,N] intermediate that is ALSO the reduce input (emitAt
 // recomputes it from the X and R register tiles). ONE last-axis mean reduce ->
-// ONE gpu.all_reduce ...add + math.rsqrt; TWO register-tile stores, no thread-0
+// ONE gpu.all_reduce add + math.rsqrt; TWO register-tile stores, no thread-0
 // guard (both are RowOut, not per-row stats). Separate S output buffer (no
 // in-place aliasing in M5a). Same pass / same DAG scheduler as rms_norm — the
 // only new shape is the second RowOut. No per-kernel branch, no new mechanism.

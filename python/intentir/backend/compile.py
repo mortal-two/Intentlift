@@ -41,6 +41,11 @@ MLIR_OPT = os.environ.get("MLIR_OPT", "/usr/lib/llvm-20/bin/mlir-opt")
 CUDA_BIN = os.environ.get("CUDA_BIN", "/usr/local/cuda-12.8/bin")
 CHIP = os.environ.get("INTENT_GPU_CHIP", "sm_120a")
 
+# Bare MLIR symbols may contain ``.`` and ``$`` after their first character.
+# Live paper-pipeline functions preserve readable dotted source provenance, so
+# artifact parsing must use the MLIR grammar instead of the narrower ``\w+``.
+_MLIR_BARE_SYMBOL_RE = r"[A-Za-z_][A-Za-z0-9_.$]*"
+
 _FRONT_PASSES = [
     "-one-shot-bufferize=bufferize-function-boundaries=true "
     "function-boundary-type-conversion=identity-layout-map",
@@ -51,12 +56,14 @@ _FRONT_PASSES = [
     "-canonicalize",  # folds grid extents to literal constants
 ]
 
-# NVIDIA-target codegen peephole run on the outlined device module: rewrites
-# scalar f32 `math.exp` to the native `ex2.approx.ftz.f32` PTX instruction so we
-# never emit a `__nv_expf` libdevice extern (which is either unresolved by ptxas
-# or DCE'd away by the integrated serializer -> empty cubin). See the C++ pass
-# `lib/Intent/Transforms/LowerGpuMathToNVVM.cpp`.
-_DEVICE_PREP_PASSES = ["-lower-gpu-math-to-nvvm"]
+# NVIDIA-target preparation on the outlined device module: rewrites scalar f32
+# math to native PTX intrinsics and backports LLVM-20's missing BF16
+# nvgpu.mma.sync conversion.  Both run before the stock composite NVVM pipeline;
+# modules without BF16 MMA make the compatibility pass a no-op.
+_DEVICE_PREP_PASSES = [
+    "-lower-gpu-math-to-nvvm",
+    "-lower-bf16-mma-to-nvvm",
+]
 
 # Integrated device lowering (R3-proven): one pass gpu -> nvvm -> PTX. Handles
 # scf.for/index/cf cleanly (the manual pass set left unrealized casts on
@@ -230,10 +237,17 @@ def _ptxas(ptx: bytes) -> bytes:
 
 def _extract_kernels(binary: str) -> list[CompiledKernel]:
     # gpu.func symbol per gpu.binary, recovered from the host launch sites.
-    func_of = dict(re.findall(r"gpu\.launch_func\s+@(\w+)::@(\w+)", binary))
+    func_of = dict(
+        re.findall(
+            rf"gpu\.launch_func\s+@({_MLIR_BARE_SYMBOL_RE})::"
+            rf"@({_MLIR_BARE_SYMBOL_RE})",
+            binary,
+        )
+    )
     kernels: list[CompiledKernel] = []
     for m in re.finditer(
-        r'gpu\.binary @(\w+)\s*\[#gpu\.object<#nvvm\.target<[^>]*>,'
+        rf'gpu\.binary @({_MLIR_BARE_SYMBOL_RE})\s*'
+        r'\[#gpu\.object<#nvvm\.target<[^>]*>,'
         r'[^"]*?assembly = "((?:[^"\\]|\\.)*)"',
         binary,
     ):

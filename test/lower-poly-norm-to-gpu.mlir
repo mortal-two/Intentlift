@@ -6,7 +6,7 @@
 // (w0/w1/w2/b/eps are rank-0 Scalar args). x, x^2, x^3 are all recomputed from
 // the SAME read-once register tile, so this is THREE last-axis mean reduces
 // (one per power's mean-square) feeding ONE read-once block-cooperative
-// gpu.launch -> THREE gpu.all_reduce ...add + THREE math.rsqrt. Besides Y[M,N]
+// gpu.launch -> THREE grouped warp/shared sums + THREE math.rsqrt. Besides Y[M,N]
 // (written from the register tile) it returns the three backward-cache rstd
 // values as THREE separate per-row [M,1] outputs (rstd3, rstd2, rstd1, matching
 // liger's RSTD[:,0:3] columns), each a per-row uniform written ONCE by thread 0
@@ -18,12 +18,8 @@
 // CHECK-NOT:     memref.alloca
 // CHECK-NOT:     scf.for
 // CHECK:         memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
-// CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         math.rsqrt
-// CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         math.rsqrt
-// CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         math.rsqrt
+// CHECK-COUNT-6: gpu.shuffle xor
+// CHECK-COUNT-3: math.rsqrt
 // CHECK:         arith.cmpi eq, %{{.*}}, %{{.*}} : index
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
 // CHECK:         scf.if

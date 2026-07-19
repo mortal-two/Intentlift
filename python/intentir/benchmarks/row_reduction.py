@@ -301,16 +301,17 @@ class MatmulKernel:
     """A compiled tensor-core matmul kernel + its resolved bare-ptr launch plan.
 
     Drives ``-convert-intent-contraction-to-gpu`` on a raw intent-MLIR module
-    (one ``intent.contraction{"mk,nk->mn"}``, A/W f16 -> Y f32) and compiles the
-    resulting tiled-K tensor-core ``gpu.launch`` to an sm_120a cubin. Unlike the
+    (one ``intent.contraction{"mk,nk->mn"}``, A/W f16 or bf16 -> Y f32) and
+    compiles the resulting tiled-K tensor-core ``gpu.launch`` to an sm_120a
+    cubin. Unlike the
     row-reduction pass this pass has no ``block-threads`` option (the WMMA tile
     geometry is fixed: BM=BN=64, BK=16, 4 warps), and it needs ``scf_to_cf=True``
     so the gpu->nvvm pipeline can legalize the ``scf.for`` carrying
     ``!gpu.mma_matrix`` iter_args (the K-loop accumulator fragments).
 
     ``thunk(tensors)`` returns a zero-arg NO-SYNC launch closure ready for
-    ``do_bench``; ``tensors`` are [A, W, Y] (A[M,K] f16, W[N,K] f16, Y[M,N] f32,
-    all contiguous CUDA).
+    ``do_bench``; ``tensors`` are [A, W, Y] (matching 16-bit A/W storage and an
+    f32 Y, all contiguous CUDA).
     """
 
     def __init__(self, mlir_text: str, num_stages: int | None = None,
@@ -356,6 +357,7 @@ class MatmulKernel:
             raise RuntimeError(
                 f"matmul: expected one kernel, got {len(kernels)}")
         ck = kernels[0]
+        self.binary_mlir = ck.binary_mlir
         self.func = load_module(ck.cubin).function(ck.kernel_name)
 
         _n, ftext = _host_func_text(ck.binary_mlir)

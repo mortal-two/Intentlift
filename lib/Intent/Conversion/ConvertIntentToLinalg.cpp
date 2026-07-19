@@ -26,10 +26,10 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <limits>
-#include <optional>
 
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTTOLINALG
@@ -88,8 +88,13 @@ static bool isI1BinaryFn(StringRef fn) {
          fn == "logical_xor" || fn == "isclose";
 }
 
-/// True iff `emitScalarBinary` can lower `fn` (the guard for MapBinaryLowering).
-static bool hasScalarBinary(StringRef fn) {
+/// True iff `emitScalarBinary` can lower `fn` for the operand element type.
+static bool hasScalarBinary(StringRef fn, Type elementType) {
+  if (isa<IntegerType>(elementType))
+    return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
+           fn == "max" || fn == "min" || fn == "gt" || fn == "ge" ||
+           fn == "lt" || fn == "le" || fn == "eq" || fn == "ne" ||
+           fn == "logical_and" || fn == "logical_or" || fn == "logical_xor";
   return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
          fn == "max" || fn == "min" || fn == "pow" || fn == "atan2" ||
          isI1BinaryFn(fn);
@@ -99,6 +104,30 @@ static bool hasScalarBinary(StringRef fn) {
 /// Returns nullptr for fns that have no scalar form here yet.
 static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
                               Value c) {
+  if (isa<IntegerType>(a.getType())) {
+    if (fn == "add")
+      return b.create<arith::AddIOp>(loc, a, c);
+    if (fn == "sub")
+      return b.create<arith::SubIOp>(loc, a, c);
+    if (fn == "mul")
+      return b.create<arith::MulIOp>(loc, a, c);
+    if (fn == "div")
+      return b.create<arith::DivSIOp>(loc, a, c);
+    if (fn == "max")
+      return b.create<arith::MaxSIOp>(loc, a, c);
+    if (fn == "min")
+      return b.create<arith::MinSIOp>(loc, a, c);
+    if (fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" ||
+        fn == "eq" || fn == "ne")
+      return emitScalarCmp(b, loc, fn, a, c);
+    if (fn == "logical_and")
+      return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+    if (fn == "logical_or")
+      return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+    if (fn == "logical_xor")
+      return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
+    return nullptr;
+  }
   if (fn == "add")
     return b.create<arith::AddFOp>(loc, a, c);
   if (fn == "sub")
@@ -225,41 +254,6 @@ static bool hasScalarUnary(StringRef fn) {
          fn == "atan" || fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
 }
 
-/// Lower `intent.iota` to a rank-1 linalg.generic.  The sole parallel index is
-/// the semantic value, cast to the result's declared integer width.  This is
-/// the backend-neutral CPU/linalg realization used by Gate2; it materializes
-/// no source/frontend-specific tile or program-id structure.
-struct IotaLowering : OpRewritePattern<IotaOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(IotaOp op,
-                                PatternRewriter &rewriter) const override {
-    auto resTy = cast<RankedTensorType>(op.getResult().getType());
-    if (resTy.getRank() != 1 || !resTy.hasStaticShape())
-      return rewriter.notifyMatchFailure(op, "iota requires static rank-1 result");
-    Type elemTy = resTy.getElementType();
-    if (!isa<IntegerType>(elemTy))
-      return rewriter.notifyMatchFailure(op, "iota result must be integer");
-
-    Location loc = op.getLoc();
-    Value init = rewriter.create<tensor::EmptyOp>(
-        loc, resTy.getShape(), elemTy);
-    SmallVector<AffineMap> maps{
-        rewriter.getMultiDimIdentityMap(/*rank=*/1)};
-    SmallVector<utils::IteratorType> iters{
-        utils::IteratorType::parallel};
-    auto generic = rewriter.create<linalg::GenericOp>(
-        loc, TypeRange{resTy}, ValueRange{}, ValueRange{init}, maps, iters,
-        [&](OpBuilder &b, Location l, ValueRange) {
-          Value index = b.create<linalg::IndexOp>(l, 0);
-          Value value = b.create<arith::IndexCastOp>(l, elemTy, index);
-          b.create<linalg::YieldOp>(l, value);
-        });
-    rewriter.replaceOp(op, generic.getResults());
-    return success();
-  }
-};
-
 struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -288,6 +282,41 @@ struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
         loc, TypeRange{resTy}, ValueRange{op.getInput()}, ValueRange{init},
         maps, iters, [&](OpBuilder &b, Location l, ValueRange args) {
           b.create<linalg::YieldOp>(l, emitScalarUnary(b, l, fn, args[0]));
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
+/// Lower `intent.iota` to the backend-neutral rank-1 linalg realization used by
+/// Gate2 and production lowering. The scalar value is the current iteration
+/// index, cast to the declared integer width when necessary; no source-specific
+/// tile or program-id structure is materialized.
+struct IotaLowering : OpRewritePattern<IotaOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(IotaOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    Type elemTy = resTy.getElementType();
+    if (resTy.getRank() != 1 || !resTy.hasStaticShape() ||
+        !elemTy.isIntOrIndex())
+      return rewriter.notifyMatchFailure(
+          op, "expected a static rank-1 integer/index result");
+
+    Location loc = op.getLoc();
+    Value init = rewriter.create<tensor::EmptyOp>(loc, resTy.getShape(), elemTy);
+    SmallVector<AffineMap> maps{rewriter.getMultiDimIdentityMap(1)};
+    SmallVector<utils::IteratorType> iters(1, utils::IteratorType::parallel);
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resTy}, ValueRange{}, ValueRange{init}, maps, iters,
+        [&](OpBuilder &b, Location l, ValueRange) {
+          Value index = b.create<linalg::IndexOp>(l, 0);
+          Value value = elemTy.isIndex()
+                            ? index
+                            : b.create<arith::IndexCastOp>(l, elemTy, index)
+                                  .getResult();
+          b.create<linalg::YieldOp>(l, value);
         });
     rewriter.replaceOp(op, generic.getResults());
     return success();
@@ -323,16 +352,16 @@ struct MapBinaryLowering : OpRewritePattern<MapBinaryOp> {
 
     StringRef fnName = op.getFn();
     bool toI1 = isI1BinaryFn(fnName);
-    // The i1-result fns (comparisons / logical / isclose) accept float, integer
-    // or i1 operands and yield an i1; every other fn is element-type-preserving
-    // over floats.
+    // The i1-result fns (comparisons / logical / isclose) accept the supported
+    // operand kinds and yield an i1; other fns preserve float or integer type.
     if (toI1) {
       (void)lhsTy;
       (void)rhsTy;
-    } else if (!isa<FloatType>(resTy.getElementType())) {
-      return rewriter.notifyMatchFailure(op, "non-float elementwise not implemented");
+    } else if (!isa<FloatType, IntegerType>(resTy.getElementType())) {
+      return rewriter.notifyMatchFailure(
+          op, "elementwise result type is not float or integer");
     }
-    if (!hasScalarBinary(fnName))
+    if (!hasScalarBinary(fnName, lhsTy.getElementType()))
       return rewriter.notifyMatchFailure(op, "fn has no scalar lowering");
 
     Location loc = op.getLoc();
@@ -494,18 +523,33 @@ struct GatherLowering : OpRewritePattern<GatherOp> {
   }
 };
 
-/// Scalar combiner for a `reduce` fn. Float sum/max/min/prod plus the boolean
-/// reductions all (and) / any (or) over i1 (C2c).
+/// Scalar combiner for a `reduce` fn. Numeric reductions preserve the operand
+/// element kind: float uses the floating-point arith ops, while signless
+/// integers use signed max/min and integer add/mul. Boolean all/any remain the
+/// dedicated i1 reductions.
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
                                Value c) {
-  if (fn == "sum" || fn == "mean")
+  bool isInteger = isa<IntegerType>(a.getType());
+  if (fn == "sum" || fn == "mean") {
+    if (isInteger)
+      return b.create<arith::AddIOp>(loc, a, c);
     return b.create<arith::AddFOp>(loc, a, c);
-  if (fn == "max")
+  }
+  if (fn == "max") {
+    if (isInteger)
+      return b.create<arith::MaxSIOp>(loc, a, c);
     return b.create<arith::MaxNumFOp>(loc, a, c);
-  if (fn == "min")
+  }
+  if (fn == "min") {
+    if (isInteger)
+      return b.create<arith::MinSIOp>(loc, a, c);
     return b.create<arith::MinNumFOp>(loc, a, c);
-  if (fn == "prod")
+  }
+  if (fn == "prod") {
+    if (isInteger)
+      return b.create<arith::MulIOp>(loc, a, c);
     return b.create<arith::MulFOp>(loc, a, c);
+  }
   if (fn == "all")
     return b.create<arith::AndIOp>(loc, a, c);
   if (fn == "any")
@@ -516,28 +560,38 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
 /// True for the boolean reductions (i1 input/output).
 static bool isBoolReduce(StringRef fn) { return fn == "all" || fn == "any"; }
 
-static std::optional<double> reduceIdentity(StringRef fn) {
-  if (fn == "sum" || fn == "mean")
-    return 0.0;
-  if (fn == "prod")
-    return 1.0;
-  if (fn == "max")
-    return -std::numeric_limits<double>::infinity();
-  if (fn == "min")
-    return std::numeric_limits<double>::infinity();
-  if (fn == "all")
-    return 1.0; // and-identity = true
-  if (fn == "any")
-    return 0.0; // or-identity = false
-  return std::nullopt;
+static bool isNumericReduce(StringRef fn) {
+  return fn == "sum" || fn == "mean" || fn == "max" || fn == "min" ||
+         fn == "prod";
 }
 
 /// Build the identity constant for a reduce fn at the given element type (float
-/// or i1). Kept separate so the i1 (all/any) path uses a bool attr, not a float.
+///, integer, or i1). Integer max/min follow the signed interpretation used by
+/// the scalar combiner.
 static Value reduceIdentityConst(OpBuilder &b, Location loc, StringRef fn,
-                                 Type elemTy, double ident) {
+                                 Type elemTy) {
   if (elemTy.isInteger(1))
-    return b.create<arith::ConstantOp>(loc, b.getBoolAttr(ident != 0.0));
+    return b.create<arith::ConstantOp>(loc, b.getBoolAttr(fn == "all"));
+
+  if (auto intTy = dyn_cast<IntegerType>(elemTy)) {
+    unsigned width = intTy.getWidth();
+    llvm::APInt ident(width, 0);
+    if (fn == "prod")
+      ident = llvm::APInt(width, 1);
+    else if (fn == "max")
+      ident = llvm::APInt::getSignedMinValue(width);
+    else if (fn == "min")
+      ident = llvm::APInt::getSignedMaxValue(width);
+    return b.create<arith::ConstantOp>(loc, b.getIntegerAttr(elemTy, ident));
+  }
+
+  double ident = 0.0;
+  if (fn == "prod")
+    ident = 1.0;
+  else if (fn == "max")
+    ident = -std::numeric_limits<double>::infinity();
+  else if (fn == "min")
+    ident = std::numeric_limits<double>::infinity();
   return b.create<arith::ConstantOp>(loc, b.getFloatAttr(elemTy, ident));
 }
 
@@ -554,12 +608,15 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
     Type elemTy = inTy.getElementType();
     StringRef fn = op.getFn();
-    // Float reductions, plus the boolean reductions all/any over i1 (C2c).
-    if (!isa<FloatType>(elemTy) && !(elemTy.isInteger(1) && isBoolReduce(fn)))
+    // Float supports numeric reductions; signless integer supports the
+    // non-mean numeric reductions; i1 is reserved for all/any.
+    bool supported =
+        (isa<FloatType>(elemTy) && isNumericReduce(fn)) ||
+        (isa<IntegerType>(elemTy) && !elemTy.isInteger(1) &&
+         isNumericReduce(fn) && fn != "mean") ||
+        (elemTy.isInteger(1) && isBoolReduce(fn));
+    if (!supported)
       return rewriter.notifyMatchFailure(op, "unsupported reduce element type");
-    auto ident = reduceIdentity(fn);
-    if (!ident)
-      return rewriter.notifyMatchFailure(op, "reduce fn has no scalar lowering");
 
     unsigned R = inTy.getRank();
     SmallVector<bool> isReduced(R, false);
@@ -641,7 +698,7 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
       SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(RE),
                                      AffineMap::get(RE, 0, outExprs, ctx)};
 
-      Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy, *ident);
+      Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy);
       Value empty = rewriter.create<tensor::EmptyOp>(loc, redShape, elemTy);
       Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
                                                    ValueRange{empty}).getResult(0);
@@ -709,20 +766,42 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
       return success();
     }
 
-    // Iteration domain = all input dims. Input map = identity; output map keeps
-    // only non-reduced dims (in order).
-    SmallVector<utils::IteratorType> iters(R, utils::IteratorType::parallel);
+    // Put every surviving parallel iterator before every reduction iterator,
+    // independent of the source-axis order.  `convert-linalg-to-parallel-loops`
+    // otherwise turns a reduction over an early axis (for example axis 0 of an
+    // [N,B,H,M] attention score tensor) into a HOST scf.for wrapped around a
+    // gpu.launch.  The generic runtime would then need to interpret host CFG and
+    // relaunch the reduction kernel once per induction value.  Parallel-first
+    // loop order instead outlines one GPU kernel whose inner scf.for performs
+    // the reduction, exactly like the already-proven last-axis row reduction.
+    //
+    // Indexing maps retain the original operand/output dimension order: loop
+    // dim -> input dim is a permutation; output dims remain the non-reduced
+    // input dims in their original order.
+    SmallVector<unsigned> loopPosForInput(R);
+    unsigned nextParallel = 0;
+    unsigned nextReduction = r;
     SmallVector<AffineExpr> outExprs;
     for (unsigned d = 0; d < R; ++d) {
       if (isReduced[d])
-        iters[d] = utils::IteratorType::reduction;
-      else
-        outExprs.push_back(getAffineDimExpr(d, ctx));
+        loopPosForInput[d] = nextReduction++;
+      else {
+        loopPosForInput[d] = nextParallel++;
+        outExprs.push_back(getAffineDimExpr(loopPosForInput[d], ctx));
+      }
     }
-    SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(R),
+    SmallVector<utils::IteratorType> iters(
+        R, utils::IteratorType::reduction);
+    for (unsigned d = 0; d < r; ++d)
+      iters[d] = utils::IteratorType::parallel;
+    SmallVector<AffineExpr> inputExprs;
+    inputExprs.reserve(R);
+    for (unsigned d = 0; d < R; ++d)
+      inputExprs.push_back(getAffineDimExpr(loopPosForInput[d], ctx));
+    SmallVector<AffineMap> maps = {AffineMap::get(R, 0, inputExprs, ctx),
                                    AffineMap::get(R, 0, outExprs, ctx)};
 
-    Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy, *ident);
+    Value identVal = reduceIdentityConst(rewriter, loc, fn, elemTy);
     Value empty = rewriter.create<tensor::EmptyOp>(loc, reducedShape, elemTy);
     Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{identVal},
                                                  ValueRange{empty}).getResult(0);
@@ -783,7 +862,9 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
 /// Lower an einsum-style contraction to a linalg.generic over the union of
 /// index labels: output labels are parallel iterators, contracted labels
 /// (present in inputs but not the output) are reduction iterators. Body is a
-/// fused multiply-accumulate; the output is zero-initialized.
+/// fused multiply-accumulate.  If no label is contracted, this is a pure
+/// broadcast/outer multiply: it writes the product directly instead of adding
+/// it to a +0 initializer, which is required to preserve IEEE signed zero.
 struct ContractionLowering : OpRewritePattern<ContractionOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -800,8 +881,23 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
 
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
     Type elemTy = resTy.getElementType();
-    if (!isa<FloatType>(elemTy))
-      return rewriter.notifyMatchFailure(op, "non-float contraction not implemented");
+    if (!isa<FloatType, IntegerType>(elemTy))
+      return rewriter.notifyMatchFailure(op,
+                                         "non-numeric contraction not implemented");
+    auto aElemTy = cast<RankedTensorType>(op.getA().getType()).getElementType();
+    auto bElemTy = cast<RankedTensorType>(op.getB().getType()).getElementType();
+    if (!isa<FloatType, IntegerType>(aElemTy) ||
+        !isa<FloatType, IntegerType>(bElemTy))
+      return rewriter.notifyMatchFailure(
+          op, "non-numeric contraction operands not implemented");
+    bool isFloat = isa<FloatType>(elemTy);
+    if (isFloat != isa<FloatType>(aElemTy) ||
+        isFloat != isa<FloatType>(bElemTy))
+      return rewriter.notifyMatchFailure(
+          op, "mixed integer/float contraction not implemented");
+    if (!isFloat && (aElemTy != elemTy || bElemTy != elemTy))
+      return rewriter.notifyMatchFailure(
+          op, "mixed-width integer contraction not implemented");
 
     // Iteration domain = output labels (parallel) ++ contracted labels
     // (reduction). Contracted = appears in an input but not the output.
@@ -818,6 +914,9 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
           dim[c] = dim.size();
           iters.push_back(utils::IteratorType::reduction);
         }
+    bool hasReduction = llvm::any_of(iters, [](utils::IteratorType iterator) {
+      return iterator == utils::IteratorType::reduction;
+    });
 
     MLIRContext *ctx = op.getContext();
     auto mapFor = [&](StringRef labels) {
@@ -829,19 +928,45 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
     SmallVector<AffineMap> maps = {mapFor(aL), mapFor(bL), mapFor(oL)};
 
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getZeroAttr(elemTy));
     Value empty = rewriter.create<tensor::EmptyOp>(
         loc, resTy.getShape(), elemTy);
-    Value init = rewriter.create<linalg::FillOp>(loc, ValueRange{zero},
-                                                 ValueRange{empty}).getResult(0);
+    Value init = empty;
+    if (hasReduction) {
+      Value zero = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getZeroAttr(elemTy));
+      init = rewriter
+                 .create<linalg::FillOp>(loc, ValueRange{zero},
+                                         ValueRange{empty})
+                 .getResult(0);
+    }
 
     auto generic = rewriter.create<linalg::GenericOp>(
         loc, TypeRange{resTy}, ValueRange{op.getA(), op.getB()},
         ValueRange{init}, maps, iters,
         [&](OpBuilder &b, Location l, ValueRange args) {
-          Value prod = b.create<arith::MulFOp>(l, args[0], args[1]);
-          Value acc = b.create<arith::AddFOp>(l, args[2], prod);
+          auto castToAccumulator = [&](Value value) -> Value {
+            if (!isFloat)
+              return value;
+            auto srcTy = cast<FloatType>(value.getType());
+            auto dstTy = cast<FloatType>(elemTy);
+            if (srcTy == dstTy)
+              return value;
+            if (srcTy.getWidth() < dstTy.getWidth())
+              return b.create<arith::ExtFOp>(l, dstTy, value);
+            return b.create<arith::TruncFOp>(l, dstTy, value);
+          };
+          Value lhs = castToAccumulator(args[0]);
+          Value rhs = castToAccumulator(args[1]);
+          Value prod = isFloat
+                           ? Value(b.create<arith::MulFOp>(l, lhs, rhs))
+                           : Value(b.create<arith::MulIOp>(l, lhs, rhs));
+          if (!hasReduction) {
+            b.create<linalg::YieldOp>(l, prod);
+            return;
+          }
+          Value acc = isFloat
+                          ? Value(b.create<arith::AddFOp>(l, args[2], prod))
+                          : Value(b.create<arith::AddIOp>(l, args[2], prod));
           b.create<linalg::YieldOp>(l, acc);
         });
     rewriter.replaceOp(op, generic.getResults());
@@ -942,10 +1067,13 @@ static Value emitScalarCast(OpBuilder &b, Location loc, Type dst, Value v) {
   if (sf && di)
     return b.create<arith::FPToSIOp>(loc, dst, v);
   if (si && df)
-    return b.create<arith::SIToFPOp>(loc, dst, v);
+    return si.isInteger(1) ? b.create<arith::UIToFPOp>(loc, dst, v).getResult()
+                           : b.create<arith::SIToFPOp>(loc, dst, v).getResult();
   if (si && di)
     return si.getWidth() < di.getWidth()
-               ? b.create<arith::ExtSIOp>(loc, dst, v).getResult()
+               ? (si.isInteger(1)
+                      ? b.create<arith::ExtUIOp>(loc, dst, v).getResult()
+                      : b.create<arith::ExtSIOp>(loc, dst, v).getResult())
                : b.create<arith::TruncIOp>(loc, dst, v).getResult();
   return nullptr;
 }
@@ -980,6 +1108,141 @@ struct CastLowering : OpRewritePattern<CastOp> {
   }
 };
 
+/// Lower a static dimension permutation to a parallel linalg.generic.  The
+/// iteration space is the result shape; the input indexing map applies the
+/// inverse permutation so result dimension i reads input dimension perm[i].
+struct TransposeLowering : OpRewritePattern<TransposeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TransposeOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    if (!resTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "dynamic transpose is unsupported");
+    unsigned rank = resTy.getRank();
+    SmallVector<AffineExpr> inputExprs(rank);
+    for (unsigned outDim = 0; outDim < rank; ++outDim) {
+      int64_t inputDim = cast<IntegerAttr>(op.getPerm()[outDim]).getInt();
+      inputExprs[inputDim] = getAffineDimExpr(outDim, op.getContext());
+    }
+    SmallVector<AffineMap> maps = {
+        AffineMap::get(rank, 0, inputExprs, op.getContext()),
+        rewriter.getMultiDimIdentityMap(rank)};
+    SmallVector<utils::IteratorType> iters(rank,
+                                           utils::IteratorType::parallel);
+    Location loc = op.getLoc();
+    Value init = rewriter.create<tensor::EmptyOp>(
+        loc, resTy.getShape(), resTy.getElementType());
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resTy}, ValueRange{op.getInput()}, ValueRange{init},
+        maps, iters, [&](OpBuilder &b, Location l, ValueRange args) {
+          b.create<linalg::YieldOp>(l, args[0]);
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
+/// Lower a static variadic concat to slice-writing linalg.generic operations.
+/// Keeping each slice as real linalg work avoids bufferization turning
+/// tensor.insert_slice into host-side memrefCopy calls, which are outside the
+/// persisted CUDA program executed by the paper runtime.
+struct ConcatLowering : OpRewritePattern<ConcatOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConcatOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!resTy || !resTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "dynamic concat is unsupported");
+    int64_t axis = op.getAxis();
+    if (axis < 0 || axis >= resTy.getRank())
+      return rewriter.notifyMatchFailure(op, "concat axis is out of range");
+
+    Location loc = op.getLoc();
+    Value result = rewriter.create<tensor::EmptyOp>(
+        loc, resTy.getShape(), resTy.getElementType());
+    int64_t offset = 0;
+    for (Value input : op.getInputs()) {
+      auto inputTy = dyn_cast<RankedTensorType>(input.getType());
+      if (!inputTy || !inputTy.hasStaticShape() ||
+          inputTy.getRank() != resTy.getRank() ||
+          inputTy.getElementType() != resTy.getElementType())
+        return rewriter.notifyMatchFailure(
+            op, "concat inputs must have one static common rank/type");
+
+      unsigned rank = resTy.getRank();
+      SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+      SmallVector<OpFoldResult> sizes;
+      SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+      for (int64_t dim : inputTy.getShape())
+        sizes.push_back(rewriter.getIndexAttr(dim));
+      offsets[axis] = rewriter.getIndexAttr(offset);
+      Value destinationSlice = rewriter.create<tensor::ExtractSliceOp>(
+          loc, inputTy, result, offsets, sizes, strides);
+      SmallVector<AffineMap> maps(2,
+                                  rewriter.getMultiDimIdentityMap(rank));
+      SmallVector<utils::IteratorType> iterators(
+          rank, utils::IteratorType::parallel);
+      auto generic = rewriter.create<linalg::GenericOp>(
+          loc, TypeRange{inputTy}, ValueRange{input},
+          ValueRange{destinationSlice}, maps,
+          iterators, [&](OpBuilder &b, Location nestedLoc, ValueRange args) {
+            b.create<linalg::YieldOp>(nestedLoc, args[0]);
+          });
+      result = rewriter.create<tensor::InsertSliceOp>(
+          loc, generic.getResult(0), result, offsets, sizes, strides);
+      offset += inputTy.getDimSize(axis);
+    }
+    if (offset != resTy.getDimSize(axis))
+      return rewriter.notifyMatchFailure(
+          op, "concat input extents do not fill the result axis");
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Lower constant padding to tensor.pad.  The downstream one-shot
+/// bufferization/SCF pipeline already carries tensor.pad to executable loops.
+struct PadLowering : OpRewritePattern<PadOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(PadOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    SmallVector<OpFoldResult> low, high;
+    for (Attribute attr : op.getLo()) {
+      int64_t value = cast<IntegerAttr>(attr).getInt();
+      if (value < 0)
+        return rewriter.notifyMatchFailure(op, "negative low padding");
+      low.push_back(rewriter.getIndexAttr(value));
+    }
+    for (Attribute attr : op.getHi()) {
+      int64_t value = cast<IntegerAttr>(attr).getInt();
+      if (value < 0)
+        return rewriter.notifyMatchFailure(op, "negative high padding");
+      high.push_back(rewriter.getIndexAttr(value));
+    }
+    Type elemTy = resTy.getElementType();
+    TypedAttr valueAttr;
+    if (isa<FloatType>(elemTy))
+      valueAttr = rewriter.getFloatAttr(
+          elemTy, op.getValue().convertToDouble());
+    else if (isa<IntegerType>(elemTy))
+      valueAttr = rewriter.getIntegerAttr(
+          elemTy, static_cast<int64_t>(op.getValue().convertToDouble()));
+    else
+      return rewriter.notifyMatchFailure(op, "unsupported pad element type");
+    Value padValue =
+        rewriter.create<arith::ConstantOp>(op.getLoc(), valueAttr);
+    Value padded = rewriter.create<tensor::PadOp>(
+        op.getLoc(), resTy, op.getInput(), low, high, padValue,
+        /*nofold=*/false);
+    rewriter.replaceOp(op, padded);
+    return success();
+  }
+};
+
 struct ConvertIntentToLinalgPass
     : ::intent::impl::ConvertIntentToLinalgBase<ConvertIntentToLinalgPass> {
   using ConvertIntentToLinalgBase::ConvertIntentToLinalgBase;
@@ -988,7 +1251,9 @@ struct ConvertIntentToLinalgPass
     RewritePatternSet patterns(&getContext());
     patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
                  GatherLowering, ReduceLowering, ContractionLowering,
-                 LoopLowering, CastLowering>(&getContext());
+                 LoopLowering, CastLowering, TransposeLowering, ConcatLowering,
+                 PadLowering>(
+        &getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

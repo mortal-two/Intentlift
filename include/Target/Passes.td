@@ -30,4 +30,26 @@ def LowerGpuMathToNVVM : Pass<"lower-gpu-math-to-nvvm", "::mlir::ModuleOp"> {
   ];
 }
 
+def LowerBf16MmaToNVVM : Pass<"lower-bf16-mma-to-nvvm", "::mlir::ModuleOp"> {
+  let summary = "Backport BF16 nvgpu.mma.sync lowering for LLVM 20.";
+  let description = [{
+    Converts BF16 `nvgpu.mma.sync` m16n8k16 operations, together with their
+    neighboring NVGPU async-copy and ldmatrix operations, to the NVVM dialect.
+    LLVM/MLIR 20 accepts the BF16 NVGPU IR and exposes the matching NVVM
+    intrinsic, but its NVGPU-to-NVVM converter omits BF16 PTX type deduction
+    and packed `vector<2xbf16>` register unpacking.  This target-only pass
+    backports those two upstream capabilities and is a no-op for modules that
+    contain no BF16 MMA operation.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::gpu::GPUDialect",
+    "::mlir::LLVM::LLVMDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::nvgpu::NVGPUDialect",
+    "::mlir::NVVM::NVVMDialect",
+    "::mlir::scf::SCFDialect",
+  ];
+}
+
 #endif // INTENT_TARGET_PASSES

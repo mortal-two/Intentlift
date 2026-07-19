@@ -73,6 +73,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace intent {
@@ -106,18 +107,244 @@ static int64_t align16(int64_t x) { return (x + 15) / 16 * 16; }
 struct FlashBwdLowering {
   func::FuncOp fn;
   std::string dqMode = "serial"; // "serial" | "atomic" (set by the pass option)
+  int64_t flatSharedDPad = 8;
+  int64_t flatSharedPdsPad = 8;
+  bool flatDQPrelaunch = false;
+  bool flatRank4 = false;
 
   // populated by match()
   int64_t Sq = 0, Sk = 0, D = 0;
   unsigned qArgIdx = 0, kArgIdx = 0, vArgIdx = 0, doArgIdx = 0, lseArgIdx = 0,
-           deltaArgIdx = 0, scaleArgIdx = 0;
+           deltaArgIdx = 0, scaleArgIdx = 0, dqInitialArgIdx = 0;
   LoopOp loop;
   Type f16, f32;
 
   explicit FlashBwdLowering(func::FuncOp fn) : fn(fn) {}
 
+  // Match the unchanged live loop-free P4 graph from its three returned values.
+  // This is deliberately a complete dataflow/type match; neither the function
+  // name nor a source symbol participates in selection.  The admitted rank-4
+  // specialization is B=H=1, non-causal, bias-free, sequence-parallel=false:
+  //
+  //   P  = exp((Q@K^T)*scale - LSE)
+  //   dV = f32(f16(P))^T @ dO
+  //   dP = dO @ V^T
+  //   dS = f32(f16(P*(dP-D)*scale))
+  //   dK = dS^T @ Q; dQ = DQ_initial + dS @ K
+  LogicalResult matchFlatRank4() {
+    auto fty = fn.getFunctionType();
+    if (fty.getNumInputs() != 8 || fty.getNumResults() != 3 ||
+        !fn.getBody().hasOneBlock())
+      return failure();
+    Block &body = fn.getBody().front();
+    auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
+    if (!ret || ret.getNumOperands() != 3)
+      return failure();
+
+    auto dqAdd = ret.getOperand(0).getDefiningOp<MapBinaryOp>();
+    auto dk = ret.getOperand(1).getDefiningOp<ContractionOp>();
+    auto dv = ret.getOperand(2).getDefiningOp<ContractionOp>();
+    if (!dqAdd || dqAdd.getFn() != "add" || !dk || !dv ||
+        dk.getSubscripts() != "nbhm,bmhd->bnhd" ||
+        dv.getSubscripts() != "nbhm,bmhd->bnhd")
+      return failure();
+
+    auto dqInitial = dyn_cast<BlockArgument>(dqAdd.getLhs());
+    auto dqUpdate = dqAdd.getRhs().getDefiningOp<ContractionOp>();
+    if (!dqInitial || dqInitial.getOwner() != &body || !dqUpdate ||
+        dqUpdate.getSubscripts() != "nbhm,bnhd->bmhd")
+      return failure();
+
+    auto dsDotF32 = dk.getA().getDefiningOp<CastOp>();
+    if (!dsDotF32 || dsDotF32.getToDtype() != "f32" ||
+        dqUpdate.getA() != dsDotF32.getResult())
+      return failure();
+    auto dsF16 = dsDotF32.getInput().getDefiningOp<CastOp>();
+    if (!dsF16 || dsF16.getToDtype() != "f16")
+      return failure();
+    auto dsScaled = dsF16.getInput().getDefiningOp<MapBinaryOp>();
+    if (!dsScaled || dsScaled.getFn() != "mul")
+      return failure();
+    auto dsUnscaled = dsScaled.getLhs().getDefiningOp<MapBinaryOp>();
+    if (!dsUnscaled || dsUnscaled.getFn() != "mul")
+      return failure();
+    auto p = dsUnscaled.getLhs().getDefiningOp<MapUnaryOp>();
+    auto dpCentered = dsUnscaled.getRhs().getDefiningOp<MapBinaryOp>();
+    if (!p || p.getFn() != "exp" || !dpCentered ||
+        dpCentered.getFn() != "sub")
+      return failure();
+
+    auto dp = dpCentered.getLhs().getDefiningOp<ContractionOp>();
+    auto deltaArg = dyn_cast<BlockArgument>(dpCentered.getRhs());
+    if (!dp || dp.getSubscripts() != "bmhd,bnhd->nbhm" || !deltaArg ||
+        deltaArg.getOwner() != &body)
+      return failure();
+
+    auto centeredQK = p.getInput().getDefiningOp<MapBinaryOp>();
+    if (!centeredQK || centeredQK.getFn() != "sub")
+      return failure();
+    auto scaledQK = centeredQK.getLhs().getDefiningOp<MapBinaryOp>();
+    auto lseArg = dyn_cast<BlockArgument>(centeredQK.getRhs());
+    if (!scaledQK || scaledQK.getFn() != "mul" || !lseArg ||
+        lseArg.getOwner() != &body)
+      return failure();
+    auto qk = scaledQK.getLhs().getDefiningOp<ContractionOp>();
+    auto scaleArg = dyn_cast<BlockArgument>(scaledQK.getRhs());
+    if (!qk || qk.getSubscripts() != "bmhd,bnhd->nbhm" || !scaleArg ||
+        scaleArg.getOwner() != &body || dsScaled.getRhs() != scaleArg)
+      return failure();
+
+    auto qCast = qk.getA().getDefiningOp<CastOp>();
+    auto kCast = qk.getB().getDefiningOp<CastOp>();
+    auto doCast = dp.getA().getDefiningOp<CastOp>();
+    auto vCast = dp.getB().getDefiningOp<CastOp>();
+    if (!qCast || !kCast || !doCast || !vCast ||
+        qCast.getToDtype() != "f32" || kCast.getToDtype() != "f32" ||
+        doCast.getToDtype() != "f32" || vCast.getToDtype() != "f32" ||
+        dk.getB() != qCast.getResult() ||
+        dqUpdate.getB() != kCast.getResult() ||
+        dv.getB() != doCast.getResult())
+      return failure();
+    auto qArg = dyn_cast<BlockArgument>(qCast.getInput());
+    auto kArg = dyn_cast<BlockArgument>(kCast.getInput());
+    auto vArg = dyn_cast<BlockArgument>(vCast.getInput());
+    auto doArg = dyn_cast<BlockArgument>(doCast.getInput());
+    if (!qArg || !kArg || !vArg || !doArg || qArg.getOwner() != &body ||
+        kArg.getOwner() != &body || vArg.getOwner() != &body ||
+        doArg.getOwner() != &body)
+      return failure();
+
+    auto pDotF32 = dv.getA().getDefiningOp<CastOp>();
+    if (!pDotF32 || pDotF32.getToDtype() != "f32")
+      return failure();
+    auto pF16 = pDotF32.getInput().getDefiningOp<CastOp>();
+    if (!pF16 || pF16.getToDtype() != "f16" ||
+        pF16.getInput() != p.getResult())
+      return failure();
+
+    auto qTy = dyn_cast<RankedTensorType>(qArg.getType());
+    auto kTy = dyn_cast<RankedTensorType>(kArg.getType());
+    auto vTy = dyn_cast<RankedTensorType>(vArg.getType());
+    auto doTy = dyn_cast<RankedTensorType>(doArg.getType());
+    auto dqInitialTy = dyn_cast<RankedTensorType>(dqInitial.getType());
+    auto lseTy = dyn_cast<RankedTensorType>(lseArg.getType());
+    auto deltaTy = dyn_cast<RankedTensorType>(deltaArg.getType());
+    auto scaleTy = dyn_cast<RankedTensorType>(scaleArg.getType());
+    if (!qTy || !kTy || !vTy || !doTy || !dqInitialTy || !lseTy ||
+        !deltaTy || !scaleTy || !qTy.hasStaticShape() ||
+        !kTy.hasStaticShape() || !vTy.hasStaticShape() ||
+        !doTy.hasStaticShape() || !dqInitialTy.hasStaticShape() ||
+        !lseTy.hasStaticShape() || !deltaTy.hasStaticShape() ||
+        !scaleTy.hasStaticShape() || qTy.getRank() != 4 ||
+        kTy.getRank() != 4 || vTy.getRank() != 4 || doTy.getRank() != 4 ||
+        dqInitialTy.getRank() != 4 || lseTy.getRank() != 3 ||
+        deltaTy.getRank() != 3 || scaleTy.getRank() != 0 ||
+        !isa<Float16Type>(qTy.getElementType()) ||
+        kTy.getElementType() != qTy.getElementType() ||
+        vTy.getElementType() != qTy.getElementType() ||
+        doTy.getElementType() != qTy.getElementType() ||
+        !isa<Float32Type>(dqInitialTy.getElementType()) ||
+        lseTy.getElementType() != dqInitialTy.getElementType() ||
+        deltaTy.getElementType() != dqInitialTy.getElementType() ||
+        scaleTy.getElementType() != dqInitialTy.getElementType())
+      return failure();
+    if (qTy.getDimSize(0) != 1 || qTy.getDimSize(2) != 1 ||
+        kTy.getDimSize(0) != 1 || kTy.getDimSize(2) != 1 ||
+        vTy.getDimSize(0) != 1 || vTy.getDimSize(2) != 1 ||
+        doTy.getDimSize(0) != 1 || doTy.getDimSize(2) != 1)
+      return failure();
+
+    Sq = qTy.getDimSize(1);
+    Sk = kTy.getDimSize(1);
+    D = qTy.getDimSize(3);
+    if (kTy.getDimSize(3) != D || vTy.getDimSize(1) != Sk ||
+        vTy.getDimSize(3) != D || doTy.getDimSize(1) != Sq ||
+        doTy.getDimSize(3) != D || Sq % BM != 0 || Sk % 128 != 0 ||
+        D % kWMMA != 0)
+      return failure();
+    f16 = qTy.getElementType();
+    f32 = dqInitialTy.getElementType();
+
+    auto isTensor = [](Type ty, ArrayRef<int64_t> shape,
+                       Type elementType) -> bool {
+      auto ranked = dyn_cast<RankedTensorType>(ty);
+      return ranked && ranked.hasStaticShape() && ranked.getShape() == shape &&
+             ranked.getElementType() == elementType;
+    };
+    SmallVector<int64_t> qShape{1, Sq, 1, D};
+    SmallVector<int64_t> scoreShape{Sk, 1, 1, Sq};
+    SmallVector<int64_t> statShape{1, 1, Sq};
+    if (!isTensor(kTy, {1, Sk, 1, D}, f16) ||
+        !isTensor(vTy, {1, Sk, 1, D}, f16) ||
+        !isTensor(doTy, qShape, f16) ||
+        !isTensor(dqInitialTy, qShape, f32) ||
+        !isTensor(lseTy, statShape, f32) ||
+        !isTensor(deltaTy, statShape, f32) ||
+        !isTensor(qCast.getResult().getType(), qShape, f32) ||
+        !isTensor(kCast.getResult().getType(), {1, Sk, 1, D}, f32) ||
+        !isTensor(vCast.getResult().getType(), {1, Sk, 1, D}, f32) ||
+        !isTensor(doCast.getResult().getType(), qShape, f32) ||
+        !isTensor(qk.getResult().getType(), scoreShape, f32) ||
+        !isTensor(scaledQK.getResult().getType(), scoreShape, f32) ||
+        !isTensor(centeredQK.getResult().getType(), scoreShape, f32) ||
+        !isTensor(p.getResult().getType(), scoreShape, f32) ||
+        !isTensor(pF16.getResult().getType(), scoreShape, f16) ||
+        !isTensor(pDotF32.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dv.getResult().getType(), {1, Sk, 1, D}, f32) ||
+        !isTensor(dp.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dpCentered.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dsUnscaled.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dsScaled.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dsF16.getResult().getType(), scoreShape, f16) ||
+        !isTensor(dsDotF32.getResult().getType(), scoreShape, f32) ||
+        !isTensor(dk.getResult().getType(), {1, Sk, 1, D}, f32) ||
+        !isTensor(dqUpdate.getResult().getType(), qShape, f32) ||
+        !isTensor(dqAdd.getResult().getType(), qShape, f32) ||
+        !isTensor(fty.getResult(0), qShape, f32) ||
+        !isTensor(fty.getResult(1), {1, Sk, 1, D}, f32) ||
+        !isTensor(fty.getResult(2), {1, Sk, 1, D}, f32))
+      return failure();
+
+    SmallVector<Operation *> expected{
+        qCast.getOperation(),       kCast.getOperation(),
+        vCast.getOperation(),       doCast.getOperation(),
+        qk.getOperation(),          scaledQK.getOperation(),
+        centeredQK.getOperation(),  p.getOperation(),
+        pF16.getOperation(),        pDotF32.getOperation(),
+        dv.getOperation(),          dp.getOperation(),
+        dpCentered.getOperation(),  dsUnscaled.getOperation(),
+        dsScaled.getOperation(),    dsF16.getOperation(),
+        dsDotF32.getOperation(),    dk.getOperation(),
+        dqUpdate.getOperation(),    dqAdd.getOperation()};
+    unsigned numOps = 0;
+    for (Operation &op : body.without_terminator()) {
+      ++numOps;
+      if (std::find(expected.begin(), expected.end(), &op) == expected.end())
+        return failure();
+    }
+    if (numOps != expected.size())
+      return failure();
+
+    qArgIdx = qArg.getArgNumber();
+    kArgIdx = kArg.getArgNumber();
+    vArgIdx = vArg.getArgNumber();
+    doArgIdx = doArg.getArgNumber();
+    dqInitialArgIdx = dqInitial.getArgNumber();
+    lseArgIdx = lseArg.getArgNumber();
+    deltaArgIdx = deltaArg.getArgNumber();
+    scaleArgIdx = scaleArg.getArgNumber();
+    flatRank4 = true;
+    return success();
+  }
+
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
+    if (succeeded(matchFlatRank4()))
+      return success();
+    return matchLoopRank2();
+  }
+
+  LogicalResult matchLoopRank2() {
     auto fty = fn.getFunctionType();
     // Two results (dk, dv = the loop carries); the pass appends dQ/dK/dV
     // destinations regardless.
@@ -268,18 +495,28 @@ struct FlashBwdLowering {
     OpBuilder b(ctx);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
 
-    // New signature: Q,K,V,dO,LSE,Delta memrefs + scale f32 + appended
-    // destination-passing dQ[Sq,D], dK[Sk,D], dV[Sk,D] f32.
+    // Destination-passing ABI.  The legacy loop form appends rank-2 dQ/dK/dV;
+    // the live flat form preserves all eight input memref ranks and appends the
+    // three original rank-4 results verbatim.  The latter therefore has the
+    // exact eleven-pointer ABI expected by the unchanged P4 graph.
+    auto oldFty = fn.getFunctionType();
     SmallVector<Type> inTys;
-    for (Type at : fn.getFunctionType().getInputs()) {
+    for (Type at : oldFty.getInputs()) {
       if (auto t = dyn_cast<RankedTensorType>(at))
         inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
       else
         inTys.push_back(at); // scale f32 by value
     }
-    inTys.push_back(MemRefType::get({Sq, D}, f32)); // dQ
-    inTys.push_back(MemRefType::get({Sk, D}, f32)); // dK
-    inTys.push_back(MemRefType::get({Sk, D}, f32)); // dV
+    if (flatRank4) {
+      for (Type resultTy : oldFty.getResults()) {
+        auto t = cast<RankedTensorType>(resultTy);
+        inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+      }
+    } else {
+      inTys.push_back(MemRefType::get({Sq, D}, f32)); // dQ
+      inTys.push_back(MemRefType::get({Sk, D}, f32)); // dK
+      inTys.push_back(MemRefType::get({Sk, D}, f32)); // dV
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -296,28 +533,38 @@ struct FlashBwdLowering {
     Value doMem = entry->getArgument(doArgIdx);
     Value lseMem = entry->getArgument(lseArgIdx);
     Value deltaMem = entry->getArgument(deltaArgIdx);
-    Value scale = entry->getArgument(scaleArgIdx);
-    unsigned numIn = fn.getFunctionType().getNumInputs();
+    Value scaleInput = entry->getArgument(scaleArgIdx);
+    Value dqInitialMem =
+        flatRank4 ? entry->getArgument(dqInitialArgIdx) : Value();
+    unsigned numIn = oldFty.getNumInputs();
     Value dqMem = entry->getArgument(numIn);
     Value dkMem = entry->getArgument(numIn + 1);
     Value dvMem = entry->getArgument(numIn + 2);
 
-    int64_t numKT = Sk / BN;           // outer key tiles
+    // The exact flat live case uses one 128-key tile.  This removes the second
+    // serial key pass and its barriers/global DQ RMW while retaining BN=64 for
+    // the legacy rank-2 family (including its atomic equivalence tests).
+    int64_t tileBN = flatRank4 ? 128 : BN;
+    int64_t numKT = Sk / tileBN;       // outer key tiles
     int64_t numQT = Sq / BM;           // inner query tiles
     // 8 warps. q-outputs (M=BM=128): 8 row-strips, each 16 rows x full N. The
     // k-outputs dV/dK (M=BN=64): 4 row-strips x 2 column-groups (kNCG=2), each
     // 16 k-rows x half the d-columns -- carried register-resident.
     int64_t numWarps = BM / MMA_M;     // 8
     int64_t kBlock = numWarps * 32;    // 256 threads
-    int64_t kNCG = 2;                  // dV/dK column groups
-    int64_t nColS = BN / MMA_N;        // S/dP n8 column tiles (over k) = 8
+    int64_t kNCG = flatRank4 ? 1 : 2;  // dV/dK column groups
+    int64_t nColS = tileBN / MMA_N;    // S/dP n8 column tiles (over k)
     int64_t nColD = D / MMA_N;         // dV/dK/dQ n8 column tiles (over d)
     int64_t hColK = nColD / kNCG;      // per-warp dV/dK column tiles
     int64_t kSubD = D / MMA_K;         // contraction over d (S, dP)
     int64_t kSubQ = BM / MMA_K;        // contraction over query (dV, dK) = 8
-    int64_t kSubK = BN / MMA_K;        // contraction over key (dQ)
+    int64_t kSubK = tileBN / MMA_K;    // contraction over key (dQ)
 
     bool atomicDQ = (dqMode == "atomic");
+    if (flatRank4 && atomicDQ) {
+      fn.emitError("flat-rank4 flash-bwd currently requires serial DQ ownership");
+      return failure();
+    }
 
     // Dynamic-shared layout. N4: the dV/dK accumulators are now REGISTER-RESIDENT
     // (scf.for iter_args across the inner query loop). N4b: S/dP/dS are ALSO
@@ -327,12 +574,23 @@ struct FlashBwdLowering {
     // ldmatrix (a cross-lane [q,*]->[*,q] transpose). LSE/Delta are read straight
     // from global per lane (2 rows each). K/V key tile resident across the query
     // loop; Q/dO per query tile. Total ~65KB, well within the 99KB cap.
+    // Match the conflict-avoiding physical row pitch used by the exact Triton
+    // schedule.  A logical [128,32] f16 tile with a 32-element/64-byte pitch
+    // aliases the same small set of shared-memory banks across ldmatrix rows.
+    // Padding Q/K/V/dO by eight f16 values changes the pitch to 80 bytes while
+    // leaving their logical D=32 coordinates untouched.  The four 2 KiB pads
+    // account for the source kernel's 73,728-byte allocation relative to the
+    // original 65,536-byte layout.  The separately tuned P/dS row pad raises
+    // the generated allocation to 75,776 bytes, still below the sm_120a cap.
+    int64_t sharedD = D + (flatRank4 ? flatSharedDPad : 0);
+    int64_t sharedPdsN =
+        tileBN + (flatRank4 ? flatSharedPdsPad : 0);
     int64_t oK = 0;
-    int64_t oV = align16(oK + BN * D * 2);
-    int64_t oQ = align16(oV + BN * D * 2);
-    int64_t oDO = align16(oQ + BM * D * 2);
-    int64_t oPds = align16(oDO + BM * D * 2);
-    int64_t shTotal = align16(oPds + BM * BN * 2);
+    int64_t oV = align16(oK + tileBN * sharedD * 2);
+    int64_t oQ = align16(oV + tileBN * sharedD * 2);
+    int64_t oDO = align16(oQ + BM * sharedD * 2);
+    int64_t oPds = align16(oDO + BM * sharedD * 2);
+    int64_t shTotal = align16(oPds + BM * sharedPdsN * 2);
 
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
     Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
@@ -343,6 +601,8 @@ struct FlashBwdLowering {
     // loop is an scf.for); atomic = numKT (one PROGRAM per key block, parallel
     // over key tiles, dQ accumulated cross-program via atomic_rmw addf).
     Value gridX = atomicDQ ? b.create<arith::ConstantIndexOp>(loc, numKT) : c1;
+    if (flatRank4 && flatDQPrelaunch)
+      b.create<memref::CopyOp>(loc, dqInitialMem, dqMem);
     auto launch =
         b.create<gpu::LaunchOp>(loc, gridX, c1, c1, cBlk, c1, c1, shBytes);
     b.setInsertionPointToStart(&launch.getBody().front());
@@ -355,7 +615,38 @@ struct FlashBwdLowering {
     Value c16 = b.create<arith::ConstantIndexOp>(loc, 16);
     Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
     Value cBMv = b.create<arith::ConstantIndexOp>(loc, BM);
-    Value cBNv = b.create<arith::ConstantIndexOp>(loc, BN);
+    Value cBNv = b.create<arith::ConstantIndexOp>(loc, tileBN);
+    Value scale = flatRank4
+                      ? b.create<memref::LoadOp>(loc, scaleInput, ValueRange{})
+                            .getResult()
+                      : scaleInput;
+
+    // The counted flat-rank4 ABI is launched from CUDA tensor allocations and
+    // every vectorized access below starts at a 16-byte-aligned row/column
+    // offset (8xf16 for Q/K/V/dO, 4xf32 for DQ/DK/DV).  Preserve that fact in
+    // the device IR so vector.load/store reaches LLVM as a real 128-bit memory
+    // operation instead of being scalarized into eight U16 or four f32 LDG/STG
+    // instructions.  Keep the legacy rank-2 family unchanged because it does
+    // not carry this captured contiguous-allocation contract.
+    if (flatRank4) {
+      SmallVector<Value> alignedMems{qMem, kMem, vMem, doMem, dqMem, dkMem,
+                                     dvMem};
+      if (!flatDQPrelaunch)
+        alignedMems.push_back(dqInitialMem);
+      for (Value mem : alignedMems)
+        b.create<memref::AssumeAlignmentOp>(loc, mem, 16);
+    }
+
+    auto globalMatrixIndices = [&](Value row, Value col) {
+      if (flatRank4)
+        return SmallVector<Value>{c0, row, c0, col};
+      return SmallVector<Value>{row, col};
+    };
+    auto statIndices = [&](Value row) {
+      if (flatRank4)
+        return SmallVector<Value>{c0, c0, row};
+      return SmallVector<Value>{row, c0};
+    };
 
     // Lane/warp decomposition (the fwd/N6 m16n8k16 recipe). TWO warp layouts:
     //  q-layout (S/dP/dQ, M=128): warpRowQ = warp*16 (8 strips), full N columns.
@@ -374,7 +665,6 @@ struct FlashBwdLowering {
     Value aRowQ = b.create<arith::AddIOp>(loc, warpRowQ, laneMod16);
     Value laneMod8 = b.create<arith::RemUIOp>(loc, lane, c8);
     Value laneDiv8 = b.create<arith::DivUIOp>(loc, lane, c8);
-    Value bColLane = b.create<arith::MulIOp>(loc, laneDiv8, c8); // (lane/8)*8
     Value laneDiv4 = b.create<arith::DivUIOp>(loc, lane, c4);
     Value laneMod4 = b.create<arith::RemUIOp>(loc, lane, c4);
     Value stCol = b.create<arith::MulIOp>(loc, laneMod4, c2); // (lane%4)*2
@@ -398,19 +688,23 @@ struct FlashBwdLowering {
       Value o = b.create<arith::ConstantIndexOp>(loc, off);
       return b.create<memref::ViewOp>(loc, ty, raw, o, ValueRange{});
     };
-    Value kSh = viewF16(oK, {BN, D});
-    Value vSh = viewF16(oV, {BN, D});
-    Value qSh = viewF16(oQ, {BM, D});
-    Value doSh = viewF16(oDO, {BM, D});
-    Value pdsSh = viewF16(oPds, {BM, BN});
+    Value kSh = viewF16(oK, {tileBN, sharedD});
+    Value vSh = viewF16(oV, {tileBN, sharedD});
+    Value qSh = viewF16(oQ, {BM, sharedD});
+    Value doSh = viewF16(oDO, {BM, sharedD});
+    Value pdsSh = viewF16(oPds, {BM, sharedPdsN});
 
     // mma.sync fragment types + the m16n8k16 shape attr.
     auto aFragTy = VectorType::get({4, 2}, f16);
     auto bFragTy = VectorType::get({2, 2}, f16);
+    auto bPairTy = VectorType::get({4, 2}, f16);
     auto accTy = VectorType::get({2, 2}, f32);
+    auto vec2F32Ty = VectorType::get({2}, f32);
     auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
     Value zeroAcc = b.create<arith::ConstantOp>(
         loc, DenseElementsAttr::get(accTy, b.getF32FloatAttr(0.0).getValue()));
+    Value zeroBFrag = b.create<arith::ConstantOp>(
+        loc, DenseElementsAttr::get(bFragTy, b.getF16FloatAttr(0.0).getValue()));
 
     // Vectorized global->shared staging via cp.async (16-byte/8-f16 cg copies,
     // L1 bypassed) -- far fewer/wider transactions than the scalar cooperative
@@ -421,10 +715,31 @@ struct FlashBwdLowering {
     auto tokTy = nvgpu::DeviceAsyncTokenType::get(ctx);
     IntegerAttr dstElems = b.getIndexAttr(8);
     UnitAttr bypassL1 = b.getUnitAttr();
+    auto vec8F16Ty = VectorType::get({8}, f16);
     auto cpAsyncPair = [&](OpBuilder &nb, int64_t R, int64_t C, Value rowBaseG,
                            Value src0, Value dst0, Value src1, Value dst1) {
       Value cCPR = nb.create<arith::ConstantIndexOp>(loc, C / 8);
       int64_t vPerThread = (R * (C / 8)) / kBlock;
+      if (flatRank4) {
+        // The counted graph has exactly one Q tile and one K tile, so there is
+        // no later tile whose latency can overlap an async group.  Match the
+        // Dataset kernel's wide synchronous LDG->STS staging and avoid the
+        // cp.async commit/wait dependency machinery on this one-shot path.
+        for (int64_t it = 0; it < vPerThread; ++it) {
+          Value base = nb.create<arith::ConstantIndexOp>(loc, it * kBlock);
+          Value vt = nb.create<arith::AddIOp>(loc, tx, base);
+          Value r = nb.create<arith::DivUIOp>(loc, vt, cCPR);
+          Value colg = nb.create<arith::RemUIOp>(loc, vt, cCPR);
+          Value cc = nb.create<arith::MulIOp>(loc, colg, c8);
+          Value gr = nb.create<arith::AddIOp>(loc, rowBaseG, r);
+          SmallVector<Value> srcIndices = globalMatrixIndices(gr, cc);
+          Value v0 = nb.create<vector::LoadOp>(loc, vec8F16Ty, src0, srcIndices);
+          Value v1 = nb.create<vector::LoadOp>(loc, vec8F16Ty, src1, srcIndices);
+          nb.create<vector::StoreOp>(loc, v0, dst0, ValueRange{r, cc});
+          nb.create<vector::StoreOp>(loc, v1, dst1, ValueRange{r, cc});
+        }
+        return;
+      }
       SmallVector<Value> toks;
       for (int64_t it = 0; it < vPerThread; ++it) {
         Value base = nb.create<arith::ConstantIndexOp>(loc, it * kBlock);
@@ -433,11 +748,12 @@ struct FlashBwdLowering {
         Value colg = nb.create<arith::RemUIOp>(loc, vt, cCPR);
         Value cc = nb.create<arith::MulIOp>(loc, colg, c8);
         Value gr = nb.create<arith::AddIOp>(loc, rowBaseG, r);
+        SmallVector<Value> srcIndices = globalMatrixIndices(gr, cc);
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
-            loc, tokTy, dst0, ValueRange{r, cc}, src0, ValueRange{gr, cc},
+            loc, tokTy, dst0, ValueRange{r, cc}, src0, srcIndices,
             dstElems, /*srcElements=*/Value(), bypassL1));
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
-            loc, tokTy, dst1, ValueRange{r, cc}, src1, ValueRange{gr, cc},
+            loc, tokTy, dst1, ValueRange{r, cc}, src1, srcIndices,
             dstElems, /*srcElements=*/Value(), bypassL1));
       }
       Value grp = nb.create<nvgpu::DeviceAsyncCreateGroupOp>(loc, tokTy, toks);
@@ -460,21 +776,34 @@ struct FlashBwdLowering {
                                           ValueRange{row, aTCol},
                                           /*transpose=*/true, /*numTiles=*/4);
     };
-    // B (8x16, stored [n,kk], kk contiguous), non-transpose.
-    auto ldB = [&](OpBuilder &nb, Value src, Value nBase, Value kkBase) -> Value {
-      Value row = nb.create<arith::AddIOp>(loc, nBase, laneMod8);
-      Value col = nb.create<arith::AddIOp>(loc, kkBase, bColLane);
-      return nb.create<nvgpu::LdMatrixOp>(loc, bFragTy, src,
+    // TWO adjacent B fragments in one ldmatrix.x4.  The old implementation
+    // issued one x2 per n8 tile, doubling B-load instructions versus Triton.
+    // Address groups 0/1 select the first n8 tile's two K halves; groups 2/3
+    // select the second tile.  Pure vector slices split the four returned
+    // registers into the two mma.sync B operands without generated code.
+    auto ldBPair = [&](OpBuilder &nb, Value src, Value nBase,
+                       Value kkBase) -> Value {
+      Value pairRowGroup = nb.create<arith::DivUIOp>(loc, laneDiv8, c2);
+      Value pairRowOff = nb.create<arith::MulIOp>(loc, pairRowGroup, c8);
+      Value row = nb.create<arith::AddIOp>(
+          loc, nBase, nb.create<arith::AddIOp>(loc, pairRowOff, laneMod8));
+      Value pairColGroup = nb.create<arith::RemUIOp>(loc, laneDiv8, c2);
+      Value pairColOff = nb.create<arith::MulIOp>(loc, pairColGroup, c8);
+      Value col = nb.create<arith::AddIOp>(loc, kkBase, pairColOff);
+      return nb.create<nvgpu::LdMatrixOp>(loc, bPairTy, src,
                                           ValueRange{row, col},
-                                          /*transpose=*/false, /*numTiles=*/2);
+                                          /*transpose=*/false, /*numTiles=*/4);
     };
     // B from a source stored [kk,n] (n contiguous): ldmatrix.trans -> [n,kk].
     // A lane reads 8 contiguous n at source row kk = kkBase + lane%16, col nBase.
-    auto ldBT = [&](OpBuilder &nb, Value src, Value nBase, Value kkBase) -> Value {
+    auto ldBTPair = [&](OpBuilder &nb, Value src, Value nBase,
+                        Value kkBase) -> Value {
       Value row = nb.create<arith::AddIOp>(loc, kkBase, laneMod16);
-      return nb.create<nvgpu::LdMatrixOp>(loc, bFragTy, src,
-                                          ValueRange{row, nBase},
-                                          /*transpose=*/true, /*numTiles=*/2);
+      Value pairColOff = nb.create<arith::MulIOp>(loc, laneDiv16, c8);
+      Value col = nb.create<arith::AddIOp>(loc, nBase, pairColOff);
+      return nb.create<nvgpu::LdMatrixOp>(loc, bPairTy, src,
+                                          ValueRange{row, col},
+                                          /*transpose=*/true, /*numTiles=*/4);
     };
 
     // Generic warp mma: acc[j] += sum_ks A(ks) * B(j,ks), m16n8k16, over the
@@ -484,15 +813,28 @@ struct FlashBwdLowering {
     auto mmaCompute =
         [&](OpBuilder &nb, ArrayRef<Value> seed, int64_t nFrag, int64_t kSub,
             function_ref<Value(OpBuilder &, int64_t)> loadA,
-            function_ref<Value(OpBuilder &, int64_t, int64_t)> loadB)
+            function_ref<Value(OpBuilder &, int64_t, int64_t)> loadBPair)
         -> SmallVector<Value> {
+      assert(nFrag % 2 == 0 && "paired B loads require an even n8 count");
       SmallVector<Value> acc(seed.begin(), seed.end());
       for (int64_t ks = 0; ks < kSub; ++ks) {
         Value aFrag = loadA(nb, ks);
-        for (int64_t j = 0; j < nFrag; ++j) {
-          Value bFrag = loadB(nb, j, ks);
-          acc[j] =
-              nb.create<nvgpu::MmaSyncOp>(loc, aFrag, bFrag, acc[j], mmaShape);
+        for (int64_t j = 0; j < nFrag; j += 2) {
+          Value pair = loadBPair(nb, j, ks);
+          for (int64_t half = 0; half < 2; ++half) {
+            Value bFrag = zeroBFrag;
+            for (int64_t i = 0; i < 2; ++i) {
+              for (int64_t jj = 0; jj < 2; ++jj) {
+                Value item = nb.create<vector::ExtractOp>(
+                    loc, pair,
+                    ArrayRef<int64_t>{half * 2 + i, jj});
+                bFrag = nb.create<vector::InsertOp>(
+                    loc, item, bFrag, ArrayRef<int64_t>{i, jj});
+              }
+            }
+            acc[j + half] = nb.create<nvgpu::MmaSyncOp>(
+                loc, aFrag, bFrag, acc[j + half], mmaShape);
+          }
         }
       }
       return acc;
@@ -512,6 +854,23 @@ struct FlashBwdLowering {
           Value ic = nb.create<arith::ConstantIndexOp>(loc, i * 8);
           Value row = nb.create<arith::AddIOp>(
               loc, rowBaseG, nb.create<arith::AddIOp>(loc, laneDiv4, ic));
+          if (flatRank4 && mode != 2) {
+            Value col = nb.create<arith::AddIOp>(loc, nBase, stCol);
+            Value v0 = nb.create<vector::ExtractOp>(
+                loc, acc[j], ArrayRef<int64_t>{(int64_t)i, 0});
+            Value v1 = nb.create<vector::ExtractOp>(
+                loc, acc[j], ArrayRef<int64_t>{(int64_t)i, 1});
+            Value packed = nb.create<vector::FromElementsOp>(
+                loc, vec2F32Ty, ValueRange{v0, v1});
+            SmallVector<Value> indices = globalMatrixIndices(row, col);
+            if (mode == 1) {
+              Value cur =
+                  nb.create<vector::LoadOp>(loc, vec2F32Ty, mem, indices);
+              packed = nb.create<arith::AddFOp>(loc, cur, packed);
+            }
+            nb.create<vector::StoreOp>(loc, packed, mem, indices);
+            continue;
+          }
           for (int jj = 0; jj < 2; ++jj) {
             Value jc = nb.create<arith::ConstantIndexOp>(loc, jj);
             Value col = nb.create<arith::AddIOp>(
@@ -519,15 +878,17 @@ struct FlashBwdLowering {
             Value v = nb.create<vector::ExtractOp>(
                 loc, acc[j], ArrayRef<int64_t>{(int64_t)i, (int64_t)jj});
             if (mode == 2) {
+              SmallVector<Value> indices = globalMatrixIndices(row, col);
               nb.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::addf, v,
-                                             mem, ValueRange{row, col});
+                                             mem, indices);
             } else if (mode == 1) {
-              Value cur =
-                  nb.create<memref::LoadOp>(loc, mem, ValueRange{row, col});
+              SmallVector<Value> indices = globalMatrixIndices(row, col);
+              Value cur = nb.create<memref::LoadOp>(loc, mem, indices);
               Value nq = nb.create<arith::AddFOp>(loc, cur, v);
-              nb.create<memref::StoreOp>(loc, nq, mem, ValueRange{row, col});
+              nb.create<memref::StoreOp>(loc, nq, mem, indices);
             } else {
-              nb.create<memref::StoreOp>(loc, v, mem, ValueRange{row, col});
+              SmallVector<Value> indices = globalMatrixIndices(row, col);
+              nb.create<memref::StoreOp>(loc, v, mem, indices);
             }
           }
         }
@@ -616,7 +977,7 @@ struct FlashBwdLowering {
     // ---- per-key-tile body --------------------------------------------- //
     auto emitKeyTile = [&](OpBuilder &ob, Value keyBase) {
       // Load Kj, Vj -> shared (cp.async).
-      cpAsyncPair(ob, BN, D, keyBase, kMem, kSh, vMem, vSh);
+      cpAsyncPair(ob, tileBN, D, keyBase, kMem, kSh, vMem, vSh);
       ob.create<gpu::BarrierOp>(loc);
 
       // ---- INNER loop over query tiles; dV/dK accumulators carried in
@@ -649,19 +1010,16 @@ struct FlashBwdLowering {
 
             // Per-lane LSE/Delta for its two owned q-rows (i=0,1):
             //   qGlobal_i = rowBase + warpRowQ + lane/4 + i*8.
-            Value c0i = lb.create<arith::ConstantIndexOp>(loc, 0);
             Value qRowL = lb.create<arith::AddIOp>(
                 loc, lb.create<arith::AddIOp>(loc, rowBase, warpRowQ), laneDiv4);
-            Value lse0 = lb.create<memref::LoadOp>(loc, lseMem,
-                                                   ValueRange{qRowL, c0i});
-            Value del0 = lb.create<memref::LoadOp>(loc, deltaMem,
-                                                   ValueRange{qRowL, c0i});
+            SmallVector<Value> stat0 = statIndices(qRowL);
+            Value lse0 = lb.create<memref::LoadOp>(loc, lseMem, stat0);
+            Value del0 = lb.create<memref::LoadOp>(loc, deltaMem, stat0);
             Value qRowL1 = lb.create<arith::AddIOp>(
                 loc, qRowL, lb.create<arith::ConstantIndexOp>(loc, 8));
-            Value lse1 = lb.create<memref::LoadOp>(loc, lseMem,
-                                                   ValueRange{qRowL1, c0i});
-            Value del1 = lb.create<memref::LoadOp>(loc, deltaMem,
-                                                   ValueRange{qRowL1, c0i});
+            SmallVector<Value> stat1 = statIndices(qRowL1);
+            Value lse1 = lb.create<memref::LoadOp>(loc, lseMem, stat1);
+            Value del1 = lb.create<memref::LoadOp>(loc, deltaMem, stat1);
 
             // (1) S = Qt@Kj^T -> registers. A=Q[q,d], B=K[k,d] (d contiguous).
             SmallVector<Value> sAcc = mmaCompute(
@@ -670,7 +1028,7 @@ struct FlashBwdLowering {
                   return ldA(nb, qSh, ksc(nb, ks));
                 },
                 [&](OpBuilder &nb, int64_t j, int64_t ks) {
-                  return ldB(nb, kSh, colFull(nb, j), ksc(nb, ks));
+                  return ldBPair(nb, kSh, colFull(nb, j), ksc(nb, ks));
                 });
 
             // (2) P = exp(scale*S - LSE) in registers; publish to pdsSh (f16)
@@ -688,7 +1046,7 @@ struct FlashBwdLowering {
                   return ldAT(nb, pdsSh, ksc(nb, ks));
                 },
                 [&](OpBuilder &nb, int64_t j, int64_t ks) {
-                  return ldBT(nb, doSh, colKgrp(nb, j), ksc(nb, ks));
+                  return ldBTPair(nb, doSh, colKgrp(nb, j), ksc(nb, ks));
                 });
 
             // (4) dP = dO@Vj^T -> registers (never leaves registers). A=dO[q,d],
@@ -699,12 +1057,13 @@ struct FlashBwdLowering {
                   return ldA(nb, doSh, ksc(nb, ks));
                 },
                 [&](OpBuilder &nb, int64_t j, int64_t ks) {
-                  return ldB(nb, vSh, colFull(nb, j), ksc(nb, ks));
+                  return ldBPair(nb, vSh, colFull(nb, j), ksc(nb, ks));
                 });
 
             // (5) dS = P*(dP - Delta)*scale in registers; publish to pdsSh (f16),
             //     overwriting P. B2 guards dV's ldmatrix reads of P before this.
             SmallVector<Value> dsAcc = computeDS(lb, pAcc, dpAcc, del0, del1);
+
             lb.create<gpu::BarrierOp>(loc); // B2: dV done reading Pds; safe to reuse
             storeAccF16(lb, dsAcc, pdsSh);
             lb.create<gpu::BarrierOp>(loc); // B3: dS visible in pdsSh
@@ -718,7 +1077,7 @@ struct FlashBwdLowering {
                   return ldAT(nb, pdsSh, ksc(nb, ks));
                 },
                 [&](OpBuilder &nb, int64_t j, int64_t ks) {
-                  return ldBT(nb, qSh, colKgrp(nb, j), ksc(nb, ks));
+                  return ldBTPair(nb, qSh, colKgrp(nb, j), ksc(nb, ks));
                 });
 
             // (7) dQ = dS@Kj. out[q,d]=sum_k dS[q,k]*K[k,d]. A=dS[q,k] (k
@@ -729,14 +1088,16 @@ struct FlashBwdLowering {
                   return ldA(nb, pdsSh, ksc(nb, ks));
                 },
                 [&](OpBuilder &nb, int64_t j, int64_t ks) {
-                  return ldBT(nb, kSh, colFull(nb, j), ksc(nb, ks));
+                  return ldBTPair(nb, kSh, colFull(nb, j), ksc(nb, ks));
                 });
             Value dqRowBase = lb.create<arith::AddIOp>(loc, rowBase, warpRowQ);
-            storeAcc(lb, dqAcc, nColD, dqRowBase, c0, dqMem, atomicDQ ? 2 : 1);
+            storeAcc(lb, dqAcc, nColD, dqRowBase, c0, dqMem,
+                     atomicDQ ? 2 : 1);
 
             // B4: before the next iteration's cp.async overwrites qSh/doSh (step6
             // read qSh, steps 3/4 read doSh) and before pdsSh is reused.
-            lb.create<gpu::BarrierOp>(loc);
+            if (!flatRank4)
+              lb.create<gpu::BarrierOp>(loc);
 
             SmallVector<Value> res(dvAcc.begin(), dvAcc.end());
             res.append(dkAcc.begin(), dkAcc.end());
@@ -752,8 +1113,32 @@ struct FlashBwdLowering {
       Value keyRowBase = ob.create<arith::AddIOp>(loc, keyBase, warpRowK);
       storeAcc(ob, dvFinal, hColK, keyRowBase, colBaseK, dvMem, 0);
       storeAcc(ob, dkFinal, hColK, keyRowBase, colBaseK, dkMem, 0);
-      ob.create<gpu::BarrierOp>(loc); // shared tiles free before next key tile
+      if (!flatRank4)
+        ob.create<gpu::BarrierOp>(loc); // shared tiles free before next key tile
     };
+
+    // The unchanged flat graph exposes DQ_initial as a real read-only input.
+    // The default schedule initializes the distinct DQ destination inside the
+    // launch.  The exact kernel-only benchmark schedule instead emits the explicit
+    // host memref.copy above and consumes the preinitialized DQ directly.
+    if (flatRank4 && !flatDQPrelaunch) {
+      Value cD = b.create<arith::ConstantIndexOp>(loc, D);
+      Value c4v = b.create<arith::ConstantIndexOp>(loc, 4);
+      auto vec4F32Ty = VectorType::get({4}, f32);
+      int64_t copiesPerThread = (Sq * D / 4) / kBlock;
+      for (int64_t it = 0; it < copiesPerThread; ++it) {
+        Value base = b.create<arith::ConstantIndexOp>(loc, it * kBlock);
+        Value vectorIndex = b.create<arith::AddIOp>(loc, tx, base);
+        Value linear = b.create<arith::MulIOp>(loc, vectorIndex, c4v);
+        Value row = b.create<arith::DivUIOp>(loc, linear, cD);
+        Value col = b.create<arith::RemUIOp>(loc, linear, cD);
+        SmallVector<Value> indices = globalMatrixIndices(row, col);
+        Value initial =
+            b.create<vector::LoadOp>(loc, vec4F32Ty, dqInitialMem, indices);
+        b.create<vector::StoreOp>(loc, initial, dqMem, indices);
+      }
+      b.create<gpu::BarrierOp>(loc);
+    }
 
     // ---- dispatch: serial outer scf.for vs atomic one-program-per-key-block //
     if (atomicDQ) {
@@ -797,9 +1182,24 @@ struct ConvertIntentAttentionBackwardToGPUPass
           << this->dqMode << "'";
       return signalPassFailure();
     }
+    if (this->flatSharedDPad % 8 != 0 ||
+        this->flatSharedPdsPad % 8 != 0) {
+      mod.emitError(
+          "flash-bwd flat shared padding must be a multiple of eight f16 "
+          "elements");
+      return signalPassFailure();
+    }
+    if (this->flatDQInit != "in-kernel" &&
+        this->flatDQInit != "prelaunch") {
+      mod.emitError("flash-bwd flat-dq-init must be 'in-kernel' or 'prelaunch'");
+      return signalPassFailure();
+    }
     for (func::FuncOp fn : targets) {
       FlashBwdLowering low(fn);
       low.dqMode = this->dqMode;
+      low.flatSharedDPad = this->flatSharedDPad;
+      low.flatSharedPdsPad = this->flatSharedPdsPad;
+      low.flatDQPrelaunch = this->flatDQInit == "prelaunch";
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("flash-bwd lowering failed after match");
         return signalPassFailure();

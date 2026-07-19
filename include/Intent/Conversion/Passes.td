@@ -32,11 +32,10 @@ def ConvertIntentRowReductionToGPU
     (keepdims `[M,1]`) — the "row normalization" shape (rms_norm, softmax,
     layer_norm, ...). It rewrites such a func in place to a memref-arg function
     holding a single `gpu.launch`: one block per row, the feature dim split
-    over the block's threads, each thread reading its columns **once** into a
-    private `memref.alloca` cache, one standalone `gpu.all_reduce` per reduce
-    (→ warp `shfl.sync.bfly` + shared-mem on NVIDIA), per-row scalars hoisted
-    once, and the epilogue writing the output from the cache (read-once = HBM
-    parity with the library kernel). This is the verified block-cooperative
+    over the block's threads, each thread reading its columns **once** into an
+    SSA register tile, compact warp/shared reduction groups, per-row scalars
+    hoisted once, and the epilogue writing the output from the register tile
+    (read-once = HBM parity with the library kernel). This is the verified block-cooperative
     path; it is general over the reduce/map DAG (NO per-kernel recognizer).
     Non-matching funcs are left untouched for `convert-intent-to-linalg`.
 
@@ -69,6 +68,28 @@ def ConvertIntentRowReductionToGPU
            "workgroup (dynamic shared) buffer so the normalize epilogue does "
            "not re-read it from HBM. num_tiles==1 (N/T <= tile-cols) keeps the "
            "M1 register-tile path byte-identical.">,
+    Option<"vectorWidth", "vector-width", "unsigned", "0",
+           "Register-path contiguous memory width: 0 = structurally selected "
+           "auto, 1 = force scalar coalesced loads/stores, 4 = require legal "
+           "four-lane Row/Col loads and Row stores (vector<4xf32> or "
+           "vector<4xf16/bf16>). This is a Layer-C candidate axis; unsupported "
+           "forced-vector graphs fail closed.">,
+    Option<"fuseFma", "fuse-fma", "bool", "false",
+           "Emit explicit f32 math.fma for single-use mul+add epilogues and "
+           "sum-of-products reduction accumulation. Disabled by default; an "
+           "offline Layer-C candidate may enable it and must pass P6 before "
+           "performance selection.">,
+    Option<"deferEpilogueColLoads", "defer-epilogue-col-loads", "bool", "true",
+           "Delay epilogue-only contiguous Col loads until after all row "
+           "collectives, reducing cross-barrier register pressure. Set false "
+           "to preload them before the reduction so small register-resident "
+           "rows can overlap global-memory latency with the collective. This "
+           "is a Layer-C candidate and must independently pass P6.">,
+    Option<"enableSortedPrefix", "enable-sorted-prefix", "bool", "true",
+           "Enable the B-certified descending sparsemax early-stop fast path. "
+           "Set false to force the general scan/reduction implementation for "
+           "the same Intent graph, providing an independently executable "
+           "generic correctness fallback.">,
   ];
 }
 
@@ -82,10 +103,16 @@ def ConvertIntentElementwiseToGPU
     `intent.reduce` — pure elementwise activations (dyt = tanh(alpha*x)*gamma,
     swiglu = (a*sigmoid(a))*b, geglu = the tanh-approx GELU gate * b). It
     rewrites such a func in place to a memref-arg function holding a single
-    `gpu.launch`: one block per row, the feature dim split over the block's
-    threads, each thread reading its columns **once** into SSA registers
+    `gpu.launch`: normally one block per row, the feature dim split over the
+    block's threads, each thread reading its columns **once** into SSA registers
     (read-once = HBM parity with the library kernel), per-row scalars hoisted
     once, and a multi-output epilogue writing each result from the register tile.
+    Contiguous strips use vector<4xf32> when divisible by four, otherwise
+    vector<2xf32> when divisible by two; scalar lowering remains the fallback.
+    A fail-closed `flatten-contiguous` schedule is available when every tensor
+    input/result is an equal-shape contiguous Row value and there are no
+    Col/broadcast/indexed views: it maps the complete tensor as one linear vec4
+    domain, reducing block count without changing the normalized op DAG.
     There is NO `gpu.all_reduce` — nothing is reduced. General over the map DAG
     (NO per-kernel recognizer); the two passes' match() predicates are disjoint
     (this pass returns failure on ANY reduce; row-reduction returns failure with
@@ -95,6 +122,10 @@ def ConvertIntentElementwiseToGPU
     the device pipeline (`lower_memref_module_to_kernels`), bypassing
     bufferization. Transcendentals (`math.exp`/`math.tanh`/...) are rewritten to
     NVVM approx intrinsics by the `-lower-gpu-math-to-nvvm` target peephole.
+    Rank-2 f16/bf16 results and Row inputs use half storage with per-map f32
+    computation (`extf` before the scalar op, `truncf` at that op's declared
+    result boundary), preserving typed intermediate rounding. Mixed f32
+    Col/Scalar broadcasts are admitted without changing the result storage type.
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
@@ -110,6 +141,12 @@ def ConvertIntentElementwiseToGPU
            "Threads per block (block size over the feature dim); 0 = auto "
            "(largest power-of-two <= min(N,256) dividing N). The PK harness "
            "passes the library kernel's geometry.">,
+    Option<"flattenContiguous", "flatten-contiguous", "bool", "false",
+           "Map an admitted equal-shape contiguous Row-only graph over one "
+           "linear vec4 domain instead of launching one block per row.">,
+    Option<"flatVectorWidth", "flat-vector-width", "unsigned", "4",
+           "Vector width for flatten-contiguous (2 or 4). Ignored by the "
+           "default row schedule.">,
   ];
 }
 
@@ -643,8 +680,8 @@ def ConvertIntentContractionToGPUMMA
   let description = [{
     The `nvgpu.mma.sync` sibling of `convert-intent-contraction-to-gpu` (which
     uses the opaque `gpu.subgroup_mma_*` / `!gpu.mma_matrix` WMMA path). Same
-    recognizer (one `intent.contraction{"mk,nk->mn"}`, A[M,K] f16, W[N,K] f16 ->
-    Y[M,N] f32, optional bias+activation epilogue) and the SAME cp.async
+    recognizer (one `intent.contraction{"mk,nk->mn"}`, matching A/W storage in
+    f16 or bf16 -> Y[M,N] f32, optional bias+activation epilogue) and the SAME cp.async
     multistage staging, but the contraction is realized by the register-level
     `nvgpu.ldmatrix` (shared->register warp-cooperative fragment load) +
     `nvgpu.mma.sync` (m16n8k16 warp MMA on `vector<...>` fragments with a KNOWN
@@ -655,14 +692,27 @@ def ConvertIntentContractionToGPUMMA
     Fragment recipe (validated against the MLIR --convert-vector-to-gpu
     use-nvgpu lowering on sm_120a): lane = tid%32, warp = tid/32, each warp owns
     a 16-row strip; A operand `ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]`
-    transpose=false -> vector<4x2xf16>; W operand (natural [N,K] layout, the
+    transpose=false -> vector<4x2xT>; W operand (natural [N,K] layout, the
     "nk" transpose folded into the load) `ldmatrix wSh[n*8 + lane%8, kOff +
-    (lane/8)*8]` transpose=false -> vector<2x2xf16>; the m16n8 f32 accumulator
+    (lane/8)*8]` transpose=false -> vector<2x2xT>, where T is f16 or bf16; the
+    m16n8 f32 accumulator
     stores back with the textbook layout d[i][j] -> row = lane/4 + i*8,
     col = (lane%4)*2 + j. Per-warp accumulator vectors ride the K loop as
     `scf.for` iter_args. Static shapes, M%BM==N%BN==K%BK==0. Run BEFORE
     `convert-intent-to-linalg`; the result goes to the device pipeline
     (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
+
+    The recognizer also consumes the canonical live-linear spelling in which
+    A/W are explicitly widened from their matching 16-bit storage type to f32
+    before the contraction, a same-storage rank-1 bias is widened and added in
+    f32, and two same-storage results return the identical
+    identity preactivation (`C` plus saved activation input). For this exact
+    semantic pattern the known mma.sync lane layout enables a register epilogue:
+    load/widen bias, add in f32, truncate once, and store the same value to both
+    destinations. No f32 accumulator tile is spilled through shared memory.
+    BF16 NVGPU fragments are completed by the target-side LLVM-20 compatibility
+    pass `-lower-bf16-mma-to-nvvm`; other supported activation DAGs retain the
+    generic shared-tile epilogue.
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
@@ -793,21 +843,40 @@ def ConvertIntentLoopContractionToGPU
            "shared 82688->99072 B (less L1), measurably REGRESSING latency. "
            "N=2 is the only depth >1 that still fits the 101376 B optin budget "
            "for D=64 (each extra stage adds BN*D*2*2 = 16384 B).">,
+    Option<"capturedFlatOnly", "captured-flat-only", "bool", /*default=*/"false",
+           "Require the exact flat split-K graph recognizer and reject the "
+           "historical normalized intent.loop form. This makes automatic paper "
+           "selection incapable of claiming the split-K fast-path ID for a "
+           "different fused-attention graph.">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "Query rows per CTA. Must be a positive multiple of the 16-row "
+           "WMMA tile; the block uses block-m/16 consumer warps.">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"64",
+           "Key rows per staged tile. Must be a positive multiple of 16; a "
+           "tail smaller than block-n is zero-filled and logit-masked.">,
+    Option<"fastF32LSELog", "fast-f32-lse-log", "bool", /*default=*/"false",
+           "For an f64 LSE destination whose online-softmax state is f32, "
+           "evaluate log(l) with the native f32 fast path before extending to "
+           "f64. The full f64 polynomial remains the default; this option is a "
+           "paper fast path guarded by strict source-vs-generated P6 checks.">,
   ];
 }
 
 def ConvertIntentFlashMMAToGPU
     : Pass<"convert-intent-flash-mma-to-gpu", "::mlir::ModuleOp"> {
-  let summary = "Lower the fused FlashAttention-forward intent.loop to one "
-                "tensor-core gpu.launch with the online-softmax state "
-                "REGISTER-RESIDENT via nvgpu.mma.sync (the M8c sibling of "
-                "convert-intent-loop-contraction-to-gpu).";
+  let summary = "Lower a fused FlashAttention-forward loop or the live B=H=1 "
+                "flat rank-4 graph to one tensor-core gpu.launch with the "
+                "online-softmax state REGISTER-RESIDENT via nvgpu.mma.sync.";
   let description = [{
     The register-resident `nvgpu.mma.sync` sibling of
     `convert-intent-loop-contraction-to-gpu` (M8a, which round-trips the
-    online-softmax state O/S/P/m/l through dynamic shared). Same recognizer (one
-    `intent.loop` scanning the key axis: carries `m[Sq,1]`, `l[Sq,1]`,
-    `O[Sq,D]`; body = `S=Q@Kj^T` -> online softmax -> `O+=P@Vj`), but the
+    online-softmax state O/S/P/m/l through dynamic shared). It recognizes either
+    one `intent.loop` scanning the key axis (carries `m[Sq,1]`, `l[Sq,1]`,
+    `O[Sq,D]`; body = `S=Q@Kj^T` -> online softmax -> `O+=P@Vj`) or the exact
+    loop-free B=H=1 rank-4 graph emitted by the live FlashAttention P4 path:
+    `bmhd,bnhd->nbhm`, max/sum on axis 0, LSE/TMP, f32-to-f16 P,
+    `nbhm,bnhd->dbhm`, transpose, and f16 Out. The flat matcher is structural,
+    never symbol-name based, and rejects extra mask/bias/tail operations. The
     rewrite keeps O/S/m/l RESIDENT IN REGISTERS so only Q/K/V touch shared:
 
     Per block (BM=BN=64, 4 warps, each warp a 16-row query strip):
@@ -829,10 +898,13 @@ def ConvertIntentFlashMMAToGPU
       global.
 
     Q/K/V f16, accumulators f32. Static shapes, BM=BN=64, D%16==0, Sq%64==0,
-    Sk%64==0, non-causal, rank-2 (no batch/LSE/causal -- those stay on the M8a
-    path). Run BEFORE `convert-intent-to-linalg`; the result goes to the device
-    pipeline (`lower_memref_module_to_kernels` with `scf_to_cf=True`, the scf.for
-    carries vector iter_args). M8a is left 100% intact (separate pass).
+    Sk%64==0. The legacy loop form remains rank-2 and supports the existing
+    optional LSE/causal controls. The live flat form is non-causal B=H=1 and
+    preserves all three destination outputs: Out f16, LSE f32, and TMP=1/l f32;
+    its scale input is a rank-0 f32 memref loaded inside the launch. Run BEFORE
+    `convert-intent-to-linalg`; the result goes to the device pipeline
+    (`lower_memref_module_to_kernels` with `scf_to_cf=True`, the scf.for carries
+    vector iter_args). M8a is left 100% intact (separate pass).
   }];
   let options = [
     Option<"numStages", "num-stages", "unsigned", /*default=*/"2",
@@ -875,10 +947,10 @@ def ConvertIntentFlashMMAToGPU
 def ConvertIntentAttentionBackwardToGPU
     : Pass<"convert-intent-attention-backward-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lower the fused FlashAttention BACKWARD (one intent.loop over "
-                "the query axis carrying dk/dv + 5 contractions + recompute-P) "
+                "the query axis or the live flat rank-4 five-contraction DAG) "
                 "to one tensor-core gpu.launch (serial-DQ).";
   let description = [{
-    Recognizes a `func.func` whose body is the FlashAttention backward as ONE
+    Recognizes either (1) a `func.func` whose body is FlashAttention backward as ONE
     `intent.loop` scanning the QUERY axis (scan inputs Q, dO, LSE, Delta; carries
     the per-key-row gradients `dk[Sk,D]`, `dv[Sk,D]`, init zeros). The body is the
     flash bwd inner block: recompute `P = exp(scale*S - LSE)` from the saved
@@ -890,6 +962,14 @@ def ConvertIntentAttentionBackwardToGPU
         dS =  P*(dP - Delta)*scale               (elementwise)
         dK += dS^T@Q      (`"qk,qd->kd"`)        accumulate into the dk carry
         dQ =  dS@K        (`"qk,kd->qd"`)        scatter-accumulate into DQ[start_m]
+
+    or (2) the unchanged live B=H=1 flat rank-4 DAG with the equivalent
+    `bmhd,bnhd->nbhm` / `nbhm,bmhd->bnhd` / `nbhm,bnhd->bmhd`
+    contractions, explicit f16 round trips for P and dS, and
+    `DQ = DQ_initial + dQ_update`. The flat matcher starts from the three return
+    values and verifies every operation/type; it does not consult a function name
+    or source symbol. Its distinct DQ destination is initialized from the nonzero
+    DQ_initial input inside the same launch before serial accumulation.
 
     The match is STRUCTURAL (the 5 contraction subscripts + the recompute-P
     subtree + the carry shapes), NOT a kernel-name match -- it just happens to be
@@ -916,7 +996,9 @@ def ConvertIntentAttentionBackwardToGPU
     Q/K/V/dO are f16, LSE/Delta/scale and all accumulators are f32. Static shapes,
     BM=128, BN=64, D%16==0, Sq%128==0, Sk%64==0 (non-causal, no bias; tail-mask /
     causal / split-K are documented follow-ups). The pass appends three
-    destination-passing outputs `dQ`, `dK`, `dV` (host pre-zeros DQ). Run BEFORE
+    destination-passing outputs `dQ`, `dK`, `dV`; the legacy loop form expects
+    host-preinitialized DQ, while the flat form copies its explicit DQ_initial
+    input itself. Run BEFORE
     `convert-intent-to-linalg`; the result goes to the device pipeline
     (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
   }];
@@ -942,6 +1024,22 @@ def ConvertIntentAttentionBackwardToGPU
            "parallelism over key blocks. Both modes pre-zero DQ; they compute the "
            "same value modulo the float reassociation of the cross-program adds "
            "(the serial==atomic equivalence gate).">,
+    Option<"flatSharedDPad", "flat-shared-d-pad", "unsigned", /*default=*/"8",
+           "Extra f16 elements in each physical Q/K/V/dO shared-memory row for "
+           "the exact flat-rank4 path. Must be a multiple of eight so every "
+           "logical vector access remains 16-byte aligned; eight matches the "
+           "captured Triton D-tile row pitch.">,
+    Option<"flatSharedPdsPad", "flat-shared-pds-pad", "unsigned", /*default=*/"8",
+           "Extra f16 elements in each physical P/dS scratch row for the exact "
+           "flat-rank4 path. Must be a multiple of eight; the logical [BM,BN] "
+           "tensor and all A/B semantics are unchanged. Eight is the measured "
+           "bank-conflict minimum for the current standard-NVGPU schedule.">,
+    Option<"flatDQInit", "flat-dq-init", "std::string",
+           /*default=*/"\"in-kernel\"",
+           "DQ initialization schedule for the exact flat-rank4 path. "
+           "'in-kernel' copies DQ_initial inside the device launch; 'prelaunch' "
+           "emits an explicit host memref.copy before the launch so kernel-only "
+           "timing matches a baseline whose DQ is initialized before launch.">,
   ];
 }
 
@@ -977,6 +1075,44 @@ def ConvertIntentSplitKReduceToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+  ];
+}
+
+def ConvertIntentSplitKReduceVarargsToGPU
+    : Pass<"convert-intent-splitk-reduce-varargs-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower the exact xFormers four-way split-K varargs merge to a "
+                "stride-aware warp-per-row gpu.launch.";
+  let description = [{
+    Structurally recognizes the live flat Intent graph for xFormers' four-way
+    split-K merge: four independent partial-output tensors and four independent
+    partial-LSE tensors are concatenated on the singleton G axis to form the
+    canonical packed-B contract `[B,4,H,M,D]` / `[B,4,H,M]`; a stable
+    max/exp-weighted merge produces both the transposed destination Out and LSE.
+    Matching is based on operand provenance, concat/reduce axes, result shapes
+    and output structure, never on the function symbol.
+
+    The rewrite preserves the real unrolled runtime ABI rather than replacing it
+    with the legacy H=G=1 packed surrogate: 10 independent pointers followed by
+    all 45 i32 stride arguments. H=4, G=1, D=64 and WRITE_LSE=true are the
+    captured constexpr specialization. Addressing consumes the runtime strides,
+    so non-contiguous views remain semantic inputs. Four warps cooperate per
+    block, one output row per warp, and every lane owns two D elements. The
+    resulting single launch is compiled through the standard GPU/NVVM/PTX/cubin
+    backend. If this structural contract does not match, the pass leaves the
+    function unchanged for the generic `convert-intent-to-linalg` fallback.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::func::FuncDialect",
+  ];
+  let options = [
+    Option<"rowsPerBlock", "rows-per-block", "int64_t", /*default=*/"4",
+           "Number of independent output rows assigned to one block. Must be "
+           "one of 1, 2, 4 or 8; one warp owns each row.">,
   ];
 }
 

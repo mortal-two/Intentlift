@@ -13,10 +13,28 @@ import subprocess
 
 import pytest
 
+import intentir.backend.compile as backend_compile
 from intentir.backend.compile import CUDA_BIN, INTENT_OPT, compile_intent_to_cubin
 
 _ADD = pathlib.Path(__file__).resolve().parents[2] / "test" / "add.mlir"
 _CUOBJDUMP = pathlib.Path(CUDA_BIN) / "cuobjdump"
+
+
+def test_extract_kernels_accepts_dotted_live_symbols(monkeypatch) -> None:
+    binary = r'''
+      gpu.launch_func @paper.flash_attn_kernel::@paper.flash_attn_kernel
+          blocks in (%c1, %c1, %c1) threads in (%c1, %c1, %c1)
+      gpu.binary @paper.flash_attn_kernel [#gpu.object<#nvvm.target<chip = "sm_120a">,
+          properties = {O = 2 : i32}, assembly = ".version 8.7\0A.visible .entry paper.flash_attn_kernel() {}\0A\00">]
+    '''
+    monkeypatch.setattr(backend_compile, "_ptxas", lambda ptx: b"\x7fELF")
+
+    kernels = backend_compile._extract_kernels(binary)
+
+    assert len(kernels) == 1
+    assert kernels[0].binary_name == "paper.flash_attn_kernel"
+    assert kernels[0].kernel_name == "paper.flash_attn_kernel"
+    assert kernels[0].cubin == b"\x7fELF"
 
 
 @pytest.mark.skipif(not pathlib.Path(INTENT_OPT).exists(),

@@ -12,20 +12,23 @@
 // --convert-vector-to-gpu use-nvgpu lowering -- the G4 probe):
 //   lane = tid%32, warp = tid/32; each warp owns a 16-row C strip.
 //   A operand : ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]
-//               transpose=false -> vector<4x2xf16>
+//               transpose=false -> vector<4x2x(f16|bf16)>
 //   W operand : ldmatrix wSh[n*8 + lane%8, kOff + (lane/8)*8]
-//               transpose=false -> vector<2x2xf16>  (natural [N,K] layout, the
+//               transpose=false -> vector<2x2x(f16|bf16)> (natural [N,K], the
 //               "nk" transpose folded into the load -- no transpose-on-copy)
 //   mma.sync m16n8k16 -> vector<2x2xf32> accumulator (per warp, one per n8 col
 //   tile), carried across the K loop as scf.for iter_args.
 //   store     : d[i][j] -> row = warp*16 + lane/4 + i*8,
 //                          col = n*8 + (lane%4)*2 + j   (textbook PTX layout)
 //
-// Static shapes, M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
-// lower_memref_module_to_kernels (the scf.for carries vector iter_args).
+// Static shapes, matching f16/bf16 A/W storage, f32 accumulation, and
+// M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
+// lower_memref_module_to_kernels (the scf.for carries vector iter_args). LLVM
+// 20's missing BF16 NVGPU conversion is supplied by LowerBf16MmaToNVVM.
 //
 // smem-pad-k: the rank-3 A/W staging buffers pad the K leading dim by `padK`
-// f16 (default 8 = one 128-bit lane) so successive ldmatrix rows land on
+// 16-bit elements (default 8 = one 128-bit lane) so successive ldmatrix rows
+// land on
 // distinct shared banks -- the bank-conflict-free analog of wmma_matmul.cuh's
 // AS_PAD/BS_PAD. The 128-bit cp.async copies fill only the first BK columns of
 // each padded row; the memref stride carries the pad transparently. At the
@@ -53,6 +56,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace intent {
@@ -73,7 +77,7 @@ struct ContractionMMALowering {
   func::FuncOp fn;
   int numStages;
   int64_t reqBM, reqBN, reqBK;
-  int64_t padK; // f16 padding on the smem K-tile leading dim (bank conflicts).
+  int64_t padK; // 16-bit padding on the smem K-tile leading dim.
 
   int64_t BM = 64, BN = 128;
   int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles); autotuner knob.
@@ -81,9 +85,11 @@ struct ContractionMMALowering {
   int64_t M = 0, N = 0, K = 0;
   unsigned aArgIdx = 0, wArgIdx = 0;
   ContractionOp con;
-  Type f16, f32;
-  Value retVal;
+  Type inputStorageType, f32;
+  SmallVector<Value> retVals;
   bool hasEpilogue = false;
+  bool hasRegisterBiasSavedEpilogue = false;
+  unsigned biasArgIdx = 0;
   SmallVector<Role> argRoles;
   DenseMap<Value, Value> argMemref;
 
@@ -92,10 +98,10 @@ struct ContractionMMALowering {
       : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN),
         reqBK(reqBK), padK(padK) {}
 
-  // ---- recognition (identical to the WMMA pass) -------------------------- //
+  // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     auto fty = fn.getFunctionType();
-    if (fty.getNumResults() != 1)
+    if (fty.getNumResults() == 0)
       return failure();
     if (!fn.getBody().hasOneBlock())
       return failure();
@@ -107,8 +113,8 @@ struct ContractionMMALowering {
         if (c)
           return failure();
         c = cc;
-      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, arith::ConstantOp>(
-                     &op)) {
+      } else if (!isa<CastOp, MapUnaryOp, MapBinaryOp, SelectOp,
+                           arith::ConstantOp>(&op)) {
         return failure();
       }
     }
@@ -116,33 +122,63 @@ struct ContractionMMALowering {
       return failure();
     con = c;
     auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
-    if (!ret || ret.getNumOperands() != 1)
+    if (!ret || ret.getNumOperands() == 0 ||
+        ret.getNumOperands() != fty.getNumResults())
       return failure();
-    retVal = ret.getOperand(0);
-    hasEpilogue = retVal != c.getResult();
+    retVals.assign(ret.getOperands().begin(), ret.getOperands().end());
+    hasEpilogue = retVals.size() != 1 || retVals.front() != c.getResult();
     if (c.getSubscripts() != "mk,nk->mn")
       return failure();
 
-    auto aArg = dyn_cast<BlockArgument>(c.getA());
-    auto wArg = dyn_cast<BlockArgument>(c.getB());
+    // Canonical live-linear graphs make an exact f16/bf16->f32 widening
+    // explicit before the contraction. Peel only that lossless cast so the
+    // tensor-core kernel still reads the original 16-bit ABI operands and
+    // accumulates in f32. Direct low-precision operands remain supported.
+    auto peelLowPrecisionInput = [&](Value operand) -> BlockArgument {
+      if (auto arg = dyn_cast<BlockArgument>(operand))
+        return arg;
+      auto castOp = operand.getDefiningOp<CastOp>();
+      if (!castOp)
+        return {};
+      auto srcTy = dyn_cast<RankedTensorType>(castOp.getInput().getType());
+      auto dstTy = dyn_cast<RankedTensorType>(castOp.getResult().getType());
+      if (!srcTy || !dstTy || srcTy.getShape() != dstTy.getShape() ||
+          !isa<Float16Type, BFloat16Type>(srcTy.getElementType()) ||
+          !isa<Float32Type>(dstTy.getElementType()))
+        return {};
+      return dyn_cast<BlockArgument>(castOp.getInput());
+    };
+    auto aArg = peelLowPrecisionInput(c.getA());
+    auto wArg = peelLowPrecisionInput(c.getB());
     if (!aArg || !wArg || aArg.getOwner() != &body || wArg.getOwner() != &body)
       return failure();
     aArgIdx = aArg.getArgNumber();
     wArgIdx = wArg.getArgNumber();
 
-    auto aTy = dyn_cast<RankedTensorType>(c.getA().getType());
-    auto wTy = dyn_cast<RankedTensorType>(c.getB().getType());
+    auto aTy = dyn_cast<RankedTensorType>(aArg.getType());
+    auto wTy = dyn_cast<RankedTensorType>(wArg.getType());
+    auto conATy = dyn_cast<RankedTensorType>(c.getA().getType());
+    auto conWTy = dyn_cast<RankedTensorType>(c.getB().getType());
     auto yTy = dyn_cast<RankedTensorType>(c.getResult().getType());
-    if (!aTy || !wTy || !yTy || !aTy.hasStaticShape() ||
-        !wTy.hasStaticShape() || !yTy.hasStaticShape())
+    if (!aTy || !wTy || !conATy || !conWTy || !yTy ||
+        !aTy.hasStaticShape() || !wTy.hasStaticShape() ||
+        !conATy.hasStaticShape() || !conWTy.hasStaticShape() ||
+        !yTy.hasStaticShape())
       return failure();
     if (aTy.getRank() != 2 || wTy.getRank() != 2 || yTy.getRank() != 2)
       return failure();
-    if (!isa<Float16Type>(aTy.getElementType()) ||
-        !isa<Float16Type>(wTy.getElementType()) ||
+    if (!isa<Float16Type, BFloat16Type>(aTy.getElementType()) ||
+        wTy.getElementType() != aTy.getElementType() ||
         !isa<Float32Type>(yTy.getElementType()))
       return failure();
-    f16 = aTy.getElementType();
+    inputStorageType = aTy.getElementType();
+    if (conATy.getShape() != aTy.getShape() ||
+        conWTy.getShape() != wTy.getShape() ||
+        (conATy.getElementType() != inputStorageType &&
+         !isa<Float32Type>(conATy.getElementType())) ||
+        (conWTy.getElementType() != inputStorageType &&
+         !isa<Float32Type>(conWTy.getElementType())))
+      return failure();
     f32 = yTy.getElementType();
 
     M = aTy.getDimSize(0);
@@ -151,6 +187,63 @@ struct ContractionMMALowering {
     if (wTy.getDimSize(1) != K || yTy.getDimSize(0) != M ||
         yTy.getDimSize(1) != N)
       return failure();
+    for (auto [index, value] : llvm::enumerate(retVals)) {
+      auto resultTy = dyn_cast<RankedTensorType>(value.getType());
+      auto declaredTy = dyn_cast<RankedTensorType>(fty.getResult(index));
+      if (!resultTy || !declaredTy || !resultTy.hasStaticShape() ||
+          resultTy != declaredTy || resultTy.getRank() != 2 ||
+          resultTy.getDimSize(0) != M || resultTy.getDimSize(1) != N ||
+          (resultTy.getElementType() != inputStorageType &&
+           resultTy.getElementType() != f32))
+        return failure();
+    }
+
+    // Exact captured fast epilogue: both external low-precision results are
+    // casts of the same f32 (contraction + widened same-storage Col bias) value.
+    // The register-level
+    // mma.sync accumulator has a known lane layout, so this case can add bias,
+    // round once, and store to both destinations directly from registers.  It
+    // avoids the generic activation DAG's full f32 shared spill + barrier while
+    // preserving the unchanged live graph and its saved-activation ABI.
+    if (retVals.size() == 2) {
+      auto firstCast = retVals[0].getDefiningOp<CastOp>();
+      auto secondCast = retVals[1].getDefiningOp<CastOp>();
+      if (firstCast && secondCast &&
+          firstCast.getInput() == secondCast.getInput() &&
+          cast<RankedTensorType>(firstCast.getResult().getType())
+                  .getElementType() == inputStorageType &&
+          cast<RankedTensorType>(secondCast.getResult().getType())
+                  .getElementType() == inputStorageType) {
+        auto add = firstCast.getInput().getDefiningOp<MapBinaryOp>();
+        if (add && add.getFn() == "add") {
+          Value other;
+          if (add.getLhs() == c.getResult())
+            other = add.getRhs();
+          else if (add.getRhs() == c.getResult())
+            other = add.getLhs();
+          auto biasCast = other ? other.getDefiningOp<CastOp>() : CastOp();
+          auto biasArg =
+              biasCast ? dyn_cast<BlockArgument>(biasCast.getInput())
+                       : BlockArgument();
+          auto biasTy = biasArg
+                            ? dyn_cast<RankedTensorType>(biasArg.getType())
+                            : RankedTensorType();
+          auto widenedTy = biasCast
+                               ? dyn_cast<RankedTensorType>(
+                                     biasCast.getResult().getType())
+                               : RankedTensorType();
+          if (biasArg && biasArg.getOwner() == &body && biasTy && widenedTy &&
+              biasTy.hasStaticShape() && biasTy.getRank() == 1 &&
+              biasTy.getDimSize(0) == N &&
+              biasTy.getElementType() == inputStorageType &&
+              widenedTy.getShape() == biasTy.getShape() &&
+              isa<Float32Type>(widenedTy.getElementType())) {
+            hasRegisterBiasSavedEpilogue = true;
+            biasArgIdx = biasArg.getArgNumber();
+          }
+        }
+      }
+    }
 
     // BK must be a positive multiple of the MMA K step (m16n8k16); reject an
     // illegal knob value rather than silently mis-tiling.
@@ -159,6 +252,8 @@ struct ContractionMMALowering {
       return failure();
     BM = reqBM;
     BN = reqBN;
+    if (BM <= 0 || BN <= 0)
+      return failure();
     if (M % BM != 0 || N % BN != 0) {
       BM = 64;
       BN = 64;
@@ -171,11 +266,17 @@ struct ContractionMMALowering {
       return failure();
     if (BM % MMA_M != 0 || BN % MMA_N != 0)
       return failure();
+    // Each thread issues complete 128-bit cp.async packets. A's packet count
+    // is integral because BK is a multiple of MMA_K; require the same for W
+    // rather than silently leaving a suffix of the staged tile uncopied.
+    int64_t copyThreads = (BM / MMA_M) * 32;
+    if (((BN * BK) / 8) % copyThreads != 0)
+      return failure();
 
-    // Padded smem leading dim: shift each K-tile row by padK f16 elements so the
+    // Padded smem leading dim: shift each K-tile row by padK 16-bit elements so
     // ldmatrix reads land on distinct shared-memory banks. padK must be a
-    // multiple of 8 (the cp.async copies are 128-bit = 8 f16 aligned); an
-    // illegal knob just disables padding rather than mis-aligning the copy.
+    // multiple of 8 (one 128-bit cp.async packet); an illegal knob disables
+    // padding rather than misaligning the copy.
     BKs = BK;
     if (padK > 0 && padK % 8 == 0)
       BKs = BK + padK;
@@ -188,7 +289,9 @@ struct ContractionMMALowering {
         continue;
       }
       auto t = dyn_cast<RankedTensorType>(inputs[i]);
-      if (!t || !t.hasStaticShape() || !isa<Float32Type>(t.getElementType()))
+      if (!t || !t.hasStaticShape() ||
+          (t.getElementType() != inputStorageType &&
+           !isa<Float32Type>(t.getElementType())))
         return failure();
       if (t.getRank() == 1 && t.getDimSize(0) == N)
         argRoles[i] = Role::Col;
@@ -222,6 +325,25 @@ struct ContractionMMALowering {
           return b.create<arith::ConstantOp>(
               loc, b.getF32FloatAttr(
                        dense.getSplatValue<APFloat>().convertToDouble()));
+      return nullptr;
+    }
+    if (auto castOp = dyn_cast<CastOp>(def)) {
+      Value source =
+          emitEpilogue(b, loc, castOp.getInput(), cScalar, gcol);
+      if (!source)
+        return nullptr;
+      auto resultTy = cast<RankedTensorType>(castOp.getResult().getType());
+      Type target = resultTy.getElementType();
+      if (source.getType() == target)
+        return source;
+      auto sourceFloat = dyn_cast<FloatType>(source.getType());
+      auto targetFloat = dyn_cast<FloatType>(target);
+      if (!sourceFloat || !targetFloat)
+        return nullptr;
+      if (sourceFloat.getWidth() < targetFloat.getWidth())
+        return b.create<arith::ExtFOp>(loc, target, source);
+      if (sourceFloat.getWidth() > targetFloat.getWidth())
+        return b.create<arith::TruncFOp>(loc, target, source);
       return nullptr;
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
@@ -259,7 +381,10 @@ struct ContractionMMALowering {
       auto t = cast<RankedTensorType>(at);
       inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
     }
-    inTys.push_back(MemRefType::get({M, N}, f32));
+    for (Type resultType : fn.getFunctionType().getResults()) {
+      auto t = cast<RankedTensorType>(resultType);
+      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -272,7 +397,11 @@ struct ContractionMMALowering {
 
     Value aMem = entry->getArgument(aArgIdx);
     Value wMem = entry->getArgument(wArgIdx);
-    Value yMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+    unsigned outputBase = fn.getFunctionType().getNumInputs();
+    SmallVector<Value> outputMems;
+    for (unsigned i = 0; i < fn.getFunctionType().getNumResults(); ++i)
+      outputMems.push_back(entry->getArgument(outputBase + i));
+    Value yMem = outputMems.front();
 
     Block &srcBlock = fn.getBody().front();
     for (unsigned i = 0; i < argRoles.size(); ++i)
@@ -294,7 +423,8 @@ struct ContractionMMALowering {
 
     int64_t aBytes = BM * BKs * 2, wBytes = BN * BKs * 2;
     int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
-    int64_t cBytes = hasEpilogue ? BM * BN * 4 : 0;
+    int64_t cBytes =
+        hasEpilogue && !hasRegisterBiasSavedEpilogue ? BM * BN * 4 : 0;
     Value shBytes = b.create<arith::ConstantOp>(
         loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
 
@@ -359,20 +489,22 @@ struct ContractionMMALowering {
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy = MemRefType::get({nStages, BM, BKs}, f16, nullptr, wgSpace);
-    auto wShTy = MemRefType::get({nStages, BN, BKs}, f16, nullptr, wgSpace);
+    auto aShTy =
+        MemRefType::get({nStages, BM, BKs}, inputStorageType, nullptr, wgSpace);
+    auto wShTy =
+        MemRefType::get({nStages, BN, BKs}, inputStorageType, nullptr, wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
     Value cSh;
-    if (hasEpilogue) {
+    if (hasEpilogue && !hasRegisterBiasSavedEpilogue) {
       auto cShTy = MemRefType::get({BM, BN}, f32, nullptr, wgSpace);
       Value cOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes + wAllBytes);
       cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
     }
 
-    auto aFragTy = VectorType::get({4, 2}, f16);
-    auto wFragTy = VectorType::get({2, 2}, f16);
+    auto aFragTy = VectorType::get({4, 2}, inputStorageType);
+    auto wFragTy = VectorType::get({2, 2}, inputStorageType);
     auto accTy = VectorType::get({2, 2}, f32);
     auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
 
@@ -517,6 +649,28 @@ struct ContractionMMALowering {
                    nb.create<memref::StoreOp>(nl, v, yMem, ValueRange{row, col});
                  });
       }
+    } else if (hasRegisterBiasSavedEpilogue) {
+      Value biasMem = entry->getArgument(biasArgIdx);
+      for (int j = 0; j < nFrag; ++j) {
+        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        Value colBase = b.create<arith::AddIOp>(loc, colBlk, nbase);
+        storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
+                 [&](OpBuilder &nb, Location nl, Value v, Value row,
+                     Value col) {
+                   Value biasStorage = nb.create<memref::LoadOp>(
+                       nl, biasMem, ValueRange{col});
+                   Value biasF32 =
+                       nb.create<arith::ExtFOp>(nl, f32, biasStorage);
+                   Value preactivation =
+                       nb.create<arith::AddFOp>(nl, v, biasF32);
+                   Value stored =
+                       nb.create<arith::TruncFOp>(nl, inputStorageType,
+                                                  preactivation);
+                   for (Value output : outputMems)
+                     nb.create<memref::StoreOp>(nl, stored, output,
+                                                ValueRange{row, col});
+                 });
+      }
     } else {
       // Spill the accumulators to the [BM,BN] shared tile, then cooperatively
       // reload + evaluate the bias/activation epilogue + write Y.
@@ -539,10 +693,16 @@ struct ContractionMMALowering {
         Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
         Value gcol = b.create<arith::AddIOp>(loc, colBlk, cc);
         Value grow = b.create<arith::AddIOp>(loc, rowBlk, r);
-        Value out = emitEpilogue(b, loc, retVal, cScalar, gcol);
-        if (!out)
-          return failure();
-        b.create<memref::StoreOp>(loc, out, yMem, ValueRange{grow, gcol});
+        for (unsigned outputIndex = 0; outputIndex < retVals.size();
+             ++outputIndex) {
+          Value out =
+              emitEpilogue(b, loc, retVals[outputIndex], cScalar, gcol);
+          auto outputTy = cast<MemRefType>(outputMems[outputIndex].getType());
+          if (!out || out.getType() != outputTy.getElementType())
+            return failure();
+          b.create<memref::StoreOp>(loc, out, outputMems[outputIndex],
+                                    ValueRange{grow, gcol});
+        }
       }
     }
 

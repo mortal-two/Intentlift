@@ -27,6 +27,20 @@ func.func @rsum(%x: tensor<4x8xf32>) -> tensor<4xf32> {
 
 // -----
 
+// A reduction over an early source axis is reordered to parallel-first loop
+// space.  This prevents an outer host scf.for around gpu.launch after the
+// generic CUDA pipeline; N remains the inner in-kernel reduction iterator.
+// CHECK-LABEL: func.func @rmax_axis0_rank4
+// CHECK: linalg.generic
+// CHECK-SAME: iterator_types = ["parallel", "parallel", "parallel", "reduction"]
+// CHECK: arith.maxnumf
+func.func @rmax_axis0_rank4(%x: tensor<128x1x1x128xf32>) -> tensor<1x1x128xf32> {
+  %m = intent.reduce %x {fn = "max", axes = [0], assoc = "associative"} : (tensor<128x1x1x128xf32>) -> tensor<1x1x128xf32>
+  return %m : tensor<1x1x128xf32>
+}
+
+// -----
+
 // reduce{max} over ALL axes with keepdims (result [1x1], every dim reduced).
 // C2b cubin fix: a naive all-reduction generic (all "reduction" iterators, no
 // parallel dim) is valid MLIR but stays a HOST scf.for nest — the GPU pipeline
@@ -99,4 +113,51 @@ func.func @rmin(%x: tensor<17xf32>) -> tensor<f32> {
 func.func @rprod(%x: tensor<17xf32>) -> tensor<f32> {
   %p = intent.reduce %x {fn = "prod", axes = [0], assoc = "float_nondeterministic"} : (tensor<17xf32>) -> tensor<f32>
   return %p : tensor<f32>
+}
+
+// -----
+
+// Integer reductions are needed by real Triton kernels such as count_nonzero:
+// compare -> cast i1 to i64 -> reduce{sum}. They must lower to integer arith,
+// not remain as a residual intent.reduce.
+// CHECK-LABEL: func.func @rsum_i64
+// CHECK: arith.constant 0 : i64
+// CHECK: linalg.generic
+// CHECK: arith.addi
+// CHECK-NOT: intent.reduce
+func.func @rsum_i64(%x: tensor<4x17xi64>) -> tensor<4xi64> {
+  %s = intent.reduce %x {fn = "sum", axes = [1], assoc = "associative"} : (tensor<4x17xi64>) -> tensor<4xi64>
+  return %s : tensor<4xi64>
+}
+
+// -----
+
+// Integer extrema use signed semantics consistently for both the identity and
+// combiner. This also exercises identities wider than a host double can encode.
+// CHECK-LABEL: func.func @rmax_i64
+// CHECK: arith.constant -9223372036854775808 : i64
+// CHECK: arith.maxsi
+func.func @rmax_i64(%x: tensor<17xi64>) -> tensor<i64> {
+  %m = intent.reduce %x {fn = "max", axes = [0], assoc = "associative"} : (tensor<17xi64>) -> tensor<i64>
+  return %m : tensor<i64>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @rmin_i32
+// CHECK: arith.constant 2147483647 : i32
+// CHECK: arith.minsi
+func.func @rmin_i32(%x: tensor<17xi32>) -> tensor<i32> {
+  %m = intent.reduce %x {fn = "min", axes = [0], assoc = "associative"} : (tensor<17xi32>) -> tensor<i32>
+  return %m : tensor<i32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @rprod_i32
+// CHECK: arith.constant 1 : i32
+// CHECK: arith.muli
+func.func @rprod_i32(%x: tensor<17xi32>) -> tensor<i32> {
+  %p = intent.reduce %x {fn = "prod", axes = [0], assoc = "associative"} : (tensor<17xi32>) -> tensor<i32>
+  return %p : tensor<i32>
 }

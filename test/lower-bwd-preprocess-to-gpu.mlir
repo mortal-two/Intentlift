@@ -5,7 +5,7 @@
 // row-reduction pass: all-PerRowOut funcs are accepted (no RowOut required) and
 // N is derived from a Row INPUT (here o : [M,N]) instead of a RowOut result. The
 // reduce result is rank-1 [M] (flash's collapsed delta layout). The cooperative
-// register-tile read-once + gpu.all_reduce ...add + thread-0 scalar write into a
+// register-tile read-once + gpu.all_reduce add + thread-0 scalar write into a
 // rank-1 memref<Mxf32> are exactly the existing machinery. M=4, N=8, T=4.
 // CHECK-LABEL: func.func @bwd_preprocess(
 // CHECK-SAME:    %{{.*}}: memref<4x8xf32>, %{{.*}}: memref<4x8xf32>, %{{.*}}: memref<4xf32>)

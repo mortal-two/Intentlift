@@ -107,6 +107,15 @@ class LoopStateBinding:
         }
         return getattr(self, aliases.get(key, key))
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dictionary-style compatibility without weakening the typed model."""
+
+        aliases = {
+            "name": "body_argument",
+            "init": "init_value",
+        }
+        return getattr(self, aliases.get(key, key), default)
+
 
 @dataclass
 class LoopTrip:

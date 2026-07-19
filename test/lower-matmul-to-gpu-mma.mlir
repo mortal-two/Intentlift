@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-contraction-to-gpu-mma %s | FileCheck %s
+// RUN: intent-opt -convert-intent-contraction-to-gpu-mma='num-stages=5 block-m=16 block-n=32 block-k=32 smem-pad-k=8' %s | FileCheck %s --check-prefix=LIVE
 
 // The nvgpu.ldmatrix + nvgpu.mma.sync sibling of -convert-intent-contraction-
 // to-gpu. Same recognizer ("mk,nk->mn", A/W f16 -> Y f32) and the same cp.async
@@ -66,4 +67,60 @@ func.func @linear_sqrelu(%A: tensor<128x64xf16>, %W: tensor<256x64xf16>,
   %sq = intent.map_binary %r, %r {fn = "mul"}
       : (tensor<128x256xf32>, tensor<128x256xf32>) -> tensor<128x256xf32>
   return %sq : tensor<128x256xf32>
+}
+
+// -----
+
+// Captured flash-attn linear variant: the unchanged live graph widens the f16
+// A/W/bias ABI to f32 explicitly, accumulates/adds in f32, then returns TWO f16
+// destinations (C and the saved pre-activation ACT_INPUT).  The structural pass
+// must peel only the exact input widenings, preserve the f16 destination ABI,
+// and write both results from the same tensor-core launch.
+// CHECK-LABEL: func.func @linear_live_saved(
+// CHECK-SAME:    %{{.*}}: memref<128x256xf16>, %{{.*}}: memref<512x256xf16>, %{{.*}}: memref<512xf16>, %{{.*}}: memref<128x512xf16>, %{{.*}}: memref<128x512xf16>)
+// CHECK:         gpu.launch
+// CHECK:         nvgpu.mma.sync
+// CHECK:         arith.extf
+// CHECK:         arith.addf
+// CHECK:         arith.truncf
+// CHECK:         memref.store
+// CHECK:         memref.store
+// CHECK-NOT:     memref<64x64xf32, #gpu.address_space<workgroup>>
+// CHECK-NOT:     linalg.generic
+// CHECK-NOT:     intent.
+// LIVE-LABEL:    func.func @linear_live_saved(
+// LIVE-SAME:     intent.launch_plan = {block = [32, 1, 1]
+// LIVE-SAME:     grid = [128, 1, 1]
+// LIVE-SAME:     pipeline_depth = 5 : i64
+// LIVE-SAME:     smem = 19200 : i64
+// LIVE:          %c128 = arith.constant 128 : index
+// LIVE:          %c32 = arith.constant 32 : index
+// LIVE:          %c19200_i32 = arith.constant 19200 : i32
+// LIVE:          gpu.launch blocks(
+// LIVE:          nvgpu.mma.sync
+// LIVE:          arith.addf
+// LIVE:          arith.truncf
+// LIVE:          memref.store
+// LIVE:          memref.store
+// LIVE-NOT:      memref<16x32xf32, #gpu.address_space<workgroup>>
+// LIVE-NOT:      intent.
+func.func @linear_live_saved(%A: tensor<128x256xf16>,
+                             %W: tensor<512x256xf16>,
+                             %bias: tensor<512xf16>)
+    -> (tensor<128x512xf16>, tensor<128x512xf16>) {
+  %Af = intent.cast %A {to_dtype = "f32"}
+      : (tensor<128x256xf16>) -> tensor<128x256xf32>
+  %Wf = intent.cast %W {to_dtype = "f32"}
+      : (tensor<512x256xf16>) -> tensor<512x256xf32>
+  %Y = intent.contraction %Af, %Wf {subscripts = "mk,nk->mn"}
+      : (tensor<128x256xf32>, tensor<512x256xf32>) -> tensor<128x512xf32>
+  %bf = intent.cast %bias {to_dtype = "f32"}
+      : (tensor<512xf16>) -> tensor<512xf32>
+  %pre = intent.map_binary %Y, %bf {fn = "add"}
+      : (tensor<128x512xf32>, tensor<512xf32>) -> tensor<128x512xf32>
+  %saved = intent.cast %pre {to_dtype = "f16"}
+      : (tensor<128x512xf32>) -> tensor<128x512xf16>
+  %out = intent.cast %pre {to_dtype = "f16"}
+      : (tensor<128x512xf32>) -> tensor<128x512xf16>
+  return %out, %saved : tensor<128x512xf16>, tensor<128x512xf16>
 }

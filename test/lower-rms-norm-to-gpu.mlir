@@ -13,7 +13,8 @@
 // CHECK-NOT:     scf.for
 // CHECK:         memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
 // CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         math.sqrt
+// CHECK:         math.rsqrt
+// CHECK-NOT:     math.sqrt
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.

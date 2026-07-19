@@ -3,7 +3,7 @@
 // layer_norm (centered variance, multi-output): two sequential last-axis mean
 // reduces — mean over X, then mean over (X-mean)^2 — with a centered-square map
 // between them, lowered to ONE read-once block-cooperative gpu.launch. Two
-// cooperative passes -> two gpu.all_reduce ...add (each a mean: all_reduce then
+// cooperative passes -> two ordered gpu.all_reduce sums (each a mean: sum then
 // /N); the register tile is loaded once and the centered/normalized epilogue is
 // recomputed from it. THREE results: Y[M,N] (the row output, written from the
 // register tile) plus the per-row stats mean[M,1] and rstd[M,1] — each a per-row
@@ -16,8 +16,7 @@
 // CHECK-NOT:     memref.alloca
 // CHECK-NOT:     scf.for
 // CHECK:         memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
-// CHECK:         gpu.all_reduce{{.*}}add
-// CHECK:         gpu.all_reduce{{.*}}add
+// CHECK-COUNT-2: gpu.all_reduce{{.*}}add
 // CHECK:         math.rsqrt
 // CHECK:         arith.cmpi eq, %{{.*}}, %{{.*}} : index
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>

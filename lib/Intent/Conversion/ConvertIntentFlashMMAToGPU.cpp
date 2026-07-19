@@ -38,8 +38,10 @@
 // latency). N=2 buys ~1.2x at >=512 keys; N>=3 plateaus. rel UNCHANGED (1.66e-4).
 //
 // Q/K/V f16, accumulators f32. Static shapes, BM=BN=64, D%16==0, Sq%64==0,
-// Sk%64==0, non-causal, rank-2 (no batch/LSE/causal -- the M8a path). Bare-ptr
-// ABI; lower_memref_module_to_kernels(scf_to_cf=True). M8a left 100% intact.
+// Sk%64==0. The original rank-2 intent.loop path remains intact (including its
+// optional LSE/causal controls). The live loop-free rank-4 path is the exact
+// non-causal B=H=1 QK/max/exp/sum/LSE/TMP/PV graph and keeps its Out/LSE/TMP
+// destination ABI. Bare-ptr ABI; lower_memref_module_to_kernels(scf_to_cf=True).
 //
 //===----------------------------------------------------------------------===//
 
@@ -89,6 +91,7 @@ struct FlashMMALowering {
   int numStages; // cp.async pipeline depth (clamped to the K-tile count)
   bool emitLse;  // also emit LSE = m + log(l) per query row (R-FLASH-3)
   bool causal;   // causal (lower-triangular) score masking (R-FLASH-3)
+  bool flatRank4 = false; // live B=H=1 flat graph, with Out/LSE/TMP results
 
   int64_t Sq = 0, Sk = 0, D = 0;
   unsigned qArgIdx = 0, kArgIdx = 0, vArgIdx = 0, scaleArgIdx = 0;
@@ -98,8 +101,191 @@ struct FlashMMALowering {
   FlashMMALowering(func::FuncOp fn, int numStages, bool emitLse, bool causal)
       : fn(fn), numStages(numStages), emitLse(emitLse), causal(causal) {}
 
-  // ---- recognition (a focused subset of the M8a matcher: rank-2, 1 result) -//
+  // Match the live, loop-free P4 graph structurally.  This deliberately starts
+  // from the three returned values and verifies the complete dataflow instead
+  // of consulting the function name.  The first supported rank-4 case is the
+  // static B=H=1 layout emitted for FlashAttention forward:
+  //
+  //   QK(bmhd,bnhd->nbhm) -> max(axis 0) -> scaled exp -> sum(axis 0)
+  //   -> LSE/TMP, and P(f32->f16) V(nbhm,bnhd->dbhm) -> transpose -> Out f16.
+  LogicalResult matchFlatRank4() {
+    auto fty = fn.getFunctionType();
+    if (causal || fty.getNumInputs() != 4 || fty.getNumResults() != 3 ||
+        !fn.getBody().hasOneBlock())
+      return failure();
+    Block &body = fn.getBody().front();
+    auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
+    if (!ret || ret.getNumOperands() != 3)
+      return failure();
+
+    auto outCast = ret.getOperand(0).getDefiningOp<CastOp>();
+    auto lse = ret.getOperand(1).getDefiningOp<MapBinaryOp>();
+    auto tmp = ret.getOperand(2).getDefiningOp<MapUnaryOp>();
+    if (!outCast || !lse || !tmp || outCast.getToDtype() != "f16" ||
+        lse.getFn() != "add" || tmp.getFn() != "exp")
+      return failure();
+
+    auto transpose = outCast.getInput().getDefiningOp<TransposeOp>();
+    if (!transpose || transpose.getPerm().size() != 4 ||
+        cast<IntegerAttr>(transpose.getPerm()[0]).getInt() != 1 ||
+        cast<IntegerAttr>(transpose.getPerm()[1]).getInt() != 3 ||
+        cast<IntegerAttr>(transpose.getPerm()[2]).getInt() != 2 ||
+        cast<IntegerAttr>(transpose.getPerm()[3]).getInt() != 0)
+      return failure();
+    auto weighted = transpose.getInput().getDefiningOp<MapBinaryOp>();
+    if (!weighted || weighted.getFn() != "mul" ||
+        weighted.getRhs() != tmp.getResult())
+      return failure();
+    auto pv = weighted.getLhs().getDefiningOp<ContractionOp>();
+    if (!pv || pv.getSubscripts() != "nbhm,bnhd->dbhm")
+      return failure();
+    auto pF16 = pv.getA().getDefiningOp<CastOp>();
+    if (!pF16 || pF16.getToDtype() != "f16")
+      return failure();
+
+    auto mMinusLse = tmp.getInput().getDefiningOp<MapBinaryOp>();
+    if (!mMinusLse || mMinusLse.getFn() != "sub" ||
+        mMinusLse.getRhs() != lse.getResult())
+      return failure();
+    Value mValue = mMinusLse.getLhs();
+    if (lse.getLhs() != mValue)
+      return failure();
+    auto logDenom = lse.getRhs().getDefiningOp<MapUnaryOp>();
+    if (!logDenom || logDenom.getFn() != "log")
+      return failure();
+    auto denom = logDenom.getInput().getDefiningOp<ReduceOp>();
+    if (!denom || denom.getFn() != "sum" || denom.getAxes().size() != 1 ||
+        cast<IntegerAttr>(denom.getAxes()[0]).getInt() != 0)
+      return failure();
+    auto p = denom.getInput().getDefiningOp<MapUnaryOp>();
+    if (!p || p.getFn() != "exp" || pF16.getInput() != p.getResult())
+      return failure();
+    auto shifted = p.getInput().getDefiningOp<MapBinaryOp>();
+    if (!shifted || shifted.getFn() != "sub" ||
+        shifted.getRhs() != mValue)
+      return failure();
+    auto scaledQK = shifted.getLhs().getDefiningOp<MapBinaryOp>();
+    auto m = mValue.getDefiningOp<MapBinaryOp>();
+    if (!scaledQK || !m || scaledQK.getFn() != "mul" ||
+        m.getFn() != "mul" || scaledQK.getRhs() != m.getRhs())
+      return failure();
+    auto rowMax = m.getLhs().getDefiningOp<ReduceOp>();
+    if (!rowMax || rowMax.getFn() != "max" ||
+        rowMax.getAxes().size() != 1 ||
+        cast<IntegerAttr>(rowMax.getAxes()[0]).getInt() != 0)
+      return failure();
+    auto qk = scaledQK.getLhs().getDefiningOp<ContractionOp>();
+    if (!qk || qk.getSubscripts() != "bmhd,bnhd->nbhm" ||
+        rowMax.getInput() != qk.getResult())
+      return failure();
+
+    auto qArg = dyn_cast<BlockArgument>(qk.getA());
+    auto kArg = dyn_cast<BlockArgument>(qk.getB());
+    auto vArg = dyn_cast<BlockArgument>(pv.getB());
+    auto scaleArg = dyn_cast<BlockArgument>(scaledQK.getRhs());
+    if (!qArg || !kArg || !vArg || !scaleArg ||
+        qArg.getOwner() != &body || kArg.getOwner() != &body ||
+        vArg.getOwner() != &body || scaleArg.getOwner() != &body ||
+        qArg == kArg || qArg == vArg || qArg == scaleArg || kArg == vArg ||
+        kArg == scaleArg || vArg == scaleArg)
+      return failure();
+
+    auto qTy = dyn_cast<RankedTensorType>(qArg.getType());
+    auto kTy = dyn_cast<RankedTensorType>(kArg.getType());
+    auto vTy = dyn_cast<RankedTensorType>(vArg.getType());
+    auto scaleTy = dyn_cast<RankedTensorType>(scaleArg.getType());
+    if (!qTy || !kTy || !vTy || !scaleTy || !qTy.hasStaticShape() ||
+        !kTy.hasStaticShape() || !vTy.hasStaticShape() ||
+        !scaleTy.hasStaticShape() || qTy.getRank() != 4 ||
+        kTy.getRank() != 4 || vTy.getRank() != 4 ||
+        scaleTy.getRank() != 0 || !isa<Float16Type>(qTy.getElementType()) ||
+        kTy.getElementType() != qTy.getElementType() ||
+        vTy.getElementType() != qTy.getElementType() ||
+        !isa<Float32Type>(scaleTy.getElementType()))
+      return failure();
+    if (qTy.getDimSize(0) != 1 || qTy.getDimSize(2) != 1 ||
+        kTy.getDimSize(0) != 1 || kTy.getDimSize(2) != 1 ||
+        vTy.getDimSize(0) != 1 || vTy.getDimSize(2) != 1)
+      return failure();
+
+    Sq = qTy.getDimSize(1);
+    D = qTy.getDimSize(3);
+    Sk = kTy.getDimSize(1);
+    if (kTy.getDimSize(3) != D || vTy.getDimSize(1) != Sk ||
+        vTy.getDimSize(3) != D || Sq % BM != 0 || Sk % BN != 0 ||
+        D % MMA_K != 0)
+      return failure();
+    f16 = qTy.getElementType();
+    f32 = scaleTy.getElementType();
+
+    auto isTensor = [](Type ty, ArrayRef<int64_t> shape,
+                       Type elementType) -> bool {
+      auto ranked = dyn_cast<RankedTensorType>(ty);
+      return ranked && ranked.hasStaticShape() && ranked.getShape() == shape &&
+             ranked.getElementType() == elementType;
+    };
+    SmallVector<int64_t> qShape{1, Sq, 1, D};
+    SmallVector<int64_t> scoreShape{Sk, 1, 1, Sq};
+    SmallVector<int64_t> statShape{1, 1, Sq};
+    SmallVector<int64_t> weightedShape{D, 1, 1, Sq};
+    if (!isTensor(qk.getResult().getType(), scoreShape, f32) ||
+        !isTensor(rowMax.getResult().getType(), statShape, f32) ||
+        !isTensor(m.getResult().getType(), statShape, f32) ||
+        !isTensor(scaledQK.getResult().getType(), scoreShape, f32) ||
+        !isTensor(shifted.getResult().getType(), scoreShape, f32) ||
+        !isTensor(p.getResult().getType(), scoreShape, f32) ||
+        !isTensor(denom.getResult().getType(), statShape, f32) ||
+        !isTensor(logDenom.getResult().getType(), statShape, f32) ||
+        !isTensor(lse.getResult().getType(), statShape, f32) ||
+        !isTensor(mMinusLse.getResult().getType(), statShape, f32) ||
+        !isTensor(tmp.getResult().getType(), statShape, f32) ||
+        !isTensor(pF16.getResult().getType(), scoreShape, f16) ||
+        !isTensor(pv.getResult().getType(), weightedShape, f32) ||
+        !isTensor(weighted.getResult().getType(), weightedShape, f32) ||
+        !isTensor(transpose.getResult().getType(), qShape, f32) ||
+        !isTensor(outCast.getResult().getType(), qShape, f16) ||
+        !isTensor(fty.getResult(0), qShape, f16) ||
+        !isTensor(fty.getResult(1), statShape, f32) ||
+        !isTensor(fty.getResult(2), statShape, f32))
+      return failure();
+
+    // With the exact dataflow above, requiring every non-terminator operation
+    // to be one of these nodes prevents silently discarding an unconsumed mask,
+    // bias, tail predicate, or side effect.
+    SmallVector<Operation *> expected{
+        qk.getOperation(),          rowMax.getOperation(),
+        m.getOperation(),           scaledQK.getOperation(),
+        shifted.getOperation(),     p.getOperation(),
+        denom.getOperation(),       logDenom.getOperation(),
+        lse.getOperation(),         mMinusLse.getOperation(),
+        tmp.getOperation(),         pF16.getOperation(),
+        pv.getOperation(),          weighted.getOperation(),
+        transpose.getOperation(),   outCast.getOperation()};
+    unsigned numOps = 0;
+    for (Operation &op : body.without_terminator()) {
+      ++numOps;
+      if (std::find(expected.begin(), expected.end(), &op) == expected.end())
+        return failure();
+    }
+    if (numOps != expected.size())
+      return failure();
+
+    qArgIdx = qArg.getArgNumber();
+    kArgIdx = kArg.getArgNumber();
+    vArgIdx = vArg.getArgNumber();
+    scaleArgIdx = scaleArg.getArgNumber();
+    flatRank4 = true;
+    return success();
+  }
+
   LogicalResult match() {
+    if (succeeded(matchFlatRank4()))
+      return success();
+    return matchLoopRank2();
+  }
+
+  // ---- recognition (a focused subset of the M8a matcher: rank-2, 1 result) -//
+  LogicalResult matchLoopRank2() {
     auto fty = fn.getFunctionType();
     if (fty.getNumResults() != 1 || !fn.getBody().hasOneBlock())
       return failure();
@@ -215,17 +401,27 @@ struct FlashMMALowering {
     OpBuilder b(ctx);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
 
-    // New signature: Q,K,V memrefs + scale f32 + destination-passing O[Sq,D] f32.
+    // Destination-passing ABI.  The legacy loop form appends O (and optionally
+    // LSE); the live flat form appends all three original results verbatim:
+    // Out[1,Sq,1,D] f16, LSE[1,1,Sq] f32, TMP[1,1,Sq] f32.
+    auto oldFty = fn.getFunctionType();
     SmallVector<Type> inTys;
-    for (Type at : fn.getFunctionType().getInputs()) {
+    for (Type at : oldFty.getInputs()) {
       if (auto t = dyn_cast<RankedTensorType>(at))
         inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
       else
         inTys.push_back(at);
     }
-    inTys.push_back(MemRefType::get({Sq, D}, f32)); // O
-    if (emitLse)
-      inTys.push_back(MemRefType::get({Sq, 1}, f32)); // LSE
+    if (flatRank4) {
+      for (Type resultTy : oldFty.getResults()) {
+        auto t = cast<RankedTensorType>(resultTy);
+        inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+      }
+    } else {
+      inTys.push_back(MemRefType::get({Sq, D}, f32)); // O
+      if (emitLse)
+        inTys.push_back(MemRefType::get({Sq, 1}, f32)); // LSE
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -239,10 +435,12 @@ struct FlashMMALowering {
     Value qMem = entry->getArgument(qArgIdx);
     Value kMem = entry->getArgument(kArgIdx);
     Value vMem = entry->getArgument(vArgIdx);
-    Value scale = entry->getArgument(scaleArgIdx);
-    unsigned numInputs = fn.getFunctionType().getNumInputs();
+    Value scaleInput = entry->getArgument(scaleArgIdx);
+    unsigned numInputs = oldFty.getNumInputs();
     Value oMem = entry->getArgument(numInputs);
-    Value lseMem = emitLse ? entry->getArgument(numInputs + 1) : Value();
+    bool writeLse = flatRank4 || emitLse;
+    Value lseMem = writeLse ? entry->getArgument(numInputs + 1) : Value();
+    Value tmpMem = flatRank4 ? entry->getArgument(numInputs + 2) : Value();
 
     int64_t numWarps = BM / MMA_M; // 4
     int64_t kBlock = numWarps * 32;
@@ -296,6 +494,12 @@ struct FlashMMALowering {
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+    // The live P4 scale is tensor<f32> -> memref<f32>.  Load it on the device
+    // with the legal rank-0 index list instead of attempting a host dereference.
+    Value scale = flatRank4
+                      ? b.create<memref::LoadOp>(loc, scaleInput, ValueRange{})
+                            .getResult()
+                      : scaleInput;
     Value c2 = b.create<arith::ConstantIndexOp>(loc, 2);
     Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
     Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
@@ -306,6 +510,10 @@ struct FlashMMALowering {
     Value ninf = b.create<arith::ConstantOp>(
         loc, b.getF32FloatAttr(-std::numeric_limits<float>::infinity()));
     Value zeroF = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
+    Value oneF = flatRank4
+                     ? b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(1.0))
+                           .getResult()
+                     : Value();
 
     Value rowBlk = b.create<arith::MulIOp>(loc, bx, cBM); // query base row
     Value warp = b.create<arith::DivUIOp>(loc, tx, c32);
@@ -337,6 +545,12 @@ struct FlashMMALowering {
     Value vSh = viewF16(oV, {nStages, BN, D});  // rotating cp.async V buffers
     Value vtSh = viewF16(oVt, {D, BN + VPAD});  // transposed V (PV B operand)
 
+    auto globalMatrixIndices = [&](Value row, Value col) {
+      if (flatRank4)
+        return SmallVector<Value>{c0, row, c0, col};
+      return SmallVector<Value>{row, col};
+    };
+
     // Cooperative copy helper: run body(i,r,c) over each linear element of [R,C].
     auto forEachElem = [&](OpBuilder &nb, int64_t R, int64_t C,
                            function_ref<void(OpBuilder &, Value, Value)> fn2) {
@@ -354,7 +568,8 @@ struct FlashMMALowering {
     // Stage Q[rowBlk:+BM,:] -> qSh once.
     forEachElem(b, BM, D, [&](OpBuilder &nb, Value r, Value c) {
       Value gr = nb.create<arith::AddIOp>(loc, rowBlk, r);
-      Value v = nb.create<memref::LoadOp>(loc, qMem, ValueRange{gr, c});
+      SmallVector<Value> qIndices = globalMatrixIndices(gr, c);
+      Value v = nb.create<memref::LoadOp>(loc, qMem, qIndices);
       nb.create<memref::StoreOp>(loc, v, qSh, ValueRange{r, c});
     });
     b.create<gpu::BarrierOp>(loc);
@@ -411,12 +626,13 @@ struct FlashMMALowering {
         Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
         Value cc = nb.create<arith::MulIOp>(nl, colg, c8);
         Value gr = nb.create<arith::AddIOp>(nl, keyBase, r);
+        SmallVector<Value> srcIndices = globalMatrixIndices(gr, cc);
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, kSh, ValueRange{stageVal, r, cc}, kMem,
-            ValueRange{gr, cc}, dstElems, /*srcElements=*/Value(), bypassL1));
+            srcIndices, dstElems, /*srcElements=*/Value(), bypassL1));
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
             nl, tokTy, vSh, ValueRange{stageVal, r, cc}, vMem,
-            ValueRange{gr, cc}, dstElems, /*srcElements=*/Value(), bypassL1));
+            srcIndices, dstElems, /*srcElements=*/Value(), bypassL1));
       }
       return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
     };
@@ -629,10 +845,14 @@ struct FlashMMALowering {
     // hold the same m/l (quad-reduced), so only tig==0 (lane%4==0) writes each of
     // its 2 owned rows (groupID=lane/4, and groupID+8). Global row layout matches
     // the O epilogue (warpRowGlobal + laneDiv4 + i*8).
-    if (emitLse) {
+    auto statIndices = [&](Value row) {
+      if (flatRank4)
+        return SmallVector<Value>{c0, c0, row};
+      return SmallVector<Value>{row, c0};
+    };
+    if (writeLse) {
       Value isLead = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                              laneMod4, c0);
-      Value c0i = b.create<arith::ConstantIndexOp>(loc, 0);
       b.create<scf::IfOp>(loc, isLead, [&](OpBuilder &nb, Location nl) {
         for (int i = 0; i < 2; ++i) {
           Value ic = nb.create<arith::ConstantIndexOp>(nl, i * 8);
@@ -640,7 +860,12 @@ struct FlashMMALowering {
               nl, warpRowGlobal, nb.create<arith::AddIOp>(nl, laneDiv4, ic));
           Value ll = nb.create<math::LogOp>(nl, lFin[i]);
           Value lse = nb.create<arith::AddFOp>(nl, mFin[i], ll);
-          nb.create<memref::StoreOp>(nl, lse, lseMem, ValueRange{row, c0i});
+          SmallVector<Value> indices = statIndices(row);
+          nb.create<memref::StoreOp>(nl, lse, lseMem, indices);
+          if (flatRank4) {
+            Value tmp = nb.create<arith::DivFOp>(nl, oneF, lFin[i]);
+            nb.create<memref::StoreOp>(nl, tmp, tmpMem, indices);
+          }
         }
         nb.create<scf::YieldOp>(nl);
       });
@@ -658,7 +883,10 @@ struct FlashMMALowering {
           Value e = b.create<vector::ExtractOp>(
               loc, finalAcc[jo], ArrayRef<int64_t>{(int64_t)i, (int64_t)i2});
           Value out = b.create<arith::DivFOp>(loc, e, lFin[i]);
-          b.create<memref::StoreOp>(loc, out, oMem, ValueRange{row, col});
+          if (flatRank4)
+            out = b.create<arith::TruncFOp>(loc, f16, out);
+          SmallVector<Value> indices = globalMatrixIndices(row, col);
+          b.create<memref::StoreOp>(loc, out, oMem, indices);
         }
       }
     }

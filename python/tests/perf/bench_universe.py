@@ -148,16 +148,17 @@ def fam_elementwise_binary():
     torch.manual_seed(0)
     a = torch.randn(M, N, device="cuda")
     b = torch.randn(M, N, device="cuda")
+    ap = a.abs() + 0.1
     bp = b.abs() + 0.1
     nb = 3 * M * N * 4
 
-    def go(op, fn, tref, fg, bb=b):
+    def go(op, fn, tref, fg, aa=a, bb=b):
         mlir = (f'func.func @f(%a: {R}, %b: {R}) -> {R} {{ '
                 f'%y = intent.map_binary %a, %b {{fn="{fn}"}} : ({R},{R}) -> {R}\n'
                 f'return %y : {R} }}')
         out = torch.empty(M, N, device="cuda")
         ref = tref()
-        build_row("elementwise-binary", op, f"[{M},{N}]", mlir, [a, bb], out,
+        build_row("elementwise-binary", op, f"[{M},{N}]", mlir, [aa, bb], out,
                   ref, EW, tref, fg,
                   fg_verify=lambda r: _rel(r, ref) < 1e-3, nbytes=nb, M=M, N=N)
         _cleanup()
@@ -170,9 +171,9 @@ def fam_elementwise_binary():
        (lambda: FG.maximum(a, b)) if FG else None)
     go("minimum", "min", lambda: torch.minimum(a, b),
        (lambda: FG.minimum(a, b)) if FG else None)
-    SKIPPED.append(("elementwise-binary", "pow",
-                    "libdevice __nv_powf unresolved by ptxas on sm_120a"))
-    del a, b, bp; _cleanup()
+    go("pow", "pow", lambda: torch.pow(ap, b),
+       (lambda: FG.pow_tensor_tensor(ap, b)) if FG else None, aa=ap)
+    del a, b, ap, bp; _cleanup()
 
 
 # --------------------------------------------------------------------------- #
@@ -389,8 +390,10 @@ def fam_activation():
 
     # gelu (tanh approx): 0.5*x*(1 + tanh(sqrt(2/pi)*(x + 0.044715*x^3))).
     # Hand-built with rank-0 scalar-arg constants + x*x*x (the corpus intent uses
-    # `const` ops + `pow` which the elementwise pass/ptxas cannot take: pow ->
-    # libdevice __nv_powf, const -> unlowered). Scalars: c_coef, c_sq2pi, c_half.
+    # `const` ops + a general pow.  Keep x^3 as two multiplies because the
+    # exponent is statically known and this is both cheaper and exact; general
+    # tensor-tensor pow is benchmarked in the binary family above.
+    # Scalars: c_coef, c_sq2pi, c_half.
     coef = torch.tensor(0.044715, device="cuda")
     sq2pi = torch.tensor(math.sqrt(2.0 / math.pi), device="cuda")
     half = torch.tensor(0.5, device="cuda")

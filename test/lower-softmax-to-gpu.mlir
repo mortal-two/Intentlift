@@ -2,7 +2,7 @@
 
 // softmax: two sequential last-axis reduces (max then sum) with a max-shift exp
 // between them, lowered to ONE read-once gpu.launch. Two cooperative passes ->
-// two gpu.all_reduce ops (maxnumf, then add); the register tile is loaded once
+// two ordered gpu.all_reduce ops (maxnumf, then add); the register tile is loaded once
 // and exp(x - max) is recomputed from it in the epilogue (matching the hand
 // oracle). Same pass, same DAG scheduler as rms_norm — the second reduce is the
 // only structural difference.

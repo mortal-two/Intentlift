@@ -346,6 +346,34 @@ LogicalResult ConcatOp::verify() {
   return success();
 }
 
+LogicalResult TransposeOp::verify() {
+  auto iTy = cast<RankedTensorType>(getInput().getType());
+  auto rTy = cast<RankedTensorType>(getResult().getType());
+  int64_t rank = iTy.getRank();
+  if (rTy.getRank() != rank)
+    return emitOpError("result rank must equal input rank");
+  if (iTy.getElementType() != rTy.getElementType())
+    return emitOpError("transpose is element-type-preserving");
+  if ((int64_t)getPerm().size() != rank)
+    return emitOpError("perm must have one entry per dim (rank ") << rank << ")";
+  SmallVector<bool> seen(rank, false);
+  for (int64_t outDim = 0; outDim < rank; ++outDim) {
+    int64_t inDim = cast<IntegerAttr>(getPerm()[outDim]).getInt();
+    if (inDim < 0 || inDim >= rank)
+      return emitOpError("perm axis ")
+             << inDim << " out of range for rank-" << rank << " input";
+    if (seen[inDim])
+      return emitOpError("perm contains duplicate axis ") << inDim;
+    seen[inDim] = true;
+    int64_t id = iTy.getDimSize(inDim), rd = rTy.getDimSize(outDim);
+    if (!ShapedType::isDynamic(id) && !ShapedType::isDynamic(rd) && id != rd)
+      return emitOpError("result extent ")
+             << rd << " != permuted input extent " << id
+             << " at result dim " << outDim;
+  }
+  return success();
+}
+
 LogicalResult PadOp::verify() {
   auto iTy = cast<RankedTensorType>(getInput().getType());
   auto rTy = cast<RankedTensorType>(getResult().getType());
@@ -358,10 +386,12 @@ LogicalResult PadOp::verify() {
     return emitOpError("lo/hi must have one entry per dim (rank ") << rank << ")";
   for (int64_t d = 0; d < rank; ++d) {
     int64_t id = iTy.getDimSize(d), rd = rTy.getDimSize(d);
-    if (ShapedType::isDynamic(id) || ShapedType::isDynamic(rd))
-      continue;
     int64_t lo = cast<IntegerAttr>(getLo()[d]).getInt();
     int64_t hi = cast<IntegerAttr>(getHi()[d]).getInt();
+    if (lo < 0 || hi < 0)
+      return emitOpError("lo/hi entries must be non-negative at dim ") << d;
+    if (ShapedType::isDynamic(id) || ShapedType::isDynamic(rd))
+      continue;
     if (id + lo + hi != rd)
       return emitOpError("result extent ")
              << rd << " != input+lo+hi (" << (id + lo + hi) << ") at dim " << d;

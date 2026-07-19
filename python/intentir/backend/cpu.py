@@ -54,6 +54,37 @@ def _dense(arr: np.ndarray, element_type: str = "f32") -> str:
         def scalar(value) -> str:
             return str(int(value))
 
+    elif element_type == "f16":
+        a = np.asarray(arr, dtype=np.float16)
+
+        def scalar(value: float) -> str:
+            # MLIR 20's dense-elements parser does not accept the `0xHhhhh`
+            # FloatAttr spelling inside a nested list. Decimal conversion from
+            # an already-quantized f16 value round-trips exactly to f16.
+            text = repr(float(np.asarray(value, dtype=np.float16)))
+            return text if any(c in text for c in ".eE") else text + ".0"
+
+    elif element_type == "bf16":
+        # NumPy has no portable bfloat16 dtype. Round an f32 value to the
+        # nearest-even BF16 payload and use MLIR's `0xRhhhh` spelling.
+        a = np.asarray(arr, dtype=np.float32)
+
+        def scalar(value: float) -> str:
+            bits = np.asarray(value, dtype=np.float32).view(np.uint32).item()
+            rounded = bits + 0x7FFF + ((bits >> 16) & 1)
+            bf16_value = np.asarray(
+                np.uint32(((rounded >> 16) & 0xFFFF) << 16), dtype=np.uint32
+            ).view(np.float32).item()
+            text = repr(float(bf16_value))
+            return text if any(c in text for c in ".eE") else text + ".0"
+
+    elif element_type == "f64":
+        a = np.asarray(arr, dtype=np.float64)
+
+        def scalar(value: float) -> str:
+            text = repr(float(np.asarray(value, dtype=np.float64)))
+            return text if any(c in text for c in ".eE") else text + ".0"
+
     else:
         a = np.asarray(arr, dtype=np.float32)
 
@@ -96,11 +127,27 @@ def _execution_element_type(dtype: str) -> str:
     """Return the element type emitted by the CPU execution frontend."""
 
     spelling = dtype.casefold().removeprefix("torch.")
+    aliases = {
+        "half": "f16",
+        "float16": "f16",
+        "bfloat16": "bf16",
+        "float": "f32",
+        "float32": "f32",
+        "double": "f64",
+        "float64": "f64",
+        "int8": "i8",
+        "int16": "i16",
+        "int32": "i32",
+        "int64": "i64",
+    }
+    spelling = aliases.get(spelling, spelling)
     if spelling == "bool":
         return "i1"
-    if spelling in _INTEGER_OUTPUT_DTYPES:
+    if spelling in _INTEGER_OUTPUT_DTYPES or spelling in {
+        "f16", "bf16", "f32", "f64",
+    }:
         return spelling
-    return "f32"
+    raise ValueError(f"unsupported CPU execution dtype {dtype!r}")
 
 
 def _build_main(fn: IntentFunction, kernel_mlir: str,
@@ -113,11 +160,7 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
     lines.append("  func.func @main() {")
     call_args, call_tys = [], []
     for i, (t, arr) in enumerate(zip(fn.inputs, inputs)):
-        element_type = (
-            t.dtype
-            if t.dtype in {"i1", "i8", "i16", "i32", "i64"}
-            else "f32"
-        )
+        element_type = _execution_element_type(t.dtype)
         ty = _tt(np.shape(arr), element_type)
         lines.append(
             f"    %in{i} = arith.constant dense<{_dense(arr, element_type)}> : {ty}"
@@ -125,16 +168,19 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         call_args.append(f"%in{i}")
         call_tys.append(ty)
     oty = _tt(out_shape, out_element_type)
+    from ..frontend.emit_mlir import _sanitize_mlir_symbol
+
     lines.append(
-        f"    %y = call @{fn.name}({', '.join(call_args)}) : "
+        f"    %y = call @{_sanitize_mlir_symbol(fn.name)}({', '.join(call_args)}) : "
         f"({', '.join(call_tys)}) -> {oty}")
     rank = len(out_shape)
     dims = ", ".join(f"d{i}" for i in range(rank))
     identity_map = f"affine_map<({dims}) -> ({dims})>"
     iterators = ", ".join('"parallel"' for _ in range(rank))
-    if out_element_type == "f32":
-        # RunnerUtils prints f32 values with limited decimal precision. Bitcast
-        # to i32 so Gate2 reads back the exact produced IEEE-754 bits.
+    if out_element_type in {"f16", "bf16", "f32"}:
+        # RunnerUtils prints floats with limited decimal precision. Extend
+        # half/BF16 values to f32, then bitcast to i32 so Gate2 reads exact
+        # produced values without textual rounding.
         print_element_type = "i32"
         print_tensor_type = _tt(out_shape, print_element_type)
         lines.append(
@@ -148,12 +194,39 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         lines.append(
             f"    }} ins(%y : {oty}) outs(%print_init : {print_tensor_type}) {{"
         )
-        lines.append("    ^bb0(%value: f32, %unused: i32):")
-        lines.append("      %print_value = arith.bitcast %value : f32 to i32")
+        lines.append(
+            f"    ^bb0(%value: {out_element_type}, %unused: i32):"
+        )
+        print_source = "%value"
+        if out_element_type != "f32":
+            lines.append(
+                f"      %print_f32 = arith.extf %value : "
+                f"{out_element_type} to f32"
+            )
+            print_source = "%print_f32"
+        lines.append(
+            f"      %print_value = arith.bitcast {print_source} : f32 to i32"
+        )
         lines.append("      linalg.yield %print_value : i32")
         lines.append(f"    }} -> {print_tensor_type}")
         print_value = "%print_values"
         printer = "printMemrefI32"
+    elif out_element_type == "f64":
+        print_element_type = "i64"
+        print_tensor_type = _tt(out_shape, print_element_type)
+        lines.append(f"    %print_init = tensor.empty() : {print_tensor_type}")
+        lines.append("    %print_values = linalg.generic {")
+        lines.append(f"      indexing_maps = [{identity_map}, {identity_map}],")
+        lines.append(f"      iterator_types = [{iterators}]")
+        lines.append(
+            f"    }} ins(%y : {oty}) outs(%print_init : {print_tensor_type}) {{"
+        )
+        lines.append("    ^bb0(%value: f64, %unused: i64):")
+        lines.append("      %print_value = arith.bitcast %value : f64 to i64")
+        lines.append("      linalg.yield %print_value : i64")
+        lines.append(f"    }} -> {print_tensor_type}")
+        print_value = "%print_values"
+        printer = "printMemrefI64"
     else:
         # Normalize every signed integer width to i64 for RunnerUtils printing,
         # then cast the parsed values back to the declared IntentIR dtype.
@@ -217,8 +290,12 @@ def _parse_memref(stdout: str, shape, element_type: str) -> np.ndarray:
     idx = stdout.index("data =")
     nums = re.findall(r"-?\d+", stdout[idx + 6:])
     raw = [int(x) for x in nums]
-    if element_type == "f32":
+    if element_type in {"f16", "bf16", "f32"}:
         vals = np.asarray(raw, dtype=np.int32).view(np.float32)
+        if element_type == "f16":
+            vals = vals.astype(np.float16)
+    elif element_type == "f64":
+        vals = np.asarray(raw, dtype=np.int64).view(np.float64)
     else:
         dtype = _INTEGER_OUTPUT_DTYPES[element_type]
         vals = np.asarray(raw, dtype=np.int64).astype(dtype, copy=False)

@@ -26,78 +26,6 @@
 
 namespace intent {
 
-/// Libdevice-safe scalar atan(x) for f32, expanded entirely in arith (no
-/// `math.atan`, which lowers to a `__nv_atanf` libdevice extern = ptxas dead
-/// end, the same failure mode as exp/sin/erf; and NVVM has NO atan.approx
-/// hardware op to peephole to). Reciprocal argument reduction onto |t|<=1 with
-/// atan(t)=pi/2 - atan(1/t) for |t|>1, then a 7-term odd minimax polynomial on
-/// [0,1] (max abs err ~7.7e-7 vs numpy, far inside the 1e-3 PK tolerance):
-///   atan(z) ~ z*(c0 + z2*(c1 + z2*(c2 + ... + z2*c6))),  z2=z*z.
-inline mlir::Value emitAtan(mlir::OpBuilder &b, mlir::Location loc,
-                            mlir::Value x) {
-  using namespace mlir;
-  Type ty = x.getType();
-  auto cst = [&](double v) {
-    return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
-  };
-  // Minimax coefficients (lstsq fit of atan(z)/z on z^2, z in [0,1]).
-  static constexpr double kC[7] = {
-      0.9999965891394812,  -0.33319009688008516, 0.1982329286937468,
-      -0.13294171203737687, 0.08076283609048057, -0.03461290793780861,
-      0.007151299050017444};
-  Value one = cst(1.0), zero = cst(0.0), halfPi = cst(1.5707963267948966);
-  Value negx = b.create<arith::NegFOp>(loc, x);
-  Value t = b.create<arith::MaxNumFOp>(loc, x, negx); // |x|
-  Value gt1 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, t, one);
-  Value recip = b.create<arith::DivFOp>(loc, one, t);
-  Value z = b.create<arith::SelectOp>(loc, gt1, recip, t);
-  Value z2 = b.create<arith::MulFOp>(loc, z, z);
-  // Horner in z2: p = c6; p = p*z2 + c5; ... ; p = p*z2 + c0.
-  Value p = cst(kC[6]);
-  for (int i = 5; i >= 0; --i)
-    p = b.create<arith::AddFOp>(loc, cst(kC[i]),
-                                b.create<arith::MulFOp>(loc, p, z2));
-  Value poly = b.create<arith::MulFOp>(loc, z, p); // atan of |x| (or 1/|x|)
-  // |x|>1: atan(|x|) = pi/2 - atan(1/|x|).
-  Value atanAbs = b.create<arith::SelectOp>(
-      loc, gt1, b.create<arith::SubFOp>(loc, halfPi, poly), poly);
-  // Restore the sign: atan is odd.
-  Value neg = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
-  return b.create<arith::SelectOp>(
-      loc, neg, b.create<arith::NegFOp>(loc, atanAbs), atanAbs);
-}
-
-/// Libdevice-safe scalar atan2(y, x) for f32: emitAtan(y/x) + the quadrant
-/// correction from the signs of (y, x) (add/sub pi for x<0; the ±pi/2 axes for
-/// x==0). Matches numpy/torch.atan2 to ~7.7e-7 abs err across all quadrants.
-/// `angle(z) = atan2(imag, real)` lowers to a `map_binary(imag, real, "atan2")`.
-inline mlir::Value emitAtan2(mlir::OpBuilder &b, mlir::Location loc,
-                             mlir::Value y, mlir::Value x) {
-  using namespace mlir;
-  Type ty = y.getType();
-  auto cst = [&](double v) {
-    return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
-  };
-  Value zero = cst(0.0), pi = cst(3.141592653589793),
-        halfPi = cst(1.5707963267948966), negHalfPi = cst(-1.5707963267948966);
-  Value r = b.create<arith::DivFOp>(loc, y, x);
-  Value a = emitAtan(b, loc, r);
-  Value xlt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
-  Value yge0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGE, y, zero);
-  Value piCorr =
-      b.create<arith::SelectOp>(loc, yge0, pi, b.create<arith::NegFOp>(loc, pi));
-  Value corr = b.create<arith::SelectOp>(loc, xlt0, piCorr, zero);
-  Value res = b.create<arith::AddFOp>(loc, a, corr);
-  // x==0 axes: y>0 -> +pi/2, y<0 -> -pi/2, y==0 -> 0.
-  Value xeq0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OEQ, x, zero);
-  Value ygt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, y, zero);
-  Value ylt0 = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, y, zero);
-  Value axis = b.create<arith::SelectOp>(
-      loc, ygt0, halfPi,
-      b.create<arith::SelectOp>(loc, ylt0, negHalfPi, zero));
-  return b.create<arith::SelectOp>(loc, xeq0, axis, res);
-}
-
 /// Scalar arith/math op for one `map_unary` fn. nullptr = unsupported here.
 inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
                                    llvm::StringRef fn, mlir::Value x) {
@@ -167,46 +95,9 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     // unlike exp) via the math.exp2 peephole.
     return b.create<math::Exp2Op>(loc, x);
   if (fn == "atan")
-    // Libdevice-safe: minimax poly + reciprocal reduction, all in arith (no
-    // __nv_atanf extern; NVVM has no atan.approx hardware op).
-    return emitAtan(b, loc, x);
-  if (fn == "erf") {
-    // Abramowitz & Stegun 7.1.26: erf(|x|) = 1 - poly(t)*exp(-x^2),
-    // t = 1/(1+p|x|), max abs err ~1.5e-7 — far inside the 1e-3 tolerance. Uses
-    // math.exp (-> ex2.approx peephole) + arith only; NVVM has no erf approx and
-    // math.erf would lower to a `__nv_erff` libdevice extern (ptxas dead end).
-    Type ty = x.getType();
-    auto cst = [&](double v) {
-      return b.create<arith::ConstantOp>(loc, b.getFloatAttr(ty, v)).getResult();
-    };
-    Value one = cst(1.0), zero = cst(0.0);
-    Value negx = b.create<arith::NegFOp>(loc, x);
-    Value absx = b.create<arith::MaxNumFOp>(loc, x, negx);
-    Value t = b.create<arith::DivFOp>(
-        loc, one,
-        b.create<arith::AddFOp>(loc, one,
-                                b.create<arith::MulFOp>(loc, cst(0.3275911), absx)));
-    // Horner: t*(a1 + t*(a2 + t*(a3 + t*(a4 + t*a5))))
-    Value poly = cst(1.061405429);
-    poly = b.create<arith::AddFOp>(loc, cst(-1.453152027),
-                                   b.create<arith::MulFOp>(loc, t, poly));
-    poly = b.create<arith::AddFOp>(loc, cst(1.421413741),
-                                   b.create<arith::MulFOp>(loc, t, poly));
-    poly = b.create<arith::AddFOp>(loc, cst(-0.284496736),
-                                   b.create<arith::MulFOp>(loc, t, poly));
-    poly = b.create<arith::AddFOp>(loc, cst(0.254829592),
-                                   b.create<arith::MulFOp>(loc, t, poly));
-    poly = b.create<arith::MulFOp>(loc, t, poly);
-    Value ex = b.create<math::ExpOp>(
-        loc, b.create<arith::NegFOp>(loc,
-                                     b.create<arith::MulFOp>(loc, absx, absx)));
-    Value y = b.create<arith::SubFOp>(
-        loc, one, b.create<arith::MulFOp>(loc, poly, ex));
-    // erf(-x) = -erf(x): flip the sign for negative inputs.
-    Value isneg = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT, x, zero);
-    return b.create<arith::SelectOp>(loc, isneg, b.create<arith::NegFOp>(loc, y),
-                                     y);
-  }
+    return b.create<math::AtanOp>(loc, x);
+  if (fn == "erf")
+    return b.create<math::ErfOp>(loc, x);
   if (fn == "isnan")
     // NaN is the only value unordered with itself. -> i1 (feeds intent.select,
     // e.g. nan_to_num = select(isnan(x), 0, x)). No libdevice.
@@ -239,15 +130,14 @@ inline mlir::Value emitScalarBinary(mlir::OpBuilder &b, mlir::Location loc,
   if (fn == "pow")
     return b.create<math::PowFOp>(loc, a, c);
   if (fn == "atan2")
-    // atan2(y=a, x=c): libdevice-safe atan of the ratio + quadrant correction.
-    // angle(z) = atan2(imag, real) lowers to map_binary(imag, real, "atan2").
-    return emitAtan2(b, loc, a, c);
+    return b.create<math::Atan2Op>(loc, a, c);
   return nullptr;
 }
 
-/// Is `fn` a `map_binary` comparison (gt/ge/lt/le/eq -> i1)?
+/// Is `fn` a `map_binary` comparison (gt/ge/lt/le/eq/ne -> i1)?
 inline bool isCmpFn(llvm::StringRef fn) {
-  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq";
+  return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" ||
+         fn == "eq" || fn == "ne";
 }
 
 /// Scalar arith.cmpf for one `map_binary` comparison fn (-> i1). nullptr if not
@@ -267,6 +157,8 @@ inline mlir::Value emitScalarCmp(mlir::OpBuilder &b, mlir::Location loc,
     p = arith::CmpFPredicate::OLE;
   else if (fn == "eq")
     p = arith::CmpFPredicate::OEQ;
+  else if (fn == "ne")
+    p = arith::CmpFPredicate::UNE;
   else
     return nullptr;
   return b.create<arith::CmpFOp>(loc, p, a, c);
@@ -291,6 +183,8 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
     p = arith::CmpIPredicate::sle;
   else if (fn == "eq")
     p = arith::CmpIPredicate::eq;
+  else if (fn == "ne")
+    p = arith::CmpIPredicate::ne;
   else
     return nullptr;
   return b.create<arith::CmpIOp>(loc, p, a, c);
@@ -309,7 +203,9 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
 ///               arg-attr (e.g. col floordiv SPATIAL + group*CPG). A structured
 ///               data-independent gather (the index is affine in (group,col)),
 ///               general over any affine-broadcast Col — NOT a per-kernel branch.
-enum class Role { Row, Col, Scalar, RowInt, ColSeg };
+///   ParamVector[P] — a small parameter vector addressed only through a
+///                    structurally validated scalar/per-column intent.gather.
+enum class Role { Row, Col, Scalar, RowInt, PerRow, ColSeg, ParamVector };
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

@@ -14,5 +14,5 @@ config.test_exec_root = os.path.join(config.intent_obj_root, "test")
 llvm_config.use_default_substitutions()
 
 tool_dirs = [config.intent_tools_dir, config.llvm_tools_dir]
-tools = ["intent-opt", "FileCheck", "not"]
+tools = ["intent-opt", "mlir-opt", "FileCheck", "not"]
 llvm_config.add_tool_substitutions(tools, tool_dirs)

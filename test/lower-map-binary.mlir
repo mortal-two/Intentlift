@@ -33,3 +33,21 @@ func.func @row_broadcast(%a: tensor<4x8xf32>, %b: tensor<4x1xf32>) -> tensor<4x8
   %c = intent.map_binary %a, %b {fn = "sub"} : (tensor<4x8xf32>, tensor<4x1xf32>) -> tensor<4x8xf32>
   return %c : tensor<4x8xf32>
 }
+
+// -----
+
+// Integer index algebra is part of the generic JSON -> MLIR path for grouped
+// kernels; it must not remain as an Intent residual after float operations have
+// already lowered.
+// CHECK-LABEL: func.func @integer_broadcast
+// CHECK-NOT: intent.map_binary
+// CHECK: arith.divsi
+// CHECK: arith.muli
+// CHECK: arith.addi
+func.func @integer_broadcast(%index: tensor<8xi32>, %extent: tensor<i32>)
+    -> tensor<8xi32> {
+  %q = intent.map_binary %index, %extent {fn = "div"} : (tensor<8xi32>, tensor<i32>) -> tensor<8xi32>
+  %scaled = intent.map_binary %q, %extent {fn = "mul"} : (tensor<8xi32>, tensor<i32>) -> tensor<8xi32>
+  %out = intent.map_binary %scaled, %index {fn = "add"} : (tensor<8xi32>, tensor<8xi32>) -> tensor<8xi32>
+  return %out : tensor<8xi32>
+}

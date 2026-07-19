@@ -47,7 +47,8 @@ struct Schedule {
   // Per-thread register/feature tile (K columns owned by one thread, or the
   // tiled Kpt strip); 1 for a scalar-per-thread schedule.
   int64_t perThreadTile = 1;
-  // 128-bit vector width: 1 = scalar ld/st, 4 = vector<4xf32> coalesced.
+  // Storage-lane vector width: 1 = scalar ld/st, 4 = four contiguous lanes.
+  // The packet is 128 bits for f32 storage and 64 bits for f16/bf16 storage.
   int64_t vectorWidth = 1;
   // Dynamic shared-memory bytes requested at launch (0 = none / static only).
   int64_t smemBytes = 0;

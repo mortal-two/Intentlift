@@ -1,4 +1,5 @@
 add_mlir_library(MLIRIntentTarget
+  LowerBf16MmaToNVVM.cpp
   LowerGpuMathToNVVM.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -13,6 +14,15 @@ add_mlir_library(MLIRIntentTarget
   MLIRPass
   MLIRTransformUtils
   MLIRArithDialect
+  MLIRGPUDialect
+  MLIRGPUToNVVMTransforms
+  MLIRLLVMCommonConversion
   MLIRMathDialect
+  MLIRMemRefDialect
   MLIRLLVMDialect
+  MLIRNVGPUDialect
+  MLIRNVGPUToNVVM
+  MLIRNVVMDialect
+  MLIRSCFDialect
+  MLIRSCFTransforms
 )

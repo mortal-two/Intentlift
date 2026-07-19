@@ -7,7 +7,7 @@ libdevice-safe lowering is numerically correct end-to-end:
 
   cos/sin/tan  -> nvvm.{cos,sin}.approx.f  (tan = sin/cos)
   exp2         -> ex2.approx.ftz.f (no log2e prescale)
-  erf          -> Abramowitz-Stegun 7.1.26 poly x exp(-x^2) (arith + ex2 peephole)
+  erf          -> shared target A&S polynomial x native ex2
   isnan        -> arith.cmpf uno (feeds select)
 
 and the composable families (no new fn, built from primitives) lower through
