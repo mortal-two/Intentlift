@@ -54,6 +54,29 @@ module {
 }
 """
 
+
+def _half_softmax_source(rows: int, columns: int, mlir_type: str) -> str:
+    row = f"tensor<{rows}x{columns}x{mlir_type}>"
+    scalar = f"tensor<{rows}x1x{mlir_type}>"
+    return f"""
+module {{
+  func.func @half_softmax(%x: {row}) -> {row} {{
+    %max = intent.reduce %x {{fn = "max", axes = [1], assoc = "associative"}}
+      : ({row}) -> {scalar}
+    %shifted = intent.map_binary %x, %max {{fn = "sub"}}
+      : ({row}, {scalar}) -> {row}
+    %exp = intent.map_unary %shifted {{fn = "exp"}}
+      : ({row}) -> {row}
+    %sum = intent.reduce %exp
+      {{fn = "sum", axes = [1], assoc = "float_nondeterministic"}}
+      : ({row}) -> {scalar}
+    %out = intent.map_binary %exp, %sum {{fn = "div"}}
+      : ({row}, {scalar}) -> {row}
+    return %out : {row}
+  }}
+}}
+"""
+
 pytestmark = [
     pytest.mark.skipif(
         not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
@@ -897,27 +920,7 @@ def test_generic_half_softmax_executes_promoted_math_and_half_scalar_abi(
     mlir_type: str,
     atol: float,
 ) -> None:
-    source = f"""
-module {{
-  func.func @half_softmax(%x: tensor<4x32x{mlir_type}>)
-      -> tensor<4x32x{mlir_type}> {{
-    %max = intent.reduce %x {{fn = "max", axes = [1], assoc = "associative"}}
-      : (tensor<4x32x{mlir_type}>) -> tensor<4x1x{mlir_type}>
-    %shifted = intent.map_binary %x, %max {{fn = "sub"}}
-      : (tensor<4x32x{mlir_type}>, tensor<4x1x{mlir_type}>)
-        -> tensor<4x32x{mlir_type}>
-    %exp = intent.map_unary %shifted {{fn = "exp"}}
-      : (tensor<4x32x{mlir_type}>) -> tensor<4x32x{mlir_type}>
-    %sum = intent.reduce %exp
-      {{fn = "sum", axes = [1], assoc = "float_nondeterministic"}}
-      : (tensor<4x32x{mlir_type}>) -> tensor<4x1x{mlir_type}>
-    %out = intent.map_binary %exp, %sum {{fn = "div"}}
-      : (tensor<4x32x{mlir_type}>, tensor<4x1x{mlir_type}>)
-        -> tensor<4x32x{mlir_type}>
-    return %out : tensor<4x32x{mlir_type}>
-  }}
-}}
-"""
+    source = _half_softmax_source(4, 32, mlir_type)
     torch.manual_seed(11)
     x = torch.randn((4, 32), device="cuda", dtype=dtype)
     program = lower_to_cuda(source, allow_specialized=False)
@@ -932,4 +935,56 @@ module {{
         torch.softmax(x, dim=1),
         rtol=0.0,
         atol=atol,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol", "sum_atol"),
+    (
+        (torch.float16, "f16", 1.0e-3, 2.0e-3),
+        (torch.bfloat16, "bf16", 4.0e-3, 8.0e-3),
+    ),
+)
+@pytest.mark.parametrize(
+    ("columns", "block_threads"),
+    ((32, 32), (1024, 128)),
+)
+def test_direct_half_softmax_uses_one_f32_accumulation_kernel(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+    sum_atol: float,
+    columns: int,
+    block_threads: int,
+) -> None:
+    source = _half_softmax_source(4, columns, mlir_type)
+    torch.manual_seed(12 + columns)
+    x = 4.0 * torch.randn((4, columns), device="cuda", dtype=dtype)
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: (
+                "-convert-intent-row-reduction-to-gpu="
+                f"block-threads={block_threads}"
+            )
+        },
+    )
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+    reference = torch.softmax(x.float(), dim=1).to(dtype)
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert program.selection.fast_path_id == fast_path_id
+    assert len(program.kernels) == 1
+    assert output.dtype == dtype
+    assert torch.isfinite(output).all()
+    assert torch.all(output >= 0)
+    torch.testing.assert_close(output, reference, rtol=0.0, atol=atol)
+    torch.testing.assert_close(
+        output.float().sum(dim=1),
+        torch.ones(4, device="cuda"),
+        rtol=0.0,
+        atol=sum_atol,
     )
