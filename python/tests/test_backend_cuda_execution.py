@@ -15,6 +15,45 @@ _ADD = _ROOT / "test" / "add.mlir"
 _MATMUL = _ROOT / "test" / "matmul.mlir"
 _SOFTMAX = _ROOT / "test" / "softmax.mlir"
 
+_INPLACE_EXP = """
+module {
+  func.func @inplace_exp(%x: tensor<8x16xf32>) -> tensor<8x16xf32>
+      attributes {intent.inplace = array<i64: 0>} {
+    %y = intent.map_unary %x {fn = "exp"}
+      : (tensor<8x16xf32>) -> tensor<8x16xf32>
+    return %y : tensor<8x16xf32>
+  }
+}
+"""
+
+_LARGE_SOFTMAX = """
+module {
+  func.func @softmax_large(%x: tensor<4x1024xf32>) -> tensor<4x1024xf32> {
+    %m = intent.reduce %x {fn = "max", axes = [1], assoc = "associative"}
+      : (tensor<4x1024xf32>) -> tensor<4x1xf32>
+    %s = intent.map_binary %x, %m {fn = "sub"}
+      : (tensor<4x1024xf32>, tensor<4x1xf32>) -> tensor<4x1024xf32>
+    %e = intent.map_unary %s {fn = "exp"}
+      : (tensor<4x1024xf32>) -> tensor<4x1024xf32>
+    %l = intent.reduce %e {fn = "sum", axes = [1], assoc = "float_nondeterministic"}
+      : (tensor<4x1024xf32>) -> tensor<4x1xf32>
+    %o = intent.map_binary %e, %l {fn = "div"}
+      : (tensor<4x1024xf32>, tensor<4x1xf32>) -> tensor<4x1024xf32>
+    return %o : tensor<4x1024xf32>
+  }
+}
+"""
+
+_ODD_TANH = """
+module {
+  func.func @odd_tanh(%x: tensor<7x33xf32>) -> tensor<7x33xf32> {
+    %y = intent.map_unary %x {fn = "tanh"}
+      : (tensor<7x33xf32>) -> tensor<7x33xf32>
+    return %y : tensor<7x33xf32>
+  }
+}
+"""
+
 pytestmark = [
     pytest.mark.skipif(
         not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
@@ -98,3 +137,62 @@ def test_direct_row_reduction_executes_with_real_collectives() -> None:
         rtol=1.0e-5,
         atol=1.0e-6,
     )
+
+
+def test_direct_elementwise_preserves_real_inplace_aliasing() -> None:
+    torch.manual_seed(5)
+    x = torch.randn((8, 16), device="cuda", dtype=torch.float32)
+    expected = torch.exp(x.clone())
+    original_pointer = x.data_ptr()
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        _INPLACE_EXP,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=16"
+        },
+    )
+
+    output = execute_cuda_artifact(program, _INPLACE_EXP, {"x": x})["out0"]
+
+    assert output.data_ptr() == original_pointer
+    torch.testing.assert_close(output, expected, rtol=2.0e-6, atol=2.0e-6)
+
+
+def test_large_direct_row_reduction_executes_shared_collectives() -> None:
+    torch.manual_seed(6)
+    x = torch.randn((4, 1024), device="cuda", dtype=torch.float32)
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+    program = lower_to_cuda(
+        _LARGE_SOFTMAX,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-row-reduction-to-gpu=block-threads=128"
+        },
+    )
+
+    output = execute_cuda_artifact(program, _LARGE_SOFTMAX, {"x": x})["out0"]
+
+    torch.testing.assert_close(
+        output,
+        torch.softmax(x, dim=1),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
+
+
+def test_generic_odd_tanh_is_self_contained_and_executes() -> None:
+    x = torch.linspace(
+        -10.0,
+        10.0,
+        7 * 33,
+        device="cuda",
+        dtype=torch.float32,
+    ).reshape(7, 33)
+    program = lower_to_cuda(_ODD_TANH, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, _ODD_TANH, {"x": x})["out0"]
+
+    assert program.selection.pipeline_kind == "generic"
+    assert torch.isfinite(output).all()
+    torch.testing.assert_close(output, torch.tanh(x), rtol=3.0e-6, atol=3.0e-6)
