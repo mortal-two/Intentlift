@@ -575,9 +575,10 @@ struct RowReductionLowering {
   // collective with the reduction identity while loading a safe in-bounds
   // address.  This mode is restricted to statistic-only outputs.
   bool hasInactiveFeatureThreads = false;
-  // Canonical half softmax additionally supports a ragged final register tile.
-  // Every invalid per-thread column contributes the reduction identity and its
-  // output store is suppressed; all threads still execute every collective.
+  // Mixed-precision half-storage graphs additionally support a ragged final
+  // register tile. Every invalid per-thread column contributes the reduction
+  // identity and its output store is suppressed; all threads still execute
+  // every collective.
   bool hasHalfFeatureTail = false;
   // Tiling: the per-thread feature strip of K columns is split into `numTiles`
   // tiles of `Kpt` columns each (K == Kpt * numTiles). numTiles==1 (K <=
@@ -1397,7 +1398,7 @@ struct RowReductionLowering {
       return failure();
     if (N % T == 0) {
       K = N / T;
-    } else if (halfSoftmax) {
+    } else if (halfSoftmax || explicitHalfStorage) {
       hasHalfFeatureTail = true;
       K = (N + T - 1) / T;
     } else if (T > N) {
