@@ -29,6 +29,8 @@ from scrc_heldout_batch import (  # noqa: E402
     _response_ids,
     _resume_row,
     _result_status,
+    _summarize_performance,
+    _timing_distribution,
     build_heldout_case,
 )
 from scrc_live_e2e import _compile_case  # noqa: E402
@@ -41,8 +43,14 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_dot",
         "fg_addr",
         "fg_ones",
+        "fg_zeros",
         "fg_arange",
+        "fg_eye",
+        "fg_trace",
         "fg_embedding",
+        "fg_index_select",
+        "fg_diag_extract",
+        "fg_amax",
         "fg_sum",
         "fg_mean",
         "fg_max",
@@ -50,6 +58,8 @@ def test_first_batch_manifest_has_reviewed_20_to_40_real_candidates() -> None:
         "fg_prod",
         "fg_vector_l2",
         "fg_vector_l1",
+        "fg_log_softmax",
+        "fg_skip_layer_norm",
     )
     assert all(item.module.startswith("flag_gems.") for item in CANDIDATES)
     assert all(item.function.isidentifier() for item in CANDIDATES)
@@ -158,6 +168,138 @@ def test_real_flag_gems_ones_case_has_multi_program_tail_contract() -> None:
         profile.scalar_values["n_elements"]
         for profile in case.gate2_shape_profiles
     ] == [1, 1023, 1024, 1025, 2051, 8209]
+    assert case.gate1_specialization_profiles == case.gate2_shape_profiles
+    assert case.gate1_primary_profile_id == "non_divisible"
+
+
+def test_real_flag_gems_zeros_case_adds_an_independent_fill_constant() -> None:
+    case = build_heldout_case("fg_zeros")
+    view = case.compiler_view().to_json()
+
+    assert case.source_path.name == "zeros.py"
+    assert case.function_name == "zeros_kernel"
+    assert "tl.store(output_ptr + offsets, 0.0, mask=mask)" in case.source_text
+    assert view["arguments"][0]["shape"] == [2051]
+    assert view["arguments"][1]["value"] == 2051
+    assert view["grid"] == [3]
+    assert view["schedule_values"]["BLOCK_SIZE"] == 1024
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one",
+        "block_minus_one",
+        "block",
+        "block_plus_one",
+        "non_divisible",
+        "far_multitile",
+    ]
+
+
+def test_real_flag_gems_eye_case_covers_2d_select_mask_and_fixed_c_family() -> None:
+    case = build_heldout_case("fg_eye")
+    view = case.compiler_view().to_json()
+
+    assert case.source_path.name == "eye_m.py"
+    assert case.function_name == "eye_kernel"
+    assert "tl.where(off_i[:, None] == off_j[None, :], 1.0, 0.0)" in case.source_text
+    assert view["arguments"][0]["shape"] == [37, 29]
+    assert view["grid"] == [2, 1]
+    assert view["grid_contract"] == [
+        "ceil_div(N, BLOCK_i)",
+        "ceil_div(M, BLOCK_j)",
+    ]
+    assert view["schedule_values"]["BLOCK_i"] == 32
+    assert view["schedule_values"]["BLOCK_j"] == 32
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one_by_one",
+        "block_edge",
+        "both_axes_tail",
+        "rectangular_nondivisible",
+    ]
+    assert case.gate1_specialization_profiles == case.gate2_shape_profiles
+    assert case.gate1_primary_profile_id == "rectangular_nondivisible"
+
+
+def test_real_flag_gems_trace_case_exercises_a_multi_iteration_diagonal_reduce() -> None:
+    case = build_heldout_case("fg_trace")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "trace.py"
+    assert case.function_name == "trace_kernel"
+    assert "for i in range(0, tl.cdiv(num_diag, BLOCK_SIZE))" in case.source_text
+    assert by_name["inp_ptr"]["shape"] == [1031, 1025]
+    assert by_name["out_ptr"]["shape"] == []
+    assert by_name["num_diag"]["value"] == 1025
+    assert by_name["stride0"]["value"] == 1025
+    assert by_name["stride1"]["value"] == 1
+    assert view["grid"] == [1]
+    assert view["schedule_values"]["BLOCK_SIZE"] == 1024
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "short_trip",
+        "exact_block_trip",
+        "block_plus_one_trip",
+    ]
+    assert case.gate1_specialization_profiles == case.gate2_shape_profiles
+    assert case.gate1_primary_profile_id == "block_plus_one_trip"
+    exact_block = case.gate2_shape_profiles[1]
+    assert exact_block.tensor_shapes["inp_ptr"] == (1031, 1025)
+    assert exact_block.scalar_values == {
+        "num_diag": 1024,
+        "stride0": 1025,
+        "stride1": 1,
+    }
+
+
+def test_real_flag_gems_log_softmax_case_covers_loop_carry_and_two_tail_axes() -> None:
+    case = build_heldout_case("fg_log_softmax")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "log_softmax.py"
+    assert case.function_name == "log_softmax_kernel"
+    assert "for start_n in range(0, N, BLOCK_N)" in case.source_text
+    assert "z = tl.where(all_neg_inf, z," in case.source_text
+    assert by_name["output_ptr"]["shape"] == [5, 513, 3]
+    assert by_name["input_ptr"]["shape"] == [5, 513, 3]
+    assert by_name["M"]["value"] == 5
+    assert by_name["N"]["value"] == 513
+    assert by_name["K"]["value"] == 3
+    assert view["grid"] == [1, 3]
+    assert view["grid_contract"] == ["ceil_div(M, BLOCK_M)", "K"]
+    assert view["schedule_values"]["BLOCK_M"] == 8
+    assert view["schedule_values"]["BLOCK_N"] == 256
+    assert view["schedule_values"]["num_warps"] == 8
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "single_n_tile",
+        "exact_tiles",
+        "multi_n_tail",
+        "multi_m_and_n_tail",
+    ]
+    assert case.gate1_specialization_profiles == case.gate2_shape_profiles
+    assert case.gate1_primary_profile_id == "multi_n_tail"
+
+
+def test_real_flag_gems_amax_case_uses_the_reviewed_final_reduce_stage() -> None:
+    case = build_heldout_case("fg_amax")
+    view = case.compiler_view().to_json()
+
+    assert case.source_path.name == "amax.py"
+    assert case.function_name == "amax_kernel_2"
+    assert "amax_val = tl.max(mid_val)" in case.source_text
+    assert view["arguments"][0]["shape"] == [63]
+    assert view["arguments"][1]["shape"] == []
+    assert view["arguments"][2]["value"] == 63
+    assert view["grid"] == [1, 1]
+    assert view["schedule_values"]["BLOCK_MID"] == 64
+    assert [profile.profile_id for profile in case.gate2_shape_profiles] == [
+        "one",
+        "block_minus_one",
+        "block",
+    ]
+    assert [profile.profile_id for profile in case.gate2_value_profiles] == [
+        "normal",
+        "uniform",
+        "large_dynamic",
+    ]
 
 
 def test_real_flag_gems_sum_case_uses_final_rank_zero_stage() -> None:
@@ -316,6 +458,99 @@ def test_real_flag_gems_embedding_case_records_take_gather_contract() -> None:
     ]
 
 
+def test_real_index_select_adds_two_axis_indirect_gather_family() -> None:
+    case = build_heldout_case("fg_index_select")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "index_select.py"
+    assert case.function_name == "index_select_kernel"
+    assert "inp_off = rows_offsets * N + indices[None, :]" in case.source_text
+    assert "final_mask = out_mask & index_valid_mask" in case.source_text
+    assert by_name["inp"]["shape"] == [19, 23]
+    assert by_name["out"]["shape"] == [19, 17]
+    assert by_name["index"] == {
+        "name": "index",
+        "kind": "tensor",
+        "dtype": "i64",
+        "shape": [17],
+    }
+    assert view["grid"] == [3, 1]
+    assert view["grid_contract"] == [
+        "ceil_div(M, BLOCK_M)",
+        "ceil_div(index_len, BLOCK_N)",
+    ]
+    assert view["constexpr_parameters"] == ["BLOCK_M", "BLOCK_N"]
+    assert view["schedule_values"]["BLOCK_M"] == 8
+    assert view["schedule_values"]["BLOCK_N"] == 32
+    assert case.input_distributions["index"] == "positive"
+    assert case.input_scales["index"] == 22.0
+    assert [
+        profile.profile_id for profile in case.gate1_specialization_profiles
+    ] == ["single", "rectangular_tail", "two_axis_multitile"]
+    assert case.gate1_primary_profile_id == "rectangular_tail"
+    assert case.gate2_shape_profiles == case.gate1_specialization_profiles
+    assert [profile.profile_id for profile in case.gate2_value_profiles] == [
+        "random_index_normal_input",
+        "boundary_index_uniform_input",
+    ]
+
+
+def test_real_diag_extract_adds_strided_gather_and_fixed_c_family() -> None:
+    case = build_heldout_case("fg_diag_extract")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "diag.py"
+    assert case.function_name == "diag_2d_to_1d_kernel"
+    assert "row_idx * stride0 + col_idx * stride1" in case.source_text
+    assert by_name["data_ptr"]["shape"] == [11, 13]
+    assert by_name["output_ptr"]["shape"] == [11]
+    assert by_name["stride0"]["value"] == 13
+    assert view["grid"] == [1]
+    assert view["grid_contract"] == ["ceil_div(N, BLOCK_SIZE)"]
+    assert view["constexpr_parameters"] == ["diagonal", "BLOCK_SIZE"]
+    assert view["schedule_values"]["diagonal"] == 2
+    assert [
+        profile.profile_id for profile in case.gate1_specialization_profiles
+    ] == ["single", "rectangular_tail", "multi_block"]
+    assert case.gate1_primary_profile_id == "rectangular_tail"
+    assert case.gate2_shape_profiles == case.gate1_specialization_profiles
+
+
+def test_real_skip_layer_norm_adds_non_reduce_norm_contract() -> None:
+    case = build_heldout_case("fg_skip_layer_norm")
+    view = case.compiler_view().to_json()
+    by_name = {item["name"]: item for item in view["arguments"]}
+
+    assert case.source_path.name == "skip_layernorm.py"
+    assert case.function_name == "skip_layer_norm_kernel"
+    assert "mean = tl.sum(x, axis=0) / N" in case.source_text
+    assert "x_hat = (x - mean) * rstd" in case.source_text
+    assert by_name["Y"]["shape"] == [7, 257]
+    assert by_name["X"]["shape"] == [7, 257]
+    assert by_name["W"]["shape"] == [257]
+    assert by_name["y_stride_r"]["value"] == 257
+    assert by_name["eps"]["value"] == 1.0e-5
+    assert view["grid"] == [7]
+    assert view["grid_contract"] == ["7"]
+    assert view["constexpr_parameters"] == ["BLOCK_SIZE"]
+    assert view["schedule_values"]["BLOCK_SIZE"] == 512
+    assert [
+        profile.profile_id for profile in case.gate1_specialization_profiles
+    ] == [
+        "single_width",
+        "rectangular_tail",
+        "block_minus_one",
+        "block",
+    ]
+    assert case.gate1_primary_profile_id == "rectangular_tail"
+    assert case.gate2_shape_profiles == case.gate1_specialization_profiles
+    assert [
+        profile.profile_id for profile in case.gate2_value_profiles
+    ] == ["normal", "large_dynamic", "near_constant"]
+
+
 def test_min_gate2_matrix_declares_shape_value_cross_product() -> None:
     case = build_heldout_case("fg_min")
 
@@ -394,6 +629,113 @@ def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "suite",
+    [
+        {
+            "passed": True,
+            "cases": [
+                {"case_id": "c0", "status": "gate2_pass"},
+                {"case_id": "c1"},
+            ],
+        },
+        {
+            "passed": True,
+            "cases": [
+                {"case_id": "same", "status": "gate2_pass"},
+                {"case_id": "same", "status": "gate2_pass"},
+            ],
+        },
+        {
+            "passed": True,
+            "cases": [
+                {"case_id": "c0", "status": "gate2_pass"},
+                {"status": "gate2_pass"},
+            ],
+        },
+        {
+            "passed": True,
+            "cases": [
+                {"case_id": "c0", "status": "gate2_pass"},
+                {"case_id": "c1", "status": "replay_diverged"},
+            ],
+        },
+        {
+            "passed": True,
+            "status_counts": {"gate2_pass": 1},
+            "cases": [
+                {"case_id": "c0", "status": "gate2_pass"},
+                {"case_id": "c1", "status": "gate2_pass"},
+            ],
+        },
+    ],
+    ids=(
+        "missing-status",
+        "duplicate-case-id",
+        "partially-missing-case-id",
+        "inconsistent-top-level-passed",
+        "incomplete-status-counts",
+    ),
+)
+def test_gate2_suite_metrics_fail_closed_on_incomplete_or_inconsistent_cases(
+    suite,
+) -> None:
+    observation = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2_suite": suite,
+        }
+    )
+
+    assert observation["gate2_attempted"] is True
+    assert observation["gate2_three_way_completed"] is False
+    assert observation["gate2_pass"] is None
+    assert observation["gate2_status"] == "gate2_suite_incomplete"
+
+
+def test_gate2_suite_metrics_accept_a_complete_all_pass_suite() -> None:
+    observation = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2_suite": {
+                "passed": True,
+                "status_counts": {"gate2_pass": 2},
+                "cases": [
+                    {"case_id": "c0", "status": "gate2_pass"},
+                    {"case_id": "c1", "status": "gate2_pass"},
+                ],
+            },
+        }
+    )
+
+    assert observation["gate2_three_way_completed"] is True
+    assert observation["gate2_pass"] is True
+    assert observation["gate2_status"] == "gate2_pass"
+
+
+def test_gate2_suite_metrics_accept_a_complete_semantic_nonpass_suite() -> None:
+    observation = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "no_closure"},
+            "gate2_diagnostic_suite": {
+                "passed": False,
+                "status_counts": {
+                    "gate2_pass": 1,
+                    "replay_diverged": 1,
+                },
+                "cases": [
+                    {"case_id": "c0", "status": "gate2_pass"},
+                    {"case_id": "c1", "status": "replay_diverged"},
+                ],
+            },
+        }
+    )
+
+    assert observation["gate2_three_way_completed"] is True
+    assert observation["gate2_pass"] is False
+    assert observation["gate2_status"] == "gate2_suite_failed"
+
+
 def test_batch_does_not_count_unsupported_or_setup_failure_as_semantic_nonpass() -> None:
     unsupported = extract_gate1_gate2_observation(
         {
@@ -446,6 +788,19 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
 
     metrics = summarize_gate1_gate2(rows)
 
+    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v2"
+    assert metrics["quadrants"] == {
+        "gate1_closed_gate2_pass": 1,
+        "gate1_closed_gate2_nonpass": 1,
+        "gate1_not_closed_gate2_pass": 1,
+        "gate1_not_closed_gate2_nonpass": 0,
+    }
+    assert metrics["quadrant_coverage"] == {
+        "eligible_completed_samples": 3,
+        "attempted_but_incomplete": 0,
+        "unattempted": 1,
+        "completion_coverage": 0.75,
+    }
     assert metrics["replay_closed"] == {
         "samples": 2,
         "gate2_attempted": 2,
@@ -469,6 +824,115 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     assert metrics["by_gate1_status"]["no_closure"][
         "pass_probability_given_completed"
     ] is None
+
+
+def test_gate1_gate2_quadrants_exclude_unsupported_and_setup_failure() -> None:
+    reports = [
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2": {"status": "lowering_unsupported"},
+        },
+        {
+            "gate1": {"status": "no_closure"},
+            "gate2_diagnostic_suite": {"status": "setup_failed"},
+        },
+        {
+            "gate1": {"status": "no_closure"},
+            "gate2_diagnostic": {"status": "lift_diverged"},
+        },
+    ]
+    metrics = summarize_gate1_gate2(
+        [
+            {"gate1_gate2": extract_gate1_gate2_observation(report)}
+            for report in reports
+        ]
+    )
+
+    assert metrics["quadrants"] == {
+        "gate1_closed_gate2_pass": 0,
+        "gate1_closed_gate2_nonpass": 0,
+        "gate1_not_closed_gate2_pass": 0,
+        "gate1_not_closed_gate2_nonpass": 1,
+    }
+    assert metrics["quadrant_coverage"] == {
+        "eligible_completed_samples": 1,
+        "attempted_but_incomplete": 2,
+        "unattempted": 0,
+        "completion_coverage": 1 / 3,
+    }
+
+
+def test_performance_distribution_does_not_turn_an_empty_sample_into_zero_time() -> None:
+    assert _timing_distribution([]) == {
+        "count": 0,
+        "total_ms": None,
+        "mean_ms": None,
+        "p50_ms": None,
+        "p95_ms": None,
+        "min_ms": None,
+        "max_ms": None,
+    }
+    assert _timing_distribution([1.0, 2.0, 100.0]) == {
+        "count": 3,
+        "total_ms": 103.0,
+        "mean_ms": 34.333,
+        "p50_ms": 2.0,
+        "p95_ms": 100.0,
+        "min_ms": 1.0,
+        "max_ms": 100.0,
+    }
+
+
+def test_batch_performance_summary_keeps_gate1_rates_and_missing_stages_explicit() -> None:
+    rows = [
+        {
+            "case": "closed",
+            "status": "gate2_pass",
+            "performance": {
+                "timing_ms": {
+                    "preflight_compile": 3.0,
+                    "initial_lift": 10.0,
+                    "gate1_loop": 20.0,
+                    "specialization_family": None,
+                    "pi_ablation": 2.0,
+                    "gate2": 5.0,
+                    "total": 37.0,
+                    "heldout_total": 40.0,
+                },
+                "recorded_invocations": {
+                    "normal_replay_compile": 2,
+                    "normal_replay_compile_ok": 1,
+                    "writer_total": 4,
+                },
+                "gate1_observation": {
+                    "status": "replay_closed",
+                    "outer_loop_termination": "replay_closed",
+                    "relift_attempts": 1,
+                    "masked_j_outcome": "hard_mismatch",
+                },
+            },
+        },
+        {"case": "unmeasured", "status": "harness_error"},
+    ]
+
+    summary = _summarize_performance(rows)
+
+    assert summary["selected_cases"] == 2
+    assert summary["measured_cases"] == 1
+    assert summary["missing_measurement_cases"] == 1
+    assert summary["timing"]["specialization_family"]["count"] == 0
+    assert summary["timing"]["specialization_family"]["mean_ms"] is None
+    assert summary["gate1"]["status_counts"] == {"replay_closed": 1}
+    assert summary["gate1"]["outer_loop_termination_counts"] == {
+        "replay_closed": 1
+    }
+    assert summary["gate1"]["replay_compile_attempts"] == 2
+    assert summary["gate1"]["replay_compile_ok"] == 1
+    assert summary["gate1"]["replay_compile_rate"] == 0.5
+    assert summary["gate1"]["cases_with_relift"] == 1
+    assert summary["gate1"]["masked_j_outcomes"] == {
+        "hard_mismatch": 1
+    }
 
 
 def test_batch_response_ids_tolerate_failed_generation_and_absent_masked() -> None:
@@ -542,30 +1006,129 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 17
+    assert identity["schema"] == 34
+    assert identity["composer_version"] == "deterministic_composer_v3"
+    assert identity["performance_schema"] == "scrc_case_performance_v1"
+    assert identity["gate1_gate2_metrics_schema"] == (
+        "scrc_gate1_gate2_conditional_v2"
+    )
     assert identity["relift_rounds"] == 3
     assert identity["semantic_interventions"] == 3
+    assert identity["fixed_c_family_closure_policy"] == (
+        "normal_paired_and_masked_fixed_c_family_all_required_v1"
+    )
+    assert identity["paired_intervention_family_policy"] == (
+        "fixed_c_family_exact_delta_all_profiles_v1"
+    )
+    assert identity["paired_intervention_scope"] == "primary_profile"
     assert identity["normal_recovery"] == "relift_only_restart_full_pipeline"
-    assert identity["replay_code_repair"] == "disabled"
+    assert identity["replay_generation_policy"] == (
+        "fresh_only_no_prior_replay_source"
+    )
+    assert identity["gate1_stagnation_policy"] == {
+        "policy": "exact_artifact_and_hard_diff_v1",
+        "required_consecutive_observations": 2,
+        "basis": "canonical_artifact_and_exact_hard_diff",
+    }
+    assert identity["ttir_fingerprint_schema"] == (
+        "triton-ttir-3.6-gate1-v3"
+    )
+    assert identity["relift_guidance_policy"] == {
+        "policy": "deterministic_gate1_hard_diff_guidance_v2",
+        "structural_policy": (
+            "deterministic_scoped_fingerprint_structure_guidance_v2"
+        ),
+        "source": (
+            "first_completed_gate1_or_fixed_c_family_hard_comparison"
+        ),
+        "family_policy": (
+            "deterministic_fixed_c_family_hard_diff_guidance_v2"
+        ),
+        "transport_failure_relift": "disabled_without_hard_diff",
+        "replay_source_input": "forbidden",
+    }
+    assert identity["gate1_termination_policy"] == {
+        "policy": "structured_no_closure_termination_v1",
+        "no_closure_requires_structured_reason": True,
+        "gate2_verdict_independence": True,
+    }
+    assert identity["lower2c_protocol"] == (
+        "intent_linalg_cpu_symbolic_iota_integer_readback_"
+        "boundary_broadcast_compressed_gather_v5"
+    )
+    assert identity["gate2_comparison_protocol"] == (
+        "exact_integer_tolerant_float_v2"
+    )
     assert identity["pi_ablations"]
     assert identity["pi_ablation_limit"] == 3
     assert identity["pi_ablation_kinds"] == []
-    assert identity["pi_ablation_replay_repairs"] == 0
     assert identity["pi_ablation_requires_closed_control"] is True
     assert identity["pi_ablation_opaque_reference_discipline"] == (
         "resolve_handles_never_emit_v1"
     )
-    assert identity["pi_ablation_replay_code_repair"] == "disabled"
     assert identity["maximum_provider_attempts_per_generation"] == 3
     assert identity["ttir_score_semantics"] == "active_evidence_weighted_v2"
-    assert identity["masked_j_fallback_policy"] == (
-        "exact_semantic_hard_degradation_v1"
+    assert identity["masked_j_policy"] == (
+        "actual_lift_pi_masked_j_hard_nonclosure_v3"
     )
-    assert identity["masked_j_score_role"] == "diagnostic_only"
+    assert identity["masked_j_family_policy"] == (
+        "actual_lift_pi_fixed_c_family_all_profile_hard_mismatch_v1"
+    )
+    assert identity["masked_j_scope"] == "primary_profile"
+    assert identity["masked_j_required_outcome"] == (
+        "compile_or_hard_nonclosure"
+    )
+    assert identity["masked_j_score_role"] == "not_used"
     assert identity["replay_reference_naming"] == "opaque_replay_refs_v1"
     assert identity["relift_protocol"] == (
-        "relift_only_pi_audit_on_strict_opaque_refs_causal_v7"
+        "gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11"
     )
+    assert identity["gate1_specialization_policy"] == {
+        "enabled": False,
+        "role": "fixed_c_family_full_sweep_relift_v1",
+        "verdict_role": "normal_family_strict_all_pass_gate1_condition",
+        "diff_policy": "exact_ordered_fixed_c_family_hard_diff_v1",
+        "replay_policy": "one_fresh_replay_per_artifact_round",
+        "relift_policy": (
+            "complete_family_sweep_then_one_source_aware_relift"
+        ),
+        "stagnation_basis": (
+            "canonical_artifact_and_exact_family_hard_diff"
+        ),
+        "anti_leakage_scope": "primary_profile",
+        "paired_intervention_policy": (
+            "fixed_c_family_exact_delta_all_profiles_v1"
+        ),
+        "masked_j_family_policy": (
+            "actual_lift_pi_fixed_c_family_all_profile_hard_mismatch_v1"
+        ),
+        "family": None,
+    }
+    ones_identity = _batch_identity(
+        build_heldout_case("fg_ones"), _batch_args()
+    )
+    family_policy = ones_identity["gate1_specialization_policy"]
+    assert family_policy["enabled"]
+    assert family_policy["anti_leakage_scope"] == "full_fixed_c_family"
+    assert ones_identity["paired_intervention_scope"] == (
+        "full_fixed_c_family"
+    )
+    assert ones_identity["masked_j_scope"] == "full_fixed_c_family"
+    assert ones_identity["masked_j_required_outcome"] == (
+        "all_profiles_legal_comparable_hard_mismatch"
+    )
+    assert family_policy["family"]["primary_profile_id"] == "non_divisible"
+    assert [
+        profile["profile_id"]
+        for profile in family_policy["family"]["profiles"]
+    ] == [
+        "one",
+        "block_minus_one",
+        "block",
+        "block_plus_one",
+        "non_divisible",
+        "far_multitile",
+    ]
     assert relift_identity["relift_rounds"] == 1
     assert _resume_row(saved, relift_identity) is None
 

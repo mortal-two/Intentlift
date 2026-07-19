@@ -1,9 +1,13 @@
 """Reusable real SCRC lift -> Gate1 -> Gate2 integration harness.
 
-Gate1 remains anchored to one reviewed compile specialization.  Gate2 can run
-either that execution contract or a strict declarative shape/value/seed matrix.
-It does not add a verifier or an alternate correctness path: all decisions are
-still made by the production SCRC lifter, Gate1, and Gate2 implementations.
+This harness invokes the production Gate1 entry point and can additionally run
+the exact same immutable replay observation over a declared fixed-C runtime
+profile family.  Normal replay, paired interventions and actual-pi masked-J
+each reuse one immutable replay over the complete family; no profile-local
+writer or repair path exists. Gate2 can run either the reviewed execution contract or a strict
+declarative shape/value/seed matrix. It does not add a verifier or an alternate
+correctness path: all decisions are still made by the production SCRC lifter,
+Gate1, and Gate2 implementations.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import inspect
 import json
 import os
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -41,20 +46,40 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.orchestrate import (
-    MASKED_J_FALLBACK_POLICY,
+    GATE1_FAMILY_ANTI_LEAKAGE_POLICY,
+    GATE1_STAGNATION_POLICY,
+    GATE1_TERMINATION_POLICY,
+    MASKED_J_FAMILY_POLICY,
+    MASKED_J_POLICY,
+    RELIFT_GUIDANCE_POLICY,
+    RELIFT_STRUCTURAL_GUIDANCE_POLICY,
     Gate1Config,
     Gate1Runner,
+    canonical_artifact_digest,
+)
+from intentir.verify.gate1.specialization import (
+    GATE1_FAMILY_DIFF_POLICY,
+    GATE1_FAMILY_RELIFT_GUIDANCE_POLICY,
+    GATE1_SPECIALIZATION_POLICY,
+    Gate1SpecializationFamily,
+    Gate1SpecializationProfile,
+)
+from intentir.verify.gate1.interventions import (
+    PAIRED_INTERVENTION_FAMILY_POLICY,
 )
 from intentir.verify.gate1.pi_ablations import PiAblationKind, run_pi_ablations
 from intentir.verify.gate1.replay import ResponsesReplayWriter
 from intentir.verify.gate1.rules import default_triton_rule_registry
+from intentir.verify.gate1.ttir import TTIR_FINGERPRINT_SCHEMA
 from intentir.verify.gate2 import (
     ArgumentRole,
     Gate2Case,
     Gate2Runner,
     Gate2Status,
     Gate2Suite,
+    GATE2_COMPARISON_PROTOCOL,
     InputDistribution,
+    LOWER2C_PROTOCOL,
     Lower2CSpec,
     TensorInputSpec,
     Tolerance,
@@ -143,6 +168,25 @@ class LiveKernelCase:
     input_scales: Mapping[str, float] = field(default_factory=dict)
     gate2_shape_profiles: tuple[Gate2ShapeProfile, ...] = ()
     gate2_value_profiles: tuple[Gate2ValueProfile, ...] = ()
+    gate1_specialization_profiles: tuple[Gate2ShapeProfile, ...] = ()
+    gate1_primary_profile_id: str | None = None
+
+    def __post_init__(self) -> None:
+        profiles = tuple(self.gate1_specialization_profiles)
+        ids = [profile.profile_id for profile in profiles]
+        if len(ids) != len(set(ids)):
+            raise ValueError(
+                "Gate1 specialization profile_id values must be unique"
+            )
+        if profiles:
+            if self.gate1_primary_profile_id not in set(ids):
+                raise ValueError(
+                    "Gate1 primary profile must be declared in the family"
+                )
+        elif self.gate1_primary_profile_id is not None:
+            raise ValueError(
+                "Gate1 primary profile requires specialization profiles"
+            )
 
     @property
     def function_name(self) -> str:
@@ -520,11 +564,17 @@ def _gate2_case(
     triton = TritonExecutionSpec(
         tuple(arguments), case.grid, dict(artifact.schedule.values)
     )
-    lowering = Lower2CSpec(
-        artifact.j.intent,
-        _symbolic_dims(artifact, case),
-        {tensor.name: tensor.name for tensor in artifact.j.intent.inputs},
-        output_keys[0],
+    lowering_kwargs = {
+        "dims": _symbolic_dims(artifact, case),
+        "input_bindings": {
+            tensor.name: tensor.name for tensor in artifact.j.intent.inputs
+        },
+        "output_key": output_keys[0],
+    }
+    lowering = (
+        Lower2CSpec.from_artifact(artifact, **lowering_kwargs)
+        if isinstance(artifact, Gate1Artifact)
+        else Lower2CSpec(artifact.j.intent, **lowering_kwargs)
     )
     return Gate2Case(
         case_id or f"{case.name}.live",
@@ -537,7 +587,7 @@ def _gate2_case(
     )
 
 
-def _apply_gate2_shape_profile(
+def _apply_shape_profile(
     case: LiveKernelCase, profile: Gate2ShapeProfile
 ) -> LiveKernelCase:
     arguments = {argument.name: argument for argument in case.arguments}
@@ -546,13 +596,13 @@ def _apply_gate2_shape_profile(
     )
     if unknown:
         raise ValueError(
-            f"Gate2 shape profile {profile.profile_id!r} has unknown argument(s): "
+            f"shape profile {profile.profile_id!r} has unknown argument(s): "
             + ", ".join(unknown)
         )
     overlap = sorted(set(profile.tensor_shapes) & set(profile.scalar_values))
     if overlap:
         raise ValueError(
-            f"Gate2 shape profile {profile.profile_id!r} has tensor/scalar "
+            f"shape profile {profile.profile_id!r} has tensor/scalar "
             "override overlap: " + ", ".join(overlap)
         )
 
@@ -561,7 +611,7 @@ def _apply_gate2_shape_profile(
         if argument.name in profile.tensor_shapes:
             if argument.kind != "tensor":
                 raise ValueError(
-                    f"Gate2 shape profile tensor override {argument.name!r} "
+                    f"shape profile tensor override {argument.name!r} "
                     "does not name a tensor argument"
                 )
             updated.append(
@@ -570,7 +620,7 @@ def _apply_gate2_shape_profile(
         elif argument.name in profile.scalar_values:
             if argument.kind != "scalar":
                 raise ValueError(
-                    f"Gate2 shape profile scalar override {argument.name!r} "
+                    f"shape profile scalar override {argument.name!r} "
                     "does not name a scalar argument"
                 )
             updated.append(
@@ -583,6 +633,50 @@ def _apply_gate2_shape_profile(
         arguments=tuple(updated),
         grid=case.grid if profile.grid is None else profile.grid,
     )
+
+
+def _gate1_specialization_family(
+    case: LiveKernelCase,
+) -> Gate1SpecializationFamily | None:
+    if not case.gate1_specialization_profiles:
+        return None
+    assert case.gate1_primary_profile_id is not None
+    profiles = tuple(
+        Gate1SpecializationProfile(
+            profile.profile_id,
+            replace(
+                _compile_case(_apply_shape_profile(case, profile)),
+                schedule=dict(case.schedule_values),
+            ),
+        )
+        for profile in case.gate1_specialization_profiles
+    )
+    return Gate1SpecializationFamily(
+        f"{case.name}.fixed_c",
+        case.gate1_primary_profile_id,
+        profiles,
+    )
+
+
+def _gate1_specialization_policy_json(case: LiveKernelCase) -> dict[str, Any]:
+    family = _gate1_specialization_family(case)
+    return {
+        "enabled": family is not None,
+        "role": GATE1_SPECIALIZATION_POLICY,
+        "verdict_role": "normal_family_strict_all_pass_gate1_condition",
+        "diff_policy": GATE1_FAMILY_DIFF_POLICY,
+        "replay_policy": "one_fresh_replay_per_artifact_round",
+        "relift_policy": "complete_family_sweep_then_one_source_aware_relift",
+        "stagnation_basis": "canonical_artifact_and_exact_family_hard_diff",
+        "anti_leakage_scope": (
+            "full_fixed_c_family" if family is not None else "primary_profile"
+        ),
+        "paired_intervention_policy": (
+            PAIRED_INTERVENTION_FAMILY_POLICY
+        ),
+        "masked_j_family_policy": MASKED_J_FAMILY_POLICY,
+        "family": None if family is None else family.to_json(),
+    }
 
 
 def _apply_gate2_value_profile(
@@ -625,7 +719,7 @@ def _gate2_suite(
 
     matrix: list[Gate2Case] = []
     for shape_profile in shapes:
-        shaped = _apply_gate2_shape_profile(case, shape_profile)
+        shaped = _apply_shape_profile(case, shape_profile)
         for value_profile in values:
             profiled = _apply_gate2_value_profile(shaped, value_profile)
             for seed in seeds:
@@ -697,6 +791,246 @@ def _gate2_suite_evidence_json(result) -> dict[str, Any]:
 
 def _progress(stage: str, **fields: Any) -> None:
     print(json.dumps({"stage": stage, **fields}, ensure_ascii=False), flush=True)
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _record_stage_ms(
+    stage_ms: dict[str, float], stage: str, started: float
+) -> None:
+    stage_ms[stage] = round(stage_ms.get(stage, 0.0) + _elapsed_ms(started), 3)
+
+
+def _lift_response_attempts(lift: Any) -> int:
+    if not isinstance(lift, dict):
+        return 0
+    if lift.get("reused"):
+        return 0
+    attempts = lift.get("attempts", 0)
+    if isinstance(attempts, bool):
+        return 0
+    if isinstance(attempts, int):
+        return max(attempts, 0)
+    if isinstance(attempts, list):
+        return len(attempts)
+    return 0
+
+
+def _finalize_performance_report(
+    report: dict[str, Any],
+    *,
+    pipeline_started: float,
+    stage_ms: Mapping[str, float],
+) -> None:
+    """Attach observation-only timing and recorded invocation counts.
+
+    These fields never participate in Gate1/Gate2 status selection.  Provider
+    SDK retries below one recorded Lift response or writer invocation are not
+    observable here and are deliberately not claimed as exact API-call counts.
+    """
+
+    gate1 = report.get("gate1")
+    gate1 = gate1 if isinstance(gate1, dict) else {}
+    relifts = report.get("relifts")
+    relifts = relifts if isinstance(relifts, list) else []
+    candidates = gate1.get("candidates")
+    candidates = candidates if isinstance(candidates, list) else []
+    interventions = gate1.get("interventions")
+    interventions = interventions if isinstance(interventions, list) else []
+    pi_ablations = report.get("pi_ablations")
+    pi_ablations = pi_ablations if isinstance(pi_ablations, list) else []
+
+    initial_lift_responses = _lift_response_attempts(report.get("lift"))
+    relift_responses = sum(_lift_response_attempts(item) for item in relifts)
+    normal_writer_invocations = len(candidates)
+    intervention_writer_invocations = len(interventions)
+    masked_writer_invocations = int(gate1.get("masked_outcome") is not None)
+    pi_writer_invocations = sum(
+        max(int(item.get("attempts", 0)), 0)
+        for item in pi_ablations
+        if isinstance(item, dict)
+        and not isinstance(item.get("attempts", 0), bool)
+    )
+
+    normal_compiles = [
+        item.get("compile")
+        for item in candidates
+        if isinstance(item, dict) and isinstance(item.get("compile"), dict)
+    ]
+    hard_closed = sum(
+        bool(item.get("comparison", {}).get("hard_pass"))
+        for item in candidates
+        if isinstance(item, dict)
+        and isinstance(item.get("comparison"), dict)
+    )
+    family = report.get("gate1_specialization_family")
+    family_records = (
+        family.get("records", []) if isinstance(family, dict) else []
+    )
+    family_records = (
+        family_records if isinstance(family_records, list) else []
+    )
+    family_source_compiles = sum(
+        isinstance(item, dict)
+        and isinstance(item.get("source_compile"), dict)
+        and not bool(item.get("source_compile_reused"))
+        for item in family_records
+    )
+    family_replay_compiles = sum(
+        isinstance(item, dict)
+        and isinstance(item.get("replay_compile"), dict)
+        and not bool(item.get("replay_compile_reused"))
+        for item in family_records
+    )
+    intervention_compiles = 0
+    intervention_baseline_compiles = 0
+    for item in interventions:
+        if not isinstance(item, dict):
+            continue
+        profiles = item.get("profile_records")
+        if isinstance(profiles, list) and profiles:
+            intervention_compiles += sum(
+                isinstance(profile, dict)
+                and isinstance(profile.get("compile"), dict)
+                for profile in profiles
+            )
+            intervention_baseline_compiles += sum(
+                isinstance(profile, dict)
+                and isinstance(profile.get("baseline_compile"), dict)
+                and not bool(profile.get("baseline_compile_reused"))
+                for profile in profiles
+            )
+        else:
+            intervention_compiles += int(
+                isinstance(item.get("compile"), dict)
+            )
+    pi_compiles = sum(
+        isinstance(item, dict) and isinstance(item.get("compile"), dict)
+        for item in pi_ablations
+    )
+    masked_family = gate1.get("masked_family_evidence")
+    masked_profiles = (
+        masked_family.get("records", [])
+        if isinstance(masked_family, dict)
+        else []
+    )
+    if isinstance(masked_profiles, list) and masked_profiles:
+        masked_compiles = sum(
+            isinstance(item, dict) and isinstance(item.get("compile"), dict)
+            for item in masked_profiles
+        )
+        masked_source_compiles = sum(
+            isinstance(item, dict)
+            and isinstance(item.get("source_compile"), dict)
+            and not bool(item.get("source_compile_reused"))
+            for item in masked_profiles
+        )
+    else:
+        masked_compiles = int(isinstance(gate1.get("masked_compile"), dict))
+        masked_source_compiles = 0
+    gate2_trials = 0
+    for key in ("gate2_suite", "gate2_diagnostic_suite"):
+        suite = report.get(key)
+        if isinstance(suite, dict) and isinstance(suite.get("cases"), list):
+            gate2_trials = len(suite["cases"])
+            break
+    else:
+        gate2_trials = int(
+            isinstance(report.get("gate2"), dict)
+            or isinstance(report.get("gate2_diagnostic"), dict)
+        )
+
+    timings: dict[str, float | None] = {
+        key: (
+            None
+            if key not in stage_ms
+            else round(float(stage_ms[key]), 3)
+        )
+        for key in (
+            "initial_lift",
+            "gate1_loop",
+            "specialization_family",
+            "pi_ablation",
+            "gate2",
+        )
+    }
+    timings["total"] = _elapsed_ms(pipeline_started)
+    timings["gate1_core"] = (
+        None
+        if timings["initial_lift"] is None
+        or timings["gate1_loop"] is None
+        else round(timings["initial_lift"] + timings["gate1_loop"], 3)
+    )
+    report["performance"] = {
+        "schema": "scrc_case_performance_v1",
+        "protocol": "scrc_wall_clock_observation_v1",
+        "clock": "time.perf_counter",
+        "verdict_role": "observation_only",
+        "timing_ms": timings,
+        "recorded_invocations": {
+            "initial_lift_responses": initial_lift_responses,
+            "initial_lift_rounds": int(initial_lift_responses > 0),
+            "relift_responses": relift_responses,
+            "relift_rounds": len(relifts),
+            "lift_responses_total": initial_lift_responses + relift_responses,
+            "normal_replay_writer": normal_writer_invocations,
+            "semantic_intervention_writer": intervention_writer_invocations,
+            "masked_j_writer": masked_writer_invocations,
+            "pi_ablation_writer": pi_writer_invocations,
+            "writer_total": (
+                normal_writer_invocations
+                + intervention_writer_invocations
+                + masked_writer_invocations
+                + pi_writer_invocations
+            ),
+            "normal_replay_compile": len(normal_compiles),
+            "normal_replay_compile_ok": sum(
+                bool(item.get("ok")) for item in normal_compiles
+            ),
+            "specialization_profiles": len(family_records),
+            "specialization_source_compile": family_source_compiles,
+            "specialization_replay_compile": family_replay_compiles,
+            "semantic_intervention_compile": intervention_compiles,
+            "semantic_intervention_baseline_compile": (
+                intervention_baseline_compiles
+            ),
+            "masked_j_compile": masked_compiles,
+            "masked_j_source_compile": masked_source_compiles,
+            "pi_ablation_compile": pi_compiles,
+            "gate2_trials": gate2_trials,
+        },
+        "gate1_observation": {
+            "status": gate1.get("status"),
+            "outer_loop_termination": gate1.get("termination_reason"),
+            "artifact_rounds_observed": len(
+                {
+                    item.get("relift_round")
+                    for item in candidates
+                    if isinstance(item, dict)
+                    and isinstance(item.get("relift_round"), int)
+                }
+            ),
+            "relift_attempts": len(relifts),
+            "normal_replay_candidates": len(candidates),
+            "normal_replay_compile_rate": (
+                None
+                if not normal_compiles
+                else round(
+                    sum(bool(item.get("ok")) for item in normal_compiles)
+                    / len(normal_compiles),
+                    6,
+                )
+            ),
+            "hard_closed_candidates": hard_closed,
+            "masked_j_outcome": gate1.get("masked_outcome"),
+        },
+        "limitations": [
+            "provider SDK retries below one recorded response/invocation are not exposed",
+            "wall time includes local compiler cache and host load effects",
+        ],
+    }
 
 
 def _write_report(path: str | None, report: dict[str, Any]) -> None:
@@ -771,6 +1105,28 @@ def _gate1_evidence_json(gate1) -> dict[str, Any]:
     return payload
 
 
+def _gate1_family_evidence_json(
+    evidence: Mapping[str, Any],
+    family: Gate1SpecializationFamily,
+) -> dict[str, Any]:
+    payload = json.loads(json.dumps(dict(evidence)))
+    payload.update(
+        {
+            "role": GATE1_SPECIALIZATION_POLICY,
+            "verdict_role": (
+                "normal_family_strict_all_pass_gate1_condition"
+            ),
+            "anti_leakage_scope": "full_fixed_c_family",
+            "paired_intervention_policy": (
+                PAIRED_INTERVENTION_FAMILY_POLICY
+            ),
+            "masked_j_family_policy": MASKED_J_FAMILY_POLICY,
+            "family": family.to_json(),
+        }
+    )
+    return payload
+
+
 def _pi_ablation_evidence_json(records) -> list[dict[str, Any]]:
     """Preserve source-blind ablation code for reproducible failure analysis."""
 
@@ -786,7 +1142,7 @@ def _pi_ablation_evidence_json(records) -> list[dict[str, Any]]:
 
 
 def _pi_ablation_control_evidence(gate1) -> dict[str, Any]:
-    """Require a valid full-pi structural control before causal ablation."""
+    """Require a valid canonical-pi structural control before diagnostics."""
 
     if getattr(gate1, "source_fingerprint", None) is None:
         return {
@@ -797,12 +1153,12 @@ def _pi_ablation_control_evidence(gate1) -> dict[str, Any]:
     if not gate1.replay_closed:
         return {
             "valid": False,
-            "reason": "full_pi_control_not_replay_closed",
+            "reason": "canonical_pi_control_not_replay_closed",
             "gate1_status": gate1.status.value,
         }
     return {
         "valid": True,
-        "reason": "full_pi_control_replay_closed",
+        "reason": "canonical_pi_control_replay_closed",
         "gate1_status": gate1.status.value,
     }
 
@@ -904,22 +1260,55 @@ def _gate2_matrix_policy_json(
     }
 
 
-def _independent_gate2_candidate(gate1: Any) -> Any | None:
-    """Choose a replay for Gate2 without changing the Gate1 verdict.
+def _select_gate2_replay_observation(
+    gate1: Any,
+    *,
+    final_artifact_digest: str | None,
+) -> Any | None:
+    """Choose an immutable replay observation for independent Gate2 use.
 
-    Prefer a normal hard-closed candidate.  When Gate1 has no structural
-    closure, use the best compiled replay from the final artifact round so the
-    independent dynamic evidence remains aligned with ``gate1.artifact``.
+    Only candidates explicitly bound to the final Gate1 artifact are eligible.
+    This is stricter than selecting the numerically latest compiled round: a
+    Relift round may replace the artifact and fail before producing a replay
+    candidate, in which case falling back to an older replay would make Gate2
+    evaluate a source/artifact pair that never existed in Gate1.
+
+    Among aligned candidates, prefer a normal hard-closed observation.  When
+    Gate1 has no structural closure, use the best compiled aligned observation
+    as independent diagnostic evidence.  Gate2 consumes that generated source
+    as-is; it never repairs it or feeds it back to the writer.
     """
 
-    candidates = tuple(gate1.candidates)
-    for candidate in candidates:
+    if not isinstance(final_artifact_digest, str) or not final_artifact_digest:
+        return None
+    candidates = tuple(
+        candidate
+        for candidate in gate1.candidates
+        if getattr(candidate, "artifact_digest", None)
+        == final_artifact_digest
+    )
+    hard_closed = [
+        candidate
+        for candidate in candidates
         if (
             candidate.generation is not None
             and candidate.comparison is not None
-            and candidate.comparison.hard_pass
-        ):
-            return candidate
+            and getattr(
+                candidate,
+                "overall_hard_pass",
+                candidate.comparison.hard_pass,
+            )
+        )
+    ]
+    if hard_closed:
+        return max(
+            hard_closed,
+            key=lambda candidate: (
+                candidate.relift_round,
+                candidate.generation_round,
+                candidate.rank_tuple,
+            ),
+        )
     compiled = [
         candidate
         for candidate in candidates
@@ -938,6 +1327,34 @@ def _independent_gate2_candidate(gate1: Any) -> Any | None:
     )
 
 
+def _select_gate1_specialization_evidence(
+    gate1: Any,
+    *,
+    final_artifact_digest: str | None,
+) -> Mapping[str, Any] | None:
+    if not isinstance(final_artifact_digest, str) or not final_artifact_digest:
+        return None
+    candidates = [
+        candidate
+        for candidate in gate1.candidates
+        if getattr(candidate, "specialization_evidence", None) is not None
+        and getattr(candidate, "artifact_digest", None)
+        == final_artifact_digest
+    ]
+    if not candidates:
+        return None
+    final_round = max(candidate.relift_round for candidate in candidates)
+    selected = max(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.relift_round == final_round
+        ),
+        key=lambda candidate: candidate.generation_round,
+    )
+    return selected.specialization_evidence
+
+
 def run_case(
     case: LiveKernelCase,
     args: argparse.Namespace,
@@ -946,6 +1363,8 @@ def run_case(
     lift_evidence: Mapping[str, Any] | None = None,
     lift_origin: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    pipeline_started = time.perf_counter()
+    stage_ms: dict[str, float] = {}
     provider = replace(
         get_provider(), model=args.model, reasoning_effort=args.effort
     )
@@ -971,7 +1390,10 @@ def run_case(
         PiAblationKind(value)
         for value in (getattr(args, "pi_ablation_kinds", None) or ())
     )
-    pi_ablation_kinds = requested_pi_ablation_kinds or tuple(PiAblationKind)
+    pi_ablation_kinds = requested_pi_ablation_kinds or (
+        PiAblationKind.PLAN_STEP_DROPOUT,
+        PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
+    )
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
@@ -982,30 +1404,81 @@ def run_case(
             "artifact_rounds": relift_rounds,
             "maximum_semantic_relifts": relift_rounds - 1,
             "normal_recovery": "relift_only_restart_full_pipeline",
-            "replay_code_repair": "disabled",
+            "replay_generation_policy": (
+                "fresh_only_no_prior_replay_source"
+            ),
+            "stagnation": {
+                "policy": GATE1_STAGNATION_POLICY,
+                "required_consecutive_observations": 2,
+                "basis": "canonical_artifact_and_exact_hard_diff",
+                "ttir_fingerprint_schema": TTIR_FINGERPRINT_SCHEMA,
+            },
+            "semantic_guidance": {
+                "policy": RELIFT_GUIDANCE_POLICY,
+                "structural_policy": RELIFT_STRUCTURAL_GUIDANCE_POLICY,
+                "source": (
+                    "first_completed_gate1_or_fixed_c_family_hard_comparison"
+                ),
+                "family_policy": (
+                    GATE1_FAMILY_RELIFT_GUIDANCE_POLICY
+                ),
+                "transport_failure_relift": "disabled_without_hard_diff",
+                "replay_source_input": "forbidden",
+            },
+            "termination": {
+                "policy": GATE1_TERMINATION_POLICY,
+                "no_closure_requires_structured_reason": True,
+                "gate2_verdict_independence": True,
+            },
         },
+        "gate1_specialization_policy": _gate1_specialization_policy_json(
+            case
+        ),
         "gate1_anti_leakage_policy": {
+            "fixed_c_family_closure_policy": (
+                GATE1_FAMILY_ANTI_LEAKAGE_POLICY
+            ),
             "paired_semantic_interventions": True,
             "maximum_interventions": semantic_interventions,
-            "paired_replay_control": "normal_model_generated_candidate",
+            "paired_replay_generation": "fresh_from_mutated_lift_artifact",
+            "paired_intervention_family_policy": (
+                PAIRED_INTERVENTION_FAMILY_POLICY
+            ),
+            "paired_intervention_scope": (
+                "full_fixed_c_family"
+                if case.gate1_specialization_profiles
+                else "primary_profile"
+            ),
             "maximum_provider_attempts_per_generation": 3,
-            "masked_j_role": "diagnostic_or_fallback",
-            "masked_j_fallback_policy": MASKED_J_FALLBACK_POLICY,
-            "masked_j_score_role": "diagnostic_only",
+            "compose_equality": "gate1_verdict_condition",
+            "masked_j_role": "actual_lift_pi_terminal_attack",
+            "masked_j_policy": MASKED_J_POLICY,
+            "masked_j_family_policy": MASKED_J_FAMILY_POLICY,
+            "masked_j_scope": (
+                "full_fixed_c_family"
+                if case.gate1_specialization_profiles
+                else "primary_profile"
+            ),
+            "masked_j_required_outcome": (
+                "all_profiles_legal_comparable_hard_mismatch"
+                if case.gate1_specialization_profiles
+                else "compile_or_hard_nonclosure"
+            ),
+            "masked_j_score_role": "not_used",
             "ttir_score_semantics": TTIR_SCORE_SEMANTICS,
             "replay_reference_naming": "opaque_replay_refs_v1",
             "pi_ablations": {
                 "enabled": pi_ablations_enabled,
                 "default_policy": "enabled_for_formal_live_evidence",
                 "maximum": pi_ablation_limit,
-                "maximum_replay_repairs": 0,
                 "requires_full_pi_replay_closed": True,
                 "kinds": [kind.value for kind in pi_ablation_kinds],
                 "verdict_role": "diagnostic",
+                "pi_mutation_execution": "reject_before_writer",
+                "mechanism_substitution": "c_strategy_then_recompose",
                 "opaque_reference_discipline": (
                     "resolve_handles_never_emit_v1"
                 ),
-                "replay_code_repair": "disabled",
             },
         },
         "gate2_input_policy": {
@@ -1020,6 +1493,16 @@ def run_case(
             "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
+        "gate2_lowering_policy": {
+            "protocol": LOWER2C_PROTOCOL,
+            "unsupported_status": "lowering_unsupported",
+            "legacy_interpreter_fallback": "disabled",
+        },
+        "gate2_comparison_policy": {
+            "protocol": GATE2_COMPARISON_PROTOCOL,
+            "integer_and_boolean": "exact",
+            "floating": "per_output_tolerance",
+        },
         "gate2_matrix_policy": _gate2_matrix_policy_json(
             case, enabled=gate2_matrix_enabled, seeds=gate2_seeds
         ),
@@ -1032,10 +1515,19 @@ def run_case(
         "compiler_view": compiler_view.to_json(),
     }
 
+    def finish(code: int) -> tuple[int, dict[str, Any]]:
+        _finalize_performance_report(
+            report,
+            pipeline_started=pipeline_started,
+            stage_ms=stage_ms,
+        )
+        return code, report
+
     if artifact is None:
         _progress(
             "lift_start", kernel=case.name, model=args.model, effort=args.effort
         )
+        lift_started = time.perf_counter()
         try:
             extraction = extract_scrc_artifact(
                 source_text,
@@ -1053,9 +1545,11 @@ def run_case(
                     _lift_attempt_evidence(item) for item in exc.attempts
                 ],
             }
+            _record_stage_ms(stage_ms, "initial_lift", lift_started)
             _progress("lift_failed", kernel=case.name, attempts=len(exc.attempts))
-            return 2, report
+            return finish(2)
 
+        _record_stage_ms(stage_ms, "initial_lift", lift_started)
         artifact = extraction.artifact
         _progress(
             "lift_complete",
@@ -1100,6 +1594,7 @@ def run_case(
         max_repairs=args.lift_repairs,
         effort=args.effort,
     )
+    specialization_family = _gate1_specialization_family(case)
     _progress("gate1_start", kernel=case.name)
     gate1_runner = Gate1Runner(
         config=Gate1Config(
@@ -1110,19 +1605,85 @@ def run_case(
             run_masked_ablation=True,
         )
     )
-    gate1 = gate1_runner.run(
-        case.kernel_source,
-        artifact,
-        _compile_case(case),
-        registry,
-        writer,
-        relifter=relifter,
-    )
+    gate1_started = time.perf_counter()
+    try:
+        gate1 = gate1_runner.run(
+            case.kernel_source,
+            artifact,
+            _compile_case(case),
+            registry,
+            writer,
+            relifter=relifter,
+            specialization_family=specialization_family,
+        )
+    finally:
+        _record_stage_ms(stage_ms, "gate1_loop", gate1_started)
     report["gate1"] = _gate1_evidence_json(gate1)
     report["relifts"] = _relift_evidence_json(relifter)
     _progress("gate1_complete", kernel=case.name, status=gate1.status.value)
-    replay_candidate = _independent_gate2_candidate(gate1)
     verified_artifact = getattr(gate1, "artifact", artifact)
+    try:
+        final_artifact_digest = canonical_artifact_digest(
+            verified_artifact,
+            registry,
+        )
+    except Exception as exc:
+        final_artifact_digest = None
+        artifact_identity_error = f"{type(exc).__name__}: {exc}"
+    else:
+        artifact_identity_error = None
+    gate2_replay = _select_gate2_replay_observation(
+        gate1,
+        final_artifact_digest=final_artifact_digest,
+    )
+    report["gate2_replay_alignment"] = {
+        "policy": "final_gate1_artifact_digest_exact_match_v1",
+        "status": "aligned" if gate2_replay is not None else "coverage_gap",
+        "final_artifact_digest": final_artifact_digest,
+        "candidate_artifact_digest": (
+            None
+            if gate2_replay is None
+            else gate2_replay.artifact_digest
+        ),
+        "candidate_relift_round": (
+            None if gate2_replay is None else gate2_replay.relift_round
+        ),
+        "reason": (
+            None
+            if gate2_replay is not None
+            else (
+                "final_gate1_artifact_digest_unavailable"
+                if final_artifact_digest is None
+                else "no_executable_candidate_bound_to_final_gate1_artifact"
+            )
+        ),
+        "diagnostic": artifact_identity_error,
+    }
+    if specialization_family is not None:
+        family_evidence = _select_gate1_specialization_evidence(
+            gate1,
+            final_artifact_digest=final_artifact_digest,
+        )
+        if family_evidence is None:
+            report["gate1_specialization_family"] = {
+                "role": GATE1_SPECIALIZATION_POLICY,
+                "verdict_role": (
+                    "normal_family_strict_all_pass_gate1_condition"
+                ),
+                "anti_leakage_scope": "full_fixed_c_family",
+                "paired_intervention_policy": (
+                    PAIRED_INTERVENTION_FAMILY_POLICY
+                ),
+                "masked_j_family_policy": MASKED_J_FAMILY_POLICY,
+                "status": "not_evaluated_before_primary_candidate",
+                "family": specialization_family.to_json(),
+            }
+        else:
+            report["gate1_specialization_family"] = (
+                _gate1_family_evidence_json(
+                    family_evidence, specialization_family
+                )
+            )
     if pi_ablations_enabled:
         pi_ablation_control = _pi_ablation_control_evidence(gate1)
         report["pi_ablation_control"] = pi_ablation_control
@@ -1130,22 +1691,23 @@ def run_case(
         pi_ablation_control = None
     if pi_ablation_control is not None and pi_ablation_control["valid"]:
         _progress("pi_ablation_start", kernel=case.name)
-        pi_ablations = run_pi_ablations(
-            verified_artifact,
-            gate1.source_fingerprint,
-            _compile_case(case),
-            registry,
-            writer,
-            compiler=gate1_runner.compiler,
-            comparator=gate1_runner.comparator,
-            limit=pi_ablation_limit,
-            kinds=pi_ablation_kinds,
-            control_candidate=(
-                None
-                if replay_candidate is None
-                else replay_candidate.generation
-            ),
-        )
+        pi_ablation_started = time.perf_counter()
+        try:
+            pi_ablations = run_pi_ablations(
+                verified_artifact,
+                gate1.source_fingerprint,
+                _compile_case(case),
+                registry,
+                writer,
+                compiler=gate1_runner.compiler,
+                comparator=gate1_runner.comparator,
+                limit=pi_ablation_limit,
+                kinds=pi_ablation_kinds,
+            )
+        finally:
+            _record_stage_ms(
+                stage_ms, "pi_ablation", pi_ablation_started
+            )
         report["pi_ablations"] = _pi_ablation_evidence_json(pi_ablations)
         _progress(
             "pi_ablation_complete",
@@ -1162,14 +1724,15 @@ def run_case(
     if not gate1.replay_closed:
         if (
             getattr(args, "diagnose_rejected", False)
-            and replay_candidate is not None
-            and replay_candidate.generation is not None
+            and gate2_replay is not None
+            and gate2_replay.generation is not None
         ):
             replay = KernelSource.from_code(
-                replay_candidate.generation.code,
+                gate2_replay.generation.code,
                 verified_artifact.interface.function_name,
             )
             _progress("gate2_diagnostic_start", kernel=case.name)
+            gate2_started = time.perf_counter()
             try:
                 runner = Gate2Runner()
                 if gate2_matrix_enabled:
@@ -1224,32 +1787,38 @@ def run_case(
                     "status": "setup_failed",
                     "error": f"{type(exc).__name__}: {exc}",
                 }
-        return 3, report
+            finally:
+                _record_stage_ms(stage_ms, "gate2", gate2_started)
+        return finish(3)
 
-    if replay_candidate is None or replay_candidate.generation is None:
+    if gate2_replay is None or gate2_replay.generation is None:
         report["gate1"]["diagnostics"].append(
-            "Gate1 closed without a recoverable replay candidate"
+            "Gate1 closed without an executable replay observation"
         )
-        return 3, report
+        return finish(3)
     replay = KernelSource.from_code(
-        replay_candidate.generation.code,
+        gate2_replay.generation.code,
         verified_artifact.interface.function_name,
     )
     report["replay"] = {
-        "response_id": replay_candidate.generation.response_id,
-        "model": replay_candidate.generation.response_model,
-        "code_sha256": replay_candidate.generation.code_sha256,
-        "code": replay_candidate.generation.code,
+        "response_id": gate2_replay.generation.response_id,
+        "model": gate2_replay.generation.response_model,
+        "code_sha256": gate2_replay.generation.code_sha256,
+        "code": gate2_replay.generation.code,
     }
 
     _progress("gate2_start", kernel=case.name)
     runner = Gate2Runner()
+    gate2_started = time.perf_counter()
     if gate2_matrix_enabled:
-        gate2_suite = runner.run_suite(
-            case.kernel_source,
-            replay,
-            _gate2_suite(verified_artifact, case, gate2_seeds),
-        )
+        try:
+            gate2_suite = runner.run_suite(
+                case.kernel_source,
+                replay,
+                _gate2_suite(verified_artifact, case, gate2_seeds),
+            )
+        finally:
+            _record_stage_ms(stage_ms, "gate2", gate2_started)
         report["gate2_suite"] = _gate2_suite_evidence_json(gate2_suite)
         _progress(
             "gate2_complete",
@@ -1257,15 +1826,18 @@ def run_case(
             status="gate2_pass" if gate2_suite.passed else "gate2_suite_failed",
             cases=len(gate2_suite.cases),
         )
-        return (0 if gate2_suite.passed else 4), report
-    gate2 = runner.run(
-        case.kernel_source,
-        replay,
-        _gate2_case(verified_artifact, case, args.seed),
-    )
+        return finish(0 if gate2_suite.passed else 4)
+    try:
+        gate2 = runner.run(
+            case.kernel_source,
+            replay,
+            _gate2_case(verified_artifact, case, args.seed),
+        )
+    finally:
+        _record_stage_ms(stage_ms, "gate2", gate2_started)
     report["gate2"] = _gate2_evidence_json(gate2)
     _progress("gate2_complete", kernel=case.name, status=gate2.status.value)
-    return (0 if gate2.status is Gate2Status.PASS else 4), report
+    return finish(0 if gate2.status is Gate2Status.PASS else 4)
 
 
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
@@ -1315,8 +1887,8 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "run the final J-only/step-drop/mechanism-substitution pi audit; "
-            "formal live evidence enables it by default"
+            "run exact pi-tamper rejection and C.strategy→recompose causal "
+            "diagnostics; formal live evidence enables them by default"
         ),
     )
     parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)

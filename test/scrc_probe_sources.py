@@ -1,7 +1,8 @@
 """Source-side Triton kernels for the temporary SCRC feasibility probe.
 
 This module is the source-visible side of the experiment.  The replay model is
-never given this file; it only receives ``scrc_probe_inputs.json``.
+never given this file; the historical writer only received
+``back/scrc_probe_inputs_v0.json``.
 """
 
 import triton

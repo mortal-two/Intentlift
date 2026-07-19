@@ -13,6 +13,8 @@ import argparse
 import hashlib
 import importlib
 import json
+import math
+import time
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -25,12 +27,30 @@ from intentir.extraction.lifters.scrc import (
 )
 from intentir.verify.gate1.compiler import TritonCompiler
 from intentir.verify.gate1.compare import TTIR_SCORE_SEMANTICS
+from intentir.verify.gate1.composer import COMPOSER_VERSION
 from intentir.verify.gate1.model import Gate1Artifact
-from intentir.verify.gate1.orchestrate import MASKED_J_FALLBACK_POLICY
+from intentir.verify.gate1.orchestrate import (
+    GATE1_FAMILY_ANTI_LEAKAGE_POLICY,
+    GATE1_STAGNATION_POLICY,
+    GATE1_TERMINATION_POLICY,
+    MASKED_J_FAMILY_POLICY,
+    MASKED_J_POLICY,
+    RELIFT_GUIDANCE_POLICY,
+    RELIFT_STRUCTURAL_GUIDANCE_POLICY,
+)
+from intentir.verify.gate1.interventions import (
+    PAIRED_INTERVENTION_FAMILY_POLICY,
+)
 from intentir.verify.gate1.pi_ablations import PiAblationKind
+from intentir.verify.gate1.specialization import (
+    GATE1_FAMILY_RELIFT_GUIDANCE_POLICY,
+)
 from intentir.verify.gate1.rules import default_triton_rule_registry
+from intentir.verify.gate1.ttir import TTIR_FINGERPRINT_SCHEMA
 from intentir.verify.gate2 import (
+    GATE2_COMPARISON_PROTOCOL,
     InputDistribution,
+    LOWER2C_PROTOCOL,
     Tolerance,
     boundary_1d_extents,
     extract_gate1_gate2_observation,
@@ -42,6 +62,7 @@ from scrc_live_e2e import (
     Gate2ValueProfile,
     LiveKernelCase,
     _compile_case,
+    _gate1_specialization_policy_json,
     _gate2_matrix_policy_json,
     _positive_int,
     _selected_gate2_seeds,
@@ -74,15 +95,24 @@ CANDIDATES = (
         "fg_ones", "flag_gems.ops.ones", "ones_kernel", "fill", "ready"
     ),
     HeldoutCandidate(
+        "fg_zeros", "flag_gems.ops.zeros", "zeros_kernel", "fill", "ready"
+    ),
+    HeldoutCandidate(
         "fg_arange",
         "flag_gems.ops.arange",
         "arange_func",
         "iota",
         "ready",
     ),
-    HeldoutCandidate("fg_eye", "flag_gems.ops.eye_m", "eye_kernel", "select"),
     HeldoutCandidate(
-        "fg_trace", "flag_gems.ops.trace", "trace_kernel", "gather_reduce"
+        "fg_eye", "flag_gems.ops.eye_m", "eye_kernel", "select", "ready"
+    ),
+    HeldoutCandidate(
+        "fg_trace",
+        "flag_gems.ops.trace",
+        "trace_kernel",
+        "gather_reduce",
+        "ready",
     ),
     HeldoutCandidate(
         "fg_embedding",
@@ -92,12 +122,28 @@ CANDIDATES = (
         "ready",
     ),
     HeldoutCandidate(
+        "fg_index_select",
+        "flag_gems.ops.index_select",
+        "index_select_kernel",
+        "indirect_indexed_gather",
+        "ready",
+    ),
+    HeldoutCandidate(
+        "fg_diag_extract",
+        "flag_gems.ops.diag",
+        "diag_2d_to_1d_kernel",
+        "strided_gather",
+        "ready",
+    ),
+    HeldoutCandidate(
         "fg_count_nonzero",
         "flag_gems.ops.count_nonzero",
         "count_nonzero_kernel_1",
         "atomic_reduce",
     ),
-    HeldoutCandidate("fg_amax", "flag_gems.ops.amax", "amax_kernel_1", "reduce"),
+    HeldoutCandidate(
+        "fg_amax", "flag_gems.ops.amax", "amax_kernel_2", "reduce", "ready"
+    ),
     HeldoutCandidate(
         "fg_sum", "flag_gems.ops.sum", "sum_kernel_2", "reduce", "ready"
     ),
@@ -137,6 +183,7 @@ CANDIDATES = (
         "flag_gems.ops.log_softmax",
         "log_softmax_kernel",
         "structured_loop",
+        "ready",
     ),
     HeldoutCandidate(
         "fg_fused_add_rms_norm",
@@ -149,6 +196,7 @@ CANDIDATES = (
         "flag_gems.fused.skip_layernorm",
         "skip_layer_norm_kernel",
         "norm",
+        "ready",
     ),
     HeldoutCandidate(
         "fg_masked_select",
@@ -259,6 +307,45 @@ def build_heldout_case(name: str) -> LiveKernelCase:
     if name == "fg_ones":
         n = 2051
         block = 1024
+        boundary_profiles = tuple(
+            Gate2ShapeProfile(
+                boundary.label,
+                {"output_ptr": (boundary.extent,)},
+                {"n_elements": boundary.extent},
+                ((boundary.extent + block - 1) // block,),
+            )
+            for boundary in boundary_1d_extents(block)
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "output_ptr", "tensor", "f32", (n,)
+                ),
+                SCRCCompilerArgument(
+                    "n_elements", "scalar", "i32", value=n
+                ),
+            ),
+            ((n + block - 1) // block,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(n_elements, BLOCK_SIZE)",),
+            ("BLOCK_SIZE",),
+            1.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=boundary_profiles,
+            gate1_specialization_profiles=boundary_profiles,
+            gate1_primary_profile_id="non_divisible",
+        )
+
+    if name == "fg_zeros":
+        n = 2051
+        block = 1024
         return LiveKernelCase(
             name,
             _function(candidate),
@@ -363,6 +450,198 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ),
         )
 
+    if name == "fg_eye":
+        n, m = 37, 29
+        block_i = block_j = 32
+        shape_profiles = (
+            Gate2ShapeProfile(
+                "one_by_one",
+                {"out_ptr": (1, 1)},
+                {"N": 1, "M": 1},
+                (1, 1),
+            ),
+            Gate2ShapeProfile(
+                "block_edge",
+                {"out_ptr": (block_i, block_j)},
+                {"N": block_i, "M": block_j},
+                (1, 1),
+            ),
+            Gate2ShapeProfile(
+                "both_axes_tail",
+                {"out_ptr": (block_i + 1, block_j + 3)},
+                {"N": block_i + 1, "M": block_j + 3},
+                (2, 2),
+            ),
+            Gate2ShapeProfile(
+                "rectangular_nondivisible",
+                {"out_ptr": (n, m)},
+                {"N": n, "M": m},
+                (2, 1),
+            ),
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "out_ptr", "tensor", "f32", (n, m)
+                ),
+                SCRCCompilerArgument("N", "scalar", "i32", value=n),
+                SCRCCompilerArgument("M", "scalar", "i32", value=m),
+            ),
+            (2, 1),
+            {
+                "BLOCK_i": block_i,
+                "BLOCK_j": block_j,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            (
+                "ceil_div(N, BLOCK_i)",
+                "ceil_div(M, BLOCK_j)",
+            ),
+            ("BLOCK_i", "BLOCK_j"),
+            1.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=shape_profiles,
+            gate1_specialization_profiles=shape_profiles,
+            gate1_primary_profile_id="rectangular_nondivisible",
+        )
+
+    if name == "fg_trace":
+        rows, cols = 1031, 1025
+        num_diag = min(rows, cols)
+        block = 1024
+        shape_profiles = (
+            Gate2ShapeProfile(
+                "short_trip",
+                {"inp_ptr": (rows, cols), "out_ptr": ()},
+                {
+                    "num_diag": 1,
+                    "stride0": cols,
+                    "stride1": 1,
+                },
+                (1,),
+            ),
+            Gate2ShapeProfile(
+                "exact_block_trip",
+                {"inp_ptr": (rows, cols), "out_ptr": ()},
+                {
+                    "num_diag": block,
+                    "stride0": cols,
+                    "stride1": 1,
+                },
+                (1,),
+            ),
+            Gate2ShapeProfile(
+                "block_plus_one_trip",
+                {"inp_ptr": (rows, cols), "out_ptr": ()},
+                {
+                    "num_diag": num_diag,
+                    "stride0": cols,
+                    "stride1": 1,
+                },
+                (1,),
+            ),
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "inp_ptr", "tensor", "f32", (rows, cols)
+                ),
+                SCRCCompilerArgument("out_ptr", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "num_diag", "scalar", "i32", value=num_diag
+                ),
+                SCRCCompilerArgument(
+                    "stride0", "scalar", "i32", value=cols
+                ),
+                SCRCCompilerArgument(
+                    "stride1", "scalar", "i32", value=1
+                ),
+            ),
+            (1,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1",),
+            ("BLOCK_SIZE",),
+            0.25,
+            Tolerance(rtol=4.0e-4, atol=4.0e-4),
+            gate2_shape_profiles=shape_profiles,
+            gate1_specialization_profiles=shape_profiles,
+            gate1_primary_profile_id="block_plus_one_trip",
+        )
+
+    if name == "fg_log_softmax":
+        m, n, k = 5, 513, 3
+        block_m, block_n = 8, 256
+        shape_profiles = (
+            Gate2ShapeProfile(
+                "single_n_tile",
+                {"output_ptr": (3, 127, 2), "input_ptr": (3, 127, 2)},
+                {"M": 3, "N": 127, "K": 2},
+                (1, 2),
+            ),
+            Gate2ShapeProfile(
+                "exact_tiles",
+                {
+                    "output_ptr": (block_m, block_n, 1),
+                    "input_ptr": (block_m, block_n, 1),
+                },
+                {"M": block_m, "N": block_n, "K": 1},
+                (1, 1),
+            ),
+            Gate2ShapeProfile(
+                "multi_n_tail",
+                {"output_ptr": (m, n, k), "input_ptr": (m, n, k)},
+                {"M": m, "N": n, "K": k},
+                (1, k),
+            ),
+            Gate2ShapeProfile(
+                "multi_m_and_n_tail",
+                {"output_ptr": (9, 257, 2), "input_ptr": (9, 257, 2)},
+                {"M": 9, "N": 257, "K": 2},
+                (2, 2),
+            ),
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "output_ptr", "tensor", "f32", (m, n, k)
+                ),
+                SCRCCompilerArgument(
+                    "input_ptr", "tensor", "f32", (m, n, k)
+                ),
+                SCRCCompilerArgument("M", "scalar", "i32", value=m),
+                SCRCCompilerArgument("N", "scalar", "i32", value=n),
+                SCRCCompilerArgument("K", "scalar", "i32", value=k),
+            ),
+            (1, k),
+            {
+                "BLOCK_M": block_m,
+                "BLOCK_N": block_n,
+                "num_warps": 8,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(M, BLOCK_M)", "K"),
+            ("BLOCK_M", "BLOCK_N"),
+            3.0,
+            Tolerance(rtol=5.0e-4, atol=5.0e-5),
+            gate2_shape_profiles=shape_profiles,
+            gate1_specialization_profiles=shape_profiles,
+            gate1_primary_profile_id="multi_n_tail",
+        )
+
     if name == "fg_sum":
         n = 1003
         block = 1024
@@ -387,6 +666,60 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ("BLOCK_MID",),
             0.25,
             Tolerance(rtol=2.0e-4, atol=2.0e-4),
+        )
+
+    if name == "fg_amax":
+        mid_size = 63
+        block = 64
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "mid", "tensor", "f32", (mid_size,)
+                ),
+                SCRCCompilerArgument("out", "tensor", "f32", ()),
+                SCRCCompilerArgument(
+                    "mid_size", "scalar", "i32", value=mid_size
+                ),
+            ),
+            (1, 1),
+            {
+                "BLOCK_MID": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("1", "1"),
+            ("BLOCK_MID",),
+            32.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=(
+                Gate2ShapeProfile(
+                    "one", {"mid": (1,)}, {"mid_size": 1}
+                ),
+                Gate2ShapeProfile(
+                    "block_minus_one",
+                    {"mid": (block - 1,)},
+                    {"mid_size": block - 1},
+                ),
+                Gate2ShapeProfile(
+                    "block", {"mid": (block,)}, {"mid_size": block}
+                ),
+            ),
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "normal", {"mid": InputDistribution.NORMAL}, 32.0
+                ),
+                Gate2ValueProfile(
+                    "uniform", {"mid": InputDistribution.UNIFORM}, 32.0
+                ),
+                Gate2ValueProfile(
+                    "large_dynamic",
+                    {"mid": InputDistribution.LARGE_DYNAMIC},
+                    1.0,
+                ),
+            ),
         )
 
     if name == "fg_mean":
@@ -622,6 +955,295 @@ def build_heldout_case(name: str) -> LiveKernelCase:
             ),
         )
 
+    if name == "fg_skip_layer_norm":
+        rows, width = 7, 257
+        block = 512
+        profiles = tuple(
+            Gate2ShapeProfile(
+                profile_id,
+                {
+                    "Y": (rows, profile_width),
+                    "X": (rows, profile_width),
+                    "R": (rows, profile_width),
+                    "W": (profile_width,),
+                    "B": (profile_width,),
+                },
+                {
+                    "y_stride_r": profile_width,
+                    "y_stride_c": 1,
+                    "x_stride_r": profile_width,
+                    "x_stride_c": 1,
+                    "r_stride_r": profile_width,
+                    "r_stride_c": 1,
+                    "N": profile_width,
+                },
+                (rows,),
+            )
+            for profile_id, profile_width in (
+                ("single_width", 1),
+                ("rectangular_tail", width),
+                ("block_minus_one", block - 1),
+                ("block", block),
+            )
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "Y", "tensor", "f32", (rows, width)
+                ),
+                SCRCCompilerArgument(
+                    "X", "tensor", "f32", (rows, width)
+                ),
+                SCRCCompilerArgument(
+                    "R", "tensor", "f32", (rows, width)
+                ),
+                SCRCCompilerArgument("W", "tensor", "f32", (width,)),
+                SCRCCompilerArgument("B", "tensor", "f32", (width,)),
+                SCRCCompilerArgument(
+                    "y_stride_r", "scalar", "i32", value=width
+                ),
+                SCRCCompilerArgument(
+                    "y_stride_c", "scalar", "i32", value=1
+                ),
+                SCRCCompilerArgument(
+                    "x_stride_r", "scalar", "i32", value=width
+                ),
+                SCRCCompilerArgument(
+                    "x_stride_c", "scalar", "i32", value=1
+                ),
+                SCRCCompilerArgument(
+                    "r_stride_r", "scalar", "i32", value=width
+                ),
+                SCRCCompilerArgument(
+                    "r_stride_c", "scalar", "i32", value=1
+                ),
+                SCRCCompilerArgument(
+                    "N", "scalar", "i32", value=width
+                ),
+                SCRCCompilerArgument(
+                    "eps", "scalar", "f32", value=1.0e-5
+                ),
+            ),
+            (rows,),
+            {
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            (str(rows),),
+            ("BLOCK_SIZE",),
+            2.0,
+            Tolerance(rtol=5.0e-4, atol=5.0e-5),
+            gate2_shape_profiles=profiles,
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "normal",
+                    {
+                        "X": InputDistribution.NORMAL,
+                        "R": InputDistribution.NORMAL,
+                        "W": InputDistribution.NORMAL,
+                        "B": InputDistribution.NORMAL,
+                    },
+                    2.0,
+                ),
+                Gate2ValueProfile(
+                    "large_dynamic",
+                    {
+                        "X": InputDistribution.LARGE_DYNAMIC,
+                        "R": InputDistribution.LARGE_DYNAMIC,
+                        "W": InputDistribution.NEAR_ONE,
+                        "B": InputDistribution.UNIFORM,
+                    },
+                    1.0,
+                ),
+                Gate2ValueProfile(
+                    "near_constant",
+                    {
+                        "X": InputDistribution.NEAR_ONE,
+                        "R": InputDistribution.NEAR_ONE,
+                        "W": InputDistribution.NEAR_ONE,
+                        "B": InputDistribution.UNIFORM,
+                    },
+                    1.0e-3,
+                ),
+            ),
+            gate1_specialization_profiles=profiles,
+            gate1_primary_profile_id="rectangular_tail",
+        )
+
+    if name == "fg_index_select":
+        rows, cols, index_len = 19, 23, 17
+        block_m, block_n = 8, 32
+        profiles = (
+            Gate2ShapeProfile(
+                "single",
+                {
+                    "inp": (1, cols),
+                    "out": (1, 1),
+                    "index": (1,),
+                },
+                {"M": 1, "N": cols, "index_len": 1},
+                (1, 1),
+            ),
+            Gate2ShapeProfile(
+                "rectangular_tail",
+                {
+                    "inp": (rows, cols),
+                    "out": (rows, index_len),
+                    "index": (index_len,),
+                },
+                {"M": rows, "N": cols, "index_len": index_len},
+                (3, 1),
+            ),
+            Gate2ShapeProfile(
+                "two_axis_multitile",
+                {
+                    "inp": (17, 37),
+                    "out": (17, 65),
+                    "index": (65,),
+                },
+                {"M": 17, "N": 37, "index_len": 65},
+                (3, 3),
+            ),
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "inp", "tensor", "f32", (rows, cols)
+                ),
+                SCRCCompilerArgument(
+                    "out", "tensor", "f32", (rows, index_len)
+                ),
+                SCRCCompilerArgument(
+                    "M", "scalar", "i32", value=rows
+                ),
+                SCRCCompilerArgument(
+                    "N", "scalar", "i32", value=cols
+                ),
+                SCRCCompilerArgument(
+                    "index", "tensor", "i64", (index_len,)
+                ),
+                SCRCCompilerArgument(
+                    "index_len", "scalar", "i32", value=index_len
+                ),
+            ),
+            (3, 1),
+            {
+                "BLOCK_M": block_m,
+                "BLOCK_N": block_n,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            (
+                "ceil_div(M, BLOCK_M)",
+                "ceil_div(index_len, BLOCK_N)",
+            ),
+            ("BLOCK_M", "BLOCK_N"),
+            2.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            {
+                "inp": InputDistribution.NORMAL,
+                "index": InputDistribution.POSITIVE,
+            },
+            {"inp": 2.0, "index": float(cols - 1)},
+            gate2_shape_profiles=profiles,
+            gate2_value_profiles=(
+                Gate2ValueProfile(
+                    "random_index_normal_input",
+                    {
+                        "inp": InputDistribution.NORMAL,
+                        "index": InputDistribution.POSITIVE,
+                    },
+                ),
+                Gate2ValueProfile(
+                    "boundary_index_uniform_input",
+                    {
+                        "inp": InputDistribution.UNIFORM,
+                        "index": InputDistribution.INTEGER_BOUNDARY,
+                    },
+                ),
+            ),
+            gate1_specialization_profiles=profiles,
+            gate1_primary_profile_id="rectangular_tail",
+        )
+
+    if name == "fg_diag_extract":
+        rows, cols, diagonal = 11, 13, 2
+        block = 128
+        profiles = (
+            Gate2ShapeProfile(
+                "single",
+                {"data_ptr": (1, 3), "output_ptr": (1,)},
+                {"N": 1, "M": 3, "stride0": 3, "stride1": 1},
+                (1,),
+            ),
+            Gate2ShapeProfile(
+                "rectangular_tail",
+                {
+                    "data_ptr": (rows, cols),
+                    "output_ptr": (rows,),
+                },
+                {
+                    "N": rows,
+                    "M": cols,
+                    "stride0": cols,
+                    "stride1": 1,
+                },
+                (1,),
+            ),
+            Gate2ShapeProfile(
+                "multi_block",
+                {"data_ptr": (129, 131), "output_ptr": (129,)},
+                {"N": 129, "M": 131, "stride0": 131, "stride1": 1},
+                (2,),
+            ),
+        )
+        return LiveKernelCase(
+            name,
+            _function(candidate),
+            (
+                SCRCCompilerArgument(
+                    "data_ptr", "tensor", "f32", (rows, cols)
+                ),
+                SCRCCompilerArgument(
+                    "output_ptr", "tensor", "f32", (rows,)
+                ),
+                SCRCCompilerArgument(
+                    "N", "scalar", "i32", value=rows
+                ),
+                SCRCCompilerArgument(
+                    "M", "scalar", "i32", value=cols
+                ),
+                SCRCCompilerArgument(
+                    "stride0", "scalar", "i32", value=cols
+                ),
+                SCRCCompilerArgument(
+                    "stride1", "scalar", "i32", value=1
+                ),
+            ),
+            (1,),
+            {
+                "diagonal": diagonal,
+                "BLOCK_SIZE": block,
+                "num_warps": 4,
+                "num_stages": 1,
+            },
+            ("num_warps", "num_stages"),
+            ("ceil_div(N, BLOCK_SIZE)",),
+            ("diagonal", "BLOCK_SIZE"),
+            2.0,
+            Tolerance(rtol=0.0, atol=0.0),
+            gate2_shape_profiles=profiles,
+            gate1_specialization_profiles=profiles,
+            gate1_primary_profile_id="rectangular_tail",
+        )
+
     if name == "fg_embedding":
         vocab, count, width = 97, 17, 13
         block = 16
@@ -702,30 +1324,79 @@ def _batch_identity(
     registry = default_triton_rule_registry()
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 17,
+        "schema": 34,
+        "performance_schema": "scrc_case_performance_v1",
+        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v2",
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
         "lift_repairs": args.lift_repairs,
         "relift_rounds": args.relift_rounds,
         "normal_recovery": "relift_only_restart_full_pipeline",
-        "replay_code_repair": "disabled",
+        "replay_generation_policy": "fresh_only_no_prior_replay_source",
+        "gate1_stagnation_policy": {
+            "policy": GATE1_STAGNATION_POLICY,
+            "required_consecutive_observations": 2,
+            "basis": "canonical_artifact_and_exact_hard_diff",
+        },
+        "ttir_fingerprint_schema": TTIR_FINGERPRINT_SCHEMA,
+        "composer_version": COMPOSER_VERSION,
+        "relift_guidance_policy": {
+            "policy": RELIFT_GUIDANCE_POLICY,
+            "structural_policy": RELIFT_STRUCTURAL_GUIDANCE_POLICY,
+            "source": (
+                "first_completed_gate1_or_fixed_c_family_hard_comparison"
+            ),
+            "family_policy": (
+                GATE1_FAMILY_RELIFT_GUIDANCE_POLICY
+            ),
+            "transport_failure_relift": "disabled_without_hard_diff",
+            "replay_source_input": "forbidden",
+        },
+        "gate1_termination_policy": {
+            "policy": GATE1_TERMINATION_POLICY,
+            "no_closure_requires_structured_reason": True,
+            "gate2_verdict_independence": True,
+        },
         "semantic_interventions": args.semantic_interventions,
+        "fixed_c_family_closure_policy": (
+            GATE1_FAMILY_ANTI_LEAKAGE_POLICY
+        ),
+        "paired_intervention_family_policy": (
+            PAIRED_INTERVENTION_FAMILY_POLICY
+        ),
+        "paired_intervention_scope": (
+            "full_fixed_c_family"
+            if case.gate1_specialization_profiles
+            else "primary_profile"
+        ),
         "pi_ablations": bool(args.pi_ablations),
         "pi_ablation_limit": args.pi_ablation_limit,
         "pi_ablation_kinds": list(args.pi_ablation_kinds or ()),
-        "pi_ablation_replay_repairs": 0,
         "pi_ablation_requires_closed_control": True,
         "pi_ablation_opaque_reference_discipline": (
             "resolve_handles_never_emit_v1"
         ),
-        "pi_ablation_replay_code_repair": "disabled",
         "maximum_provider_attempts_per_generation": 3,
         "ttir_score_semantics": TTIR_SCORE_SEMANTICS,
-        "masked_j_fallback_policy": MASKED_J_FALLBACK_POLICY,
-        "masked_j_score_role": "diagnostic_only",
+        "masked_j_policy": MASKED_J_POLICY,
+        "masked_j_family_policy": MASKED_J_FAMILY_POLICY,
+        "masked_j_scope": (
+            "full_fixed_c_family"
+            if case.gate1_specialization_profiles
+            else "primary_profile"
+        ),
+        "masked_j_required_outcome": (
+            "all_profiles_legal_comparable_hard_mismatch"
+            if case.gate1_specialization_profiles
+            else "compile_or_hard_nonclosure"
+        ),
+        "masked_j_score_role": "not_used",
         "replay_reference_naming": "opaque_replay_refs_v1",
         "relift_protocol": SCRC_RELIFT_PROTOCOL,
+        "gate1_specialization_policy": _gate1_specialization_policy_json(
+            case
+        ),
         "diagnose_rejected": bool(args.diagnose_rejected),
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,
@@ -739,6 +1410,8 @@ def _batch_identity(
             "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
+        "lower2c_protocol": LOWER2C_PROTOCOL,
+        "gate2_comparison_protocol": GATE2_COMPARISON_PROTOCOL,
         "gate2_matrix_policy": _gate2_matrix_policy_json(
             case,
             enabled=bool(args.gate2_matrix),
@@ -809,6 +1482,172 @@ def _relift_response_ids(report: dict[str, Any]) -> list[str]:
         for item in relifts
         if isinstance(item, dict) and item.get("response_id")
     ]
+
+
+def _attach_batch_performance(
+    report: dict[str, Any],
+    *,
+    case_started: float,
+    preflight_ms: float | None,
+) -> dict[str, Any]:
+    performance = report.get("performance")
+    if not isinstance(performance, dict):
+        performance = {
+            "schema": "scrc_case_performance_v1",
+            "protocol": "scrc_wall_clock_observation_v1",
+            "clock": "time.perf_counter",
+            "verdict_role": "observation_only",
+            "timing_ms": {},
+            "recorded_invocations": {},
+            "gate1_observation": {},
+            "limitations": [],
+        }
+        report["performance"] = performance
+    timing = performance.get("timing_ms")
+    if not isinstance(timing, dict):
+        timing = {}
+        performance["timing_ms"] = timing
+    timing["preflight_compile"] = (
+        None if preflight_ms is None else round(float(preflight_ms), 3)
+    )
+    timing["heldout_total"] = round(
+        (time.perf_counter() - case_started) * 1000.0, 3
+    )
+    return performance
+
+
+def _nearest_rank(values: list[float], quantile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(1, math.ceil(quantile * len(ordered)))
+    return ordered[rank - 1]
+
+
+def _timing_distribution(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {
+            "count": 0,
+            "total_ms": None,
+            "mean_ms": None,
+            "p50_ms": None,
+            "p95_ms": None,
+            "min_ms": None,
+            "max_ms": None,
+        }
+    total = sum(values)
+    return {
+        "count": len(values),
+        "total_ms": round(total, 3),
+        "mean_ms": round(total / len(values), 3),
+        "p50_ms": round(float(_nearest_rank(values, 0.50)), 3),
+        "p95_ms": round(float(_nearest_rank(values, 0.95)), 3),
+        "min_ms": round(min(values), 3),
+        "max_ms": round(max(values), 3),
+    }
+
+
+def _summarize_performance(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    timing_keys = (
+        "preflight_compile",
+        "initial_lift",
+        "gate1_loop",
+        "specialization_family",
+        "pi_ablation",
+        "gate2",
+        "gate1_core",
+        "total",
+        "heldout_total",
+    )
+    timings: dict[str, list[float]] = {key: [] for key in timing_keys}
+    invocation_totals: Counter[str] = Counter()
+    gate1_statuses: Counter[str] = Counter()
+    termination_reasons: Counter[str] = Counter()
+    masked_outcomes: Counter[str] = Counter()
+    measured_cases = 0
+    replay_compile = 0
+    replay_compile_ok = 0
+    relift_attempts = 0
+    cases_with_relift = 0
+    per_case: list[dict[str, Any]] = []
+
+    for row in rows:
+        performance = row.get("performance")
+        if not isinstance(performance, dict):
+            continue
+        measured_cases += 1
+        timing = performance.get("timing_ms")
+        timing = timing if isinstance(timing, dict) else {}
+        for key in timing_keys:
+            value = timing.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                timings[key].append(float(value))
+        invocations = performance.get("recorded_invocations")
+        invocations = invocations if isinstance(invocations, dict) else {}
+        for key, value in invocations.items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                invocation_totals[key] += value
+        replay_compile += int(invocations.get("normal_replay_compile", 0))
+        replay_compile_ok += int(
+            invocations.get("normal_replay_compile_ok", 0)
+        )
+        observation = performance.get("gate1_observation")
+        observation = observation if isinstance(observation, dict) else {}
+        status = observation.get("status")
+        if isinstance(status, str):
+            gate1_statuses[status] += 1
+        termination = observation.get("outer_loop_termination")
+        if isinstance(termination, str):
+            termination_reasons[termination] += 1
+        masked = observation.get("masked_j_outcome")
+        if isinstance(masked, str):
+            masked_outcomes[masked] += 1
+        relifts = observation.get("relift_attempts", 0)
+        if isinstance(relifts, int) and not isinstance(relifts, bool):
+            relift_attempts += relifts
+            cases_with_relift += int(relifts > 0)
+        per_case.append(
+            {
+                "case": row.get("case"),
+                "status": row.get("status"),
+                "gate1_status": status,
+                "outer_loop_termination": termination,
+                "timing_ms": {
+                    key: timing.get(key) for key in timing_keys
+                },
+                "relift_attempts": relifts,
+            }
+        )
+
+    return {
+        "protocol": "scrc_batch_performance_v1",
+        "verdict_role": "observation_only",
+        "selected_cases": len(rows),
+        "measured_cases": measured_cases,
+        "missing_measurement_cases": len(rows) - measured_cases,
+        "timing": {
+            key: _timing_distribution(values)
+            for key, values in timings.items()
+        },
+        "recorded_invocation_totals": dict(sorted(invocation_totals.items())),
+        "gate1": {
+            "status_counts": dict(sorted(gate1_statuses.items())),
+            "outer_loop_termination_counts": dict(
+                sorted(termination_reasons.items())
+            ),
+            "replay_compile_attempts": replay_compile,
+            "replay_compile_ok": replay_compile_ok,
+            "replay_compile_rate": (
+                None
+                if replay_compile == 0
+                else round(replay_compile_ok / replay_compile, 6)
+            ),
+            "cases_with_relift": cases_with_relift,
+            "relift_attempts": relift_attempts,
+            "masked_j_outcomes": dict(sorted(masked_outcomes.items())),
+        },
+        "per_case": per_case,
+    }
 
 
 def _load_cached_lift(
@@ -904,6 +1743,8 @@ def main() -> int:
     for name in selected:
         path = args.out_dir / f"{name}.json"
         print(json.dumps({"case": name, "stage": "start"}), flush=True)
+        case_started = time.perf_counter()
+        preflight_ms: float | None = None
         try:
             case = build_heldout_case(name)
             identity = _batch_identity(case, args)
@@ -924,6 +1765,7 @@ def main() -> int:
             preflight = TritonCompiler().compile(
                 case.kernel_source, compile_case
             )
+            preflight_ms = preflight.elapsed_ms
             if not preflight.ok:
                 code = 1
                 report = {
@@ -997,6 +1839,12 @@ def main() -> int:
                 "effort": args.effort,
                 "batch": {"terminal": True, "row": row},
             }
+        performance = _attach_batch_performance(
+            report,
+            case_started=case_started,
+            preflight_ms=preflight_ms,
+        )
+        row["performance"] = performance
         _write_report(str(path), report)
         rows.append(row)
         print(
@@ -1013,6 +1861,7 @@ def main() -> int:
         "selected": list(selected),
         "counts": dict(sorted(counts.items())),
         "gate1_gate2_metrics": summarize_gate1_gate2(rows),
+        "performance_summary": _summarize_performance(rows),
         "results": rows,
     }
     _write_report(str(args.out_dir / "summary.json"), summary)
