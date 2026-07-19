@@ -464,6 +464,28 @@ def test_gate2_consumes_multi_output_bundle_through_real_cuda() -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CUDA_BACKEND, reason="needs built CUDA backend")
+def test_gate2_automatic_elementwise_selection_consumes_layer_c_schedule() -> None:
+    intent = _two_output_intent()
+    bundle = GateIntentBundle.from_artifact(
+        _artifact(intent, num_warps=4),
+        dims={},
+        input_bindings={"X": "input"},
+        output_bindings={"Y": "neg", "Z": "abs"},
+    )
+
+    lowered = CudaLoweringRunner().lower(CudaLoweringSpec(bundle))
+
+    assert lowered.program.selection.pipeline_kind == "specialized"
+    assert lowered.program.selection.fast_path_id == (
+        "cuda.elementwise.row.vectorized.v1"
+    )
+    assert lowered.schedule_decision is not None
+    assert lowered.schedule_decision.observed_block_threads == 128
+    assert lowered.schedule_decision.schedule.block_threads == 128
+    assert "block-threads=128" in lowered.program.selection.pass_argument
+
+
+@pytest.mark.skipif(not _HAVE_CUDA_BACKEND, reason="needs built CUDA backend")
 def test_gate1_bf16_contraction_reaches_native_mma_and_executes() -> None:
     if not torch.cuda.is_bf16_supported():
         pytest.skip("CUDA device has no BF16 tensor-core support")

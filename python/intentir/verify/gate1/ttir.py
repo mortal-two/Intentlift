@@ -542,12 +542,13 @@ def _bounded_normalize_operations(
     operations: list[_Operation],
     result_to_node: dict[str, int],
 ) -> tuple[list[_Operation], dict[str, int]]:
-    """Apply the two registered rewrites after lexical SSA resolution.
+    """Apply the registered bounded rewrites after lexical SSA resolution.
 
-    Gate1 deliberately has only two bounded false-reject normalizations:
-    neutral ``x + 0`` and ``1 / sqrt(x)`` versus ``rsqrt(x)``.  Applying them
-    to the parsed graph is essential: MLIR SSA spellings are region-scoped, so
-    a textual whole-function substitution would otherwise depend on whether
+    Gate1 deliberately keeps these false-reject normalizations narrow: neutral
+    ``x + 0``, ``1 / sqrt(x)`` versus ``rsqrt(x)``, and Triton's exact
+    libdevice-rsqrt spelling versus ``math.rsqrt``.  Applying them to the
+    parsed graph is essential: MLIR SSA spellings are region-scoped, so a
+    textual whole-function substitution would otherwise depend on whether
     sibling or nested regions happened to reuse the same local name.
     """
 
@@ -569,6 +570,41 @@ def _bounded_normalize_operations(
     substitutions: dict[str, str] = {}
     removed_nodes: set[int] = set()
     normalization_constant_nodes: set[int] = set()
+
+    # Rule N0: Triton 3.6 lowers ``tl.extra.libdevice.rsqrt`` to the exact
+    # ``tt.extern_elementwise`` symbols below, while replaying the semantic
+    # ``rsqrt`` rule produces ``math.rsqrt``.  Only the one-input/one-output
+    # signatures whose symbol and result type agree are normalized; all other
+    # extern calls remain distinct hard evidence.
+    extern_rsqrt_types = {
+        "__nv_rsqrtf": "f32",
+        "__nv_rsqrt": "f64",
+    }
+    for operation in operations:
+        if (
+            operation.name != "tt.extern_elementwise"
+            or len(operation.result_names) != 1
+            or len(operation.operands) != 1
+        ):
+            continue
+        symbol_match = re.search(
+            r'\bsymbol\s*=\s*"(?P<symbol>[^"]+)"',
+            operation.local_signature,
+        )
+        result_match = re.search(
+            r"->(?P<result>[^,(){}]+)$", operation.local_signature
+        )
+        if symbol_match is None or result_match is None:
+            continue
+        expected_type = extern_rsqrt_types.get(symbol_match.group("symbol"))
+        result_type = _normalize_space(result_match.group("result"))
+        if expected_type is None or result_type != expected_type:
+            continue
+        operation.name = "math.rsqrt"
+        operation.local_signature = _normalize_space(
+            f"math.rsqrt % : {result_type}"
+        )
+        operation.header_operand_count = 1
 
     # Rule N1: scalar/tensor floating or integer neutral addition.
     for operation in operations:

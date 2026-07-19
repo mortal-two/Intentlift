@@ -623,6 +623,23 @@ def test_observed_rsqrt_reciprocal_sqrt_rule_is_normalized() -> None:
     assert compare_ttir(rsqrt, reciprocal_sqrt).hard_pass
 
 
+def test_exact_libdevice_rsqrt_extern_is_normalized() -> None:
+    rsqrt = DATAFLOW_TTIR.replace(
+        "    %answer = arith.subf %left, %right : f32",
+        "    %answer = math.rsqrt %left : f32",
+    )
+    libdevice = DATAFLOW_TTIR.replace(
+        "    %answer = arith.subf %left, %right : f32",
+        '    %answer = tt.extern_elementwise %left '
+        '{libname = "", libpath = "", pure = true, '
+        'symbol = "__nv_rsqrtf"} : (f32) -> f32',
+    )
+    other_extern = libdevice.replace("__nv_rsqrtf", "__nv_sinf")
+
+    assert compare_ttir(rsqrt, libdevice).hard_pass
+    assert not compare_ttir(rsqrt, other_extern).hard_pass
+
+
 def test_rank_tuple_prefers_a_closer_failed_candidate():
     fill_only = compare_ttir(
         REDUCE_TTIR,

@@ -20,7 +20,7 @@ from intentir.backend.cuda.pipeline import (
     execute_cuda_artifact,
     lower_to_cuda,
 )
-from intentir.backend.cuda.selection import LoweringTarget
+from intentir.backend.cuda.selection import LoweringTarget, select_variant
 from intentir.backend.cuda.schedules import (
     ELEMENTWISE_FAST_PATH_ID,
     ROW_FAST_PATH_ID,
@@ -442,20 +442,33 @@ def _combined_layer_c(bundle: GateIntentBundle) -> dict[str, Any]:
     }
 
 
-def _implicit_schedule_decision(
+def _layer_c_schedule_decision(
     spec: CudaLoweringSpec, intent_mlir: str
 ) -> ScheduleDecision | None:
     options = spec.options
     if options.schedule_decision is not None:
         return options.schedule_decision
-    if options.only_fast_path not in {ROW_FAST_PATH_ID, ELEMENTWISE_FAST_PATH_ID}:
+    fast_path_id = options.only_fast_path
+    if fast_path_id is None and options.allow_specialized:
+        selected = select_variant(
+            intent_mlir,
+            target=options.target,
+            pass_overrides=options.pass_overrides,
+            allow_specialized=True,
+        )
+        fast_path_id = selected.fast_path_id
+    if fast_path_id not in {ROW_FAST_PATH_ID, ELEMENTWISE_FAST_PATH_ID}:
+        return None
+    if fast_path_id in options.pass_overrides:
+        # An explicit pass override is already the caller's schedule decision.
+        # Do not silently replace it with a Layer-C-derived candidate.
         return None
     layer_c = _combined_layer_c(spec.bundle)
     try:
         resolve_layer_c_scalar(layer_c, "num_warps")
     except LayerCResolutionError:
         return None
-    if options.only_fast_path == ROW_FAST_PATH_ID:
+    if fast_path_id == ROW_FAST_PATH_ID:
         return resolve_row_schedule(intent_mlir, layer_c)
     return resolve_elementwise_schedule(intent_mlir, layer_c)
 
@@ -680,13 +693,26 @@ class CudaLoweringRunner:
             fold=spec.options.fold,
             broadcast_axes=broadcasts,
         )
-        schedule_decision = _implicit_schedule_decision(spec, intent_mlir)
+        schedule_decision = _layer_c_schedule_decision(spec, intent_mlir)
+        pass_overrides = spec.options.pass_overrides
+        lowering_schedule_decision = schedule_decision
+        if schedule_decision is not None and spec.options.only_fast_path is None:
+            # Automatic selection first discovered the structural family.  Keep
+            # the second, tuned probe in the full selector order so the final
+            # evidence still records rejected predecessors and can continue to
+            # another compatible fast path if the Layer-C candidate stops
+            # consuming the complete graph.
+            pass_overrides = {
+                **dict(spec.options.pass_overrides),
+                schedule_decision.fast_path_id: schedule_decision.pass_argument,
+            }
+            lowering_schedule_decision = None
         program = lower_to_cuda(
             intent_mlir,
             target=spec.options.target,
-            pass_overrides=spec.options.pass_overrides,
+            pass_overrides=pass_overrides,
             only_fast_path=spec.options.only_fast_path,
-            schedule_decision=schedule_decision,
+            schedule_decision=lowering_schedule_decision,
             allow_specialized=spec.options.allow_specialized,
         )
         output_bindings = tuple(
