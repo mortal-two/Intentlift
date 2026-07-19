@@ -1,4 +1,4 @@
-# SCRC 真实 add 闭环报告
+# SCRC 真实 add 闭环报告（v7 历史归档）
 
 日期：2026-07-14
 
@@ -10,7 +10,7 @@
 > 状态是 `LEAKAGE_REJECTED`，Gate2 按门禁顺序未运行。因此下文的
 > `REPLAY_CLOSED` 只能视为历史阶段结果，不能再作为当前 Gate1 接受证据。
 > 根因与待批准方案见
-> `doc/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
+> `doc/back/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
 
 ## 结论
 

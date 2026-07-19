@@ -1,4 +1,12 @@
-# SCRC 真实验证架构与 IntentIR A/B/C 衔接计划
+# SCRC 真实验证架构与 IntentIR A/B/C 衔接计划（归档）
+
+> 归档状态：本文的两门架构与 A/B/C 归因原则已经吸收到当前 Gate1/Gate2 spec、
+> `doc/SCRC_Gate1_规则库与数百Kernel扩展计划.md` 和
+> `doc/SCRC_v8后续实施与规模验证流程.md`，不再作为独立活动路线图。v8 中 π 由
+> `DeterministicCompose(Canon(J), Interface, C, RuleRegistry)` 自动生成；本文出现的
+> “J+π”应按“J/interface/C/规则库派生的完整 π”理解。旧解释器、手写 probe 和
+> strict-v5-v7 报告已经归档，不计入当前规模验证结果。当前分阶段流程和完成定义见
+> `doc/SCRC_v8后续实施与规模验证流程.md`。
 
 ## 1. 正确的问题不是“op 是否 verify-ready”
 
@@ -85,8 +93,10 @@ J 的计算结果，不需要再造 JSON evaluator。
 ```text
 真实 Triton/TileLang/CUDA Kernel
   │
-  ├─ 提升官 LLM（可看源码）
-  │     └─ J / π / C / 接口 / 定位表
+  ├─ 完整 Lift（可看源码）
+  │     ├─ source-aware LLM：J / C / 接口 / 定位表
+  │     ├─ deterministic finalizer：π / provenance
+  │     └─ 返回完整 J / π / C artifact
   │
   ├─ 源前端 compile-only → source fingerprint
   │
@@ -111,7 +121,7 @@ J 的计算结果，不需要再造 JSON evaluator。
 不能先列一张想象中的“复杂特性清单”然后扩 IR。正确顺序是：
 
 1. 从项目规划的真实前端输入中选 Kernel；
-2. 真实调用 LLM 提取 J/π/C；
+2. 真实调用完整 Lift：LLM 提取 J/C，Lift 内确定性生成 π；
 3. 跑 Gate1；
 4. 闭合后跑 Gate2；
 5. 对具体失败做三方归属；
@@ -131,7 +141,7 @@ J 的计算结果，不需要再造 JSON evaluator。
 ### 阶段一：Triton 真实 LLM 样本
 
 - 从现有真实 source/provenance 可追溯 Kernel 选 20～40 个；
-- 全部重新通过 `extract_scrc_artifact` 生成 J/π/C；
+- 全部重新通过 `extract_scrc_artifact` 在 Lift 内生成完整 J/π/C；
 - 不复用手写 J 或手写 `.mlir` 作为提升结果；
 - 跑 Gate1，按真实失败补规则卡或规范化规则。
 

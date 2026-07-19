@@ -1,4 +1,6 @@
-# IntentIR SCRC Triton 探针报告
+# IntentIR SCRC Triton 探针报告（历史 v0 归档）
+
+> 本报告使用手工 probe input 与 GPT-5.5 replay，不属于当前 fresh v8 正式证据。
 
 日期：2026-07-14
 结论：**受控的第一阶段探针通过。五个 kernel 均在首次盲重放、零次修复下编译成功；源/重放 TTIR 的接口、算子多重集、归约结构、mask/effect 摘要全部一致。观察到的剩余差异是有限且可枚举的规范化噪声，没有发现发散型差异。**
@@ -21,11 +23,11 @@ J + π + 前端接口 + C 空位名 + 检索规则卡
 
 ## 2. 隔离与可复现控制
 
-- 提升官手写的 J、π、接口和 8 张规则卡在 [scrc_probe_inputs.json](scrc_probe_inputs.json)。
+- 提升官手写的 J、π、接口和 8 张规则卡在 [scrc_probe_inputs_v0.json](scrc_probe_inputs_v0.json)。
 - 源 kernel 在 [scrc_probe_sources.py](scrc_probe_sources.py)，没有进入重写请求。
 - GPT 返回的盲重放代码原样保存在 [scrc_probe_replays.py](scrc_probe_replays.py)。
 - π 静态检查：不含 `tl.*`/`triton.*` API；没有源文件路径；没有 BLOCK/warp/stage/CTA 的具体值。π 中的数字只来自 `J...nodes[n]` 一类结构引用。
-- C 数值仅存在于 [scrc_probe_compile.py](scrc_probe_compile.py) 的注入/编译侧，重写员只知道空位名称。
+- C 数值仅存在于 [scrc_probe_compile_v0.py](scrc_probe_compile_v0.py) 的注入/编译侧，重写员只知道空位名称。
 - 源和重放在不同 Python 进程、不同 Triton cache/dump 目录中完成最终编译。
 - 使用 `JITFunction.warmup()`，只编译、不启动 kernel；同时读取 `CompiledKernel.asm["ttir"]` 并启用 `TRITON_KERNEL_DUMP=1`。
 - 设置 `TRITON_ALWAYS_COMPILE=1`，避免磁盘 cache hit 导致 dump 目录为空。
@@ -44,7 +46,7 @@ J + π + 前端接口 + C 空位名 + 检索规则卡
 | 重写输入 SHA-256 | `b218d66338b5838291f3ce649e64983680f5ae1e3d50c697f56476c4e0d4da22` |
 
 注：这张表是早期探针的历史记录，不表示 5.6 系列不可用。正确模型名
-`gpt-5.6-sol` 已在后续 `test/scrc_live_add_report.md` 中以 `xhigh` 完成真实
+`gpt-5.6-sol` 已在后续 `test/back/scrc_live_add_report_v7.md` 中以 `xhigh` 完成真实
 Lift→Gate1→Gate2 闭环。
 
 环境记录：Python 3.10.12、PyTorch 2.10.0+cu130、Triton 3.6.0、NVIDIA RTX 5090 D（sm_120）、驱动 580.95.05。
@@ -65,7 +67,7 @@ matmul 含动态 `ceil_div(K, BLOCK_K)` 的 `scf.for`，不是仅覆盖单 K til
 
 ## 4. 人工 TTIR diff 结果
 
-[scrc_probe_compare.py](scrc_probe_compare.py) 只提供计数 sanity check；下面的结论来自对五组 raw unified diff 的逐段人工检查，包括每个 load/store 的地址、mask 依赖、归约 combiner 和数据流。
+[scrc_probe_compare_v0.py](scrc_probe_compare_v0.py) 只提供计数 sanity check；下面的结论来自对五组 raw unified diff 的逐段人工检查，包括每个 load/store 的地址、mask 依赖、归约 combiner 和数据流。
 
 | kernel | 编译 | 接口 | 算子多重集 | 归约 | mask / effect | 人工数据流结论 |
 |---|---|---|---|---|---|---|
@@ -162,7 +164,7 @@ rtk env \
   TRITON_STORE_BINARY_ONLY=0 \
   TRITON_CACHE_DIR=/tmp/intentir-scrc-source-cache \
   TRITON_DUMP_DIR=/tmp/intentir-scrc-source-dump \
-  python test/scrc_probe_compile.py \
+  python test/back/scrc_probe_compile_v0.py \
   --side source --output-dir /tmp/intentir-scrc-probe
 ```
 
@@ -175,14 +177,14 @@ rtk env \
   TRITON_STORE_BINARY_ONLY=0 \
   TRITON_CACHE_DIR=/tmp/intentir-scrc-replay-cache \
   TRITON_DUMP_DIR=/tmp/intentir-scrc-replay-dump \
-  python test/scrc_probe_compile.py \
+  python test/back/scrc_probe_compile_v0.py \
   --side replay --output-dir /tmp/intentir-scrc-probe
 ```
 
 结构摘要：
 
 ```bash
-rtk python test/scrc_probe_compare.py /tmp/intentir-scrc-probe
+rtk python test/back/scrc_probe_compare_v0.py /tmp/intentir-scrc-probe
 ```
 
 `test/lit.cfg.py` 只收集 `.mlir`，这些 Python 探针不会进入现有 lit 测试集合。

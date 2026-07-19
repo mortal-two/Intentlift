@@ -1,4 +1,4 @@
-{
+ {
   "format": "intentir-scrc-probe-input/v1",
   "purpose": "Blindly reconstruct five Triton kernels from J, pi, interface contracts, schedule-slot names, and retrieved rule cards. No source text is present in this artifact.",
   "frontend": {

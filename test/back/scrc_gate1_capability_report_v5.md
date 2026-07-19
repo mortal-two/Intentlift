@@ -1,10 +1,13 @@
-# SCRC Gate1 随机／边界能力复验报告
+# SCRC Gate1 随机／边界能力复验报告（strict-v5 历史归档）
+
+> 本报告的手工 mutant 与两方动态代理只保留为历史能力实验，不属于当前 Gate2
+> 三方执行或 fresh v8 规模验证结果。
 
 日期：2026-07-14
 
 ## 1. 实验范围
 
-本报告运行 `test/scrc_gate1_capability.py` 的 18 个定向样例：五个正确重放、
+本报告运行 `test/back/scrc_gate1_capability_v5.py` 的 18 个定向样例：五个正确重放、
 四个等价改写、七个行为错误变异、一个非语义 JIT 元数据变化和一个 π 泄漏
 变异。
 
@@ -15,7 +18,7 @@ source/replay 两方 GPU 代理；正式三方 Gate2 已在 `python/tests/test_g
 执行命令：
 
 ```bash
-PYTHONPATH=python python test/scrc_gate1_capability.py \
+PYTHONPATH=python python test/back/scrc_gate1_capability_v5.py \
   --gate2-depth full \
   --cache-dir /tmp/scrc_gate1_capability_cache \
   --strict-expectations \

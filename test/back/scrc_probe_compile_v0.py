@@ -1,4 +1,4 @@
-"""Compile the source/replay sides of the temporary Triton SCRC probe.
+"""Compile the archived source/replay sides of the initial Triton SCRC probe.
 
 The script uses ``JITFunction.warmup``: compilation happens, kernels are not
 executed.  ``CompiledKernel.asm['ttir']`` is persisted independently of the
@@ -16,7 +16,7 @@ from types import ModuleType
 import torch
 
 
-ROOT = Path(__file__).resolve().parent
+TEST_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load(path: Path, module_name: str) -> ModuleType:
@@ -126,7 +126,11 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    module_path = ROOT / f"scrc_probe_{args.side}s.py"
+    module_path = (
+        TEST_ROOT / "scrc_probe_sources.py"
+        if args.side == "source"
+        else TEST_ROOT / "back" / "scrc_probe_replays_v0.py"
+    )
     module = _load(module_path, f"scrc_probe_{args.side}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 

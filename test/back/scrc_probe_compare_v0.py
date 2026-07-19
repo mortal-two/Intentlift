@@ -1,4 +1,4 @@
-"""Mechanical sanity summary for the SCRC probe's manual TTIR review.
+"""Archived mechanical summary for the initial manual TTIR probe review.
 
 This is deliberately not the proposed production fingerprint extractor.  It
 only counts the structures that were then inspected in the raw unified diffs.

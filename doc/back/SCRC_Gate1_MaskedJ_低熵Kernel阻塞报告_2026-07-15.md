@@ -1,4 +1,7 @@
-# SCRC Gate1 masked-J：低熵 Kernel 与 π 结构可识别性阻塞报告
+# SCRC Gate1 masked-J：低熵 Kernel 与 π 结构可识别性阻塞报告（旧口径归档）
+
+> 当前 masked-J 已改为 mask→recompose diagnostic，不再运行 masked writer 或以
+> fuzzy ratio 裁决 Gate1。
 
 日期：2026-07-15
 

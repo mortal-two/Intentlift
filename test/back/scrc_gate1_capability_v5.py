@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SCRC Gate1 capability-limit probe for the five feasibility kernels.
+"""Archived strict-v5 Gate1 capability probe for the five feasibility kernels.
 
 This is an experiment driver, not a lit test.  It compiles the trusted source
 kernel and one source-blind replay/mutant with the same Triton specialization,
@@ -12,9 +12,9 @@ The dynamic oracle is intentionally labelled a *two-party proxy*: it compares
 
 Typical usage from the repository root::
 
-    PYTHONPATH=python python test/scrc_gate1_capability.py --list
-    PYTHONPATH=python python test/scrc_gate1_capability.py
-    PYTHONPATH=python python test/scrc_gate1_capability.py --gate2-depth full
+    PYTHONPATH=python python test/back/scrc_gate1_capability_v5.py --list
+    PYTHONPATH=python python test/back/scrc_gate1_capability_v5.py
+    PYTHONPATH=python python test/back/scrc_gate1_capability_v5.py --gate2-depth full
 
 No repository artifact is written by default.  Triton modules, compiler dumps,
 and caches live in temporary directories and are removed after the run.  Use
@@ -36,7 +36,7 @@ from types import ModuleType
 from typing import Any, Iterable, Mapping, Sequence
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
@@ -61,7 +61,7 @@ from intentir.verify.gate1.leakage import (  # noqa: E402
 
 
 SOURCE_MODULE = ROOT / "test" / "scrc_probe_sources.py"
-REPLAY_MODULE = ROOT / "test" / "scrc_probe_replays.py"
+REPLAY_MODULE = ROOT / "test" / "back" / "scrc_probe_replays_v0.py"
 
 
 @dataclass(frozen=True)

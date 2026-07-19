@@ -1,4 +1,4 @@
-"""Blind replay generated from ``scrc_probe_inputs.json`` only.
+"""Archived blind replay generated from ``scrc_probe_inputs_v0.json`` only.
 
 Requested/returned model: gpt-5.5
 Response id: resp_09484adc73d88790016a55f4e4fd188195868c5a7ef804a822

@@ -1,4 +1,4 @@
-# SCRC Gate1 / Gate2：本轮成果、两道门禁关系与原型边界
+# SCRC Gate1 / Gate2：本轮成果、两道门禁关系与原型边界（v7 阶段归档）
 
 ## 0. 当前整合状态
 
@@ -62,8 +62,8 @@
 add 的 Lift、正常 replay 和三方执行。2026-07-15 补齐方案要求的不透明
 ABI/C 消融后，最新 add 的 masked replay 也完全闭合，因 `L=1.0` 被 Gate1
 正确拒绝；此前 Gate2 PASS 仍是 lowering 工程证据，但不再是当前 Gate1 接受
-证据。详见 `test/scrc_live_add_report.md` 与
-`doc/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
+证据。详见 `test/back/scrc_live_add_report_v7.md` 与
+`doc/back/SCRC_Gate1_MaskedJ_低熵Kernel阻塞报告_2026-07-15.md`。
 
 2026-07-15 同一入口又推进了 row-sum 和 softmax。两者的 normal
 source-blind replay 都已达到 TTIR 硬闭合；softmax 还用真实 diff 补了
@@ -71,7 +71,7 @@ source-blind replay 都已达到 TTIR 硬闭合；softmax 还用真实 diff 补�
 row-sum 的 masked score 为 `0.778676`，softmax 的 masked replay 又完整
 闭合为 `1.0`，所以两者最终仍是 `LEAKAGE_REJECTED`。softmax 的
 production lower2c 三方预检已 PASS，但正式 live Gate2 按门禁顺序没有
-运行。详见 `test/scrc_live_softmax_report.md`。
+运行。详见 `test/back/scrc_live_softmax_report_v7.md`。
 
 RMSNorm 随后也沿用同一入口完成真实 Lift 和 normal replay。本轮补齐
 runtime `eps` 到 J `shape=[]` 输入的 `tensor_ref` 连接、`mean` 的语义
@@ -79,7 +79,7 @@ runtime `eps` 到 J `shape=[]` 输入的 `tensor_ref` 连接、`mean` 的语义
 选择说明。normal replay 首候选 score `1.0`，masked replay 也为 `1.0`，
 最终仍是 `LEAKAGE_REJECTED`。对这份被拒绝的真实 live artifact 按方案
 9.1 离线执行 Gate2，三方 PASS，但不改变门禁结论。详见
-`test/scrc_live_rmsnorm_report.md`。
+`test/back/scrc_live_rmsnorm_report_v7.md`。
 
 matmul 最后沿同一入口完成五核探针。最终 J 只包含一个
 `contraction("mk,kn->mn")`，源码 K-tile loop 被正确还原为 contraction 的
@@ -88,7 +88,7 @@ Layer-C/前端实现，而不是 J `loop/reduce`。本轮还根据真实失败�
 规则，并把 source n-gram 扫描纠正为只约束 π，不再误伤依法保存源码边界的
 J.B。normal replay 首候选 score `1.0`；masked replay 虽未硬闭合，仍以
 `0.804518 > 0.5` 被 `LEAKAGE_REJECTED`。真实 live 被拒绝样本的离线 Gate2
-三方 PASS。详见 `test/scrc_live_matmul_report.md`。
+三方 PASS。详见 `test/back/scrc_live_matmul_report_v7.md`。
 
 ### 1.3 Gate1 收回 SCRC 主线
 
@@ -269,7 +269,7 @@ normal 与独立 masked-J 都为 `1.0`，所以正式仍是 `LEAKAGE_REJECTED`�
 diagnostic 因 CPU wrapper 把输入硬编码为 f32 而 `EXECUTION_FAILED`；修复后严格
 复用同一 Lift artifact，source/replay 最大误差 0，二者对 lowering 最大误差
 `3.6089e-9`。这些修复属于既有 const/cast/reduce lowering，不新增 IntentIR op。
-详细证据见 `doc/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
+详细证据见 `doc/back/SCRC_首批24个真实Kernel执行报告_2026-07-15.md`。
 
 ### 1.8 第七章 relift-only 语义重提
 

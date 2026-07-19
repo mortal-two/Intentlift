@@ -1,4 +1,4 @@
-# TianchenIR / IntentIR 只读审计报告
+# TianchenIR / IntentIR 只读审计报告（SCRC 重构前归档）
 
 > 审计主题：Op 完整度、真实 LLM 提取与 Lowering、多次尝试与候选差异处理、验证与证书、当前工程成熟度
 >
