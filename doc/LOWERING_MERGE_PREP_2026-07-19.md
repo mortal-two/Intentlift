@@ -52,6 +52,7 @@ lowering pass 的隐式输入。反过来，paper receipt 也不得成为 Gate l
 4. `0c49f0b test: cover frontend CUDA compile and runtime orchestration`
 5. `936f573 backend: add verification-neutral CUDA lowering bridge`
 6. `be7dc34 test: exercise neutral generic and direct CUDA lowering`
+7. `3e417e8 test: isolate xformers split-k import shims`
 
 ## 保留的后端能力
 
@@ -152,6 +153,7 @@ paper verifier。
   `-O2` 下会在 `memref.store` 构造时崩溃；
 - MLIR lit：109/109 通过；
 - frontend/backend/orchestrate/neutral bridge：55 passed，1 skipped；
+- xFormers split-K CUDA PK：10/10 通过；
 - 中立 generic 路径真实生成 `add_kernel` ELF cubin；
 - 中立 direct elementwise 路径真实完成 structural probe、specialized MLIR、
   NVVM/PTX/ptxas，并生成 ELF cubin。
@@ -165,4 +167,3 @@ paper verifier。
 4. 把现有 paper-scoped schedule/variant/dispatch 模块迁到中立 backend 命名空间，
    保留 guard、fallback、bundle 和性能消融，不迁移 paper verdict；
 5. 分层运行全部 lit、Python lowering、CUDA PK 与 performance regression。
-
