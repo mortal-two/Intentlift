@@ -133,6 +133,19 @@ def test_emit_broadcast_keeps_existing_leading_singleton_axis() -> None:
     assert "tensor<1x8xf32>) -> tensor<4x8xf32>" in mlir
 
 
+def test_emit_keeps_standard_trailing_vector_broadcast_rank_one() -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(
+        _broadcast_binary_fn("trailing_vector", [8], [4, 8]),
+        {},
+        broadcast_axes={"Y": {"row": (0,)}},
+    )
+
+    assert "tensor.expand_shape %row" not in mlir
+    assert "tensor<4x8xf32>, tensor<8xf32>) -> tensor<4x8xf32>" in mlir
+
+
 def test_emit_broadcast_supports_mixed_existing_and_missing_axes() -> None:
     from intentir.frontend import emit_module
 
@@ -145,6 +158,94 @@ def test_emit_broadcast_supports_mixed_existing_and_missing_axes() -> None:
     assert "tensor.expand_shape %row" in mlir
     assert "output_shape [1, 4, 1]" in mlir
     assert "tensor<1x4x1xf32>) -> tensor<3x4x8xf32>" in mlir
+
+
+def test_emit_scalar_broadcast_uses_empty_affine_map_without_rank_insertion() -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(
+        _broadcast_binary_fn("scalar_broadcast", [], [4, 1]),
+        {},
+        broadcast_axes={"Y": {"row": (0,)}},
+    )
+
+    assert "tensor.expand_shape %row" not in mlir
+    assert "tensor<4x1xf32>, tensor<f32>) -> tensor<4x1xf32>" in mlir
+
+
+def test_emit_propagates_collapsed_output_shape_through_rms_chain() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "rms_chain_shape",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "eps", "dtype": "f32", "shape": []},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "R", "dtype": "f32", "shape": [4]},
+                ],
+                "body": [
+                    {
+                        "op": "map_binary",
+                        "result": "square",
+                        "operands": ["X", "X"],
+                        "attrs": {"fn": "mul"},
+                    },
+                    {
+                        "op": "reduce",
+                        "result": "mean",
+                        "operands": ["square"],
+                        "attrs": {
+                            "fn": "mean",
+                            "axes": [1],
+                            "assoc": "float_nondeterministic",
+                        },
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "shifted",
+                        "operands": ["mean", "eps"],
+                        "attrs": {"fn": "add"},
+                    },
+                    {
+                        "op": "map_unary",
+                        "result": "root",
+                        "operands": ["shifted"],
+                        "attrs": {"fn": "sqrt"},
+                    },
+                    {
+                        "op": "map_unary",
+                        "result": "R",
+                        "operands": ["root"],
+                        "attrs": {"fn": "recip"},
+                    },
+                    {
+                        "op": "contraction",
+                        "result": "Y",
+                        "operands": ["X", "R"],
+                        "attrs": {"subscripts": "mn,m->mn"},
+                    },
+                ],
+            }
+        }
+    )
+
+    mlir = emit_module(
+        fn,
+        {},
+        broadcast_axes={"shifted": {"eps": (0,)}},
+    )
+
+    assert "intent.reduce" in mlir
+    assert "-> tensor<4xf32>" in mlir
+    assert (
+        '{subscripts = "mn,m->mn"} : '
+        "(tensor<4x8xf32>, tensor<4xf32>) -> tensor<4x8xf32>"
+    ) in mlir
 
 
 def test_emit_select_keeps_existing_condition_broadcast_axis() -> None:

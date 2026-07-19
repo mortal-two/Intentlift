@@ -485,6 +485,12 @@ def _broadcast_projection(
             f"broadcast axes {list(axes)} cannot project rank {len(shape)} "
             f"operand to consumer rank {target_rank}"
         )
+    if not shape:
+        # A rank-0 tensor uses the empty affine input map and therefore
+        # broadcasts across the complete consumer domain without materializing
+        # rank insertion.  Boundary axes remain audited semantic facts, but
+        # need not enumerate every consumer dimension for a scalar.
+        return [1] * target_rank, tuple(range(target_rank))
     axis_set = set(normalized)
     memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
 
@@ -1175,15 +1181,30 @@ def _infer_body(
         # transpose operand rank/shape, which lets an intermediate reduce choose
         # collapsed vs keepdims without relying on a model-specific heuristic.
         for op in reversed(body):
+            if not isinstance(op.result, str) or op.result not in env:
+                continue
+            result_shape = env[op.result]
+            if op.op in {"map_unary", "cast"} and len(op.operands) == 1:
+                operand = op.operands[0]
+                if operand not in env:
+                    env[operand] = list(result_shape)
+                    changed = True
+                continue
+            if op.op in {"map_binary", "select"}:
+                axes = _op_broadcast_axes(op, broadcast_axes)
+                if not axes:
+                    continue
+                for operand in op.operands:
+                    if operand not in env and not axes.get(operand):
+                        env[operand] = list(result_shape)
+                        changed = True
+                continue
             if (
                 op.op != "transpose"
-                or not isinstance(op.result, str)
-                or op.result not in env
                 or len(op.operands) != 1
             ):
                 continue
             operand = op.operands[0]
-            result_shape = env[op.result]
             perm = _fold_permutation(op.attrs["perm"], fold, extents or {})
             if sorted(perm) != list(range(len(result_shape))):
                 raise ValueError(
@@ -1258,6 +1279,20 @@ class _Printer:
         # Rank-0 tensors already broadcast through an empty affine input map;
         # no tensor.expand_shape is needed for explicit scalar axes.
         if not axes or not source_shape or target_shape == source_shape:
+            return self.ssa[name], source_type
+        rank_gap = len(target_shape) - len(source_shape)
+        standard_trailing_vector = (
+            consumer_shape is not None
+            and len(source_shape) == 1
+            and inserted_axes == tuple(range(rank_gap))
+            and source_shape == target_shape[rank_gap:]
+        )
+        if standard_trailing_vector:
+            # Intent map lowering and the row fast path both understand the
+            # conventional trailing rank-1 parameter broadcast directly.  Keep
+            # it rank-1 so specialized row kernels can classify it as a column
+            # parameter; non-trailing projections still materialize an explicit
+            # expand_shape below.
             return self.ssa[name], source_type
 
         inserted = set(inserted_axes)

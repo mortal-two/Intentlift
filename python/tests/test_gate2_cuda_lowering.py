@@ -288,8 +288,8 @@ def test_cuda_lower_materializes_boundary_broadcast_axes(
     assert artifact.broadcast_consumer_count == 1
     assert "tensor.expand_shape %lhs" in observed["source"]
     assert "output_shape [3, 1]" in observed["source"]
-    assert "tensor.expand_shape %rhs" in observed["source"]
-    assert "output_shape [1, 5]" in observed["source"]
+    assert "tensor.expand_shape %rhs" not in observed["source"]
+    assert "tensor<5xf32>) -> tensor<3x5xf32>" in observed["source"]
 
 
 def test_cuda_lower_reuses_existing_singleton_broadcast_axis(
@@ -399,6 +399,93 @@ def test_cuda_lower_rejects_non_singleton_declared_broadcast_axis() -> None:
                     semantic_archive=archive,
                 )
             )
+        )
+
+
+def test_cuda_bundle_accepts_contraction_broadcast_encoded_by_subscripts() -> None:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "gate_cuda_contraction_broadcast",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "scale", "dtype": "f32", "shape": [4]},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 8]}
+                ],
+                "body": [
+                    {
+                        "op": "contraction",
+                        "result": "Y",
+                        "operands": ["X", "scale"],
+                        "attrs": {"subscripts": "mn,m->mn"},
+                    }
+                ],
+            }
+        }
+    )
+    archive = SemanticArchive(
+        intent.name,
+        intent,
+        {"n0": "body[0]"},
+        Boundary(
+            broadcasts=[BroadcastSpec("n0", "scale", [1])],
+            output_mappings=[OutputMapping("Y", "Y", "n0")],
+        ),
+    )
+
+    bundle = GateIntentBundle(
+        intent,
+        {},
+        {"X": "X", "scale": "scale"},
+        {"Y": "Y"},
+        semantic_archive=archive,
+    )
+
+    assert bundle.semantic_archive is archive
+
+
+def test_cuda_bundle_rejects_contraction_broadcast_conflicting_with_subscripts() -> None:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "gate_cuda_bad_contraction_broadcast",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "scale", "dtype": "f32", "shape": [4]},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 8]}
+                ],
+                "body": [
+                    {
+                        "op": "contraction",
+                        "result": "Y",
+                        "operands": ["X", "scale"],
+                        "attrs": {"subscripts": "mn,m->mn"},
+                    }
+                ],
+            }
+        }
+    )
+    archive = SemanticArchive(
+        intent.name,
+        intent,
+        {"n0": "body[0]"},
+        Boundary(
+            broadcasts=[BroadcastSpec("n0", "scale", [0])],
+            output_mappings=[OutputMapping("Y", "Y", "n0")],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="disagree with subscripts"):
+        GateIntentBundle(
+            intent,
+            {},
+            {"X": "X", "scale": "scale"},
+            {"Y": "Y"},
+            semantic_archive=archive,
         )
 
 

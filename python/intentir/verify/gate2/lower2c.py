@@ -79,10 +79,12 @@ def boundary_broadcast_axes(
                 f"broadcast target {broadcast.node_ref!r} has no J node path"
             )
         operation = _operation_at_path(archive, path)
-        if operation.get("op") not in {"map_binary", "select"}:
+        op_name = operation.get("op")
+        if op_name not in {"map_binary", "select", "contraction"}:
             raise NotImplementedError(
-                "lower2c boundary broadcast currently supports map_binary/select "
-                f"consumers, got {operation.get('op')!r}"
+                "lower2c boundary broadcast currently supports "
+                "map_binary/select/contraction consumers, "
+                f"got {op_name!r}"
             )
         op_result = operation.get("result")
         if not isinstance(op_result, str):
@@ -101,6 +103,44 @@ def boundary_broadcast_axes(
                 "lower2c boundary broadcast currently requires integer axes"
             )
         axes = tuple(int(axis) for axis in broadcast.axes)
+        if op_name == "contraction":
+            operand_positions = [
+                index
+                for index, operand in enumerate(operands)
+                if operand == broadcast.operand
+            ]
+            if len(operand_positions) != 1:
+                raise ValueError(
+                    "contraction broadcast operand must identify exactly one "
+                    f"operand position, got {operand_positions!r}"
+                )
+            attrs = operation.get("attrs")
+            subscripts = attrs.get("subscripts") if isinstance(attrs, Mapping) else None
+            if not isinstance(subscripts, str):
+                raise ValueError("contraction broadcast requires string subscripts")
+            try:
+                inputs_text, output_labels = subscripts.split("->", 1)
+                input_labels = [item.strip() for item in inputs_text.split(",")]
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid contraction subscripts {subscripts!r}"
+                ) from exc
+            if len(input_labels) != len(operands):
+                raise ValueError(
+                    "contraction subscript/input arity differs from operands"
+                )
+            labels = input_labels[operand_positions[0]]
+            expected_axes = tuple(
+                index
+                for index, label in enumerate(output_labels.strip())
+                if label not in labels
+            )
+            if axes != expected_axes:
+                raise ValueError(
+                    "contraction broadcast axes disagree with subscripts: "
+                    f"operand={broadcast.operand!r}, expected={expected_axes!r}, "
+                    f"observed={axes!r}"
+                )
         operand_axes = result.setdefault(op_result, {})
         if broadcast.operand in operand_axes:
             previous = operand_axes[broadcast.operand]
