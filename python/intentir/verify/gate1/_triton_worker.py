@@ -101,6 +101,8 @@ def _scalar_value(spec: Mapping[str, Any]) -> int | float | bool:
 
 def _runtime_value(torch: Any, spec: Mapping[str, Any], device: str) -> Any:
     kind = spec.get("kind")
+    if kind == "none":
+        return None
     if kind == "scalar":
         return _scalar_value(spec)
     if kind != "tensor":

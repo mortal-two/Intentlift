@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "test/high_performance_live_batch.py"
+SPEC = importlib.util.spec_from_file_location("high_performance_live_batch", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+batch = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = batch
+SPEC.loader.exec_module(batch)
+
+
+def test_official_high_performance_campaign_resolves_28_authentic_sources() -> None:
+    cases = batch.load_cases()
+
+    assert len(cases) == 28
+    assert len({case.function_name for case in cases}) == 28
+    assert all(case.source_path.is_file() for case in cases)
+    assert all(case.compiler_view().grid for case in cases)
+
+
+def test_official_campaign_configuration_is_not_cli_overridable() -> None:
+    parsed = batch._parser().parse_args([])
+    official = batch._official_args(parsed)
+
+    assert official.model == "gpt-5.6-sol"
+    assert official.effort == "xhigh"
+    assert official.gate1_profile == "formal"
+    assert official.lowering_backend == "cuda"
+    assert not official.diagnose_rejected
+
+
+def test_fresh_contract_rejects_wrong_model_cache_and_missing_cuda() -> None:
+    report = {
+        "model": "gpt-5.5",
+        "effort": "high",
+        "lift": {
+            "ok": True,
+            "reused": True,
+            "response_model": "gpt-5.5",
+            "response_ids": [],
+            "usage": {},
+        },
+        "gate1": {"status": "replay_closed"},
+        "gate2": {"status": "gate2_pass"},
+        "gate2_lowering_policy": {"backend": "cpu"},
+    }
+
+    passed, failures = batch._fresh_contract(report)
+
+    assert not passed
+    assert set(failures) == {
+        "lift_was_reused",
+        "response_model_mismatch",
+        "missing_provider_response_id",
+        "requested_model_mismatch",
+        "requested_effort_mismatch",
+        "not_cuda_lowering",
+    }
+
+
+def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
+    report = {
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "lift": {
+            "ok": True,
+            "response_model": "gpt-5.6-sol",
+            "response_ids": ["resp_fresh"],
+            "usage": {"total_tokens": 1},
+        },
+        "gate1": {"status": "replay_closed"},
+        "gate2": {"status": "gate2_pass"},
+        "gate2_lowering_policy": {"backend": "cuda"},
+    }
+
+    assert batch._fresh_contract(report) == (True, [])

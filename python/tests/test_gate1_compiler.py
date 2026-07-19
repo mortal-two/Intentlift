@@ -233,6 +233,27 @@ def test_compile_case_rejects_overlapping_schedule_slots() -> None:
         )
 
 
+def test_compile_case_preserves_none_arguments_and_string_constexprs() -> None:
+    case = CompileCase(
+        arguments={
+            "x": RuntimeArgument.tensor((4,), "float32"),
+            "bias": RuntimeArgument.none(),
+        },
+        grid=(1,),
+        schedule={"BIAS_TYPE": "none", "BLOCK": 4},
+    )
+
+    assert case.to_payload()["arguments"]["bias"] == {
+        "kind": "none",
+        "dtype": "none",
+        "shape": None,
+        "strides": None,
+        "value": None,
+    }
+    assert case.to_payload()["schedule"]["BIAS_TYPE"] == "none"
+    assert _triton_worker._runtime_value(None, {"kind": "none"}, "cuda") is None
+
+
 def test_worker_unwraps_kernel_interface_metadata_and_warmup_result() -> None:
     class Inner:
         arg_names = ["x", "BLOCK"]

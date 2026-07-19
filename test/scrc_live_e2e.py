@@ -444,11 +444,13 @@ def _compile_case(case: LiveKernelCase) -> CompileCase:
             arguments[argument.name] = RuntimeArgument.tensor(
                 argument.shape, _runtime_dtype(argument.dtype)
             )
-        else:
+        elif argument.kind == "scalar":
             assert argument.value is not None
             arguments[argument.name] = RuntimeArgument.scalar(
                 argument.value, _runtime_dtype(argument.dtype)
             )
+        else:
+            arguments[argument.name] = RuntimeArgument.none(argument.dtype)
     return CompileCase(arguments, case.grid)
 
 

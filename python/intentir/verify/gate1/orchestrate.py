@@ -1401,11 +1401,12 @@ def _composer_shadow_record(
 def _case_with_artifact_schedule(
     case: CompileCase, artifact: Gate1Artifact
 ) -> CompileCase:
-    values: dict[str, int | float | bool] = {}
+    values: dict[str, int | float | bool | str] = {}
     for name, value in artifact.schedule.values.items():
-        if not isinstance(value, (bool, int, float)):
+        if not isinstance(value, (bool, int, float, str)):
             raise ValueError(
-                f"Triton schedule value {name!r} must be bool/int/float, got {value!r}"
+                f"Triton schedule value {name!r} must be a JSON scalar, "
+                f"got {value!r}"
             )
         values[name] = value
     missing = artifact.schedule.missing_required_values()

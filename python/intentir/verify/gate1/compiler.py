@@ -122,15 +122,17 @@ class KernelSource:
 class RuntimeArgument:
     """One compile-time argument used to specialize a Triton kernel."""
 
-    kind: Literal["tensor", "scalar"]
+    kind: Literal["tensor", "scalar", "none"]
     dtype: str | None = None
     shape: tuple[int, ...] | None = None
     strides: tuple[int, ...] | None = None
     value: int | float | bool | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in {"tensor", "scalar"}:
-            raise ValueError("RuntimeArgument.kind must be 'tensor' or 'scalar'")
+        if self.kind not in {"tensor", "scalar", "none"}:
+            raise ValueError(
+                "RuntimeArgument.kind must be 'tensor', 'scalar', or 'none'"
+            )
         if self.kind == "tensor":
             if self.dtype is None or self.shape is None or self.value is not None:
                 raise ValueError("tensor argument requires dtype/shape and forbids value")
@@ -144,13 +146,15 @@ class RuntimeArgument:
                 if len(strides) != len(shape) or any(stride < 0 for stride in strides):
                     raise ValueError("tensor strides must match rank and be non-negative")
                 object.__setattr__(self, "strides", strides)
-        else:
+        elif self.kind == "scalar":
             if self.value is None or self.shape is not None or self.strides is not None:
                 raise ValueError("scalar argument requires value and forbids shape/strides")
             if not isinstance(self.value, (bool, int, float)):
                 raise ValueError("scalar value must be bool, int, or float")
             if self.dtype is not None:
                 object.__setattr__(self, "dtype", self.dtype.removeprefix("torch."))
+        elif self.shape is not None or self.strides is not None or self.value is not None:
+            raise ValueError("none argument forbids shape, strides, and value")
 
     @classmethod
     def tensor(
@@ -173,6 +177,10 @@ class RuntimeArgument:
     ) -> "RuntimeArgument":
         return cls("scalar", dtype=dtype, value=value)
 
+    @classmethod
+    def none(cls, dtype: str | None = "none") -> "RuntimeArgument":
+        return cls("none", dtype=dtype)
+
     def to_payload(self) -> dict[str, Any]:
         payload = asdict(self)
         if payload["shape"] is not None:
@@ -188,7 +196,7 @@ class CompileCase:
 
     arguments: Mapping[str, RuntimeArgument]
     grid: tuple[int, ...]
-    schedule: Mapping[str, int | float | bool] = field(default_factory=dict)
+    schedule: Mapping[str, int | float | bool | str] = field(default_factory=dict)
     device: str = "cuda"
 
     def __post_init__(self) -> None:
@@ -209,7 +217,7 @@ class CompileCase:
                 raise ValueError(f"invalid schedule name: {name!r}")
             if name in arguments:
                 raise ValueError(f"{name!r} appears in both arguments and schedule")
-            if not isinstance(value, (bool, int, float)):
+            if not isinstance(value, (bool, int, float, str)):
                 raise ValueError(f"schedule value {name!r} is not JSON scalar")
         if self.device != "cuda" and not self.device.startswith("cuda:"):
             raise ValueError("Gate1 Triton compiler currently supports CUDA only")

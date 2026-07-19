@@ -56,7 +56,7 @@ class TritonArgument:
 class TritonExecutionSpec:
     arguments: tuple[TritonArgument, ...]
     grid: tuple[int, ...]
-    schedule: Mapping[str, int | float | bool] = field(default_factory=dict)
+    schedule: Mapping[str, int | float | bool | str] = field(default_factory=dict)
     device: str = "cuda"
 
     def __post_init__(self) -> None:

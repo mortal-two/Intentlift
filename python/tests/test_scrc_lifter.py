@@ -315,6 +315,24 @@ def test_compiler_view_accepts_rank_zero_tensor_pointer() -> None:
     assert argument.to_json()["shape"] == []
 
 
+def test_compiler_view_preserves_disabled_optional_none_argument() -> None:
+    argument = scrc.SCRCCompilerArgument("Bias", "none", "none")
+    view = scrc.SCRCCompilerView(
+        {"BIAS_TYPE": "none"},
+        arguments=(argument,),
+        grid=(1,),
+        grid_contract=("1",),
+        parameter_order=("Bias",),
+    )
+
+    assert argument.to_json() == {
+        "name": "Bias",
+        "kind": "none",
+        "dtype": "none",
+    }
+    assert view.to_json()["schedule_values"] == {"BIAS_TYPE": "none"}
+
+
 def test_scrc_extraction_rejects_an_incomplete_lift_artifact() -> None:
     payload = _artifact_payload()
     payload["plan"] = {"steps": []}

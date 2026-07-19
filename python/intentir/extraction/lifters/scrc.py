@@ -217,8 +217,10 @@ class SCRCCompilerArgument:
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
             raise ValueError(f"invalid compiler argument name: {self.name!r}")
-        if self.kind not in {"tensor", "scalar"}:
-            raise ValueError("compiler argument kind must be tensor or scalar")
+        if self.kind not in {"tensor", "scalar", "none"}:
+            raise ValueError(
+                "compiler argument kind must be tensor, scalar, or none"
+            )
         if not isinstance(self.dtype, str) or not self.dtype:
             raise ValueError("compiler argument dtype must be a non-empty string")
         shape = tuple(int(dim) for dim in self.shape)
@@ -229,8 +231,10 @@ class SCRCCompilerArgument:
                 raise ValueError(
                     "tensor compiler argument requires shape and forbids value"
                 )
-        elif shape or self.value is None:
+        elif self.kind == "scalar" and (shape or self.value is None):
             raise ValueError("scalar compiler argument requires value only")
+        elif self.kind == "none" and (shape or self.value is not None):
+            raise ValueError("none compiler argument forbids shape and value")
         object.__setattr__(self, "shape", shape)
 
     def to_json(self) -> dict[str, Any]:
@@ -241,7 +245,7 @@ class SCRCCompilerArgument:
         }
         if self.kind == "tensor":
             result["shape"] = list(self.shape)
-        else:
+        elif self.kind == "scalar":
             result["value"] = self.value
         return result
 
@@ -255,7 +259,7 @@ class SCRCCompilerView:
     instead of asking it to invent those values from source text.
     """
 
-    schedule_values: Mapping[str, bool | int | float]
+    schedule_values: Mapping[str, bool | int | float | str]
     compiler_slots: tuple[str, ...] = ()
     aliases: tuple[AliasSpec, ...] = ()
     arguments: tuple[SCRCCompilerArgument, ...] = ()
@@ -269,8 +273,10 @@ class SCRCCompilerView:
         for name, value in values.items():
             if not isinstance(name, str) or not name.isidentifier():
                 raise ValueError(f"invalid schedule name: {name!r}")
-            if not isinstance(value, (bool, int, float)):
-                raise TypeError(f"schedule value {name!r} must be a scalar")
+            if not isinstance(value, (bool, int, float, str)):
+                raise TypeError(
+                    f"schedule value {name!r} must be a JSON scalar"
+                )
         slots = tuple(self.compiler_slots)
         if len(set(slots)) != len(slots) or any(
             not isinstance(name, str) or not name.isidentifier()
@@ -511,6 +517,10 @@ Cross-field rules:
   IntentIR tensor input;
 - a runtime scalar consumed by the computation is an IntentIR scalar input with
   shape=[] and is linked from the scalar interface parameter with tensor_ref;
+- a trusted compiler-view argument with kind=none is a compile-time-disabled
+  optional runtime parameter. Preserve it in interface order as kind=scalar,
+  mode=value, dtype=none, rank=0, with no tensor_ref; replay must accept and
+  forward Python None without inventing J semantics for the disabled feature;
 - canonicalize reciprocal square root in J as sqrt followed by recip. The replay
   may recover the source-native mechanism through the selected rule card;
 - when the source spells a mean as local sum divided by the runtime logical
@@ -551,9 +561,11 @@ Cross-field rules:
   that staging by repeated two-dimensional comparisons;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
-- interface runtime parameters copy the trusted compiler-view argument order,
-  tensor/scalar kind, dtype and tensor rank exactly; interface.grid has the same
-  rank as the trusted concrete grid and copies grid_contract exactly;
+- interface runtime parameters copy the trusted compiler-view argument order.
+  tensor maps to pointer/tensor, scalar maps to scalar, and none maps to the
+  disabled optional scalar contract above; dtype and tensor rank remain exact.
+  interface.grid has the same rank as the trusted concrete grid and copies
+  grid_contract exactly;
 - the complete interface parameter order and constexpr parameter names copy the
   trusted compiler view exactly;
 - compiler-view tensor shapes and scalar values describe one specialization;
