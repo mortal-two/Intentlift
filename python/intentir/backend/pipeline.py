@@ -14,9 +14,10 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 import intentir.backend.compile as backend_compile
+import intentir.backend.orchestrate as backend_orchestrate
 from intentir.backend.selection import (
     LoweringTarget,
     VariantSelection,
@@ -216,4 +217,55 @@ def lower_function_to_cuda(
     )
 
 
-__all__ = ["LoweredProgram", "lower_function_to_cuda", "lower_to_cuda"]
+def execute_cuda_artifact(
+    program: LoweredProgram,
+    intent_module: str | os.PathLike[str],
+    inputs: Mapping[str, Any],
+    *,
+    output_aliases: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Execute already-compiled cubins without invoking the compiler again.
+
+    ``intent_module`` supplies the logical ABI used by the host orchestrator.
+    Its hash must match the source compiled into ``program``.  The compiler
+    callback passed to :func:`backend.orchestrate.run_program` returns only the
+    persisted kernels, so execution cannot silently rebuild or substitute a
+    different binary.
+    """
+
+    source = read_intent_module(intent_module)
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    if source_digest != program.source_mlir_sha256:
+        raise ValueError(
+            "execution Intent module differs from the compiled artifact source"
+        )
+
+    path = _existing_path(intent_module)
+    if path is not None:
+        return backend_orchestrate.run_program(
+            path,
+            dict(inputs),
+            compile_all=lambda _path: list(program.kernels),
+            output_aliases=(
+                dict(output_aliases) if output_aliases is not None else None
+            ),
+        )
+    with tempfile.TemporaryDirectory(prefix="intentir-execution-") as directory:
+        source_path = Path(directory) / "input.mlir"
+        source_path.write_text(source, encoding="utf-8")
+        return backend_orchestrate.run_program(
+            source_path,
+            dict(inputs),
+            compile_all=lambda _path: list(program.kernels),
+            output_aliases=(
+                dict(output_aliases) if output_aliases is not None else None
+            ),
+        )
+
+
+__all__ = [
+    "LoweredProgram",
+    "execute_cuda_artifact",
+    "lower_function_to_cuda",
+    "lower_to_cuda",
+]
