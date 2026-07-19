@@ -16,6 +16,17 @@ _ADD = _ROOT / "test" / "add.mlir"
 _MATMUL = _ROOT / "test" / "matmul.mlir"
 _SOFTMAX = _ROOT / "test" / "softmax.mlir"
 
+_BF16_MATMUL = """
+module {
+  func.func @bf16_matmul(%A: tensor<64x32xbf16>,
+                         %W: tensor<64x32xbf16>) -> tensor<64x64xf32> {
+    %Y = intent.contraction %A, %W {subscripts = "mk,nk->mn"}
+      : (tensor<64x32xbf16>, tensor<64x32xbf16>) -> tensor<64x64xf32>
+    return %Y : tensor<64x64xf32>
+  }
+}
+"""
+
 _INPLACE_EXP = """
 module {
   func.func @inplace_exp(%x: tensor<8x16xf32>) -> tensor<8x16xf32>
@@ -220,6 +231,30 @@ def test_generic_multikernel_artifact_preserves_launch_order_and_scratch() -> No
     assert program.selection.pipeline_kind == "generic"
     assert len(program.kernels) == 2
     torch.testing.assert_close(output, a @ b.T, rtol=1.0e-5, atol=1.0e-5)
+
+
+def test_bf16_mma_artifact_executes_one_native_tensor_core_kernel() -> None:
+    if not torch.cuda.is_bf16_supported():
+        pytest.skip("CUDA device has no BF16 tensor-core support")
+
+    torch.manual_seed(33)
+    a = torch.randn((64, 32), device="cuda", dtype=torch.bfloat16)
+    w = torch.randn((64, 32), device="cuda", dtype=torch.bfloat16)
+    fast_path_id = "cuda.linear.f16_f32.bias_saved.mma_sync.v1"
+    program = lower_to_cuda(_BF16_MATMUL, only_fast_path=fast_path_id)
+
+    output = execute_cuda_artifact(
+        program,
+        _BF16_MATMUL,
+        {"A": a, "W": w},
+    )["out0"]
+    reference = torch.mm(a, w.t(), out_dtype=torch.float32)
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert program.selection.fast_path_id == fast_path_id
+    assert len(program.kernels) == 1
+    assert output.dtype == torch.float32
+    torch.testing.assert_close(output, reference, rtol=1.0e-3, atol=1.0e-3)
 
 
 def test_direct_row_reduction_executes_with_real_collectives() -> None:
