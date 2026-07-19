@@ -77,6 +77,88 @@ module {{
 }}
 """
 
+
+def _half_rms_norm_source(rows: int, columns: int, mlir_type: str) -> str:
+    storage_row = f"tensor<{rows}x{columns}x{mlir_type}>"
+    storage_column = f"tensor<{columns}x{mlir_type}>"
+    compute_row = f"tensor<{rows}x{columns}xf32>"
+    compute_column = f"tensor<{columns}xf32>"
+    statistic = f"tensor<{rows}x1xf32>"
+    return f"""
+module {{
+  func.func @half_rms_norm(%X: {storage_row}, %W: {storage_column},
+                           %eps: tensor<f32>) -> {storage_row} {{
+    %Xf = intent.cast %X {{to_dtype = "f32"}}
+      : ({storage_row}) -> {compute_row}
+    %Wf = intent.cast %W {{to_dtype = "f32"}}
+      : ({storage_column}) -> {compute_column}
+    %x2 = intent.map_binary %Xf, %Xf {{fn = "mul"}}
+      : ({compute_row}, {compute_row}) -> {compute_row}
+    %mean = intent.reduce %x2
+      {{fn = "mean", axes = [1], assoc = "float_nondeterministic"}}
+      : ({compute_row}) -> {statistic}
+    %me = intent.map_binary %mean, %eps {{fn = "add"}}
+      : ({statistic}, tensor<f32>) -> {statistic}
+    %rms = intent.map_unary %me {{fn = "sqrt"}}
+      : ({statistic}) -> {statistic}
+    %inv = intent.map_unary %rms {{fn = "recip"}}
+      : ({statistic}) -> {statistic}
+    %xs = intent.map_binary %Xf, %inv {{fn = "mul"}}
+      : ({compute_row}, {statistic}) -> {compute_row}
+    %Yf = intent.map_binary %xs, %Wf {{fn = "mul"}}
+      : ({compute_row}, {compute_column}) -> {compute_row}
+    %Y = intent.cast %Yf {{to_dtype = "{mlir_type}"}}
+      : ({compute_row}) -> {storage_row}
+    return %Y : {storage_row}
+  }}
+}}
+"""
+
+
+def _half_layer_norm_source(rows: int, columns: int, mlir_type: str) -> str:
+    storage_row = f"tensor<{rows}x{columns}x{mlir_type}>"
+    storage_column = f"tensor<{columns}x{mlir_type}>"
+    compute_row = f"tensor<{rows}x{columns}xf32>"
+    compute_column = f"tensor<{columns}xf32>"
+    statistic = f"tensor<{rows}x1xf32>"
+    return f"""
+module {{
+  func.func @half_layer_norm(%X: {storage_row}, %W: {storage_column},
+                             %B: {storage_column}, %eps: tensor<f32>)
+      -> ({storage_row}, {statistic}, {statistic}) {{
+    %Xf = intent.cast %X {{to_dtype = "f32"}}
+      : ({storage_row}) -> {compute_row}
+    %Wf = intent.cast %W {{to_dtype = "f32"}}
+      : ({storage_column}) -> {compute_column}
+    %Bf = intent.cast %B {{to_dtype = "f32"}}
+      : ({storage_column}) -> {compute_column}
+    %mean = intent.reduce %Xf
+      {{fn = "mean", axes = [1], assoc = "float_nondeterministic"}}
+      : ({compute_row}) -> {statistic}
+    %xc = intent.map_binary %Xf, %mean {{fn = "sub"}}
+      : ({compute_row}, {statistic}) -> {compute_row}
+    %xc2 = intent.map_binary %xc, %xc {{fn = "mul"}}
+      : ({compute_row}, {compute_row}) -> {compute_row}
+    %var = intent.reduce %xc2
+      {{fn = "mean", axes = [1], assoc = "float_nondeterministic"}}
+      : ({compute_row}) -> {statistic}
+    %vare = intent.map_binary %var, %eps {{fn = "add"}}
+      : ({statistic}, tensor<f32>) -> {statistic}
+    %rstd = intent.map_unary %vare {{fn = "rsqrt"}}
+      : ({statistic}) -> {statistic}
+    %xn = intent.map_binary %xc, %rstd {{fn = "mul"}}
+      : ({compute_row}, {statistic}) -> {compute_row}
+    %xnw = intent.map_binary %xn, %Wf {{fn = "mul"}}
+      : ({compute_row}, {compute_column}) -> {compute_row}
+    %Yf = intent.map_binary %xnw, %Bf {{fn = "add"}}
+      : ({compute_row}, {compute_column}) -> {compute_row}
+    %Y = intent.cast %Yf {{to_dtype = "{mlir_type}"}}
+      : ({compute_row}) -> {storage_row}
+    return %Y, %mean, %rstd : {storage_row}, {statistic}, {statistic}
+  }}
+}}
+"""
+
 pytestmark = [
     pytest.mark.skipif(
         not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
@@ -988,3 +1070,120 @@ def test_direct_half_softmax_uses_one_f32_accumulation_kernel(
         rtol=0.0,
         atol=sum_atol,
     )
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol"),
+    (
+        (torch.float16, "f16", 2.0e-3),
+        (torch.bfloat16, "bf16", 1.0e-2),
+    ),
+)
+@pytest.mark.parametrize(
+    ("columns", "block_threads"),
+    ((32, 32), (1024, 128)),
+)
+def test_direct_half_rms_norm_uses_explicit_f32_compute_graph(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+    columns: int,
+    block_threads: int,
+) -> None:
+    source = _half_rms_norm_source(4, columns, mlir_type)
+    torch.manual_seed(20 + columns)
+    # Squaring this in f16 would overflow; the explicit cast must move the
+    # complete norm graph into f32 before x*x is formed.
+    x = 300.0 * torch.randn((4, columns), device="cuda", dtype=dtype)
+    weight = torch.randn((columns,), device="cuda", dtype=dtype)
+    eps = torch.tensor(1.0e-6, device="cuda", dtype=torch.float32)
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: (
+                "-convert-intent-row-reduction-to-gpu="
+                f"block-threads={block_threads}"
+            )
+        },
+    )
+
+    output = execute_cuda_artifact(
+        program,
+        source,
+        {"X": x, "W": weight, "eps": eps},
+    )["out0"]
+    xf = x.float()
+    reference = (
+        xf
+        * torch.rsqrt((xf * xf).mean(dim=1, keepdim=True) + eps)
+        * weight.float()
+    ).to(dtype)
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert program.selection.fast_path_id == fast_path_id
+    assert len(program.kernels) == 1
+    assert output.dtype == dtype
+    assert torch.isfinite(output).all()
+    torch.testing.assert_close(output, reference, rtol=0.0, atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol"),
+    (
+        (torch.float16, "f16", 2.0e-3),
+        (torch.bfloat16, "bf16", 1.0e-2),
+    ),
+)
+@pytest.mark.parametrize(
+    ("columns", "block_threads"),
+    ((32, 32), (1024, 128)),
+)
+def test_direct_half_layer_norm_keeps_statistics_in_f32(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+    columns: int,
+    block_threads: int,
+) -> None:
+    source = _half_layer_norm_source(4, columns, mlir_type)
+    torch.manual_seed(30 + columns)
+    # At N=1024, a half-precision row sum near 64*N would overflow.  The f32
+    # mean/variance path must remain finite and retain the small centered signal.
+    x = 64.0 + torch.randn((4, columns), device="cuda", dtype=dtype)
+    weight = torch.randn((columns,), device="cuda", dtype=dtype)
+    bias = torch.randn((columns,), device="cuda", dtype=dtype)
+    eps = torch.tensor(1.0e-5, device="cuda", dtype=torch.float32)
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: (
+                "-convert-intent-row-reduction-to-gpu="
+                f"block-threads={block_threads}"
+            )
+        },
+    )
+
+    outputs = execute_cuda_artifact(
+        program,
+        source,
+        {"X": x, "W": weight, "B": bias, "eps": eps},
+    )
+    xf = x.float()
+    mean = xf.mean(dim=1, keepdim=True)
+    centered = xf - mean
+    rstd = torch.rsqrt((centered * centered).mean(dim=1, keepdim=True) + eps)
+    reference = (centered * rstd * weight.float() + bias.float()).to(dtype)
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert program.selection.fast_path_id == fast_path_id
+    assert len(program.kernels) == 1
+    assert outputs["out0"].dtype == dtype
+    assert outputs["out1"].dtype == torch.float32
+    assert outputs["out2"].dtype == torch.float32
+    torch.testing.assert_close(outputs["out0"], reference, rtol=0.0, atol=atol)
+    torch.testing.assert_close(outputs["out1"], mean, rtol=0.0, atol=2.0e-5)
+    torch.testing.assert_close(outputs["out2"], rstd, rtol=0.0, atol=2.0e-5)
