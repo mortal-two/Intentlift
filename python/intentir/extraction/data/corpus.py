@@ -4,7 +4,8 @@ Each entry names a REAL kernel source (FlagGems / Triton tutorials), a runnable
 entry point (the library's own wrapper), and an input contract. The pipeline for
 one kernel is:
 
-    source --(gpt-5.5)--> IntentIR JSON --validate--> interpret(JSON)
+    source --(configured live provider)--> IntentIR JSON
+        --validate--> interpret(JSON)
         == run(the real kernel)          [dynamic certificate]
     JSON --emit--> intent dialect MLIR --convert-intent-to-linalg--> linalg
         [lower; no residual intent.*]

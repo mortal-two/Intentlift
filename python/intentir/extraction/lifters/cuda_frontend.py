@@ -162,7 +162,7 @@ def run_cuda_frontend(save: bool = True):
 if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore")
-    print("=== Multi-frontend: lifting CUDA C++ kernels (live gpt-5.5) ===\n")
+    print("=== Multi-frontend: lifting CUDA C++ kernels (configured live provider) ===\n")
     for r in run_cuda_frontend():
         rel = f"{r['rel_err']:.2e}" if r["rel_err"] is not None else "—"
         st = "PASS" if r["verified"] else ("ERR " + r["error"] if r["error"] else "FAIL")

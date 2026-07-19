@@ -20,7 +20,7 @@ def main() -> int:
     specs = [s for s in kernel_specs() if not only or s.name in only]
     results = []
     mode = "deterministic re-verify of committed JSON" if saved \
-        else "live gpt-5.5 extraction"
+        else "configured live-provider extraction"
     print(f"=== IntentIR corpus: {len(specs)} kernels ({mode}) ===\n")
     for s in specs:
         print(f">>> {s.name} ({s.library}) ...", flush=True)
@@ -56,7 +56,7 @@ def main() -> int:
         "# IntentIR kernel corpus",
         "",
         "Real high-performance-library Triton kernels lifted to IntentIR by the "
-        "**live provider agent** (gpt-5.5, OpenAI responses API), then verified "
+        "**configured live provider agent** (OpenAI responses API), then verified "
         "against the actual library kernel and lowered to linalg.",
         "",
         "- **extract**: `intentir.extraction` calls the provider; JSON is NOT "

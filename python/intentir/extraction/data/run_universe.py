@@ -260,7 +260,7 @@ def main() -> int:
         return OpResult(**{k: v for k, v in prior[name].items()
                            if k in OpResult.__dataclass_fields__})
 
-    mode = "saved-replay" if saved else "live gpt-5.5 extraction"
+    mode = "saved-replay" if saved else "configured live-provider extraction"
     n_req = len(only) if only else len(all_specs)
     print(f"=== C1 pilot: {n_req} requested / {len(all_specs)} ops ({mode}) ===\n",
           flush=True)
