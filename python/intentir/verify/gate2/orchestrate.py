@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from intentir.verify.gate1.compiler import KernelSource
 
 from .compare import compare_outputs
+from .cuda_lowering import CudaLoweringRunner, CudaLoweringSpec
 from .lower2c import Lower2CRunner, Lower2CSpec
 from .model import Gate2Result, Gate2Status, Gate2SuiteResult, Tolerance
 from .triton import TritonExecutionSpec, TritonRunner
@@ -18,7 +19,7 @@ class Gate2Case:
     case_id: str
     values: Mapping[str, Any]
     triton: TritonExecutionSpec
-    lowering: Lower2CSpec
+    lowering: Lower2CSpec | CudaLoweringSpec
     output_keys: tuple[str, ...]
     tolerances: Mapping[str, Tolerance] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -69,7 +70,7 @@ class Gate2Runner:
         *,
         source_runner: TritonRunner | None = None,
         replay_runner: TritonRunner | None = None,
-        lowering_runner: Lower2CRunner | None = None,
+        lowering_runner: Lower2CRunner | CudaLoweringRunner | None = None,
     ) -> None:
         self.source_runner = source_runner or TritonRunner()
         self.replay_runner = replay_runner or TritonRunner()

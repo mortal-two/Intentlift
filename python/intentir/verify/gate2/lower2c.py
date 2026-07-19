@@ -59,7 +59,7 @@ def _operation_at_path(
     return operation
 
 
-def _boundary_broadcast_axes(
+def boundary_broadcast_axes(
     archive: SemanticArchive | None,
 ) -> dict[str, dict[str, tuple[int, ...]]]:
     """Resolve existing Boundary.broadcasts to Intent result/operand axes."""
@@ -189,7 +189,7 @@ class Lower2CRunner:
                 np.asarray(values[spec.input_bindings[tensor.name]])
                 for tensor in spec.intent.inputs
             ]
-            broadcast_axes = _boundary_broadcast_axes(spec.semantic_archive)
+            broadcast_axes = boundary_broadcast_axes(spec.semantic_archive)
             output = run_on_cpu(
                 spec.intent,
                 dict(spec.dims),
@@ -221,4 +221,14 @@ class Lower2CRunner:
             )
 
 
-__all__ = ["LOWER2C_PROTOCOL", "Lower2CRunner", "Lower2CSpec"]
+# Archived tests and callers used the private spelling before the CUDA Gate
+# adapter shared this canonical Layer-B projection.  Keep it as an alias.
+_boundary_broadcast_axes = boundary_broadcast_axes
+
+
+__all__ = [
+    "LOWER2C_PROTOCOL",
+    "Lower2CRunner",
+    "Lower2CSpec",
+    "boundary_broadcast_axes",
+]
