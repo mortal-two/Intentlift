@@ -108,7 +108,8 @@ func.func @live_poly_norm_vector_params(
 // CHECK:         gpu.launch
 // CHECK:         arith.cmpi ne
 // CHECK-COUNT-2: gpu.all_reduce{{.*}}add
-// CHECK:         math.sqrt
+// CHECK:         math.rsqrt
+// CHECK-NOT:     math.sqrt
 // The multi-output epilogue materializes shared SSA values before any guarded
 // destination region, then performs the row stores. This keeps cached values
 // dominating every output even when a sibling output is partial-writeback.

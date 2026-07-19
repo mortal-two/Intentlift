@@ -10,7 +10,8 @@
 // CHECK:         memref.load {{.*}} : memref<4x32xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
 // CHECK:         gpu.all_reduce add
-// CHECK:         math.sqrt {{.*}} : f32
+// CHECK:         math.rsqrt {{.*}} : f32
+// CHECK-NOT:     math.sqrt
 // CHECK:         memref.load {{.*}} : memref<32xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
 // CHECK:         arith.truncf {{.*}} : f32 to f16
