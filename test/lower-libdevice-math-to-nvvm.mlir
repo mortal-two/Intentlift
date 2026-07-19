@@ -66,7 +66,45 @@ func.func @pow_f32(%base: f32, %exponent: f32) -> f32 {
 
 // -----
 
-// Non-f32 forms remain outside this approximate target policy.
+// Half storage is widened to the shared f32 backend and rounded back only after
+// the semantic math operation.
+// CHECK-LABEL: func.func @exp_f16
+// CHECK: arith.extf {{.*}} : f16 to f32
+// CHECK: llvm.call_intrinsic "llvm.nvvm.ex2.approx.ftz.f"
+// CHECK: arith.truncf {{.*}} : f32 to f16
+// CHECK-NOT: math.exp
+func.func @exp_f16(%x: f16) -> f16 {
+  %r = math.exp %x : f16
+  return %r : f16
+}
+
+// -----
+
+// CHECK-LABEL: func.func @erf_bf16
+// CHECK: arith.extf {{.*}} : bf16 to f32
+// CHECK: llvm.call_intrinsic "llvm.nvvm.ex2.approx.ftz.f"
+// CHECK: arith.truncf {{.*}} : f32 to bf16
+// CHECK-NOT: math.erf
+func.func @erf_bf16(%x: bf16) -> bf16 {
+  %r = math.erf %x : bf16
+  return %r : bf16
+}
+
+// -----
+
+// CHECK-LABEL: func.func @pow_f16
+// CHECK: arith.extf {{.*}} : f16 to f32
+// CHECK: llvm.call_intrinsic "llvm.nvvm.ex2.approx.ftz.f"
+// CHECK: arith.truncf {{.*}} : f32 to f16
+// CHECK-NOT: math.powf
+func.func @pow_f16(%base: f16, %exponent: f16) -> f16 {
+  %r = math.powf %base, %exponent : f16
+  return %r : f16
+}
+
+// -----
+
+// f64 forms remain outside this f32-compute policy.
 // CHECK-LABEL: func.func @atan_f64
 // CHECK: math.atan
 func.func @atan_f64(%x: f64) -> f64 {

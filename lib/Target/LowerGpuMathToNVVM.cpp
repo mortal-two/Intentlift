@@ -44,6 +44,74 @@ static constexpr double kLog2E = 1.4426950408889634;
 /// ln(2) as an f32 — the change-of-base constant for log(x) = log2(x)*ln2.
 static constexpr double kLn2 = 0.6931471805599453;
 
+static bool isHalfStorageType(Type type) {
+  return isa<Float16Type, BFloat16Type>(type);
+}
+
+/// Promote one scalar f16/bf16 math operation to the backend's f32 compute
+/// domain, then round back to its declared storage type.  Greedy rewriting
+/// subsequently applies the existing libdevice-free f32 pattern to the newly
+/// created math op.
+template <typename MathOp>
+struct PromoteHalfUnaryMath : OpRewritePattern<MathOp> {
+  using OpRewritePattern<MathOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MathOp op,
+                                PatternRewriter &rewriter) const override {
+    Type storageType = op.getOperand().getType();
+    if (!isHalfStorageType(storageType))
+      return rewriter.notifyMatchFailure(op, "operand is not f16/bf16");
+    Type f32 = rewriter.getF32Type();
+    Value widened =
+        rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getOperand());
+    Value computed = rewriter.create<MathOp>(op.getLoc(), widened);
+    rewriter.replaceOpWithNewOp<arith::TruncFOp>(
+        op, storageType, computed);
+    return success();
+  }
+};
+
+template <typename MathOp>
+struct PromoteHalfBinaryMath : OpRewritePattern<MathOp> {
+  using OpRewritePattern<MathOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MathOp op,
+                                PatternRewriter &rewriter) const override {
+    Type storageType = op.getLhs().getType();
+    if (!isHalfStorageType(storageType) || op.getRhs().getType() != storageType)
+      return rewriter.notifyMatchFailure(
+          op, "operands are not matching f16/bf16 scalars");
+    Type f32 = rewriter.getF32Type();
+    Value lhs = rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getLhs());
+    Value rhs = rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getRhs());
+    Value computed = rewriter.create<MathOp>(op.getLoc(), lhs, rhs);
+    rewriter.replaceOpWithNewOp<arith::TruncFOp>(
+        op, storageType, computed);
+    return success();
+  }
+};
+
+struct PromoteHalfFma : OpRewritePattern<math::FmaOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::FmaOp op,
+                                PatternRewriter &rewriter) const override {
+    Type storageType = op.getA().getType();
+    if (!isHalfStorageType(storageType) || op.getB().getType() != storageType ||
+        op.getC().getType() != storageType)
+      return rewriter.notifyMatchFailure(
+          op, "operands are not matching f16/bf16 scalars");
+    Type f32 = rewriter.getF32Type();
+    Value a = rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getA());
+    Value b = rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getB());
+    Value c = rewriter.create<arith::ExtFOp>(op.getLoc(), f32, op.getC());
+    Value computed = rewriter.create<math::FmaOp>(op.getLoc(), a, b, c);
+    rewriter.replaceOpWithNewOp<arith::TruncFOp>(
+        op, storageType, computed);
+    return success();
+  }
+};
+
 /// `math.log(%x) - %y` -> `fma(lg2.approx(%x), ln2, -%y)`.
 ///
 /// The generic log rewrite would materialize `lg2 * ln2` followed by a
@@ -959,6 +1027,20 @@ struct LowerGpuMathToNVVM
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
+    patterns.add<PromoteHalfUnaryMath<math::ExpOp>,
+                 PromoteHalfUnaryMath<math::LogOp>,
+                 PromoteHalfUnaryMath<math::AbsFOp>,
+                 PromoteHalfUnaryMath<math::SqrtOp>,
+                 PromoteHalfUnaryMath<math::RsqrtOp>,
+                 PromoteHalfUnaryMath<math::TanhOp>,
+                 PromoteHalfUnaryMath<math::CosOp>,
+                 PromoteHalfUnaryMath<math::SinOp>,
+                 PromoteHalfUnaryMath<math::Exp2Op>,
+                 PromoteHalfUnaryMath<math::AtanOp>,
+                 PromoteHalfUnaryMath<math::ErfOp>,
+                 PromoteHalfBinaryMath<math::PowFOp>,
+                 PromoteHalfBinaryMath<math::Atan2Op>, PromoteHalfFma>(
+        &getContext());
     patterns.add<LogSubToLg2Fma>(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
     patterns.add<SigmoidReciprocalToNVVMApprox>(&getContext());
