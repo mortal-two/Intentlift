@@ -44,8 +44,8 @@ func.func @uexp2(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
-// erf via the accurate math.erf on the CPU/linalg path (the GPU pass uses the
-// libdevice-safe A&S poly in MapEmit.h).
+// erf via the accurate math.erf on the CPU/linalg path; the direct GPU emitter
+// now preserves the same semantic op for the shared libdevice-free target pass.
 // CHECK-LABEL: func.func @uerf
 // CHECK: math.erf
 func.func @uerf(%a: tensor<256xf32>) -> tensor<256xf32> {
@@ -55,8 +55,8 @@ func.func @uerf(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
-// atan via the accurate math.atan on the CPU/linalg path (the GPU pass uses the
-// libdevice-safe minimax poly in MapEmit.h). Complex angle = atan2(imag, real).
+// atan via the accurate math.atan on the CPU/linalg path; direct GPU lowering
+// preserves it until the shared target polynomial. Complex angle = atan2.
 // CHECK-LABEL: func.func @uatan
 // CHECK: math.atan
 func.func @uatan(%a: tensor<256xf32>) -> tensor<256xf32> {

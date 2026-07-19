@@ -80,14 +80,12 @@ func.func @geglu(%A: tensor<4x8xf32>, %B: tensor<4x8xf32>,
   return %c : tensor<4x8xf32>
 }
 
-// angle(z) = atan2(imag, real): the complex angle primitive lowers to the
-// libdevice-safe minimax atan (arith.divf ratio + arith.select quadrant
-// correction), NEVER a math.atan / __nv_atan2f libdevice extern (ptxas dead end).
+// angle(z) = atan2(imag, real): the direct pass preserves the semantic math op;
+// the shared target peephole subsequently expands it into libdevice-free NVVM
+// arithmetic with complete signed-zero/infinity/NaN handling.
 // CHECK-LABEL: func.func @angle(
 // CHECK:         gpu.launch
-// CHECK:         arith.divf
-// CHECK:         arith.select
-// CHECK-NOT:     math.atan
+// CHECK:         math.atan2
 func.func @angle(%Im: tensor<4x8xf32>, %Re: tensor<4x8xf32>) -> tensor<4x8xf32> {
   %r = intent.map_binary %Im, %Re {fn = "atan2"} : (tensor<4x8xf32>, tensor<4x8xf32>) -> tensor<4x8xf32>
   return %r : tensor<4x8xf32>
