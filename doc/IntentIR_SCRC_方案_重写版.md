@@ -82,6 +82,11 @@ LLM 完全可能看着一个 softmax Kernel,漏掉"减 max"那一步,输出一�
 | 重写员(Replay Agent) | LLM | 只有 J、π、调度空位表、规则卡 | 重写同前端 Kernel |
 | 注入器 | 程序 | C 的具体值 | 把调度值填进重放模板 |
 | 裁判(Comparator Core) | **纯代码** | 两份语义指纹 | 逐项硬比对,判过/不过;LLM 无权推翻 |
+
+> v8 实现说明：这里的“提升官/Lift Agent”按完整 Lift 过程理解。source-aware LLM
+> 负责 J、C、接口和定位 core；同一次 Lift 内的 deterministic finalizer 根据
+> J/interface/C/RuleRegistry 生成 π。对 Gate1 而言，Lift 的最终产物仍是完整
+> `J + π + C + 接口 + 定位表`，π 没有被移到 Gate1 或独立外部流程。
 | 诊断员(Diagnostician) | LLM | 裁判输出 + 定位表 + 源视图 | 只解释和归属,**无裁决权** |
 
 为什么裁判必须是代码:Gate 的裁决必须确定、可重跑、不会看漏。
@@ -437,7 +442,7 @@ Gate2 对照，不能越过当前 Gate1 verdict。
 接口精确相等
 A 指纹规范化后精确相等
 B 无关键不一致
-每轮静态泄漏扫描通过 且 终检消融的泄漏比 L ≤ 阈值(见第八章)
+每轮静态泄漏扫描通过 且 masked-J/actual-π 终检出现 compile rejection 或硬指纹差异
 连续两轮无新增关键不一致
 ```
 
@@ -467,10 +472,12 @@ B 无关键不一致
 - **名字始终要遮。** 正常 replay 已先对 J/B/π 做一致的不透明重命名
   (`reduce_max_0 → n3`),让引用只剩 declaration order 与拓扑信息；masked-J
   复用同一原则并进一步遮盖 A/B 内容。不能只在消融时才隐藏名字。
-- **裁决必须确定。** masked replay 无法形成可编译且接口合法的指纹，或其
-  `op_multiset/dataflow/reduction/predicate_effect` 任一硬分量不同，才算无 J 时
-  确定性退化；全部语义硬分量仍闭合则判泄漏。score/ratio 只作诊断，不进入接受
-  条件。
+- **裁决必须确定。** masked writer 必须先形成通过源码与 opaque ABI 校验的可审计
+  候选。该合法候选在同一前端编译期被拒绝，或编译后
+  `op_multiset/dataflow/reduction/predicate_effect` 任一硬分量与 source 不同，均
+  表示“无 J 时确定性退化”；全部语义硬分量仍闭合则判泄漏。没有形成 generation、
+  ABI 恢复失败或指纹工具失败只能记为 inconclusive，不能把 provider/基础设施失败
+  冒充成 π 无泄漏；score/ratio 不进入接受条件。
 
 为什么放在最终而不是只在第一轮:**迭代修复恰恰是泄漏产生的时刻**——
 每轮差异报告都在诱导模型把修正塞进 π(改 π 比改 J 更容易过下一轮),
@@ -605,7 +612,7 @@ Gate2 三方差分吸收其成熟实践。投稿前需再做一轮系统检索�
 - RQ1 SCRC 是否优于 one-shot lifting?(对比:裸提升 / 提升+自由重放 /
   提升+π但不隔离 / 完整 SCRC)
 - RQ2 π 是否偷带语义?(第八章消融套件,全部在不透明重命名下执行,
-  报告泄漏比 L)
+  报告 masked hard-closure / hard-mismatch / inconclusive 三类结果；不以比值裁决)
 - RQ3 C 后注入是否必要?(重写员直接看 C vs 空位后注入)
 - RQ4 结构化差异报告是否优于"请重试"?(自由文本错误 / 原始编译器
   报错 / 差异报告 / 差异报告+责任归属)
@@ -630,7 +637,7 @@ Gate2 三方差分吸收其成熟实践。投稿前需再做一轮系统检索�
 | 平均 Lift/relift 轮数 | 修复成本 |
 | 归属准确率 | 差异报告把错误判给正确责任方的比例 |
 | 提取器检出率 | 变异集上确定性指纹的检出率 |
-| 泄漏比 L | 遮盖消融的量化结果 |
+| masked-J 终检结果 | actual-π 遮盖消融的 hard closure、hard mismatch 与 inconclusive |
 | Agent 成本 | 每 Kernel 的 token 与延迟 |
 | held-out 泛化 | 未参与开发的 Kernel 上的闭合率 |
 
@@ -658,7 +665,7 @@ Phase 0  基础:J schema 收紧;π schema + 机制词汇表 + 规则卡格式;
 Phase 1  Triton MVP:TTIR 指纹提取器 + 裁判 + 诊断员;10~15 张规则卡;
          elementwise/reduce/softmax/matmul 共 20~40 个 Kernel;
          relift-only 单外循环跑通
-Phase 2  反作弊:静态扫描;不透明重命名 + 遮盖消融 + 泄漏比 L;
+Phase 2  反作弊:静态扫描;不透明重命名 + actual-π masked-J 硬指纹终检;
          变异集(兼提取器单测)
 Phase 3  Gate2:输入生成器(边界形状+对抗值+种子);容差比较;
          打通 J→标量→CPU JIT 链;三方差分与成对条件概率评估

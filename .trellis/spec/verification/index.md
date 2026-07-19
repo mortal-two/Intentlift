@@ -4,7 +4,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| [scrc-gate1.md](scrc-gate1.md) | J/π/C 驱动的源码隔离重放、双 TTIR 结构闭合、规则库与有限修复。 |
+| [scrc-gate1.md](scrc-gate1.md) | J/π/C 驱动的源码隔离重放、双 TTIR 结构闭合、规则库与 source-aware Lift/relift 外循环。 |
 | [scrc-gate2.md](scrc-gate2.md) | source/replay/lowering 三方实际执行与机械归属。 |
 | [architecture.md](architecture.md) | 当前两门架构入口及旧方案归档位置。 |
 

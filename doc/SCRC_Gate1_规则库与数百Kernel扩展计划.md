@@ -1,5 +1,22 @@
 # SCRC Gate1：规则库与数百 Kernel 扩展计划
 
+> 状态：**当前活动路线图。** 正式协议已经升级为
+> `gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11`。下文关于 19 张卡、masked-writer ratio、
+> 11/24 与 strict-v5-v7 的数字只保留为问题来源，不是当前实验基线；最新基线见
+> `doc/SCRC_PI_v8效果专项测试_2026-07-17.md`。当前未完成主线是 held-out 扩展、
+> 复杂 J 特性、跨 family fresh SCRC 和真实失败驱动的 RuleCard 增长。
+> 当前统一执行顺序与验收条件见 `doc/SCRC_v8后续实施与规模验证流程.md`。
+> schema-26 的 17-Kernel fresh 性能/覆盖实测见
+> `doc/SCRC_Gate1_17Kernel规模性能实验_2026-07-17.md`。
+> 当前 schema-31 manifest 为 27 candidates / 20 ready，新增 non-reduce
+> `fg_diag_extract` strided-gather 与 `fg_index_select` two-axis indirect indexed gather，
+> 并将 `fg_skip_layer_norm` fused norm 提升为 ready；三者已通过真实 source compile +
+> scope-aware TTIR fingerprint，fresh Lift/replay 待 provider 恢复。
+> 2026-07-17 已恢复 `masked J + 实际 Lift π` terminal attack；所有旧 ratio、
+> mask→recompose 和未执行 actual-π masked writer 的结果只算历史证据，不能进入
+> schema-31 正式 closure 统计。fixed-C normal、paired intervention 和
+> actual-π masked-J 均已接入完整 family；π 数据模型与拓扑未改动。
+
 ## 1. 当前 Gate1 不是哪里有问题就加检查
 
 Gate1 的职责固定为：
@@ -26,8 +43,10 @@ Triton 语义等价判定器：
 - 早期 add/row-sum/softmax/RMSNorm/matmul 手写 J/π 只用于机制探针；
 - 后续已将这五个族和 11 个 FlagGems 样本重新走真实
   `gpt-5.6-sol/xhigh` Lift，16 个 normal replay 均达到 TTIR 硬闭合；
-- 16/16 最终都因 masked-J `L > 0.5` 被拒绝，因此正式
-  `REPLAY_CLOSED` 真实 LLM artifact 样本仍为 0；
+- 历史 16/16 都因 masked-J `L > 0.5` 被拒绝；该 fuzzy-ratio verdict 已废止，
+  这些 artifact 必须按 schema-25 的 actual-π masked hard comparison、
+  fresh-only replay policy 重跑，不能
+  直接改判为当前 `REPLAY_CLOSED`；
 - 24 个真实 FlagGems 队列完成 11 个、剩余 13 个 queued；11/24 是
   进度，不是覆盖率。
 
@@ -35,12 +54,13 @@ Triton 语义等价判定器：
 
 实现位置：`python/intentir/verify/gate1/rules.py`。
 
-当前 19 张 Triton 规则卡分为：
+当前 22 张 Triton 规则卡分为：
 
 1. domain/index：native/wide program domain、完整 integer offset tile、分阶段
    pointer tile；
 2. memory：masked access、分阶段 mask tile、unmasked access、output mapping；
-3. A 算子：elementwise、显式轴 reduce、flattened reduce、broadcast、cast、select；
+3. A 算子：elementwise、const、iota、显式轴 reduce、flattened reduce、broadcast、
+   cast、select；
 4. contraction/loop：K-tiled dot、outer product、loop carry；
 5. 接口/C：runtime scalar、schedule slot。
 
@@ -115,6 +135,14 @@ name。`fg_max/fg_min/fg_vector_l2` 直接复用 flattened-reduce 与 elementwis
 “冻结规则库上的独立 held-out 验证”。冻结后的复用能力仍要由后续 queued 样本
 检验。
 
+2026-07-17 的 schema-22 `fg_arange` fresh 运行又暴露了一个可复现的规则覆盖缺口：
+真实 `gpt-5.6-sol/xhigh` Lift 前两次均生成合法 `intent.iota`，随后被 deterministic
+composer 以 `ZeroRuleMatchError(intent_op:iota)` 拒绝；第三次模型试图绕开 iota，
+反而触发 destination-passing storage 合同错误。由此新增共享 canonical 卡
+`realize_iota`，而不是修改 J schema 或允许模型改写语义。该卡只从 J 读取 `n/dtype`，
+并复用 J/B 已声明的全局 domain coordinate；禁止把每个 program 的局部
+`0..BLOCK-1` 当作全局 iota，也禁止重复生成独立 program-id/arange 拓扑。
+
 检索过程已经显式化：
 
 ```text
@@ -128,10 +156,11 @@ name。`fg_max/fg_min/fg_vector_l2` 直接复用 flattened-reduce 与 elementwis
 
 每张新卡必须由真实失败驱动，流程固定：
 
-1. 真实 Kernel 经 LLM 生成 J/π/C；
+1. 真实 Kernel 经完整 Lift 生成 J/C/π；其中 LLM 生成 LiftCore，Lift 内部
+   deterministic finalizer 生成 π；
 2. 重写失败或 TTIR 不闭合；
 3. 判断是：
-   - π 没选对已有卡；
+   - C.strategy 或 composer 没选对已有卡；
    - 现有卡描述不够；
    - 缺一张新的实现机制卡；
    - J/A/B/C 本身有问题；
@@ -191,14 +220,16 @@ Lift 端到端证据”是三个不同层次，不能互相代替。
 
 | 分层 | 已有真实证据 | 部分覆盖 | 尚无端到端证据 |
 |---|---|---|---|
-| A：算子/值数据流 | 常量 fill、基础 elementwise、sum/mean/max/min/prod、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype promotion、广播、多步融合、常量敏感性、混合精度 | RNG/dropout、scan/sort/top-k、量化/位运算组合、稀疏、多输出、大型 attention/跨 Kernel 图 |
-| B：域/索引/mask/effect | 一维 tail mask、基础二维仿射索引、masked load/store、fill/guard、row reduction、staged mask tile、axis-0 take gather | 多 program axis、非末轴/多重归约、动态 stride、转置访问、复合/因果 mask、整数宽度、一般 along-axis gather | online/structured loop、scan carry、atomic、scatter、block pointer/descriptor、别名敏感副作用顺序 |
-| C：实现/调度 | 单个 reviewed profile 的 constexpr block、num_warps/num_stages 槽、K tile、wide program id | `do_not_specialize` 的实际 TTIR 影响、grid 合同、编译属性 | 同一 Kernel 的多 C/多 specialization 聚合门禁、descriptor ABI、架构专属约束、跨 Triton 版本系统规范化 |
-| 前端/裁判基础设施 | Triton compile-only、FlagGems wrapper、rank-0 pointer、TTIR interface/op/dataflow/reduce/predicate/effect 比较 | 复杂 region/loop 指纹、编译失败的安全差异摘要、masked-J 可识别性 | TileLang TIR、CUDA AST/PTX 正式 Gate1、atomics/内存序指纹、shape-parametric 等价 |
+| A：算子/值数据流 | 常量 fill、基础 elementwise、sum/mean/max/min/prod、vector norm、softmax/RMSNorm 固定链、matmul/dot/outer product | cast/dtype promotion、广播、多步融合、常量敏感性、混合精度；二维 eye 已进入真实 Lift 但未形成合法 artifact | RNG/dropout、scan/sort/top-k、量化/位运算组合、稀疏、多输出、大型 attention/跨 Kernel 图 |
+| B：域/索引/mask/effect | 一维 tail mask、基础二维仿射索引、masked load/store、fill/guard、row reduction、staged mask tile、axis-0 take gather | 多 program axis、非末轴/多重归约、动态 stride、转置访问、复合/因果 mask、整数宽度、一般 along-axis gather；`fg_log_softmax` 已有 2-loop source/0-loop replay 的 fresh Gate1 非闭合和 multi-N Gate2 divergence | structured-loop replay closure、scan carry、atomic、scatter、block pointer/descriptor、别名敏感副作用顺序 |
+| C：实现/调度 | reviewed constexpr block、num_warps/num_stages 槽、K tile、wide program id；`fg_ones` 同一 replay 的 6 个 fixed-C runtime specialization，且 normal/paired/masked 均完成 full-family verdict | `do_not_specialize` 的实际 TTIR 影响、grid 合同、编译属性；streaming reduction/loop-carry 的 J/C 归属仍待 fresh 闭合 | descriptor ABI、架构专属约束、跨 Triton 版本系统规范化 |
+| 前端/裁判基础设施 | Triton compile-only、FlagGems wrapper、rank-0 pointer、scope-aware region/loop fingerprint、TTIR interface/op/dataflow/reduce/predicate/effect 比较 | 编译失败的安全差异摘要、masked-J 可识别性、loop/reduction/effect Relift 结构 guidance | TileLang TIR、CUDA AST/PTX 正式 Gate1、atomics/内存序指纹、shape-parametric 等价 |
 
-当前 comparator 更准确的定位是：对“无复杂结构化循环、仿射索引、
-基础 mask/归约/dot”的 TTIR 结构闭包工具。`fg_log_softmax` 使用 online
-结构化循环，不能因为名字中有 softmax 就认为已被当前 softmax 样本覆盖。
+当前 comparator 已能 scope-aware 解析复杂 region/loop，但 replay closure 仍主要覆盖
+仿射索引、基础 mask/归约/dot。`fg_log_softmax` fresh 结果证明 parser 已不再阻塞，
+真正的缺口是 source online recurrence 未进入 replay：single/exact tile 动态通过，
+multi-N 明确 `replay_diverged`。因此不能因为名字中有 softmax 就认为 streaming
+softmax 已被当前 softmax 样本覆盖。
 
 ### A 层
 
@@ -235,14 +266,15 @@ normal source/replay，当前实现已按下列循环工作：
 
 ```text
 原始 source
-  → SCRC Lift 产生 J/π/C/接口/定位表
+  → SCRC Lift 内完成 LiftCore + deterministic π finalization
+  → 返回 J/π/C/接口/定位表
   → 源码隔离 normal replay
   → source/replay 同前端编译与纯代码硬比较
   → generation/compile/interface/硬比较任一失败
   → 提取失败类别或 interface/op/dataflow/reduction/predicate-effect 结构差异
-  → 原始 source + source fingerprint + 差异历史 + 当前 J/π
+  → 原始 source + source fingerprint + 差异历史 + 当前完整 LiftArtifact
       交回可看源码的 SCRC Lift
-  → 只修改 J/π/location_map，冻结 interface 与 C
+  → 修改 J/C.strategy/location_map，冻结 interface 与 C.schedule，并在 Lift 内重产 π
   → 从静态扫描、源编译和全新源码隔离 replay 重新进行
   → normal 硬闭合或重提预算耗尽
 ```
@@ -255,7 +287,10 @@ normal source/replay，当前实现已按下列循环工作：
 经白名单序列化的纯代码差异。Gate2 输出不进入该循环，不能用动态
 PASS 覆盖 Gate1 差异。
 
-normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
+normal 闭合后仍要执行 `masked J + 同一实际 Lift π` 反作弊终检。masked replay
+硬闭合为 `LEAKAGE_REJECTED`；合法候选 compile rejection 或 compiled hard
+mismatch 形成正式反泄漏证据；没有 generation、ABI 恢复或指纹不可评估为
+`NO_CLOSURE`。当前不把
 `LEAKAGE_REJECTED` 自动伪装成 normal source/replay 语义差异；如需建立
 专门的信息重分配循环，必须先在方案中单独定义反作弊反馈与防刷分
 约束，不与本次 normal diff relift 混在一起。
@@ -264,8 +299,8 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
 
 ### 第一批：20～40 个 Triton
 
-- live add、row-sum、softmax、RMSNorm、matmul 的 normal replay 已结构闭合，
-  五者都因 masked-J 消融被最终拒绝；add 的历史正式 Gate2 与五者的独立
+- live add、row-sum、softmax、RMSNorm、matmul 的历史 normal replay 已结构闭合，
+  五者旧 masked-J 消融结果只保留作历史；add 的历史正式 Gate2 与五者的独立
   production lower2c 三方预检均已跑通；
 - RMSNorm 和 matmul 还对真实 live 被拒绝样本离线跑通 Gate2，记入方案 9.1
   的 rejected 对照，不改变 Gate1 裁决；
@@ -299,10 +334,17 @@ normal 闭合后仍要执行 masked-J 反作弊终检。当前不把
 - `fg_embedding` 在静态 `indices[17]`、`weight[97,13]` J 下运行 2 个合法
   index/weight value profile × 3 seeds，6/6 三方零误差 PASS；因为 compiler view
   不提供 runtime shape scalar，不能把这个证据扩大成动态 shape 支持；
-- `fg_arange/fg_trace/fg_eye` 继续 queued：production Lower2C 仍分别缺 iota、
-  gather+reduce 的端到端 contract 和二维对角 predicate realization；本轮加入的
+- `fg_arange` 的 production Lower2C iota/integer read-back 接缝已经补齐并通过
+  i8/i16/i32/i64、i1、signed-i64 与 symbolic affine-arange execution regression；
+  schema-24 fresh `gpt-5.6-sol/xhigh` 已完成 3 个合法 shape/value profile × 3 seeds：
+  Gate2 9/9 三方零误差 PASS，Gate1 为 `NO_CLOSURE`。初始 J 与两次 Relift J/C/π
+  逐字段相同，没有再把 BLOCK/pid/lane 复制进 J；剩余 affine ordinal association
+  缺口已形成计划外 C.strategy 候选报告，未获批准前不实现；
+  schema-26 已把 `fg_trace/fg_eye` 提升为真实 ready compiler case：source preflight
+  均通过，但前者三次 Lift 失败于静态 shape symbol/未注册 `triu`，后者三次失败于
+  broadcast compose 与 storage lifetime；它们仍没有 Gate1/Gate2 closure 证据。
   通用 take/along-axis gather lowering 只消除了 `fg_embedding` 已实际触发的接缝，
-  没有替未运行候选制造结果；
+  没有替失败样本制造结果；
 - 覆盖五核同类和现有 corpus 中可执行 source；
 - 全部重新走 LLM J/π/C；
 - 跑 relift-only Gate1、规则检索、最终 π audit 与 Gate2；

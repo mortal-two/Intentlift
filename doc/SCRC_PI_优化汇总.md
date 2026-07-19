@@ -1,9 +1,14 @@
 # SCRC π 优化汇总：严格重放计划
 
-> 更新时间：2026-07-16  
-> 当前协议：`relift_only_pi_audit_on_strict_opaque_refs_causal_v7`  
+> 更新时间：2026-07-18
+>
+> 当前协议：`gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11`
+>
 > 设计主线：`doc/IntentIR_SCRC_方案_重写版.md`  
 > 范围：汇总 TianchenIR 中与 π 定义、生成、规则卡、重放隔离、因果验证和历史试验有关的全部已落地优化。
+> 注：v8 的完整 Lift 仍产出 π；变化是 π 不再由 source-aware LLM 自由书写，而由
+> Lift 内部的 `DeterministicCompose(Canon(J), interface, C, RuleRegistry)` finalizer
+> 唯一生成。Gate1 只消费并复核完整 LiftArtifact。
 
 ## 1. 结论
 
@@ -11,9 +16,14 @@
 
 上一版 `pi-v2/causal-v3` 把 π 改成了“稀疏、无序、只记录 source-specific override 的集合”。这不是单纯压缩表示，而是把 π 从原方案中的“严格施工说明”改成了“少数例外提示”。当前项目又不存在一个纯代码、确定性、版本化、可审计的 full-plan materializer，因此缺失步骤只能由规则库、prompt 和 LLM 隐式补齐。此时 π 本身已经不再是严格重放规则。
 
-所以本轮没有为 sparse π 作事后合理化，而是将 π 恢复为：
+v7 当时没有为 sparse π 作事后合理化，而是先将 π 恢复为：
 
-> **由 Lift 生成的、完整的、按施工依赖排序的严格重放规则实例序列。**
+> **完整的、按施工依赖排序的严格重放规则实例序列。**
+
+v8 的最终定义进一步收紧为：π 是完整 LiftArtifact 的组成部分，同时也是
+J/interface/C/RuleRegistry 的可重算、逐字节可验证派生物。source-aware LLM 负责
+LiftCore 中的 J/C；Lift 内部 deterministic finalizer 负责 π。所有 source-specific
+决策只允许进入 `C.strategy`，Gate1 不承担 π 生产。
 
 “完整”指规则级施工计划完整，不是让 π 复制 J、Triton 源码或前端 API。每个步骤只选择一个规则卡，并通过 typed reference 从 J/B/C/接口读取其参数。
 
@@ -35,7 +45,7 @@ J/B/C/interface：保存“事实和值”
 rule card：保存“该机制在前端如何实现”
 ```
 
-这里必须区分“规则定义”和“π 实例”：21 张 RuleCard 是跨 Kernel 共享、由系统维护
+这里必须区分“规则定义”和“π 实例”：22 张 RuleCard 是跨 Kernel 共享、由系统维护
 的规则定义，Lift 无权按每份源码创建新规则；Lift 只生成当前 artifact 的 π 实例，
 即从全局规则库选择 rule id，并绑定到当前 J/B/interface/C 的 opaque references。
 
@@ -111,6 +121,7 @@ ABI 名称。π 自身不保存这个名称。
 |---|---|
 | `map_unary` / `map_binary` | `realize_elementwise` |
 | `const` | `realize_const` |
+| `iota` | `realize_iota` |
 | `reduce` | `realize_reduce` 或 `realize_flattened_reduce` |
 | `contraction` | `realize_k_tiled_dot` 或 `realize_outer_product` |
 | `cast` | `realize_cast` |
@@ -122,7 +133,8 @@ ABI 名称。π 自身不保存这个名称。
 
 ### 4.2 恢复有序性
 
-`ReplayPlan` 保留 Lift 产生的原始顺序：
+`ReplayPlan` 保留完整 Lift 产生的最终施工顺序；v8 中该顺序由 Lift 内部 composer
+确定：
 
 - 不再按字典序规范排序；
 - 不再把 π 解释成无序集合；
@@ -221,26 +233,75 @@ Replay prompt 明确要求逐步执行 π，并禁止隐藏默认步骤。
 
 ### 4.12 协议与 cache identity 升级
 
-当前协议为：
+v7 历史协议为：
 
 ```text
 relift_only_pi_audit_on_strict_opaque_refs_causal_v7
 ```
 
 v4 恢复了完整严格 π，但 paired intervention 仍让模型从空白重新生成整个 mutant
-Kernel，真实 softmax 因此出现与目标变异无关的 `constant/select` 重构漂移。v5
-把 normal 的模型生成 replay 作为受控结构基线交给同一 source-blind writer：writer
+Kernel，真实 softmax 因此出现与目标变异无关的 `constant/select` 重构漂移。历史 v5
+曾把 normal 的模型生成 replay 作为受控结构基线交给同一 source-blind writer：writer
 仍只看到当前 J、同一完整 π、接口与 C 槽，不看到 source、mutation sidecar 或期望
 TTIR delta；未变化的 π 步骤禁止被重新分组或“好心优化”。
 
 v5 同时把 live harness 的已注册 J/B intervention 上限从 1 提高到 3，并在每条
 记录中保存 `base_generation_id`。v6 不改变完整、有序 π 的语义，而是禁止
 Lift-owned reference id 携带来源提示，并在正常 replay handoff 中统一重命名 J/B/π
-引用。v7 进一步取消所有 normal/消融 replay-code repair，把正常失败统一回流 Lift，
-并让正式 π audit 默认开启。held-out batch identity 当前升到 schema 17：除
+引用。v7 取消 normal/消融 replay-code repair，把正常失败统一回流 Lift，并让正式
+π audit 默认开启；但后续审计确认 paired intervention 与 mechanism substitution 仍
+继承了 v5 的 candidate 复用通道，因此“所有 replay repair 已移除”的表述当时并不
+完整。held-out batch identity 曾升到 schema 17：除
 intervention 与 generation 预算外，还绑定 TTIR score、masked-J fallback、
 `opaque_replay_refs_v1`、relift-only 恢复、冻结 C 以及 full-π closed-control 前置
-条件。历史 v3/v4/v5/v6 identity 不能静默当作当前结果。
+条件。actual-π masked-J 接入时 identity 升到 schema 19；本轮归档 repair/ratio-era
+活动字段后进一步升到 schema 20。2026-07-17 又删除全部 active prior-replay
+candidate 参数和派生字段，identity 升到 schema 21，并继续绑定
+`actual_lift_pi_masked_j_hard_nonclosure_v3`：normal opaque 不能替代 masked
+terminal attack 与 `fresh_only_no_prior_replay_source`：旧 schema 17--20 与历史
+v3/v4/v5/v6 identity 都不能静默当作当前结果。Gate2 production Lower2C 补齐
+iota/integer read-back 后，identity 继续升到 schema 22；真实 `fg_arange` J 随后证明
+`iota.attrs.n` 可以是 runtime symbolic extent，当前 identity 因此升到 schema 23，
+并绑定 `intent_linalg_cpu_symbolic_iota_integer_readback_v3`，防止旧
+lowering-unsupported 或 static-iota 报告被恢复为当前结果。随后活动报告删除
+`replay_code_repair=disabled`、`maximum_replay_repairs=0` 等 repair-era 否定字段：
+不存在的子系统不再以开关或计数器留在正式 schema 中，identity 因此升到 schema 24。
+同时 Gate1Runner 不再把含 replay code 的完整 `CandidateRecord` 暴露给 Relifter；
+跨层对象收紧为 source-free `ReliftEvidence`。完整 replay 仅留在 Gate1 审计与 Gate2
+原样执行路径，不能成为 Lift prompt 的输入或 writer 的修补基底。
+schema 25 进一步把有序 fixed-C specialization family 的完整 runtime contract 写入
+resume identity，并允许 family runner 直接消费 primary Gate1 的同一
+`ReplayGeneration`。该阶段只形成 same-replay diagnostic；family-wide Relift 和
+anti-leakage 接通前不改变正式 Gate1 verdict。
+
+schema 26 增加 `scrc_case_performance_v1` identity 和 observation-only 阶段耗时/
+逻辑调用聚合，防止旧无计时报告混入正式性能批次；这些字段不进入 J/C/π、prompt、
+ReliftEvidence、fingerprint 或 verdict。17-Kernel fresh 结果中，12 个 closed control
+的 direct step dropout 全部 canonicality-rejected；actual-π masked-J 为 12 个 hard
+mismatch、1 个 `fg_addr` hard closure。完整证据见
+`doc/SCRC_Gate1_17Kernel规模性能实验_2026-07-17.md`。
+
+schema 27 不改变 π 的定义或信息边界，只收紧外循环与 TTIR 证据版本：
+`exact_artifact_and_hard_diff_v1` 在 canonical J/C/π/interface 与确定性 hard diff 连续
+两轮完全不变时停止继续 Relift/writer 采样；`triton-ttir-3.6-gate1-v2` 修复 lexical
+region SSA 作用域。两者都不把 replay code、raw TTIR、score 或诊断 prose 回流
+writer，也不允许 Gate1 借随机重放掩盖 Lift artifact 未改变。
+
+schema 28 仍不改变 π。本次只把 Relift 协议升为
+`gate1_diff_guided_deterministic_pi_relift_v9`：完成 Gate1 hard compare 后生成
+`deterministic_gate1_hard_diff_guidance_v1`，而未形成 replay/hard diff 的 provider
+failure 不再触发语义 Relift。这样优化的是“差分后的下一轮 Lift 判断”，不是初始 Lift
+一次响应率，也不是 π 拓扑。
+
+schema 29 同样不改变 π，只增加 `structured_no_closure_termination_v1`，让 live/batch
+明确区分 stagnation、provider unavailable、Relift budget/failure 和 masked evidence
+incomplete。Gate2 diagnostic 仍与 Gate1 独立；termination 字段不得被解释为新的 Gate
+或总体通过判据。
+
+schema 30 仍不改变 π。`gate1_fixed_c_family_diff_guided_pi_relift_v10` 只把同一份
+J/C/π/replay 的 normal 验证范围扩展到完整 fixed-C runtime profile family；family
+hard diff 回流 Lift，profile 不能拥有独立 π。已闭合 profile 是下一轮不可回归约束，
+而不是新增进 π 的施工拓扑。
 
 ### 4.13 空分量与 masked-J 裁决收紧
 
@@ -249,10 +310,15 @@ TTIR component 的双方空集合仍表示“没有差异”，但不再表示�
 `score=null`，并从总分分子和分母同时排除；总分只在确有 source 或 replay 证据的
 category 上归一化。normal Gate1 继续由硬分量精确相等裁决。
 
-masked-J fallback 也不再使用 score ratio 阈值。当前
-`exact_semantic_hard_degradation_v1` 只接受两类确定性证据：masked replay 无法形成
-可编译且接口合法的指纹，或其 `op_multiset/dataflow/reduction/predicate_effect`
-至少一个硬分量与 source 不同。ratio 仅保留为诊断字段。
+masked-J 不再是 fallback，也不再执行 `mask J -> recompose`。当前正式路径保留
+实际 Lift 产出的 π，仅遮蔽 J/A/B 内容与全部 J/ABI/C 名称，再调用一次 fresh、无
+prior-replay 输入、无 repair 的 writer。活动 writer API 不存在 candidate 参数。
+masked 合法候选在编译期被拒绝，或编译后
+`op_multiset/dataflow/reduction/predicate_effect` 至少一个硬分量与 source 不同，
+均形成有效反泄漏证据；全部硬分量闭合则 `LEAKAGE_REJECTED`。没有 generation、
+ABI 恢复失败或指纹工具失败为 inconclusive，Gate1 返回 `NO_CLOSURE`。旧 ratio
+字段、threshold helper 与 repair-era `Gate1Result` 已移入
+`intentir.verify.back.legacy_v0`，不再出现在活动 Gate1 API 或报告 JSON 中。
 
 ### 4.14 refs/node_ref 正常通道不透明化
 
@@ -341,15 +407,17 @@ diagnostic 中 source↔replay、source↔lowering、replay↔lowering 三对全
 当前证据同时暴露一个尚未解决的上限：dropout 的确定性优先级通常选择首个 compute
 或 address target，本轮复杂四核又都集中到 `a0`，所以它并未覆盖 π 的全部 step 或
 所有 mechanism family。mechanism substitution 比 dropout 更稳定，但当前也只验证
-首个可替换 address association，尚不能证明 21 张规则卡逐卡必要、π 已最小化或复杂
+首个可替换 address association，尚不能证明 22 张规则卡逐卡必要、π 已最小化或复杂
 attention/atomic/scatter/loop 等特性已覆盖。
 
-### 4.16 v7：取消 replay code repair，正式 π audit 默认常开
+### 4.16 取消 replay code repair，正式 π audit 默认常开
 
 用户指出的偏航成立。原方案早期第六、七章确实允许“π/重放代码小修”，这是此前
 实现 replay feedback/base-candidate repair 的来源；但实际代码修的是某个 replay
 候选，并没有重新产出 π，因此既不能证明 Lift 的 J/π 已经正确，也会让闭合依赖旧
-候选代码。v7 按当前主线取消这条内循环。
+候选代码。v7 先取消 normal/消融的这条内循环；2026-07-17 的完整数据流复审又发现
+paired intervention 和 mechanism substitution 尚保留 candidate 回灌，现已一并移入
+`intentir.verify.back.legacy_v0`，活动路径统一执行下述 fresh-only 合同。
 
 normal Gate1 现在只有 source-aware 外循环：
 
@@ -364,8 +432,10 @@ source + 当前 J/π
                     → 从静态扫描、源编译、fresh replay 开始全流程重跑
 ```
 
-writer API 已删除 compiler/comparator `RepairFeedback`，normal replay 永远不接收旧
-失败候选；`Gate1Config.max_repairs` 与 live/held-out `--rewrite-repairs` 也已删除。
+writer API 已删除 compiler/comparator `RepairFeedback` 以及 `base_candidate`、
+`control_candidate`、`repair_candidate`；normal、masked、paired intervention 与 π/C
+诊断都永远不接收旧候选。`Gate1Config.max_repairs` 与 live/held-out
+`--rewrite-repairs` 也已删除。
 relift trigger 明确区分 `replay_generation_failed`、`replay_compile_failed`、
 `replay_evaluation_failed` 与 `normal_no_closure`。Lift 内部对不合法 artifact JSON 的
 修正仍允许，因为它始终看 source 且重新发出完整 J/π；provider 对同一请求的 HTTP
@@ -395,8 +465,10 @@ Lift/replay prompt 变更以及 held-out 新家族仍必须执行；否则只能
 ### 4.17 fresh v7 实测：默认 audit 与无 replay repair 证据（2026-07-16）
 
 使用真实 `gpt-5.6-sol/xhigh` fresh Lift 对 add 和边界 matmul
-`M=7,N=1003,K=19` 复验。两例 normal writer 都只生成一个 fresh candidate，报告中
-`base_generation_id=null`，均编译并通过 Gate1 硬指纹；Gate2 也均 PASS。两例 Lift
+`M=7,N=1003,K=19` 复验。两例 normal writer 都只生成一个 fresh candidate；当时
+报告中的 `base_generation_id=null` 是旧字段留下的否定证据；schema 23 已直接
+删除该字段并从接口上禁止 prior replay，schema 24 又删除所有活动
+replay-repair 否定开关/计数器。两例均编译并通过 Gate1 硬指纹；Gate2 也均 PASS。两例 Lift
 各发生一次 artifact-level schema/opaque-reference 修正：首个完整 artifact 的 π
 引用了非 opaque 的 `out`，Lift 随后重新发出完整 J/π。这不是 replay 修复。
 
@@ -420,9 +492,76 @@ matmul 命令没有传 `--pi-ablations`，仍自动进入三档 audit，证明�
 generation failure、compile failure 和 hard semantic mismatch 均触发 Lift，新一轮
 重新编译 source 并生成 fresh replay，失败候选从不成为 writer 输入。
 
+### 4.18 v8：确定性 compose、五核实测与 pointer-staged 规则收紧（2026-07-17）
+
+v8 不再让 source-aware LLM 子响应直接书写 π。完整 Lift 先生成
+J/interface/C.strategy/location_map，再由其内部 `deterministic_composer_v2` 根据
+J/interface/C/RuleRegistry 唯一完成 π，并记录 canonical input digest、plan digest
+与逐 leaf provenance；Lift 返回完整 J+C+π artifact。drop/add/ref/order 等直接
+π 变更在 writer 前由 compose equality 精确拒绝。合法机制变化只允许修改 C.strategy，
+随后重算完整 π，并通过普通 writer 路径执行。
+
+真实 `gpt-5.6-sol/xhigh` fresh 测试中，add、row-sum、softmax、RMSNorm、matmul
+最终均为 Gate1 `REPLAY_CLOSED`、Gate2 PASS，所有适用硬类别 score=1.0。row-sum 的
+step dropout 为 `CANONICALITY_REJECTED/attempts=0`；C.strategy address substitution
+重新 compose 后为 `SEMANTICS_PRESERVED`。
+
+测试同时发现并修复两处实现问题：
+
+- mechanism substitution 仍残留旧 `ablation_kind` 参数，导致没有 plan_override 时
+  在 prompt builder 提前失败；当前该路径不再携带 direct-π ablation 标记；
+- matmul 初次出现 Gate1 no-closure、Gate2 diagnostic PASS。差异来自旧
+  `materialize_pointer_tile` 对地址分组约束不唯一：writer 既可能预合并整数 offset，
+  也可能把 coordinate 内部的 program-base/lane 过度拆分。RuleCard v3 规定 domain
+  coordinate 为原子，只按 index_expression 的顶层加法项从左到右各执行一次 pointer
+  addition，不拆乘法项或 coordinate 内部结构。没有增加 π 字段；fresh matmul 随后首轮
+  Gate1/Gate2 闭合。
+
+完整命令、失败归因和逐核结果见
+`doc/SCRC_PI_v8效果专项测试_2026-07-17.md`。
+
+### 4.19 composer-v3：同节点多 broadcast 的节点级确定性组装（2026-07-19）
+
+真实 `fg_eye` 暴露了 J 事实与 π action 的基数差异：一个二元 comparison/select
+节点可以有多条 `Boundary.broadcasts(node_ref, operand, axes)`，但 π 的
+`realize_broadcast` 只以 `node_ref` 为目标。旧 composer 按每条声明生成 step，导致同一
+节点出现重复 marker 并在 Gate1 前拒绝。
+
+`deterministic_composer_v3` 按 `node_ref` 合并 broadcast work item，同时：
+
+- 在 `facts.broadcasts[]` 中保留完整 operand/axes 配对；
+- 将所有 operand producer dependency 取并集；
+- 一个节点只物化一条 `realize_broadcast(node_ref)`；
+- `j_digest` 和 rule/node_ref leaf provenance 绑定全部 BroadcastSpec；
+- 声明顺序不影响 canonical identity；
+- 完全相同的重复声明继续 fail-closed。
+
+这没有增加 π 字段，也没有把智能决策移入 π。J 仍保存全部 broadcast 语义，π 只声明
+“按 J 中该节点的完整 broadcast 集合施工”。held-out identity 同步升级到 schema 32，
+并显式绑定 composer version。
+
+最终 `fg_eye` fresh `gpt-5.6-sol/xhigh` 实验中，normal replay 和四个 fixed-C profile
+全部 hard-close，masked-J family 四个 profile 全部 hard mismatch，Gate1 为
+`REPLAY_CLOSED`。π dropout 为 `CANONICALITY_REJECTED`；合法 mechanism substitution
+因 writer off-target drift 保持 inconclusive。完整证据见
+`doc/SCRC_composerV3跨Family实测与GridExtent缺口_2026-07-19.md`。
+
+### 4.20 Lower2C-v4 消费 Boundary broadcast，π 保持不变（2026-07-19）
+
+`fg_eye` schema-32 fresh 已证明 J/π/replay Gate1 闭合，但旧 Gate2 Lower2C 丢弃
+`SemanticArchive.boundary.broadcasts`，导致 6 个 shape divergence 和 6 个 execution
+failure。该问题在 lowering 接线层修复：integer axes 被 legalize 为标准
+`tensor.expand_shape`，随后继续使用现有 map_binary/select affine broadcast maps。
+
+本次没有增加 π step、refs、规则卡、C.strategy 或 J op。使用同一份保存真实
+artifact/replay 的无模型复验中，Gate1/fixed-C/masked-J 证据保持不变，Gate2 从
+0/12 完整通过提升到 12/12 `gate2_pass`。held-out identity 升到 schema 33，并绑定
+`intent_linalg_cpu_symbolic_iota_integer_readback_boundary_broadcast_v4`。详见
+`doc/SCRC_Lower2C_BoundaryBroadcast_v4_2026-07-19.md`。
+
 ## 5. 当前规则库
 
-规则库共有 21 张卡，其中实现字段仍使用历史名称 `selection_mode=derived|override`：
+规则库共有 22 张卡，其中实现字段仍使用历史名称 `selection_mode=derived|override`：
 
 - `derived` 现在表示通常依据 J/B/C 选择的 canonical mechanism；
 - `override` 表示来源相关的 alternative mechanism；
@@ -434,11 +573,12 @@ generation failure、compile failure 和 hard semantic mismatch 均触发 Lift�
 | `bind_program_domain` | canonical | 原生宽度 program coordinate |
 | `bind_wide_program_domain` | alternative | 显式宽化 program coordinate |
 | `materialize_index_tile` | canonical | 先形成完整整数 offset |
-| `materialize_pointer_tile` | alternative | 保留 pointer + scalar base + lane 的结合方式 |
+| `materialize_pointer_tile` | alternative | 按 index_expression 顶层加法项逐项形成 pointer association |
 | `realize_masked_access` | canonical | masked load/store |
 | `materialize_mask_tile` | alternative/additional | 保留已暂存并复用的 mask component |
 | `realize_elementwise` | canonical | unary/binary map |
 | `realize_const` | canonical | 常量节点 |
+| `realize_iota` | canonical | 从 J/B 全局 domain coordinate 实现语义 ordinal |
 | `realize_reduce` | canonical | 显式 local tile axis reduction |
 | `realize_flattened_reduce` | alternative | source 省略 axis 的 flatten reduction |
 | `realize_broadcast` | canonical | 语义 broadcast/local rank insertion |
@@ -502,7 +642,7 @@ generation failure、compile failure 和 hard semantic mismatch 均触发 Lift�
 - duplicate/conflict fail-closed；
 - source/API 静态泄漏扫描；
 - paired J/B causal intervention；
-- masked-J 降级为诊断或无干预坐标时的 fallback；
+- normal opaque rename 与 actual-π masked-J terminal attack 两条互补通道；
 - relift 时 interface 与 C 冻结；
 - Gate1 与 Gate2 维持独立证据关系。
 
@@ -510,9 +650,10 @@ generation failure、compile failure 和 hard semantic mismatch 均触发 Lift�
 
 paired intervention 是 Gate1 的因果验证机制，不是 π 生成规则。
 
-当前做法是固定完整 π、interface、C、规则库和 source，最多选择 3 个合法、互不
-破坏合同的注册 J/B 坐标。每个 mutant replay 都复用同一个 normal 模型生成候选作为
-结构控制，只修改当前 J 要求的部分，再要求 TTIR 出现精确、可枚举的目标差分。这能验证：
+当前做法是冻结 interface、C、规则库和 source，最多选择 3 个合法、互不破坏合同的
+注册 J/B 坐标。每个 mutant 都从变异后的 J/B 确定性重新 compose 完整 π，再由同一
+writer 配置全新生成 replay；normal replay code 不进入 mutant prompt。随后要求 TTIR
+出现精确、可枚举的目标差分。这能验证：
 
 - writer 是否真正读取 J；
 - π 是否偷偷复制了被干预的语义值；
@@ -520,7 +661,11 @@ paired intervention 是 Gate1 的因果验证机制，不是 π 生成规则。
 
 恢复完整 π 后该机制仍然成立，因为 π 只引用 J/B 值，不复制它们。
 
-blank/masked-J 会混合测量接口可猜性、模型先验、规则卡信息和 π 泄漏，因此高相似度不能单独证明 π 错误。它不能成为削弱 π 定义的理由。
+blank/masked-J 会混合测量接口可猜性、模型先验、规则卡信息和 π 泄漏，因此一次
+hard closure 不能单独归因为“π 独占责任”。但它能确定 J 被遮蔽后剩余 packet 仍足以
+恢复 source hard fingerprint，所以按 Gate1 的“J 是语义权威”合同必须拒绝。若要
+进一步归因，可增加不参与正式接受的 π-neutralized 对照；这不能成为削弱 π 定义或
+跳过 masked terminal attack 的理由。
 
 masked-fill intervention 还会沿 J DAG 检查是否流入带
 `masked_contribution` 的 reduction。若 fill 经 elementwise 节点间接进入 reduction，
@@ -594,8 +739,10 @@ delta。RMSNorm 首轮 strict Lift 曾因 π 引用未登记中间名 `inv_rms` 
 | RMSNorm | `DEGRADED` | `UNEXPECTED_CLOSURE` | `materialize_pointer_tile@a_x` |
 | matmul | `DEGRADED` | `UNEXPECTED_CLOSURE` | `materialize_pointer_tile@a_load` |
 
-受控 mechanism substitution 保持 π 完整、冻结 J/B/C，并以 normal 模型生成 replay
-为结构基线，只替换首个 address association。五核均成功编译且硬退化：
+以下受控 mechanism substitution 是 v5/v6 历史口径：它保持 π 完整、冻结 J/B/C，
+并曾以 normal 模型生成 replay 为结构基线，只替换首个 address association。该
+replay-to-replay 控制方式现已归档；当前机制替换改为修改一个 C.strategy binding、
+重新 compose π 并 fresh generation。历史五核均成功编译且硬退化：
 
 | Kernel | 替换 | 结果 |
 |---|---|---|
@@ -681,6 +828,8 @@ label，不是 v6 writer packet 内容；同一目标在 `opaque_replay_refs_v1`
 - target 缺失、未知 target、错误适用类别拒绝；
 - duplicate、family conflict 和互斥 mechanism 拒绝；
 - masked-J 前先验证原始完整 π；
+- masked-J 保留实际 Lift π、只遮蔽 J，并执行一次 fresh writer/ABI restore/compile/
+  hard comparison；
 - paired intervention 固定 π 的行为；
 - J-only、确定性单步 π dropout 与受控 mechanism substitution 的 source-blind
   单次生成、编译和硬结构比较；失败不修 replay；
@@ -689,7 +838,7 @@ label，不是 v6 writer packet 内容；同一目标在 `opaque_replay_refs_v1`
 
 仍不能宣称：
 
-- 21 张规则卡已覆盖全部 IntentIR op 或数百个真实 Kernel；
+- 22 张规则卡已覆盖全部 IntentIR op 或数百个真实 Kernel；
 - 历史 v3/v4/v5/v6 的 5 核/FlagGems 结果自动成为当前 v7 结果；
 - 每一张 π 卡已经完成逐卡必要性消融，或 π swap 已形成硬裁决；
 - mechanism substitution 已覆盖每个 π step 或每个 alternative family；当前五核试验
@@ -697,6 +846,28 @@ label，不是 v6 writer packet 内容；同一目标在 `opaque_replay_refs_v1`
 - structured loop、atomic/scatter、block pointer、descriptor、复杂 attention 等特性已充分覆盖。
 
 下一步正式证据必须从真实 Kernel 重新走 `gpt-5.6-sol/xhigh` Lift，生成完整 π，再执行 source-blind replay、Gate1 paired intervention 和独立 Gate2。手写 J/π 只作为单元测试或机制探针，不计入规模化端到端覆盖。
+
+### schema-30 fixed-C family 对 π 的影响
+
+schema-30 没有改变 π 的定义或字段。一个 fixed-C family 共享同一份 J/C/π 和同一份
+replay；profile 只改变 manifest 已声明的 runtime shape/scalar/grid。secondary profile
+failure 通过 family hard diff 回流 Lift，不生成 profile-specific π，也不把 profile
+差异复制进 π。当前新增的是 Gate1/Relift 的验证范围，不是 π 的信息量。
+
+### schema-31 full-family 反泄漏对 π 的影响
+
+schema-31 仍未修改 π schema、rule 序列、refs 命名、依赖拓扑或信息量。变化只是
+将现有因果/反泄漏实验扩展到同一 fixed-C family：
+
+- paired J/B intervention 对 mutant J 依旧重新 deterministic compose；每个
+  intervention 只生成一份 mutant replay，所有 profiles 检查同一份 code 的
+  注册 exact delta；
+- masked-J 依旧保留 normal Lift 的 actual π，不重新 compose、不默认关闭 π、
+  不接收 normal replay 或 diff；一份 masked replay 覆盖全部 profiles；
+- 任一 masked profile hard-close 仍只能说明“J 被遮蔽后剩余 packet 足以恢复
+  源语义”，不能自动单独归因为 π 拓扑；
+- 当前保存真实 `fg_ones` 迁移中，masked 6/6 为可比 hard mismatch，没有出现
+  成批 topology leakage 证据，因此不触发 π 拓扑优化。
 
 ## 12. 最终定义
 
