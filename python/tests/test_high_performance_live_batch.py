@@ -67,6 +67,11 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
     report = {
         "model": "gpt-5.6-sol",
         "effort": "xhigh",
+        "provider_request": {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "xhigh",
+            "api_key_recorded": False,
+        },
         "lift": {
             "ok": True,
             "response_model": "gpt-5.6-sol",
@@ -79,3 +84,26 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
     }
 
     assert batch._fresh_contract(report) == (True, [])
+
+
+def test_performance_state_requires_measured_correct_output() -> None:
+    report = {
+        "gpu_performance": {
+            "status": "measured",
+            "correctness_pass": True,
+            "comparison": {
+                "speedup_source_over_generated": 1.04,
+                "non_regression_2pct_pass": True,
+                "extension_3pct_speedup_pass": True,
+            },
+        }
+    }
+
+    assert batch._performance_state(report) == {
+        "measured": True,
+        "speedup_source_over_generated": 1.04,
+        "non_regression_2pct_pass": True,
+        "extension_3pct_speedup_pass": True,
+    }
+    report["gpu_performance"]["correctness_pass"] = False
+    assert not batch._performance_state(report)["measured"]

@@ -1491,6 +1491,14 @@ def run_case(
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
+        "provider_request": {
+            "name": provider.name,
+            "base_url": provider.base_url.rstrip("/"),
+            "wire_api": provider.wire_api,
+            "model": provider.model,
+            "reasoning_effort": provider.reasoning_effort,
+            "api_key_recorded": False,
+        },
         "gate1_execution_profile": gate1_profile,
         "relift_policy": {
             "protocol": SCRC_RELIFT_PROTOCOL,

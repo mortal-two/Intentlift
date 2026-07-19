@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -280,6 +281,14 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
         failures.append("requested_model_mismatch")
     if report.get("effort") != OFFICIAL_EFFORT:
         failures.append("requested_effort_mismatch")
+    provider_request = report.get("provider_request")
+    if isinstance(provider_request, Mapping):
+        if provider_request.get("model") != OFFICIAL_MODEL:
+            failures.append("provider_requested_model_mismatch")
+        if provider_request.get("reasoning_effort") != OFFICIAL_EFFORT:
+            failures.append("provider_requested_effort_mismatch")
+        if provider_request.get("api_key_recorded") is not False:
+            failures.append("provider_api_key_recording_policy_mismatch")
     if report.get("gate1", {}).get("status") != "replay_closed":
         failures.append("gate1_not_closed")
     if report.get("gate2", {}).get("status") != "gate2_pass":
@@ -287,6 +296,67 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
     if report.get("gate2_lowering_policy", {}).get("backend") != "cuda":
         failures.append("not_cuda_lowering")
     return not failures, failures
+
+
+def _performance_state(report: Mapping[str, Any]) -> dict[str, Any]:
+    performance = report.get("gpu_performance")
+    if not isinstance(performance, Mapping) or performance.get("status") != "measured":
+        return {
+            "measured": False,
+            "speedup_source_over_generated": None,
+            "non_regression_2pct_pass": False,
+            "extension_3pct_speedup_pass": False,
+        }
+    comparison = performance.get("comparison")
+    if not isinstance(comparison, Mapping):
+        return {
+            "measured": False,
+            "speedup_source_over_generated": None,
+            "non_regression_2pct_pass": False,
+            "extension_3pct_speedup_pass": False,
+        }
+    speedup = comparison.get("speedup_source_over_generated")
+    measured = (
+        isinstance(speedup, (int, float))
+        and not isinstance(speedup, bool)
+        and math.isfinite(float(speedup))
+        and float(speedup) > 0.0
+        and performance.get("correctness_pass") is True
+    )
+    return {
+        "measured": measured,
+        "speedup_source_over_generated": float(speedup) if measured else None,
+        "non_regression_2pct_pass": bool(
+            measured and comparison.get("non_regression_2pct_pass") is True
+        ),
+        "extension_3pct_speedup_pass": bool(
+            measured and comparison.get("extension_3pct_speedup_pass") is True
+        ),
+    }
+
+
+def _campaign_row(
+    kernel_id: str,
+    report_path: Path,
+    report: Mapping[str, Any],
+    *,
+    resumed: bool,
+    exit_code: int | None = None,
+) -> dict[str, Any]:
+    passed, failures = _fresh_contract(report)
+    performance = _performance_state(report)
+    row: dict[str, Any] = {
+        "kernel_id": kernel_id,
+        "status": "complete" if passed else "failed",
+        "fresh_full_pipeline": passed,
+        "report": str(report_path),
+        "resumed": resumed,
+        "failures": failures,
+        **performance,
+    }
+    if exit_code is not None:
+        row["exit_code"] = exit_code
+    return row
 
 
 def _select_cases(
@@ -336,14 +406,12 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                     flush=True,
                 )
                 rows.append(
-                    {
-                        "kernel_id": kernel_id,
-                        "status": "complete",
-                        "fresh_full_pipeline": True,
-                        "report": str(report_path),
-                        "resumed": True,
-                        "failures": failures,
-                    }
+                    _campaign_row(
+                        kernel_id,
+                        report_path,
+                        saved,
+                        resumed=True,
+                    )
                 )
                 continue
         print(
@@ -382,16 +450,24 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         }
         _atomic_json(report_path, report)
         rows.append(
-            {
-                "kernel_id": kernel_id,
-                "status": "complete" if passed else "failed",
-                "fresh_full_pipeline": passed,
-                "exit_code": code,
-                "report": str(report_path),
-                "resumed": False,
-                "failures": failures,
-            }
+            _campaign_row(
+                kernel_id,
+                report_path,
+                report,
+                resumed=False,
+                exit_code=code,
+            )
         )
+    measured_speedups = [
+        float(row["speedup_source_over_generated"])
+        for row in rows
+        if row["measured"]
+    ]
+    suite_geomean = (
+        math.exp(sum(math.log(value) for value in measured_speedups) / 28)
+        if len(cases) == 28 and len(measured_speedups) == 28
+        else None
+    )
     summary = {
         "schema": CAMPAIGN_SCHEMA,
         "model": OFFICIAL_MODEL,
@@ -402,7 +478,22 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "fresh_full_pipeline_passed": sum(
             bool(row["fresh_full_pipeline"]) for row in rows
         ),
-        "performance_passed": 0,
+        "performance_measured": sum(bool(row["measured"]) for row in rows),
+        "non_regression_2pct_passed": sum(
+            bool(row["non_regression_2pct_pass"]) for row in rows
+        ),
+        "extension_3pct_passed": sum(
+            bool(row["extension_3pct_speedup_pass"]) for row in rows
+        ),
+        "performance_passed": sum(
+            bool(row["extension_3pct_speedup_pass"]) for row in rows
+        ),
+        "performance_pass_definition": "per-kernel extension 1.03x + CI lower > 1",
+        "paper_suite_geomean_speedup": suite_geomean,
+        "paper_suite_target_speedup": 1.35,
+        "paper_suite_target_pass": (
+            suite_geomean >= 1.35 if suite_geomean is not None else None
+        ),
         "rows": rows,
     }
     _atomic_json(args.out_dir / "summary.json", summary)
