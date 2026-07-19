@@ -324,6 +324,59 @@ def _transpose_artifact() -> Gate1Artifact:
     )
 
 
+def _concat_artifact() -> Gate1Artifact:
+    return Gate1Artifact(
+        j=SemanticArchive(
+            kernel_id="concat_kernel",
+            intent=IntentFunction.from_json(
+                {
+                    "name": "concat_kernel",
+                    "inputs": [
+                        {"name": "left", "dtype": "f32", "shape": ["M", "N"]},
+                        {"name": "right", "dtype": "f32", "shape": ["M", "K"]},
+                    ],
+                    "outputs": [
+                        {"name": "out", "dtype": "f32", "shape": ["M", "P"]}
+                    ],
+                    "body": [
+                        {
+                            "op": "concat",
+                            "result": "out",
+                            "operands": ["left", "right"],
+                            "attrs": {"axis": 1},
+                        }
+                    ],
+                }
+            ),
+            node_ids={"concat_node": "body[0]"},
+            boundary=Boundary(domains={"program": "program_id(0) < 1"}),
+        ),
+        interface=KernelInterface(
+            kernel_id="concat_kernel",
+            function_name="concat_kernel",
+            frontend=Frontend.TRITON,
+            parameters=[
+                KernelParameter(
+                    "left", ParameterKind.POINTER, ParameterMode.INPUT,
+                    "f32", 2, tensor_ref="left",
+                ),
+                KernelParameter(
+                    "right", ParameterKind.POINTER, ParameterMode.INPUT,
+                    "f32", 2, tensor_ref="right",
+                ),
+                KernelParameter(
+                    "out", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                    "f32", 2, tensor_ref="out",
+                ),
+            ],
+            grid=["1"],
+        ),
+        schedule=ScheduleSpec(),
+        plan=ReplayPlan([ReplayStep("realize_concat", node_ref="concat_node")]),
+        location_map=LocationMap("private.py", []),
+    )
+
+
 def _multi_broadcast_artifact(
     broadcasts: list[BroadcastSpec] | None = None,
 ) -> Gate1Artifact:
@@ -665,7 +718,7 @@ def test_materialized_artifact_persists_exact_compose_provenance() -> None:
 
 def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
     registry = default_triton_rule_registry()
-    assert len(registry.cards) == 23
+    assert len(registry.cards) == 24
     artifact, result = materialize_replay_plan(_iota_artifact(), registry)
     iota_steps = [
         step
@@ -739,6 +792,35 @@ def test_transpose_fails_closed_when_its_rule_is_absent() -> None:
 
     with pytest.raises(ZeroRuleMatchError, match="intent_op:transpose"):
         compose_replay_plan(_transpose_artifact(), without_transpose)
+
+
+def test_concat_has_one_canonical_rule_and_complete_pi_provenance() -> None:
+    registry = default_triton_rule_registry()
+    artifact, result = materialize_replay_plan(_concat_artifact(), registry)
+    concat_steps = [
+        step for step in artifact.plan.steps if step.node_ref == "concat_node"
+    ]
+
+    assert [(step.rule, step.refs) for step in concat_steps] == [
+        ("realize_concat", [])
+    ]
+    assert result.provenance.coverage == 1.0
+    assert result.provenance.orphan_leaf_count == 0
+    registry.validate_strict_plan(
+        artifact.plan,
+        frontend=artifact.interface.frontend,
+        artifact=artifact,
+    )
+
+
+def test_concat_fails_closed_when_its_rule_is_absent() -> None:
+    registry = default_triton_rule_registry()
+    without_concat = RuleRegistry(
+        [card for card in registry.cards if card.id != "realize_concat"]
+    )
+
+    with pytest.raises(ZeroRuleMatchError, match="intent_op:concat"):
+        compose_replay_plan(_concat_artifact(), without_concat)
 
 
 def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:

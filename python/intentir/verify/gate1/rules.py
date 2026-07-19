@@ -458,6 +458,7 @@ class RuleRegistry(StrictJSONMixin):
             "reduce": {"realize_reduce", "realize_flattened_reduce"},
             "contraction": {"realize_k_tiled_dot", "realize_outer_product"},
             "transpose": {"realize_transpose"},
+            "concat": {"realize_concat"},
             "cast": {"realize_cast"},
             "select": {"realize_select"},
             "loop": {"realize_loop_carry"},
@@ -736,6 +737,11 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "target_kinds": ["intent_op:transpose"],
         "construction_phase": 60,
         "required_fields": ["operands", "attrs.perm"],
+    },
+    "realize_concat": {
+        "target_kinds": ["intent_op:concat"],
+        "construction_phase": 60,
+        "required_fields": ["operands", "attrs.axis"],
     },
     "bind_runtime_scalar": {
         "target_kinds": ["interface.runtime_scalar"],
@@ -1142,6 +1148,29 @@ def default_triton_rule_registry() -> RuleRegistry:
             pitfalls=[
                 "Do not infer a different permutation from tensor extents.",
                 "Do not replace a semantic transpose with reshape or broadcast.",
+            ],
+        ),
+        _default_triton_card(
+            "realize_concat",
+            Frontend.TRITON,
+            applies_to=["concat"],
+            reads=["ordered operands", "static concatenation axis", "result shape"],
+            api_mapping={
+                "last_axis_pair": "tl.cat(lhs, rhs, can_reorder=False)",
+                "arbitrary_axis": (
+                    "tl.permute axis to the last dimension, apply an ordered "
+                    "tl.cat chain, then apply the inverse permutation"
+                ),
+            },
+            example=(
+                "Concatenate operands in their declared J order along exactly "
+                "attrs.axis; use can_reorder=False for every tl.cat."
+            ),
+            pitfalls=[
+                "Never reorder operands or set can_reorder=True.",
+                "Do not replace concatenation with interleaving tl.join semantics.",
+                "For a non-last axis, preserve all other axis positions through "
+                "an explicit permutation and its inverse.",
             ],
         ),
         _default_triton_card(

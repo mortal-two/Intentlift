@@ -135,6 +135,7 @@ _COMPUTE_RULES = {
     "realize_outer_product",
     "realize_indexed_access",
     "realize_transpose",
+    "realize_concat",
     "realize_cast",
     "realize_select",
     "realize_loop_carry",
