@@ -883,3 +883,53 @@ module {{
     assert output.data_ptr() == pointer
     assert output.dtype == dtype
     torch.testing.assert_close(output, expected, rtol=0.0, atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mlir_type", "atol"),
+    (
+        (torch.float16, "f16", 5.0e-4),
+        (torch.bfloat16, "bf16", 4.0e-3),
+    ),
+)
+def test_generic_half_softmax_executes_promoted_math_and_half_scalar_abi(
+    dtype: torch.dtype,
+    mlir_type: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @half_softmax(%x: tensor<4x32x{mlir_type}>)
+      -> tensor<4x32x{mlir_type}> {{
+    %max = intent.reduce %x {{fn = "max", axes = [1], assoc = "associative"}}
+      : (tensor<4x32x{mlir_type}>) -> tensor<4x1x{mlir_type}>
+    %shifted = intent.map_binary %x, %max {{fn = "sub"}}
+      : (tensor<4x32x{mlir_type}>, tensor<4x1x{mlir_type}>)
+        -> tensor<4x32x{mlir_type}>
+    %exp = intent.map_unary %shifted {{fn = "exp"}}
+      : (tensor<4x32x{mlir_type}>) -> tensor<4x32x{mlir_type}>
+    %sum = intent.reduce %exp
+      {{fn = "sum", axes = [1], assoc = "float_nondeterministic"}}
+      : (tensor<4x32x{mlir_type}>) -> tensor<4x1x{mlir_type}>
+    %out = intent.map_binary %exp, %sum {{fn = "div"}}
+      : (tensor<4x32x{mlir_type}>, tensor<4x1x{mlir_type}>)
+        -> tensor<4x32x{mlir_type}>
+    return %out : tensor<4x32x{mlir_type}>
+  }}
+}}
+"""
+    torch.manual_seed(11)
+    x = torch.randn((4, 32), device="cuda", dtype=dtype)
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+
+    assert program.selection.pipeline_kind == "generic"
+    assert len(program.kernels) == 7
+    assert output.dtype == dtype
+    torch.testing.assert_close(
+        output,
+        torch.softmax(x, dim=1),
+        rtol=0.0,
+        atol=atol,
+    )

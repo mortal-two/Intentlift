@@ -70,6 +70,28 @@ def test_parse_and_marshal_f64_launch_constants() -> None:
     assert len(pointers) == 1
 
 
+def test_parse_and_marshal_half_launch_constants_as_raw_bits() -> None:
+    import ctypes
+
+    from intentir.backend.orchestrate import (
+        _BF16Arg,
+        _F16Arg,
+        _marshal,
+        _parse_bf16_bits,
+        _parse_f16_bits,
+    )
+
+    assert _parse_f16_bits("0xFC00") == 0xFC00
+    assert _parse_f16_bits("-2.0") == 0xC000
+    assert _parse_bf16_bits("0xFF80") == 0xFF80
+    assert _parse_bf16_bits("1.0") == 0x3F80
+
+    keep, pointers = _marshal([_F16Arg(0x3C00), _BF16Arg(0xBF80)])
+    assert [type(item) for item in keep] == [ctypes.c_uint16, ctypes.c_uint16]
+    assert [item.value for item in keep] == [0x3C00, 0xBF80]
+    assert len(pointers) == 2
+
+
 def test_parse_typed_inplace_result_contract() -> None:
     from intentir.backend.orchestrate import _parse_intent_inplace
 
