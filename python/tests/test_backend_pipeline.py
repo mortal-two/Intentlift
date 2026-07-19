@@ -9,6 +9,7 @@ import intentir.backend.compile as backend_compile
 import intentir.backend.pipeline as backend_pipeline
 from intentir.backend.pipeline import LoweredProgram, lower_to_cuda
 from intentir.backend.selection import LoweringTarget, ProbeAttempt, VariantSelection
+from intentir.backend.schedules import ElementwiseSchedule, ScheduleDecision
 
 
 _SOURCE = "module { func.func @f() { return } }\n"
@@ -111,6 +112,35 @@ def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(
 def test_pipeline_rejects_a_target_different_from_the_configured_backend() -> None:
     with pytest.raises(ValueError, match="configured CUDA backend"):
         lower_to_cuda(_SOURCE, target=LoweringTarget(chip="sm_90"))
+
+
+def test_pipeline_threads_a_structural_schedule_into_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _selection("generic")
+    observed: dict[str, object] = {}
+
+    def fake_select(*args, **kwargs):
+        observed.update(kwargs)
+        return selection
+
+    monkeypatch.setattr(backend_pipeline, "select_variant", fake_select)
+    monkeypatch.setattr(
+        backend_compile, "compile_all_kernels", lambda path: [_kernel()]
+    )
+    decision = ScheduleDecision(
+        fast_path_id="cuda.elementwise.row.vectorized.v1",
+        schedule=ElementwiseSchedule(128, True, 2),
+        observed_block_threads=128,
+        source="test",
+    )
+
+    lower_to_cuda(_SOURCE, schedule_decision=decision)
+
+    assert observed["only_fast_path"] == decision.fast_path_id
+    assert observed["pass_overrides"] == {
+        decision.fast_path_id: decision.pass_argument
+    }
 
 
 def test_lowered_program_rejects_non_elf_device_artifacts() -> None:
