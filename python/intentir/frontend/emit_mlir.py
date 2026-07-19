@@ -24,6 +24,8 @@ executable form). Scalar inputs (``scale``) are emitted as rank-0 ``tensor<f32>`
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 from intentir.ir.model import IntentFunction, IntentOp
 
 _DT = "f32"  # execute in f32 even where the JSON declares f16
@@ -45,6 +47,9 @@ def _strip(group: str, fold: int) -> str:
     return group[fold:]
 
 
+BroadcastAxes = Mapping[str, Mapping[str, Sequence[int]]]
+
+
 def _broadcast(a: list[int] | None, b: list[int] | None) -> list[int] | None:
     """numpy-style right-aligned broadcast of two shapes (None = unknown)."""
     if a is None:
@@ -57,8 +62,75 @@ def _broadcast(a: list[int] | None, b: list[int] | None) -> list[int] | None:
     return [max(x, y) for x, y in zip(a, b)]
 
 
-def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
-              extents: dict[str, int] | None = None) -> list[int] | None:
+def _broadcast_checked(
+    a: list[int] | None,
+    b: list[int] | None,
+) -> list[int] | None:
+    """Strict numpy broadcast used when J supplies explicit broadcast facts."""
+
+    if a is None:
+        return b
+    if b is None:
+        return a
+    rank = max(len(a), len(b))
+    lhs = [1] * (rank - len(a)) + list(a)
+    rhs = [1] * (rank - len(b)) + list(b)
+    result: list[int] = []
+    for left, right in zip(lhs, rhs, strict=True):
+        if left != right and left != 1 and right != 1:
+            raise ValueError(
+                f"explicit broadcast shapes are incompatible: {a} vs {b}"
+            )
+        result.append(max(left, right))
+    return result
+
+
+def _insert_broadcast_axes(
+    shape: list[int] | None,
+    axes: Sequence[int],
+) -> list[int] | None:
+    """Insert semantic size-1 broadcast axes into one concrete shape."""
+
+    if shape is None:
+        return None
+    if not axes:
+        return list(shape)
+    target_rank = len(shape) + len(axes)
+    normalized: list[int] = []
+    for raw_axis in axes:
+        if isinstance(raw_axis, bool) or not isinstance(raw_axis, int):
+            raise NotImplementedError(
+                "emit_mlir broadcast axes currently require integer positions"
+            )
+        axis = raw_axis if raw_axis >= 0 else raw_axis + target_rank
+        if axis < 0 or axis >= target_rank:
+            raise ValueError(
+                f"broadcast axis {raw_axis} is outside target rank {target_rank}"
+            )
+        normalized.append(axis)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("broadcast axes must be unique")
+    inserted = set(normalized)
+    source = iter(shape)
+    return [1 if index in inserted else next(source) for index in range(target_rank)]
+
+
+def _op_broadcast_axes(
+    op: IntentOp,
+    broadcast_axes: BroadcastAxes | None,
+) -> Mapping[str, Sequence[int]]:
+    if broadcast_axes is None or not isinstance(op.result, str):
+        return {}
+    return broadcast_axes.get(op.result, {})
+
+
+def _infer_op(
+    op: IntentOp,
+    env: dict[str, list[int]],
+    fold: int,
+    extents: dict[str, int] | None = None,
+    broadcast_axes: BroadcastAxes | None = None,
+) -> list[int] | None:
     """Output shape of one body op given known operand shapes (None if not yet
     resolvable). Mirrors interpret.py's shape rules."""
     if op.op == "contraction":
@@ -121,7 +193,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
             shp[-1] = int(w)
         return shp
     if op.op == "iota":
-        return [int(op.attrs["n"])]
+        extent = op.attrs["n"]
+        if isinstance(extent, str):
+            if extents is None or extent not in extents:
+                raise ValueError(f"unbound symbolic iota extent {extent!r}")
+            extent = extents[extent]
+        return [int(extent)]
     if op.op == "const":
         return _resolve(op.attrs.get("shape", []), extents or {})
     if op.op == "rand":
@@ -137,7 +214,12 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
         return list(env[x]) if x in env else None
     if op.op == "map_binary":
         a, b = op.operands
-        return _broadcast(env.get(a), env.get(b))
+        axes = _op_broadcast_axes(op, broadcast_axes)
+        combine = _broadcast_checked if axes else _broadcast
+        return combine(
+            _insert_broadcast_axes(env.get(a), axes.get(a, ())),
+            _insert_broadcast_axes(env.get(b), axes.get(b, ())),
+        )
     if op.op == "gather":
         d, idx = op.operands
         if d not in env or idx not in env:
@@ -170,7 +252,15 @@ def _infer_op(op: IntentOp, env: dict[str, list[int]], fold: int,
         return list(env[d]) if d in env else None         # data-shaped
     if op.op == "select":
         c, x, y = op.operands
-        return _broadcast(_broadcast(env.get(c), env.get(x)), env.get(y))
+        axes = _op_broadcast_axes(op, broadcast_axes)
+        combine = _broadcast_checked if axes else _broadcast
+        return combine(
+            combine(
+                _insert_broadcast_axes(env.get(c), axes.get(c, ())),
+                _insert_broadcast_axes(env.get(x), axes.get(x, ())),
+            ),
+            _insert_broadcast_axes(env.get(y), axes.get(y, ())),
+        )
     if op.op == "concat":
         if any(o not in env for o in op.operands):
             return None
@@ -254,12 +344,17 @@ def _mlir_f(v) -> str:
     return s
 
 
-def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int,
-                extents: dict[str, int] | None = None) -> None:
+def _infer_body(
+    body: list[IntentOp],
+    env: dict[str, list[int]],
+    fold: int,
+    extents: dict[str, int] | None = None,
+    broadcast_axes: BroadcastAxes | None = None,
+) -> None:
     for _ in range(len(body) + 2):
         changed = False
         for op in body:
-            sh = _infer_op(op, env, fold, extents)
+            sh = _infer_op(op, env, fold, extents, broadcast_axes)
             if sh is None:
                 continue
             # Multi-result ops (sort -> values, indices) name every result; all
@@ -274,12 +369,13 @@ def _infer_body(body: list[IntentOp], env: dict[str, list[int]], fold: int,
 
 
 class _Printer:
-    def __init__(self) -> None:
+    def __init__(self, broadcast_axes: BroadcastAxes | None = None) -> None:
         self.lines: list[str] = []
         self._n = 0
         self.ssa: dict[str, str] = {}   # JSON name -> SSA name
         self.bool_results: set[str] = set()  # JSON names that are i1 (cmp outputs)
         self.int_results: dict[str, str] = {}  # JSON names that are int (iota)
+        self.broadcast_axes = broadcast_axes or {}
 
     def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
         """Tensor type for a JSON value: i1 if a comparison result, an integer
@@ -291,6 +387,59 @@ class _Printer:
         if not shape:
             return f"tensor<{elt}>"
         return "tensor<" + "x".join(str(s) for s in shape) + f"x{elt}>"
+
+    def _ttn_shape(self, name: str, shape: Sequence[int]) -> str:
+        elt = "i1" if name in self.bool_results else self.int_results.get(name)
+        if elt is None:
+            return _tt(list(shape))
+        if not shape:
+            return f"tensor<{elt}>"
+        return "tensor<" + "x".join(str(s) for s in shape) + f"x{elt}>"
+
+    def _broadcast_operand(
+        self,
+        name: str,
+        env: dict[str, list[int]],
+        axes: Sequence[int],
+        indent: str,
+    ) -> tuple[str, str]:
+        source_shape = env[name]
+        target_shape = _insert_broadcast_axes(source_shape, axes)
+        assert target_shape is not None
+        source_type = self._ttn(name, env)
+        target_type = self._ttn_shape(name, target_shape)
+        # Rank-0 tensors already broadcast through an empty affine input map;
+        # no tensor.expand_shape is needed for explicit scalar axes.
+        if not axes or not source_shape:
+            return self.ssa[name], source_type
+
+        inserted = {
+            axis if axis >= 0 else axis + len(target_shape) for axis in axes
+        }
+        source_positions = [
+            index for index in range(len(target_shape)) if index not in inserted
+        ]
+        reassociation: list[list[int]] = []
+        for index, position in enumerate(source_positions):
+            start = 0 if index == 0 else position
+            end = (
+                source_positions[index + 1]
+                if index + 1 < len(source_positions)
+                else len(target_shape)
+            )
+            reassociation.append(list(range(start, end)))
+        groups = "[" + ", ".join(
+            "[" + ", ".join(str(value) for value in group) + "]"
+            for group in reassociation
+        ) + "]"
+        output_shape = ", ".join(str(value) for value in target_shape)
+        self._n += 1
+        result = f"%{name}_broadcast_{self._n}"
+        self.lines.append(
+            f"{indent}{result} = tensor.expand_shape {self.ssa[name]} {groups} "
+            f"output_shape [{output_shape}] : {source_type} into {target_type}"
+        )
+        return result, target_type
 
     def fresh(self, name: str) -> str:
         self._n += 1
@@ -480,8 +629,13 @@ class _Printer:
         elif op.op == "map_binary":
             if a["fn"] in _CMP_FNS:
                 self.bool_results.add(op.result)
-            x, y = (self.ssa[o] for o in op.operands)
-            tx, ty = (self._ttn(o, env) for o in op.operands)
+            axes = _op_broadcast_axes(op, self.broadcast_axes)
+            x, tx = self._broadcast_operand(
+                op.operands[0], env, axes.get(op.operands[0], ()), indent
+            )
+            y, ty = self._broadcast_operand(
+                op.operands[1], env, axes.get(op.operands[1], ()), indent
+            )
             self.lines.append(
                 f'{indent}{r} = intent.map_binary {x}, {y} {{fn = "{a["fn"]}"}} : '
                 f'({tx}, {ty}) -> {self._ttn(op.result, env)}')
@@ -493,8 +647,16 @@ class _Printer:
                 self.bool_results.add(op.result)
             elif xn in self.int_results:
                 self.int_results[op.result] = self.int_results[xn]
-            c, x, y = (self.ssa[o] for o in op.operands)
-            tc, tx, ty = (self._ttn(o, env) for o in op.operands)
+            axes = _op_broadcast_axes(op, self.broadcast_axes)
+            c, tc = self._broadcast_operand(
+                op.operands[0], env, axes.get(op.operands[0], ()), indent
+            )
+            x, tx = self._broadcast_operand(
+                op.operands[1], env, axes.get(op.operands[1], ()), indent
+            )
+            y, ty = self._broadcast_operand(
+                op.operands[2], env, axes.get(op.operands[2], ()), indent
+            )
             self.lines.append(
                 f'{indent}{r} = intent.select {c}, {x}, {y} : '
                 f'({tc}, {tx}, {ty}) -> {self._ttn(op.result, env)}')
@@ -503,10 +665,67 @@ class _Printer:
             td, ti = (self._ttn(o, env) for o in op.operands)
             axis = int(a["axis"]) - fold
             mode = a.get("mode", "along_axis")
-            self.lines.append(
-                f'{indent}{r} = intent.gather {d}, {i} '
-                f'{{axis = {axis} : i64, mode = "{mode}"}} : '
-                f'({td}, {ti}) -> {self._ttn(op.result, env)}')
+            data_rank = len(env[op.operands[0]])
+            index_rank = len(env[op.operands[1]])
+            if axis < 0:
+                axis += data_rank
+            if mode == "along_axis" and index_rank == data_rank - 1:
+                # JSON IntentIR permits the selected axis to be omitted from
+                # index/result (one index per coordinate of the other axes).
+                # Legalize to the stricter MLIR Intent op by inserting a unit
+                # axis, gather at equal rank, then squeeze that unit axis.
+                if index_rank == 0:
+                    raise NotImplementedError(
+                        "emit_mlir compressed along_axis gather does not yet "
+                        "support a rank-0 index/result"
+                    )
+                expanded_index_shape = _insert_broadcast_axes(
+                    env[op.operands[1]], (axis,)
+                )
+                assert expanded_index_shape is not None
+                expanded_index, expanded_index_type = self._broadcast_operand(
+                    op.operands[1], env, (axis,), indent
+                )
+                expanded_result_type = self._ttn_shape(
+                    op.result, expanded_index_shape
+                )
+                self._n += 1
+                gathered = f"%{op.result}_gather_expanded_{self._n}"
+                self.lines.append(
+                    f'{indent}{gathered} = intent.gather {d}, {expanded_index} '
+                    f'{{axis = {axis} : i64, mode = "{mode}"}} : '
+                    f'({td}, {expanded_index_type}) -> {expanded_result_type}')
+
+                source_positions = [
+                    dim for dim in range(data_rank) if dim != axis
+                ]
+                reassociation: list[list[int]] = []
+                for index, position in enumerate(source_positions):
+                    start = 0 if index == 0 else position
+                    end = (
+                        source_positions[index + 1]
+                        if index + 1 < len(source_positions)
+                        else data_rank
+                    )
+                    reassociation.append(list(range(start, end)))
+                groups = "[" + ", ".join(
+                    "[" + ", ".join(str(value) for value in group) + "]"
+                    for group in reassociation
+                ) + "]"
+                self.lines.append(
+                    f"{indent}{r} = tensor.collapse_shape {gathered} {groups} : "
+                    f"{expanded_result_type} into {self._ttn(op.result, env)}"
+                )
+            else:
+                if mode == "along_axis" and index_rank != data_rank:
+                    raise NotImplementedError(
+                        "emit_mlir along_axis gather requires index rank equal "
+                        "to data rank or data rank minus one"
+                    )
+                self.lines.append(
+                    f'{indent}{r} = intent.gather {d}, {i} '
+                    f'{{axis = {axis} : i64, mode = "{mode}"}} : '
+                    f'({td}, {ti}) -> {self._ttn(op.result, env)}')
         elif op.op == "scatter":
             d, i, s = (self.ssa[o] for o in op.operands)
             td, ti, ts = (self._ttn(o, env) for o in op.operands)
@@ -572,7 +791,15 @@ class _Printer:
             # Integer column-index vector; the result is an integer tensor (not
             # f32), so record it as a non-f32 op and print its int type directly.
             dt = a.get("dtype", "i32")
-            n = int(a["n"])
+            shape = env[op.result]
+            if len(shape) != 1:
+                raise ValueError("iota result must resolve to rank 1")
+            n = int(shape[0])
+            declared_n = a["n"]
+            if isinstance(declared_n, int) and declared_n != n:
+                raise ValueError(
+                    f"iota attrs.n={declared_n} differs from result extent {n}"
+                )
             self.int_results[op.result] = dt
             self.lines.append(
                 f'{indent}{r} = intent.iota : tensor<{n}x{dt}>')
@@ -614,7 +841,15 @@ def _tile(loop: IntentOp, extents: dict[str, int]) -> int:
     th = loop.trip.get("tile_hint") if loop.trip else None
     if isinstance(th, str):
         return int(extents[th])
-    return int(th) if th is not None else 1
+    if th is not None:
+        return int(th)
+    # New SCRC J keeps only the semantic trip axis in J.  When this standalone
+    # emitter is used without the artifact's C.schedule, one full-axis tile is
+    # the deterministic, semantics-preserving fallback.  Gate pipelines may
+    # still inject an explicit C tile through the legacy compatibility field.
+    if loop.trip is not None and loop.trip.axis in extents:
+        return int(extents[loop.trip.axis])
+    return 1
 
 
 def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
@@ -643,8 +878,19 @@ def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
         slshape[ax] = tile
         env[s["name"]] = slshape
         scan_specs.append((s["name"], s["from"], ax))
-    carries = [c["name"] for c in loop.carry]
-    yields = list(loop.yields)
+    carries = [c.body_argument for c in loop.carry]
+    yields = [c.next_value for c in loop.carry]
+    for state in loop.carry:
+        if state.type is not None:
+            if state.type.dtype.casefold().removeprefix("torch.") not in {
+                "f32", "float32", "float",
+            }:
+                raise NotImplementedError(
+                    "emit_mlir semantic-loop prototype currently supports "
+                    f"f32 carry values, got {state.type.dtype!r}"
+                )
+            full = _resolve(state.type.shape, extents)
+            env[state.body_argument] = full[fold:]
     for _ in range(len(loop.body) + 3):
         _infer_body(loop.body, env, fold, extents)
         moved = False
@@ -654,6 +900,9 @@ def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
                 moved = True
         if not moved:
             break
+    for state in loop.carry:
+        if state.body_argument in env:
+            env[state.result_value] = list(env[state.body_argument])
     return loop, env, carries, yields, scan_specs, tile
 
 
@@ -756,8 +1005,13 @@ def emit_loop_module(fn: IntentFunction, dims: dict[str, int], fold: int = 2,
     return "\n".join(lines) + "\n"
 
 
-def emit_module(fn: IntentFunction, dims: dict[str, int], fold: int = 0,
-                func_name: str | None = None) -> str:
+def emit_module(
+    fn: IntentFunction,
+    dims: dict[str, int],
+    fold: int = 0,
+    func_name: str | None = None,
+    broadcast_axes: BroadcastAxes | None = None,
+) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
     Inputs become function args (clean SSA names so the orchestrator keys them by
@@ -776,9 +1030,9 @@ def emit_module(fn: IntentFunction, dims: dict[str, int], fold: int = 0,
     # contracts; intermediate reductions retain the existing keepdims default.
     for t in fn.outputs:
         env[t.name] = _resolve(t.shape, extents)[fold:]
-    _infer_body(fn.body, env, fold, extents)
+    _infer_body(fn.body, env, fold, extents, broadcast_axes)
 
-    p = _Printer()
+    p = _Printer(broadcast_axes)
     # Integer inputs (e.g. a gather/scatter `index` tensor) keep their declared
     # integer width; every other input is emitted in the execute dtype (f32).
     for t in fn.inputs:

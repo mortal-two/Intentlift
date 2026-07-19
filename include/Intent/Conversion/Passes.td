@@ -8,9 +8,10 @@ def ConvertIntentToLinalg : Pass<"convert-intent-to-linalg", "::mlir::ModuleOp">
   let description = [{
     Lowers Layer-A atomic ops of the `intent` dialect to standard MLIR
     (linalg/tensor/arith), the first leg of the back-end spine
-    intent -> linalg -> {scf,vector} -> gpu -> nvvm -> cubin. Starts with the
-    elementwise `intent.map_binary` (equal-shape, no broadcast); reduce /
-    contraction / broadcast follow.
+    intent -> linalg -> {scf,vector} -> gpu -> nvvm -> cubin. Elementwise
+    `intent.map_binary`/`intent.select` use affine input maps for scalar,
+    right-aligned and size-1 broadcast; explicit semantic rank insertion is
+    legalized by the frontend before this pass.
   }];
   let dependentDialects = [
     "::mlir::linalg::LinalgDialect",

@@ -1,6 +1,6 @@
 """SCRC Gate2: three-way source/replay/production-lowering execution."""
 
-from .compare import compare_outputs
+from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs
 from .inputs import (
     BoundaryExtent,
     GeneratedInputCase,
@@ -11,7 +11,7 @@ from .inputs import (
     generate_input_matrix,
     generate_tensor_input,
 )
-from .lower2c import Lower2CRunner, Lower2CSpec
+from .lower2c import LOWER2C_PROTOCOL, Lower2CRunner, Lower2CSpec
 from .metrics import extract_gate1_gate2_observation, summarize_gate1_gate2
 from .model import (
     ExecutionResult,
@@ -35,6 +35,7 @@ __all__ = [
     "BoundaryExtent",
     "ExecutionResult",
     "Gate2Case",
+    "GATE2_COMPARISON_PROTOCOL",
     "Gate2Result",
     "Gate2Runner",
     "Gate2Status",
@@ -43,6 +44,7 @@ __all__ = [
     "GeneratedInputCase",
     "InputCaseTemplate",
     "InputDistribution",
+    "LOWER2C_PROTOCOL",
     "Lower2CRunner",
     "Lower2CSpec",
     "OutputAgreement",

@@ -61,8 +61,10 @@ def test_emit_body_lowers() -> None:
     from intentir.frontend import emit_body_function
 
     mlir = emit_body_function(_fn(), _DIMS)
-    # body args: outer (Q, scale) + scan tiles (Kj, Vj) + carries (m, l, Oacc)
-    for name in ("%Q", "%scale", "%Kj", "%Vj", "%m", "%l", "%Oacc"):
+    # body args: outer (Q, scale) + scan tiles + explicit loop state arguments.
+    for name in (
+        "%Q", "%scale", "%Kj", "%Vj", "%m_iter", "%l_iter", "%Oacc_iter",
+    ):
         assert f"{name}:" in mlir, name
     lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
     assert "linalg.generic" in lowered
@@ -110,7 +112,7 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
                 "Q": Qd, "scale": sc,
                 "Kj": Kd[ti * BK:(ti + 1) * BK].contiguous(),
                 "Vj": Vd[ti * BK:(ti + 1) * BK].contiguous(),
-                "m": m, "l": l, "Oacc": Oacc})
+                "m_iter": m, "l_iter": l, "Oacc_iter": Oacc})
             m = out["out0"].reshape(Sq, 1).contiguous()
             l = out["out1"].reshape(Sq, 1).contiguous()
             Oacc = out["out2"].reshape(Sq, D).contiguous()

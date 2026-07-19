@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import inspect
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from intentir.ir.model import IntentFunction
+from intentir.verify.gate1 import Boundary, BroadcastSpec, SemanticArchive
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate2 import (
     ArgumentRole,
@@ -27,6 +29,7 @@ from intentir.verify.gate2 import (
     TritonArgument,
     TritonExecutionSpec,
     boundary_1d_extents,
+    compare_outputs,
     generate_input_matrix,
     generate_tensor_input,
 )
@@ -37,6 +40,31 @@ HAVE_CPU_LOWERING = (
     (ROOT / "build/tools/intent-opt/intent-opt").exists()
     and Path("/usr/lib/llvm-20/bin/mlir-runner").exists()
 )
+
+
+def test_gate2_integer_and_boolean_outputs_use_exact_comparison() -> None:
+    large = np.asarray([2**60], dtype=np.int64)
+    adjacent = np.asarray([2**60 + 1], dtype=np.int64)
+    integer = compare_outputs(
+        "source",
+        {"Y": large},
+        "lowering",
+        {"Y": adjacent},
+        ("Y",),
+        {"Y": Tolerance(rtol=1.0, atol=1.0)},
+    )
+    assert not integer.passed
+    assert integer.outputs[0].max_abs_error == 1.0
+
+    boolean = compare_outputs(
+        "source",
+        {"Y": np.asarray([True, False])},
+        "lowering",
+        {"Y": np.asarray([False, False])},
+        ("Y",),
+    )
+    assert not boolean.passed
+    assert boolean.outputs[0].max_abs_error == 1.0
 
 
 def _intent() -> IntentFunction:
@@ -56,6 +84,116 @@ def _intent() -> IntentFunction:
                 ],
             }
         }
+    )
+
+
+def _eye_archive() -> SemanticArchive:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "eye_boundary_broadcast_gate2",
+                "inputs": [],
+                "outputs": [
+                    {"name": "out", "dtype": "f32", "shape": ["N", "M"]}
+                ],
+                "body": [
+                    {
+                        "op": "iota",
+                        "result": "idx_i",
+                        "attrs": {"n": "N", "dtype": "i32"},
+                        "type": {"dtype": "i32", "shape": ["N"]},
+                    },
+                    {
+                        "op": "iota",
+                        "result": "idx_j",
+                        "attrs": {"n": "M", "dtype": "i32"},
+                        "type": {"dtype": "i32", "shape": ["M"]},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "is_diag",
+                        "operands": ["idx_i", "idx_j"],
+                        "attrs": {"fn": "eq"},
+                        "type": {"dtype": "i1", "shape": ["N", "M"]},
+                    },
+                    {
+                        "op": "const",
+                        "result": "one",
+                        "attrs": {"value": 1.0, "dtype": "f32", "shape": []},
+                        "type": {"dtype": "f32", "shape": []},
+                    },
+                    {
+                        "op": "const",
+                        "result": "zero",
+                        "attrs": {"value": 0.0, "dtype": "f32", "shape": []},
+                        "type": {"dtype": "f32", "shape": []},
+                    },
+                    {
+                        "op": "select",
+                        "result": "out",
+                        "operands": ["is_diag", "one", "zero"],
+                        "type": {"dtype": "f32", "shape": ["N", "M"]},
+                    },
+                ],
+            }
+        }
+    )
+    return SemanticArchive(
+        kernel_id="eye_boundary_broadcast_gate2",
+        intent=intent,
+        node_ids={
+            "n0": "body[0]",
+            "n1": "body[1]",
+            "n2": "body[2]",
+            "n3": "body[3]",
+            "n4": "body[4]",
+            "n5": "body[5]",
+        },
+        boundary=Boundary(
+            broadcasts=[
+                BroadcastSpec("n2", "idx_i", [1]),
+                BroadcastSpec("n2", "idx_j", [0]),
+                BroadcastSpec("n5", "one", [0, 1]),
+                BroadcastSpec("n5", "zero", [0, 1]),
+            ]
+        ),
+    )
+
+
+def _outer_sub_archive() -> SemanticArchive:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "outer_sub_boundary_broadcast_gate2",
+                "inputs": [
+                    {"name": "lhs", "dtype": "f32", "shape": ["N"]},
+                    {"name": "rhs", "dtype": "f32", "shape": ["M"]},
+                ],
+                "outputs": [
+                    {"name": "out", "dtype": "f32", "shape": ["N", "M"]}
+                ],
+                "body": [
+                    {
+                        "op": "map_binary",
+                        "result": "out",
+                        "operands": ["lhs", "rhs"],
+                        "attrs": {"fn": "sub"},
+                        "type": {"dtype": "f32", "shape": ["N", "M"]},
+                    }
+                ],
+            }
+        }
+    )
+    return SemanticArchive(
+        kernel_id="outer_sub_boundary_broadcast_gate2",
+        intent=intent,
+        node_ids={"n0": "body[0]"},
+        boundary=Boundary(
+            broadcasts=[
+                BroadcastSpec("n0", "lhs", [1]),
+                BroadcastSpec("n0", "rhs", [0]),
+            ]
+        ),
     )
 
 
@@ -244,6 +382,125 @@ def test_lower2c_uses_real_intent_lowering_not_legacy_interpreter() -> None:
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["Y"], a + b)
     assert "mlir-runner" in result.metadata["path"]
+    assert result.metadata["protocol"] == (
+        "intent_linalg_cpu_symbolic_iota_integer_readback_"
+        "boundary_broadcast_compressed_gather_v5"
+    )
+
+
+@pytest.mark.parametrize(("n", "m"), ((1, 1), (4, 4), (3, 5), (5, 3)))
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_materializes_boundary_broadcast_axes_for_eye(n, m) -> None:
+    archive = _eye_archive()
+    result = Lower2CRunner().run(
+        Lower2CSpec(
+            archive.intent,
+            {"N": n, "M": m},
+            {},
+            "out",
+            semantic_archive=archive,
+        ),
+        {},
+    )
+
+    assert result.ok, result.error
+    expected = np.equal(
+        np.arange(n, dtype=np.int32)[:, None],
+        np.arange(m, dtype=np.int32)[None, :],
+    ).astype(np.float32)
+    assert result.outputs["out"].shape == (n, m)
+    np.testing.assert_array_equal(result.outputs["out"], expected)
+    assert result.metadata["boundary_broadcast_consumer_count"] == 2
+
+
+@pytest.mark.parametrize(("n", "m"), ((4, 4), (3, 5)))
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_boundary_broadcast_preserves_operand_axis_direction(n, m) -> None:
+    archive = _outer_sub_archive()
+    lhs = (np.arange(n, dtype=np.float32) + 1.0) * 100.0
+    rhs = np.arange(m, dtype=np.float32) + 1.0
+    result = Lower2CRunner().run(
+        Lower2CSpec(
+            archive.intent,
+            {"N": n, "M": m},
+            {"lhs": "lhs", "rhs": "rhs"},
+            "out",
+            semantic_archive=archive,
+        ),
+        {"lhs": lhs, "rhs": rhs},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["out"], lhs[:, None] - rhs[None, :]
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_does_not_guess_outer_broadcast_without_boundary_facts() -> None:
+    archive = _eye_archive()
+    legacy = Lower2CRunner().run(
+        Lower2CSpec(archive.intent, {"N": 3, "M": 5}, {}, "out"),
+        {},
+    )
+
+    assert not legacy.ok
+
+
+@pytest.mark.parametrize(
+    "broadcasts",
+    (
+        [
+            BroadcastSpec("n0", "lhs", [2]),
+            BroadcastSpec("n0", "rhs", [0]),
+        ],
+        [
+            BroadcastSpec("n0", "lhs", ["axis"]),
+            BroadcastSpec("n0", "rhs", [0]),
+        ],
+        [
+            BroadcastSpec("n0", "lhs", [1]),
+            BroadcastSpec("n0", "lhs", [0]),
+        ],
+        [
+            BroadcastSpec("n0", "lhs", [1]),
+            BroadcastSpec("n0", "lhs", [1]),
+        ],
+        [
+            BroadcastSpec("n0", "lhs", [0]),
+            BroadcastSpec("n0", "rhs", [0]),
+        ],
+    ),
+    ids=[
+        "axis-out-of-range",
+        "symbolic-axis",
+        "conflicting-axes",
+        "duplicate-axes",
+        "incompatible-projection",
+    ],
+)
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_boundary_broadcast_invalid_contracts_fail_closed(
+    broadcasts,
+) -> None:
+    base = _outer_sub_archive()
+    archive = replace(base, boundary=Boundary(broadcasts=broadcasts))
+    result = Lower2CRunner().run(
+        Lower2CSpec(
+            archive.intent,
+            {"N": 3, "M": 5},
+            {"lhs": "lhs", "rhs": "rhs"},
+            "out",
+            semantic_archive=archive,
+        ),
+        {
+            "lhs": np.arange(3, dtype=np.float32),
+            "rhs": np.arange(5, dtype=np.float32),
+        },
+    )
+
+    assert not result.ok
+    assert result.unsupported
 
 
 @pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
@@ -282,6 +539,88 @@ def test_lower2c_executes_embedding_take_gather() -> None:
     np.testing.assert_array_equal(result.outputs["Y"], weight[indices])
 
 
+@pytest.mark.parametrize("axis", (0, 1))
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_executes_compressed_along_axis_gather(axis) -> None:
+    data_shape = (4, 3) if axis == 0 else (3, 5)
+    index_shape = (data_shape[1],) if axis == 0 else (data_shape[0],)
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": f"compressed_along_axis_{axis}_gate2",
+                "inputs": [
+                    {"name": "D", "dtype": "f32", "shape": list(data_shape)},
+                    {"name": "I", "dtype": "i64", "shape": list(index_shape)},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": list(index_shape)}
+                ],
+                "body": [
+                    {
+                        "op": "gather",
+                        "result": "Y",
+                        "operands": ["D", "I"],
+                        "attrs": {"axis": axis, "mode": "along_axis"},
+                    }
+                ],
+            }
+        }
+    )
+    data = np.arange(np.prod(data_shape), dtype=np.float32).reshape(data_shape)
+    indices = (
+        np.asarray([3, 1, 0], dtype=np.int64)
+        if axis == 0
+        else np.asarray([4, 2, 0], dtype=np.int64)
+    )
+    expected = (
+        data[indices, np.arange(data_shape[1])]
+        if axis == 0
+        else data[np.arange(data_shape[0]), indices]
+    )
+
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {}, {"D": "D", "I": "I"}, "Y"),
+        {"D": data, "I": indices},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["Y"], expected)
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_compressed_along_axis_rank0_fails_closed() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "compressed_along_axis_rank0_gate2",
+                "inputs": [
+                    {"name": "D", "dtype": "f32", "shape": [5]},
+                    {"name": "I", "dtype": "i64", "shape": []},
+                ],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+                "body": [
+                    {
+                        "op": "gather",
+                        "result": "Y",
+                        "operands": ["D", "I"],
+                        "attrs": {"axis": 0, "mode": "along_axis"},
+                    }
+                ],
+            }
+        }
+    )
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {}, {"D": "D", "I": "I"}, "Y"),
+        {
+            "D": np.arange(5, dtype=np.float32),
+            "I": np.asarray(2, dtype=np.int64),
+        },
+    )
+
+    assert not result.ok
+    assert result.unsupported
+
+
 @pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
 def test_lower2c_supports_no_input_symbolic_const_output() -> None:
     fn = IntentFunction.from_json(
@@ -314,6 +653,171 @@ def test_lower2c_supports_no_input_symbolic_const_output() -> None:
     np.testing.assert_array_equal(
         result.outputs["Y"], np.ones(1003, dtype=np.float32)
     )
+
+
+@pytest.mark.parametrize(
+    ("dtype", "numpy_dtype"),
+    (
+        ("i8", np.int8),
+        ("i16", np.int16),
+        ("i32", np.int32),
+        ("i64", np.int64),
+    ),
+)
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_executes_iota_and_reads_back_integer_output(
+    dtype, numpy_dtype
+) -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": f"iota_{dtype}_gate2",
+                "inputs": [],
+                "outputs": [{"name": "Y", "dtype": dtype, "shape": [7]}],
+                "body": [
+                    {
+                        "op": "iota",
+                        "result": "Y",
+                        "attrs": {"n": 7, "dtype": dtype},
+                    }
+                ],
+            }
+        }
+    )
+
+    result = Lower2CRunner().run(Lower2CSpec(fn, {}, {}, "Y"), {})
+
+    assert result.ok, result.error
+    assert result.outputs["Y"].dtype == np.dtype(numpy_dtype)
+    np.testing.assert_array_equal(
+        result.outputs["Y"], np.arange(7, dtype=numpy_dtype)
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_reads_back_boolean_output_without_signed_i1_corruption() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "iota_eq_gate2",
+                "inputs": [],
+                "outputs": [{"name": "Y", "dtype": "i1", "shape": [7]}],
+                "body": [
+                    {
+                        "op": "iota",
+                        "result": "I",
+                        "attrs": {"n": 7, "dtype": "i32"},
+                    },
+                    {
+                        "op": "const",
+                        "result": "Three",
+                        "attrs": {"value": 3, "dtype": "i32", "shape": []},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["I", "Three"],
+                        "attrs": {"fn": "eq"},
+                    },
+                ],
+            }
+        }
+    )
+
+    result = Lower2CRunner().run(Lower2CSpec(fn, {}, {}, "Y"), {})
+
+    assert result.ok, result.error
+    assert result.outputs["Y"].dtype == np.dtype(np.bool_)
+    np.testing.assert_array_equal(
+        result.outputs["Y"],
+        np.asarray([False, False, False, True, False, False, False]),
+    )
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_integer_readback_preserves_signed_i64_range() -> None:
+    expected = np.asarray([-(2**40), -1, 2**40], dtype=np.int64)
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "signed_i64_gate2",
+                "inputs": [],
+                "outputs": [{"name": "Y", "dtype": "i64", "shape": [3]}],
+                "body": [
+                    {
+                        "op": "const",
+                        "result": "Y",
+                        "attrs": {
+                            "value": expected.tolist(),
+                            "dtype": "i64",
+                            "shape": [3],
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    result = Lower2CRunner().run(Lower2CSpec(fn, {}, {}, "Y"), {})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["Y"], expected)
+
+
+@pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
+def test_lower2c_executes_affine_arange_composed_from_iota() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "affine_arange_gate2",
+                "inputs": [],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+                "body": [
+                    {
+                        "op": "iota",
+                        "result": "I",
+                        "attrs": {"n": "N", "dtype": "i32"},
+                    },
+                    {
+                        "op": "cast",
+                        "result": "F",
+                        "operands": ["I"],
+                        "attrs": {"to_dtype": "f32"},
+                    },
+                    {
+                        "op": "const",
+                        "result": "Step",
+                        "attrs": {"value": 0.125, "dtype": "f32", "shape": []},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Scaled",
+                        "operands": ["F", "Step"],
+                        "attrs": {"fn": "mul"},
+                    },
+                    {
+                        "op": "const",
+                        "result": "Start",
+                        "attrs": {"value": -3.25, "dtype": "f32", "shape": []},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["Scaled", "Start"],
+                        "attrs": {"fn": "add"},
+                    },
+                ],
+            }
+        }
+    )
+
+    result = Lower2CRunner().run(
+        Lower2CSpec(fn, {"N": 17}, {}, "Y"), {}
+    )
+
+    assert result.ok, result.error
+    expected = -3.25 + 0.125 * np.arange(17, dtype=np.float32)
+    np.testing.assert_array_equal(result.outputs["Y"], expected)
 
 
 @pytest.mark.skipif(not HAVE_CPU_LOWERING, reason="needs intent-opt + mlir-runner")
@@ -426,7 +930,7 @@ def test_gate2_real_add_source_replay_lowering_three_way() -> None:
             ROOT / "test/scrc_probe_sources.py", "add_kernel", trusted=True
         ),
         KernelSource.from_file(
-            ROOT / "test/scrc_probe_replays.py", "add_kernel"
+            ROOT / "test/back/scrc_probe_replays_v0.py", "add_kernel"
         ),
         case,
     )
@@ -506,7 +1010,7 @@ def test_gate2_real_collapsed_row_sum_three_way() -> None:
             trusted=True,
         ),
         KernelSource.from_file(
-            ROOT / "test/scrc_probe_replays.py", "row_sum_kernel"
+            ROOT / "test/back/scrc_probe_replays_v0.py", "row_sum_kernel"
         ),
         case,
     )
@@ -567,7 +1071,7 @@ def test_gate2_real_softmax_source_replay_lowering_three_way() -> None:
             trusted=True,
         ),
         KernelSource.from_file(
-            ROOT / "test/scrc_probe_replays.py", "softmax_kernel"
+            ROOT / "test/back/scrc_probe_replays_v0.py", "softmax_kernel"
         ),
         case,
     )
@@ -678,7 +1182,7 @@ def test_gate2_real_rmsnorm_runtime_eps_three_way() -> None:
                 trusted=True,
             ),
             KernelSource.from_file(
-                ROOT / "test/scrc_probe_replays.py", "rmsnorm_kernel"
+                ROOT / "test/back/scrc_probe_replays_v0.py", "rmsnorm_kernel"
             ),
             case,
         )
@@ -705,7 +1209,7 @@ def test_gate2_rmsnorm_attributes_baked_eps_to_replay() -> None:
     x = (rng.standard_normal((m, n)) * 0.25).astype(np.float32)
     w = (0.75 + rng.random(n) * 0.5).astype(np.float32)
     eps = np.float32(1.0e-2)
-    replay_text = (ROOT / "test/scrc_probe_replays.py").read_text()
+    replay_text = (ROOT / "test/back/scrc_probe_replays_v0.py").read_text()
     baked = replay_text.replace(
         "    shifted = mean_square + eps",
         "    shifted = mean_square + 1.0e-5",
@@ -843,7 +1347,7 @@ def test_gate2_real_matmul_f16_tail_three_way() -> None:
                 trusted=True,
             ),
             KernelSource.from_file(
-                ROOT / "test/scrc_probe_replays.py", "matmul_kernel"
+                ROOT / "test/back/scrc_probe_replays_v0.py", "matmul_kernel"
             ),
             _matmul_gate2_case(a, b),
         )
@@ -870,7 +1374,7 @@ def test_gate2_matmul_attributes_wrong_b_address_to_replay() -> None:
     rng = np.random.default_rng(43)
     a = (rng.standard_normal((17, 19)) * 0.25).astype(np.float16)
     b = (rng.standard_normal((19, 13)) * 0.25).astype(np.float16)
-    replay_text = (ROOT / "test/scrc_probe_replays.py").read_text()
+    replay_text = (ROOT / "test/back/scrc_probe_replays_v0.py").read_text()
     wrong = replay_text.replace(
         "            b_ptr + k[:, None] * N + n[None, :],",
         "            b_ptr + n[None, :] * K + k[:, None],",

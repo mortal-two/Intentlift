@@ -2,8 +2,9 @@
 //
 // First leg of the back-end spine. Lowers Layer-A atomic ops to standard MLIR
 // so the stock linalg->gpu->nvvm pipeline can carry them to a GPU binary.
-// Scope today: elementwise intent.map_binary (equal shapes, no broadcast),
-// which is the minimum needed to reach a first intent-sourced cubin (M5).
+// The general elementwise path supports right-aligned/scalar/size-1 broadcast
+// through affine input maps.  Frontends may first materialize explicit semantic
+// rank insertion (for example Boundary.broadcasts) as tensor.expand_shape.
 //
 //===----------------------------------------------------------------------===//
 
@@ -223,6 +224,41 @@ static bool hasScalarUnary(StringRef fn) {
          fn == "cos" || fn == "sin" || fn == "tan" || fn == "exp2" ||
          fn == "atan" || fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
 }
+
+/// Lower `intent.iota` to a rank-1 linalg.generic.  The sole parallel index is
+/// the semantic value, cast to the result's declared integer width.  This is
+/// the backend-neutral CPU/linalg realization used by Gate2; it materializes
+/// no source/frontend-specific tile or program-id structure.
+struct IotaLowering : OpRewritePattern<IotaOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(IotaOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resTy = cast<RankedTensorType>(op.getResult().getType());
+    if (resTy.getRank() != 1 || !resTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "iota requires static rank-1 result");
+    Type elemTy = resTy.getElementType();
+    if (!isa<IntegerType>(elemTy))
+      return rewriter.notifyMatchFailure(op, "iota result must be integer");
+
+    Location loc = op.getLoc();
+    Value init = rewriter.create<tensor::EmptyOp>(
+        loc, resTy.getShape(), elemTy);
+    SmallVector<AffineMap> maps{
+        rewriter.getMultiDimIdentityMap(/*rank=*/1)};
+    SmallVector<utils::IteratorType> iters{
+        utils::IteratorType::parallel};
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{resTy}, ValueRange{}, ValueRange{init}, maps, iters,
+        [&](OpBuilder &b, Location l, ValueRange) {
+          Value index = b.create<linalg::IndexOp>(l, 0);
+          Value value = b.create<arith::IndexCastOp>(l, elemTy, index);
+          b.create<linalg::YieldOp>(l, value);
+        });
+    rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
 
 struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -950,7 +986,7 @@ struct ConvertIntentToLinalgPass
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<MapUnaryLowering, MapBinaryLowering, SelectLowering,
+    patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
                  GatherLowering, ReduceLowering, ContractionLowering,
                  LoopLowering, CastLowering>(&getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -63,34 +64,86 @@ def extract_gate1_gate2_observation(
     observation["gate2_attempted"] = True
     if is_suite:
         cases = evidence.get("cases")
-        case_items = (
+        case_items = list(
             cases
             if isinstance(cases, Sequence) and not isinstance(cases, (str, bytes))
             else ()
         )
-        statuses = [
-            str(case["status"])
-            for case in case_items
-            if isinstance(case, Mapping)
-            and isinstance(case.get("status"), str)
-        ]
+        statuses: list[str] = []
+        case_mappings: list[Mapping[str, Any]] = []
+        all_cases_are_mappings = bool(case_items)
+        for case in case_items:
+            if not isinstance(case, Mapping):
+                all_cases_are_mappings = False
+                continue
+            case_mappings.append(case)
+            status = case.get("status")
+            if isinstance(status, str):
+                statuses.append(status)
         observation["gate2_case_statuses"] = statuses
+
+        all_statuses_present = (
+            all_cases_are_mappings
+            and len(case_mappings) == len(case_items)
+            and len(statuses) == len(case_items)
+        )
+        statuses_terminal = all(
+            status in _THREE_WAY_STATUSES for status in statuses
+        )
+
+        any_case_id = any("case_id" in case for case in case_mappings)
+        case_ids = [case.get("case_id") for case in case_mappings]
+        case_ids_valid = (
+            not any_case_id
+            or (
+                len(case_ids) == len(case_items)
+                and all(
+                    isinstance(case_id, str) and bool(case_id)
+                    for case_id in case_ids
+                )
+                and len(case_ids) == len(set(case_ids))
+            )
+        )
+
+        status_counts_valid = True
+        declared_status_counts = evidence.get("status_counts")
+        if declared_status_counts is not None:
+            status_counts_valid = bool(
+                isinstance(declared_status_counts, Mapping)
+                and all(
+                    isinstance(key, str)
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for key, value in declared_status_counts.items()
+                )
+                and dict(Counter(statuses))
+                == dict(declared_status_counts)
+            )
+
         suite_passed = evidence.get("passed")
+        derived_pass = bool(statuses) and all(
+            status == "gate2_pass" for status in statuses
+        )
         completed = (
-            bool(statuses)
+            all_statuses_present
+            and statuses_terminal
+            and case_ids_valid
+            and status_counts_valid
             and isinstance(suite_passed, bool)
-            and all(status in _THREE_WAY_STATUSES for status in statuses)
+            and suite_passed is derived_pass
         )
         observation["gate2_three_way_completed"] = completed
         raw_status = evidence.get("status")
-        if isinstance(raw_status, str) and not statuses:
+        if completed:
+            observation["gate2_status"] = (
+                "gate2_pass" if derived_pass else "gate2_suite_failed"
+            )
+            observation["gate2_pass"] = derived_pass
+        elif isinstance(raw_status, str):
             observation["gate2_status"] = raw_status
         else:
-            observation["gate2_status"] = (
-                "gate2_pass" if suite_passed is True else "gate2_suite_failed"
-            )
-        if completed:
-            observation["gate2_pass"] = suite_passed is True
+            observation["gate2_status"] = "gate2_suite_incomplete"
         return observation
 
     status = evidence.get("status")
@@ -128,7 +181,12 @@ def _conditional_bucket(observations: Sequence[Mapping[str, Any]]) -> dict[str, 
 def summarize_gate1_gate2(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Report Gate2 pass probabilities conditioned on the independent Gate1 result."""
+    """Report independent Gate1/Gate2 quadrants and conditional coverage.
+
+    Only completed three-way Gate2 observations enter a semantic quadrant.
+    Missing, unsupported, setup-failed and execution-incomplete observations
+    remain explicit coverage gaps; they are never coerced into Gate2 non-pass.
+    """
 
     observations: list[Mapping[str, Any]] = []
     for row in rows:
@@ -139,11 +197,55 @@ def summarize_gate1_gate2(
             observations.append(observation)
     closed = [item for item in observations if item["gate1_closed"]]
     not_closed = [item for item in observations if not item["gate1_closed"]]
+    completed = [
+        item for item in observations if item["gate2_three_way_completed"]
+    ]
+    unattempted = [
+        item for item in observations if not item["gate2_attempted"]
+    ]
+    attempted_incomplete = [
+        item
+        for item in observations
+        if item["gate2_attempted"]
+        and not item["gate2_three_way_completed"]
+    ]
+
+    def quadrant(*, gate1_closed: bool, gate2_pass: bool) -> int:
+        return sum(
+            item["gate1_closed"] is gate1_closed
+            and item["gate2_pass"] is gate2_pass
+            for item in completed
+        )
+
     statuses = sorted({str(item["gate1_status"]) for item in observations})
     return {
-        "schema": "scrc_gate1_gate2_conditional_v1",
+        "schema": "scrc_gate1_gate2_conditional_v2",
         "gate1_observed_samples": len(observations),
         "rows_without_gate1_verdict": len(rows) - len(observations),
+        "quadrants": {
+            "gate1_closed_gate2_pass": quadrant(
+                gate1_closed=True, gate2_pass=True
+            ),
+            "gate1_closed_gate2_nonpass": quadrant(
+                gate1_closed=True, gate2_pass=False
+            ),
+            "gate1_not_closed_gate2_pass": quadrant(
+                gate1_closed=False, gate2_pass=True
+            ),
+            "gate1_not_closed_gate2_nonpass": quadrant(
+                gate1_closed=False, gate2_pass=False
+            ),
+        },
+        "quadrant_coverage": {
+            "eligible_completed_samples": len(completed),
+            "attempted_but_incomplete": len(attempted_incomplete),
+            "unattempted": len(unattempted),
+            "completion_coverage": (
+                None
+                if not observations
+                else len(completed) / len(observations)
+            ),
+        },
         "replay_closed": _conditional_bucket(closed),
         "not_replay_closed": _conditional_bucket(not_closed),
         "by_gate1_status": {
