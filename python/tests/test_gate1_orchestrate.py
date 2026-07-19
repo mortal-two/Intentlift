@@ -22,6 +22,11 @@ from intentir.verify.gate1.interventions import (
     PAIRED_INTERVENTION_FAMILY_POLICY,
     InterventionStatus,
 )
+from intentir.verify.gate1.leakage import (
+    LeakageKind,
+    LeakagePolicy,
+    scan_static_leakage,
+)
 from intentir.verify.gate1.compare import compare_ttir
 from intentir.verify.gate1.composer import materialize_replay_plan
 from intentir.verify.gate1.model import (
@@ -47,10 +52,12 @@ from intentir.verify.gate1.orchestrate import (
     CandidateRecord,
     Gate1Config,
     Gate1Runner,
+    MAX_EXACT_COMPOSED_PLAN_STEPS,
     MASKED_J_FAMILY_POLICY,
     ReliftTrigger,
     RELIFT_STRUCTURAL_GUIDANCE_POLICY,
     _build_structural_relift_guidance,
+    _exact_composed_leakage_policy,
     _validate_compiled_interface,
     canonical_artifact_digest,
 )
@@ -533,6 +540,112 @@ def test_composer_shadow_is_reported_but_does_not_change_gate1_verdict() -> None
     assert disabled.composer_shadow == ()
     shadow_json = enabled.to_json()["composer_shadow"][0]
     assert shadow_json["status"] in {"match", "mismatch", "failed"}
+
+
+@pytest.mark.parametrize(
+    ("steps", "expected_limit", "extended"),
+    [
+        (64, 64, False),
+        (65, 65, True),
+        (87, 87, True),
+        (MAX_EXACT_COMPOSED_PLAN_STEPS + 1,
+         MAX_EXACT_COMPOSED_PLAN_STEPS, False),
+    ],
+)
+def test_exact_composed_step_budget_is_bounded(
+    steps: int, expected_limit: int, extended: bool
+) -> None:
+    plan = ReplayPlan(
+        [ReplayStep("realize_const", refs=[f"node_{index}"]) for index in range(steps)]
+    )
+
+    policy, was_extended = _exact_composed_leakage_policy(
+        LeakagePolicy(), plan
+    )
+
+    assert policy.max_steps == expected_limit
+    assert was_extended is extended
+    assert policy.max_literal_chars == LeakagePolicy().max_literal_chars
+    assert policy.max_total_literal_chars == LeakagePolicy().max_total_literal_chars
+
+    if steps > MAX_EXACT_COMPOSED_PLAN_STEPS:
+        oversized_policy, oversized_extended = _exact_composed_leakage_policy(
+            LeakagePolicy(max_steps=1024), plan
+        )
+        assert oversized_policy.max_steps == MAX_EXACT_COMPOSED_PLAN_STEPS
+        assert oversized_extended is False
+
+
+def test_runner_extends_only_exact_composer_mechanical_step_budget() -> None:
+    artifact = _artifact()
+    registry = default_triton_rule_registry()
+    configured = LeakagePolicy(max_steps=1)
+    standalone = scan_static_leakage(
+        artifact.plan,
+        source="SOURCE",
+        j=artifact.j,
+        policy=configured,
+        registry=registry,
+    )
+
+    assert not standalone.passed
+    assert any(item.kind is LeakageKind.BUDGET for item in standalone.violations)
+
+    result = Gate1Runner(
+        compiler=FakeCompiler(),
+        config=Gate1Config(
+            stable_closures=1,
+            run_semantic_interventions=False,
+            run_masked_ablation=False,
+        ),
+        leakage_policy=configured,
+    ).run(
+        _source(), artifact, _case(), registry, CaptureWriter(["GOOD"])
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.leakage_report is not None
+    metrics = result.leakage_report.metrics
+    assert metrics["configured_step_budget"] == 1
+    assert metrics["deterministic_plan_steps"] == len(artifact.plan.steps)
+    assert metrics["effective_step_budget"] == len(artifact.plan.steps)
+    assert metrics["exact_composer_step_extension"] == 1
+    assert any(
+        "extended only the mechanical plan step budget" in item
+        for item in result.diagnostics
+    )
+
+
+def test_plan_mismatch_cannot_receive_exact_composer_step_extension() -> None:
+    artifact = _artifact()
+    tampered = replace(
+        artifact,
+        plan=ReplayPlan(
+            [
+                *artifact.plan.steps,
+                artifact.plan.steps[-1],
+            ]
+        ),
+    )
+    result = Gate1Runner(
+        compiler=FakeCompiler(),
+        config=Gate1Config(
+            stable_closures=1,
+            run_semantic_interventions=False,
+            run_masked_ablation=False,
+        ),
+        leakage_policy=LeakagePolicy(max_steps=1),
+    ).run(
+        _source(),
+        tampered,
+        _case(),
+        default_triton_rule_registry(),
+        CaptureWriter(["GOOD"]),
+    )
+
+    assert result.status is Gate1Status.LIFT_REJECTED
+    assert result.leakage_report is None
+    assert any("artifact validation failed" in item for item in result.diagnostics)
 
 
 def test_gate1_rejects_incomplete_lift_artifact_instead_of_generating_pi() -> None:

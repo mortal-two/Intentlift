@@ -58,6 +58,7 @@ from .model import (
     Gate1Artifact,
     Gate1Status,
     ParameterKind,
+    ReplayPlan,
 )
 from .replay import (
     ReplayGeneration,
@@ -71,6 +72,32 @@ from .ttir import (
     fingerprint_ttir,
     runtime_argument_names,
 )
+
+
+MAX_EXACT_COMPOSED_PLAN_STEPS = 512
+
+
+def _exact_composed_leakage_policy(
+    base: LeakagePolicy,
+    plan: ReplayPlan,
+) -> tuple[LeakagePolicy, bool]:
+    """Admit trusted deterministic expansion without enlarging pi freedom.
+
+    The caller must first prove that the candidate plan exactly equals a fresh
+    server-side composition.  Only the step-count budget may then grow to the
+    trusted mechanical size; every literal/API/source-ngram budget remains
+    unchanged.  An independent absolute limit still rejects pathological
+    compositions.
+    """
+    deterministic_steps = len(plan.steps)
+    if deterministic_steps > MAX_EXACT_COMPOSED_PLAN_STEPS:
+        return replace(
+            base,
+            max_steps=MAX_EXACT_COMPOSED_PLAN_STEPS,
+        ), False
+    if deterministic_steps <= base.max_steps:
+        return base, False
+    return replace(base, max_steps=deterministic_steps), True
 
 
 @dataclass(frozen=True)
@@ -3012,13 +3039,44 @@ class Gate1Runner:
                     f"passed at relift round {relift_round}"
                 )
                 source_text, _ = source.read_code()
+                effective_leakage_policy, step_budget_extended = (
+                    _exact_composed_leakage_policy(
+                        self.leakage_policy,
+                        composed.plan,
+                    )
+                )
                 leakage_report = scan_static_leakage(
-                    current.plan,
+                    composed.plan,
                     source=source_text,
                     j=current.j,
-                    policy=self.leakage_policy,
+                    policy=effective_leakage_policy,
                     registry=registry,
                 )
+                deterministic_steps = len(composed.plan.steps)
+                leakage_report.metrics.update(
+                    {
+                        "configured_step_budget": self.leakage_policy.max_steps,
+                        "effective_step_budget": effective_leakage_policy.max_steps,
+                        "deterministic_plan_steps": deterministic_steps,
+                        "absolute_exact_composed_step_budget": (
+                            MAX_EXACT_COMPOSED_PLAN_STEPS
+                        ),
+                        "exact_composer_step_extension": int(step_budget_extended),
+                    }
+                )
+                if step_budget_extended:
+                    diagnostics.append(
+                        "exact composer attestation extended only the mechanical "
+                        "plan step budget from "
+                        f"{self.leakage_policy.max_steps} to "
+                        f"{effective_leakage_policy.max_steps}"
+                    )
+                elif deterministic_steps > MAX_EXACT_COMPOSED_PLAN_STEPS:
+                    diagnostics.append(
+                        "exact composed plan step count "
+                        f"{deterministic_steps} exceeds absolute trusted limit "
+                        f"{MAX_EXACT_COMPOSED_PLAN_STEPS}"
+                    )
             except Exception as exc:
                 diagnostics.append(f"artifact validation failed: {type(exc).__name__}: {exc}")
                 return Gate1ExecutionResult(
