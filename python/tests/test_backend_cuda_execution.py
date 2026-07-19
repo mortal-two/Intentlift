@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -1128,6 +1129,36 @@ def test_direct_half_rms_norm_uses_explicit_f32_compute_graph(
     assert output.dtype == dtype
     assert torch.isfinite(output).all()
     torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
+
+
+def test_bf16_row_vector_path_reaches_native_ptx() -> None:
+    source = _half_rms_norm_source(4, 1024, "bf16")
+    lowered = backend_compile._run(
+        [
+            backend_compile.INTENT_OPT,
+            "-convert-intent-row-reduction-to-gpu=block-threads=128",
+        ],
+        stdin=source,
+    )
+    kernels = backend_compile.lower_memref_module_to_kernels(lowered)
+
+    assert len(kernels) == 1
+    assembly = re.search(
+        r'assembly = "((?:[^"\\]|\\.)*)"', kernels[0].binary_mlir
+    )
+    assert assembly is not None
+    ptx = backend_compile._unescape_mlir_bytes(assembly.group(1)).decode()
+
+    # Guard the complete MLIR -> LLVM -> NVPTX contract.  The row pass may keep
+    # vector<4xbf16> in MLIR while a later target pass silently scalarizes it;
+    # these checks prove that the final target still uses one 64-bit packet and
+    # native BF16 conversions without a software helper.
+    assert "ld.global.v4.b16" in ptx
+    assert "st.global.v4.b16" in ptx
+    assert "cvt.f32.bf16" in ptx
+    assert "cvt.rn.bf16.f32" in ptx
+    assert ".extern .func" not in ptx
+    assert not re.search(r"(^|\s)call(?:\.|\s)", ptx)
 
 
 @pytest.mark.parametrize(

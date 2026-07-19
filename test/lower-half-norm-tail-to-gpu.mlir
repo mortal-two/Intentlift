@@ -1,8 +1,12 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=32 %s | FileCheck %s
+// RUN: intent-opt -convert-intent-row-reduction-to-gpu='block-threads=32 vector-width=4' %s | FileCheck %s --check-prefix=FORCED
 
 // Explicit mixed-precision normalization graphs share the same safe ragged-row
 // schedule as half softmax.  Reduction terms are masked only at the accumulator
 // boundary, so centered variance cannot be polluted by a dummy loaded value.
+
+// FORCED-LABEL: func.func @rms_norm_f16_tail(
+// FORCED:         intent.reduce
 
 // CHECK-LABEL: func.func @rms_norm_f16_tail(
 // CHECK-SAME:    {{.*}}memref<4x37xf16>{{.*}}memref<37xf16>{{.*}}memref<f32>{{.*}}memref<4x37xf16>)

@@ -4,15 +4,17 @@
 // values in f32 even though global storage is half precision.
 
 // CHECK-LABEL: func.func @softmax_f16_multiwarp(
-// CHECK-SAME:    {{.*}}memref<4x1024xf16>{{.*}}memref<4x1024xf16>)
+// CHECK-SAME:    {{.*}}memref<4x256xvector<4xf16>>{{.*}}memref<4x256xvector<4xf16>>)
 // CHECK:         gpu.launch
 // CHECK:         gpu.dynamic_shared_memory
-// CHECK:         memref.load {{.*}} : memref<4x1024xf16>
+// CHECK:         memref.load {{.*}} : memref<4x256xvector<4xf16>>
+// CHECK:         vector.extract {{.*}} : f16 from vector<4xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
 // CHECK:         gpu.shuffle {{.*}} : f32
 // CHECK:         math.exp {{.*}} : f32
 // CHECK:         arith.truncf {{.*}} : f32 to f16
-// CHECK:         memref.store {{.*}} : memref<4x1024xf16>
+// CHECK:         vector.from_elements {{.*}} : vector<4xf16>
+// CHECK:         memref.store {{.*}} : memref<4x256xvector<4xf16>>
 // CHECK-NOT:     intent.
 func.func @softmax_f16_multiwarp(%x: tensor<4x1024xf16>)
     -> tensor<4x1024xf16> {
@@ -31,15 +33,17 @@ func.func @softmax_f16_multiwarp(%x: tensor<4x1024xf16>)
 }
 
 // CHECK-LABEL: func.func @softmax_bf16_multiwarp(
-// CHECK-SAME:    {{.*}}memref<4x1024xbf16>{{.*}}memref<4x1024xbf16>)
+// CHECK-SAME:    {{.*}}memref<4x256xvector<4xbf16>>{{.*}}memref<4x256xvector<4xbf16>>)
 // CHECK:         gpu.launch
 // CHECK:         gpu.dynamic_shared_memory
-// CHECK:         memref.load {{.*}} : memref<4x1024xbf16>
+// CHECK:         memref.load {{.*}} : memref<4x256xvector<4xbf16>>
+// CHECK:         vector.extract {{.*}} : bf16 from vector<4xbf16>
 // CHECK:         arith.extf {{.*}} : bf16 to f32
 // CHECK:         gpu.shuffle {{.*}} : f32
 // CHECK:         math.exp {{.*}} : f32
 // CHECK:         arith.truncf {{.*}} : f32 to bf16
-// CHECK:         memref.store {{.*}} : memref<4x1024xbf16>
+// CHECK:         vector.from_elements {{.*}} : vector<4xbf16>
+// CHECK:         memref.store {{.*}} : memref<4x256xvector<4xbf16>>
 // CHECK-NOT:     intent.
 func.func @softmax_bf16_multiwarp(%x: tensor<4x1024xbf16>)
     -> tensor<4x1024xbf16> {
