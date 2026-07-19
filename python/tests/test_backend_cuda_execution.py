@@ -484,3 +484,217 @@ module {
     )
     zero = expected == 0.0
     assert torch.equal(torch.signbit(output[zero]), torch.signbit(expected[zero]))
+
+
+@pytest.mark.parametrize("pipeline_kind", ("generic", "specialized"))
+def test_pow_is_libdevice_free_and_executes_on_cuda(pipeline_kind: str) -> None:
+    source = """
+module {
+  func.func @pow(
+      %base: tensor<4x32xf32>, %exponent: tensor<4x32xf32>)
+      -> tensor<4x32xf32> {
+    %z = intent.map_binary %base, %exponent {fn = "pow"}
+      : (tensor<4x32xf32>, tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %z : tensor<4x32xf32>
+  }
+}
+"""
+    base = torch.linspace(
+        0.125,
+        8.0,
+        4 * 32,
+        device="cuda",
+        dtype=torch.float32,
+    ).reshape(4, 32)
+    exponent = torch.linspace(
+        -3.0,
+        3.0,
+        4 * 32,
+        device="cuda",
+        dtype=torch.float32,
+    ).reshape(4, 32)
+    if pipeline_kind == "generic":
+        program = lower_to_cuda(source, allow_specialized=False)
+    else:
+        fast_path_id = "cuda.elementwise.row.vectorized.v1"
+        program = lower_to_cuda(
+            source,
+            only_fast_path=fast_path_id,
+            pass_overrides={
+                fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+            },
+        )
+
+    output = execute_cuda_artifact(
+        program,
+        source,
+        {"base": base, "exponent": exponent},
+    )["out0"]
+
+    assert program.selection.pipeline_kind == pipeline_kind
+    torch.testing.assert_close(
+        output,
+        torch.pow(base, exponent),
+        rtol=3.0e-5,
+        atol=2.0e-6,
+    )
+
+
+@pytest.mark.parametrize("pipeline_kind", ("generic", "specialized"))
+def test_pow_matches_cuda_special_value_and_integer_parity_semantics(
+    pipeline_kind: str,
+) -> None:
+    source = """
+module {
+  func.func @pow_special(
+      %base: tensor<4x32xf32>, %exponent: tensor<4x32xf32>)
+      -> tensor<4x32xf32> {
+    %z = intent.map_binary %base, %exponent {fn = "pow"}
+      : (tensor<4x32xf32>, tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %z : tensor<4x32xf32>
+  }
+}
+"""
+    base_values = torch.tensor(
+        [torch.nan, -torch.inf, -2.0, -1.0, -0.0, 0.0, 1.0, torch.inf],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    exponent_values = torch.tensor(
+        [
+            torch.nan,
+            -torch.inf,
+            -3.0,
+            -2.0,
+            -1.5,
+            -0.5,
+            -0.0,
+            0.0,
+            0.5,
+            1.5,
+            2.0,
+            3.0,
+            torch.inf,
+            8388607.0,
+            8388608.0,
+            8388609.0,
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    base = base_values.repeat_interleave(exponent_values.numel()).reshape(4, 32)
+    exponent = exponent_values.repeat(base_values.numel()).reshape(4, 32)
+    if pipeline_kind == "generic":
+        program = lower_to_cuda(source, allow_specialized=False)
+    else:
+        fast_path_id = "cuda.elementwise.row.vectorized.v1"
+        program = lower_to_cuda(
+            source,
+            only_fast_path=fast_path_id,
+            pass_overrides={
+                fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+            },
+        )
+
+    output = execute_cuda_artifact(
+        program,
+        source,
+        {"base": base, "exponent": exponent},
+    )["out0"]
+    expected = torch.pow(base, exponent)
+
+    assert program.selection.pipeline_kind == pipeline_kind
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=3.0e-5,
+        atol=2.0e-6,
+        equal_nan=True,
+    )
+    signed_special = (expected == 0.0) | torch.isinf(expected)
+    assert torch.equal(
+        torch.signbit(output[signed_special]),
+        torch.signbit(expected[signed_special]),
+    )
+
+
+def test_pow_handles_subnormals_near_one_and_f32_parity_boundaries() -> None:
+    source = """
+module {
+  func.func @pow_edges(
+      %base: tensor<3x8xf32>, %exponent: tensor<3x8xf32>)
+      -> tensor<3x8xf32> {
+    %z = intent.map_binary %base, %exponent {fn = "pow"}
+      : (tensor<3x8xf32>, tensor<3x8xf32>) -> tensor<3x8xf32>
+    return %z : tensor<3x8xf32>
+  }
+}
+"""
+    zero = torch.tensor(0.0, device="cuda", dtype=torch.float32)
+    one = torch.tensor(1.0, device="cuda", dtype=torch.float32)
+    min_subnormal = torch.nextafter(zero, one)
+    min_normal = torch.tensor(
+        torch.finfo(torch.float32).tiny,
+        device="cuda",
+        dtype=torch.float32,
+    )
+    below_one = torch.nextafter(one, zero)
+    above_one = torch.nextafter(one, torch.tensor(torch.inf, device="cuda"))
+    base = torch.stack(
+        (
+            min_subnormal,
+            min_subnormal,
+            min_subnormal,
+            min_normal,
+            min_normal,
+            above_one,
+            below_one,
+            torch.tensor(1.0001, device="cuda"),
+            *[torch.tensor(-1.0, device="cuda") for _ in range(16)],
+        )
+    ).reshape(3, 8)
+    exponent = torch.stack(
+        (
+            torch.tensor(0.01, device="cuda"),
+            torch.tensor(0.5, device="cuda"),
+            one,
+            torch.tensor(0.01, device="cuda"),
+            torch.tensor(0.5, device="cuda"),
+            torch.tensor(100000.0, device="cuda"),
+            torch.tensor(100000.0, device="cuda"),
+            torch.tensor(10000.0, device="cuda"),
+            torch.tensor(-16777218.0, device="cuda"),
+            torch.tensor(-16777216.0, device="cuda"),
+            torch.tensor(-16777215.0, device="cuda"),
+            torch.tensor(-8388609.0, device="cuda"),
+            torch.tensor(-8388608.0, device="cuda"),
+            torch.tensor(-8388607.0, device="cuda"),
+            torch.tensor(8388607.0, device="cuda"),
+            torch.tensor(8388608.0, device="cuda"),
+            torch.tensor(8388609.0, device="cuda"),
+            torch.tensor(16777215.0, device="cuda"),
+            torch.tensor(16777216.0, device="cuda"),
+            torch.tensor(16777218.0, device="cuda"),
+            torch.tensor(torch.finfo(torch.float32).max, device="cuda"),
+            below_one,
+            above_one,
+            min_subnormal,
+        )
+    ).reshape(3, 8)
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(
+        program,
+        source,
+        {"base": base, "exponent": exponent},
+    )["out0"]
+    expected = torch.pow(base, exponent)
+
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=3.0e-6,
+        atol=0.0,
+        equal_nan=True,
+    )
+    assert output[0, 2].item() == min_subnormal.item()
