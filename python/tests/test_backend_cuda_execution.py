@@ -947,7 +947,7 @@ def test_generic_half_softmax_executes_promoted_math_and_half_scalar_abi(
 )
 @pytest.mark.parametrize(
     ("columns", "block_threads"),
-    ((32, 32), (1024, 128)),
+    ((32, 32), (37, 32), (1000, 128), (1024, 128)),
 )
 def test_direct_half_softmax_uses_one_f32_accumulation_kernel(
     dtype: torch.dtype,
