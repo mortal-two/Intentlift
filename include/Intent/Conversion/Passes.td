@@ -70,8 +70,9 @@ def ConvertIntentRowReductionToGPU
     Option<"vectorWidth", "vector-width", "unsigned", "0",
            "Register-path contiguous memory width: 0 = structurally selected "
            "auto, 1 = force scalar coalesced loads/stores, 4 = require legal "
-           "vector<4xf32> Row/Col loads and Row stores. This is a Layer-C "
-           "candidate axis; unsupported forced-vector graphs fail closed.">,
+           "four-lane Row/Col loads and Row stores (vector<4xf32> or "
+           "vector<4xf16/bf16>). This is a Layer-C candidate axis; unsupported "
+           "forced-vector graphs fail closed.">,
     Option<"fuseFma", "fuse-fma", "bool", "false",
            "Emit explicit f32 math.fma for single-use mul+add epilogues and "
            "sum-of-products reduction accumulation. Disabled by default; an "

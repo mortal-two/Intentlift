@@ -594,6 +594,11 @@ struct RowReductionLowering {
   // per-thread column layout becomes col = vt*(T*4) + tx*4 + j (vec index tx+vt*T
   // in the retyped memref<Mx(N/4)xvector<4xf32>>), staying fully coalesced.
   bool useVec4 = false;
+  // Mixed-precision register kernels use four contiguous 16-bit storage lanes.
+  // Arithmetic remains scalar f32 after extraction/promotion; only global
+  // Row/Col loads and RowOut stores use vector<4xhalf> packets.
+  bool useHalfVec4 = false;
+  Type halfVectorStorageType;
   int64_t numVecTiles = 0;
   Type f32;                         // compute type
   Type storageType;                 // f32 generally; f16/bf16 for exact softmax
@@ -1432,7 +1437,8 @@ struct RowReductionLowering {
     // register path.  The tiled/shared-cache and scan paths still model their
     // frontier buffers in the source element type and therefore must not claim
     // half-softmax support.
-    if ((halfSoftmax || explicitHalfStorage) && numTiles > 1)
+    if ((halfSoftmax || explicitHalfStorage) &&
+        (numTiles > 1 || !scans.empty()))
       return failure();
     // Multi-tile (tiled + smem-cached) path scope: exactly one per-row reduce,
     // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. The general
@@ -1498,22 +1504,24 @@ struct RowReductionLowering {
                     [](int64_t arg) { return arg >= 0; }))
       return failure();
 
-    // float4 gate (register-tile path only): K a multiple of 4 and no ColSeg
-    // gather (numGroups==0).  Column-indexed control stays on the scalar path,
-    // but a select whose condition is a proven rank-0 scalar is lane-invariant
-    // and therefore safe to evaluate after vec4 loads.  Flash LayerNorm's
-    // zero-centered-weight switch is exactly this case: W versus W+1 changes
-    // arithmetic, not the column mapping.  Every Row arg + RowOut output is
-    // retyped to a vector<4xf32>-element memref so the bulk load/store vectorize.
+    // Contiguous vector gate (register-tile path only): vector<4xf32> for
+    // native f32 graphs, vector<4xf16/bf16> for mixed-precision storage.
+    // Column-indexed control stays on the scalar path, but a select whose
+    // condition is a proven rank-0 scalar is lane-invariant and therefore safe
+    // after vector loads.  Every Row/Col ABI value and RowOut must share the
+    // selected storage type; arithmetic still proceeds through scalar emitAt.
     if (requestedVectorWidth != 1 && sched.kind == KRegister &&
-        !hasInactiveFeatureThreads &&
-        (K % 4 == 0) && numGroups == 0) {
+        !hasInactiveFeatureThreads && !hasHalfFeatureTail && numGroups == 0) {
       bool hasColumnIndexedControl = false;
-      bool allRowsF32 = true;
+      bool allVectorABIValuesF32 = true;
       for (unsigned index = 0; index < argRoles.size(); ++index)
-        if (argRoles[index] == Role::Row &&
+        if ((argRoles[index] == Role::Row || argRoles[index] == Role::Col) &&
             cast<RankedTensorType>(fty.getInput(index)).getElementType() != f32)
-          allRowsF32 = false;
+          allVectorABIValuesF32 = false;
+      for (unsigned index = 0; index < outRoles.size(); ++index)
+        if (outRoles[index] == ResultRole::RowOut &&
+            cast<RankedTensorType>(fty.getResult(index)).getElementType() != f32)
+          allVectorABIValuesF32 = false;
       for (Operation &op : fn.getBody().front().without_terminator()) {
         if (isa<IotaOp>(&op)) {
           hasColumnIndexedControl = true;
@@ -1522,12 +1530,48 @@ struct RowReductionLowering {
         if (auto select = dyn_cast<SelectOp>(&op))
           hasColumnIndexedControl |= !isStaticUniform(select.getCond());
       }
-      if (!hasColumnIndexedControl && allRowsF32) {
+      if (!hasColumnIndexedControl && allVectorABIValuesF32 && (K % 4 == 0)) {
         useVec4 = true;
         numVecTiles = K / 4;
         sched.vectorWidth = 4; // M6: record the vectorized load/store plan
+      } else if (!hasColumnIndexedControl && (K % 4 == 0) &&
+                 (halfSoftmax || explicitHalfStorage) &&
+                 llvm::none_of(inplaceArg,
+                               [](int64_t arg) { return arg >= 0; })) {
+        Type candidate;
+        bool legalHalfABI = true;
+        bool sawRow = false;
+        for (unsigned index = 0; index < argRoles.size(); ++index) {
+          if (argRoles[index] != Role::Row && argRoles[index] != Role::Col)
+            continue;
+          Type elementType =
+              cast<RankedTensorType>(fty.getInput(index)).getElementType();
+          if (!isHalfStorageType(elementType) ||
+              (candidate && candidate != elementType)) {
+            legalHalfABI = false;
+            break;
+          }
+          candidate = elementType;
+          sawRow |= argRoles[index] == Role::Row;
+        }
+        for (unsigned index = 0; legalHalfABI && index < outRoles.size();
+             ++index) {
+          if (outRoles[index] != ResultRole::RowOut)
+            continue;
+          Type elementType =
+              cast<RankedTensorType>(fty.getResult(index)).getElementType();
+          if (!candidate || elementType != candidate)
+            legalHalfABI = false;
+        }
+        if (legalHalfABI && sawRow && candidate) {
+          useHalfVec4 = true;
+          halfVectorStorageType = candidate;
+          numVecTiles = K / 4;
+          sched.vectorWidth = 4;
+        }
       }
-    } else if (requestedVectorWidth != 1 && sched.kind == KScan &&
+    } else if ((requestedVectorWidth == 0 || requestedVectorWidth == 4) &&
+               sched.kind == KScan &&
                (K % 4 == 0) && numGroups == 0) {
       // The scan owns contiguous columns per thread.  Retype each Row pointer
       // to vec4 so every four columns use one 16-byte global transaction; the
@@ -1536,7 +1580,7 @@ struct RowReductionLowering {
       numVecTiles = K / 4;
       sched.vectorWidth = 4;
     }
-    if (requestedVectorWidth == 4 && !useVec4)
+    if (requestedVectorWidth == 4 && !useVec4 && !useHalfVec4)
       return failure();
     return success();
   }
@@ -3458,22 +3502,27 @@ struct RowReductionLowering {
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
 
-    // float4 path: Row args + RowOut outputs are retyped to a vector<4xf32>-
-    // element memref<Mx(N/4)xvector<4xf32>>. Ordinary contiguous Col args use
-    // memref<(N/4)xvector<4xf32>> and share the exact same per-thread vec index.
-    // ColSeg/index-mapped inputs never enter this path. Host is unchanged: the
-    // bare-ptr ABI passes one aligned pointer per memref regardless of element
-    // type.
-    Type vec4Ty = VectorType::get({4}, f32);
-    MemRefType rowVecMemref = MemRefType::get({M, N / 4}, vec4Ty);
-    MemRefType colVecMemref = MemRefType::get({N / 4}, vec4Ty);
+    // Register vector path: four contiguous f32 or f16/bf16 storage lanes.
+    // Row/Col/RowOut pointers are retyped only after match() proves a uniform
+    // storage ABI. Host pointers are unchanged under the bare-pointer calling
+    // convention; extraction feeds the same scalar register-tile evaluator.
+    bool useRegisterVector = useVec4 || useHalfVec4;
+    int64_t registerVectorWidth = 4;
+    Type registerVectorElement =
+        useHalfVec4 ? halfVectorStorageType : f32;
+    Type registerVectorType =
+        VectorType::get({registerVectorWidth}, registerVectorElement);
+    MemRefType rowVecMemref = MemRefType::get(
+        {M, N / registerVectorWidth}, registerVectorType);
+    MemRefType colVecMemref =
+        MemRefType::get({N / registerVectorWidth}, registerVectorType);
 
     // New signature: original args (as memrefs) ++ one output memref per result.
     SmallVector<Type> inTys;
     for (unsigned i = 0; i < argRoles.size(); ++i) {
-      if (useVec4 && argRoles[i] == Role::Row)
+      if (useRegisterVector && argRoles[i] == Role::Row)
         inTys.push_back(rowVecMemref);
-      else if (useVec4 && argRoles[i] == Role::Col)
+      else if (useRegisterVector && argRoles[i] == Role::Col)
         inTys.push_back(colVecMemref);
       else
         inTys.push_back(memrefOf(i));
@@ -3486,7 +3535,7 @@ struct RowReductionLowering {
           cast<RankedTensorType>(fn.getFunctionType().getResult(j))
               .getElementType();
       if (rr == ResultRole::RowOut)
-        inTys.push_back(useVec4
+        inTys.push_back(useRegisterVector
                             ? rowVecMemref
                             : MemRefType::get({M, N}, outputElementType));
       else if (rr == ResultRole::PerRowOut)
@@ -3606,26 +3655,25 @@ struct RowReductionLowering {
 
     // Column indices + the read-once register tile. Two layouts:
     //  - scalar path: col[k] = tx + k*T (interleaved, coalesced scalar loads).
-    //  - float4 path: the K columns split into K/4 vec4 tiles; the register value
-    //    at k = vt*4 + j has scalar col vt*(T*4) + tx*4 + j, i.e. vec index
-    //    (tx + vt*T) in memref<Mx(N/4)xvector<4xf32>>. Each vec tile is one
-    //    coalesced `ld.global.v4.f32` across the warp; the 4 lanes are extracted
-    //    into the SAME register tile the scalar path feeds emitAt.
+    //  - vector path: the K columns split into contiguous four-lane storage
+    //    packets. The register value at k=vt*W+j has scalar column
+    //    (tx+vt*T)*W+j; extracted lanes feed the same scalar emitAt graph.
     cols.clear();
     cols.resize(K);
-    // vecIdx[vt] = tx + vt*T (float4 path): the vec4 tile index into the retyped
-    // memref<Mx(N/4)xvector<4xf32>>. Reused by the RowOut vec4 store epilogue.
+    // vecIdx[vt] = tx + vt*T: packet index into the retyped Row/Col memref.
     SmallVector<Value> vecIdx;
-    if (useVec4) {
+    if (useRegisterVector) {
       vecIdx.resize(numVecTiles);
-      Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
+      Value cWidth =
+          b.create<arith::ConstantIndexOp>(loc, registerVectorWidth);
       for (int64_t vt = 0; vt < numVecTiles; ++vt) {
         Value off = b.create<arith::ConstantIndexOp>(loc, vt * T);
         vecIdx[vt] = b.create<arith::AddIOp>(loc, tx, off);
-        Value base4 = b.create<arith::MulIOp>(loc, vecIdx[vt], c4);
-        for (int64_t j = 0; j < 4; ++j) {
+        Value base = b.create<arith::MulIOp>(loc, vecIdx[vt], cWidth);
+        for (int64_t j = 0; j < registerVectorWidth; ++j) {
           Value cj = b.create<arith::ConstantIndexOp>(loc, j);
-          cols[vt * 4 + j] = b.create<arith::AddIOp>(loc, base4, cj);
+          cols[vt * registerVectorWidth + j] =
+              b.create<arith::AddIOp>(loc, base, cj);
         }
       }
     } else if (hasHalfFeatureTail) {
@@ -3661,16 +3709,16 @@ struct RowReductionLowering {
       }
     }
     SmallVector<Value> deferredColArgs;
-    auto loadVec4Col = [&](Value arg) {
+    auto loadVectorCol = [&](Value arg) {
       // A Col[N] parameter follows the same logical column mapping as every
-      // Row[M,N] operand. Load each contiguous group once as float4 and keep
-      // the extracted lanes in SSA so all uses of W[col] share that load.
+      // Row[M,N] operand. Load each contiguous packet once and keep the
+      // extracted storage lanes in SSA so all uses of W[col] share that load.
       SmallVector<Value> vals(K);
       for (int64_t vt = 0; vt < numVecTiles; ++vt) {
         Value v = b.create<memref::LoadOp>(loc, argMemref[arg],
                                            ValueRange{vecIdx[vt]});
-        for (int64_t j = 0; j < 4; ++j)
-          vals[vt * 4 + j] =
+        for (int64_t j = 0; j < registerVectorWidth; ++j)
+          vals[vt * registerVectorWidth + j] =
               b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
       }
       colVals[arg] = std::move(vals);
@@ -3691,15 +3739,19 @@ struct RowReductionLowering {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Row) {
         SmallVector<Value> vals(K);
-        if (useVec4) {
-          // One coalesced ld.global.v4.f32 per vec tile; extract the 4 lanes into
-          // the same register tile the scalar path feeds emitAt.
+        if (useRegisterVector) {
+          // One coalesced vector load per packet; extract storage lanes into
+          // the same scalar register tile the non-vector path feeds emitAt.
           for (int64_t vt = 0; vt < numVecTiles; ++vt) {
             Value v = b.create<memref::LoadOp>(loc, argMemref[arg],
                                                ValueRange{bx, vecIdx[vt]});
-            for (int64_t j = 0; j < 4; ++j)
-              vals[vt * 4 + j] =
-                  b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
+            for (int64_t j = 0; j < registerVectorWidth; ++j) {
+              Value lane = b.create<vector::ExtractOp>(
+                  loc, v, ArrayRef<int64_t>{j});
+              if (halfSoftmax)
+                lane = b.create<arith::ExtFOp>(loc, f32, lane);
+              vals[vt * registerVectorWidth + j] = lane;
+            }
           }
         } else {
           for (int64_t k = 0; k < K; ++k) {
@@ -3711,9 +3763,9 @@ struct RowReductionLowering {
           }
         }
         rowVals[arg] = vals;
-      } else if (argRoles[i] == Role::Col && useVec4) {
+      } else if (argRoles[i] == Role::Col && useRegisterVector) {
         if (neededBeforeEpilogue(arg) || !deferEpilogueColumnLoads)
-          loadVec4Col(arg);
+          loadVectorCol(arg);
         else
           deferredColArgs.push_back(arg);
       } else if (argRoles[i] == Role::Scalar) {
@@ -3801,7 +3853,8 @@ struct RowReductionLowering {
                          << " has an unsupported scalar expression";
           return failure();
         }
-        Value vec = b.create<vector::FromElementsOp>(loc, vec4Ty, lanes);
+        Value vec =
+            b.create<vector::FromElementsOp>(loc, registerVectorType, lanes);
         b.create<memref::StoreOp>(loc, vec, outMems[j],
                                   ValueRange{bx, vecIdx[vt]});
       }
@@ -4061,7 +4114,7 @@ struct RowReductionLowering {
     // after the last reduction barrier.  Columns that participate in a reduce
     // or scan were proven above and loaded before the collective instead.
     for (Value arg : deferredColArgs)
-      loadVec4Col(arg);
+      loadVectorCol(arg);
 
     // Cross-row fold: each cross-row (axis-0 sum) reduce passes THIS block's
     // per-row scalar through as if it were the whole-tensor sum; the per-row
@@ -4126,14 +4179,21 @@ struct RowReductionLowering {
         // that DAG would reuse values defined in the child region and violate
         // dominance. Only the destination stores belong in the conditional.
         SmallVector<Value> prepared;
-        if (useVec4) {
+        if (useRegisterVector) {
           prepared.reserve(numVecTiles);
-          // Group the 4 contiguous lanes of each vec tile into a vector<4xf32>
-          // and emit one coalesced st.global.v4.f32.
+          // Repack the contiguous scalar epilogue lanes into one storage
+          // vector. Exact half softmax owns an implicit final demotion;
+          // explicit mixed-precision graphs already end in intent.cast.
           for (int64_t vt = 0; vt < numVecTiles; ++vt) {
-            SmallVector<Value> lanes(4);
-            for (int64_t lj = 0; lj < 4; ++lj)
-              lanes[lj] = emitAt(b, loc, outputVals[j], vt * 4 + lj);
+            SmallVector<Value> lanes(registerVectorWidth);
+            for (int64_t lj = 0; lj < registerVectorWidth; ++lj) {
+              Value lane = emitAt(
+                  b, loc, outputVals[j], vt * registerVectorWidth + lj);
+              if (halfSoftmax && lane)
+                lane = b.create<arith::TruncFOp>(loc,
+                                                  halfVectorStorageType, lane);
+              lanes[lj] = lane;
+            }
             if (std::any_of(lanes.begin(), lanes.end(),
                             [](Value lane) { return !lane; })) {
               fn.emitError() << "row output " << j
@@ -4141,7 +4201,8 @@ struct RowReductionLowering {
               return failure();
             }
             prepared.push_back(
-                b.create<vector::FromElementsOp>(loc, vec4Ty, lanes));
+                b.create<vector::FromElementsOp>(loc, registerVectorType,
+                                                 lanes));
           }
         } else {
           prepared.reserve(K);
@@ -4165,7 +4226,7 @@ struct RowReductionLowering {
             // constructing memref.store, which previously made the row
             // reduction pass crash under -O2 even though debug builds passed.
             SmallVector<Value, 2> indices{
-                bx, useVec4 ? vecIdx[index] : cols[index]};
+                bx, useRegisterVector ? vecIdx[index] : cols[index]};
             if (hasHalfFeatureTail) {
               auto ifOp = b.create<scf::IfOp>(
                   loc, featureTileActive[index], /*withElseRegion=*/false);
