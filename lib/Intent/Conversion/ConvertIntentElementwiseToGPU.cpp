@@ -23,8 +23,10 @@
 //
 // Read-once register tile is the whole game: a dynamically-indexed alloca lands
 // in local memory and caps bandwidth far below peak. Static shapes only
-// (bare-ptr ABI). Emits math.exp/tanh/...; the `-lower-gpu-math-to-nvvm`
-// peephole turns those into NVVM approx intrinsics downstream.
+// (bare-ptr ABI). f16/bf16 storage is promoted to f32 within each semantic map
+// op and rounded back at that op's typed result boundary. Emits
+// math.exp/tanh/...; the `-lower-gpu-math-to-nvvm` peephole turns those into
+// NVVM approx intrinsics downstream.
 //
 //===----------------------------------------------------------------------===//
 
@@ -110,8 +112,10 @@ struct ElementwiseLowering {
   // while the normalized Intent DAG still exposes target-level fast sigmoid.
   int64_t vectorWidth = 1;
   int64_t numVectorTiles = 0;
-  Type f32;
+  Type storageType;
+  Type computeType;
   SmallVector<Role> argRoles;        // per func arg
+  SmallVector<Type> argElementTypes; // per func arg storage/broadcast type
   SmallVector<int64_t> argRowDiv;    // per arg: 1, or M/d0 for a broadcast Row
   SmallVector<Strides> argStrides;   // per arg: [row,col] (Row only; else unused)
   SmallVector<Strides> resStrides;   // per result: [row,col]
@@ -123,15 +127,16 @@ struct ElementwiseLowering {
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
         requestFlatVectorWidth(flatWidth) {}
 
-  /// memref type for a Row/result view: `memref<d0 x N x f32>` (identity layout
-  /// when contiguous, so dyt/swiglu/geglu stay byte-identical) or a strided
-  /// `memref<d0 x N x f32, strided<[row, col], offset: 0>>`. Offset is 0: the
+  /// Memref type for a Row/result view in the function's storage type.
+  /// `memref<d0 x N x storage>` uses identity layout when contiguous, otherwise
+  /// a strided
+  /// `memref<d0 x N x storage, strided<[row, col], offset: 0>>`. Offset is 0: the
   /// bare pointer the harness passes is the strided torch view's data_ptr, which
   /// already folds in any base offset (q[:, hd/2:].data_ptr()).
   MemRefType rowMemref(MLIRContext *ctx, int64_t d0, Strides s) {
     if (s.isDefault(N))
-      return MemRefType::get({d0, N}, f32);
-    return MemRefType::get({d0, N}, f32,
+      return MemRefType::get({d0, N}, storageType);
+    return MemRefType::get({d0, N}, storageType,
                            StridedLayoutAttr::get(ctx, 0, {s.row, s.col}));
   }
 
@@ -139,12 +144,12 @@ struct ElementwiseLowering {
   /// vectorWidth > 1; the caller has already proved default contiguous strides.
   MemRefType rowVecMemref(MLIRContext *ctx, int64_t d0) {
     return MemRefType::get({d0, N / vectorWidth},
-                           VectorType::get({vectorWidth}, f32));
+                           VectorType::get({vectorWidth}, storageType));
   }
 
   MemRefType flatVecMemref(MLIRContext *ctx) {
     return MemRefType::get({M * N / vectorWidth},
-                           VectorType::get({vectorWidth}, f32));
+                           VectorType::get({vectorWidth}, storageType));
   }
 
   // ---- recognition ------------------------------------------------------- //
@@ -153,24 +158,29 @@ struct ElementwiseLowering {
     unsigned nRes = fty.getNumResults();
     if (nRes < 1)
       return failure();
-    // Every result is a full rank-2 static f32 [M,N] row output. Anchor (M,N)
-    // from the first; all must agree (pure elementwise = no shape change).
+    // Every result is one full rank-2 static floating [M,N] row output.  f16
+    // and bf16 are storage types; scalar computation is promoted to f32.
+    // Anchor (M,N,storage) from the first; all results must agree.
     int64_t anchorM = -1, anchorN = -1;
     for (Type rt : fty.getResults()) {
       auto t = dyn_cast<RankedTensorType>(rt);
       if (!t || t.getRank() != 2 || !t.hasStaticShape())
         return failure();
-      if (!isa<Float32Type>(t.getElementType()))
+      Type elementType = t.getElementType();
+      if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
         return failure();
-      f32 = t.getElementType();
       if (anchorN < 0) {
         anchorM = t.getDimSize(0);
         anchorN = t.getDimSize(1);
+        storageType = elementType;
       } else if (t.getDimSize(0) != anchorM || t.getDimSize(1) != anchorN)
+        return failure();
+      else if (elementType != storageType)
         return failure();
     }
     M = anchorM;
     N = anchorN;
+    computeType = Float32Type::get(fn.getContext());
 
     // Single basic block, terminated by a return of the output values.
     if (!fn.getBody().hasOneBlock())
@@ -205,14 +215,16 @@ struct ElementwiseLowering {
         inplaceArg[j] = a[j];
     }
 
-    // Args: classify each by shape; only Row/Col/Scalar f32 tensors allowed.
+    // Args: Row inputs use the result storage type. Col/Scalar broadcasts may
+    // additionally be f32 (the common mixed-precision scale/bias contract).
     // A 2-D arg whose first dim d0 < M but DIVIDES M is a "broadcast Row": one
     // row is shared by M/d0 consecutive blocks (rope's cos/sin: one per token,
     // shared by the token's n_head blocks). An `intent.strides` arg-attr makes
     // the Row a strided view of a larger buffer (half / even-odd partner views).
     for (unsigned i = 0; i < fty.getNumInputs(); ++i) {
       auto t = dyn_cast<RankedTensorType>(fty.getInput(i));
-      if (!t || !t.hasStaticShape() || t.getElementType() != f32)
+      if (!t || !t.hasStaticShape() ||
+          !isa<Float16Type, BFloat16Type, Float32Type>(t.getElementType()))
         return failure();
       ArrayRef<int64_t> s = t.getShape();
       Strides st{N, 1};
@@ -238,7 +250,10 @@ struct ElementwiseLowering {
       } else {
         return failure();
       }
+      if (role == Role::Row && t.getElementType() != storageType)
+        return failure();
       argRoles.push_back(role);
+      argElementTypes.push_back(t.getElementType());
       argRowDiv.push_back(div);
       argStrides.push_back(st);
     }
@@ -333,6 +348,74 @@ struct ElementwiseLowering {
   DenseMap<Value, SmallVector<Value>> rowVals; // Row arg -> K loaded SSA values
   SmallVector<Value> cols;                     // K column indices (tx + k*T)
 
+  Value toCompute(OpBuilder &b, Location loc, Value value) const {
+    if (value.getType() == computeType || !isa<FloatType>(value.getType()))
+      return value;
+    if (isa<Float16Type, BFloat16Type>(value.getType()))
+      return b.create<arith::ExtFOp>(loc, computeType, value);
+    return value;
+  }
+
+  Value toStorage(OpBuilder &b, Location loc, Value value) const {
+    if (value.getType() == storageType)
+      return value;
+    if (value.getType() == computeType &&
+        isa<Float16Type, BFloat16Type>(storageType))
+      return b.create<arith::TruncFOp>(loc, storageType, value);
+    return value;
+  }
+
+  Type tensorElementType(Value value) const {
+    return cast<RankedTensorType>(value.getType()).getElementType();
+  }
+
+  Value castFloatTo(OpBuilder &b, Location loc, Value value,
+                    Type targetType) const {
+    if (value.getType() == targetType || !isa<FloatType>(value.getType()) ||
+        !isa<FloatType>(targetType))
+      return value;
+    if (targetType == computeType &&
+        isa<Float16Type, BFloat16Type>(value.getType()))
+      return b.create<arith::ExtFOp>(loc, targetType, value);
+    if (value.getType() == computeType &&
+        isa<Float16Type, BFloat16Type>(targetType))
+      return b.create<arith::TruncFOp>(loc, targetType, value);
+    return value;
+  }
+
+  Value emitMappedUnary(OpBuilder &b, Location loc, MapUnaryOp op,
+                        Value input) const {
+    Type resultType = tensorElementType(op.getResult());
+    if (isa<Float16Type, BFloat16Type>(input.getType()) ||
+        isa<Float16Type, BFloat16Type>(resultType))
+      input = toCompute(b, loc, input);
+    Value result = emitScalarUnary(b, loc, op.getFn(), input);
+    return result ? castFloatTo(b, loc, result, resultType) : Value();
+  }
+
+  Value emitMappedBinary(OpBuilder &b, Location loc, MapBinaryOp op,
+                         Value lhs, Value rhs) const {
+    if (isCmpFn(op.getFn())) {
+      if (isa<IntegerType>(lhs.getType()))
+        return emitScalarCmpI(b, loc, op.getFn(), lhs, rhs);
+      if (lhs.getType() != computeType || rhs.getType() != computeType) {
+        lhs = toCompute(b, loc, lhs);
+        rhs = toCompute(b, loc, rhs);
+      }
+      return emitScalarCmp(b, loc, op.getFn(), lhs, rhs);
+    }
+
+    Type resultType = tensorElementType(op.getResult());
+    if (isa<FloatType>(lhs.getType()) &&
+        (lhs.getType() != computeType || rhs.getType() != computeType ||
+         resultType != computeType)) {
+      lhs = toCompute(b, loc, lhs);
+      rhs = toCompute(b, loc, rhs);
+    }
+    Value result = emitScalarBinary(b, loc, op.getFn(), lhs, rhs);
+    return result ? castFloatTo(b, loc, result, resultType) : Value();
+  }
+
   /// Evaluate an original value for the thread's k-th column (fully unrolled).
   Value emitAt(OpBuilder &b, Location loc, Value v, unsigned k) {
     if (Value u = uniform.lookup(v))
@@ -342,8 +425,9 @@ struct ElementwiseLowering {
       if (role == Role::Row)
         return rowVals[v][k];
       if (role == Role::Col)
-        return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{cols[k]});
-      return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{}); // scalar
+        return b.create<memref::LoadOp>(loc, argMemref[v],
+                                       ValueRange{cols[k]});
+      return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
     }
     Operation *def = v.getDefiningOp();
     if (auto cst = dyn_cast<arith::ConstantOp>(def))
@@ -356,15 +440,11 @@ struct ElementwiseLowering {
       return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
-      return emitScalarUnary(b, loc, mu.getFn(), emitAt(b, loc, mu.getInput(), k));
+      return emitMappedUnary(b, loc, mu, emitAt(b, loc, mu.getInput(), k));
     if (auto mb = dyn_cast<MapBinaryOp>(def)) {
       Value lhs = emitAt(b, loc, mb.getLhs(), k);
       Value rhs = emitAt(b, loc, mb.getRhs(), k);
-      if (isCmpFn(mb.getFn()))
-        return isa<IntegerType>(lhs.getType())
-                   ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
-                   : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
-      return emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+      return emitMappedBinary(b, loc, mb, lhs, rhs);
     }
     if (auto sel = dyn_cast<SelectOp>(def))
       return b.create<arith::SelectOp>(loc, emitAt(b, loc, sel.getCond(), k),
@@ -398,8 +478,8 @@ struct ElementwiseLowering {
           changed = true;
         } else if (auto mu = dyn_cast<MapUnaryOp>(&op)) {
           if (isUniform(mu.getInput())) {
-            uniform[res] = emitScalarUnary(b, loc, mu.getFn(),
-                                           emitAt(b, loc, mu.getInput(), 0));
+            uniform[res] = emitMappedUnary(
+                b, loc, mu, emitAt(b, loc, mu.getInput(), 0));
             changed = true;
           }
         } else if (auto mb = dyn_cast<MapBinaryOp>(&op)) {
@@ -410,9 +490,9 @@ struct ElementwiseLowering {
           if (isCmpFn(mb.getFn()))
             continue;
           if (isUniform(mb.getLhs()) && isUniform(mb.getRhs())) {
-            uniform[res] = emitScalarBinary(b, loc, mb.getFn(),
-                                            emitAt(b, loc, mb.getLhs(), 0),
-                                            emitAt(b, loc, mb.getRhs(), 0));
+            uniform[res] = emitMappedBinary(
+                b, loc, mb, emitAt(b, loc, mb.getLhs(), 0),
+                emitAt(b, loc, mb.getRhs(), 0));
             changed = true;
           }
         }
@@ -425,8 +505,8 @@ struct ElementwiseLowering {
     if (role == Role::Row)
       return rowMemref(ctx, M / argRowDiv[i], argStrides[i]);
     if (role == Role::Col)
-      return MemRefType::get({N}, f32);
-    return MemRefType::get({}, f32);
+      return MemRefType::get({N}, argElementTypes[i]);
+    return MemRefType::get({}, argElementTypes[i]);
   }
 
   LogicalResult rewrite() {
@@ -487,13 +567,13 @@ struct ElementwiseLowering {
     //  - scalar path: col[k] = tx + k*T (interleaved, coalesced scalar loads).
     //  - vector path: the K columns split into K/vectorWidth tiles; the register
     //    value at k = vt*W + j has scalar col vt*(T*W) + tx*W + j, i.e. vec index
-    //    (tx + vt*T) in memref<d0x(N/W)xvector<Wxf32>>. Each tile is one
+    //    (tx + vt*T) in memref<d0x(N/W)xvector<Wxstorage>>. Each tile is one
     //    coalesced vector load across the warp; its lanes are extracted
     //    into the SAME register tile the scalar path feeds emitAt. Col/Scalar
     //    args still index cols[k]/once, so they need no retype.
     cols.clear();
     cols.resize(K);
-    Type vectorTy = VectorType::get({vectorWidth}, f32);
+    Type vectorTy = VectorType::get({vectorWidth}, storageType);
     SmallVector<Value> vecIdx; // vector tile index tx+vt*T (reused by store)
     if (vectorWidth > 1) {
       vecIdx.resize(numVectorTiles);
@@ -548,12 +628,13 @@ struct ElementwiseLowering {
                                 ValueRange{ridx, vecIdx[vt]});
             for (int64_t j = 0; j < vectorWidth; ++j)
               vals[vt * vectorWidth + j] =
-                  b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
+                  b.create<vector::ExtractOp>(loc, v,
+                                              ArrayRef<int64_t>{j});
           }
         } else {
           for (int64_t k = 0; k < K; ++k)
-            vals[k] = b.create<memref::LoadOp>(loc, argMemref[arg],
-                                               ValueRange{ridx, cols[k]});
+            vals[k] = b.create<memref::LoadOp>(
+                loc, argMemref[arg], ValueRange{ridx, cols[k]});
         }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
@@ -572,8 +653,9 @@ struct ElementwiseLowering {
         for (int64_t vt = 0; vt < numVectorTiles; ++vt) {
           SmallVector<Value> lanes(vectorWidth);
           for (int64_t lj = 0; lj < vectorWidth; ++lj)
-            lanes[lj] =
-                emitAt(b, loc, outputVals[j], vt * vectorWidth + lj);
+            lanes[lj] = toStorage(
+                b, loc,
+                emitAt(b, loc, outputVals[j], vt * vectorWidth + lj));
           Value vec = b.create<vector::FromElementsOp>(loc, vectorTy, lanes);
           if (flattenContiguous)
             b.create<memref::StoreOp>(loc, vec, outMems[j],
@@ -584,7 +666,7 @@ struct ElementwiseLowering {
         }
       } else {
         for (int64_t k = 0; k < K; ++k) {
-          Value out = emitAt(b, loc, outputVals[j], k);
+          Value out = toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
           b.create<memref::StoreOp>(loc, out, outMems[j],
                                     ValueRange{bx, cols[k]});
         }

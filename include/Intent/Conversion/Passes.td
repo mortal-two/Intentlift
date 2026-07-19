@@ -120,6 +120,10 @@ def ConvertIntentElementwiseToGPU
     the device pipeline (`lower_memref_module_to_kernels`), bypassing
     bufferization. Transcendentals (`math.exp`/`math.tanh`/...) are rewritten to
     NVVM approx intrinsics by the `-lower-gpu-math-to-nvvm` target peephole.
+    Rank-2 f16/bf16 results and Row inputs use half storage with per-map f32
+    computation (`extf` before the scalar op, `truncf` at that op's declared
+    result boundary), preserving typed intermediate rounding. Mixed f32
+    Col/Scalar broadcasts are admitted without changing the result storage type.
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
