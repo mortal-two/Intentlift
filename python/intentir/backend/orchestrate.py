@@ -108,6 +108,10 @@ class _F32Arg(float):
     """Kernel arg passed by value as a 32-bit float (4 raw bytes)."""
 
 
+class _F64Arg(float):
+    """Kernel arg passed by value as a 64-bit float (8 raw bytes)."""
+
+
 def _parse_f32(s: str) -> float:
     """Parse an MLIR f32 literal: decimal (``1.0``, ``0.0e+00``) or the raw
     IEEE-754 hex form MLIR prints for special values (``0xFF800000`` = -inf)."""
@@ -118,6 +122,15 @@ def _parse_f32(s: str) -> float:
     return float(s)
 
 
+def _parse_f64(s: str) -> float:
+    """Parse an MLIR f64 decimal or raw 64-bit IEEE-754 hex literal."""
+    s = s.strip()
+    if s.lower().startswith("0x"):
+        import struct
+        return struct.unpack(">d", bytes.fromhex(s[2:].rjust(16, "0")))[0]
+    return float(s)
+
+
 def _marshal(args):
     """Build the ctypes arg-pointer array for ``cuLaunchKernel``.
 
@@ -125,7 +138,9 @@ def _marshal(args):
     """
     cvals = []
     for a in args:
-        if isinstance(a, _F32Arg):
+        if isinstance(a, _F64Arg):
+            cvals.append(ctypes.c_double(float(a)))
+        elif isinstance(a, _F32Arg):
             cvals.append(ctypes.c_float(float(a)))
         elif isinstance(a, _I32Arg):
             cvals.append(ctypes.c_int32(int(a)))
@@ -158,6 +173,27 @@ def _launch(func, grid, block, args, shared: int = 0) -> None:
     torch.cuda.synchronize()
 
 
+def _set_dynamic_shared_memory(func, shared: int) -> bool:
+    """Opt a function into its persisted dynamic shared-memory requirement."""
+
+    if shared <= 0:
+        return False
+    from intentir.backend.launch import _driver
+
+    cuda = _driver()
+    attribute = (
+        cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+    )
+    result = cuda.cuFuncSetAttribute(func, attribute, int(shared))
+    error = result[0] if isinstance(result, tuple) else result
+    if int(error) != 0:
+        raise RuntimeError(
+            "cuFuncSetAttribute(MAX_DYNAMIC_SHARED_SIZE_BYTES) failed with "
+            f"CUDA driver error {int(error)}"
+        )
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # Cached (Triton-style) launcher (R-FLASH-1).                                  #
 # --------------------------------------------------------------------------- #
@@ -175,9 +211,10 @@ class CachedLauncher:
     the GPU-bound large ones.
 
     ``plan`` is the same launch-arg plan the flash kernels already build:
-    ``("ptr", input_index) | ("scale",) | ("i64", value)``. ``launch(inputs,
-    scale)`` refreshes the pointer slots from ``inputs[i].data_ptr()`` and the
-    scale slot, then launches on torch's current stream.
+    ``("ptr", input_index) | ("scale",) | ("f32", value) | ("i64", value)``.
+    ``launch(inputs, scale)`` refreshes the pointer slots from
+    ``inputs[i].data_ptr()`` and any dynamic scale slot, then launches on
+    torch's current stream.  Fixed ``f32`` entries remain immutable.
     """
 
     def __init__(self, func, grid, block, plan, shared: int = 0):
@@ -200,6 +237,10 @@ class CachedLauncher:
             elif kind == "scale":
                 self._scale_slots.append(len(self._cells))
                 self._cells.append(ctypes.c_float(0.0))
+            elif kind == "f32":
+                self._cells.append(ctypes.c_float(float(entry[1])))
+            elif kind == "f64":
+                self._cells.append(ctypes.c_double(float(entry[1])))
             elif kind == "i64":
                 self._cells.append(ctypes.c_int64(int(entry[1])))
             elif kind == "i32":
@@ -303,6 +344,70 @@ def _parse_intent_signature(intent_src: str) -> list[_IntentInput]:
     return inputs
 
 
+def _parse_intent_results(intent_src: str) -> list[tuple[tuple[int, ...], str]]:
+    """Recover declared result shapes/dtypes from one emitted ``func.func``.
+
+    Generic bufferization may return a tensor through a loose flat malloc even
+    when its source ABI is keepdims (for example ``tensor<1x1x128xf32>``).  The
+    host LLVM descriptor is then insufficient to recover the semantic shape, so
+    output collection must consult the same P4 signature that was compiled.
+    """
+
+    match = re.search(
+        r"func\.func\s+@\w+\s*\([^)]*\)\s*->\s*"
+        r"(\([^)]*\)|tensor<[^>]+>)",
+        intent_src,
+    )
+    if not match:
+        return []
+    result_text = match.group(1).strip()
+    pieces = (
+        _split_top_level(result_text[1:-1])
+        if result_text.startswith("(")
+        else [result_text]
+    )
+    results: list[tuple[tuple[int, ...], str]] = []
+    for piece in pieces:
+        tensor_match = re.fullmatch(
+            r"tensor<(?:(\d+(?:x\d+)*)x)?([A-Za-z0-9]+)>", piece.strip()
+        )
+        if tensor_match is None:
+            raise NotImplementedError(
+                f"orchestrate: unhandled intent result type {piece.strip()!r}"
+            )
+        dims = (
+            tuple(int(dim) for dim in tensor_match.group(1).split("x"))
+            if tensor_match.group(1)
+            else ()
+        )
+        results.append((dims, tensor_match.group(2)))
+    return results
+
+
+def _parse_intent_inplace(
+    intent_src: str, result_count: int
+) -> list[int] | None:
+    """Recover the typed result->input alias contract, when present."""
+
+    match = re.search(
+        r"intent\.inplace\s*=\s*array<i64:\s*([^>]*)>", intent_src
+    )
+    if match is None:
+        return None
+    values = [
+        int(piece.strip())
+        for piece in match.group(1).split(",")
+        if piece.strip()
+    ]
+    if len(values) != result_count:
+        raise ValueError(
+            "orchestrate: intent.inplace length does not match declared results"
+        )
+    if any(value < -1 for value in values):
+        raise ValueError("orchestrate: intent.inplace entries must be -1 or input indices")
+    return values
+
+
 # --------------------------------------------------------------------------- #
 # Host LLVM-func parsing.                                                      #
 # --------------------------------------------------------------------------- #
@@ -322,19 +427,29 @@ class _LaunchSite:
     dynamic_shared_ssa: str | None = None  # dynamic_shared_memory_size operand ssa
 
 
+@dataclass(frozen=True)
+class _ConstGlobal:
+    name: str
+    shape: tuple[int, ...]
+    elem: str
+    value: int | float
+
+
 @dataclass
 class _HostModule:
     func_name: str
     sig_args: list[str]                       # ordered block-arg SSA names ("%arg0", ...)
     constants: dict[str, tuple[str, str]]     # ssa -> (raw_value, type)
     aligned_ptr_blockargs: dict[str, int]     # aligned-ptr block-arg ssa -> input index
+    destination_aligned_ptrs: list[str]       # destination-passing result ptrs
+    destination_result_indices: list[int]     # declared result index per destination
     malloc_buffers: dict[str, "_Buffer"]      # aligned-ptr ssa (inttoptr result) -> buffer
     loose_buffers: dict[str, "_LooseBuffer"]  # inttoptr ssa -> loose intermediate buffer
     launches: list[_LaunchSite]
     return_aligned_ptrs: list[str]            # aligned-ptr ssa per result, in order
     body_text: str = field(default="", repr=False)
-    const_globals: dict[str, tuple[float, str]] = field(default_factory=dict)
-    # llvm.mlir.addressof ssa -> (scalar value, elem type)
+    const_globals: dict[str, _ConstGlobal] = field(default_factory=dict)
+    # llvm.mlir.addressof/zero-GEP ssa -> static scalar or dense splat
 
 
 @dataclass
@@ -512,9 +627,11 @@ def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
     # Map size-field SSA values to integers via the constant table.
     consts = _parse_constants(func_text)
 
-    # Element type of malloc'd buffers: from getelementptr "[N] : (...) -> ..., <elem>".
-    gep = re.search(r"llvm\.getelementptr\s+%\w+\[\d+\][^,]*,\s*([a-z0-9]+)", func_text)
-    elem = gep.group(1) if gep else "f32"
+    # Reuse the per-allocation size trace used for loose buffers.  Looking at the
+    # first getelementptr in the whole host function silently assigns that one
+    # element type to every returned buffer; a mixed-result graph (f16 Out plus
+    # f32 LSE/TMP) therefore allocated Out as f32 despite a correct P4 ABI.
+    allocation_info = _parse_loose_buffers(func_text)
 
     buffers: dict[str, _Buffer] = {}
     # Only roots that descend from an undef AND whose aligned ptr is an inttoptr
@@ -538,6 +655,11 @@ def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
                         f"[3,{i}] (ssa={ssa}) to a constant"
                     )
                 sizes.append(int(consts[ssa][0]))
+        if aligned not in allocation_info:
+            raise NotImplementedError(
+                f"orchestrate: could not recover allocation type for {aligned}"
+            )
+        elem = allocation_info[aligned].elem
         buffers[aligned] = _Buffer(aligned_ssa=aligned, shape=tuple(sizes), elem=elem)
     return buffers
 
@@ -756,39 +878,96 @@ def _parse_return_aligned_ptrs(func_text: str) -> list[str]:
     return [a] if a is not None else []
 
 
-def _parse_const_globals(binary_mlir: str, func_text: str) -> dict[str, tuple[float, str]]:
-    """``llvm.mlir.addressof`` ssa -> (scalar value, elem) for each scalar const
-    global. A rank-0 ``intent.const`` (e.g. the ``0.0`` in std's ``max(var,0)``)
-    bufferizes to a module-level ``llvm.mlir.global private constant`` and is
-    handed to a kernel as the bare pointer off ``llvm.mlir.addressof``. Only
-    scalar-float globals are resolved (splat/dense fall through unhandled)."""
-    # name -> (value, elem) from module-level scalar-float global declarations.
-    globals_: dict[str, tuple[float, str]] = {}
-    for m in re.finditer(
-        r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*([-+0-9.eE]+)\s*:\s*(f\d+)\s*\)",
+def _parse_const_globals(binary_mlir: str, func_text: str) -> dict[str, _ConstGlobal]:
+    """Resolve scalar and dense-splat globals plus zero-offset GEP aliases."""
+
+    def parse_value(text: str, elem: str) -> int | float:
+        return _parse_f32(text) if elem.startswith("f") else int(text, 0)
+
+    globals_: dict[str, _ConstGlobal] = {}
+    for match in re.finditer(
+        r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*"
+        r"([-+0-9.eExXa-fA-F]+)\s*:\s*([fi]\d+)\s*\)",
         binary_mlir,
     ):
-        try:
-            globals_[m.group(1)] = (float(m.group(2)), m.group(3))
-        except ValueError:
-            pass
-    # addressof ssa (in the host func) -> the resolved (value, elem).
-    out: dict[str, tuple[float, str]] = {}
-    for m in re.finditer(r"(%\w+)\s*=\s*llvm\.mlir\.addressof\s+@(\w+)", func_text):
-        if m.group(2) in globals_:
-            out[m.group(1)] = globals_[m.group(2)]
+        name, raw, elem = match.group(1), match.group(2), match.group(3)
+        globals_[name] = _ConstGlobal(name, (), elem, parse_value(raw, elem))
+    for match in re.finditer(
+        r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*dense<"
+        r"([-+0-9.eExXa-fA-F]+)>\s*:\s*tensor<"
+        r"((?:\d+x)*)?([fi]\d+)>\s*\)",
+        binary_mlir,
+    ):
+        name, raw, dims_text, elem = (
+            match.group(1),
+            match.group(2),
+            match.group(3) or "",
+            match.group(4),
+        )
+        shape = tuple(int(dim) for dim in dims_text.split("x") if dim)
+        globals_[name] = _ConstGlobal(
+            name, shape, elem, parse_value(raw, elem)
+        )
+
+    out: dict[str, _ConstGlobal] = {}
+    for match in re.finditer(
+        r"(%\w+)\s*=\s*llvm\.mlir\.addressof\s+@(\w+)", func_text
+    ):
+        if match.group(2) in globals_:
+            out[match.group(1)] = globals_[match.group(2)]
+    changed = True
+    while changed:
+        changed = False
+        for match in re.finditer(
+            r"(%\w+)\s*=\s*llvm\.getelementptr\s+(%\w+)\[([^]]+)\]",
+            func_text,
+        ):
+            result, base, indices = match.group(1), match.group(2), match.group(3)
+            if result in out or base not in out:
+                continue
+            parsed_indices = [item.strip() for item in indices.split(",")]
+            if not parsed_indices or any(item != "0" for item in parsed_indices):
+                continue
+            out[result] = out[base]
+            changed = True
     return out
 
 
-def _parse_host_module(binary_mlir: str, intent_inputs: list[_IntentInput]) -> _HostModule:
+def _parse_host_module(
+    binary_mlir: str,
+    intent_inputs: list[_IntentInput],
+    intent_results: list[tuple[tuple[int, ...], str]] | None = None,
+    intent_inplace: list[int] | None = None,
+) -> _HostModule:
     _func_name, func_text = _host_func_text(binary_mlir)
     sig_name, ordered, ptr_blockargs = _parse_signature_blockargs(func_text)
-    aligned_map = _map_input_aligned_ptrs(ptr_blockargs)
-    if intent_inputs and len(aligned_map) != len(intent_inputs):
+    all_aligned = _map_input_aligned_ptrs(ptr_blockargs)
+    result_count = len(intent_results or [])
+    input_count = len(intent_inputs)
+    destination_aligned_ptrs: list[str] = []
+    destination_result_indices: list[int] = []
+    fresh_results = (
+        [index for index, alias in enumerate(intent_inplace) if alias < 0]
+        if intent_inplace is not None
+        else list(range(result_count))
+    )
+    if len(all_aligned) == input_count:
+        aligned_map = all_aligned
+    elif fresh_results and len(all_aligned) == input_count + len(fresh_results):
+        ordered_aligned = [
+            ssa for ssa, _index in sorted(all_aligned.items(), key=lambda item: item[1])
+        ]
+        aligned_map = {
+            ssa: index for index, ssa in enumerate(ordered_aligned[:input_count])
+        }
+        destination_aligned_ptrs = ordered_aligned[input_count:]
+        destination_result_indices = fresh_results
+    else:
         raise NotImplementedError(
             "orchestrate: host has "
-            f"{len(aligned_map)} input memrefs but intent signature has "
-            f"{len(intent_inputs)} tensor args; cannot map inputs unambiguously"
+            f"{len(all_aligned)} memrefs but intent signature has {input_count} "
+            f"inputs and {result_count} results; cannot distinguish input and "
+            "destination-passing buffers unambiguously"
         )
     struct_buffers = _parse_malloc_buffers(func_text)
     loose_buffers = _parse_loose_buffers(func_text)
@@ -801,6 +980,8 @@ def _parse_host_module(binary_mlir: str, intent_inputs: list[_IntentInput]) -> _
         sig_args=ordered,
         constants=_parse_constants(func_text),
         aligned_ptr_blockargs=aligned_map,
+        destination_aligned_ptrs=destination_aligned_ptrs,
+        destination_result_indices=destination_result_indices,
         malloc_buffers=struct_buffers,
         loose_buffers=loose_buffers,
         launches=_parse_launches(func_text),
@@ -821,7 +1002,193 @@ def _resolve_const_index(host: _HostModule, ssa: str) -> int:
     return int(host.constants[ssa][0])
 
 
-def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
+def _execute_host_scalar_prelude(
+    host: _HostModule,
+    input_tensor_by_index,
+    buffer_tensor_by_ssa,
+) -> None:
+    """Execute scalar host stores emitted before the first GPU launch.
+
+    Bufferization keeps rank-0 tensor casts on the host.  A representative
+    lowering is ``load input<i32> -> sitofp -> store malloc<f32>``; ignoring
+    that prelude leaves the device buffer uninitialized even though every GPU
+    kernel is launched correctly.  Evaluate the deliberately small scalar SSA
+    subset on CUDA tensors so no host value round-trip or original compiler
+    callback is needed.  A later scalar store is hoisted only when its
+    destination has not appeared in an earlier launch and its value depends
+    solely on input scalars/constants; arbitrary host LLVM is still rejected.
+    """
+
+    import torch
+
+    body = host.body_text
+    first_launch = body.find("gpu.launch_func")
+    definitions: dict[str, str] = {}
+    for match in re.finditer(r"(%\w+)\s*=\s*([^\n]+)", body):
+        definitions[match.group(1)] = match.group(2).strip()
+    stores: list[tuple[int, str, str]] = []
+    for match in re.finditer(r"llvm\.store\s+(%\w+),\s*(%\w+)\s*:", body):
+        destination = match.group(2)
+        if destination not in buffer_tensor_by_ssa:
+            continue
+        if first_launch >= 0 and match.start() > first_launch:
+            earlier_launch_text = body[first_launch : match.start()]
+            if re.search(
+                rf"gpu\.launch_func[^\n]*{re.escape(destination)}\s*:",
+                earlier_launch_text,
+            ):
+                raise NotImplementedError(
+                    "orchestrate: cannot hoist scalar store whose destination "
+                    f"{destination} was used by an earlier GPU launch"
+                )
+        stores.append((match.start(), match.group(1), destination))
+    if not stores:
+        return
+
+    cache: dict[str, "torch.Tensor"] = {}
+    initialized_scalar_buffers: set[str] = set()
+
+    def resolve_load_pointer(pointer: str) -> tuple["torch.Tensor", int]:
+        if pointer in host.aligned_ptr_blockargs:
+            return (
+                input_tensor_by_index[host.aligned_ptr_blockargs[pointer]],
+                0,
+            )
+        if pointer in host.const_globals and pointer in buffer_tensor_by_ssa:
+            return buffer_tensor_by_ssa[pointer], 0
+        # A compiler-created scalar buffer is readable only after this prelude
+        # has itself initialized it from inputs/constants.  This permits
+        # straight-line scalar expressions while continuing to reject reads
+        # from arbitrary or uninitialized malloc buffers.
+        if pointer in initialized_scalar_buffers:
+            return buffer_tensor_by_ssa[pointer], 0
+        rhs = definitions.get(pointer)
+        if rhs is None:
+            raise NotImplementedError(
+                f"orchestrate: scalar load pointer {pointer} has no definition"
+            )
+        gep = re.match(
+            r"llvm\.getelementptr\s+(%\w+)\[([^]]+)\]",
+            rhs,
+        )
+        if gep:
+            tensor, base_offset = resolve_load_pointer(gep.group(1))
+            pieces = [piece.strip() for piece in gep.group(2).split(",")]
+            if not pieces or any(not re.fullmatch(r"-?\d+", piece) for piece in pieces):
+                raise NotImplementedError(
+                    "orchestrate: scalar prelude GEP indices must be literals"
+                )
+            # Scalar element pointers use one linear index.  Aggregate constant
+            # globals may spell the root element as [0, 0]; only zero leading
+            # aggregate indices are valid in this host-scalar subset.
+            indices = [int(piece) for piece in pieces]
+            if len(indices) > 1 and any(index != 0 for index in indices[:-1]):
+                raise NotImplementedError(
+                    "orchestrate: scalar prelude aggregate GEP is not a root element"
+                )
+            return tensor, base_offset + indices[-1]
+        raise NotImplementedError(
+            f"orchestrate: unsupported scalar load pointer {pointer} = {rhs}"
+        )
+
+    def evaluate(ssa: str) -> "torch.Tensor":
+        if ssa in cache:
+            return cache[ssa]
+        if ssa in host.constants:
+            raw, ty = host.constants[ssa]
+            if ty.startswith("f"):
+                value = torch.tensor(
+                    _parse_f32(raw), dtype=_torch_dtype(ty), device="cuda"
+                )
+            else:
+                dtype = _torch_dtype(ty) if ty in {"i1", "i8", "i16", "i32", "i64"} else torch.int64
+                value = torch.tensor(int(raw), dtype=dtype, device="cuda")
+            cache[ssa] = value
+            return value
+        rhs = definitions.get(ssa)
+        if rhs is None:
+            raise NotImplementedError(
+                f"orchestrate: scalar prelude value {ssa} has no definition"
+            )
+        load = re.match(r"llvm\.load\s+(%\w+)\s*:", rhs)
+        if load:
+            pointer = load.group(1)
+            tensor, offset = resolve_load_pointer(pointer)
+            flat = tensor.reshape(-1)
+            if offset < 0 or offset >= flat.numel():
+                raise IndexError(
+                    f"orchestrate: scalar prelude load {pointer}[{offset}] is out of bounds"
+                )
+            value = flat[offset]
+            cache[ssa] = value
+            return value
+
+        cast = re.match(
+            r"llvm\.(sitofp|uitofp|fptosi|fptoui|fpext|fptrunc|sext|zext|trunc)\s+"
+            r"(%\w+)\s*:\s*\S+\s+to\s+(\S+)",
+            rhs,
+        )
+        if cast:
+            value = evaluate(cast.group(2)).to(dtype=_torch_dtype(cast.group(3)))
+            cache[ssa] = value
+            return value
+
+        binary = re.match(
+            r"llvm\.(add|sub|mul|sdiv|udiv|fadd|fsub|fmul|fdiv)\s+"
+            r"(%\w+),\s*(%\w+)",
+            rhs,
+        )
+        if binary:
+            lhs = evaluate(binary.group(2))
+            rhs_value = evaluate(binary.group(3))
+            operation = binary.group(1)
+            if operation in {"add", "fadd"}:
+                value = lhs + rhs_value
+            elif operation in {"sub", "fsub"}:
+                value = lhs - rhs_value
+            elif operation in {"mul", "fmul"}:
+                value = lhs * rhs_value
+            else:
+                value = lhs / rhs_value
+            cache[ssa] = value
+            return value
+
+        icmp = re.match(
+            r'llvm\.icmp\s+"(eq|ne)"\s+'
+            r"(%\w+),\s*(%\w+)",
+            rhs,
+        )
+        if icmp:
+            lhs = evaluate(icmp.group(2))
+            rhs_value = evaluate(icmp.group(3))
+            predicate = icmp.group(1)
+            if predicate == "eq":
+                value = lhs == rhs_value
+            else:
+                value = lhs != rhs_value
+            cache[ssa] = value
+            return value
+        raise NotImplementedError(
+            f"orchestrate: unsupported scalar prelude definition {ssa} = {rhs}"
+        )
+
+    for _position, value_ssa, destination_ssa in stores:
+        destination = buffer_tensor_by_ssa[destination_ssa].reshape(-1)
+        if destination.numel() != 1:
+            raise NotImplementedError(
+                "orchestrate: host scalar store destination is not one element: "
+                f"{destination_ssa} has {destination.numel()}"
+            )
+        destination[0].copy_(evaluate(value_ssa).to(dtype=destination.dtype))
+        initialized_scalar_buffers.add(destination_ssa)
+
+
+def run_program(
+    intent_mlir_path,
+    inputs,
+    compile_all=compile_all_kernels,
+    output_aliases=None,
+):
     """Compile *intent_mlir_path* and execute its whole kernel graph on the GPU.
 
     Parameters
@@ -837,6 +1204,10 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
         per-op pipeline; pass ``compile_all_kernels_fused`` (the fused+tiled
         pipeline) to execute a pointwise chain as one fused kernel. The host module
         is parsed generically, so a fused single-kernel graph runs unchanged.
+    output_aliases : dict[str, str], optional
+        Layer-B runtime binding from an output key (``"out0"``) to an input
+        tensor name.  The returned P5 buffer SSA is bound directly to that input
+        allocation before any launch; no copy kernel or source callback is used.
 
     Returns
     -------
@@ -849,6 +1220,8 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
 
     intent_src = Path(intent_mlir_path).read_text()
     intent_inputs = _parse_intent_signature(intent_src)
+    intent_results = _parse_intent_results(intent_src)
+    intent_inplace = _parse_intent_inplace(intent_src, len(intent_results))
 
     kernels = compile_all(intent_mlir_path)
     if not kernels:
@@ -856,7 +1229,38 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
     binary_mlir = kernels[0].binary_mlir
     by_binary: dict[str, CompiledKernel] = {k.binary_name: k for k in kernels}
 
-    host = _parse_host_module(binary_mlir, intent_inputs)
+    host = _parse_host_module(
+        binary_mlir, intent_inputs, intent_results, intent_inplace
+    )
+    if host.return_aligned_ptrs:
+        output_aligned_ptrs = host.return_aligned_ptrs
+    elif intent_inplace is not None:
+        input_ssa_by_index = {
+            index: ssa for ssa, index in host.aligned_ptr_blockargs.items()
+        }
+        destination_by_result = dict(
+            zip(
+                host.destination_result_indices,
+                host.destination_aligned_ptrs,
+                strict=True,
+            )
+        )
+        output_aligned_ptrs = []
+        for result_index, alias in enumerate(intent_inplace):
+            if alias >= 0:
+                if alias >= len(intent_inputs) or alias not in input_ssa_by_index:
+                    raise ValueError(
+                        "orchestrate: intent.inplace references an invalid input"
+                    )
+                output_aligned_ptrs.append(input_ssa_by_index[alias])
+            elif result_index in destination_by_result:
+                output_aligned_ptrs.append(destination_by_result[result_index])
+            else:
+                raise RuntimeError(
+                    "orchestrate: no destination buffer for a fresh declared result"
+                )
+    else:
+        output_aligned_ptrs = host.destination_aligned_ptrs
 
     # --- bind input tensors by aligned-ptr block-arg -> input index -------- #
     # aligned_ptr_blockargs: %argK (aligned ptr) -> input index i
@@ -883,7 +1287,71 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
         t = inputs[key]
         if not t.is_cuda:
             raise ValueError(f"orchestrate: input {key!r} must be a CUDA tensor")
+        if idx >= len(intent_inputs):
+            raise ValueError(
+                f"orchestrate: host input index {idx} exceeds the P4 signature"
+            )
+        declared = intent_inputs[idx]
+        if tuple(t.shape) != declared.shape:
+            raise ValueError(
+                f"orchestrate: input {key!r} shape {tuple(t.shape)} does not "
+                f"match declared {declared.shape}"
+            )
+        expected_dtype = _torch_dtype(declared.dtype_str)
+        if t.dtype != expected_dtype:
+            raise ValueError(
+                f"orchestrate: input {key!r} dtype {t.dtype} does not match "
+                f"declared {expected_dtype}"
+            )
         input_tensor_by_index[idx] = t.contiguous()
+
+    alias_tensor_by_ssa: dict[str, "torch.Tensor"] = {}
+    if output_aliases:
+        if not isinstance(output_aliases, dict):
+            raise TypeError("orchestrate: output_aliases must be a dict")
+        for output_key, input_name in output_aliases.items():
+            match = re.fullmatch(r"out(\d+)", str(output_key))
+            if match is None:
+                raise ValueError(
+                    f"orchestrate: invalid output alias key {output_key!r}"
+                )
+            output_index = int(match.group(1))
+            if output_index >= len(output_aligned_ptrs):
+                raise ValueError(
+                    f"orchestrate: output alias {output_key!r} is out of range"
+                )
+            input_indices = [
+                index
+                for index, item in enumerate(intent_inputs)
+                if item.name == input_name
+            ]
+            if len(input_indices) != 1:
+                raise ValueError(
+                    f"orchestrate: output alias input {input_name!r} matched "
+                    f"{len(input_indices)} ABI entries"
+                )
+            input_index = input_indices[0]
+            tensor = input_tensor_by_index[input_index]
+            if output_index < len(intent_results):
+                shape, elem = intent_results[output_index]
+                if tuple(tensor.shape) != tuple(shape):
+                    raise ValueError(
+                        f"orchestrate: {output_key} alias shape {tuple(tensor.shape)} "
+                        f"does not match declared {shape}"
+                    )
+                expected_dtype = _torch_dtype(elem)
+                if tensor.dtype != expected_dtype:
+                    raise ValueError(
+                        f"orchestrate: {output_key} alias dtype {tensor.dtype} "
+                        f"does not match declared {expected_dtype}"
+                    )
+            output_ssa = output_aligned_ptrs[output_index]
+            existing = alias_tensor_by_ssa.get(output_ssa)
+            if existing is not None and existing.data_ptr() != tensor.data_ptr():
+                raise ValueError(
+                    f"orchestrate: conflicting aliases for returned buffer {output_ssa}"
+                )
+            alias_tensor_by_ssa[output_ssa] = tensor
 
     # --- allocate every malloc buffer ------------------------------------- #
     # Struct-packed buffers (the returned output) get their real shape; loose
@@ -891,12 +1359,34 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
     # SSA->tensor entry per buffer means a pointer reused across kernels
     # (e.g. softmax's exp buffer) resolves to the same storage automatically.
     buffer_tensor_by_ssa: dict[str, "torch.Tensor"] = {}
+    for ssa, result_index in zip(
+        host.destination_aligned_ptrs,
+        host.destination_result_indices,
+        strict=True,
+    ):
+        if ssa in alias_tensor_by_ssa:
+            buffer_tensor_by_ssa[ssa] = alias_tensor_by_ssa[ssa]
+            continue
+        if result_index >= len(intent_results):
+            raise RuntimeError(
+                "orchestrate: destination-passing output has no declared P4 result"
+            )
+        shape, elem = intent_results[result_index]
+        buffer_tensor_by_ssa[ssa] = torch.empty(
+            shape if shape else (), dtype=_torch_dtype(elem), device="cuda"
+        ).contiguous()
     for ssa, buf in host.malloc_buffers.items():
+        if ssa in alias_tensor_by_ssa:
+            buffer_tensor_by_ssa[ssa] = alias_tensor_by_ssa[ssa]
+            continue
         dtype = _torch_dtype(buf.elem)
         buffer_tensor_by_ssa[ssa] = torch.zeros(
             *buf.shape, dtype=dtype, device="cuda"
         ).contiguous()
     for ssa, lbuf in host.loose_buffers.items():
+        if ssa in alias_tensor_by_ssa:
+            buffer_tensor_by_ssa[ssa] = alias_tensor_by_ssa[ssa]
+            continue
         dtype = _torch_dtype(lbuf.elem)
         # torch.empty is fine: every reduce buffer is overwritten by its explicit
         # identity-fill kernel (-inf for max, 0 for sum) before first read.
@@ -904,12 +1394,27 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
             (lbuf.n_elems,), dtype=dtype, device="cuda"
         ).contiguous()
 
-    # Scalar const globals (e.g. the 0.0 in std's max(var, 0)) -> a 1-elem
-    # read-only device buffer the kernel loads (and broadcasts).
-    for ssa, (val, elem) in host.const_globals.items():
-        buffer_tensor_by_ssa[ssa] = torch.full(
-            (1,), val, dtype=_torch_dtype(elem), device="cuda"
-        ).contiguous()
+    # Static scalar / dense-splat globals become read-only CUDA buffers.  GEP
+    # aliases share the same allocation instead of materializing extra copies.
+    const_tensor_by_name: dict[str, "torch.Tensor"] = {}
+    for ssa, constant in host.const_globals.items():
+        tensor = const_tensor_by_name.get(constant.name)
+        if tensor is None:
+            shape = constant.shape if constant.shape else (1,)
+            tensor = torch.full(
+                shape,
+                constant.value,
+                dtype=_torch_dtype(constant.elem),
+                device="cuda",
+            ).contiguous()
+            const_tensor_by_name[constant.name] = tensor
+        buffer_tensor_by_ssa[ssa] = tensor
+
+    _execute_host_scalar_prelude(
+        host,
+        input_tensor_by_index,
+        buffer_tensor_by_ssa,
+    )
 
     # --- map each launch operand to a concrete launch arg ------------------ #
     def _resolve_ptr(ssa: str) -> "torch.Tensor":
@@ -924,6 +1429,31 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
         )
 
     # --- execute each launch in order -------------------------------------- #
+    scalar_load_inputs: dict[str, int] = {}
+    for match in re.finditer(
+        r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*(f32|f64)",
+        host.body_text,
+    ):
+        result_ssa, pointer_ssa = match.group(1), match.group(2)
+        if pointer_ssa in host.aligned_ptr_blockargs:
+            scalar_load_inputs[result_ssa] = host.aligned_ptr_blockargs[pointer_ssa]
+
+    def _loaded_input_scalar(ssa: str, expected_dtype) -> float:
+        if ssa not in scalar_load_inputs:
+            raise NotImplementedError(
+                f"orchestrate: scalar launch arg {ssa} is neither a constant "
+                "nor a direct rank-0 input load"
+            )
+        input_index = scalar_load_inputs[ssa]
+        tensor = input_tensor_by_index[input_index]
+        if tensor.numel() != 1 or tensor.dtype != expected_dtype:
+            raise ValueError(
+                "orchestrate: loaded scalar launch input has the wrong ABI: "
+                f"index={input_index}, shape={tuple(tensor.shape)}, "
+                f"dtype={tensor.dtype}, expected={expected_dtype}"
+            )
+        return float(tensor.item())
+
     for site in host.launches:
         ck = by_binary.get(site.binary_module)
         if ck is None:
@@ -937,6 +1467,14 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
 
         grid = tuple(_resolve_const_index(host, s) for s in site.grid_ssa)
         block = tuple(_resolve_const_index(host, s) for s in site.block_ssa)
+        shared = 0
+        if site.dynamic_shared_ssa is not None:
+            if site.dynamic_shared_ssa not in host.constants:
+                raise NotImplementedError(
+                    "orchestrate: dynamic shared-memory size is not a constant"
+                )
+            shared = int(host.constants[site.dynamic_shared_ssa][0])
+            _set_dynamic_shared_memory(func, shared)
 
         call_args = []
         for op in site.args:
@@ -957,24 +1495,32 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
                     )
                 call_args.append(_I32Arg(int(host.constants[op.ssa][0])))
             elif ty == "f32":
-                if op.ssa not in host.constants:
-                    raise NotImplementedError(
-                        f"orchestrate: f32 scalar arg {op.ssa} is not a constant"
-                    )
-                call_args.append(_F32Arg(_parse_f32(host.constants[op.ssa][0])))
+                value = (
+                    _parse_f32(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else _loaded_input_scalar(op.ssa, torch.float32)
+                )
+                call_args.append(_F32Arg(value))
+            elif ty == "f64":
+                value = (
+                    _parse_f64(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else _loaded_input_scalar(op.ssa, torch.float64)
+                )
+                call_args.append(_F64Arg(value))
             else:
                 raise NotImplementedError(
                     f"orchestrate: unhandled launch-arg type {ty!r} (operand {op.ssa})"
                 )
 
-        _launch(func, grid, block, call_args)
+        _launch(func, grid, block, call_args, shared=shared)
 
     # --- collect outputs --------------------------------------------------- #
     # One ``out{i}`` per function result, in return order (multi-result programs,
     # e.g. a loop body yielding several carries, return them all).
     outputs: dict[str, "torch.Tensor"] = {}
-    if host.return_aligned_ptrs:
-        for i, ssa in enumerate(host.return_aligned_ptrs):
+    if output_aligned_ptrs:
+        for i, ssa in enumerate(output_aligned_ptrs):
             if ssa in buffer_tensor_by_ssa:
                 outputs[f"out{i}"] = buffer_tensor_by_ssa[ssa]
             elif ssa in host.aligned_ptr_blockargs:
@@ -993,6 +1539,30 @@ def run_program(intent_mlir_path, inputs, compile_all=compile_all_kernels):
                 "orchestrate: could not determine program output(s) from llvm.return "
                 f"(found {len(buffer_tensor_by_ssa)} malloc buffers)"
             )
+    if intent_results:
+        if len(outputs) != len(intent_results):
+            raise RuntimeError(
+                "orchestrate: recovered output count does not match P4 signature: "
+                f"runtime={len(outputs)}, declared={len(intent_results)}"
+            )
+        for index, (shape, elem) in enumerate(intent_results):
+            key = f"out{index}"
+            tensor = outputs[key]
+            expected_dtype = _torch_dtype(elem)
+            if tensor.dtype != expected_dtype:
+                raise RuntimeError(
+                    f"orchestrate: output {index} dtype {tensor.dtype} does not "
+                    f"match declared {expected_dtype}"
+                )
+            expected_numel = 1
+            for dim in shape:
+                expected_numel *= dim
+            if tensor.numel() != expected_numel:
+                raise RuntimeError(
+                    f"orchestrate: output {index} has {tensor.numel()} elements, "
+                    f"declared shape {shape} requires {expected_numel}"
+                )
+            outputs[key] = tensor.reshape(shape)
     return outputs
 
 
