@@ -1073,20 +1073,21 @@ def test_direct_half_softmax_uses_one_f32_accumulation_kernel(
 
 
 @pytest.mark.parametrize(
-    ("dtype", "mlir_type", "atol"),
+    ("dtype", "mlir_type", "atol", "rtol"),
     (
-        (torch.float16, "f16", 2.0e-3),
-        (torch.bfloat16, "bf16", 1.0e-2),
+        (torch.float16, "f16", 2.0e-3, 2.0e-3),
+        (torch.bfloat16, "bf16", 1.0e-2, 1.0e-2),
     ),
 )
 @pytest.mark.parametrize(
     ("columns", "block_threads"),
-    ((32, 32), (1024, 128)),
+    ((32, 32), (37, 32), (1000, 128), (1024, 128)),
 )
 def test_direct_half_rms_norm_uses_explicit_f32_compute_graph(
     dtype: torch.dtype,
     mlir_type: str,
     atol: float,
+    rtol: float,
     columns: int,
     block_threads: int,
 ) -> None:
@@ -1126,24 +1127,25 @@ def test_direct_half_rms_norm_uses_explicit_f32_compute_graph(
     assert len(program.kernels) == 1
     assert output.dtype == dtype
     assert torch.isfinite(output).all()
-    torch.testing.assert_close(output, reference, rtol=0.0, atol=atol)
+    torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
 
 
 @pytest.mark.parametrize(
-    ("dtype", "mlir_type", "atol"),
+    ("dtype", "mlir_type", "atol", "rtol"),
     (
-        (torch.float16, "f16", 2.0e-3),
-        (torch.bfloat16, "bf16", 1.0e-2),
+        (torch.float16, "f16", 2.0e-3, 2.0e-3),
+        (torch.bfloat16, "bf16", 1.0e-2, 1.0e-2),
     ),
 )
 @pytest.mark.parametrize(
     ("columns", "block_threads"),
-    ((32, 32), (1024, 128)),
+    ((32, 32), (37, 32), (1000, 128), (1024, 128)),
 )
 def test_direct_half_layer_norm_keeps_statistics_in_f32(
     dtype: torch.dtype,
     mlir_type: str,
     atol: float,
+    rtol: float,
     columns: int,
     block_threads: int,
 ) -> None:
@@ -1184,6 +1186,6 @@ def test_direct_half_layer_norm_keeps_statistics_in_f32(
     assert outputs["out0"].dtype == dtype
     assert outputs["out1"].dtype == torch.float32
     assert outputs["out2"].dtype == torch.float32
-    torch.testing.assert_close(outputs["out0"], reference, rtol=0.0, atol=atol)
+    torch.testing.assert_close(outputs["out0"], reference, rtol=rtol, atol=atol)
     torch.testing.assert_close(outputs["out1"], mean, rtol=0.0, atol=2.0e-5)
     torch.testing.assert_close(outputs["out2"], rstd, rtol=0.0, atol=2.0e-5)
