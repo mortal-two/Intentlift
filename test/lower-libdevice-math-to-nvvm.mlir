@@ -52,6 +52,20 @@ func.func @erf_f32(%x: f32) -> f32 {
 
 // -----
 
+// CHECK-LABEL: func.func @pow_f32
+// CHECK: arith.bitcast
+// CHECK: arith.cmpi
+// CHECK: arith.sitofp
+// CHECK: llvm.call_intrinsic "llvm.nvvm.ex2.approx.ftz.f"
+// CHECK: arith.select
+// CHECK-NOT: math.powf
+func.func @pow_f32(%base: f32, %exponent: f32) -> f32 {
+  %r = math.powf %base, %exponent : f32
+  return %r : f32
+}
+
+// -----
+
 // Non-f32 forms remain outside this approximate target policy.
 // CHECK-LABEL: func.func @atan_f64
 // CHECK: math.atan

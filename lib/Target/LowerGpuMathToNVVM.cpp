@@ -628,6 +628,309 @@ struct ErfToPolynomial : OpRewritePattern<math::ErfOp> {
   }
 };
 
+/// A self-contained f32 log2 for pow.  IEEE-754 exponent/mantissa reduction
+/// keeps the atanh series on [1/sqrt(2), sqrt(2)], where seven odd terms are
+/// below f32 precision.  Positive subnormals are normalized by 2^24 and the
+/// extracted exponent is compensated accordingly.
+static Value emitLog2F32Polynomial(PatternRewriter &rewriter, Location loc,
+                                   Value x) {
+  auto f32 = cast<Float32Type>(x.getType());
+  Type i32 = rewriter.getI32Type();
+  auto cF32 = [&](double value) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(value));
+  };
+  auto cI32 = [&](int32_t value) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(value));
+  };
+
+  Value bits = rewriter.create<arith::BitcastOp>(loc, i32, x);
+  Value exponentField = rewriter.create<arith::AndIOp>(
+      loc, rewriter.create<arith::ShRUIOp>(loc, bits, cI32(23)),
+      cI32(0xff));
+  Value exponentFieldZero = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, exponentField, cI32(0));
+  Value valueNonzero = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::ne, bits, cI32(0));
+  Value subnormal = rewriter.create<arith::AndIOp>(
+      loc, exponentFieldZero, valueNonzero);
+  Value scaledSubnormal = rewriter.create<arith::MulFOp>(
+      loc, x, cF32(16777216.0)); // 2^24
+  Value normalized = rewriter.create<arith::SelectOp>(
+      loc, subnormal, scaledSubnormal, x);
+
+  Value normalizedBits =
+      rewriter.create<arith::BitcastOp>(loc, i32, normalized);
+  Value normalizedExponentField = rewriter.create<arith::AndIOp>(
+      loc,
+      rewriter.create<arith::ShRUIOp>(loc, normalizedBits, cI32(23)),
+      cI32(0xff));
+  Value exponent = rewriter.create<arith::SubIOp>(
+      loc, normalizedExponentField, cI32(127));
+  Value subnormalExponent = rewriter.create<arith::SubIOp>(
+      loc, exponent, cI32(24));
+  exponent = rewriter.create<arith::SelectOp>(
+      loc, subnormal, subnormalExponent, exponent);
+
+  Value mantissaBits = rewriter.create<arith::OrIOp>(
+      loc,
+      rewriter.create<arith::AndIOp>(loc, normalizedBits, cI32(0x007fffff)),
+      cI32(0x3f800000));
+  Value mantissa =
+      rewriter.create<arith::BitcastOp>(loc, f32, mantissaBits);
+  Value aboveSqrt2 = rewriter.create<arith::CmpFOp>(
+      loc, arith::CmpFPredicate::OGT, mantissa,
+      cF32(1.4142135623730950488));
+  Value reducedMantissa = rewriter.create<arith::SelectOp>(
+      loc, aboveSqrt2,
+      rewriter.create<arith::MulFOp>(loc, mantissa, cF32(0.5)), mantissa);
+  exponent = rewriter.create<arith::SelectOp>(
+      loc, aboveSqrt2,
+      rewriter.create<arith::AddIOp>(loc, exponent, cI32(1)), exponent);
+
+  Value one = cF32(1.0);
+  Value numerator = rewriter.create<arith::SubFOp>(
+      loc, reducedMantissa, one);
+  Value denominator = rewriter.create<arith::AddFOp>(
+      loc, reducedMantissa, one);
+  Value z = rewriter.create<arith::DivFOp>(loc, numerator, denominator);
+  Value z2 = rewriter.create<arith::MulFOp>(loc, z, z);
+  auto fma = [&](Value lhs, Value rhs, Value addend) -> Value {
+    return rewriter
+        .create<LLVM::CallIntrinsicOp>(
+            loc, f32, rewriter.getStringAttr("llvm.fma"),
+            ValueRange{lhs, rhs, addend})
+        .getResult(0);
+  };
+  Value polynomial = cF32(1.0 / 13.0);
+  for (int denominatorValue = 11; denominatorValue >= 1;
+       denominatorValue -= 2) {
+    polynomial = fma(
+        polynomial, z2,
+        cF32(1.0 / static_cast<double>(denominatorValue)));
+  }
+  Value series = rewriter.create<arith::MulFOp>(loc, z, polynomial);
+  Value exponentF32 =
+      rewriter.create<arith::SIToFPOp>(loc, f32, exponent);
+  return fma(series, cF32(2.0 * kLog2E), exponentF32);
+}
+
+/// `math.powf %base, %exponent : f32` -> polynomial log2/native ex2 plus an
+/// explicit C99-compatible special-value decision tree.
+///
+/// The stock NVIDIA conversion emits an unresolved `__nv_powf`.  For the
+/// regular magnitude use
+///
+///   |base|^exponent = 2^(exponent * log2(|base|)),
+///
+/// with a range-reduced f32 log2 and the native ex2 PTX instruction.  Float
+/// exponents are classified as integer/odd directly from their IEEE-754
+/// representation, avoiding an out-of-range float-to-int conversion.  This
+/// preserves negative-base integer powers and the required signed
+/// zero/infinity results while rejecting negative finite bases raised to a
+/// non-integer exponent.
+struct PowFToLg2Ex2Approx : OpRewritePattern<math::PowFOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::PowFOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getLhs().getType());
+    if (!f32 || op.getRhs().getType() != f32)
+      return rewriter.notifyMatchFailure(op, "operands are not scalar f32");
+
+    Location loc = op.getLoc();
+    Type i32 = rewriter.getI32Type();
+    auto cF32 = [&](double value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF32FloatAttr(value));
+    };
+    auto cI32 = [&](int32_t value) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI32IntegerAttr(value));
+    };
+    Value trueValue = rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+    auto logicalNot = [&](Value value) -> Value {
+      return rewriter.create<arith::XOrIOp>(loc, value, trueValue);
+    };
+
+    Value base = op.getLhs();
+    Value exponent = op.getRhs();
+    Value zero = cF32(0.0);
+    Value one = cF32(1.0);
+    Value infinity = cF32(std::numeric_limits<float>::infinity());
+    Value nan = cF32(std::numeric_limits<float>::quiet_NaN());
+
+    Value baseBits = rewriter.create<arith::BitcastOp>(loc, i32, base);
+    Value exponentBits =
+        rewriter.create<arith::BitcastOp>(loc, i32, exponent);
+    Value zeroI32 = cI32(0);
+    Value absoluteMask = cI32(0x7fffffff);
+    Value infinityBits = cI32(0x7f800000);
+    Value mantissaMask = cI32(0x007fffff);
+    Value baseAbsoluteBits = rewriter.create<arith::AndIOp>(
+        loc, baseBits, absoluteMask);
+    Value exponentAbsoluteBits = rewriter.create<arith::AndIOp>(
+        loc, exponentBits, absoluteMask);
+    Value absoluteBase =
+        rewriter.create<arith::BitcastOp>(loc, f32, baseAbsoluteBits);
+    Value baseSign = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::slt, baseBits, zeroI32);
+    Value baseZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, baseAbsoluteBits, zeroI32);
+    Value baseInfinity = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, baseAbsoluteBits, infinityBits);
+    Value baseNaN = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ugt, baseAbsoluteBits, infinityBits);
+    Value baseFinite = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ult, baseAbsoluteBits, infinityBits);
+
+    Value exponentZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, exponentAbsoluteBits, zeroI32);
+    Value exponentInfinity = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, exponentAbsoluteBits, infinityBits);
+    Value exponentNaN = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ugt, exponentAbsoluteBits, infinityBits);
+    Value exponentPositive = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, exponent, zero);
+    Value exponentNegative = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, exponent, zero);
+
+    // A finite f32 is integral when all fractional significand bits below its
+    // unbiased exponent are zero.  Clamp the dynamic shift into [0, 23] so the
+    // integer shift itself is defined even when a later select discards it.
+    Value exponentField = rewriter.create<arith::AndIOp>(
+        loc,
+        rewriter.create<arith::ShRUIOp>(loc, exponentAbsoluteBits, cI32(23)),
+        cI32(0xff));
+    Value unbiasedExponent = rewriter.create<arith::SubIOp>(
+        loc, exponentField, cI32(127));
+    Value exponentAtLeastZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, unbiasedExponent, zeroI32);
+    Value exponentAtMost23 = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sle, unbiasedExponent, cI32(23));
+    Value exponentAbove23 = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sgt, unbiasedExponent, cI32(23));
+    Value integerRange = rewriter.create<arith::AndIOp>(
+        loc, exponentAtLeastZero, exponentAtMost23);
+    Value rawShift = rewriter.create<arith::SubIOp>(
+        loc, cI32(23), unbiasedExponent);
+    Value shiftBelowZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::slt, rawShift, zeroI32);
+    Value nonnegativeShift = rewriter.create<arith::SelectOp>(
+        loc, shiftBelowZero, zeroI32, rawShift);
+    Value shiftAbove23 = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sgt, nonnegativeShift, cI32(23));
+    Value safeShift = rewriter.create<arith::SelectOp>(
+        loc, shiftAbove23, cI32(23), nonnegativeShift);
+    Value integerBit = rewriter.create<arith::ShLIOp>(
+        loc, cI32(1), safeShift);
+    Value fractionalMask = rewriter.create<arith::SubIOp>(
+        loc, integerBit, cI32(1));
+    Value mantissa = rewriter.create<arith::AndIOp>(
+        loc, exponentAbsoluteBits, mantissaMask);
+    Value noFraction = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq,
+        rewriter.create<arith::AndIOp>(loc, mantissa, fractionalMask),
+        zeroI32);
+    Value finiteExponent = logicalNot(exponentInfinity);
+    finiteExponent = rewriter.create<arith::AndIOp>(
+        loc, finiteExponent, logicalNot(exponentNaN));
+    Value integralMagnitude = rewriter.create<arith::OrIOp>(
+        loc, exponentAbove23,
+        rewriter.create<arith::AndIOp>(loc, integerRange, noFraction));
+    Value exponentIsInteger = rewriter.create<arith::OrIOp>(
+        loc, exponentZero,
+        rewriter.create<arith::AndIOp>(loc, finiteExponent,
+                                       integralMagnitude));
+
+    Value significand = rewriter.create<arith::OrIOp>(
+        loc, mantissa, cI32(1 << 23));
+    Value oddBitSet = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ne,
+        rewriter.create<arith::AndIOp>(loc, significand, integerBit),
+        zeroI32);
+    Value exponentIsOdd = rewriter.create<arith::AndIOp>(
+        loc, exponentIsInteger,
+        rewriter.create<arith::AndIOp>(loc, integerRange, oddBitSet));
+    Value negativeResult = rewriter.create<arith::AndIOp>(
+        loc, baseSign, exponentIsOdd);
+    auto applyResultSign = [&](Value magnitude) -> Value {
+      Value negativeMagnitude =
+          rewriter.create<arith::NegFOp>(loc, magnitude);
+      return rewriter.create<arith::SelectOp>(
+          loc, negativeResult, negativeMagnitude, magnitude);
+    };
+
+    Value log2Base =
+        emitLog2F32Polynomial(rewriter, loc, absoluteBase);
+    Value scaled = rewriter.create<arith::MulFOp>(
+        loc, exponent, log2Base);
+    Value needsSubnormalResult = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, scaled, cF32(-126.0));
+    Value exponentAdjustment = rewriter.create<arith::SelectOp>(
+        loc, needsSubnormalResult, cF32(24.0), zero);
+    Value adjustedScaled = rewriter.create<arith::AddFOp>(
+        loc, scaled, exponentAdjustment);
+    auto ex2 = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, f32,
+        rewriter.getStringAttr("llvm.nvvm.ex2.approx.ftz.f"),
+        ValueRange{adjustedScaled});
+    Value magnitudeScale = rewriter.create<arith::SelectOp>(
+        loc, needsSubnormalResult, cF32(5.9604644775390625e-8), one);
+    Value magnitude = rewriter.create<arith::MulFOp>(
+        loc, ex2.getResult(0), magnitudeScale);
+    Value result = applyResultSign(magnitude);
+
+    Value negativeFiniteNonzeroBase = rewriter.create<arith::AndIOp>(
+        loc, baseSign,
+        rewriter.create<arith::AndIOp>(loc, baseFinite,
+                                       logicalNot(baseZero)));
+    Value invalidNegativePower = rewriter.create<arith::AndIOp>(
+        loc, negativeFiniteNonzeroBase, logicalNot(exponentIsInteger));
+    result = rewriter.create<arith::SelectOp>(
+        loc, invalidNegativePower, nan, result);
+
+    Value absoluteBaseGreaterOne = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, absoluteBase, one);
+    Value absoluteBaseLessOne = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, absoluteBase, one);
+    Value growingInfiniteExponent = rewriter.create<arith::SelectOp>(
+        loc, exponentPositive, infinity, zero);
+    Value decayingInfiniteExponent = rewriter.create<arith::SelectOp>(
+        loc, exponentPositive, zero, infinity);
+    Value infiniteExponentResult = rewriter.create<arith::SelectOp>(
+        loc, absoluteBaseGreaterOne, growingInfiniteExponent,
+        rewriter.create<arith::SelectOp>(loc, absoluteBaseLessOne,
+                                         decayingInfiniteExponent, one));
+    result = rewriter.create<arith::SelectOp>(
+        loc, exponentInfinity, infiniteExponentResult, result);
+
+    Value infiniteBaseMagnitude = rewriter.create<arith::SelectOp>(
+        loc, exponentNegative, zero, infinity);
+    Value infiniteBaseResult = applyResultSign(infiniteBaseMagnitude);
+    result = rewriter.create<arith::SelectOp>(
+        loc, baseInfinity, infiniteBaseResult, result);
+
+    Value zeroBaseMagnitude = rewriter.create<arith::SelectOp>(
+        loc, exponentNegative, infinity, zero);
+    Value zeroBaseResult = applyResultSign(zeroBaseMagnitude);
+    result = rewriter.create<arith::SelectOp>(
+        loc, baseZero, zeroBaseResult, result);
+
+    Value anyNaN = rewriter.create<arith::OrIOp>(loc, baseNaN, exponentNaN);
+    result = rewriter.create<arith::SelectOp>(loc, anyNaN, nan, result);
+    Value positiveOne = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, baseBits, cI32(0x3f800000));
+    result = rewriter.create<arith::SelectOp>(loc, positiveOne, one, result);
+    result = rewriter.create<arith::SelectOp>(
+        loc, exponentZero, one, result);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 /// `math.fma %a, %b, %c : f32` -> LLVM's target-independent fused multiply-add
 /// intrinsic.  Leaving the math op to the stock GPU pipeline produces a
 /// `__nv_fmaf` libdevice extern, which has the same unresolved-symbol failure
@@ -667,6 +970,7 @@ struct LowerGpuMathToNVVM
     patterns.add<AtanToPolynomial>(&getContext());
     patterns.add<Atan2ToPolynomial>(&getContext());
     patterns.add<ErfToPolynomial>(&getContext());
+    patterns.add<PowFToLg2Ex2Approx>(&getContext());
     patterns.add<FmaToLLVMIntrinsic>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
