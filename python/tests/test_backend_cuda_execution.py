@@ -352,3 +352,135 @@ module {
     )
     zero = expected == 0.0
     assert torch.equal(torch.signbit(output[zero]), torch.signbit(expected[zero]))
+
+
+@pytest.mark.parametrize(
+    ("operation", "atol"),
+    (("abs", 0.0), ("atan", 5.0e-7), ("erf", 7.0e-7)),
+)
+def test_direct_unary_math_reuses_target_special_value_semantics(
+    operation: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @{operation}_direct(
+      %x: tensor<4x32xf32>) -> tensor<4x32xf32> {{
+    %y = intent.map_unary %x {{fn = "{operation}"}}
+      : (tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %y : tensor<4x32xf32>
+  }}
+}}
+"""
+    row = torch.tensor(
+        [-torch.inf, -8.0, -0.0, 0.0, 8.0, torch.inf, torch.nan, 1.0],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    x = row.repeat(4, 4)
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+        },
+    )
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+    expected = getattr(torch, operation)(x)
+
+    assert program.selection.pipeline_kind == "specialized"
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=1.0e-6,
+        atol=atol,
+        equal_nan=True,
+    )
+    assert torch.equal(
+        torch.signbit(output[:, 2:4]),
+        torch.signbit(expected[:, 2:4]),
+    )
+
+
+def test_direct_atan2_reuses_target_special_value_semantics() -> None:
+    source = """
+module {
+  func.func @atan2_direct(
+      %y: tensor<4x32xf32>, %x: tensor<4x32xf32>)
+      -> tensor<4x32xf32> {
+    %z = intent.map_binary %y, %x {fn = "atan2"}
+      : (tensor<4x32xf32>, tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %z : tensor<4x32xf32>
+  }
+}
+"""
+    special_y = torch.tensor(
+        [
+            0.0,
+            -0.0,
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            torch.inf,
+            torch.inf,
+            -torch.inf,
+            -torch.inf,
+            torch.inf,
+            -torch.inf,
+            1.0,
+            -1.0,
+            torch.nan,
+            1.0,
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    special_x = torch.tensor(
+        [
+            0.0,
+            0.0,
+            -0.0,
+            -0.0,
+            0.0,
+            0.0,
+            torch.inf,
+            -torch.inf,
+            torch.inf,
+            -torch.inf,
+            1.0,
+            1.0,
+            torch.inf,
+            -torch.inf,
+            1.0,
+            torch.nan,
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    y = special_y.repeat(8).reshape(4, 32)
+    x = special_x.repeat(8).reshape(4, 32)
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=32"
+        },
+    )
+
+    output = execute_cuda_artifact(program, source, {"y": y, "x": x})["out0"]
+    expected = torch.atan2(y, x)
+
+    assert program.selection.pipeline_kind == "specialized"
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=1.0e-6,
+        atol=7.0e-7,
+        equal_nan=True,
+    )
+    zero = expected == 0.0
+    assert torch.equal(torch.signbit(output[zero]), torch.signbit(expected[zero]))
