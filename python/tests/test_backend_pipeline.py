@@ -7,7 +7,11 @@ import pytest
 
 import intentir.backend.compile as backend_compile
 import intentir.backend.pipeline as backend_pipeline
-from intentir.backend.pipeline import LoweredProgram, lower_to_cuda
+from intentir.backend.pipeline import (
+    LoweredProgram,
+    execute_cuda_artifact,
+    lower_to_cuda,
+)
 from intentir.backend.selection import LoweringTarget, ProbeAttempt, VariantSelection
 from intentir.backend.schedules import ElementwiseSchedule, ScheduleDecision
 
@@ -150,6 +154,59 @@ def test_lowered_program_rejects_non_elf_device_artifacts() -> None:
             selection=selection,
             kernels=(_kernel(cubin=b"not-elf"),),
             source_mlir_sha256=selection.input_sha256,
+        )
+
+
+def test_execute_artifact_reuses_persisted_kernels_without_compiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _selection("generic")
+    kernel = _kernel()
+    program = LoweredProgram(
+        selection=selection,
+        kernels=(kernel,),
+        source_mlir_sha256=selection.input_sha256,
+    )
+    observed: dict[str, object] = {}
+
+    def fake_run(path, inputs, compile_all, output_aliases=None):
+        observed["source"] = Path(path).read_text(encoding="utf-8")
+        observed["inputs"] = inputs
+        observed["kernels"] = compile_all(path)
+        observed["aliases"] = output_aliases
+        return {"out0": "executed"}
+
+    monkeypatch.setattr(backend_pipeline.backend_orchestrate, "run_program", fake_run)
+
+    result = execute_cuda_artifact(
+        program,
+        _SOURCE,
+        {"x": "input"},
+        output_aliases={"out0": "x"},
+    )
+
+    assert result == {"out0": "executed"}
+    assert observed == {
+        "source": _SOURCE,
+        "inputs": {"x": "input"},
+        "kernels": [kernel],
+        "aliases": {"out0": "x"},
+    }
+
+
+def test_execute_artifact_rejects_a_different_source_before_launch() -> None:
+    selection = _selection("generic")
+    program = LoweredProgram(
+        selection=selection,
+        kernels=(_kernel(),),
+        source_mlir_sha256=selection.input_sha256,
+    )
+
+    with pytest.raises(ValueError, match="differs from the compiled"):
+        execute_cuda_artifact(
+            program,
+            "module { func.func @different() { return } }\n",
+            {},
         )
 
 
