@@ -164,6 +164,28 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
   }
 }
 
+/// Match the common normalization scalar fast path `recip(sqrt(x))`.  The
+/// single-use condition makes the replacement local: no other consumer loses
+/// the explicitly materialized sqrt value.
+static MapUnaryOp reciprocalSqrtOperand(MapUnaryOp reciprocal) {
+  if (!reciprocal || reciprocal.getFn() != "recip")
+    return nullptr;
+  auto squareRoot = reciprocal.getInput().getDefiningOp<MapUnaryOp>();
+  if (!squareRoot || squareRoot.getFn() != "sqrt" ||
+      !squareRoot.getResult().hasOneUse())
+    return nullptr;
+  return squareRoot;
+}
+
+static bool isFusedReciprocalSqrtInput(MapUnaryOp squareRoot) {
+  if (!squareRoot || squareRoot.getFn() != "sqrt" ||
+      !squareRoot.getResult().hasOneUse())
+    return false;
+  auto reciprocal =
+      dyn_cast<MapUnaryOp>(*squareRoot.getResult().getUsers().begin());
+  return reciprocalSqrtOperand(reciprocal) == squareRoot;
+}
+
 /// Materialize one element of a tensor splat constant.  Paper extraction emits
 /// scalar broadcast literals as rank-0 tensor arith.constant ops (rather than
 /// adding synthetic scalar function arguments), so the structural fast path
@@ -1610,9 +1632,13 @@ struct RowReductionLowering {
     }
     if (auto transpose = dyn_cast<TransposeOp>(def))
       return remember(emitAt(b, loc, transpose.getInput(), k));
-    if (auto mu = dyn_cast<MapUnaryOp>(def))
+    if (auto mu = dyn_cast<MapUnaryOp>(def)) {
+      if (MapUnaryOp squareRoot = reciprocalSqrtOperand(mu))
+        return remember(emitScalarUnary(
+            b, loc, "rsqrt", emitAt(b, loc, squareRoot.getInput(), k)));
       return remember(emitScalarUnary(b, loc, mu.getFn(),
                                       emitAt(b, loc, mu.getInput(), k)));
+    }
     if (auto mb = dyn_cast<MapBinaryOp>(def)) {
       if (enableFmaFusion && mb.getFn() == "add") {
         auto emitFma = [&](Value maybeMul, Value addend) -> Value {
@@ -1924,7 +1950,14 @@ struct RowReductionLowering {
             }
           }
         } else if (auto mu = dyn_cast<MapUnaryOp>(&op)) {
-          if (isUniform(mu.getInput())) {
+          if (isFusedReciprocalSqrtInput(mu))
+            continue;
+          if (MapUnaryOp squareRoot = reciprocalSqrtOperand(mu);
+              squareRoot && isUniform(squareRoot.getInput())) {
+            uniform[res] = emitScalarUnary(
+                b, loc, "rsqrt", emitAt(b, loc, squareRoot.getInput(), 0));
+            changed = true;
+          } else if (isUniform(mu.getInput())) {
             uniform[res] = emitScalarUnary(b, loc, mu.getFn(),
                                            emitAt(b, loc, mu.getInput(), 0));
             changed = true;
@@ -2070,11 +2103,17 @@ struct RowReductionLowering {
         res = uniform.lookup(v); // scalar already loaded once at launch top
     } else {
       Operation *d = v.getDefiningOp();
-      if (auto mu = dyn_cast<MapUnaryOp>(d))
-        res = emitScalarUnary(b, loc, mu.getFn(),
-                              emitAtCol(b, loc, mu.getInput(), col, bx, cur,
-                                        fromSmem));
-      else if (auto mb = dyn_cast<MapBinaryOp>(d))
+      if (auto mu = dyn_cast<MapUnaryOp>(d)) {
+        if (MapUnaryOp squareRoot = reciprocalSqrtOperand(mu))
+          res = emitScalarUnary(
+              b, loc, "rsqrt",
+              emitAtCol(b, loc, squareRoot.getInput(), col, bx, cur,
+                        fromSmem));
+        else
+          res = emitScalarUnary(b, loc, mu.getFn(),
+                                emitAtCol(b, loc, mu.getInput(), col, bx, cur,
+                                          fromSmem));
+      } else if (auto mb = dyn_cast<MapBinaryOp>(d))
         res = emitScalarBinary(
             b, loc, mb.getFn(),
             emitAtCol(b, loc, mb.getLhs(), col, bx, cur, fromSmem),
