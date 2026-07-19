@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 import intentir.backend.compile as backend_compile
-import intentir.backend.pipeline as backend_pipeline
+import intentir.backend.cuda.pipeline as backend_pipeline
+import intentir.backend.pipeline as legacy_backend_pipeline
 from intentir.backend.pipeline import (
     LoweredProgram,
     execute_cuda_artifact,
@@ -18,6 +19,19 @@ from intentir.backend.schedules import ElementwiseSchedule, ScheduleDecision
 
 _SOURCE = "module { func.func @f() { return } }\n"
 _SPECIALIZED = "module { gpu.launch blocks(%c1, %c1, %c1) threads(%c1, %c1, %c1) }\n"
+
+
+def test_flat_pipeline_import_remains_a_compatibility_alias() -> None:
+    assert legacy_backend_pipeline.LoweredProgram is backend_pipeline.LoweredProgram
+    assert legacy_backend_pipeline.lower_to_cuda is backend_pipeline.lower_to_cuda
+    assert (
+        legacy_backend_pipeline.lower_function_to_cuda
+        is backend_pipeline.lower_function_to_cuda
+    )
+    assert (
+        legacy_backend_pipeline.execute_cuda_artifact
+        is backend_pipeline.execute_cuda_artifact
+    )
 
 
 def _kernel(*, cubin: bytes = b"\x7fELFfake") -> backend_compile.CompiledKernel:
