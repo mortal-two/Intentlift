@@ -65,6 +65,32 @@ def _flat_fn(name: str) -> IntentFunction:
     })
 
 
+def _broadcast_binary_fn(
+    name: str,
+    operand_shape: list[int],
+    output_shape: list[int],
+) -> IntentFunction:
+    return IntentFunction.from_json({
+        "intent_function": {
+            "name": name,
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": output_shape},
+                {"name": "row", "dtype": "f32", "shape": operand_shape},
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": output_shape}
+            ],
+            "body": [{
+                "op": "map_binary",
+                "result": "Y",
+                "operands": ["X", "row"],
+                "attrs": {"fn": "mul"},
+                "type": {"dtype": "f32", "shape": output_shape},
+            }],
+        }
+    })
+
+
 def _intent_opt(mlir: str, *passes: str) -> str:
     p = subprocess.run([INTENT_OPT, *passes], input=mlir, capture_output=True,
                        text=True)
@@ -92,6 +118,66 @@ def test_emit_module_sanitizes_function_symbol(
     mlir = emit_module(_flat_fn(raw_name), {})
     assert f"func.func @{symbol}(" in mlir
     assert mlir == emit_module(_flat_fn(raw_name), {})  # stable across emissions
+
+
+def test_emit_broadcast_keeps_existing_leading_singleton_axis() -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(
+        _broadcast_binary_fn("existing_leading_axis", [1, 8], [4, 8]),
+        {},
+        broadcast_axes={"Y": {"row": (0,)}},
+    )
+
+    assert "tensor.expand_shape %row" not in mlir
+    assert "tensor<1x8xf32>) -> tensor<4x8xf32>" in mlir
+
+
+def test_emit_broadcast_supports_mixed_existing_and_missing_axes() -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(
+        _broadcast_binary_fn("mixed_broadcast_axes", [4, 1], [3, 4, 8]),
+        {},
+        broadcast_axes={"Y": {"row": (0, 2)}},
+    )
+
+    assert "tensor.expand_shape %row" in mlir
+    assert "output_shape [1, 4, 1]" in mlir
+    assert "tensor<1x4x1xf32>) -> tensor<3x4x8xf32>" in mlir
+
+
+def test_emit_select_keeps_existing_condition_broadcast_axis() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "select_existing_broadcast_axis",
+            "inputs": [
+                {"name": "cond", "dtype": "i1", "shape": [4, 1]},
+                {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                {"name": "Y", "dtype": "f32", "shape": [4, 8]},
+            ],
+            "outputs": [
+                {"name": "out", "dtype": "f32", "shape": [4, 8]}
+            ],
+            "body": [{
+                "op": "select",
+                "result": "out",
+                "operands": ["cond", "X", "Y"],
+                "attrs": {},
+                "type": {"dtype": "f32", "shape": [4, 8]},
+            }],
+        }
+    })
+    mlir = emit_module(
+        fn,
+        {},
+        broadcast_axes={"out": {"cond": (1,)}},
+    )
+
+    assert "tensor.expand_shape %cond" not in mlir
+    assert "tensor<4x1xi1>, tensor<4x8xf32>, tensor<4x8xf32>" in mlir
 
 
 @_needs_opt

@@ -292,6 +292,116 @@ def test_cuda_lower_materializes_boundary_broadcast_axes(
     assert "output_shape [1, 5]" in observed["source"]
 
 
+def test_cuda_lower_reuses_existing_singleton_broadcast_axis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "gate_cuda_existing_singleton",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "row", "dtype": "f32", "shape": [4, 1]},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 8]}
+                ],
+                "body": [
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["X", "row"],
+                        "attrs": {"fn": "mul"},
+                        "type": {"dtype": "f32", "shape": [4, 8]},
+                    }
+                ],
+            }
+        }
+    )
+    archive = SemanticArchive(
+        intent.name,
+        intent,
+        {"n0": "body[0]"},
+        Boundary(
+            broadcasts=[BroadcastSpec("n0", "row", [1])],
+            output_mappings=[OutputMapping("Y", "Y", "n0")],
+        ),
+    )
+    observed: dict[str, str] = {}
+
+    def fake_lower(source: str, **_kwargs):
+        observed["source"] = source
+        return object()
+
+    monkeypatch.setattr(cuda_gate, "lower_to_cuda", fake_lower)
+    lowered = CudaLoweringRunner().lower(
+        CudaLoweringSpec(
+            GateIntentBundle(
+                intent,
+                {},
+                {"X": "X", "row": "row"},
+                {"Y": "Y"},
+                semantic_archive=archive,
+            )
+        )
+    )
+
+    assert lowered.broadcast_consumer_count == 1
+    assert "tensor.expand_shape %row" not in observed["source"]
+    assert "tensor<4x1xf32>) -> tensor<4x8xf32>" in observed["source"]
+
+
+def test_cuda_lower_rejects_non_singleton_declared_broadcast_axis() -> None:
+    intent = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "gate_cuda_invalid_existing_broadcast",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                    {"name": "row", "dtype": "f32", "shape": [4, 8]},
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [4, 8]}
+                ],
+                "body": [
+                    {
+                        "op": "map_binary",
+                        "result": "Y",
+                        "operands": ["X", "row"],
+                        "attrs": {"fn": "mul"},
+                        "type": {"dtype": "f32", "shape": [4, 8]},
+                    }
+                ],
+            }
+        }
+    )
+    archive = SemanticArchive(
+        intent.name,
+        intent,
+        {"n0": "body[0]"},
+        Boundary(
+            broadcasts=[BroadcastSpec("n0", "row", [1])],
+            output_mappings=[OutputMapping("Y", "Y", "n0")],
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="existing broadcast dimensions must be size one",
+    ):
+        CudaLoweringRunner().lower(
+            CudaLoweringSpec(
+                GateIntentBundle(
+                    intent,
+                    {},
+                    {"X": "X", "row": "row"},
+                    {"Y": "Y"},
+                    semantic_archive=archive,
+                )
+            )
+        )
+
+
 class _ExpectedRunner:
     def __init__(self, outputs: dict[str, np.ndarray]) -> None:
         self.outputs = outputs

@@ -429,17 +429,30 @@ def _broadcast_checked(
     return result
 
 
-def _insert_broadcast_axes(
+def _broadcast_projection(
     shape: list[int] | None,
     axes: Sequence[int],
-) -> list[int] | None:
-    """Insert semantic size-1 broadcast axes into one concrete shape."""
+    target_shape: Sequence[int] | None = None,
+) -> tuple[list[int] | None, tuple[int, ...]]:
+    """Project one operand onto the consumer rank using Layer-B axes.
+
+    A broadcast axis may already exist as a size-one dimension (``[M, 1]``
+    broadcast over axis 1) or may be absent from a lower-rank operand
+    (``[N]`` broadcast over axis 0 into ``[M, N]``).  Only the latter case
+    requires ``tensor.expand_shape`` rank insertion.  When a consumer shape is
+    available, preserve the operand dimensions in order and allow dimensions
+    to be omitted only at declared broadcast axes.
+    """
 
     if shape is None:
-        return None
+        return None, ()
     if not axes:
-        return list(shape)
-    target_rank = len(shape) + len(axes)
+        return list(shape), ()
+    target_rank = (
+        len(target_shape)
+        if target_shape is not None
+        else len(shape) + len(axes)
+    )
     normalized: list[int] = []
     for raw_axis in axes:
         if isinstance(raw_axis, bool) or not isinstance(raw_axis, int):
@@ -454,9 +467,86 @@ def _insert_broadcast_axes(
         normalized.append(axis)
     if len(set(normalized)) != len(normalized):
         raise ValueError("broadcast axes must be unique")
-    inserted = set(normalized)
-    source = iter(shape)
-    return [1 if index in inserted else next(source) for index in range(target_rank)]
+
+    if target_shape is None:
+        inserted = set(normalized)
+        source = iter(shape)
+        return (
+            [
+                1 if index in inserted else next(source)
+                for index in range(target_rank)
+            ],
+            tuple(sorted(inserted)),
+        )
+
+    target = list(target_shape)
+    if len(shape) > target_rank:
+        raise ValueError(
+            f"broadcast axes {list(axes)} cannot project rank {len(shape)} "
+            f"operand to consumer rank {target_rank}"
+        )
+    axis_set = set(normalized)
+    memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
+
+    def align(source_index: int, target_index: int) -> tuple[int, ...] | None:
+        key = (source_index, target_index)
+        if key in memo:
+            return memo[key]
+        if target_index == target_rank:
+            result = () if source_index == len(shape) else None
+            memo[key] = result
+            return result
+
+        if target_index in axis_set:
+            # Prefer retaining an already-present singleton at the same target
+            # position.  If that cannot complete the alignment, treat this
+            # declared broadcast axis as the missing rank dimension.
+            if source_index < len(shape) and shape[source_index] == 1:
+                suffix = align(source_index + 1, target_index + 1)
+                if suffix is not None:
+                    memo[key] = suffix
+                    return suffix
+            suffix = align(source_index, target_index + 1)
+            if suffix is not None:
+                result = (target_index, *suffix)
+                memo[key] = result
+                return result
+        elif (
+            source_index < len(shape)
+            and shape[source_index] == target[target_index]
+        ):
+            suffix = align(source_index + 1, target_index + 1)
+            if suffix is not None:
+                memo[key] = suffix
+                return suffix
+
+        memo[key] = None
+        return None
+
+    inserted_axes = align(0, 0)
+    if inserted_axes is None:
+        raise ValueError(
+            f"operand shape {shape} cannot align with consumer shape {target} "
+            f"using broadcast axes {list(axes)}; existing broadcast "
+            "dimensions must be size one and missing dimensions must be "
+            "declared broadcast axes"
+        )
+    projected = [
+        1 if index in axis_set else target_extent
+        for index, target_extent in enumerate(target)
+    ]
+    return projected, inserted_axes
+
+
+def _insert_broadcast_axes(
+    shape: list[int] | None,
+    axes: Sequence[int],
+    target_shape: Sequence[int] | None = None,
+) -> list[int] | None:
+    projected, _inserted_axes = _broadcast_projection(
+        shape, axes, target_shape
+    )
+    return projected
 
 
 def _op_broadcast_axes(
@@ -466,6 +556,38 @@ def _op_broadcast_axes(
     if broadcast_axes is None or not isinstance(op.result, str):
         return {}
     return broadcast_axes.get(op.result, {})
+
+
+def _op_declared_shape(
+    op: IntentOp,
+    fold: int,
+    extents: dict[str, int] | None,
+) -> list[int] | None:
+    if not isinstance(op.type, dict) or not isinstance(
+        op.type.get("shape"), list
+    ):
+        return None
+    return _resolve(op.type["shape"], extents or {})[fold:]
+
+
+def _op_target_shape(
+    op: IntentOp,
+    env: Mapping[str, list[int]],
+    fold: int,
+    extents: dict[str, int] | None,
+) -> list[int] | None:
+    declared = _op_declared_shape(op, fold, extents)
+    constrained = env.get(op.result) if isinstance(op.result, str) else None
+    if (
+        declared is not None
+        and constrained is not None
+        and declared != constrained
+    ):
+        raise ValueError(
+            f"op result {op.result!r} declared shape {declared} conflicts "
+            f"with consumer/output constraint {constrained}"
+        )
+    return declared if declared is not None else constrained
 
 
 def _infer_op(
@@ -583,10 +705,21 @@ def _infer_op(
         a, b = op.operands
         axes = _op_broadcast_axes(op, broadcast_axes)
         combine = _broadcast_checked if axes else _broadcast
-        return combine(
-            _insert_broadcast_axes(env.get(a), axes.get(a, ())),
-            _insert_broadcast_axes(env.get(b), axes.get(b, ())),
+        declared = _op_target_shape(op, env, fold, extents)
+        inferred = combine(
+            _insert_broadcast_axes(
+                env.get(a), axes.get(a, ()), declared
+            ),
+            _insert_broadcast_axes(
+                env.get(b), axes.get(b, ()), declared
+            ),
         )
+        if declared is not None and axes and inferred != declared:
+            raise ValueError(
+                f"map_binary result {op.result!r} inferred shape {inferred} "
+                f"conflicts with declared shape {declared}"
+            )
+        return inferred
     if op.op == "gather":
         d, idx = op.operands
         if d not in env or idx not in env:
@@ -621,13 +754,26 @@ def _infer_op(
         c, x, y = op.operands
         axes = _op_broadcast_axes(op, broadcast_axes)
         combine = _broadcast_checked if axes else _broadcast
-        return combine(
+        declared = _op_target_shape(op, env, fold, extents)
+        inferred = combine(
             combine(
-                _insert_broadcast_axes(env.get(c), axes.get(c, ())),
-                _insert_broadcast_axes(env.get(x), axes.get(x, ())),
+                _insert_broadcast_axes(
+                    env.get(c), axes.get(c, ()), declared
+                ),
+                _insert_broadcast_axes(
+                    env.get(x), axes.get(x, ()), declared
+                ),
             ),
-            _insert_broadcast_axes(env.get(y), axes.get(y, ())),
+            _insert_broadcast_axes(
+                env.get(y), axes.get(y, ()), declared
+            ),
         )
+        if declared is not None and axes and inferred != declared:
+            raise ValueError(
+                f"select result {op.result!r} inferred shape {inferred} "
+                f"conflicts with declared shape {declared}"
+            )
+        return inferred
     if op.op == "concat":
         if any(o not in env for o in op.operands):
             return None
@@ -1100,20 +1246,21 @@ class _Printer:
         env: dict[str, list[int]],
         axes: Sequence[int],
         indent: str,
+        consumer_shape: Sequence[int] | None = None,
     ) -> tuple[str, str]:
         source_shape = env[name]
-        target_shape = _insert_broadcast_axes(source_shape, axes)
+        target_shape, inserted_axes = _broadcast_projection(
+            source_shape, axes, consumer_shape
+        )
         assert target_shape is not None
         source_type = self._ttn(name, env)
         target_type = self._ttn_shape(name, target_shape)
         # Rank-0 tensors already broadcast through an empty affine input map;
         # no tensor.expand_shape is needed for explicit scalar axes.
-        if not axes or not source_shape:
+        if not axes or not source_shape or target_shape == source_shape:
             return self.ssa[name], source_type
 
-        inserted = {
-            axis if axis >= 0 else axis + len(target_shape) for axis in axes
-        }
+        inserted = set(inserted_axes)
         source_positions = [
             index for index in range(len(target_shape)) if index not in inserted
         ]
@@ -1310,10 +1457,18 @@ class _Printer:
         elif op.op == "map_binary":
             axes = _op_broadcast_axes(op, self.broadcast_axes)
             x, tx = self._broadcast_operand(
-                op.operands[0], env, axes.get(op.operands[0], ()), indent
+                op.operands[0],
+                env,
+                axes.get(op.operands[0], ()),
+                indent,
+                env[op.result],
             )
             y, ty = self._broadcast_operand(
-                op.operands[1], env, axes.get(op.operands[1], ()), indent
+                op.operands[1],
+                env,
+                axes.get(op.operands[1], ()),
+                indent,
+                env[op.result],
             )
             self.lines.append(
                 f'{indent}{r} = intent.map_binary {x}, {y} {{fn = "{a["fn"]}"}} : '
@@ -1321,13 +1476,25 @@ class _Printer:
         elif op.op == "select":
             axes = _op_broadcast_axes(op, self.broadcast_axes)
             c, tc = self._broadcast_operand(
-                op.operands[0], env, axes.get(op.operands[0], ()), indent
+                op.operands[0],
+                env,
+                axes.get(op.operands[0], ()),
+                indent,
+                env[op.result],
             )
             x, tx = self._broadcast_operand(
-                op.operands[1], env, axes.get(op.operands[1], ()), indent
+                op.operands[1],
+                env,
+                axes.get(op.operands[1], ()),
+                indent,
+                env[op.result],
             )
             y, ty = self._broadcast_operand(
-                op.operands[2], env, axes.get(op.operands[2], ()), indent
+                op.operands[2],
+                env,
+                axes.get(op.operands[2], ()),
+                indent,
+                env[op.result],
             )
             self.lines.append(
                 f'{indent}{r} = intent.select {c}, {x}, {y} : '
