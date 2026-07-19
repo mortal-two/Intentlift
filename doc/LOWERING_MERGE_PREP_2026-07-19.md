@@ -53,6 +53,14 @@ lowering pass 的隐式输入。反过来，paper receipt 也不得成为 Gate l
 5. `936f573 backend: add verification-neutral CUDA lowering bridge`
 6. `be7dc34 test: exercise neutral generic and direct CUDA lowering`
 7. `3e417e8 test: isolate xformers split-k import shims`
+8. `9886391 backend: preserve Layer-C and runtime dispatch contracts`
+9. `9cb0a10 test: cover neutral schedules and runtime contracts`
+10. `01b4093 backend: preserve neutral schedule variant planning`
+11. `5d12cf3 test: cover neutral variant planning and ablation`
+12. `de1e41f backend: preserve variant bundles and guarded dispatch`
+13. `ce46632 test: cover variant bundles fallback and dispatch`
+
+中间两次文档提交只记录合并边界与回归结果，不含编译器逻辑。
 
 ## 保留的后端能力
 
@@ -82,6 +90,10 @@ lowering pass 的隐式输入。反过来，paper receipt 也不得成为 Gate l
 - `intentir.backend.pipeline.lower_to_cuda`：generic/direct 自动选择与真实编译；
 - `intentir.backend.pipeline.lower_function_to_cuda`：供 Gate adapter 直接提交
   已接受的 `IntentFunction`。
+- `intentir.backend.layer_c`、`variant_planner`：Layer-C 参数解析、候选枚举、
+  backend legality、constraints-on/off 消融；
+- `intentir.backend.runtime_contract`、`variant_manifest`、`cuda_dispatch`：
+  runtime guard、同 bundle conservative fallback、预调优顺序、prepared dispatch。
 
 ### 中立 API
 
@@ -152,7 +164,8 @@ paper verifier。
 - 发现并修复 row-reduction 中临时 `ValueRange` 悬空引用：旧 Debug 构建会掩盖，
   `-O2` 下会在 `memref.store` 构造时崩溃；
 - MLIR lit：109/109 通过；
-- frontend/backend/orchestrate/neutral bridge：55 passed，1 skipped；
+- frontend/backend/orchestrate/neutral bridge 及 variant/dispatch：
+  104 passed，1 skipped；
 - xFormers split-K CUDA PK：10/10 通过；
 - 中立 generic 路径真实生成 `add_kernel` ELF cubin；
 - 中立 direct elementwise 路径真实完成 structural probe、specialized MLIR、
@@ -160,10 +173,11 @@ paper verifier。
 
 ## 下一合并阶段
 
-1. 在 Gate 工作树自身提交或隔离现有未提交修改后，把上述六个提交合入；
+1. 在 Gate 工作树自身提交或隔离现有未提交修改后，把上述合并栈合入；
 2. 实现 `GateIntentBundle` adapter，并检查 loop body 内嵌 Layer-B，不能只遍历
    顶层 `fn.body`；
 3. 实现 `CudaLoweringRunner`，覆盖多输出、alias、writeback 和 side effect；
-4. 把现有 paper-scoped schedule/variant/dispatch 模块迁到中立 backend 命名空间，
-   保留 guard、fallback、bundle 和性能消融，不迁移 paper verdict；
+4. 继续迁移尚未中立化的 `RowSchedule`、`ElementwiseSchedule`、各 specialized
+   materializer 和 Linear multi-cubin bundle；guard、fallback、variant planner、
+   manifest 与 prepared dispatch 已进入中立 backend；
 5. 分层运行全部 lit、Python lowering、CUDA PK 与 performance regression。
