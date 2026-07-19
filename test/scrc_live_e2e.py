@@ -1954,6 +1954,17 @@ def run_case(
                     cuda_only_fast_path=cuda_only_fast_path,
                 ),
             )
+        except Exception as exc:
+            report["gate2_suite"] = {
+                "status": "setup_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            _progress(
+                "gate2_complete",
+                kernel=case.name,
+                status="setup_failed",
+            )
+            return finish(4)
         finally:
             _record_stage_ms(stage_ms, "gate2", gate2_started)
         report["gate2_suite"] = _gate2_suite_evidence_json(gate2_suite)
@@ -1976,6 +1987,17 @@ def run_case(
                 cuda_only_fast_path=cuda_only_fast_path,
             ),
         )
+    except Exception as exc:
+        report["gate2"] = {
+            "status": "setup_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        _progress(
+            "gate2_complete",
+            kernel=case.name,
+            status="setup_failed",
+        )
+        return finish(4)
     finally:
         _record_stage_ms(stage_ms, "gate2", gate2_started)
     report["gate2"] = _gate2_evidence_json(gate2)
