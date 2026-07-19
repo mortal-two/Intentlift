@@ -297,10 +297,10 @@
       "suite": "flash_attention",
       "symbol": "_bwd_kernel_one_col_block",
       "mechanisms": ["attention_backward"],
-      "source_alignment": "family_only",
-      "lowering": {"status": "exact_variant_gap", "fast_path_id": null, "candidate_fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "selection": "unavailable", "generic_fallback": "unavailable", "cuda_tests": [], "family_tests": ["python/tests/test_flash_bwd_pk.py::test_flash_bwd_pk", "python/tests/test_flash_bwd_dualmode_pk.py::test_flash_bwd_dualmode_gate"], "lit_tests": []},
-      "performance": {"evidence": "none", "outcome": "not_measured"},
-      "blockers": ["exact ATOMIC_ADD=false D64 BLOCK_M128 BLOCK_N64 one-column-block graph and ABI are not recognized or executed"]
+      "source_alignment": "upstream_compared_handwritten_mlir",
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "candidate_fast_path_id": null, "selection": "explicit_pass", "generic_fallback": "unavailable", "cuda_tests": ["python/tests/test_flash_bwd_one_col_pk.py::test_flash_bwd_one_col_exact_symbol_lowering"], "family_tests": ["python/tests/test_flash_bwd_pk.py::test_flash_bwd_pk", "python/tests/test_flash_bwd_dualmode_pk.py::test_flash_bwd_dualmode_gate"], "lit_tests": []},
+      "performance": {"evidence": "correctness_only", "outcome": "not_measured"},
+      "blockers": ["exact symbol/config execution is closed; live extraction, automatic selection binding, generic fallback, and performance remain open"]
     },
     {
       "ordinal": 21,
@@ -401,16 +401,16 @@
   },
   "rollup": {
     "exact_capture_alignment": 20,
-    "device_execution_proven": 27,
+    "device_execution_proven": 28,
     "automatic_selection_executed": 20,
-    "explicit_pass_execution": 7,
-    "exact_variant_gaps": 1,
+    "explicit_pass_execution": 8,
+    "exact_variant_gaps": 0,
     "performance": {
       "archived_formal_pass": 16,
       "archived_formal_below_threshold": 4,
       "runtime_parity_guard": 6,
-      "correctness_only": 1,
-      "none": 1
+      "correctness_only": 2,
+      "none": 0
     }
   }
 }
