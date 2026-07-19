@@ -196,3 +196,159 @@ def test_generic_odd_tanh_is_self_contained_and_executes() -> None:
     assert program.selection.pipeline_kind == "generic"
     assert torch.isfinite(output).all()
     torch.testing.assert_close(output, torch.tanh(x), rtol=3.0e-6, atol=3.0e-6)
+
+
+@pytest.mark.parametrize(
+    ("operation", "atol"),
+    (("abs", 0.0), ("atan", 5.0e-7), ("erf", 7.0e-7)),
+)
+def test_generic_unary_math_avoids_libdevice_and_matches_torch(
+    operation: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @{operation}(%x: tensor<4x32xf32>) -> tensor<4x32xf32> {{
+    %y = intent.map_unary %x {{fn = "{operation}"}}
+      : (tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %y : tensor<4x32xf32>
+  }}
+}}
+"""
+    x = torch.linspace(
+        -8.0,
+        8.0,
+        4 * 32,
+        device="cuda",
+        dtype=torch.float32,
+    ).reshape(4, 32)
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+
+    assert program.selection.pipeline_kind == "generic"
+    assert torch.isfinite(output).all()
+    torch.testing.assert_close(
+        output,
+        getattr(torch, operation)(x),
+        rtol=1.0e-6,
+        atol=atol,
+    )
+
+
+def test_generic_atan2_avoids_libdevice_across_all_quadrants() -> None:
+    source = """
+module {
+  func.func @atan2(
+      %y: tensor<4x32xf32>, %x: tensor<4x32xf32>)
+      -> tensor<4x32xf32> {
+    %z = intent.map_binary %y, %x {fn = "atan2"}
+      : (tensor<4x32xf32>, tensor<4x32xf32>) -> tensor<4x32xf32>
+    return %z : tensor<4x32xf32>
+  }
+}
+"""
+    positive = torch.linspace(
+        0.125,
+        5.0,
+        32,
+        device="cuda",
+        dtype=torch.float32,
+    )
+    y = torch.stack((positive, positive.flip(0), -positive, -positive.flip(0)))
+    x = torch.stack((positive.flip(0), -positive, positive.flip(0), -positive))
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, source, {"y": y, "x": x})["out0"]
+
+    assert torch.isfinite(output).all()
+    torch.testing.assert_close(
+        output,
+        torch.atan2(y, x),
+        rtol=1.0e-6,
+        atol=7.0e-7,
+    )
+
+
+@pytest.mark.parametrize(
+    ("operation", "atol"),
+    (("abs", 0.0), ("atan", 5.0e-7), ("erf", 7.0e-7)),
+)
+def test_generic_unary_math_preserves_special_values(
+    operation: str,
+    atol: float,
+) -> None:
+    source = f"""
+module {{
+  func.func @{operation}(%x: tensor<1x8xf32>) -> tensor<1x8xf32> {{
+    %y = intent.map_unary %x {{fn = "{operation}"}}
+      : (tensor<1x8xf32>) -> tensor<1x8xf32>
+    return %y : tensor<1x8xf32>
+  }}
+}}
+"""
+    x = torch.tensor(
+        [[-torch.inf, -8.0, -0.0, 0.0, 8.0, torch.inf, torch.nan, 1.0]],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, source, {"x": x})["out0"]
+    expected = getattr(torch, operation)(x)
+
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=1.0e-6,
+        atol=atol,
+        equal_nan=True,
+    )
+    assert torch.equal(
+        torch.signbit(output[:, 2:4]),
+        torch.signbit(expected[:, 2:4]),
+    )
+
+
+def test_generic_atan2_preserves_zero_infinity_and_nan_semantics() -> None:
+    source = """
+module {
+  func.func @atan2_special(
+      %y: tensor<2x8xf32>, %x: tensor<2x8xf32>)
+      -> tensor<2x8xf32> {
+    %z = intent.map_binary %y, %x {fn = "atan2"}
+      : (tensor<2x8xf32>, tensor<2x8xf32>) -> tensor<2x8xf32>
+    return %z : tensor<2x8xf32>
+  }
+}
+"""
+    y = torch.tensor(
+        [
+            [0.0, -0.0, 0.0, -0.0, 1.0, -1.0, torch.inf, torch.inf],
+            [-torch.inf, -torch.inf, torch.inf, -torch.inf, 1.0, -1.0, torch.nan, 1.0],
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    x = torch.tensor(
+        [
+            [0.0, 0.0, -0.0, -0.0, 0.0, 0.0, torch.inf, -torch.inf],
+            [torch.inf, -torch.inf, 1.0, 1.0, torch.inf, -torch.inf, 1.0, torch.nan],
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    program = lower_to_cuda(source, allow_specialized=False)
+
+    output = execute_cuda_artifact(program, source, {"y": y, "x": x})["out0"]
+    expected = torch.atan2(y, x)
+
+    torch.testing.assert_close(
+        output,
+        expected,
+        rtol=1.0e-6,
+        atol=7.0e-7,
+        equal_nan=True,
+    )
+    zero = expected == 0.0
+    assert torch.equal(torch.signbit(output[zero]), torch.signbit(expected[zero]))
