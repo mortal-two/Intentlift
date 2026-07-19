@@ -382,6 +382,98 @@ static Value emitAffineExpr(OpBuilder &b, Location loc, AffineExpr e,
 /// `.sum()` the library leaves separate.
 enum class ResultRole { RowOut, PerRowOut, PerRowVectorOut, AtomicOut };
 
+/// Recognize only the canonical, numerically-stable mixed-precision softmax
+/// graph.  This is intentionally narrower than the general row-reduction
+/// matcher: accepting one exact graph lets the lowering use f16/bf16 for
+/// storage while keeping every arithmetic and collective value in f32 without
+/// accidentally changing the semantics of other half-typed reductions.
+static Type exactHalfSoftmaxStorageType(func::FuncOp fn) {
+  auto fty = fn.getFunctionType();
+  if (fty.getNumInputs() != 1 || fty.getNumResults() != 1 ||
+      fn->hasAttr("intent.inplace") || !fn.getBody().hasOneBlock())
+    return {};
+
+  auto inputTy = dyn_cast<RankedTensorType>(fty.getInput(0));
+  auto outputTy = dyn_cast<RankedTensorType>(fty.getResult(0));
+  if (!inputTy || !outputTy || !inputTy.hasStaticShape() ||
+      !outputTy.hasStaticShape() || inputTy.getRank() != 2 ||
+      outputTy.getRank() != 2 || inputTy.getShape() != outputTy.getShape() ||
+      inputTy.getDimSize(0) <= 0 || inputTy.getDimSize(1) <= 0 ||
+      inputTy.getElementType() != outputTy.getElementType() ||
+      !isa<Float16Type, BFloat16Type>(inputTy.getElementType()))
+    return {};
+
+  Block &body = fn.getBody().front();
+  auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
+  if (!ret || ret.getNumOperands() != 1 ||
+      std::distance(body.begin(), body.end()) != 6)
+    return {};
+
+  auto div = ret.getOperand(0).getDefiningOp<MapBinaryOp>();
+  if (!div || div.getFn() != "div")
+    return {};
+  auto exponent = div.getLhs().getDefiningOp<MapUnaryOp>();
+  auto sum = div.getRhs().getDefiningOp<ReduceOp>();
+  if (!exponent || exponent.getFn() != "exp" || !sum ||
+      sum.getFn() != "sum" || sum.getInput() != exponent.getResult() ||
+      sum.getAssoc() != "float_nondeterministic")
+    return {};
+  auto subtract = exponent.getInput().getDefiningOp<MapBinaryOp>();
+  if (!subtract || subtract.getFn() != "sub" ||
+      subtract.getLhs() != fn.getArgument(0))
+    return {};
+  auto maximum = subtract.getRhs().getDefiningOp<ReduceOp>();
+  if (!maximum || maximum.getFn() != "max" ||
+      maximum.getInput() != fn.getArgument(0) ||
+      maximum.getAssoc() != "associative")
+    return {};
+
+  auto isAxisOne = [](ReduceOp reduce) {
+    if (reduce.getAxes().size() != 1)
+      return false;
+    auto axis = dyn_cast<IntegerAttr>(reduce.getAxes()[0]);
+    return axis && axis.getInt() == 1;
+  };
+  if (!isAxisOne(maximum) || !isAxisOne(sum))
+    return {};
+
+  Type storageType = inputTy.getElementType();
+  int64_t M = inputTy.getDimSize(0);
+  int64_t N = inputTy.getDimSize(1);
+  auto hasTensorType = [&](Value value, ArrayRef<int64_t> shape) {
+    auto type = dyn_cast<RankedTensorType>(value.getType());
+    return type && type.hasStaticShape() && type.getShape() == shape &&
+           type.getElementType() == storageType;
+  };
+  if (!hasTensorType(maximum.getResult(), {M, 1}) ||
+      !hasTensorType(subtract.getResult(), {M, N}) ||
+      !hasTensorType(exponent.getResult(), {M, N}) ||
+      !hasTensorType(sum.getResult(), {M, 1}) ||
+      !hasTensorType(div.getResult(), {M, N}))
+    return {};
+
+  auto hasExactUsers = [](Value value, ArrayRef<Operation *> expected) {
+    SmallVector<Operation *> actual(value.getUsers().begin(),
+                                    value.getUsers().end());
+    if (actual.size() != expected.size())
+      return false;
+    return llvm::all_of(expected, [&](Operation *operation) {
+      return llvm::is_contained(actual, operation);
+    });
+  };
+  if (!hasExactUsers(fn.getArgument(0),
+                     {maximum.getOperation(), subtract.getOperation()}) ||
+      !hasExactUsers(maximum.getResult(), {subtract.getOperation()}) ||
+      !hasExactUsers(subtract.getResult(), {exponent.getOperation()}) ||
+      !hasExactUsers(exponent.getResult(),
+                     {sum.getOperation(), div.getOperation()}) ||
+      !hasExactUsers(sum.getResult(), {div.getOperation()}) ||
+      !hasExactUsers(div.getResult(), {ret.getOperation()}))
+    return {};
+
+  return storageType;
+}
+
 /// One func's row-reduction lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
 struct RowReductionLowering {
@@ -423,7 +515,9 @@ struct RowReductionLowering {
   // in the retyped memref<Mx(N/4)xvector<4xf32>>), staying fully coalesced.
   bool useVec4 = false;
   int64_t numVecTiles = 0;
-  Type f32;
+  Type f32;                         // compute type
+  Type storageType;                 // f32 generally; f16/bf16 for exact softmax
+  bool halfSoftmax = false;
   Type rowIntTy;                     // element type of a RowInt [M] arg (Y), if any
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
@@ -644,6 +738,12 @@ struct RowReductionLowering {
     if (requestedVectorWidth != 0 && requestedVectorWidth != 1 &&
         requestedVectorWidth != 4)
       return failure();
+    f32 = Float32Type::get(fn.getContext());
+    storageType = f32;
+    if (Type halfStorage = exactHalfSoftmaxStorageType(fn)) {
+      halfSoftmax = true;
+      storageType = halfStorage;
+    }
     auto fty = fn.getFunctionType();
     unsigned nRes = fty.getNumResults();
     if (nRes < 1)
@@ -675,12 +775,12 @@ struct RowReductionLowering {
           return failure();
       }
     }
-    // Results are static f32, each per-row in M: a RowOut is rank-2 [M,N] (the
-    // full feature row); a per-row scalar output (Mean/RSTD, or flash's delta)
-    // is rank-2 [M,1] OR rank-1 [M]. Anchor M from every result's leading dim;
-    // anchor N from a RowOut if any. An all-PerRowOut func (e.g. flash
-    // _bwd_preprocess_do_o_dot: delta = sum(o*do, axis=1)) has no RowOut, so N
-    // is derived from a Row-shaped INPUT below.
+    // Results are normally static f32.  The one exception is the exact
+    // f16/bf16 softmax graph proven above: its public storage type remains half
+    // while this lowering's compute type is still f32.  A RowOut is rank-2
+    // [M,N] (the full feature row); a per-row scalar output (Mean/RSTD, or
+    // flash's delta) is rank-2 [M,1] OR rank-1 [M]. Anchor M from every result's
+    // leading dim and N from a RowOut if any.
     int64_t anchorM = -1, anchorN = -1;
     // First recognize the exact singleton rank-4 ABI before the general
     // rank-3 grouped-output logic.  Otherwise [1,1,M] would be misclassified as
@@ -740,7 +840,8 @@ struct RowReductionLowering {
       auto t = dyn_cast<RankedTensorType>(rt);
       if (!t || !t.hasStaticShape())
         return failure();
-      if (!isa<Float32Type>(t.getElementType()))
+      if (t.getElementType() != f32 &&
+          !(halfSoftmax && t.getElementType() == storageType))
         return failure();
       if (t.getRank() != 3)
         continue;
@@ -759,7 +860,6 @@ struct RowReductionLowering {
     }
     for (Type rt : fty.getResults()) {
       auto t = cast<RankedTensorType>(rt);
-      f32 = t.getElementType();
       int64_t rank = t.getRank();
       if (rank > 3)
         return failure();
@@ -955,8 +1055,10 @@ struct RowReductionLowering {
       // remain for a lowering with explicit axis roles.
       if (t.getElementType() == f32 && s.size() == 1 && s[0] == M && M == N)
         return failure();
-      if (t.getElementType() == f32 && s.size() == 2 && s[0] == M &&
-          s[1] == N)
+      bool isRowStorage = t.getElementType() == f32 ||
+                          (halfSoftmax &&
+                           t.getElementType() == storageType);
+      if (isRowStorage && s.size() == 2 && s[0] == M && s[1] == N)
         argRoles.push_back(Role::Row);
       else if (t.getElementType() == f32 && s.size() == 1 && s[0] == N)
         argRoles.push_back(Role::Col);
@@ -1037,9 +1139,10 @@ struct RowReductionLowering {
         Type outElem = rTy.getElementType();
         if (inElem != outElem)
           return failure();
-        // The manual scan-path tree supports the live sparsemax support-count
-        // reduction natively as i32 sum.  Other row reductions remain f32.
-        if (inElem != f32 &&
+        // The manual scan-path tree supports the sparsemax support-count
+        // reduction natively as i32 sum.  The exact half-softmax graph is the
+        // only other non-f32 source type; its emitted accumulator is f32.
+        if (inElem != f32 && !(halfSoftmax && inElem == storageType) &&
             (!inElem.isInteger(32) || r.getFn() != "sum"))
           return failure();
         reduces.push_back(r);
@@ -1178,7 +1281,10 @@ struct RowReductionLowering {
     // tiled paths have an equivalent integer implementation.
     if (scans.empty())
       for (ReduceOp r : reduces)
-        if (cast<RankedTensorType>(r.getInput().getType()).getElementType() != f32)
+        if (Type elementType =
+                cast<RankedTensorType>(r.getInput().getType()).getElementType();
+            elementType != f32 &&
+            !(halfSoftmax && elementType == storageType))
           return failure();
 
     // Validate every AtomicOut: its value must reach a cross-row reduce through
@@ -1227,6 +1333,12 @@ struct RowReductionLowering {
         }
       }
     }
+    // The mixed-precision implementation is deliberately the read-once
+    // register path.  The tiled/shared-cache and scan paths still model their
+    // frontier buffers in the source element type and therefore must not claim
+    // half-softmax support.
+    if (halfSoftmax && numTiles > 1)
+      return failure();
     // Multi-tile (tiled + smem-cached) path scope: exactly one per-row reduce,
     // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. The general
     // tiled multi-reduce case is out of M5 scope (its kernels are small-N /
@@ -3254,14 +3366,20 @@ struct RowReductionLowering {
       if (inplaceArg[j] >= 0)
         continue;
       ResultRole rr = outRoles[j];
+      Type outputElementType =
+          cast<RankedTensorType>(fn.getFunctionType().getResult(j))
+              .getElementType();
       if (rr == ResultRole::RowOut)
-        inTys.push_back(useVec4 ? rowVecMemref : MemRefType::get({M, N}, f32));
+        inTys.push_back(useVec4
+                            ? rowVecMemref
+                            : MemRefType::get({M, N}, outputElementType));
       else if (rr == ResultRole::PerRowOut)
-        inTys.push_back(MemRefType::get({M}, f32));
+        inTys.push_back(MemRefType::get({M}, outputElementType));
       else if (rr == ResultRole::PerRowVectorOut)
-        inTys.push_back(MemRefType::get({M, outVectorWidths[j]}, f32));
+        inTys.push_back(
+            MemRefType::get({M, outVectorWidths[j]}, outputElementType));
       else // AtomicOut: a rank-0 scalar accumulated across blocks (host pre-zeroes)
-        inTys.push_back(MemRefType::get({}, f32));
+        inTys.push_back(MemRefType::get({}, outputElementType));
     }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
@@ -3451,9 +3569,13 @@ struct RowReductionLowering {
                   b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{j});
           }
         } else {
-          for (int64_t k = 0; k < K; ++k)
-            vals[k] = b.create<memref::LoadOp>(loc, argMemref[arg],
-                                               ValueRange{bx, cols[k]});
+          for (int64_t k = 0; k < K; ++k) {
+            Value loaded = b.create<memref::LoadOp>(
+                loc, argMemref[arg], ValueRange{bx, cols[k]});
+            if (halfSoftmax)
+              loaded = b.create<arith::ExtFOp>(loc, f32, loaded);
+            vals[k] = loaded;
+          }
         }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Col && useVec4) {
@@ -3894,6 +4016,8 @@ struct RowReductionLowering {
                              << " has an unsupported scalar epilogue";
               return failure();
             }
+            if (halfSoftmax)
+              out = b.create<arith::TruncFOp>(loc, storageType, out);
             prepared.push_back(out);
           }
         }
