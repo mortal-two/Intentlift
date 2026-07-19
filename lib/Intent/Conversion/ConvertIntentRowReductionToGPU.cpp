@@ -500,6 +500,10 @@ struct RowReductionLowering {
   // collective with the reduction identity while loading a safe in-bounds
   // address.  This mode is restricted to statistic-only outputs.
   bool hasInactiveFeatureThreads = false;
+  // Canonical half softmax additionally supports a ragged final register tile.
+  // Every invalid per-thread column contributes the reduction identity and its
+  // output store is suppressed; all threads still execute every collective.
+  bool hasHalfFeatureTail = false;
   // Tiling: the per-thread feature strip of K columns is split into `numTiles`
   // tiles of `Kpt` columns each (K == Kpt * numTiles). numTiles==1 (K <=
   // tileColsMax) is the M1 register-tile path, emitted byte-identically.
@@ -1306,6 +1310,9 @@ struct RowReductionLowering {
       return failure();
     if (N % T == 0) {
       K = N / T;
+    } else if (halfSoftmax) {
+      hasHalfFeatureTail = true;
+      K = (N + T - 1) / T;
     } else if (T > N) {
       // Preserve a source schedule such as Flash D=64 / 4 warps.  Only
       // statistic outputs are legal: inactive lanes can contribute the exact
@@ -1619,8 +1626,10 @@ struct RowReductionLowering {
   /// Intent DAG and float-nondeterministic reduction policy.
   Value accumulateRegisterReduction(OpBuilder &b, Location loc, ReduceOp red,
                                     const ReduceInfo &info, Value acc,
-                                    unsigned k, Value featureLaneActive) {
+                                    unsigned k, Value featureLaneActive,
+                                    ArrayRef<Value> featureTileActive) {
     if (enableFmaFusion && !hasInactiveFeatureThreads &&
+        !hasHalfFeatureTail &&
         info.op == gpu::AllReduceOperation::ADD &&
         red.getAssoc() == "float_nondeterministic") {
       auto mul = red.getInput().getDefiningOp<MapBinaryOp>();
@@ -1632,10 +1641,12 @@ struct RowReductionLowering {
       }
     }
     Value term = emitAt(b, loc, red.getInput(), k);
-    if (hasInactiveFeatureThreads) {
+    Value active = hasHalfFeatureTail ? featureTileActive[k]
+                                      : featureLaneActive;
+    if (active) {
       Value identity = b.create<arith::ConstantOp>(
           loc, b.getF32FloatAttr(info.ident));
-      term = b.create<arith::SelectOp>(loc, featureLaneActive, term, identity);
+      term = b.create<arith::SelectOp>(loc, active, term, identity);
     }
     return combineScalar(b, loc, info.op, acc, term);
   }
@@ -3461,6 +3472,7 @@ struct RowReductionLowering {
     Value tx = launch.getThreadIds().x;
     rowIndex = bx;
     Value featureLaneActive;
+    SmallVector<Value> featureTileActive;
 
     SmallVector<Value> reduceScratch;
     if (reduceSharedBytes > 0) {
@@ -3510,6 +3522,22 @@ struct RowReductionLowering {
           Value cj = b.create<arith::ConstantIndexOp>(loc, j);
           cols[vt * 4 + j] = b.create<arith::AddIOp>(loc, base4, cj);
         }
+      }
+    } else if (hasHalfFeatureTail) {
+      // Each register position has its own tail predicate.  Invalid positions
+      // read a safe address so no speculative load can go out of bounds; their
+      // reduction term is replaced by the monoid identity below and the final
+      // store is guarded by the same predicate.
+      Value cN = b.create<arith::ConstantIndexOp>(loc, N);
+      Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+      featureTileActive.resize(K);
+      for (int64_t k = 0; k < K; ++k) {
+        Value off = b.create<arith::ConstantIndexOp>(loc, k * T);
+        Value logicalCol = b.create<arith::AddIOp>(loc, tx, off);
+        featureTileActive[k] = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, logicalCol, cN);
+        cols[k] = b.create<arith::SelectOp>(
+            loc, featureTileActive[k], logicalCol, c0);
       }
     } else if (hasInactiveFeatureThreads) {
       // Keep every launched lane in the collective while preventing the lanes
@@ -3687,7 +3715,8 @@ struct RowReductionLowering {
             b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
         for (int64_t k = 0; k < K; ++k)
           acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                            featureLaneActive);
+                                            featureLaneActive,
+                                            featureTileActive);
         auto allRed = b.create<gpu::AllReduceOp>(
             loc, acc, gpu::AllReduceOperationAttr::get(ctx, info.op),
             /*uniform=*/UnitAttr::get(ctx));
@@ -3704,7 +3733,8 @@ struct RowReductionLowering {
           b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
       for (int64_t k = 0; k < K; ++k)
         acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                          featureLaneActive);
+                                          featureLaneActive,
+                                          featureTileActive);
 
       // First level: every warp reduces its thread partial in five shuffles.
       Value warpAcc = acc;
@@ -3836,7 +3866,8 @@ struct RowReductionLowering {
             b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
         for (int64_t k = 0; k < K; ++k)
           acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                            featureLaneActive);
+                                            featureLaneActive,
+                                            featureTileActive);
         Value warpAcc = acc;
         for (int32_t delta = 1; delta < reduceWarpWidth; delta <<= 1) {
           Value other = b.create<gpu::ShuffleOp>(
@@ -4030,7 +4061,17 @@ struct RowReductionLowering {
             // reduction pass crash under -O2 even though debug builds passed.
             SmallVector<Value, 2> indices{
                 bx, useVec4 ? vecIdx[index] : cols[index]};
-            b.create<memref::StoreOp>(loc, prepared[index], outMems[j], indices);
+            if (hasHalfFeatureTail) {
+              auto ifOp = b.create<scf::IfOp>(
+                  loc, featureTileActive[index], /*withElseRegion=*/false);
+              OpBuilder::InsertionGuard guard(b);
+              b.setInsertionPointToStart(ifOp.thenBlock());
+              b.create<memref::StoreOp>(loc, prepared[index], outMems[j],
+                                        indices);
+            } else {
+              b.create<memref::StoreOp>(loc, prepared[index], outMems[j],
+                                        indices);
+            }
           }
         };
         if (Value write = conditionalWriteForAlias(j)) {
