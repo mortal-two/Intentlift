@@ -382,6 +382,10 @@ static Value emitAffineExpr(OpBuilder &b, Location loc, AffineExpr e,
 /// `.sum()` the library leaves separate.
 enum class ResultRole { RowOut, PerRowOut, PerRowVectorOut, AtomicOut };
 
+static bool isHalfStorageType(Type type) {
+  return isa<Float16Type, BFloat16Type>(type);
+}
+
 /// Recognize only the canonical, numerically-stable mixed-precision softmax
 /// graph.  This is intentionally narrower than the general row-reduction
 /// matcher: accepting one exact graph lets the lowering use f16/bf16 for
@@ -400,7 +404,7 @@ static Type exactHalfSoftmaxStorageType(func::FuncOp fn) {
       outputTy.getRank() != 2 || inputTy.getShape() != outputTy.getShape() ||
       inputTy.getDimSize(0) <= 0 || inputTy.getDimSize(1) <= 0 ||
       inputTy.getElementType() != outputTy.getElementType() ||
-      !isa<Float16Type, BFloat16Type>(inputTy.getElementType()))
+      !isHalfStorageType(inputTy.getElementType()))
     return {};
 
   Block &body = fn.getBody().front();
@@ -474,6 +478,55 @@ static Type exactHalfSoftmaxStorageType(func::FuncOp fn) {
   return storageType;
 }
 
+/// A mixed-precision row kernel may expose half storage at its ABI only when
+/// the Intent graph makes the f32 compute boundary explicit.  Requiring every
+/// use of the argument to be a shape-preserving half->f32 intent.cast prevents
+/// an unrelated half map/reduce graph from being silently promoted.
+static bool explicitlyPromotesHalfArgument(func::FuncOp fn, unsigned index) {
+  auto inputTy = dyn_cast<RankedTensorType>(fn.getFunctionType().getInput(index));
+  if (!inputTy || !inputTy.hasStaticShape() ||
+      !isHalfStorageType(inputTy.getElementType()) ||
+      !fn.getBody().hasOneBlock())
+    return false;
+  Value argument = fn.getArgument(index);
+  bool sawCast = false;
+  for (Operation *user : argument.getUsers()) {
+    auto castOp = dyn_cast<CastOp>(user);
+    auto resultTy = castOp
+                        ? dyn_cast<RankedTensorType>(castOp.getResult().getType())
+                        : RankedTensorType();
+    if (!castOp || castOp.getInput() != argument || !resultTy ||
+        !resultTy.hasStaticShape() ||
+        resultTy.getShape() != inputTy.getShape() ||
+        !isa<Float32Type>(resultTy.getElementType()))
+      return false;
+    sawCast = true;
+  }
+  return sawCast;
+}
+
+/// Symmetric ABI proof for a half result: the returned value must be a single
+/// shape-preserving f32->half intent.cast.  Statistics may remain f32 in other
+/// results (LayerNorm mean/rstd), but no implicit output demotion is inferred.
+static bool explicitlyDemotesHalfResult(func::FuncOp fn, unsigned index) {
+  auto outputTy =
+      dyn_cast<RankedTensorType>(fn.getFunctionType().getResult(index));
+  if (!outputTy || !outputTy.hasStaticShape() || outputTy.getRank() != 2 ||
+      !isHalfStorageType(outputTy.getElementType()) ||
+      !fn.getBody().hasOneBlock() || fn->hasAttr("intent.inplace"))
+    return false;
+  auto ret = dyn_cast<func::ReturnOp>(fn.getBody().front().getTerminator());
+  if (!ret || index >= ret.getNumOperands())
+    return false;
+  auto castOp = ret.getOperand(index).getDefiningOp<CastOp>();
+  auto inputTy = castOp
+                     ? dyn_cast<RankedTensorType>(castOp.getInput().getType())
+                     : RankedTensorType();
+  return castOp && castOp.getResult().hasOneUse() && inputTy &&
+         inputTy.hasStaticShape() && inputTy.getShape() == outputTy.getShape() &&
+         isa<Float32Type>(inputTy.getElementType());
+}
+
 /// One func's row-reduction lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
 struct RowReductionLowering {
@@ -522,6 +575,7 @@ struct RowReductionLowering {
   Type f32;                         // compute type
   Type storageType;                 // f32 generally; f16/bf16 for exact softmax
   bool halfSoftmax = false;
+  bool explicitHalfStorage = false;
   Type rowIntTy;                     // element type of a RowInt [M] arg (Y), if any
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<ReduceOp> reduces;     // per-row (axis-1) reduces, program order
@@ -838,15 +892,21 @@ struct RowReductionLowering {
     // boundary.  Internally the one-block-per-row kernel flattens the first two
     // contiguous dimensions to M=batch*group while retaining the original ABI
     // pointer and exact [batch,group] statistic outputs.
-    for (Type rt : fty.getResults()) {
+    for (unsigned resultIndex = 0; resultIndex < fty.getNumResults();
+         ++resultIndex) {
       if (flatSingletonRank4)
         break;
+      Type rt = fty.getResult(resultIndex);
       auto t = dyn_cast<RankedTensorType>(rt);
       if (!t || !t.hasStaticShape())
         return failure();
+      bool explicitHalfResult =
+          explicitlyDemotesHalfResult(fn, resultIndex);
       if (t.getElementType() != f32 &&
-          !(halfSoftmax && t.getElementType() == storageType))
+          !(halfSoftmax && t.getElementType() == storageType) &&
+          !explicitHalfResult)
         return failure();
+      explicitHalfStorage |= explicitHalfResult;
       if (t.getRank() != 3)
         continue;
       if (groupedBatch == 0) {
@@ -986,6 +1046,8 @@ struct RowReductionLowering {
       if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
+      bool explicitHalfArgument = explicitlyPromotesHalfArgument(fn, ai);
+      explicitHalfStorage |= explicitHalfArgument;
       // ColSeg (group_norm W/B): a 1-D f32 arg carrying an affine column-index
       // map. The arg-attr drives the gather (general, no per-kernel branch); the
       // [C] extent need not equal N. CPG = map(1,col)-map(0,col) (the group
@@ -1057,14 +1119,17 @@ struct RowReductionLowering {
       // per-column vector on square domains.  A take-gather parameter was
       // resolved above from use semantics; all other rank-1 f32 operands must
       // remain for a lowering with explicit axis roles.
-      if (t.getElementType() == f32 && s.size() == 1 && s[0] == M && M == N)
+      if ((t.getElementType() == f32 || explicitHalfArgument) &&
+          s.size() == 1 && s[0] == M && M == N)
         return failure();
       bool isRowStorage = t.getElementType() == f32 ||
                           (halfSoftmax &&
-                           t.getElementType() == storageType);
+                           t.getElementType() == storageType) ||
+                          explicitHalfArgument;
       if (isRowStorage && s.size() == 2 && s[0] == M && s[1] == N)
         argRoles.push_back(Role::Row);
-      else if (t.getElementType() == f32 && s.size() == 1 && s[0] == N)
+      else if ((t.getElementType() == f32 || explicitHalfArgument) &&
+               s.size() == 1 && s[0] == N)
         argRoles.push_back(Role::Col);
       else if (t.getElementType() == f32 && s.size() == 1 && s[0] == M)
         argRoles.push_back(Role::PerRow);
@@ -1344,7 +1409,7 @@ struct RowReductionLowering {
     // register path.  The tiled/shared-cache and scan paths still model their
     // frontier buffers in the source element type and therefore must not claim
     // half-softmax support.
-    if (halfSoftmax && numTiles > 1)
+    if ((halfSoftmax || explicitHalfStorage) && numTiles > 1)
       return failure();
     // Multi-tile (tiled + smem-cached) path scope: exactly one per-row reduce,
     // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. The general
@@ -1902,7 +1967,7 @@ struct RowReductionLowering {
     if (role == Role::Row)
       return MemRefType::get({M, N}, tensorTy.getElementType());
     if (role == Role::Col)
-      return MemRefType::get({N}, f32);
+      return MemRefType::get({N}, tensorTy.getElementType());
     if (role == Role::ColSeg)
       return MemRefType::get({colSegLen[argIdx]}, f32);
     if (role == Role::ParamVector)
