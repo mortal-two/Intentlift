@@ -104,6 +104,14 @@ class _I32Arg(int):
     """Kernel arg passed by value as a 32-bit integer."""
 
 
+class _F16Arg(int):
+    """Kernel arg passed as one raw IEEE-754 binary16 bit pattern."""
+
+
+class _BF16Arg(int):
+    """Kernel arg passed as one raw bfloat16 bit pattern."""
+
+
 class _F32Arg(float):
     """Kernel arg passed by value as a 32-bit float (4 raw bytes)."""
 
@@ -122,6 +130,28 @@ def _parse_f32(s: str) -> float:
     return float(s)
 
 
+def _parse_f16_bits(s: str) -> int:
+    """Parse an MLIR f16 literal into the exact 16-bit kernel ABI payload."""
+    import struct
+
+    s = s.strip()
+    if s.lower().startswith("0x"):
+        return int(s, 16) & 0xFFFF
+    return int.from_bytes(struct.pack(">e", float(s)), "big")
+
+
+def _parse_bf16_bits(s: str) -> int:
+    """Parse an MLIR bf16 literal into its round-to-nearest-even bit pattern."""
+    import struct
+
+    s = s.strip()
+    if s.lower().startswith("0x"):
+        return int(s, 16) & 0xFFFF
+    bits = int.from_bytes(struct.pack(">f", float(s)), "big")
+    rounded = (bits + 0x7FFF + ((bits >> 16) & 1)) & 0xFFFFFFFF
+    return rounded >> 16
+
+
 def _parse_f64(s: str) -> float:
     """Parse an MLIR f64 decimal or raw 64-bit IEEE-754 hex literal."""
     s = s.strip()
@@ -134,7 +164,7 @@ def _parse_f64(s: str) -> float:
 def _marshal(args):
     """Build the ctypes arg-pointer array for ``cuLaunchKernel``.
 
-    Mirrors launch.py's ``_marshal`` but adds the f32 branch it lacks.
+    Mirrors launch.py's ``_marshal`` but adds floating scalar ABI branches.
     """
     cvals = []
     for a in args:
@@ -142,6 +172,8 @@ def _marshal(args):
             cvals.append(ctypes.c_double(float(a)))
         elif isinstance(a, _F32Arg):
             cvals.append(ctypes.c_float(float(a)))
+        elif isinstance(a, (_F16Arg, _BF16Arg)):
+            cvals.append(ctypes.c_uint16(int(a)))
         elif isinstance(a, _I32Arg):
             cvals.append(ctypes.c_int32(int(a)))
         elif isinstance(a, _I64Arg):
@@ -241,6 +273,10 @@ class CachedLauncher:
                 self._cells.append(ctypes.c_float(float(entry[1])))
             elif kind == "f64":
                 self._cells.append(ctypes.c_double(float(entry[1])))
+            elif kind == "f16":
+                self._cells.append(ctypes.c_uint16(int(entry[1])))
+            elif kind == "bf16":
+                self._cells.append(ctypes.c_uint16(int(entry[1])))
             elif kind == "i64":
                 self._cells.append(ctypes.c_int64(int(entry[1])))
             elif kind == "i32":
@@ -1431,7 +1467,8 @@ def run_program(
     # --- execute each launch in order -------------------------------------- #
     scalar_load_inputs: dict[str, int] = {}
     for match in re.finditer(
-        r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*(f32|f64)",
+        r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*"
+        r"(f16|bf16|f32|f64)",
         host.body_text,
     ):
         result_ssa, pointer_ssa = match.group(1), match.group(2)
@@ -1453,6 +1490,22 @@ def run_program(
                 f"dtype={tensor.dtype}, expected={expected_dtype}"
             )
         return float(tensor.item())
+
+    def _loaded_input_scalar_bits(ssa: str, expected_dtype) -> int:
+        if ssa not in scalar_load_inputs:
+            raise NotImplementedError(
+                f"orchestrate: scalar launch arg {ssa} is neither a constant "
+                "nor a direct rank-0 input load"
+            )
+        input_index = scalar_load_inputs[ssa]
+        tensor = input_tensor_by_index[input_index]
+        if tensor.numel() != 1 or tensor.dtype != expected_dtype:
+            raise ValueError(
+                "orchestrate: loaded scalar launch input has the wrong ABI: "
+                f"index={input_index}, shape={tuple(tensor.shape)}, "
+                f"dtype={tensor.dtype}, expected={expected_dtype}"
+            )
+        return int(tensor.reshape(()).view(torch.uint16).item())
 
     for site in host.launches:
         ck = by_binary.get(site.binary_module)
@@ -1494,6 +1547,20 @@ def run_program(
                         f"orchestrate: i32 scalar arg {op.ssa} is not a constant"
                     )
                 call_args.append(_I32Arg(int(host.constants[op.ssa][0])))
+            elif ty == "f16":
+                bits = (
+                    _parse_f16_bits(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else _loaded_input_scalar_bits(op.ssa, torch.float16)
+                )
+                call_args.append(_F16Arg(bits))
+            elif ty == "bf16":
+                bits = (
+                    _parse_bf16_bits(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else _loaded_input_scalar_bits(op.ssa, torch.bfloat16)
+                )
+                call_args.append(_BF16Arg(bits))
             elif ty == "f32":
                 value = (
                     _parse_f32(host.constants[op.ssa][0])
