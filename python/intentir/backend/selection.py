@@ -235,13 +235,15 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         scf_to_cf=True,
     ),
     PassDescriptor(
+        # Keep the original public ID for schedule/CLI compatibility.  The
+        # implementation now accepts matching f16 or bf16 storage.
         fast_path_id="cuda.linear.f16_f32.bias_saved.mma_sync.v1",
         pass_argument=(
             "-convert-intent-contraction-to-gpu-mma=num-stages=5 "
             "block-m=16 block-n=32 block-k=32 smem-pad-k=8"
         ),
         supported_chips=("sm_120a",),
-        description="f16/f32 linear contraction with bias and saved outputs",
+        description="tuned f16/bf16 tensor-core contraction with f32 accumulate",
         scf_to_cf=True,
     ),
     PassDescriptor(

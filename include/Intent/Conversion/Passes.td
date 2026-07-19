@@ -679,8 +679,8 @@ def ConvertIntentContractionToGPUMMA
   let description = [{
     The `nvgpu.mma.sync` sibling of `convert-intent-contraction-to-gpu` (which
     uses the opaque `gpu.subgroup_mma_*` / `!gpu.mma_matrix` WMMA path). Same
-    recognizer (one `intent.contraction{"mk,nk->mn"}`, A[M,K] f16, W[N,K] f16 ->
-    Y[M,N] f32, optional bias+activation epilogue) and the SAME cp.async
+    recognizer (one `intent.contraction{"mk,nk->mn"}`, matching A/W storage in
+    f16 or bf16 -> Y[M,N] f32, optional bias+activation epilogue) and the SAME cp.async
     multistage staging, but the contraction is realized by the register-level
     `nvgpu.ldmatrix` (shared->register warp-cooperative fragment load) +
     `nvgpu.mma.sync` (m16n8k16 warp MMA on `vector<...>` fragments with a KNOWN
@@ -691,9 +691,10 @@ def ConvertIntentContractionToGPUMMA
     Fragment recipe (validated against the MLIR --convert-vector-to-gpu
     use-nvgpu lowering on sm_120a): lane = tid%32, warp = tid/32, each warp owns
     a 16-row strip; A operand `ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]`
-    transpose=false -> vector<4x2xf16>; W operand (natural [N,K] layout, the
+    transpose=false -> vector<4x2xT>; W operand (natural [N,K] layout, the
     "nk" transpose folded into the load) `ldmatrix wSh[n*8 + lane%8, kOff +
-    (lane/8)*8]` transpose=false -> vector<2x2xf16>; the m16n8 f32 accumulator
+    (lane/8)*8]` transpose=false -> vector<2x2xT>, where T is f16 or bf16; the
+    m16n8 f32 accumulator
     stores back with the textbook layout d[i][j] -> row = lane/4 + i*8,
     col = (lane%4)*2 + j. Per-warp accumulator vectors ride the K loop as
     `scf.for` iter_args. Static shapes, M%BM==N%BN==K%BK==0. Run BEFORE
@@ -701,13 +702,16 @@ def ConvertIntentContractionToGPUMMA
     (`lower_memref_module_to_kernels` with `scf_to_cf=True`).
 
     The recognizer also consumes the canonical live-linear spelling in which
-    A/W are explicitly widened f16->f32 before the contraction, a rank-1 f16
-    bias is widened and added in f32, and two f16 results return the identical
+    A/W are explicitly widened from their matching 16-bit storage type to f32
+    before the contraction, a same-storage rank-1 bias is widened and added in
+    f32, and two same-storage results return the identical
     identity preactivation (`C` plus saved activation input). For this exact
     semantic pattern the known mma.sync lane layout enables a register epilogue:
     load/widen bias, add in f32, truncate once, and store the same value to both
     destinations. No f32 accumulator tile is spilled through shared memory.
-    Other supported activation DAGs retain the generic shared-tile epilogue.
+    BF16 NVGPU fragments are completed by the target-side LLVM-20 compatibility
+    pass `-lower-bf16-mma-to-nvvm`; other supported activation DAGs retain the
+    generic shared-tile epilogue.
   }];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",

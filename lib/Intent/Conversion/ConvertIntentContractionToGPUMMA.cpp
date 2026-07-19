@@ -12,20 +12,23 @@
 // --convert-vector-to-gpu use-nvgpu lowering -- the G4 probe):
 //   lane = tid%32, warp = tid/32; each warp owns a 16-row C strip.
 //   A operand : ldmatrix aSh[warp*16 + lane%16, kOff + (lane/16)*8]
-//               transpose=false -> vector<4x2xf16>
+//               transpose=false -> vector<4x2x(f16|bf16)>
 //   W operand : ldmatrix wSh[n*8 + lane%8, kOff + (lane/8)*8]
-//               transpose=false -> vector<2x2xf16>  (natural [N,K] layout, the
+//               transpose=false -> vector<2x2x(f16|bf16)> (natural [N,K], the
 //               "nk" transpose folded into the load -- no transpose-on-copy)
 //   mma.sync m16n8k16 -> vector<2x2xf32> accumulator (per warp, one per n8 col
 //   tile), carried across the K loop as scf.for iter_args.
 //   store     : d[i][j] -> row = warp*16 + lane/4 + i*8,
 //                          col = n*8 + (lane%4)*2 + j   (textbook PTX layout)
 //
-// Static shapes, M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
-// lower_memref_module_to_kernels (the scf.for carries vector iter_args).
+// Static shapes, matching f16/bf16 A/W storage, f32 accumulation, and
+// M%BM==N%BN==K%BK==0. Bare-ptr ABI; scf_to_cf=True in
+// lower_memref_module_to_kernels (the scf.for carries vector iter_args). LLVM
+// 20's missing BF16 NVGPU conversion is supplied by LowerBf16MmaToNVVM.
 //
 // smem-pad-k: the rank-3 A/W staging buffers pad the K leading dim by `padK`
-// f16 (default 8 = one 128-bit lane) so successive ldmatrix rows land on
+// 16-bit elements (default 8 = one 128-bit lane) so successive ldmatrix rows
+// land on
 // distinct shared banks -- the bank-conflict-free analog of wmma_matmul.cuh's
 // AS_PAD/BS_PAD. The 128-bit cp.async copies fill only the first BK columns of
 // each padded row; the memref stride carries the pad transparently. At the
@@ -74,7 +77,7 @@ struct ContractionMMALowering {
   func::FuncOp fn;
   int numStages;
   int64_t reqBM, reqBN, reqBK;
-  int64_t padK; // f16 padding on the smem K-tile leading dim (bank conflicts).
+  int64_t padK; // 16-bit padding on the smem K-tile leading dim.
 
   int64_t BM = 64, BN = 128;
   int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles); autotuner knob.
@@ -82,7 +85,7 @@ struct ContractionMMALowering {
   int64_t M = 0, N = 0, K = 0;
   unsigned aArgIdx = 0, wArgIdx = 0;
   ContractionOp con;
-  Type f16, f32;
+  Type inputStorageType, f32;
   SmallVector<Value> retVals;
   bool hasEpilogue = false;
   bool hasRegisterBiasSavedEpilogue = false;
@@ -127,11 +130,11 @@ struct ContractionMMALowering {
     if (c.getSubscripts() != "mk,nk->mn")
       return failure();
 
-    // The canonical live-linear graph makes exact f16->f32 widening explicit
-    // before the contraction.  Peel only that lossless cast so the generated
-    // tensor-core kernel still reads the original f16 ABI operands and
-    // accumulates in f32.  Direct f16 contraction operands remain supported.
-    auto peelF16Input = [&](Value operand) -> BlockArgument {
+    // Canonical live-linear graphs make an exact f16/bf16->f32 widening
+    // explicit before the contraction. Peel only that lossless cast so the
+    // tensor-core kernel still reads the original 16-bit ABI operands and
+    // accumulates in f32. Direct low-precision operands remain supported.
+    auto peelLowPrecisionInput = [&](Value operand) -> BlockArgument {
       if (auto arg = dyn_cast<BlockArgument>(operand))
         return arg;
       auto castOp = operand.getDefiningOp<CastOp>();
@@ -140,13 +143,13 @@ struct ContractionMMALowering {
       auto srcTy = dyn_cast<RankedTensorType>(castOp.getInput().getType());
       auto dstTy = dyn_cast<RankedTensorType>(castOp.getResult().getType());
       if (!srcTy || !dstTy || srcTy.getShape() != dstTy.getShape() ||
-          !isa<Float16Type>(srcTy.getElementType()) ||
+          !isa<Float16Type, BFloat16Type>(srcTy.getElementType()) ||
           !isa<Float32Type>(dstTy.getElementType()))
         return {};
       return dyn_cast<BlockArgument>(castOp.getInput());
     };
-    auto aArg = peelF16Input(c.getA());
-    auto wArg = peelF16Input(c.getB());
+    auto aArg = peelLowPrecisionInput(c.getA());
+    auto wArg = peelLowPrecisionInput(c.getB());
     if (!aArg || !wArg || aArg.getOwner() != &body || wArg.getOwner() != &body)
       return failure();
     aArgIdx = aArg.getArgNumber();
@@ -164,16 +167,18 @@ struct ContractionMMALowering {
       return failure();
     if (aTy.getRank() != 2 || wTy.getRank() != 2 || yTy.getRank() != 2)
       return failure();
-    if (!isa<Float16Type>(aTy.getElementType()) ||
-        !isa<Float16Type>(wTy.getElementType()) ||
+    if (!isa<Float16Type, BFloat16Type>(aTy.getElementType()) ||
+        wTy.getElementType() != aTy.getElementType() ||
         !isa<Float32Type>(yTy.getElementType()))
       return failure();
+    inputStorageType = aTy.getElementType();
     if (conATy.getShape() != aTy.getShape() ||
         conWTy.getShape() != wTy.getShape() ||
-        !isa<Float16Type, Float32Type>(conATy.getElementType()) ||
-        !isa<Float16Type, Float32Type>(conWTy.getElementType()))
+        (conATy.getElementType() != inputStorageType &&
+         !isa<Float32Type>(conATy.getElementType())) ||
+        (conWTy.getElementType() != inputStorageType &&
+         !isa<Float32Type>(conWTy.getElementType())))
       return failure();
-    f16 = aTy.getElementType();
     f32 = yTy.getElementType();
 
     M = aTy.getDimSize(0);
@@ -188,12 +193,14 @@ struct ContractionMMALowering {
       if (!resultTy || !declaredTy || !resultTy.hasStaticShape() ||
           resultTy != declaredTy || resultTy.getRank() != 2 ||
           resultTy.getDimSize(0) != M || resultTy.getDimSize(1) != N ||
-          !isa<Float16Type, Float32Type>(resultTy.getElementType()))
+          (resultTy.getElementType() != inputStorageType &&
+           resultTy.getElementType() != f32))
         return failure();
     }
 
-    // Exact captured fast epilogue: both external f16 results are casts of the
-    // same f32 (contraction + widened f16 Col bias) value.  The register-level
+    // Exact captured fast epilogue: both external low-precision results are
+    // casts of the same f32 (contraction + widened same-storage Col bias) value.
+    // The register-level
     // mma.sync accumulator has a known lane layout, so this case can add bias,
     // round once, and store to both destinations directly from registers.  It
     // avoids the generic activation DAG's full f32 shared spill + barrier while
@@ -203,12 +210,10 @@ struct ContractionMMALowering {
       auto secondCast = retVals[1].getDefiningOp<CastOp>();
       if (firstCast && secondCast &&
           firstCast.getInput() == secondCast.getInput() &&
-          isa<Float16Type>(cast<RankedTensorType>(
-                               firstCast.getResult().getType())
-                               .getElementType()) &&
-          isa<Float16Type>(cast<RankedTensorType>(
-                               secondCast.getResult().getType())
-                               .getElementType())) {
+          cast<RankedTensorType>(firstCast.getResult().getType())
+                  .getElementType() == inputStorageType &&
+          cast<RankedTensorType>(secondCast.getResult().getType())
+                  .getElementType() == inputStorageType) {
         auto add = firstCast.getInput().getDefiningOp<MapBinaryOp>();
         if (add && add.getFn() == "add") {
           Value other;
@@ -230,7 +235,7 @@ struct ContractionMMALowering {
           if (biasArg && biasArg.getOwner() == &body && biasTy && widenedTy &&
               biasTy.hasStaticShape() && biasTy.getRank() == 1 &&
               biasTy.getDimSize(0) == N &&
-              isa<Float16Type>(biasTy.getElementType()) &&
+              biasTy.getElementType() == inputStorageType &&
               widenedTy.getShape() == biasTy.getShape() &&
               isa<Float32Type>(widenedTy.getElementType())) {
             hasRegisterBiasSavedEpilogue = true;
@@ -247,6 +252,8 @@ struct ContractionMMALowering {
       return failure();
     BM = reqBM;
     BN = reqBN;
+    if (BM <= 0 || BN <= 0)
+      return failure();
     if (M % BM != 0 || N % BN != 0) {
       BM = 64;
       BN = 64;
@@ -259,11 +266,17 @@ struct ContractionMMALowering {
       return failure();
     if (BM % MMA_M != 0 || BN % MMA_N != 0)
       return failure();
+    // Each thread issues complete 128-bit cp.async packets. A's packet count
+    // is integral because BK is a multiple of MMA_K; require the same for W
+    // rather than silently leaving a suffix of the staged tile uncopied.
+    int64_t copyThreads = (BM / MMA_M) * 32;
+    if (((BN * BK) / 8) % copyThreads != 0)
+      return failure();
 
-    // Padded smem leading dim: shift each K-tile row by padK f16 elements so the
+    // Padded smem leading dim: shift each K-tile row by padK 16-bit elements so
     // ldmatrix reads land on distinct shared-memory banks. padK must be a
-    // multiple of 8 (the cp.async copies are 128-bit = 8 f16 aligned); an
-    // illegal knob just disables padding rather than mis-aligning the copy.
+    // multiple of 8 (one 128-bit cp.async packet); an illegal knob disables
+    // padding rather than misaligning the copy.
     BKs = BK;
     if (padK > 0 && padK % 8 == 0)
       BKs = BK + padK;
@@ -277,7 +290,8 @@ struct ContractionMMALowering {
       }
       auto t = dyn_cast<RankedTensorType>(inputs[i]);
       if (!t || !t.hasStaticShape() ||
-          !isa<Float16Type, Float32Type>(t.getElementType()))
+          (t.getElementType() != inputStorageType &&
+           !isa<Float32Type>(t.getElementType())))
         return failure();
       if (t.getRank() == 1 && t.getDimSize(0) == N)
         argRoles[i] = Role::Col;
@@ -475,8 +489,10 @@ struct ContractionMMALowering {
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy = MemRefType::get({nStages, BM, BKs}, f16, nullptr, wgSpace);
-    auto wShTy = MemRefType::get({nStages, BN, BKs}, f16, nullptr, wgSpace);
+    auto aShTy =
+        MemRefType::get({nStages, BM, BKs}, inputStorageType, nullptr, wgSpace);
+    auto wShTy =
+        MemRefType::get({nStages, BN, BKs}, inputStorageType, nullptr, wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
@@ -487,8 +503,8 @@ struct ContractionMMALowering {
       cSh = b.create<memref::ViewOp>(loc, cShTy, raw, cOff, ValueRange{});
     }
 
-    auto aFragTy = VectorType::get({4, 2}, f16);
-    auto wFragTy = VectorType::get({2, 2}, f16);
+    auto aFragTy = VectorType::get({4, 2}, inputStorageType);
+    auto wFragTy = VectorType::get({2, 2}, inputStorageType);
     auto accTy = VectorType::get({2, 2}, f32);
     auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
 
@@ -641,14 +657,15 @@ struct ContractionMMALowering {
         storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
                  [&](OpBuilder &nb, Location nl, Value v, Value row,
                      Value col) {
-                   Value biasF16 = nb.create<memref::LoadOp>(
+                   Value biasStorage = nb.create<memref::LoadOp>(
                        nl, biasMem, ValueRange{col});
                    Value biasF32 =
-                       nb.create<arith::ExtFOp>(nl, f32, biasF16);
+                       nb.create<arith::ExtFOp>(nl, f32, biasStorage);
                    Value preactivation =
                        nb.create<arith::AddFOp>(nl, v, biasF32);
                    Value stored =
-                       nb.create<arith::TruncFOp>(nl, f16, preactivation);
+                       nb.create<arith::TruncFOp>(nl, inputStorageType,
+                                                  preactivation);
                    for (Value output : outputMems)
                      nb.create<memref::StoreOp>(nl, stored, output,
                                                 ValueRange{row, col});

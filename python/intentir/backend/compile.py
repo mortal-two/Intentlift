@@ -56,12 +56,14 @@ _FRONT_PASSES = [
     "-canonicalize",  # folds grid extents to literal constants
 ]
 
-# NVIDIA-target codegen peephole run on the outlined device module: rewrites
-# scalar f32 `math.exp` to the native `ex2.approx.ftz.f32` PTX instruction so we
-# never emit a `__nv_expf` libdevice extern (which is either unresolved by ptxas
-# or DCE'd away by the integrated serializer -> empty cubin). See the C++ pass
-# `lib/Intent/Transforms/LowerGpuMathToNVVM.cpp`.
-_DEVICE_PREP_PASSES = ["-lower-gpu-math-to-nvvm"]
+# NVIDIA-target preparation on the outlined device module: rewrites scalar f32
+# math to native PTX intrinsics and backports LLVM-20's missing BF16
+# nvgpu.mma.sync conversion.  Both run before the stock composite NVVM pipeline;
+# modules without BF16 MMA make the compatibility pass a no-op.
+_DEVICE_PREP_PASSES = [
+    "-lower-gpu-math-to-nvvm",
+    "-lower-bf16-mma-to-nvvm",
+]
 
 # Integrated device lowering (R3-proven): one pass gpu -> nvvm -> PTX. Handles
 # scf.for/index/cf cleanly (the manual pass set left unrealized casts on
