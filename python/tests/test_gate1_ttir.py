@@ -635,9 +635,11 @@ def test_exact_libdevice_rsqrt_extern_is_normalized() -> None:
         'symbol = "__nv_rsqrtf"} : (f32) -> f32',
     )
     other_extern = libdevice.replace("__nv_rsqrtf", "__nv_sinf")
+    wrong_input_type = libdevice.replace(": (f32) -> f32", ": (f64) -> f32")
 
     assert compare_ttir(rsqrt, libdevice).hard_pass
     assert not compare_ttir(rsqrt, other_extern).hard_pass
+    assert not compare_ttir(rsqrt, wrong_input_type).hard_pass
 
 
 def test_rank_tuple_prefers_a_closer_failed_candidate():

@@ -546,10 +546,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--capture-manifest", type=Path, default=batch.DEFAULT_CAPTURE_MANIFEST
     )
-    parser.add_argument("--paired-samples", type=int, default=30)
+    parser.add_argument("--paired-samples", type=int, default=50)
     parser.add_argument("--warmup-ms", type=int, default=10)
     parser.add_argument("--rep-ms", type=int, default=50)
-    parser.add_argument("--bootstrap-resamples", type=int, default=20_000)
+    parser.add_argument("--bootstrap-resamples", type=int, default=50_000)
     return parser
 
 

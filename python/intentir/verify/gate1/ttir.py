@@ -591,14 +591,20 @@ def _bounded_normalize_operations(
             r'\bsymbol\s*=\s*"(?P<symbol>[^"]+)"',
             operation.local_signature,
         )
-        result_match = re.search(
-            r"->(?P<result>[^,(){}]+)$", operation.local_signature
+        signature_match = re.search(
+            r":\((?P<input>[^,(){}]+)\)->(?P<result>[^,(){}]+)$",
+            operation.local_signature,
         )
-        if symbol_match is None or result_match is None:
+        if symbol_match is None or signature_match is None:
             continue
         expected_type = extern_rsqrt_types.get(symbol_match.group("symbol"))
-        result_type = _normalize_space(result_match.group("result"))
-        if expected_type is None or result_type != expected_type:
+        input_type = _normalize_space(signature_match.group("input"))
+        result_type = _normalize_space(signature_match.group("result"))
+        if (
+            expected_type is None
+            or input_type != expected_type
+            or result_type != expected_type
+        ):
             continue
         operation.name = "math.rsqrt"
         operation.local_signature = _normalize_space(
