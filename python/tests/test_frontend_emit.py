@@ -26,11 +26,43 @@ from intentir.ir.model import IntentFunction
 
 _TEST = pathlib.Path(__file__).resolve().parents[2] / "test"
 _JSON = _TEST / "flashattention_fwd.intent.json"
+_LIVE_JSON = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "artifacts/paper_pipeline/hp-hard-first-20260717"
+    / "high_performance_flash_attn.flash_attn_triton._fwd_kernel/P1/intent.json"
+)
 _DIMS = {"B": 1, "H": 1, "Sq": 4, "Sk": 8, "D": 4, "BK": 2}
 
 
 def _fn() -> IntentFunction:
     return IntentFunction.from_json(json.loads(_JSON.read_text()))
+
+
+def _fn_with_f32_accumulators() -> IntentFunction:
+    """The legacy loop fixture predates explicit contraction accumulator types."""
+
+    fn = _fn()
+    loop = next(op for op in fn.body if op.op == "loop")
+    for op in loop.body:
+        if op.op == "contraction":
+            op.layer_b["accumulator_dtype"] = "f32"
+    return fn
+
+
+def _flat_fn(name: str) -> IntentFunction:
+    return IntentFunction.from_json({
+        "intent_function": {
+            "name": name,
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [4]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": [4]}],
+            "body": [{
+                "op": "map_unary",
+                "result": "Y",
+                "operands": ["X"],
+                "attrs": {"fn": "exp"},
+            }],
+        }
+    })
 
 
 def _intent_opt(mlir: str, *passes: str) -> str:
@@ -44,11 +76,209 @@ _needs_opt = pytest.mark.skipif(not pathlib.Path(INTENT_OPT).exists(),
                                 reason="intent-opt not built")
 
 
+@pytest.mark.parametrize(("raw_name", "symbol"), [
+    ("already_valid_name_1", "already_valid_name_1"),
+    ("mlir.valid$but.ptx.unsafe", "mlir_valid_but_ptx_unsafe"),
+    ("high_performance:flash_attn/kernel", "high_performance_flash_attn_kernel"),
+    ("9attention", "_9attention"),
+    ("λ attention", "__attention"),
+    ("", "_"),
+])
+def test_emit_module_sanitizes_function_symbol(
+    raw_name: str, symbol: str
+) -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(_flat_fn(raw_name), {})
+    assert f"func.func @{symbol}(" in mlir
+    assert mlir == emit_module(_flat_fn(raw_name), {})  # stable across emissions
+
+
+@_needs_opt
+def test_gather_emits_typed_bounds_fact_only_from_layer_b() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "bounded_gather",
+            "inputs": [
+                {"name": "W", "dtype": "f32", "shape": [3]},
+                {"name": "I", "dtype": "i32", "shape": []},
+            ],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": [{
+                "op": "gather",
+                "result": "Y",
+                "operands": ["W", "I"],
+                "attrs": {"axis": 0, "mode": "take"},
+                "layer_b": {"index_in_bounds": True},
+            }],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert "intent.index_bounds_proven = true" in mlir
+    _intent_opt(mlir)
+
+
+def test_validated_bounds_assumptions_emit_typed_scalar_equalities() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "bounded_scalar_specialization",
+            "inputs": [
+                {"name": "W", "dtype": "f32", "shape": [3]},
+                {"name": "I", "dtype": "i32", "shape": []},
+            ],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": [{
+                "op": "gather",
+                "result": "Y",
+                "operands": ["W", "I"],
+                "attrs": {"axis": 0, "mode": "take"},
+                "layer_b": {
+                    "index_in_bounds": True,
+                    "index_bounds_proof": {
+                        "kind": "closed_integer_interval",
+                        "assumptions": [{
+                            "kind": "validated_layer_b_integer_equality",
+                            "input": "I",
+                            "equals": 2,
+                        }],
+                    },
+                },
+            }],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert "intent.scalar_equalities = array<i64: 1, 2>" in mlir
+
+
+def test_free_text_scalar_contract_does_not_emit_typed_equality() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "unproved_scalar_specialization",
+            "inputs": [{"name": "I", "dtype": "i32", "shape": []}],
+            "outputs": [{"name": "Y", "dtype": "i32", "shape": []}],
+            "body": [{
+                "op": "map_binary",
+                "result": "Y",
+                "operands": ["I", "I"],
+                "attrs": {"fn": "add"},
+                "layer_b": {
+                    "contracts": [{"id": "I_eq_2", "holds": True, "value": 2}]
+                },
+            }],
+        }
+    })
+
+    assert "intent.scalar_equalities" not in emit_module(fn, {})
+
+
+def test_direct_overwrite_layer_b_emits_typed_inplace_contract() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "rms_norm_add_alias",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": [4, 8]},
+                {"name": "Y", "dtype": "f32", "shape": [4, 8]},
+            ],
+            "outputs": [
+                {"name": "X_out", "dtype": "f32", "shape": [4, 8]},
+                {"name": "H1", "dtype": "f32", "shape": [4, 8]},
+            ],
+            "body": [
+                {
+                    "op": "map_binary",
+                    "result": "X_out",
+                    "operands": ["X", "Y"],
+                    "attrs": {"fn": "add"},
+                    "layer_b": {
+                        "mutation": {
+                            "kind": "in_place_overwrite",
+                            "input": "X",
+                            "output": "X_out",
+                            "storage": "x_ptr",
+                        }
+                    },
+                },
+                {
+                    "op": "map_unary",
+                    "result": "H1",
+                    "operands": ["X_out"],
+                    "attrs": {"fn": "neg"},
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert "intent.inplace = array<i64: 0, -1>" in mlir
+
+
+def test_gather_does_not_promote_free_text_contract_to_bounds_proof() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "unproven_gather",
+            "inputs": [
+                {"name": "W", "dtype": "f32", "shape": [3]},
+                {"name": "I", "dtype": "i32", "shape": []},
+            ],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": [{
+                "op": "gather",
+                "result": "Y",
+                "operands": ["W", "I"],
+                "attrs": {"axis": 0, "mode": "take"},
+                "layer_b": {
+                    "contracts": [{
+                        "id": "invented_gather_indices_in_bounds",
+                        "holds": True,
+                    }],
+                },
+            }],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert "intent.index_bounds_proven" not in mlir
+
+
+@_needs_opt
+def test_all_emitters_sanitize_live_llm_function_name() -> None:
+    from intentir.frontend import emit_body_function, emit_loop_module, emit_module
+
+    raw_name = "high_performance:flash_attn.flash_attn_triton._fwd_kernel"
+    symbol = "high_performance_flash_attn_flash_attn_triton__fwd_kernel"
+    loop_fn = _fn()
+    loop_fn.name = raw_name
+    modules = [
+        emit_module(_flat_fn(raw_name), {}),
+        emit_loop_module(loop_fn, _DIMS, func_name=raw_name),
+        emit_body_function(loop_fn, _DIMS, func_name=raw_name),
+    ]
+
+    for mlir in modules:
+        assert f"func.func @{symbol}(" in mlir
+        _intent_opt(mlir)
+
+
 @_needs_opt
 def test_emit_loop_module_lowers() -> None:
     from intentir.frontend import emit_loop_module
 
-    mlir = emit_loop_module(_fn(), _DIMS)
+    # Generic lowering currently needs homogeneous scalar operand types.  The
+    # legacy fixture omits dot accumulator obligations, so use an explicitly
+    # annotated variant for this lowering-specific test.
+    mlir = emit_loop_module(_fn_with_f32_accumulators(), _DIMS)
     assert "intent.loop" in mlir and "intent.yield" in mlir
     lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
     assert "scf.for" in lowered
@@ -60,13 +290,420 @@ def test_emit_loop_module_lowers() -> None:
 def test_emit_body_lowers() -> None:
     from intentir.frontend import emit_body_function
 
-    mlir = emit_body_function(_fn(), _DIMS)
+    mlir = emit_body_function(_fn_with_f32_accumulators(), _DIMS)
     # body args: outer (Q, scale) + scan tiles (Kj, Vj) + carries (m, l, Oacc)
     for name in ("%Q", "%scale", "%Kj", "%Vj", "%m", "%l", "%Oacc"):
         assert f"{name}:" in mlir, name
     lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
     assert "linalg.generic" in lowered
     assert "intent." not in lowered
+
+
+@_needs_opt
+def test_legacy_loop_preserves_mixed_float_dtypes_and_verifies() -> None:
+    """P4 parsing is distinct from optional generic lowering support."""
+    from intentir.frontend import emit_body_function
+
+    mlir = emit_body_function(_fn(), _DIMS)
+    assert "%Q: tensor<4x4xf16>" in mlir
+    assert "%Kj: tensor<2x4xf16>" in mlir
+    assert (
+        "(tensor<4x4xf16>, tensor<2x4xf16>) -> tensor<4x2xf16>"
+        in mlir
+    )
+    assert (
+        "(tensor<4x2xf16>, tensor<f32>) -> tensor<4x2xf32>"
+        in mlir
+    )
+    _intent_opt(mlir)  # real C++ parser/verifier; no lowering claim here
+
+
+@_needs_opt
+def test_flat_emitter_preserves_float_ssa_dtypes_and_predicates() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "dtype_graph",
+            "inputs": [
+                {"name": "A", "dtype": "f16", "shape": [2, 4]},
+                {"name": "B", "dtype": "f16", "shape": [3, 4]},
+                {"name": "X", "dtype": "bf16", "shape": [2]},
+                {"name": "D", "dtype": "f64", "shape": [2]},
+            ],
+            "outputs": [
+                {"name": "R", "dtype": "f32", "shape": [2]},
+                {"name": "HT", "dtype": "f16", "shape": [3, 2]},
+                {"name": "P", "dtype": "bf16", "shape": [2]},
+                {"name": "Dn", "dtype": "f64", "shape": [2]},
+                {"name": "pred", "dtype": "i1", "shape": [2]},
+                {"name": "idx", "dtype": "i64", "shape": [2]},
+            ],
+            "body": [
+                {
+                    "op": "contraction",
+                    "result": "C",
+                    "operands": ["A", "B"],
+                    "attrs": {"subscripts": "mk,nk->mn"},
+                    "layer_b": {"accumulator_dtype": "f32"},
+                },
+                {
+                    "op": "map_unary",
+                    "result": "E",
+                    "operands": ["C"],
+                    "attrs": {"fn": "exp"},
+                },
+                {
+                    "op": "reduce",
+                    "result": "R",
+                    "operands": ["E"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [1],
+                        "assoc": "float_nondeterministic",
+                        "keepdims": False,
+                    },
+                },
+                {
+                    "op": "cast",
+                    "result": "H",
+                    "operands": ["C"],
+                    "attrs": {"to_dtype": "f16"},
+                },
+                {
+                    "op": "transpose",
+                    "result": "HT",
+                    "operands": ["H"],
+                    "attrs": {"perm": [1, 0]},
+                },
+                {
+                    "op": "map_unary",
+                    "result": "P",
+                    "operands": ["X"],
+                    "attrs": {"fn": "abs"},
+                },
+                {
+                    "op": "map_unary",
+                    "result": "Dn",
+                    "operands": ["D"],
+                    "attrs": {"fn": "neg"},
+                },
+                {
+                    "op": "map_binary",
+                    "result": "pred",
+                    "operands": ["P", "P"],
+                    "attrs": {"fn": "gt"},
+                },
+                {
+                    "op": "iota",
+                    "result": "idx",
+                    "attrs": {"n": 2, "dtype": "i64"},
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert "%A: tensor<2x4xf16>" in mlir
+    assert "%X: tensor<2xbf16>" in mlir
+    assert "%D: tensor<2xf64>" in mlir
+    assert "-> tensor<2x3xf32>" in mlir       # contraction accumulator
+    assert 'to_dtype = "f16"' in mlir
+    assert "-> tensor<3x2xf16>" in mlir       # transpose propagation
+    assert "-> tensor<2xbf16>" in mlir        # unary propagation
+    assert "-> tensor<2xf64>" in mlir
+    assert "-> tensor<2xi1>" in mlir          # comparison predicate
+    assert "intent.iota : tensor<2xi64>" in mlir
+    _intent_opt(mlir)
+
+
+@pytest.mark.parametrize("accumulator", [None, "not_a_dtype"])
+def test_contraction_without_valid_accumulator_keeps_operand_dtype(
+    accumulator: str | None,
+) -> None:
+    from intentir.frontend import emit_module
+
+    contraction = {
+        "op": "contraction",
+        "result": "C",
+        "operands": ["A", "B"],
+        "attrs": {"subscripts": "mk,nk->mn"},
+    }
+    if accumulator is not None:
+        contraction["layer_b"] = {"accumulator_dtype": accumulator}
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "same_type_dot",
+            "inputs": [
+                {"name": "A", "dtype": "f16", "shape": [2, 4]},
+                {"name": "B", "dtype": "f16", "shape": [3, 4]},
+            ],
+            "outputs": [{"name": "C", "dtype": "f16", "shape": [2, 3]}],
+            "body": [contraction],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+    assert (
+        "(tensor<2x4xf16>, tensor<3x4xf16>) -> tensor<2x3xf16>"
+        in mlir
+    )
+
+
+@pytest.mark.skipif(not _LIVE_JSON.exists(), reason="live P1 artifact unavailable")
+@_needs_opt
+def test_live_flash_artifact_preserves_dtype_contract_and_verifies() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json(json.loads(_LIVE_JSON.read_text()))
+    mlir = emit_module(fn, {})
+    assert (
+        "func.func @high_performance_flash_attn_flash_attn_triton__fwd_kernel("
+        in mlir
+    )
+    for name in ("Q", "K", "V"):
+        assert f"%{name}: tensor<1x128x1x64xf16>" in mlir
+    lines = mlir.splitlines()
+    qk = next(line for line in lines if " = intent.contraction %Q, %K " in line)
+    p_f32 = next(line for line in lines if "%p_f32_" in line and "map_unary" in line)
+    p_f16 = next(line for line in lines if "%p_f16_" in line and "intent.cast" in line)
+    weighted = next(
+        line for line in lines
+        if "%weighted_unscaled_" in line and "intent.contraction" in line
+    )
+    out = next(line for line in lines if "%Out_" in line and "intent.cast" in line)
+    returned = next(line for line in lines if line.lstrip().startswith("return "))
+    assert qk.endswith("-> tensor<128x1x1x128xf32>")
+    assert p_f32.endswith("-> tensor<128x1x1x128xf32>")
+    assert 'to_dtype = "f16"' in p_f16
+    assert p_f16.endswith("-> tensor<128x1x1x128xf16>")
+    assert weighted.endswith("-> tensor<64x1x1x128xf32>")
+    assert 'to_dtype = "f16"' in out
+    assert out.endswith("-> tensor<1x128x1x64xf16>")
+    assert (
+        "tensor<1x128x1x64xf16>, tensor<1x1x128xf32>, "
+        "tensor<1x1x128xf32>" in returned
+    )
+    _intent_opt(mlir)  # P4 parser/verifier only; lowering is a separate status
+
+
+@_needs_opt
+def test_integer_reduce_preserves_dtype_and_lowers() -> None:
+    """A compare/cast/count graph must keep i64 through reduce and the ABI."""
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "count_nonzero_like",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["M", "N"]}],
+            "outputs": [{"name": "Y", "dtype": "i64", "shape": []}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "nz",
+                    "operands": ["X"],
+                    "attrs": {"to_dtype": "i1"},
+                },
+                {
+                    "op": "cast",
+                    "result": "nz_i64",
+                    "operands": ["nz"],
+                    "attrs": {"to_dtype": "i64"},
+                },
+                {
+                    "op": "reduce",
+                    "result": "Y",
+                    "operands": ["nz_i64"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [0, 1],
+                        "assoc": "associative",
+                    },
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {"M": 4, "N": 17})
+    assert "tensor<4x17xi64>) -> tensor<i64>" in mlir
+    assert "-> (tensor<i64>)" in mlir
+    lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
+    assert "arith.addi" in lowered
+    assert "intent." not in lowered
+
+
+@_needs_opt
+def test_transpose_and_symbolic_pad_lower() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "transpose_pad",
+            "inputs": [
+                {
+                    "name": "X",
+                    "dtype": "f32",
+                    "shape": ["B", "M", "D"],
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "Y",
+                    "dtype": "f32",
+                    "shape": ["B", "D", "R"],
+                }
+            ],
+            "body": [
+                {
+                    "op": "transpose",
+                    "result": "T",
+                    "operands": ["X"],
+                    "attrs": {"perm": [0, 2, 1]},
+                },
+                {
+                    "op": "pad",
+                    "result": "Y",
+                    "operands": ["T"],
+                    "attrs": {
+                        "lo": [0, 0, 0],
+                        "hi": [0, 0, "R - M"],
+                        "value": 0.0,
+                    },
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {"B": 1, "M": 2, "D": 3, "R": 4})
+    assert "intent.transpose" in mlir
+    assert "perm = [0, 2, 1]" in mlir
+    assert "intent.pad" in mlir
+    assert "hi = [0, 0, 2]" in mlir
+    lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
+    assert "linalg.generic" in lowered
+    assert "tensor.pad" in lowered or "tensor.empty" in lowered
+    assert "intent." not in lowered
+
+
+@_needs_opt
+def test_reduce_to_non_self_inverse_transpose_uses_collapsed_shape() -> None:
+    """A declared transposed output constrains an intermediate reduce shape."""
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "reduce_transpose",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": ["A", "B", "C", "D"]}
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": ["B", "C", "A"]}
+            ],
+            "body": [
+                {
+                    "op": "reduce",
+                    "result": "R",
+                    "operands": ["X"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [3],
+                        "assoc": "float_nondeterministic",
+                        "keepdims": False,
+                    },
+                },
+                {
+                    "op": "transpose",
+                    "result": "Y",
+                    "operands": ["R"],
+                    "attrs": {"perm": [1, 2, 0]},
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {"A": 2, "B": 3, "C": 5, "D": 7})
+    assert "tensor<2x3x5x7xf32>) -> tensor<2x3x5xf32>" in mlir
+    assert "perm = [1, 2, 0]" in mlir
+    lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
+    assert "affine_map<(d0, d1, d2) -> (d2, d0, d1)>" in lowered
+    assert "intent." not in lowered
+
+
+@_needs_opt
+def test_legacy_reduce_shape_is_inferred_backwards_through_transpose() -> None:
+    """Old captures without keepdims still lower when the ABI disambiguates."""
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "flash_delta_shape",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": [1, "M", "H", "D"]}
+            ],
+            "outputs": [
+                {"name": "Delta", "dtype": "f32", "shape": [1, "H", "M"]}
+            ],
+            "body": [
+                {
+                    "op": "reduce",
+                    "result": "Delta_bmh",
+                    "operands": ["X"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [3],
+                        "assoc": "float_nondeterministic",
+                    },
+                },
+                {
+                    "op": "transpose",
+                    "result": "Delta",
+                    "operands": ["Delta_bmh"],
+                    "attrs": {"perm": [0, 2, 1]},
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {"M": 128, "H": 1, "D": 64})
+    assert "tensor<1x128x1x64xf32>) -> tensor<1x128x1xf32>" in mlir
+    lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
+    assert "intent." not in lowered
+
+
+def test_transpose_and_pad_reject_invalid_shape_contracts() -> None:
+    from intentir.frontend import emit_module
+
+    bad_perm = IntentFunction.from_json({
+        "intent_function": {
+            "name": "bad_perm",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [2, 3, 4]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": [2, 3, 4]}],
+            "body": [{
+                "op": "transpose",
+                "result": "Y",
+                "operands": ["X"],
+                "attrs": {"perm": [0, 1, 1]},
+            }],
+        }
+    })
+    with pytest.raises(ValueError, match="invalid"):
+        emit_module(bad_perm, {})
+
+    negative_pad = IntentFunction.from_json({
+        "intent_function": {
+            "name": "negative_pad",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [2, 3]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": [2, 2]}],
+            "body": [{
+                "op": "pad",
+                "result": "Y",
+                "operands": ["X"],
+                "attrs": {"lo": [0, 0], "hi": [0, -1], "value": 0.0},
+            }],
+        }
+    })
+    with pytest.raises(ValueError, match="non-negative"):
+        emit_module(negative_pad, {})
 
 
 torch = pytest.importorskip("torch")
@@ -83,7 +720,7 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
     from intentir.frontend import emit_body_function
     from intentir.verify.interpret import interpret
 
-    fn = _fn()
+    fn = _fn_with_f32_accumulators()
     Sq, Sk, D, BK = _DIMS["Sq"], _DIMS["Sk"], _DIMS["D"], _DIMS["BK"]
     body_path = tmp_path / "flash_body_fwd.mlir"
     body_path.write_text(emit_body_function(fn, _DIMS))
@@ -91,9 +728,9 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
 
     for seed, scale in [(0, 1.0), (1, 0.25), (2, 0.5)]:
         rng = np.random.default_rng(seed)
-        Q = rng.standard_normal((1, 1, Sq, D)).astype(np.float32)
-        K = rng.standard_normal((1, 1, Sk, D)).astype(np.float32)
-        V = rng.standard_normal((1, 1, Sk, D)).astype(np.float32)
+        Q = rng.standard_normal((1, 1, Sq, D)).astype(np.float16)
+        K = rng.standard_normal((1, 1, Sk, D)).astype(np.float16)
+        V = rng.standard_normal((1, 1, Sk, D)).astype(np.float16)
         o_interp = interpret(
             fn, {"Q": Q, "K": K, "V": V, "scale": np.float32(scale)}, {"BK": BK}
         )["O"][0, 0]
