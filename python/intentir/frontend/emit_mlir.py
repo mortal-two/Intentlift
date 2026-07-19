@@ -564,6 +564,71 @@ def _op_broadcast_axes(
     return broadcast_axes.get(op.result, {})
 
 
+def _broadcast_mul_contraction_subscripts(
+    op: IntentOp,
+    env: Mapping[str, list[int]],
+    axes: Mapping[str, Sequence[int]],
+) -> str | None:
+    """Canonicalize a non-trailing rank-insertion multiply to einsum.
+
+    ``map_binary`` plus Layer-B broadcast axes is the canonical JSON spelling,
+    while the row CUDA pass also accepts the equivalent no-reduction
+    contraction.  Converting only multiplication with a proven non-trailing
+    insertion keeps the transformation exact and avoids forcing live LLMs to
+    choose one backend-facing graph spelling.  Ordinary trailing vector
+    broadcasts remain map operations.
+    """
+
+    if (
+        op.op != "map_binary"
+        or op.attrs.get("fn") != "mul"
+        or not isinstance(op.result, str)
+        or len(op.operands) != 2
+        or op.result not in env
+    ):
+        return None
+    result_shape = env[op.result]
+    rank = len(result_shape)
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    if rank == 0 or rank > len(alphabet):
+        return None
+    output_labels = alphabet[:rank]
+    operand_labels: list[str] = []
+    saw_nontrailing_insertion = False
+    for operand in op.operands:
+        source_shape = env.get(operand)
+        if source_shape is None or not source_shape:
+            return None
+        operand_axes = tuple(axes.get(operand, ()))
+        if not operand_axes:
+            if source_shape != result_shape:
+                return None
+            positions = tuple(range(rank))
+        else:
+            projected, inserted = _broadcast_projection(
+                source_shape, operand_axes, result_shape
+            )
+            if projected is None:
+                return None
+            positions = tuple(
+                index for index in range(rank) if index not in set(inserted)
+            )
+            if len(positions) != len(source_shape):
+                return None
+            if any(
+                source_extent != result_shape[position]
+                for source_extent, position in zip(source_shape, positions)
+            ):
+                return None
+            leading = tuple(range(rank - len(source_shape)))
+            if inserted and inserted != leading:
+                saw_nontrailing_insertion = True
+        operand_labels.append("".join(output_labels[index] for index in positions))
+    if not saw_nontrailing_insertion:
+        return None
+    return f"{operand_labels[0]},{operand_labels[1]}->{output_labels}"
+
+
 def _op_declared_shape(
     op: IntentOp,
     fold: int,
@@ -1491,23 +1556,35 @@ class _Printer:
                 f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "map_binary":
             axes = _op_broadcast_axes(op, self.broadcast_axes)
-            x, tx = self._broadcast_operand(
-                op.operands[0],
-                env,
-                axes.get(op.operands[0], ()),
-                indent,
-                env[op.result],
-            )
-            y, ty = self._broadcast_operand(
-                op.operands[1],
-                env,
-                axes.get(op.operands[1], ()),
-                indent,
-                env[op.result],
-            )
-            self.lines.append(
-                f'{indent}{r} = intent.map_binary {x}, {y} {{fn = "{a["fn"]}"}} : '
-                f'({tx}, {ty}) -> {self._ttn(op.result, env)}')
+            contraction = _broadcast_mul_contraction_subscripts(op, env, axes)
+            if contraction is not None:
+                x, y = (self.ssa[name] for name in op.operands)
+                tx, ty = (self._ttn(name, env) for name in op.operands)
+                self.lines.append(
+                    f'{indent}{r} = intent.contraction {x}, {y} '
+                    f'{{subscripts = "{contraction}"}} : ({tx}, {ty}) -> '
+                    f'{self._ttn(op.result, env)}'
+                )
+            else:
+                x, tx = self._broadcast_operand(
+                    op.operands[0],
+                    env,
+                    axes.get(op.operands[0], ()),
+                    indent,
+                    env[op.result],
+                )
+                y, ty = self._broadcast_operand(
+                    op.operands[1],
+                    env,
+                    axes.get(op.operands[1], ()),
+                    indent,
+                    env[op.result],
+                )
+                self.lines.append(
+                    f'{indent}{r} = intent.map_binary {x}, {y} '
+                    f'{{fn = "{a["fn"]}"}} : ({tx}, {ty}) -> '
+                    f'{self._ttn(op.result, env)}'
+                )
         elif op.op == "select":
             axes = _op_broadcast_axes(op, self.broadcast_axes)
             c, tc = self._broadcast_operand(

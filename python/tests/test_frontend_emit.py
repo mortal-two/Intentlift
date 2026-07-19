@@ -146,6 +146,22 @@ def test_emit_keeps_standard_trailing_vector_broadcast_rank_one() -> None:
     assert "tensor<4x8xf32>, tensor<8xf32>) -> tensor<4x8xf32>" in mlir
 
 
+def test_emit_nontrailing_mul_broadcast_canonicalizes_to_contraction() -> None:
+    from intentir.frontend import emit_module
+
+    mlir = emit_module(
+        _broadcast_binary_fn("row_scale", [4], [4, 8]),
+        {},
+        broadcast_axes={"Y": {"row": (1,)}},
+    )
+
+    assert "tensor.expand_shape %row" not in mlir
+    assert (
+        'intent.contraction %X, %row {subscripts = "ab,a->ab"} : '
+        "(tensor<4x8xf32>, tensor<4xf32>) -> tensor<4x8xf32>"
+    ) in mlir
+
+
 def test_emit_broadcast_supports_mixed_existing_and_missing_axes() -> None:
     from intentir.frontend import emit_module
 
