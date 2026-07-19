@@ -55,13 +55,13 @@ def test_responses_payload_carries_json_schema_text_format() -> None:
     assert payload["text"] == {"format": text_format}
 
 
-def test_xhigh_request_policy_uses_long_window_and_fewer_retries() -> None:
+def test_xhigh_request_policy_uses_one_long_nonduplicated_request() -> None:
     assert _resolve_responses_request_policy(
         _provider(), "xhigh", None, None
-    ) == (2, 1800.0)
+    ) == (1, 3600.0)
     assert _resolve_responses_request_policy(
         _provider(effort="xhigh"), None, None, None
-    ) == (2, 1800.0)
+    ) == (1, 3600.0)
 
 
 def test_non_xhigh_request_policy_preserves_historical_defaults() -> None:
@@ -118,4 +118,4 @@ def test_call_responses_passes_resolved_xhigh_timeout_to_urlopen(
     )
 
     assert reply.text == "ok"
-    assert observed == {"timeout": 1800.0}
+    assert observed == {"timeout": 3600.0}

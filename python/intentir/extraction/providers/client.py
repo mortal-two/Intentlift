@@ -19,8 +19,8 @@ from .provider import ProviderConfig, get_provider
 
 DEFAULT_RESPONSES_MAX_RETRIES = 4
 DEFAULT_RESPONSES_TIMEOUT_SECONDS = 600.0
-XHIGH_RESPONSES_MAX_RETRIES = 2
-XHIGH_RESPONSES_TIMEOUT_SECONDS = 1800.0
+XHIGH_RESPONSES_MAX_RETRIES = 1
+XHIGH_RESPONSES_TIMEOUT_SECONDS = 3600.0
 
 
 class ProviderError(RuntimeError):
@@ -76,9 +76,9 @@ def _resolve_responses_request_policy(
     """Resolve request limits without duplicating long-running xhigh calls.
 
     ``xhigh`` responses can legitimately take longer than the ordinary request
-    window.  Give them one long window plus one retry, while preserving the
-    historical defaults for every other effort.  Explicit caller values always
-    win.
+    window.  Give them one hour without blindly duplicating an in-flight
+    expensive request, while preserving the historical defaults for every
+    other effort.  Explicit caller values always win.
     """
     effective_effort = (effort or provider.reasoning_effort).strip().lower()
     is_xhigh = effective_effort == "xhigh"
