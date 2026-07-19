@@ -834,6 +834,7 @@ def test_concat_fails_closed_when_its_rule_is_absent() -> None:
 
 
 def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:
+    registry = default_triton_rule_registry()
     artifact = replace(
         _artifact(),
         strategy=StrategySpec(
@@ -856,7 +857,7 @@ def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:
             ]
         ),
     )
-    result = compose_replay_plan(artifact, default_triton_rule_registry())
+    result = compose_replay_plan(artifact, registry)
     selected = {(step.rule, step.target_ref) for step in result.plan.steps}
 
     assert ("bind_wide_program_domain", "lane_domain") in selected
@@ -864,6 +865,17 @@ def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:
     assert ("materialize_mask_tile", "load_x") in selected
     assert ("bind_program_domain", "lane_domain") not in selected
     assert ("materialize_index_tile", "load_x") not in selected
+
+    pointer_card = registry.get(
+        "materialize_pointer_tile", frontend=Frontend.TRITON
+    )
+    assert pointer_card.version == "4"
+    assert any("one shared staged base per buffer" in item for item in pointer_card.pitfalls)
+    assert any("extra addptr" in item for item in pointer_card.pitfalls)
+
+    mask_card = registry.get("materialize_mask_tile", frontend=Frontend.TRITON)
+    assert mask_card.version == "2"
+    assert any("same constructed mask value" in item for item in mask_card.pitfalls)
 
 
 def test_explicit_metadata_drives_renamed_cards_without_registry_priority() -> None:

@@ -1993,12 +1993,12 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         if card.selection_mode.value == "override"
     )
     assert cards["realize_k_tiled_dot"].selection_mode.value == "derived"
-    assert cards["materialize_pointer_tile"].version == "3"
+    assert cards["materialize_pointer_tile"].version == "4"
     assert any(
-        "top-level terms" in item
+        "one shared staged base per buffer" in item
         for item in cards["materialize_pointer_tile"].pitfalls
     )
-    assert "top-level additive terms" in cards[
+    assert "maximal common row/base term" in cards[
         "materialize_pointer_tile"
     ].example
     assert cards["realize_masked_access"].version == "3"

@@ -854,23 +854,36 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "materialize_pointer_tile",
             Frontend.TRITON,
-            version="3",
+            version="4",
             selection_mode=RuleSelectionMode.OVERRIDE,
             override_family="address_association",
             applies_to=["boundary.accesses"],
-            reads=["index_expression", "schedule slot"],
+            reads=[
+                "all index_expression values for the same tensor",
+                "shared additive prefixes",
+                "derived integer offset tiles",
+                "load/store reuse",
+                "schedule slot",
+            ],
             api_mapping={"lane_range": "tl.arange"},
             example=(
-                "Treat each named J domain coordinate as an atomic value. Split the "
-                "access index_expression only at its top-level additive terms, then "
-                "add those terms to the pointer exactly once each, from left to right."
+                "Analyze all pointer-staged accesses to one tensor together. "
+                "Hoist the maximal common row/base term into one pointer value, "
+                "materialize each unique remaining integer offset tile once, and "
+                "reuse those values for matching loads and stores. If a second "
+                "offset is the first offset plus a constant, form that relation as "
+                "integer arithmetic before its single pointer addition."
             ),
             pitfalls=[
-                "Use the same staged pointer association independently for every buffer.",
+                "Create one shared staged base per buffer, not one copy per access.",
+                "Do not rebuild an identical pointer or integer offset separately "
+                "for a load and its matching store.",
+                "Do not turn an integer relation such as right_offset = "
+                "left_offset + half_extent into an extra addptr on right_pointer.",
                 "Do not expand a named coordinate into its program-base and lane "
                 "construction; a term such as m*K remains one pointer addition.",
-                "Do not combine top-level terms into one integer tile and do not split "
-                "multiplicative or coordinate-internal subexpressions into extra addptrs.",
+                "After shared-base extraction, do not split multiplicative or "
+                "coordinate-internal subexpressions into extra addptrs.",
             ],
         ),
         _default_triton_card(
@@ -894,6 +907,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "materialize_mask_tile",
             Frontend.TRITON,
+            version="2",
             selection_mode=RuleSelectionMode.OVERRIDE,
             override_family="mask_materialization",
             applies_to=["boundary.accesses"],
@@ -908,11 +922,13 @@ def default_triton_rule_registry() -> RuleRegistry:
             },
             example=(
                 "Compute source-declared one-dimensional predicate components "
-                "once, rank-insert those boolean values, and reuse the composed "
-                "tile mask for every referenced access."
+                "once, rank-insert those boolean values, and reuse one identical "
+                "composed tile mask across every matching load and store."
             ),
             pitfalls=[
                 "Do not recompute component comparisons after rank insertion.",
+                "Byte-identical predicate expressions for the same logical domain "
+                "must reference the same constructed mask value.",
                 "Do not merge predicates whose source staging is independent.",
             ],
         ),
