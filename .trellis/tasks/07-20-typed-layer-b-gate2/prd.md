@@ -2,22 +2,26 @@
 
 ## Goal
 
-Make the five active high-performance kernels proceed through the canonical
-pipeline without weakening Gate1:
+Make real LLM lifting produce a complete executable `J=A+B` and causal replay
+construction evidence without weakening Gate1 or creating a semantic Gate0:
 
 ```text
-fresh real LLM Lift/Relift
+fresh real LLM LiftCore proposal
+  -> Gate1 typed A/B/interface admission + canonical pi construction
+  -> bounded source-aware Relift for admission or hard-closure evidence
   -> strict Gate1 source/replay hard closure
+  -> executable pi ablations + actual-pi masked-J terminal checks
   -> typed IntentProgram(A+B+ABI) handoff
   -> final-J replay/scalar Gate2 v2
   -> independent per-target backend conformance
 ```
 
-The immediate shared blocker is that Gate1 currently accepts free-form Layer-B
-domain strings which later fail the typed contract parser. KLDiv's accepted
-artifact contains `b = grid_axis(0), 0 <= b < 2048`; TVD and LayerNorm have
-equivalent natural-language spellings. This must be fixed at the Lift/schema
-boundary so the LLM produces a genuinely executable J.
+The immediate architecture defect is that semantic predicate/interface/J/pi
+checks currently reject or repair a candidate inside extraction before Gate1,
+while direct pi dropout is counted as evidence without reaching the writer.
+These checks must become named Gate1 hard admission/causal evidence.  Extraction
+keeps only enough closed JSON shape and primitive types to preserve and audit a
+proposal; it must not become a second acceptance authority.
 
 ## Non-negotiable invariants
 
@@ -26,8 +30,9 @@ boundary so the LLM produces a genuinely executable J.
 - Do not infer missing predicate/fill/alias/conflict fields or add kernel-name
   special cases.
 - Official live remains fresh, uncached, `gpt-5.6-sol/xhigh`, with zero paired
-  semantic interventions and no pi ablations. `wrong_fill_delta` is not on the
-  acceptance path; masked-J remains a terminal anti-leakage attack.
+  semantic J/B interventions. `wrong_fill_delta` is not on the acceptance path.
+  Executable pi ablations and masked-J are required terminal proof arms; neither
+  may feed Relift or rescue a candidate.
 - Gate2 v2 has exactly two required legs: final-J replay and scalar MLIR
   reference. It cannot import or fall back to CUDA/ROCm production lowering.
 - Production backend conformance happens only after Gate2.
@@ -36,30 +41,47 @@ boundary so the LLM produces a genuinely executable J.
 
 ## Requirements
 
-1. Define one canonical, typed portable grammar/model for Layer-B domain
-   predicates and use it in both Gate1 validation and IntentProgram handoff.
-2. Update the LLM prompt/schema/repair diagnostics so invalid natural-language
-   predicates are rejected early and repaired by the LLM, not rewritten by
-   deterministic code.
-3. Preserve compatibility only for expressions that are already valid under
-   the canonical grammar; fail closed on assignment/prose/source-local syntax.
-4. Add generic tests for valid logical predicates and invalid forms observed in
-   KLDiv/TVD/LayerNorm.
-5. Re-run fresh real LLM Gate1/Gate2 for the five kernels as capability becomes
-   available. Old source/replay v1 reports remain diagnostic only.
-6. Make scalar execution scalable for legitimate captured shapes without a
+1. Keep LiftCore parsing limited to closed JSON/object/array/primitive
+   constructability and provenance capture. Move portable predicate typing,
+   compiler-view/interface agreement, semantic J references, scope/storage,
+   iota extent, C strategy and pi capability/completeness into Gate1 admission.
+2. Emit structured Gate1 admission evidence and route semantic admission
+   failures through the same bounded source-aware Relift policy. Provider
+   transport failures remain terminal and never masquerade as semantic repair.
+3. Treat RuleRegistry only as an executable pi mechanism catalogue. Compose the
+   canonical pi inside Gate1; zero/ambiguous rule coverage is a Gate1 capability
+   failure with actionable Relift evidence, not an extraction-time whitelist.
+4. Keep one canonical typed portable grammar for Layer-B predicates and use it
+   in Gate1 and IntentProgram handoff. Assignment/prose/source-local syntax must
+   fail closed in Gate1; deterministic code must not rewrite or infer it.
+5. Separate canonical pi validation from ablation execution. A structurally
+   executable step dropout/substitution must enter a fresh source-blind writer,
+   compile, and undergo the same score-free hard comparison. Writer-before
+   rejection, schema invalidity or provider failure is inconclusive, not a kill.
+6. Require every applicable causal pi ablation to be killed by compile
+   nonclosure or hard fingerprint nonclosure. A surviving ablation rejects the
+   normal candidate. Classify administrative ABI/schedule steps separately so
+   the causal claim is neither vacuous nor overstated.
+7. Preserve actual-pi masked-J as an independent terminal attack after normal
+   hard closure and pi ablation proof. It cannot modify normal J, enter Relift,
+   or compensate for any other failed arm.
+8. Add generic tests for valid and invalid predicates, admission-driven Relift,
+   compose capability gaps, executable dropout/substitution, inconclusive
+   evidence and mutation survival.
+9. Re-run fresh real LLM Gate1/Gate2 for the active kernels, then extend the same
+   evidence contract to all 28 high-performance kernels. Old source/replay v1
+   reports remain diagnostic only.
+10. Make scalar execution scalable for legitimate captured shapes without a
    JSON/NumPy interpreter or kernel-name profiles. Any small profile must be a
    declared, ABI-valid specialization shared by replay and scalar.
-7. After Gate2 passes, run independent target-specific lowering conformance,
+11. After Gate2 passes, run independent target-specific lowering conformance,
    keeping common, CUDA, CPU/reference, and future backends physically separate.
 
 ## Current evidence
 
-- Typed predicate admission landed in `05876fe`: the three observed binder/prose
-  forms now fail before Gate1, enter ordinary bounded Lift repair, and cannot be
-  reintroduced through post-construction mutation. The canonical specs now
-  describe this current behavior; explicit typed free-symbol binding remains a
-  follow-up capability rather than an inferred compatibility rule.
+- Typed predicate parsing landed in `05876fe`, but it currently executes in
+  `Gate1Artifact` construction and therefore rejects before Gate1. This is now
+  an identified architecture defect to migrate, not the desired final design.
 - The active scalar reference now uses a value-independent MLIR module, one
   ranked-memref C entry for all outputs, a content-addressed toolchain-bound
   cache, and a crash/timeout-isolated worker. The old dense-input,
@@ -77,11 +99,16 @@ boundary so the LLM produces a genuinely executable J.
 
 ## Completion criteria
 
-- Typed-domain validation lands with unit and integration tests.
-- Invalid observed domain forms fail during Lift/Gate1 artifact validation with
-  actionable repair diagnostics.
+- Extraction no longer performs semantic acceptance or canonical pi coverage.
+- Invalid observed domain forms and J/interface/pi capability gaps appear as
+  structured Gate1 admission evidence and can drive bounded source-aware Relift.
+- Direct pi dropout/substitution reaches a fresh writer and compiler; formal
+  evidence never counts pre-writer canonicality rejection as a successful kill.
+- Official live requires applicable executable pi ablations plus masked-J, while
+  retaining zero paired semantic interventions and no `wrong_fill_delta` path.
 - No Gate1 comparator/tolerance relaxation appears in the diff.
-- At least KLDiv is re-lifted fresh through Gate1 and replay/scalar Gate2 v2;
-  remaining kernels have honest terminal evidence or explicit capability gaps.
+- The active five kernels are re-lifted fresh through Gate1 and replay/scalar
+  Gate2 v2 under the revised evidence protocol; remaining campaign kernels have
+  honest terminal evidence or explicit capability gaps until all 28 close.
 - Gate2 architecture tests prove no production CUDA dependency.
 - Target lower results, when run, are reported separately from Gate2.

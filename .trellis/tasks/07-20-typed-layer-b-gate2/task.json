@@ -27,6 +27,6 @@
     "python/intentir/verify/gate1/program_adapter.py",
     "python/intentir/extraction/lifters/scrc.py"
   ],
-  "notes": "Phase 2.1 typed predicate admission landed in 05876fe. The scalable value-independent ranked-memref scalar ABI is implemented with one-call multi-output execution, content-addressed compilation, and an isolated worker. Task remains in progress for explicit typed symbol binding and fresh five-kernel evidence.",
+  "notes": "Typed predicate parsing and the scalable ranked-memref scalar ABI landed, but semantic predicate/interface/pi rejection still occurs before Gate1 and pi dropout is not executable. Current phase migrates those decisions into Gate1 admission with bounded Relift and makes pi ablation a required writer/compiler hard-evidence arm before the fresh 28-kernel campaign.",
   "meta": {}
 }
