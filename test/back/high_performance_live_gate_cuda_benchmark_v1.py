@@ -1,4 +1,8 @@
-"""Benchmark a completed live Gate1/Gate2 CUDA report against captured Triton.
+"""Archived benchmark for a historical Gate1/Gate2 CUDA-lowering report.
+
+This source snapshot expects the pre-2026-07-20 three-way live helper contract.
+It is retained for audit; reproduce the full CLI from commit ``c59bd69`` rather
+than importing the current source/replay-only live harness.
 
 This first performance adapter deliberately handles only automatically selected
 single-launch CUDA programs.  Unsupported multi-launch/generic cases remain
@@ -22,7 +26,7 @@ import numpy as np
 from intentir.backend import orchestrate as backend_orchestrate
 from intentir.backend.launch import load_module
 from intentir.verify.gate1.model import Gate1Artifact
-from intentir.verify.gate2 import CudaLoweringRunner
+from intentir.verify.back.gate2_production_lowering_v1 import CudaLoweringRunner
 
 import high_performance_live_batch as batch
 import scrc_live_e2e as live

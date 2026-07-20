@@ -577,7 +577,7 @@ def build_semantic_interventions(
         raise ValueError("intervention limit must be non-negative")
     if not isinstance(artifact, Gate1Artifact):
         artifact = Gate1Artifact.from_json(artifact)
-    registry = registry or default_triton_rule_registry()
+    registry = registry if registry is not None else default_triton_rule_registry()
     if limit == 0:
         return ()
 

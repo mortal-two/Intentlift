@@ -36,8 +36,10 @@ Hard constraints:
    the generated ABI/body. Never infer semantics from handle spelling.
 5. J reduction axes are global tensor axes; frontend reduction calls use the
    matching boundary.reductions.tile_axis for the local tile value.
-6. A semantic broadcast may be implicit on a local tile. Do not emit an explicit
-   rank change unless the selected rule and local operand ranks require it.
+6. boundary.broadcasts.axes are global semantic axes, never local Triton axis
+   numbers. A semantic broadcast may be implicit on a local tile; do not emit an
+   explicit rank change unless the selected rule's global-to-local projection
+   proves that a materialized consumer-local axis is absent from the operand.
 7. Reproduce each declared access predicate exactly; do not strengthen it with
    redundant domain bounds.
 8. Apply each pi rule only to its declared target and in listed construction
@@ -47,10 +49,16 @@ Hard constraints:
    access order, pointer/mask construction and broadcast placement everywhere
    outside that literal's direct semantic use. Never refactor, hoist, sink,
    fold or reorder code based on a literal value.
-10. Keep one-dimensional domain coordinates one-dimensional. For every
-    non-scalar boundary.broadcast rank insertion, emit the selected rule's
-    explicit tl.expand_dims at that declared consumer; never pre-expand a
-    coordinate globally or rely on Python/Triton implicit broadcasting.
+10. Keep one-dimensional domain coordinates one-dimensional. Before realizing a
+    broadcast, establish the ordered operand-local axes, ordered consumer-local
+    axes, and global axes fixed/elided by the program domain. Rank-0 operands or
+    an empty missing-local-axis sequence are direct uses. Otherwise emit exactly
+    one tl.expand_dims per missing local axis at its final consumer-local position,
+    in ascending position order; the insertion count must equal the local rank
+    delta and the final local shape must match the consumer. Reuse an identical
+    projected view instead of expanding per BroadcastSpec/use. If this projection
+    is ambiguous, do not guess or use the global axis number as a local index.
+    Never pre-expand a coordinate globally.
 11. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 

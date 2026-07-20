@@ -5,7 +5,7 @@ the exact same immutable replay observation over a declared fixed-C runtime
 profile family.  Normal replay, paired interventions and actual-pi masked-J
 each reuse one immutable replay over the complete family; no profile-local
 writer or repair path exists. Gate2 can run either the reviewed execution contract or a strict
-declarative shape/value/seed matrix. It does not add a verifier or an alternate
+declarative shape/value/seed matrix over the source and replay legs. It does not add a verifier or an alternate
 correctness path: all decisions are still made by the production SCRC lifter,
 Gate1, and Gate2 implementations.
 """
@@ -69,23 +69,18 @@ from intentir.verify.gate1.interventions import (
 )
 from intentir.verify.gate1.pi_ablations import PiAblationKind, run_pi_ablations
 from intentir.verify.gate1.replay import ResponsesReplayWriter
+from intentir.verify.gate1.rule_release import load_rule_release
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate1.ttir import TTIR_FINGERPRINT_SCHEMA
 from intentir.verify.gate2 import (
     ArgumentRole,
-    CUDA_LOWERING_PROTOCOL,
-    CudaLoweringOptions,
-    CudaLoweringRunner,
-    CudaLoweringSpec,
+    GATE2_EXECUTION_PROTOCOL,
     Gate2Case,
     Gate2Runner,
     Gate2Status,
     Gate2Suite,
     GATE2_COMPARISON_PROTOCOL,
-    GateIntentBundle,
     InputDistribution,
-    LOWER2C_PROTOCOL,
-    Lower2CSpec,
     TensorInputSpec,
     Tolerance,
     TritonArgument,
@@ -458,38 +453,6 @@ def _runtime_by_name(case: LiveKernelCase) -> dict[str, SCRCCompilerArgument]:
     return {argument.name: argument for argument in case.arguments}
 
 
-def _symbolic_dims(artifact, case: LiveKernelCase) -> dict[str, int]:
-    runtime = _runtime_by_name(case)
-    tensors = {
-        tensor.name: tensor
-        for tensor in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
-    }
-    dims: dict[str, int] = {}
-    for parameter in artifact.interface.parameters:
-        if parameter.kind not in {ParameterKind.POINTER, ParameterKind.TENSOR}:
-            continue
-        argument = runtime[parameter.name]
-        tensor = tensors[parameter.tensor_ref]
-        if len(tensor.shape) != len(argument.shape):
-            raise ValueError(
-                f"J tensor {tensor.name!r} rank differs from compiler view"
-            )
-        for declared, concrete in zip(
-            tensor.shape, argument.shape, strict=True
-        ):
-            if isinstance(declared, str):
-                previous = dims.setdefault(declared, concrete)
-                if previous != concrete:
-                    raise ValueError(
-                        f"symbolic dim {declared!r} has inconsistent bindings"
-                    )
-            elif int(declared) != concrete:
-                raise ValueError(
-                    f"static J extent {declared} differs from {concrete}"
-                )
-    return dims
-
-
 def _gate2_case(
     artifact,
     case: LiveKernelCase,
@@ -497,13 +460,7 @@ def _gate2_case(
     *,
     case_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
-    lowering_backend: str = "cpu",
-    cuda_only_fast_path: str | None = None,
 ) -> Gate2Case:
-    if lowering_backend not in {"cpu", "cuda"}:
-        raise ValueError(
-            f"unsupported Gate2 lowering backend {lowering_backend!r}"
-        )
     rng = np.random.default_rng(seed)
     runtime = _runtime_by_name(case)
     values: dict[str, Any] = {}
@@ -575,72 +532,14 @@ def _gate2_case(
     triton = TritonExecutionSpec(
         tuple(arguments), case.grid, dict(artifact.schedule.values)
     )
-    dims = _symbolic_dims(artifact, case)
-    input_bindings = {
-        tensor.name: tensor.name for tensor in artifact.j.intent.inputs
-    }
-    if lowering_backend == "cpu":
-        if len(output_keys) != 1:
-            raise ValueError("current lower2c leg requires exactly one output")
-        lowering_kwargs = {
-            "dims": dims,
-            "input_bindings": input_bindings,
-            "output_key": output_keys[0],
-        }
-        lowering = (
-            Lower2CSpec.from_artifact(artifact, **lowering_kwargs)
-            if isinstance(artifact, Gate1Artifact)
-            else Lower2CSpec(artifact.j.intent, **lowering_kwargs)
-        )
-    else:
-        output_bindings = {
-            tensor.name: tensor.name for tensor in artifact.j.intent.outputs
-        }
-        bundle = (
-            GateIntentBundle.from_artifact(
-                artifact,
-                dims=dims,
-                input_bindings=input_bindings,
-                output_bindings=output_bindings,
-            )
-            if isinstance(artifact, Gate1Artifact)
-            else GateIntentBundle(
-                artifact.j.intent,
-                dims,
-                input_bindings,
-                output_bindings,
-                declared_schedule=dict(artifact.schedule.values),
-            )
-        )
-        lowering = CudaLoweringSpec(
-            bundle,
-            CudaLoweringOptions(only_fast_path=cuda_only_fast_path),
-        )
-        missing_outputs = sorted(set(output_keys) - set(output_bindings.values()))
-        if missing_outputs:
-            raise ValueError(
-                "CUDA Gate2 output interface differs from canonical Intent "
-                f"outputs: {missing_outputs}"
-            )
-    case_metadata = dict(metadata or {})
-    case_metadata["lowering_backend"] = lowering_backend
     return Gate2Case(
         case_id or f"{case.name}.live",
         values,
         triton,
-        lowering,
         tuple(output_keys),
         {output_key: case.tolerance for output_key in output_keys},
-        case_metadata,
+        dict(metadata or {}),
     )
-
-
-def _gate2_runner(lowering_backend: str) -> Gate2Runner:
-    if lowering_backend == "cpu":
-        return Gate2Runner()
-    if lowering_backend == "cuda":
-        return Gate2Runner(lowering_runner=CudaLoweringRunner())
-    raise ValueError(f"unsupported Gate2 lowering backend {lowering_backend!r}")
 
 
 def _gate1_config(
@@ -782,9 +681,6 @@ def _gate2_suite(
     artifact,
     case: LiveKernelCase,
     seeds: tuple[int, ...],
-    *,
-    lowering_backend: str = "cpu",
-    cuda_only_fast_path: str | None = None,
 ) -> Gate2Suite:
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("Gate2 matrix seeds must be non-empty and unique")
@@ -815,8 +711,6 @@ def _gate2_suite(
                             "value_profile": value_profile.profile_id,
                             "seed": seed,
                         },
-                        lowering_backend=lowering_backend,
-                        cuda_only_fast_path=cuda_only_fast_path,
                     )
                 )
     return Gate2Suite(f"{case.name}.matrix", tuple(matrix))
@@ -827,7 +721,6 @@ def _execution_json(result) -> dict[str, Any]:
         "leg": result.leg,
         "ok": result.ok,
         "error": result.error,
-        "unsupported": result.unsupported,
         "metadata": dict(result.metadata),
         "outputs": {
             name: {
@@ -841,26 +734,21 @@ def _execution_json(result) -> dict[str, Any]:
 
 def _gate2_evidence_json(result) -> dict[str, Any]:
     return {
+        "execution_protocol": GATE2_EXECUTION_PROTOCOL,
         "case_id": result.case_id,
         "status": result.status.value,
         "metadata": dict(result.metadata),
         "source": _execution_json(result.source),
         "replay": _execution_json(result.replay),
-        "lowering": _execution_json(result.lowering),
         "source_replay": None
         if result.source_replay is None
         else asdict(result.source_replay),
-        "source_lowering": None
-        if result.source_lowering is None
-        else asdict(result.source_lowering),
-        "replay_lowering": None
-        if result.replay_lowering is None
-        else asdict(result.replay_lowering),
     }
 
 
 def _gate2_suite_evidence_json(result) -> dict[str, Any]:
     return {
+        "execution_protocol": GATE2_EXECUTION_PROTOCOL,
         "suite_id": result.suite_id,
         "passed": result.passed,
         "status_counts": result.status_counts,
@@ -1451,13 +1339,7 @@ def run_case(
     compiler_view = case.compiler_view()
     source_text = case.source_text
     source_encoded = source_text.encode("utf-8")
-    registry = default_triton_rule_registry()
-    lowering_backend = str(getattr(args, "lowering_backend", "cpu"))
-    if lowering_backend not in {"cpu", "cuda"}:
-        raise ValueError(
-            f"unsupported Gate2 lowering backend {lowering_backend!r}"
-        )
-    cuda_only_fast_path = getattr(args, "cuda_only_fast_path", None)
+    registry = _rule_registry_from_args(args)
     gate1_profile = str(getattr(args, "gate1_profile", "formal"))
     if gate1_profile not in {"formal", "normal"}:
         raise ValueError(f"unsupported Gate1 profile {gate1_profile!r}")
@@ -1609,16 +1491,11 @@ def run_case(
             "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
-        "gate2_lowering_policy": {
-            "backend": lowering_backend,
-            "protocol": (
-                CUDA_LOWERING_PROTOCOL
-                if lowering_backend == "cuda"
-                else LOWER2C_PROTOCOL
-            ),
-            "cuda_only_fast_path": cuda_only_fast_path,
-            "unsupported_status": "lowering_unsupported",
-            "legacy_interpreter_fallback": "disabled",
+        "gate2_execution_policy": {
+            "protocol": GATE2_EXECUTION_PROTOCOL,
+            "legs": ["source", "replay"],
+            "production_lowering_in_verdict": False,
+            "replay_binding": "final_gate1_artifact_digest_exact_match_v1",
         },
         "gate2_comparison_policy": {
             "protocol": GATE2_COMPARISON_PROTOCOL,
@@ -1849,8 +1726,7 @@ def run_case(
         )
     if not gate1.replay_closed:
         if (
-            lowering_backend == "cpu"
-            and getattr(args, "diagnose_rejected", False)
+            getattr(args, "diagnose_rejected", False)
             and gate2_replay is not None
             and gate2_replay.generation is not None
         ):
@@ -1861,7 +1737,7 @@ def run_case(
             _progress("gate2_diagnostic_start", kernel=case.name)
             gate2_started = time.perf_counter()
             try:
-                runner = _gate2_runner(lowering_backend)
+                runner = Gate2Runner()
                 if gate2_matrix_enabled:
                     diagnostic_suite = runner.run_suite(
                         case.kernel_source,
@@ -1870,8 +1746,6 @@ def run_case(
                             verified_artifact,
                             case,
                             gate2_seeds,
-                            lowering_backend=lowering_backend,
-                            cuda_only_fast_path=cuda_only_fast_path,
                         ),
                     )
                     report["gate2_diagnostic_suite"] = {
@@ -1898,8 +1772,6 @@ def run_case(
                             verified_artifact,
                             case,
                             args.seed,
-                            lowering_backend=lowering_backend,
-                            cuda_only_fast_path=cuda_only_fast_path,
                         ),
                     )
                     report["gate2_diagnostic"] = {
@@ -1920,6 +1792,7 @@ def run_case(
                     else "gate2_diagnostic"
                 )
                 report[key] = {
+                    "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                     "kind": "offline_gate2_for_gate1_rejected_sample",
                     "independent": True,
                     "gate1_status": gate1.status.value,
@@ -1947,7 +1820,7 @@ def run_case(
     }
 
     _progress("gate2_start", kernel=case.name)
-    runner = _gate2_runner(lowering_backend)
+    runner = Gate2Runner()
     gate2_started = time.perf_counter()
     if gate2_matrix_enabled:
         try:
@@ -1958,12 +1831,11 @@ def run_case(
                     verified_artifact,
                     case,
                     gate2_seeds,
-                    lowering_backend=lowering_backend,
-                    cuda_only_fast_path=cuda_only_fast_path,
                 ),
             )
         except Exception as exc:
             report["gate2_suite"] = {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "status": "setup_failed",
                 "error": f"{type(exc).__name__}: {exc}",
             }
@@ -1991,12 +1863,11 @@ def run_case(
                 verified_artifact,
                 case,
                 args.seed,
-                lowering_backend=lowering_backend,
-                cuda_only_fast_path=cuda_only_fast_path,
             ),
         )
     except Exception as exc:
         report["gate2"] = {
+            "execution_protocol": GATE2_EXECUTION_PROTOCOL,
             "status": "setup_failed",
             "error": f"{type(exc).__name__}: {exc}",
         }
@@ -2024,6 +1895,14 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _rule_registry_from_args(args: argparse.Namespace):
+    registry = default_triton_rule_registry()
+    release_path = getattr(args, "rule_release", None)
+    if release_path is not None:
+        registry = load_rule_release(Path(release_path)).apply(registry)
+    return registry.frozen_snapshot()
+
+
 def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -2044,22 +1923,15 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser.add_argument("--num-warps", type=int, default=4)
     parser.add_argument("--num-stages", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument(
+        "--rule-release",
+        type=Path,
+        help=(
+            "explicit approved Gate1 RuleRegistry release; loaded once before "
+            "the run and bound by the resulting registry digest"
+        ),
+    )
     parser.add_argument("--gate2-matrix", action="store_true")
-    parser.add_argument(
-        "--lowering-backend",
-        choices=("cpu", "cuda"),
-        default="cpu",
-        help=(
-            "production lowering used by Gate2 after Gate1 replay closure"
-        ),
-    )
-    parser.add_argument(
-        "--cuda-only-fast-path",
-        help=(
-            "restrict CUDA structural selection to one fast-path id; generic "
-            "fallback remains explicitly reported"
-        ),
-    )
     parser.add_argument(
         "--gate1-profile",
         choices=("formal", "normal"),
@@ -2124,9 +1996,6 @@ def main(default_kernel: str = "add") -> int:
         "exit_code": code,
         "kernel": report.get("case"),
         "gate1_profile": report.get("gate1_execution_profile"),
-        "lowering_backend": report.get("gate2_lowering_policy", {}).get(
-            "backend"
-        ),
         "lift": report.get("lift", {}).get("ok"),
         "gate1": report.get("gate1", {}).get("status"),
         "anti_leakage_basis": report.get("gate1", {}).get(

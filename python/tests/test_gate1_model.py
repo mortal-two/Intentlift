@@ -507,6 +507,34 @@ def test_rule_registry_resolves_only_cards_used_by_plan() -> None:
         registry.resolve(ReplayPlan([ReplayStep("missing", node_ref="n0")]))
 
 
+def test_rule_registry_snapshot_is_order_independent_and_detached_from_callers() -> None:
+    registry = default_triton_rule_registry()
+    reordered = RuleRegistry(list(reversed(registry.cards)))
+
+    assert reordered.digest == registry.digest
+    assert reordered.to_json() == registry.to_json()
+
+    fetched = registry.get("realize_elementwise")
+    fetched.api_mapping["unreviewed"] = "libdevice.unreviewed"
+    exposed = registry.cards[0]
+    exposed.pitfalls.append("caller mutation")
+
+    assert "unreviewed" not in registry.get("realize_elementwise").api_mapping
+    assert "caller mutation" not in registry.cards[0].pitfalls
+
+    frozen = registry.frozen_snapshot()
+    assert frozen.frozen
+    with pytest.raises(SchemaError, match="frozen RuleRegistry"):
+        frozen.register(
+            RuleCard(
+                "late_hot_reload",
+                Frontend.TRITON,
+                target_kinds=["intent_op:late"],
+                construction_phase=60,
+            )
+        )
+
+
 def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
     registry = default_triton_rule_registry()
     assert all(card.target_kinds for card in registry.cards)
@@ -835,6 +863,9 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "tl.sum" in normal  # concrete API names live in selected system rule cards
     assert "one deterministic syntactic normal form" in normal
     assert "pre-expand a" in normal
+    assert "global axis number as a local index" in normal
+    assert "insertion count must equal the local rank" in normal
+    assert "reuse an identical" in normal.lower()
     assert '"reference_naming": "opaque_replay_refs_v1"' in normal
     assert "reduce_sum_node" not in normal
     assert "input_masked_load" not in normal

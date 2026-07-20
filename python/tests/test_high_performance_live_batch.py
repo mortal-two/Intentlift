@@ -30,13 +30,13 @@ def test_official_campaign_configuration_is_not_cli_overridable() -> None:
     assert official.model == "gpt-5.6-sol"
     assert official.effort == "xhigh"
     assert official.gate1_profile == "formal"
-    assert official.lowering_backend == "cuda"
+    assert not hasattr(official, "lowering_backend")
     assert official.semantic_interventions == 0
     assert not official.pi_ablations
     assert not official.diagnose_rejected
 
 
-def test_fresh_contract_rejects_wrong_model_cache_and_missing_cuda() -> None:
+def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
     report = {
         "model": "gpt-5.5",
         "effort": "high",
@@ -63,8 +63,15 @@ def test_fresh_contract_rejects_wrong_model_cache_and_missing_cuda() -> None:
             "maximum_interventions": 0,
             "pi_ablations": {"enabled": False},
         },
-        "gate2": {"status": "gate2_pass"},
-        "gate2_lowering_policy": {"backend": "cpu"},
+        "gate2": {
+            "execution_protocol": "legacy_three_way",
+            "status": "gate2_pass",
+        },
+        "gate2_execution_policy": {
+            "protocol": "legacy_three_way",
+            "legs": ["source", "replay", "lowering"],
+            "production_lowering_in_verdict": True,
+        },
     }
 
     passed, failures = batch._fresh_contract(report)
@@ -76,7 +83,10 @@ def test_fresh_contract_rejects_wrong_model_cache_and_missing_cuda() -> None:
         "missing_provider_response_id",
         "requested_model_mismatch",
         "requested_effort_mismatch",
-        "not_cuda_lowering",
+        "gate2_execution_protocol_mismatch",
+        "gate2_execution_legs_mismatch",
+        "production_lowering_entered_gate2_verdict",
+        "gate2_evidence_protocol_mismatch",
     }
 
 
@@ -101,8 +111,15 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
             "maximum_interventions": 0,
             "pi_ablations": {"enabled": False},
         },
-        "gate2": {"status": "gate2_pass"},
-        "gate2_lowering_policy": {"backend": "cuda"},
+        "gate2": {
+            "execution_protocol": "source_replay_dynamic_equivalence_v1",
+            "status": "gate2_pass",
+        },
+        "gate2_execution_policy": {
+            "protocol": "source_replay_dynamic_equivalence_v1",
+            "legs": ["source", "replay"],
+            "production_lowering_in_verdict": False,
+        },
     }
 
     report["gate1"].update(
@@ -143,8 +160,15 @@ def test_fresh_contract_rejects_interventions_or_missing_masked_j() -> None:
             "pi_ablations": {"enabled": True},
         },
         "pi_ablations": [{"status": "rejected"}],
-        "gate2": {"status": "gate2_pass"},
-        "gate2_lowering_policy": {"backend": "cuda"},
+        "gate2": {
+            "execution_protocol": "source_replay_dynamic_equivalence_v1",
+            "status": "gate2_pass",
+        },
+        "gate2_execution_policy": {
+            "protocol": "source_replay_dynamic_equivalence_v1",
+            "legs": ["source", "replay"],
+            "production_lowering_in_verdict": False,
+        },
     }
 
     passed, failures = batch._fresh_contract(report)

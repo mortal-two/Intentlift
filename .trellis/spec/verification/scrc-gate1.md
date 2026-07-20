@@ -8,7 +8,7 @@ Gate1 只回答一个问题：源码隔离 writer 能否依据完整语义 `J`�
 硬结构闭合。
 
 Gate1 不执行 Kernel，不解释 JSON 得到数值结果，也不新增 verifier。Gate2 是独立
-的三方动态行为证据；Gate2 通过不推导 Gate1 必须通过，Gate1 拒绝也不阻止记录
+的 source/replay 双腿动态行为证据；Gate2 通过不推导 Gate1 必须通过，Gate1 拒绝也不阻止记录
 Gate2 的独立结果。
 
 当前正式协议：
@@ -113,6 +113,53 @@ RuleCard 具有机器可执行元数据：target kinds、strategy family/choice�
 fields、phase、provides/requires。每个 work item 必须匹配恰好一张卡：零匹配是
 J/C/registry gap，多匹配是 ambiguity；两者都 fail-closed，priority 不得替代选择。
 
+RuleRegistry 的 semantic identity 对 card 输入顺序不敏感，按 card id canonicalize 后
+计算 SHA-256。registry 注册时复制 RuleCard，读取时也返回副本；一个 Lift/Gate1/batch
+开始前必须创建 detached frozen snapshot。运行中注册、替换或按当前 Kernel 热加载卡片
+一律拒绝。composer、Lift prompt、artifact/cache identity 与 replay code policy 使用同一
+snapshot digest；显式空 registry 不得静默回退 default registry。
+
+### 5.1 受控动态扩充（`scrc-rule-release-v1`）
+
+“动态扩充”只表示在**下一次** run/batch 开始前显式装载已审计 release，不表示当前
+Kernel 失败后自动发明规则并立即重试。release 控制面与 writer 可见 RuleCard 分离；
+trigger/regression/evidence/rationale 不进入 source-blind replay packet。
+
+release 必须包含：
+
+- `proposed | approved | revoked` 状态；只有 `approved` 可 apply；
+- exact `parent_registry_digest`；
+- `add | replace` 变更；replace 还绑定旧 card canonical digest；
+- 非空 trigger、独立 regression、evidence 与 rationale；
+- 覆盖上述全部内容的 `approval_content_digest`。
+
+loader 使用严格 JSON，拒绝未知字段、重复 key、NaN/Infinity、错误 parent/digest、
+重复 card id 与 revoked/proposed release。apply 返回新 registry，不修改 parent。
+add v1 只允许具有显式 `target_kinds + construction_phase` 的 derived card，不能新增
+frontend 或 override family；replace 必须提升 card version，且不得改变 frontend、
+target/strategy/phase/required-fields/provides/requires 等 composer selection metadata。
+新 IntentIR 语义、branch/region、strategy family 或 frontend 仍必须先走代码/schema/spec
+release，不能借 data-only RuleCard 绕过。
+
+每次 Gate1 缺口先分类：`existing-card-too-narrow` 用 replace release；只有“现有 schema
+op 缺少 derived mechanism”才可用 add release；错误 J/B、错误 C、composer work-item
+错误、TTIR parser/normalization 缺口以及新 strategy/op 均不得伪装成 RuleCard 扩充。
+zero/ambiguous match 只产生候选证据并结束当前 run，同一 run 不因候选而自动重试。
+
+live、held-out 与 saved-observation recheck 仅通过显式 `--rule-release PATH` 装载；不扫描
+目录、不读取环境变量、不从网络下载。正式 batch 中切换 release 必须结束旧 batch，
+以新 registry digest 全量重跑；历史 snapshot 缺失时 fail-closed，不得用 current default
+替代。
+
+### 5.2 RuleRegistry 驱动的 replay API policy
+
+replay AST validator 不再维护与 RuleCard 分离的 libdevice 函数白名单。允许的
+`libdevice.<fn>` 精确来自当前 frozen registry 的 `api_mapping` 调用拼写，并随
+`KernelSource` 携带 registry digest/允许调用集合进入 compiler 二次校验。允许一张新卡
+不等于放开整个 namespace；未在 active registry 映射中出现的 libdevice 调用仍拒绝。
+当前真实 `liger_geglu` 证据只批准 `map_unary(tanh) -> libdevice.tanh`，不据此泛化开放
+任意数学函数。
+
 deterministic composer 是 **Lift 内部的 π finalizer**，不是 Lift 与 Gate1 之间的
 第三个独立生产阶段。source-aware LLM 子响应先形成 J/interface/C/location core，
 同一次 Lift 随后生成 canonical π 与 provenance，并把完整 LiftArtifact 交给 Gate1。
@@ -127,13 +174,44 @@ Composer：
 5. 生成完整 ReplayPlan、canonical bytes/hash 和 100% leaf provenance；
 6. 保存 artifact 后，Gate1 每轮重新 compose 并精确比较。
 
-当前版本为 `deterministic_composer_v3`。`Boundary.broadcasts` 是 operand/axes 级 J
+当前版本为 `deterministic_composer_v4`。strict coverage 与 card selection 均按
+`target_kinds` 驱动，并按 `artifact.interface.frontend` 过滤；新增已存在于 IntentIR schema
+中的 derived mechanism card 不再需要修改 hard-coded rule-id coverage map。不同 frontend
+的同 target card 不得造成当前 frontend ambiguity。
+
+`AccessKind.SYNCHRONIZE` 是 effect construction，不是地址访问。composer-v4 不为它生成
+`boundary.access.address` work item，而只选择 `realize_synchronize -> tl.debug_barrier`；
+因此不得构造 arange、pointer、predicate 或 load/store mask。该修正来自真实
+`high_performance_liger_cross_entropy` 的 zero-rule-match 证据。
+
+`Boundary.broadcasts` 是 operand/axes 级 J
 事实，而 `realize_broadcast(node_ref)` 是节点级 π action；同一 `node_ref` 的多个不同
 BroadcastSpec 必须合成一个 work item。合并后的 `facts.broadcasts[]` 保留完整配对，
 成员 required fields 逐项校验，operand producer dependencies 取并集，`j_digest` 与
 rule/node_ref leaf provenance 绑定全部声明。声明换序不影响 canonical identity；完全
 相同的重复声明 fail-closed。该规则不增加 π 信息，也不允许 π 替代 J 的 broadcast
-语义。
+语义。`Boundary.broadcasts.axes` 是全局语义轴；`realize_broadcast` v4 必须先投影到
+program-domain/local-tile rank：被 program selection 消去的全局轴直接使用 operand，
+只有仍在本地 tile 中存活的 rank insertion 才发出 consumer-local `tl.expand_dims`。
+
+`realize_broadcast` v5 进一步把该投影收紧为确定的施工顺序。writer 必须先建立有序的
+operand-local axes、consumer-local axes，以及被 program-domain 固定或消去的全局轴；
+全局 axis 编号不得直接作为 `tl.expand_dims` 的 local axis。rank-0 operand 或 projected
+missing-local-axis 为空时直接使用 operand。只有 consumer tile 中仍物化、但 operand
+tile 尚未表示的轴才允许扩维；插入位置按最终 consumer-local axis 的升序解释，显式
+插入次数必须严格等于 local rank 差，插入后的有序 axes 与 shape 必须在 elementwise
+使用前精确匹配 consumer。相同 `(operand, missing-local-axes, consumer-tile-shape)` 的
+projected view 最多构造一次并复用，不能按每条 BroadcastSpec 或每个 consumer 盲目重复
+扩维。若局部 axes、projection 或 shape 不能从 J/B/C 与先前 π construction 确定，必须
+fail-closed 并回到 source-aware Lift；不得靠补维度直到 rank 相同、`broadcast_to` fallback
+或掩盖非 broadcast extent/dataflow mismatch。
+
+典型反例是 LayerNorm `[M,N]`：一个 program 选择 M 后，Mean/RSTD `[M]` 和 eps 在局部
+都是 scalar，W/B `[N]` 与 X/output 都是 `[BLOCK_N]`。J 中 axes `[1]`/`[0]` 仍保留全局
+语义，但局部施工全部为 direct use；把全局 M=0 直接翻译成 `expand_dims(...,0)` 会错误
+制造 `[1,BLOCK_N]`，并与 `[BLOCK_N]` pointer/mask 或 value dataflow 错位。相反，若真实
+consumer tile 同时物化 `[M,N]` 而 operand tile 仅物化 `[N]`，M 投影到 local position 0，
+此时才精确发出一次 `tl.expand_dims(operand,0)`。
 
 opaque handle alpha-renaming、JSON object order 和独立 J node 声明换序不得改变
 canonical π bytes 或 canonical input digest。删除、增加、改 ref、换 step 顺序或直接
@@ -291,8 +369,9 @@ replay compile、interface、parser 或 setup failure 不产生 family digest。
 只暴露 profile id/stage/pass/digest；去内部 node hash 的逐 profile 差分由
 `deterministic_fixed_c_family_hard_diff_guidance_v2` 提供，不传 replay code/raw TTIR。
 
-`fg_ones` 的保存真实 LLM artifact/replay 已用当前 stack 复验：6/6 normal family
-hard-close，Gate2 6 shape × 3 seed 共 18/18 三方零误差 PASS。family-wide paired
+`fg_ones` 的保存真实 LLM artifact/replay 曾用 schema-30 stack 复验：6/6 normal family
+hard-close，历史三方 Gate2 6 shape × 3 seed 共 18/18 零误差 PASS。该结果不自动升级为
+当前双腿 execution protocol。family-wide paired
 intervention 与 actual-π masked-J 尚未接通，因此报告必须标记
 `anti_leakage_scope=primary_profile_pending_family_wide`，不得宣称完整 family
 anti-leakage 已完成。
@@ -326,28 +405,20 @@ digest。score、rank、diagnostic prose 均不得进入身份。语义失败与
 
 ## 10. Gate2
 
-Gate2 继续执行 source、replay、Lower2C 三方动态矩阵。真实 live harness 使用
-`Lower2CSpec.from_artifact`，让 lowering leg 绑定完整 validated J/scope/storage，
-而不是 archived JSON interpreter。当前 Lower2C 协议
-`intent_linalg_cpu_symbolic_iota_integer_readback_boundary_broadcast_compressed_gather_v5` 包含
-backend-neutral iota lowering、runtime symbolic extent 绑定、通用整数输出读回，
-并消费现有 `Boundary.broadcasts`。v4 将 integer axes 确定性 legalize 为
-`tensor.expand_shape`，再复用 map_binary/select 的 affine size-1 broadcast maps；
-缺失 Boundary 时不得猜 outer broadcast，越界、符号、重复、冲突或不兼容 projection
-均 fail-closed。v5 进一步将 index/result 省略 gather axis 的 compressed
-`along_axis` gather 确定性 legalize 为 expand-index、等 rank gather、collapse-result；
-完整等 rank 与 take 模式保持原语义，当前不可表达的 rank-0 compressed case
-fail-closed；
-`exact_integer_tolerant_float_v2` 对整数/布尔精确比较、只对浮点
-应用逐输出容差。unsupported 仍显式返回，不回退解释器。Gate2 与 Gate1 的 verdict
-始终独立。
+Gate2 执行 source/replay 双腿动态矩阵，协议为
+`source_replay_dynamic_equivalence_v1`。两腿均成功时按
+`exact_integer_tolerant_float_v2` 比较：整数/布尔精确比较，浮点应用逐输出容差；
+任一腿失败只形成 execution coverage gap。IntentIR production lowering 与归档 JSON
+解释器均不参与 Gate2 verdict。旧三方 Gate2 规范与 Lower2C/CUDA adapter 已归档，
+见 [归档说明](back/gate2_production_lowering_v1/scrc-gate2-three-way.md)。Gate2 与
+Gate1 的 verdict 始终独立。
 
 Gate2 使用的 replay 必须与最终 Gate1 artifact canonical digest 精确对齐。每个
 `CandidateRecord` 在形成时绑定当前 artifact digest；最终 artifact 改变但未形成新
-candidate 时，Gate2 返回 coverage gap，禁止选用旧轮 replay 与新 artifact Lower2C
-混合。fixed-C specialization evidence 遵循同一对齐规则。
+candidate 时，Gate2 返回 coverage gap，禁止选用旧轮 replay。fixed-C
+specialization evidence 遵循同一对齐规则。
 
-suite 指标只在所有 cases 都是完整合法三方终态时完成；若出现 `case_id`，所有 cases
+suite 指标只在所有 cases 都是完整合法 source/replay 终态时完成；若出现 `case_id`，所有 cases
 必须有非空唯一 ID；声明的 `status_counts` 必须等于实际计数；顶层 `passed` 必须等于
 逐 case 推导值。任何缺失或矛盾只进入 attempted-but-incomplete coverage，不得计作
 Gate2 non-pass。
@@ -375,10 +446,9 @@ incomplete；schema-31 同一 termination policy 又增加 intervention evidence
 replay observation 时 Gate2 diagnostic 仍可独立运行并通过。
 
 schema-30 绑定 `gate1_fixed_c_family_diff_guided_pi_relift_v10`、完整 fixed-C normal
-family sweep/Relift/stagnation，以及 `scrc_gate1_gate2_conditional_v2` 四象限汇总。只有
-完成三方 Gate2 comparison 的样本进入四象限；unsupported、setup/execution incomplete
-和未运行样本单独进入 coverage，不得计为 Gate2 non-pass。schema-29 cache/report 不得
-静默升级为 schema-30 family 证据。
+family sweep/Relift/stagnation，以及历史
+`scrc_gate1_gate2_conditional_v2` 三方四象限汇总。该旧报告不得混入当前统计；
+schema-29 cache/report 也不得静默升级为 schema-30 family 证据。
 
 schema-31 绑定
 `gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11`、held-out identity 31 和
@@ -387,6 +457,11 @@ schema-31 绑定
 协议，但要求 family contract/code/fingerprint/artifact digest 的完整身份和 Gate2
 artifact-replay 对齐；旧报告缺少直接 candidate digest 时，只允许通过同轮、match 状态、
 完整 compose provenance 恢复身份，否则按 coverage gap 处理。
+
+held-out identity 35 绑定当前 `scrc_gate1_gate2_conditional_v3` 与
+`source_replay_dynamic_equivalence_v1`。只有 evidence 显式携带该 execution protocol，
+且完成 source/replay comparison，才进入当前四象限；setup/execution incomplete、
+协议不匹配和未运行样本单独进入 coverage。
 
 schema-31 fresh `fg_log_softmax` 后，Relift prompt 使用
 `deterministic_fingerprint_structure_guidance_v1`：精确记录 loop carry/yield、reduction、
@@ -412,6 +487,10 @@ induction block argument，没有 init/yield carry pair；因此现有证据更�
 traversal loop，而不是缺失 semantic loop carry。
 
 ## 11. 当前明确限制
+
+以下涉及 `lowering_diverged`、`lift_diverged` 或 Lower2C 的 schema-26～32 结果均是
+旧三方 Gate2 的历史记录，只能按归档协议解释；当前 Gate2 不再产生这些状态，也不
+把 production lowering 纳入裁决。
 
 - branch-region 尚无一等 IntentIR op，因此 branch scope fail-closed；
 - loop MLIR prototype 当前只实现有限 carry dtype；

@@ -6,29 +6,16 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .orchestrate import GATE2_EXECUTION_PROTOCOL
 
-_THREE_WAY_STATUSES = frozenset(
-    {
-        "gate2_pass",
-        "lowering_diverged",
-        "replay_diverged",
-        "lift_diverged",
-        "all_diverged",
-        "inconclusive",
-    }
-)
+
+_COMPLETED_STATUSES = frozenset({"gate2_pass", "replay_diverged"})
 
 
 def extract_gate1_gate2_observation(
     report: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Extract both gate verdicts without collapsing one into the other.
-
-    A missing diagnostic, setup failure, unsupported lowering, or execution
-    failure is not silently counted as a semantic Gate2 rejection. Conditional
-    probabilities use only completed three-way comparisons and expose attempt
-    and completion coverage alongside the probability.
-    """
+    """Extract both gate verdicts without collapsing one into the other."""
 
     gate1 = report.get("gate1")
     gate1_status = gate1.get("status") if isinstance(gate1, Mapping) else None
@@ -36,8 +23,9 @@ def extract_gate1_gate2_observation(
         "gate1_status": gate1_status,
         "gate1_closed": gate1_status == "replay_closed",
         "gate2_evidence_kind": None,
+        "gate2_execution_protocol": None,
         "gate2_attempted": False,
-        "gate2_three_way_completed": False,
+        "gate2_comparison_completed": False,
         "gate2_status": None,
         "gate2_pass": None,
         "gate2_case_statuses": [],
@@ -46,8 +34,8 @@ def extract_gate1_gate2_observation(
     evidence: Mapping[str, Any] | None = None
     is_suite = False
     for report_key, evidence_kind, suite in (
-        ("gate2_suite", "production_suite", True),
-        ("gate2", "production", False),
+        ("gate2_suite", "suite", True),
+        ("gate2", "single", False),
         ("gate2_diagnostic_suite", "diagnostic_suite", True),
         ("gate2_diagnostic", "diagnostic", False),
     ):
@@ -62,6 +50,14 @@ def extract_gate1_gate2_observation(
         return observation
 
     observation["gate2_attempted"] = True
+    execution_protocol = evidence.get("execution_protocol")
+    observation["gate2_execution_protocol"] = (
+        execution_protocol if isinstance(execution_protocol, str) else None
+    )
+    if execution_protocol != GATE2_EXECUTION_PROTOCOL:
+        observation["gate2_status"] = "gate2_protocol_mismatch"
+        return observation
+
     if is_suite:
         cases = evidence.get("cases")
         case_items = list(
@@ -88,7 +84,7 @@ def extract_gate1_gate2_observation(
             and len(statuses) == len(case_items)
         )
         statuses_terminal = all(
-            status in _THREE_WAY_STATUSES for status in statuses
+            status in _COMPLETED_STATUSES for status in statuses
         )
 
         any_case_id = any("case_id" in case for case in case_mappings)
@@ -117,8 +113,7 @@ def extract_gate1_gate2_observation(
                     and value >= 0
                     for key, value in declared_status_counts.items()
                 )
-                and dict(Counter(statuses))
-                == dict(declared_status_counts)
+                and dict(Counter(statuses)) == dict(declared_status_counts)
             )
 
         suite_passed = evidence.get("passed")
@@ -133,7 +128,7 @@ def extract_gate1_gate2_observation(
             and isinstance(suite_passed, bool)
             and suite_passed is derived_pass
         )
-        observation["gate2_three_way_completed"] = completed
+        observation["gate2_comparison_completed"] = completed
         raw_status = evidence.get("status")
         if completed:
             observation["gate2_status"] = (
@@ -150,8 +145,8 @@ def extract_gate1_gate2_observation(
     observation["gate2_status"] = status if isinstance(status, str) else None
     if isinstance(status, str):
         observation["gate2_case_statuses"] = [status]
-        completed = status in _THREE_WAY_STATUSES
-        observation["gate2_three_way_completed"] = completed
+        completed = status in _COMPLETED_STATUSES
+        observation["gate2_comparison_completed"] = completed
         if completed:
             observation["gate2_pass"] = status == "gate2_pass"
     return observation
@@ -160,14 +155,14 @@ def extract_gate1_gate2_observation(
 def _conditional_bucket(observations: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     attempted = [item for item in observations if item["gate2_attempted"]]
     completed = [
-        item for item in observations if item["gate2_three_way_completed"]
+        item for item in observations if item["gate2_comparison_completed"]
     ]
     passed = [item for item in completed if item["gate2_pass"] is True]
     total = len(observations)
     return {
         "samples": total,
         "gate2_attempted": len(attempted),
-        "gate2_three_way_completed": len(completed),
+        "gate2_comparison_completed": len(completed),
         "gate2_pass": len(passed),
         "gate2_nonpass": len(completed) - len(passed),
         "attempt_coverage": None if total == 0 else len(attempted) / total,
@@ -181,12 +176,7 @@ def _conditional_bucket(observations: Sequence[Mapping[str, Any]]) -> dict[str, 
 def summarize_gate1_gate2(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Report independent Gate1/Gate2 quadrants and conditional coverage.
-
-    Only completed three-way Gate2 observations enter a semantic quadrant.
-    Missing, unsupported, setup-failed and execution-incomplete observations
-    remain explicit coverage gaps; they are never coerced into Gate2 non-pass.
-    """
+    """Report independent Gate1/Gate2 quadrants and completion coverage."""
 
     observations: list[Mapping[str, Any]] = []
     for row in rows:
@@ -198,7 +188,7 @@ def summarize_gate1_gate2(
     closed = [item for item in observations if item["gate1_closed"]]
     not_closed = [item for item in observations if not item["gate1_closed"]]
     completed = [
-        item for item in observations if item["gate2_three_way_completed"]
+        item for item in observations if item["gate2_comparison_completed"]
     ]
     unattempted = [
         item for item in observations if not item["gate2_attempted"]
@@ -207,7 +197,7 @@ def summarize_gate1_gate2(
         item
         for item in observations
         if item["gate2_attempted"]
-        and not item["gate2_three_way_completed"]
+        and not item["gate2_comparison_completed"]
     ]
 
     def quadrant(*, gate1_closed: bool, gate2_pass: bool) -> int:
@@ -219,7 +209,7 @@ def summarize_gate1_gate2(
 
     statuses = sorted({str(item["gate1_status"]) for item in observations})
     return {
-        "schema": "scrc_gate1_gate2_conditional_v2",
+        "schema": "scrc_gate1_gate2_conditional_v3",
         "gate1_observed_samples": len(observations),
         "rows_without_gate1_verdict": len(rows) - len(observations),
         "quadrants": {

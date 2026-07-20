@@ -439,8 +439,10 @@ def run_pi_ablations(
 
         try:
             compiled = compiler.compile(
-                KernelSource.from_code(
-                    generation.code, intervention_artifact.interface.function_name
+                KernelSource.from_replay(
+                    generation.code,
+                    intervention_artifact.interface.function_name,
+                    registry,
                 ),
                 compile_case,
             )

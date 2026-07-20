@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,10 @@ from intentir.verify.gate1.compiler import (
     TritonCompiler,
 )
 from intentir.verify.gate1 import _triton_worker
+from intentir.verify.gate1.rules import (
+    RuleRegistry,
+    default_triton_rule_registry,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -102,6 +107,68 @@ def pow_kernel(x, exponent, out, BLOCK: tl.constexpr):
     )
 
     assert validation.function_names == ("pow_kernel",)
+
+
+def test_accepts_registry_declared_triton_libdevice_tanh() -> None:
+    module = """import triton
+import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+@triton.jit
+def tanh_kernel(x, out, BLOCK: tl.constexpr):
+    offsets = tl.arange(0, BLOCK)
+    values = tl.load(x + offsets)
+    tl.store(out + offsets, libdevice.tanh(values))
+"""
+
+    validation = validate_triton_module(
+        module,
+        required_function="tanh_kernel",
+        registry=default_triton_rule_registry(),
+    )
+
+    assert validation.function_names == ("tanh_kernel",)
+
+
+def test_dynamic_registry_mapping_drives_namespace_policy_without_global_widening() -> None:
+    base = default_triton_rule_registry()
+    elementwise = base.get("realize_elementwise")
+    extended_elementwise = replace(
+        elementwise,
+        version="6",
+        api_mapping={
+            **elementwise.api_mapping,
+            "reviewed_sin": (
+                "from triton.language.extra.cuda import libdevice; "
+                "libdevice.sin(operand)"
+            ),
+        },
+    )
+    registry = RuleRegistry(
+        [
+            extended_elementwise if card.id == elementwise.id else card
+            for card in base.cards
+        ]
+    )
+    module = """import triton
+import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+@triton.jit
+def sin_kernel(x):
+    return libdevice.sin(x)
+"""
+
+    validate_triton_module(
+        module,
+        required_function="sin_kernel",
+        registry=registry,
+    )
+    source = KernelSource.from_replay(module, "sin_kernel", registry)
+
+    assert source.allowed_libdevice_calls is not None
+    assert "sin" in source.allowed_libdevice_calls
+    assert source.rule_registry_digest == registry.digest
 
 
 def test_rejects_non_allowlisted_libdevice_calls() -> None:

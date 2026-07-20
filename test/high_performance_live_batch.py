@@ -1,4 +1,4 @@
-"""Official 28-kernel fresh-LLM -> Gate1 -> Gate2 CUDA campaign.
+"""Official 28-kernel fresh-LLM -> Gate1 -> Gate2 campaign.
 
 The lowering registry intentionally remains verification-neutral.  This
 campaign joins its frozen 28 direct-kernel membership to the authentic launch
@@ -24,7 +24,11 @@ from intentir.extraction.lifters.scrc import (
     SCRCCompilerView,
 )
 from intentir.verify.gate1.compiler import KernelSource
-from intentir.verify.gate2 import InputDistribution, Tolerance
+from intentir.verify.gate2 import (
+    GATE2_EXECUTION_PROTOCOL,
+    InputDistribution,
+    Tolerance,
+)
 
 import scrc_live_e2e as live
 
@@ -33,10 +37,9 @@ ROOT = Path(__file__).resolve().parents[1]
 OFFICIAL_MODEL = "gpt-5.6-sol"
 OFFICIAL_EFFORT = "xhigh"
 OFFICIAL_GATE1_PROFILE = "formal"
-OFFICIAL_LOWERING_BACKEND = "cuda"
 OFFICIAL_SEMANTIC_INTERVENTIONS = 0
 OFFICIAL_PI_ABLATIONS = False
-CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate-cuda.v2"
+CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate.v3"
 DEFAULT_REGISTRY = ROOT / "spec/lowering/high-performance-kernels.json"
 DEFAULT_CAPTURE_MANIFEST = Path(
     "/home/kingdom/phdworks/TianchenIR-rebuttal/artifacts/gate_paper/"
@@ -259,8 +262,6 @@ def _official_args(args: argparse.Namespace) -> argparse.Namespace:
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
         gate1_profile=OFFICIAL_GATE1_PROFILE,
-        lowering_backend=OFFICIAL_LOWERING_BACKEND,
-        cuda_only_fast_path=None,
     )
 
 
@@ -332,10 +333,27 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
     pi_ablations = report.get("pi_ablations")
     if pi_ablations not in (None, []):
         failures.append("pi_ablation_evidence_present")
-    if report.get("gate2", {}).get("status") != "gate2_pass":
-        failures.append("gate2_cuda_not_passed")
-    if report.get("gate2_lowering_policy", {}).get("backend") != "cuda":
-        failures.append("not_cuda_lowering")
+    gate2 = report.get("gate2")
+    if not isinstance(gate2, Mapping):
+        suite = report.get("gate2_suite")
+        gate2 = suite if isinstance(suite, Mapping) else None
+        gate2_passed = bool(gate2 is not None and gate2.get("passed") is True)
+    else:
+        gate2_passed = gate2.get("status") == "gate2_pass"
+    if gate2 is None or not gate2_passed:
+        failures.append("gate2_not_passed")
+    elif gate2.get("execution_protocol") != GATE2_EXECUTION_PROTOCOL:
+        failures.append("gate2_evidence_protocol_mismatch")
+    gate2_policy = report.get("gate2_execution_policy")
+    if not isinstance(gate2_policy, Mapping):
+        failures.append("missing_gate2_execution_policy")
+    else:
+        if gate2_policy.get("protocol") != GATE2_EXECUTION_PROTOCOL:
+            failures.append("gate2_execution_protocol_mismatch")
+        if gate2_policy.get("legs") != ["source", "replay"]:
+            failures.append("gate2_execution_legs_mismatch")
+        if gate2_policy.get("production_lowering_in_verdict") is not False:
+            failures.append("production_lowering_entered_gate2_verdict")
     return not failures, failures
 
 
@@ -478,14 +496,14 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             "first_lift_cache_policy": "forbid",
             "historical_candidate_json_as_input": "forbidden",
             "gate1_profile": OFFICIAL_GATE1_PROFILE,
-            "lowering_backend": OFFICIAL_LOWERING_BACKEND,
+            "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
             "semantic_interventions": OFFICIAL_SEMANTIC_INTERVENTIONS,
             "pi_ablations": OFFICIAL_PI_ABLATIONS,
             "required_path": [
                 "fresh_lift",
                 "normal_replay",
                 "masked_j",
-                "cuda_gate2",
+                "source_replay_gate2",
             ],
             "origin": dict(case.origin),
         }
@@ -522,7 +540,7 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "model": OFFICIAL_MODEL,
         "effort": OFFICIAL_EFFORT,
         "gate1_profile": OFFICIAL_GATE1_PROFILE,
-        "lowering_backend": OFFICIAL_LOWERING_BACKEND,
+        "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
         "semantic_interventions": OFFICIAL_SEMANTIC_INTERVENTIONS,
         "pi_ablations": OFFICIAL_PI_ABLATIONS,
         "selected": len(cases),
@@ -565,7 +583,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("/tmp/intentir_hp28_live_gate_cuda"),
+        default=Path("/tmp/intentir_hp28_live_gate"),
     )
     parser.add_argument("--seed", type=int, default=20260720)
     parser.add_argument("--lift-repairs", type=int, default=2)

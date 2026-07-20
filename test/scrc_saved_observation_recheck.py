@@ -27,6 +27,7 @@ from intentir.verify.gate1.orchestrate import (
     canonical_artifact_digest,
 )
 from intentir.verify.gate1.replay import StaticReplayWriter
+from intentir.verify.gate1.rule_release import load_rule_release
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate2 import Gate2Runner
 
@@ -289,6 +290,7 @@ def run_saved_recheck(
     run_family: bool = False,
     run_anti_leakage: bool = False,
     seed: int = 20260715,
+    rule_release: Path | None = None,
 ) -> dict[str, Any]:
     saved = json.loads(report_path.read_text(encoding="utf-8"))
     case = build_heldout_case(case_name)
@@ -305,6 +307,9 @@ def run_saved_recheck(
         artifact_payload, source=case.source_text
     )
     registry = default_triton_rule_registry()
+    if rule_release is not None:
+        registry = load_rule_release(rule_release).apply(registry)
+    registry = registry.frozen_snapshot()
     final_saved_artifact_digest = canonical_artifact_digest(
         artifact,
         registry,
@@ -545,6 +550,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--family", action="store_true")
     parser.add_argument("--anti-leakage", action="store_true")
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument("--rule-release", type=Path)
     return parser
 
 
@@ -561,6 +567,7 @@ def main() -> int:
             run_family=args.family,
             run_anti_leakage=args.anti_leakage,
             seed=args.seed,
+            rule_release=args.rule_release,
         )
     except Exception as exc:
         result = {

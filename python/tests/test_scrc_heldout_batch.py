@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate2 import (
+    GATE2_EXECUTION_PROTOCOL,
     extract_gate1_gate2_observation,
     summarize_gate1_gate2,
 )
@@ -586,9 +587,9 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
         {
             "lift": {"ok": True},
             "gate1": {"status": "replay_closed"},
-            "gate2": {"status": "lowering_unsupported"},
+            "gate2": {"status": "execution_failed"},
         }
-    ) == "lowering_unsupported"
+    ) == "execution_failed"
     assert _result_status(
         {
             "lift": {"ok": True},
@@ -610,6 +611,7 @@ def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
         {
             "gate1": {"status": "leakage_rejected"},
             "gate2_diagnostic": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "kind": "offline_gate2_for_gate1_rejected_sample",
                 "independent": True,
                 "status": "gate2_pass",
@@ -621,8 +623,9 @@ def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
         "gate1_status": "leakage_rejected",
         "gate1_closed": False,
         "gate2_evidence_kind": "diagnostic",
+        "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
         "gate2_attempted": True,
-        "gate2_three_way_completed": True,
+        "gate2_comparison_completed": True,
         "gate2_status": "gate2_pass",
         "gate2_pass": True,
         "gate2_case_statuses": ["gate2_pass"],
@@ -680,6 +683,7 @@ def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
 def test_gate2_suite_metrics_fail_closed_on_incomplete_or_inconsistent_cases(
     suite,
 ) -> None:
+    suite = {"execution_protocol": GATE2_EXECUTION_PROTOCOL, **suite}
     observation = extract_gate1_gate2_observation(
         {
             "gate1": {"status": "replay_closed"},
@@ -688,7 +692,7 @@ def test_gate2_suite_metrics_fail_closed_on_incomplete_or_inconsistent_cases(
     )
 
     assert observation["gate2_attempted"] is True
-    assert observation["gate2_three_way_completed"] is False
+    assert observation["gate2_comparison_completed"] is False
     assert observation["gate2_pass"] is None
     assert observation["gate2_status"] == "gate2_suite_incomplete"
 
@@ -698,6 +702,7 @@ def test_gate2_suite_metrics_accept_a_complete_all_pass_suite() -> None:
         {
             "gate1": {"status": "replay_closed"},
             "gate2_suite": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "passed": True,
                 "status_counts": {"gate2_pass": 2},
                 "cases": [
@@ -708,7 +713,7 @@ def test_gate2_suite_metrics_accept_a_complete_all_pass_suite() -> None:
         }
     )
 
-    assert observation["gate2_three_way_completed"] is True
+    assert observation["gate2_comparison_completed"] is True
     assert observation["gate2_pass"] is True
     assert observation["gate2_status"] == "gate2_pass"
 
@@ -718,6 +723,7 @@ def test_gate2_suite_metrics_accept_a_complete_semantic_nonpass_suite() -> None:
         {
             "gate1": {"status": "no_closure"},
             "gate2_diagnostic_suite": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "passed": False,
                 "status_counts": {
                     "gate2_pass": 1,
@@ -731,30 +737,51 @@ def test_gate2_suite_metrics_accept_a_complete_semantic_nonpass_suite() -> None:
         }
     )
 
-    assert observation["gate2_three_way_completed"] is True
+    assert observation["gate2_comparison_completed"] is True
     assert observation["gate2_pass"] is False
     assert observation["gate2_status"] == "gate2_suite_failed"
 
 
-def test_batch_does_not_count_unsupported_or_setup_failure_as_semantic_nonpass() -> None:
-    unsupported = extract_gate1_gate2_observation(
+def test_gate2_metrics_reject_legacy_three_way_status_without_active_protocol() -> None:
+    observation = extract_gate1_gate2_observation(
         {
             "gate1": {"status": "replay_closed"},
-            "gate2": {"status": "lowering_unsupported"},
+            "gate2": {"status": "gate2_pass"},
+        }
+    )
+
+    assert observation["gate2_attempted"] is True
+    assert observation["gate2_execution_protocol"] is None
+    assert observation["gate2_comparison_completed"] is False
+    assert observation["gate2_status"] == "gate2_protocol_mismatch"
+    assert observation["gate2_pass"] is None
+
+
+def test_batch_does_not_count_execution_or_setup_failure_as_semantic_nonpass() -> None:
+    execution_failed = extract_gate1_gate2_observation(
+        {
+            "gate1": {"status": "replay_closed"},
+            "gate2": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "execution_failed",
+            },
         }
     )
     setup_failed = extract_gate1_gate2_observation(
         {
             "gate1": {"status": "no_closure"},
-            "gate2_diagnostic_suite": {"status": "setup_failed"},
+            "gate2_diagnostic_suite": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "setup_failed",
+            },
         }
     )
 
-    assert unsupported["gate2_attempted"]
-    assert not unsupported["gate2_three_way_completed"]
-    assert unsupported["gate2_pass"] is None
+    assert execution_failed["gate2_attempted"]
+    assert not execution_failed["gate2_comparison_completed"]
+    assert execution_failed["gate2_pass"] is None
     assert setup_failed["gate2_attempted"]
-    assert not setup_failed["gate2_three_way_completed"]
+    assert not setup_failed["gate2_comparison_completed"]
     assert setup_failed["gate2_status"] == "setup_failed"
     assert setup_failed["gate2_pass"] is None
 
@@ -763,15 +790,22 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     reports = [
         {
             "gate1": {"status": "replay_closed"},
-            "gate2": {"status": "gate2_pass"},
+            "gate2": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "gate2_pass",
+            },
         },
         {
             "gate1": {"status": "replay_closed"},
-            "gate2": {"status": "replay_diverged"},
+            "gate2": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "replay_diverged",
+            },
         },
         {
             "gate1": {"status": "leakage_rejected"},
             "gate2_diagnostic_suite": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "passed": True,
                 "cases": [
                     {"status": "gate2_pass"},
@@ -788,7 +822,7 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
 
     metrics = summarize_gate1_gate2(rows)
 
-    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v2"
+    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v3"
     assert metrics["quadrants"] == {
         "gate1_closed_gate2_pass": 1,
         "gate1_closed_gate2_nonpass": 1,
@@ -804,7 +838,7 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     assert metrics["replay_closed"] == {
         "samples": 2,
         "gate2_attempted": 2,
-        "gate2_three_way_completed": 2,
+        "gate2_comparison_completed": 2,
         "gate2_pass": 1,
         "gate2_nonpass": 1,
         "attempt_coverage": 1.0,
@@ -814,7 +848,7 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     assert metrics["not_replay_closed"] == {
         "samples": 2,
         "gate2_attempted": 1,
-        "gate2_three_way_completed": 1,
+        "gate2_comparison_completed": 1,
         "gate2_pass": 1,
         "gate2_nonpass": 0,
         "attempt_coverage": 0.5,
@@ -826,19 +860,28 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     ] is None
 
 
-def test_gate1_gate2_quadrants_exclude_unsupported_and_setup_failure() -> None:
+def test_gate1_gate2_quadrants_exclude_execution_and_setup_failure() -> None:
     reports = [
         {
             "gate1": {"status": "replay_closed"},
-            "gate2": {"status": "lowering_unsupported"},
+            "gate2": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "execution_failed",
+            },
         },
         {
             "gate1": {"status": "no_closure"},
-            "gate2_diagnostic_suite": {"status": "setup_failed"},
+            "gate2_diagnostic_suite": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "setup_failed",
+            },
         },
         {
             "gate1": {"status": "no_closure"},
-            "gate2_diagnostic": {"status": "lift_diverged"},
+            "gate2_diagnostic": {
+                "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+                "status": "replay_diverged",
+            },
         },
     ]
     metrics = summarize_gate1_gate2(
@@ -1006,11 +1049,11 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 34
-    assert identity["composer_version"] == "deterministic_composer_v3"
+    assert identity["schema"] == 35
+    assert identity["composer_version"] == "deterministic_composer_v4"
     assert identity["performance_schema"] == "scrc_case_performance_v1"
     assert identity["gate1_gate2_metrics_schema"] == (
-        "scrc_gate1_gate2_conditional_v2"
+        "scrc_gate1_gate2_conditional_v3"
     )
     assert identity["relift_rounds"] == 3
     assert identity["semantic_interventions"] == 3
@@ -1052,10 +1095,10 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         "no_closure_requires_structured_reason": True,
         "gate2_verdict_independence": True,
     }
-    assert identity["lower2c_protocol"] == (
-        "intent_linalg_cpu_symbolic_iota_integer_readback_"
-        "boundary_broadcast_compressed_gather_v5"
+    assert identity["gate2_execution_protocol"] == (
+        "source_replay_dynamic_equivalence_v1"
     )
+    assert identity["gate2_execution_legs"] == ["source", "replay"]
     assert identity["gate2_comparison_protocol"] == (
         "exact_integer_tolerant_float_v2"
     )

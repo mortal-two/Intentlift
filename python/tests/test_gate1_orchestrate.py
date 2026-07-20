@@ -2003,11 +2003,15 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     ].example
     assert cards["realize_masked_access"].version == "3"
     assert cards["realize_masked_access"].api_mapping["vector_conjunction"] == "&"
-    assert cards["realize_broadcast"].version == "3"
-    assert cards["realize_elementwise"].version == "4"
+    assert cards["realize_broadcast"].version == "5"
+    assert cards["realize_elementwise"].version == "5"
     assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
     assert cards["realize_elementwise"].api_mapping["abs"] == "tl.abs"
     assert "libdevice.pow" in cards["realize_elementwise"].api_mapping["pow"]
+    assert "libdevice.tanh" in cards["realize_elementwise"].api_mapping["tanh"]
+    assert cards["realize_synchronize"].api_mapping["program_barrier"] == (
+        "tl.debug_barrier"
+    )
     assert cards["realize_reduce"].version == "4"
     assert "tile_axis" in cards["realize_reduce"].reads
     assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]
@@ -2040,8 +2044,18 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         for item in cards["materialize_mask_tile"].pitfalls
     )
     assert cards["realize_broadcast"].api_mapping["scalar_to_tile"] == (
-        "use the scalar operand directly"
+        "use a rank-0 scalar operand directly; scalar broadcasting never "
+        "requires synthetic tl.expand_dims"
     )
+    assert "global axis number is never" in cards[
+        "realize_broadcast"
+    ].api_mapping["global_to_local_axis_map"]
+    assert "explicit_expand_dims" in cards[
+        "realize_broadcast"
+    ].api_mapping["local_realization_modes"]
+    assert "rank" in cards["realize_broadcast"].api_mapping[
+        "shape_postcondition"
+    ]
     assert any(
         "redundant domain facts" in item
         for item in cards["realize_masked_access"].pitfalls

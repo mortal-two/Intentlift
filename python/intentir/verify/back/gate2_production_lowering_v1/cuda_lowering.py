@@ -1,4 +1,4 @@
-"""Gate compatibility adapter for the verification-neutral CUDA backend.
+"""Archived Gate adapter for the verification-neutral CUDA backend.
 
 The adapter consumes only canonical IntentIR plus explicit A/B/C bindings.  It
 does not accept a Gate verdict, replay status, source code, or paper receipt as

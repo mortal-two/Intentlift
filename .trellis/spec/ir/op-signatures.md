@@ -75,13 +75,13 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，与 Triton
 TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
 两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，
-不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由 IEEE-special Gate2
-三方矩阵固定，不引入新 op。
+不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由独立 backend regression
+与历史 IEEE-special 三方实验固定，不引入新 op；当前 Gate2 不裁决 lowering。
 
 JSON `const` 表示字面量或按声明 shape 的 splat materialization，例如
 `{"value":1.0,"dtype":"f32","shape":["N"]}`；它直接降为标准
-`arith.constant`，不是新增库级 named op。shape 中的符号必须由 Gate2 dims
-解析，零输入函数同样允许产生该输出。
+`arith.constant`，不是新增库级 named op。shape 中的符号必须由具体 lowering／执行
+调用显式绑定，零输入函数同样允许产生该输出。
 
 所有 interface `tensor_ref` 的 dtype 必须与被引用 J tensor 的 dtype 一致。
 pointer 所指 tensor 可以是 rank 0，此时 compiler view 使用 `shape=[]`；它仍是

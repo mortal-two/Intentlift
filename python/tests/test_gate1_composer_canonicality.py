@@ -13,6 +13,8 @@ from intentir.verify.gate1 import (
     Boundary,
     BoundaryAccess,
     BroadcastSpec,
+    EffectKind,
+    EffectSpec,
     Frontend,
     Gate1Artifact,
     KernelInterface,
@@ -23,6 +25,7 @@ from intentir.verify.gate1 import (
     ParameterMode,
     ReplayPlan,
     ReplayStep,
+    RuleCard,
     RuleRegistry,
     ScheduleSlot,
     ScheduleSlotKind,
@@ -694,14 +697,33 @@ def test_exact_duplicate_broadcast_declarations_fail_closed() -> None:
         compose_replay_plan(artifact, default_triton_rule_registry())
 
 
-def test_broadcast_rule_requires_deterministic_explicit_rank_insertion() -> None:
+def test_broadcast_rule_projects_global_axes_before_local_rank_insertion() -> None:
     card = default_triton_rule_registry().get(
         "realize_broadcast", frontend=Frontend.TRITON
     )
 
-    assert card.version == "3"
-    assert "tl.expand_dims" in card.api_mapping["rank_insertion"]
-    assert any("implicit broadcasting" in item for item in card.pitfalls)
+    assert card.version == "5"
+    assert "global axis number is never" in card.api_mapping[
+        "global_to_local_axis_map"
+    ]
+    assert "launch_replication" in card.api_mapping[
+        "local_realization_modes"
+    ]
+    assert "only the last mode" in card.api_mapping[
+        "local_realization_modes"
+    ]
+    assert "use the operand directly" in card.api_mapping[
+        "projected_global_broadcast"
+    ]
+    assert "tl.expand_dims" in card.api_mapping["local_rank_insertion"]
+    assert "ascending" in card.api_mapping["local_rank_insertion"]
+    assert "at most one" in card.api_mapping["reuse_projected_view"]
+    assert "rank" in card.api_mapping["shape_postcondition"]
+    assert "LayerNorm" in card.example
+    assert "RoPE" in card.example
+    assert "[1,BLOCK_N]" in card.example
+    assert any("global semantic axes" in item for item in card.pitfalls)
+    assert any("fail closed" in item for item in card.pitfalls)
 
 
 def test_provenance_covers_every_pi_leaf_without_orphans() -> None:
@@ -713,6 +735,21 @@ def test_provenance_covers_every_pi_leaf_without_orphans() -> None:
     assert result.provenance.coverage == 1.0
     assert result.provenance.orphan_leaf_count == 0
     result.provenance.validate(result.plan)
+
+
+def test_composer_registry_identity_is_canonical_and_frontend_scoped() -> None:
+    base = default_triton_rule_registry()
+    cuda_shadow = replace(
+        base.get("realize_cast"),
+        id="cuda_realize_cast",
+        frontend=Frontend.CUDA,
+    )
+    mixed = RuleRegistry([cuda_shadow, *reversed(base.cards)])
+
+    result = compose_replay_plan(_artifact(), mixed)
+
+    assert result.provenance.registry_digest == mixed.digest
+    assert all(step.rule != "cuda_realize_cast" for step in result.plan.steps)
 
 
 def test_materialized_artifact_persists_exact_compose_provenance() -> None:
@@ -728,7 +765,8 @@ def test_materialized_artifact_persists_exact_compose_provenance() -> None:
 
 def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
     registry = default_triton_rule_registry()
-    assert len(registry.cards) == 24
+    assert len(registry.cards) == 25
+    assert "realize_synchronize" in registry
     artifact, result = materialize_replay_plan(_iota_artifact(), registry)
     iota_steps = [
         step
@@ -751,6 +789,57 @@ def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
         "static_lane_coordinate"
     ]
     assert any("BLOCK_SIZE" in item for item in iota_card.pitfalls)
+
+
+def test_synchronize_is_an_effect_without_address_materialization() -> None:
+    base = _artifact()
+    boundary = base.j.boundary
+    synchronized = replace(
+        base,
+        j=replace(
+            base.j,
+            boundary=Boundary(
+                domains=dict(boundary.domains),
+                accesses=[
+                    boundary.accesses[0],
+                    BoundaryAccess(
+                        access_id="program_barrier",
+                        kind=AccessKind.SYNCHRONIZE,
+                        tensor="x",
+                    ),
+                    boundary.accesses[1],
+                ],
+                broadcasts=list(boundary.broadcasts),
+                aliases=list(boundary.aliases),
+                effects=[
+                    *boundary.effects,
+                    EffectSpec(
+                        EffectKind.SYNCHRONIZE,
+                        "x",
+                        effect_id="barrier_effect",
+                        access_ref="program_barrier",
+                    ),
+                ],
+                output_mappings=list(boundary.output_mappings),
+                reductions=list(boundary.reductions),
+            ),
+        ),
+    )
+    registry = default_triton_rule_registry()
+
+    materialized, result = materialize_replay_plan(synchronized, registry)
+    barrier_rules = [
+        step.rule
+        for step in result.plan.steps
+        if step.target_ref == "program_barrier"
+    ]
+
+    assert barrier_rules == ["realize_synchronize"]
+    registry.validate_strict_plan(
+        materialized.plan,
+        frontend=Frontend.TRITON,
+        artifact=materialized,
+    )
 
 
 def test_iota_fails_closed_when_its_shared_rule_is_absent() -> None:

@@ -5,8 +5,8 @@ path lowers reaches a completely different backend through standard MLIR, with n
 GPU-specific machinery. intent->linalg is backend-neutral; only the device tail
 (gpu/nvvm here, an RVV/vector tail later) is specialized. This module proves that
 neutrality by actually executing a lifted kernel on the CPU and reading the result
-back.  SCRC Gate2 uses this as its production-lowering leg; it is not a JSON
-interpreter. See spec/lowering/index.md ("多后端余量").
+back.  This is an independent backend capability, not a Gate2 verdict leg and not
+a JSON interpreter. See spec/lowering/index.md ("多后端余量").
 """
 
 from __future__ import annotations
