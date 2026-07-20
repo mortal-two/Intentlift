@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.variant_planner import (
+from intentir.backend.cuda.variant_planner import (
     SelectionConstraints,
     VariantPlanningError,
     enumerate_schedule_candidates,

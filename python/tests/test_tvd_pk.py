@@ -30,7 +30,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -109,7 +109,7 @@ def _liger_launch(P, Q):
 
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 4096)])
 def test_tvd_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     torch.manual_seed(0)
     # Probability-like rows (softmax) so p>q is well populated; any finite f32

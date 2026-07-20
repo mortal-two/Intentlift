@@ -10,7 +10,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT
 
 _TEST = pathlib.Path(__file__).resolve().parents[2] / "test"
 _ADD = _TEST / "add.mlir"
@@ -28,8 +28,8 @@ pytestmark = [
 
 
 def test_intent_add_executes_on_gpu() -> None:
-    from intentir.backend.compile import compile_intent_to_cubin
-    from intentir.backend.launch import I64Arg, PtrArg, launch, load_module
+    from intentir.backend.cuda.compile import compile_intent_to_cubin
+    from intentir.backend.cuda.launch import I64Arg, PtrArg, launch, load_module
 
     k = compile_intent_to_cubin(_ADD)
     func = load_module(k.cubin).function(k.kernel_name)
@@ -52,7 +52,7 @@ def test_intent_exp_executes_on_gpu() -> None:
     """map_unary{exp} is the softmax primitive. The NVVM peephole rewrites
     math.exp to the native ex2.approx PTX instruction (no libdevice extern),
     proving the last unproven link on the attention path runs on hardware."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     a = torch.randn(256, dtype=torch.float32, device="cuda").contiguous()
@@ -69,7 +69,7 @@ def test_intent_attention_executes_on_gpu() -> None:
     Layer-A reference O = softmax(Q·Kᵀ)·V (what interpret.py computes) at a tight
     1e-3 rtol — the LIFT-vs-LOWERING translation check. This is attention
     bring-up, NOT the fused FlashAttention algorithm."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     q = torch.randn(4, 16, dtype=torch.float32, device="cuda").contiguous()
@@ -101,9 +101,9 @@ def test_fused_flash_executes_on_gpu() -> None:
     across the two extreme groupings."""
     import struct
 
-    from intentir.backend.compile import lower_memref_module_to_kernels
-    from intentir.backend.launch import load_module
-    from intentir.backend.orchestrate import _F32Arg, _I64Arg, _PtrArg, _launch
+    from intentir.backend.cuda.compile import lower_memref_module_to_kernels
+    from intentir.backend.cuda.launch import load_module
+    from intentir.backend.cuda.orchestrate import _F32Arg, _I64Arg, _PtrArg, _launch
 
     flash = lower_memref_module_to_kernels(_TEST / "flash_fused.mlir")[0]
     func = load_module(flash.cubin).function("flash_kernel")
@@ -129,8 +129,8 @@ def test_fused_flash_executes_on_gpu() -> None:
 def test_intent_matmul_executes_on_gpu() -> None:
     """A contraction lowers to a reduction kernel (internal scf.for over the
     contracted dim) that runs bit-exact on the GPU — flash's QK/PV step."""
-    from intentir.backend.compile import compile_all_kernels
-    from intentir.backend.launch import I64Arg, PtrArg, launch, load_module
+    from intentir.backend.cuda.compile import compile_all_kernels
+    from intentir.backend.cuda.launch import I64Arg, PtrArg, launch, load_module
 
     # [fill, matmul] in launch order; the matmul is last. Pre-zeroing the output
     # lets us skip the fill kernel and launch the reduction kernel directly.

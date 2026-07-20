@@ -28,7 +28,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -101,7 +101,7 @@ def _outshape(xs, ws, stride, pad, dil):
 
 
 def _run(name, Cin, Cout, sp, kk, stride, pad, dil, bias, seed, tf32=False):
-    from intentir.benchmarks.row_reduction import ConvMMAKernel
+    from intentir.backend.cuda.kernel_driver import ConvMMAKernel
     N = 2
     xs = [N, Cin] + sp
     ws = [Cout, Cin] + kk

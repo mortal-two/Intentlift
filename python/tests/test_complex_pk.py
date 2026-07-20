@@ -26,7 +26,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -53,7 +53,7 @@ def _rel(a, b):
 
 def _run(name, mlir_text, inputs):
     """Compile+launch a single-[M,N]-output elementwise kernel."""
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     Y = torch.empty(M, N, device="cuda", dtype=torch.float32)
     k = RowReductionKernel(name, {"M": M, "N": N}, T,
                            pass_name=_PASS, mlir_text=mlir_text)

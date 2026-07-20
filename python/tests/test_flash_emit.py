@@ -23,7 +23,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -59,7 +59,7 @@ def test_bk1_structurally_matches_flash_fused() -> None:
     """The bk=1 emission must reproduce the hand-written ``flash_fused.mlir`` result
     (same single-key online rescale) — the structural-equivalence check, done
     numerically: same inputs, same output to f32 round-off."""
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
 
     for seed, scale in [(0, 0.5), (1, 1.0), (2, 0.125)]:
         q, k, v = _rand(2, 4, 2, seed)
@@ -75,7 +75,7 @@ def test_bk1_structurally_matches_flash_fused() -> None:
 )
 def test_correctness(sq: int, sk: int, d: int, bk: int) -> None:
     """run_fused_flash vs exact softmax across divisible and TAIL (3,10,4,4) shapes."""
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
 
     q, k, v = _rand(sq, sk, d, seed=7)
     scale = 1.0 / (d ** 0.5)
@@ -90,7 +90,7 @@ def test_tile_invariance() -> None:
 
     Different K-tile groupings (different schedules) -> the identical Layer-A
     output: the schedule is non-binding, so the retuner is free to pick any bk."""
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
 
     sq, sk, d = 4, 16, 16
     q, k, v = _rand(sq, sk, d, seed=3)
@@ -106,7 +106,7 @@ def test_vs_triton() -> None:
     triton_flash = pytest.importorskip("intentir.benchmarks.triton_flash")
     if not triton_flash.HAVE_TRITON:
         pytest.skip("triton not available")
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
 
     sq, sk, d = 8, 16, 16
     q, k, v = _rand(sq, sk, d, seed=5)
@@ -122,7 +122,7 @@ def test_retune_sweep_selects_correct_bk() -> None:
     output is correct vs the exact reference. No timing assertion: one-thread-per-
     query makes the deltas small — this asserts the *mechanism* (sweep + correctness-
     preserving selection), not a tuned-perf claim."""
-    from intentir.emitters.flash_emit import retune_sweep, run_fused_flash
+    from intentir.backend.cuda.flash import retune_sweep, run_fused_flash
 
     sq, sk, d = 64, 128, 16
     res = retune_sweep(sq, sk, d)

@@ -32,7 +32,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -117,7 +117,7 @@ func.func @geglu(%A: {R}, %B: {R}, %half: tensor<f32>, %k: tensor<f32>,
 
 
 def _kernel(name, M, N, mlir_text):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     return RowReductionKernel(name, {"M": M, "N": N}, _T(N),
                               pass_name=_PASS, mlir_text=mlir_text)
 

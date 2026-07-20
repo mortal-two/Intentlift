@@ -31,7 +31,7 @@ import pathlib
 import numpy as np
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 from intentir.verify.interpret import _philox_uniform
 
 torch = pytest.importorskip("torch")
@@ -52,7 +52,7 @@ _PASS = "convert-intent-rng-to-gpu"
 
 
 def _kernel(name, Ro, Co, T, mlir_text):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     return RowReductionKernel(name, {"M": Ro, "N": Co}, T,
                               pass_name=_PASS, mlir_text=mlir_text)
 

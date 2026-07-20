@@ -33,7 +33,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -115,7 +115,7 @@ def _flash_launch(O, DO, d):
 
 @pytest.mark.parametrize("M,d", [(4096, 64), (8192, 128)])
 def test_bwd_preprocess_pk_vs_flash(M, d):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     assert M % 128 == 0
     torch.manual_seed(0)

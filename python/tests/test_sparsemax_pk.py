@@ -29,7 +29,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -130,7 +130,7 @@ def _sparsemax_ref(x):
 
 @pytest.mark.parametrize("M,N", [(4096, 1024), (2048, 4096)])
 def test_sparsemax_fwd_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.sparsemax import _sparsemax_forward_kernel
     from liger_kernel.ops.utils import calculate_settings
 
@@ -172,7 +172,7 @@ def test_sparsemax_fwd_pk_vs_liger(M, N):
 
 @pytest.mark.parametrize("M,N", [(4096, 1024), (2048, 4096)])
 def test_sparsemax_bwd_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.sparsemax import _sparsemax_backward_kernel
     from liger_kernel.ops.utils import calculate_settings
 

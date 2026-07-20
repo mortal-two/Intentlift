@@ -5,7 +5,7 @@
 // General op-graph dispatch (the keystone): a multi-op program is SEQUENCED into
 // outlined single-op / single-chain stage funcs, each of which ONE existing
 // cluster / row-reduction pass lowers UNCHANGED, wired by intermediate buffers at
-// the driver (see python/intentir/backend/opgraph.py). This test drives all three
+// the driver (see python/intentir/backend/cuda/opgraph.py). This test drives all three
 // passes in one intent-opt pipeline over the outlined quantile op-graph
 // (sort C6b -> gather C3 -> lerp reduce) plus the topk_softmax op-graph
 // (softmax reduce -> topk sort): every stage fires on ITS op within the module,

@@ -3,7 +3,7 @@ cluster boundary — vs torch AND the real flag_gems kernels on the 5090D.
 
 The keystone the coverage task deferred. Each cluster pass (sort/gather/...) only
 lowers a func whose body is ONE cluster op; a program mixing a cluster op with a
-fused map/reduce chain cannot lower as one func. ``intentir.backend.opgraph``
+fused map/reduce chain cannot lower as one func. ``intentir.backend.cuda.opgraph``
 SEQUENCES such a program into outlined single-op / single-chain stages, each
 lowered by an existing pass unchanged, wired by intermediate device buffers:
 
@@ -30,7 +30,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 flag_gems = pytest.importorskip("flag_gems")
@@ -62,7 +62,7 @@ def _scalar(v):
 @pytest.mark.parametrize("q", [0.1, 0.37, 0.5, 0.95])
 @pytest.mark.parametrize("M,N", [(256, 512), (128, 1024)])
 def test_quantile_opgraph_pk(M, N, q):
-    from intentir.backend.opgraph import quantile_plan
+    from intentir.backend.cuda.opgraph import quantile_plan
 
     torch.manual_seed(0)
     x = torch.randn(M, N, device="cuda").contiguous()
@@ -98,7 +98,7 @@ def test_quantile_opgraph_pk(M, N, q):
 @pytest.mark.parametrize("k", [2, 8])
 @pytest.mark.parametrize("tokens,experts", [(256, 32), (128, 64)])
 def test_topk_softmax_opgraph_pk(tokens, experts, k):
-    from intentir.backend.opgraph import topk_softmax_plan
+    from intentir.backend.cuda.opgraph import topk_softmax_plan
 
     torch.manual_seed(0)
     gating = torch.randn(tokens, experts, device="cuda", dtype=torch.float32).contiguous()
@@ -133,7 +133,7 @@ def test_topk_softmax_opgraph_pk(tokens, experts, k):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("M,V,T", [(256, 1024, 256), (128, 2048, 256)])
 def test_cross_entropy_opgraph_pk(M, V, T):
-    from intentir.backend.opgraph import cross_entropy_plan
+    from intentir.backend.cuda.opgraph import cross_entropy_plan
 
     assert V % T == 0 and (V // T) <= 32, "register tile must not spill"
     torch.manual_seed(0)

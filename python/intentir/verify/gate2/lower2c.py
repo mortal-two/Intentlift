@@ -16,7 +16,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from intentir.backend.cpu import run_on_cpu
+from intentir.backend.cpu.pipeline import run_on_cpu
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1.model import Gate1Artifact, SemanticArchive
 

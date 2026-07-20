@@ -27,7 +27,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 flag_gems = pytest.importorskip("flag_gems")
@@ -61,7 +61,7 @@ def _scalar(v):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("rows,cols,group_size", [(64, 512, 128), (128, 256, 256)])
 def test_per_token_group_quant_fp8_pk(rows, cols, group_size):
-    from intentir.backend.opgraph import per_token_group_quant_fp8_plan
+    from intentir.backend.cuda.opgraph import per_token_group_quant_fp8_plan
 
     torch.manual_seed(0)
     x = torch.randn(rows, cols, device="cuda", dtype=torch.float32).contiguous()
@@ -109,7 +109,7 @@ def test_per_token_group_quant_fp8_pk(rows, cols, group_size):
 @pytest.mark.parametrize("num_blocks,block_size,num_heads,head_size,x,Nt",
                          [(64, 16, 8, 64, 8, 200), (32, 32, 4, 128, 16, 300)])
 def test_reshape_and_cache_pk(num_blocks, block_size, num_heads, head_size, x, Nt):
-    from intentir.backend.opgraph import reshape_and_cache_run
+    from intentir.backend.cuda.opgraph import reshape_and_cache_run
 
     torch.manual_seed(0)
     key = torch.randn(Nt, num_heads, head_size, device="cuda", dtype=torch.float32)
@@ -142,7 +142,7 @@ def test_reshape_and_cache_pk(num_blocks, block_size, num_heads, head_size, x, N
 @pytest.mark.parametrize("num_tokens,top_k,num_experts,block_size",
                          [(256, 2, 8, 16), (128, 4, 16, 32), (512, 2, 8, 64)])
 def test_moe_align_block_size_pk(num_tokens, top_k, num_experts, block_size):
-    from intentir.backend.opgraph import moe_align_block_size_run
+    from intentir.backend.cuda.opgraph import moe_align_block_size_run
 
     torch.manual_seed(0)
     topk_ids = torch.randint(0, num_experts, (num_tokens, top_k),

@@ -22,7 +22,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -93,7 +93,7 @@ func.func @jsd(%X: tensor<{M}x{N}xf32>, %Y: tensor<{M}x{N}xf32>,
 
 @pytest.mark.parametrize("M,N", [(4096, 4096), (2048, 8192)])
 def test_kl_div_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.kl_div import kldiv_forward_triton
 
     T = _num_warps(N) * 32
@@ -126,7 +126,7 @@ def test_kl_div_pk_vs_liger(M, N):
 
 @pytest.mark.parametrize("M,N", [(4096, 4096), (2048, 8192)])
 def test_jsd_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.jsd import jsd_forward
 
     T = _num_warps(N) * 32

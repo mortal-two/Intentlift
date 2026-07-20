@@ -64,7 +64,7 @@ PAD_SWEEP = [0, 8]
 def _do_bench(thunk, want_graph: bool = True):
     """Median kernel us via the same steady-state path bench_clusters uses.
 
-    Imported lazily so ``import intentir.backend.autotune`` stays cheap and does
+    Imported lazily so ``import intentir.backend.cuda.autotune`` stays cheap and does
     not pull in torch/triton/flag_gems at module load.
     """
     import triton

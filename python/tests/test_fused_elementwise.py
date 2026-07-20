@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not _HAS_GPU, reason="needs CUDA GPU")
 
 @pytest.mark.parametrize("chain_name", ["add_mul", "silu_mul_add", "gelu_mul_add"])
 def test_chain_fuses_to_one_kernel_and_matches(chain_name, tmp_path):
-    from intentir.backend.compile import compile_all_kernels_fused
+    from intentir.backend.cuda.compile import compile_all_kernels_fused
     from intentir.benchmarks.fused_elementwise import _chains, _build_plan, _launch_nosync
 
     chain = next(c for c in _chains() if c.name == chain_name)

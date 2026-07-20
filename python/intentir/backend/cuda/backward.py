@@ -4,7 +4,7 @@ flag_gems exposes 24 ``*_backward`` entrypoints. Almost all are *compositions of
 mechanisms IntentIR already lowers*, so this is authoring + verify (like the
 extraction bulk), NOT new passes. Each builder returns a ``BwdKernel`` — a
 ``(pass_name, mlir_text, block_threads)`` spec that ONE existing pass lowers
-unchanged, driven by :class:`intentir.benchmarks.row_reduction.RowReductionKernel`.
+unchanged, driven by :class:`intentir.backend.cuda.kernel_driver.RowReductionKernel`.
 
 Three mechanism groups (reference gradient = torch autograd; also PK'd vs the
 real ``flag_gems.<op>_backward``):

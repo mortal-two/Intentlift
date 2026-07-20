@@ -22,10 +22,10 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT, _run,
+from intentir.backend.cuda.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT, _run,
                                        lower_memref_module_to_kernels)
-from intentir.backend.launch import load_module
-from intentir.backend.orchestrate import (CachedLauncher, _host_func_text,
+from intentir.backend.cuda.launch import load_module
+from intentir.backend.cuda.orchestrate import (CachedLauncher, _host_func_text,
                                            _map_input_aligned_ptrs,
                                            _parse_constants, _parse_launches,
                                            _parse_signature_blockargs,
@@ -76,7 +76,7 @@ class _FlashLseKernel:
         self.shared = 0
         if site.dynamic_shared_ssa is not None:
             self.shared = int(consts[site.dynamic_shared_ssa][0])
-            from intentir.backend.launch import _driver
+            from intentir.backend.cuda.launch import _driver
             cuda = _driver()
             attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
             cuda.cuFuncSetAttribute(self.func, attr, self.shared)

@@ -33,7 +33,7 @@ from intentir.backend.cuda.compile import (INTENT_OPT, _run,
                                        lower_memref_module_to_kernels)
 from intentir.backend.cuda.launch import (I64Arg, PtrArg, _driver, _marshal,
                                       load_module)
-from intentir.backend.launch_plan import single_launch_plan
+from intentir.backend.cuda.launch_config import single_launch_config
 from intentir.backend.cuda.orchestrate import (_host_func_text,
                                            _map_input_aligned_ptrs,
                                            _parse_constants, _parse_launches,
@@ -42,7 +42,7 @@ from intentir.backend.cuda.orchestrate import (_host_func_text,
 from intentir.frontend.emit_mlir import emit_module
 from intentir.ir.model import IntentFunction
 
-_REPO = Path(__file__).resolve().parents[3]  # benchmarks/intentir/python/<root>
+_REPO = Path(__file__).resolve().parents[4]
 
 
 def _intent_mlir(name: str, dims: dict) -> str:
@@ -123,7 +123,7 @@ class RowReductionKernel:
         # (equivalence proof across the PK suite) before trusting it; the regex
         # path stays as a validated fallback for kernels whose pass has not yet
         # been taught to emit a plan (plan is None).
-        plan = single_launch_plan(rr)
+        plan = single_launch_config(rr)
         if plan is not None:
             plan.assert_matches(self.grid, self.block, self.shared,
                                 where=f"({name} {pass_name})")
@@ -382,7 +382,7 @@ class MatmulKernel:
             attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
             cuda.cuFuncSetAttribute(self.func, attr, self.shared)
         # M6: prefer the pass-emitted structured launch plan; assert == regex.
-        plan = single_launch_plan(rr)
+        plan = single_launch_config(rr)
         if plan is not None:
             plan.assert_matches(self.grid, self.block, self.shared, where="(matmul)")
             self.grid, self.block, self.shared = plan.grid, plan.block, plan.smem
@@ -472,7 +472,7 @@ class ConvMMAKernel:
             attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
             cuda.cuFuncSetAttribute(self.func, attr, self.shared)
         # M6: prefer the pass-emitted structured launch plan; assert == regex.
-        plan = single_launch_plan(rr)
+        plan = single_launch_config(rr)
         if plan is not None:
             plan.assert_matches(self.grid, self.block, self.shared, where="(conv-mma)")
             self.grid, self.block, self.shared = plan.grid, plan.block, plan.smem

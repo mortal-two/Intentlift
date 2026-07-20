@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.abi import LogicalArgument
-from intentir.backend.cuda_dispatch import (
+from intentir.ir.abi import LogicalArgument
+from intentir.backend.cuda.dispatch import (
     CudaDispatchError,
     CudaVariantDispatcher,
     PreparedVariant,
 )
-from intentir.backend.runtime_contract import (
+from intentir.backend.cuda.runtime_contract import (
     RuntimeContract,
     RuntimeLaunchFacts,
     RuntimePredicate,
 )
-from intentir.backend.variant_manifest import (
+from intentir.backend.cuda.variant_manifest import (
     ArtifactProvenance,
     DeviceLaunchStep,
-    LaunchPlan,
+    ExecutableLaunchPlan,
     VariantManifest,
     VariantRecord,
 )
@@ -73,7 +73,7 @@ def _record(
         role=role,
         schedule={"tile": divisor, "vector_width": 4 if specialized else 1},
         artifact=artifact,
-        launch_plan=LaunchPlan(
+        launch_plan=ExecutableLaunchPlan(
             steps=tuple(
                 DeviceLaunchStep(
                     step_id=f"main{index}",
@@ -312,4 +312,3 @@ def test_dispatcher_requires_every_manifest_variant_prepared_up_front() -> None:
 def test_unknown_mode_is_rejected() -> None:
     with pytest.raises(CudaDispatchError, match="unsupported dispatch mode"):
         _dispatcher([]).select(_facts(1024), mode="gate1")
-

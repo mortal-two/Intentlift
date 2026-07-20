@@ -19,8 +19,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from intentir.backend import orchestrate as backend_orchestrate
-from intentir.backend.launch import load_module
+import intentir.backend.cuda.orchestrate as backend_orchestrate
+from intentir.backend.cuda.launch import load_module
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate2 import CudaLoweringRunner
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.layer_c import LayerCResolutionError, resolve_layer_c_scalar
+from intentir.ir.layer_c import LayerCResolutionError, resolve_layer_c_scalar
 
 
 @pytest.mark.parametrize(

@@ -19,7 +19,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -90,7 +90,7 @@ func.func @qwen2vl_mrope(
 
 @pytest.mark.parametrize("bsz,seq,nh,hd", [(8, 1024, 8, 128), (4, 2048, 16, 64)])
 def test_qwen2vl_mrope_pk_vs_liger(bsz, seq, nh, hd):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.qwen2vl_mrope import _triton_qwen2vl_mrope
 
     n_row = bsz * seq

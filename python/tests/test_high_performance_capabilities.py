@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from intentir.backend.common import load_high_performance_registry
-from intentir.backend.selection import DEFAULT_PASSES
+from intentir.backend.cuda.capabilities import load_high_performance_registry
+from intentir.backend.cuda.selection import DEFAULT_PASSES
 
 
 _ROOT = Path(__file__).resolve().parents[2]

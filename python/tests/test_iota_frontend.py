@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from intentir.backend.compile import INTENT_OPT
-from intentir.backend.cpu import run_on_cpu
+from intentir.backend.cuda.compile import INTENT_OPT
+from intentir.backend.cpu.pipeline import run_on_cpu
 from intentir.frontend.emit_mlir import emit_module
 from intentir.ir.model import IntentFunction
 

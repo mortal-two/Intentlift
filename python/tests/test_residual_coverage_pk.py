@@ -267,7 +267,7 @@ def test_bin_topk_pk(B, S, k):
 # flag_gems.scaled_dot_product_attention, causal + non-causal.                 #
 # --------------------------------------------------------------------------- #
 try:
-    from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+    from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
     _FLASH_READY = (pathlib.Path(INTENT_OPT).exists()
                     and pathlib.Path(MLIR_OPT).exists()
                     and pathlib.Path(CUDA_BIN).exists() and _HAS_CUDA)

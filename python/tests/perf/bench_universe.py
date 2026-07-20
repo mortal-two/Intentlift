@@ -53,7 +53,7 @@ from bench_clusters import (FG, ROWS, _cleanup, _fg_time, bench, c3_gather,
                             our_launcher,
                             c4_layout, c5_rng, c6_argmax, c6_sort, c7_conv,
                             c7_polar, c7_pool, c8_compact, fg_time, record)
-from intentir.benchmarks.row_reduction import MatmulKernel, RowReductionKernel
+from intentir.backend.cuda.kernel_driver import MatmulKernel, RowReductionKernel
 
 RR = "convert-intent-row-reduction-to-gpu"
 EW = "convert-intent-elementwise-to-gpu"

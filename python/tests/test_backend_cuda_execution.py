@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import intentir.backend.compile as backend_compile
-from intentir.backend.pipeline import execute_cuda_artifact, lower_to_cuda
+import intentir.backend.cuda.compile as backend_compile
+from intentir.backend.cuda.pipeline import execute_cuda_artifact, lower_to_cuda
 
 
 torch = pytest.importorskip("torch")

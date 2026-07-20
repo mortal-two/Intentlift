@@ -26,7 +26,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -59,7 +59,7 @@ _PARITY_SLACK = 1.5
 
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 4096)])
 def test_layer_norm_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.layer_norm import _layer_norm_forward_kernel
     from liger_kernel.ops.utils import calculate_settings
 

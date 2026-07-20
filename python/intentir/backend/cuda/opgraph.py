@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from intentir.benchmarks.row_reduction import RowReductionKernel
+from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
@@ -513,7 +513,7 @@ def reshape_and_cache_run(key, value, key_cache, value_cache, slot_mapping,
     """
     import torch
 
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     Nt = int(slot_mapping.shape[0])
     H = int(key.shape[1])
@@ -599,7 +599,7 @@ def moe_align_block_size_run(topk_ids, block_size: int, num_experts: int):
     """
     import torch
 
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     dev = topk_ids.device
     flat = topk_ids.reshape(-1).to(torch.int64)
@@ -705,7 +705,7 @@ def unique_run(x, block_threads: int | None = None):
     """
     import torch
 
-    from intentir.benchmarks.row_reduction import CompactKernel, RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import CompactKernel, RowReductionKernel
 
     N = int(x.numel())
     row = x.reshape(1, N).contiguous().float()

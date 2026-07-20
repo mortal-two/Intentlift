@@ -19,7 +19,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT
 
 _TEST = pathlib.Path(__file__).resolve().parents[2] / "test"
 _ADD = _TEST / "add.mlir"
@@ -38,7 +38,7 @@ pytestmark = [
 
 
 def test_parse_multi_result_p4_signature() -> None:
-    from intentir.backend.orchestrate import _parse_intent_results
+    from intentir.backend.cuda.orchestrate import _parse_intent_results
 
     source = """
     module {
@@ -59,7 +59,7 @@ def test_parse_multi_result_p4_signature() -> None:
 def test_parse_and_marshal_f64_launch_constants() -> None:
     import ctypes
 
-    from intentir.backend.orchestrate import _F64Arg, _marshal, _parse_f64
+    from intentir.backend.cuda.orchestrate import _F64Arg, _marshal, _parse_f64
 
     value = _parse_f64("0x3FE62E42FEFA39EF")
     assert value == pytest.approx(0.6931471805599453)
@@ -73,7 +73,7 @@ def test_parse_and_marshal_f64_launch_constants() -> None:
 def test_parse_and_marshal_half_launch_constants_as_raw_bits() -> None:
     import ctypes
 
-    from intentir.backend.orchestrate import (
+    from intentir.backend.cuda.orchestrate import (
         _BF16Arg,
         _F16Arg,
         _marshal,
@@ -93,7 +93,7 @@ def test_parse_and_marshal_half_launch_constants_as_raw_bits() -> None:
 
 
 def test_parse_typed_inplace_result_contract() -> None:
-    from intentir.backend.orchestrate import _parse_intent_inplace
+    from intentir.backend.cuda.orchestrate import _parse_intent_inplace
 
     source = """
     func.func @loss(%x: tensor<2x8xf32>, %loss: tensor<2xf32>)
@@ -107,7 +107,7 @@ def test_parse_typed_inplace_result_contract() -> None:
 
 
 def test_parse_returned_malloc_uses_its_own_element_type() -> None:
-    from intentir.backend.orchestrate import _parse_malloc_buffers
+    from intentir.backend.cuda.orchestrate import _parse_malloc_buffers
 
     host = """
       %c4 = llvm.mlir.constant(4 : i64) : i64
@@ -132,7 +132,7 @@ def test_parse_returned_malloc_uses_its_own_element_type() -> None:
 
 
 def test_parse_scalar_and_splat_constant_globals() -> None:
-    from intentir.backend.orchestrate import _parse_const_globals
+    from intentir.backend.cuda.orchestrate import _parse_const_globals
 
     module = """
       llvm.mlir.global private constant @zero(0 : i64) : i64
@@ -159,7 +159,7 @@ def test_parse_scalar_and_splat_constant_globals() -> None:
 
 def test_run_program_add() -> None:
     """Single-kernel program: run_program(add, {a, b}) == a + b bit-exact."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     a = torch.randn(8, 16, dtype=torch.float32, device="cuda").contiguous()
@@ -174,7 +174,7 @@ def test_run_program_add() -> None:
 
 
 def test_run_program_binds_layer_b_output_alias_without_copy() -> None:
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     a = torch.randn(8, 16, dtype=torch.float32, device="cuda").contiguous()
@@ -197,8 +197,8 @@ def test_run_program_accepts_destination_passing_row_kernel(tmp_path) -> None:
     declared P4 results without a host malloc or compiler fallback.
     """
 
-    import intentir.backend.compile as backend_compile
-    from intentir.backend.orchestrate import run_program
+    import intentir.backend.cuda.compile as backend_compile
+    from intentir.backend.cuda.orchestrate import run_program
 
     specialized = backend_compile._run(
         [
@@ -229,7 +229,7 @@ def test_run_program_accepts_destination_passing_row_kernel(tmp_path) -> None:
 def test_run_program_matmul() -> None:
     """Multi-kernel program: fill + matmul with intermediate buffer, f32 + index
     scalar args. run_program(matmul, {a, b}) ~= a @ b.T within 1e-4."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     a = torch.randn(8, 16, dtype=torch.float32, device="cuda").contiguous()
@@ -249,7 +249,7 @@ def test_run_program_softmax() -> None:
     passed to kernels as bare aligned malloc pointers, never struct-packed) plus
     a struct-packed returned output, an f32 -inf identity (hex literal), and an
     f32 0.0 identity. run_program(softmax, {x}) ~= torch.softmax(x, 1)."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     torch.manual_seed(0)
     x = torch.randn(4, 8, dtype=torch.float32, device="cuda").contiguous()
@@ -270,7 +270,7 @@ def test_run_program_executes_rank_zero_cast_host_prelude(tmp_path) -> None:
     the pointwise consumer kernel; otherwise the whole result is silently zero
     or garbage despite valid cubins.
     """
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     source = """
     module {
@@ -296,7 +296,7 @@ def test_run_program_executes_rank_zero_cast_host_prelude(tmp_path) -> None:
 def test_run_program_loads_vector_gather_scalars_through_literal_gep(
     tmp_path,
 ) -> None:
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     source = """
     module {
@@ -335,7 +335,7 @@ def test_run_program_loads_vector_gather_scalars_through_literal_gep(
 def test_run_program_rejects_input_abi_mismatch(
     tmp_path, tensor, message: str
 ) -> None:
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     source = """
     module {
@@ -356,7 +356,7 @@ def test_run_program_rejects_input_abi_mismatch(
 def test_run_program_evaluates_scalar_icmp_ne_with_const_global(
     tmp_path, flag: int, use_x: bool
 ) -> None:
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
 
     source = """
     module {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.schedules import (
+from intentir.backend.cuda.schedules import (
     ElementwiseSchedule,
     RowSchedule,
     pass_override,

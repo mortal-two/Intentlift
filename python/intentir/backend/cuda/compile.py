@@ -32,12 +32,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+from intentir.backend.toolchain.tools import INTENT_OPT, MLIR_OPT
 
-INTENT_OPT = os.environ.get(
-    "INTENT_OPT", str(_REPO_ROOT / "build" / "tools" / "intent-opt" / "intent-opt")
-)
-MLIR_OPT = os.environ.get("MLIR_OPT", "/usr/lib/llvm-20/bin/mlir-opt")
 CUDA_BIN = os.environ.get("CUDA_BIN", "/usr/local/cuda-12.8/bin")
 CHIP = os.environ.get("INTENT_GPU_CHIP", "sm_120a")
 

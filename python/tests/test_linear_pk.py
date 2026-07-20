@@ -37,7 +37,7 @@ import types
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -212,7 +212,7 @@ def _rel(a, b):
 
 def _build_and_run(M, N, K, act, bias_on):
     """Compile the fused-epilogue kernel, run it once, return (Y, A, W, bias)."""
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     torch.manual_seed(0)
     A = torch.randn(M, K, device="cuda", dtype=torch.float16).contiguous()

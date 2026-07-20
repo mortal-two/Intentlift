@@ -24,7 +24,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -65,7 +65,7 @@ def _bench(fn):
     (1024, 1024, 1024),
 ])
 def test_matmul_mma_pk(M, N, K):
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     torch.manual_seed(0)
     A = torch.randn(M, K, device="cuda", dtype=torch.float16).contiguous()

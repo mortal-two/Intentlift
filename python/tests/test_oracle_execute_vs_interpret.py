@@ -33,7 +33,7 @@ import pathlib
 import numpy as np
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT
 
 _TEST = pathlib.Path(__file__).resolve().parents[2] / "test"
 _JSON = _TEST / "flashattention_fwd.intent.json"
@@ -59,7 +59,7 @@ def test_lifting_certificate_intent_dialect(scale) -> None:
     """interpret(JSON IR) == execute(intent-dialect attention.mlir, lowered via
     convert-intent-to-linalg). The real certified-lifting check: the executed
     side goes through the compiler's dialect lowering."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
     from intentir.verify.interpret import interpret
 
     fn = _flash_fn()
@@ -100,7 +100,7 @@ def test_fused_emitter_matches_interpreter(sq, sk, d, scale, bk, seed) -> None:
     """interpret(JSON IR) == execute(independent fused emitter). A cross-
     implementation correctness + tile-invariance check; NOT a lowering certificate
     (the emitter bypasses the intent dialect — see module docstring)."""
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
     from intentir.verify.interpret import interpret
 
     fn = _flash_fn()

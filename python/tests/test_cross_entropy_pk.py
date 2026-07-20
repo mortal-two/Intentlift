@@ -45,7 +45,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -149,7 +149,7 @@ def _liger_launch(X, target, M, V):
 
 @pytest.mark.parametrize("M,V", [(8192, 4096), (4096, 8192)])
 def test_cross_entropy_pk_vs_liger(M, V):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     assert V % _T == 0 and (V // _T) <= 32, "register tile must not spill"
     torch.manual_seed(0)

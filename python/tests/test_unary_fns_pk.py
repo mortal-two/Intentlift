@@ -28,7 +28,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -53,7 +53,7 @@ def _rel(a, b):
 
 
 def _kernel(name, mlir_text):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     return RowReductionKernel(name, {"M": M, "N": N}, T,
                               pass_name=_PASS, mlir_text=mlir_text)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.runtime_contract import (
+from intentir.backend.cuda.runtime_contract import (
     RuntimeContract,
     RuntimeContractError,
     RuntimeLaunchFacts,

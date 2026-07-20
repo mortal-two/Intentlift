@@ -34,7 +34,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -141,7 +141,7 @@ func.func @xf_rms_norm_add(%X: {R}, %Resid: {R}, %W: {C}, %eps: tensor<f32>)
 @pytest.mark.parametrize("include_weight", [True, False])
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 12288), (4096, 24576)])
 def test_xformers_rms_norm_pk(M, N, include_weight):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     xf = _load_xformers()
 
     BLOCK, num_warps = _settings(N)
@@ -200,7 +200,7 @@ def test_xformers_rms_norm_pk(M, N, include_weight):
 
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 12288), (4096, 24576)])
 def test_xformers_rms_norm_add_pk(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     xf = _load_xformers()
 
     BLOCK, num_warps = _settings(N)

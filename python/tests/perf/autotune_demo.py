@@ -25,16 +25,16 @@ from pathlib import Path
 import torch
 import triton
 
-from intentir.backend.autotune import AutotuneDriver, TuneTask
-from intentir.backend.launch import I64Arg, PtrArg, _marshal
-from intentir.benchmarks.row_reduction import (ConvMMAKernel, MatmulKernel,
+from intentir.backend.cuda.autotune import AutotuneDriver, TuneTask
+from intentir.backend.cuda.launch import I64Arg, PtrArg, _marshal
+from intentir.backend.cuda.kernel_driver import (ConvMMAKernel, MatmulKernel,
                                                RowReductionKernel)
 
 
 def _flag_gems():
     try:
         import flag_gems
-        from intentir.backend.flaggems_shim import apply_flaggems_launch_shim
+        from intentir.benchmarks.flaggems_shim import apply_flaggems_launch_shim
         apply_flaggems_launch_shim()
         return flag_gems
     except Exception:

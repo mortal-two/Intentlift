@@ -33,7 +33,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -70,7 +70,7 @@ def _div_threads(cols, cap=256):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("N,hi", [(1024, 64), (4096, 512), (2048, 2048)])
 def test_unique_opgraph_pk(N, hi):
-    from intentir.backend.opgraph import unique_run
+    from intentir.backend.cuda.opgraph import unique_run
 
     torch.manual_seed(0)
     # integer-valued floats with duplicates (hi < N forces collisions); the
@@ -90,7 +90,7 @@ def test_unique_opgraph_pk(N, hi):
 # randperm(n) = argsort of philox keys  (valid perm + uniform + determinism)   #
 # --------------------------------------------------------------------------- #
 def test_randperm_valid_and_deterministic():
-    from intentir.backend.opgraph import randperm_plan
+    from intentir.backend.cuda.opgraph import randperm_plan
 
     n = 1024
     perm = randperm_plan(n, seed=1234).run({})["perm"].reshape(-1).long()
@@ -113,7 +113,7 @@ def test_randperm_valid_and_deterministic():
 
 
 def test_randperm_positional_uniformity():
-    from intentir.backend.opgraph import randperm_plan
+    from intentir.backend.cuda.opgraph import randperm_plan
 
     # Statistical: over S independent seeds each position's value should be
     # ~uniform on [0,n-1]; test that no position is biased (column mean near the
@@ -139,7 +139,7 @@ def test_randperm_positional_uniformity():
 # multinomial(p, k) = inverse-CDF categorical  (empirical dist + determinism)  #
 # --------------------------------------------------------------------------- #
 def _multinomial_counts(N, K, p, seed):
-    from intentir.backend.opgraph import multinomial_plan
+    from intentir.backend.cuda.opgraph import multinomial_plan
 
     prog = multinomial_plan(N, K, seed=seed)
     env = prog.run({
@@ -184,7 +184,7 @@ def test_multinomial_distribution_and_determinism():
     (1, 2, 12, 10, 24, 30),
 ])
 def test_upsample_bicubic2d_pk(N, C, H, W, OH, OW):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     I = f"tensor<{N}x{C}x{H}x{W}xf32>"
     O = f"tensor<{N}x{C}x{OH}x{OW}xf32>"

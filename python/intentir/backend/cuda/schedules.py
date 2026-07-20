@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 import intentir.backend.cuda.orchestrate as backend_orchestrate
-from intentir.backend.layer_c import resolve_layer_c_scalar
+from intentir.ir.layer_c import resolve_layer_c_scalar
 from intentir.backend.cuda.selection import read_intent_module
 
 

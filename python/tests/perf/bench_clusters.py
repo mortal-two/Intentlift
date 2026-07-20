@@ -9,7 +9,7 @@ compute ceiling or the naive-untuned single-block gap is real.
 
 flag_gems is the REAL Triton target. It is now timed IN-PROCESS on the same
 ``do_bench_cudagraph`` path as ours + torch, thanks to
-``intentir.backend.flaggems_shim`` (routes flag_gems' cached libentry launcher
+``intentir.benchmarks.flaggems_shim`` (routes flag_gems' cached libentry launcher
 through its constexpr-inclusive path so triton 3.6 no longer drops the constexpr
 placeholder slot — see the shim module / research/r2-flaggems-fix.md). The old
 FG_BENCH subprocess escape hatch is retired.
@@ -52,8 +52,8 @@ from pathlib import Path
 import torch
 import triton
 
-from intentir.backend.launch import I64Arg, PtrArg, _marshal
-from intentir.benchmarks.row_reduction import ConvMMAKernel, RowReductionKernel
+from intentir.backend.cuda.launch import I64Arg, PtrArg, _marshal
+from intentir.backend.cuda.kernel_driver import ConvMMAKernel, RowReductionKernel
 
 # NOTE (perf audit): the GB/s / %HBM columns are INDICATIVE only — nbytes counts
 # LOGICAL bytes (a tiled/broadcast input is counted per-read though it is
@@ -70,7 +70,7 @@ def _flag_gems():
     its cached libentry dispatch works in-process under CUDA-graph capture."""
     try:
         import flag_gems
-        from intentir.backend.flaggems_shim import apply_flaggems_launch_shim
+        from intentir.benchmarks.flaggems_shim import apply_flaggems_launch_shim
         apply_flaggems_launch_shim()
         return flag_gems
     except Exception:
@@ -692,7 +692,7 @@ def c7_polar():
 # ======================================================================== #
 def c8_compact():
     print("\n[C8] compact (nonzero / masked_select, multi-block stream compaction)")
-    from intentir.benchmarks.row_reduction import CompactKernel
+    from intentir.backend.cuda.kernel_driver import CompactKernel
     # data-dependent output extent -> ref not graph-capturable; use do_bench.
     for R, Cc in [(2048, 2048), (4096, 4096)]:
         T = 256

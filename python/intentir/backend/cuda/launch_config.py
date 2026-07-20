@@ -6,7 +6,7 @@ Background
 ----------
 Every perf-critical ``ConvertIntent*ToGPU`` pass bakes its launch geometry as
 raw ``arith.constant`` index ops feeding ``gpu.launch``; the runtime
-(``orchestrate.py`` / ``row_reduction.py``) then recovers grid/block/smem by
+(``orchestrate.py`` / ``kernel_driver.py``) then recovers grid/block/smem by
 ``_resolve_const_index`` -- a regex over ``gpu.launch_func ... blocks in (...)``
 that only works because ``-canonicalize`` happens to fold the extents to
 literals (R5 P5, ``r5-backend-critique.md:102-111``). Brittle by construction.
@@ -42,7 +42,7 @@ _INT_RE = re.compile(r"(\w+)\s*=\s*(-?\d+)\s*:\s*i\d+")
 
 
 @dataclass
-class LaunchPlan:
+class KernelLaunchConfig:
     """A pass-emitted structured launch plan (one gpu.launch's geometry)."""
 
     grid: tuple[int, int, int]
@@ -71,13 +71,13 @@ class LaunchPlan:
             )
 
 
-def parse_launch_plans(mlir_text: str) -> list[LaunchPlan]:
+def parse_launch_configs(mlir_text: str) -> list[KernelLaunchConfig]:
     """Parse every ``intent.launch_plan`` attribute in a pass-output module.
 
     Returns them in source order (one per host func that emitted a plan). An
     empty list means no pass attached a plan (regex fallback applies).
     """
-    plans: list[LaunchPlan] = []
+    plans: list[KernelLaunchConfig] = []
     for m in _PLAN_RE.finditer(mlir_text):
         body = m.group(1)
         arrs = {am.group(1): (int(am.group(2)), int(am.group(3)), int(am.group(4)))
@@ -86,7 +86,7 @@ def parse_launch_plans(mlir_text: str) -> list[LaunchPlan]:
         if "grid" not in arrs or "block" not in arrs:
             continue
         plans.append(
-            LaunchPlan(
+            KernelLaunchConfig(
                 grid=arrs["grid"],
                 block=arrs["block"],
                 smem=ints.get("smem", 0),
@@ -99,13 +99,13 @@ def parse_launch_plans(mlir_text: str) -> list[LaunchPlan]:
     return plans
 
 
-def single_launch_plan(mlir_text: str) -> LaunchPlan | None:
+def single_launch_config(mlir_text: str) -> KernelLaunchConfig | None:
     """The sole launch plan in a single-kernel module, or None if absent.
 
     Raises if more than one plan is present (a single-launch driver expects at
-    most one); multi-launch callers use ``parse_launch_plans``.
+    most one); multi-launch callers use ``parse_launch_configs``.
     """
-    plans = parse_launch_plans(mlir_text)
+    plans = parse_launch_configs(mlir_text)
     if not plans:
         return None
     if len(plans) > 1:
@@ -115,4 +115,8 @@ def single_launch_plan(mlir_text: str) -> LaunchPlan | None:
     return plans[0]
 
 
-__all__ = ["LaunchPlan", "parse_launch_plans", "single_launch_plan"]
+__all__ = [
+    "KernelLaunchConfig",
+    "parse_launch_configs",
+    "single_launch_config",
+]

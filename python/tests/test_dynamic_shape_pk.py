@@ -34,7 +34,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -57,7 +57,7 @@ def _kernel(name, T, mlir_text):
     # The compact pass now emits THREE gpu.launches (count, scan, scatter) that
     # share a device scratch; CompactKernel loads all three cubins, allocates the
     # scratch, and launches them in stream order.
-    from intentir.benchmarks.row_reduction import CompactKernel
+    from intentir.backend.cuda.kernel_driver import CompactKernel
     return CompactKernel(name, T, mlir_text)
 
 

@@ -26,7 +26,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -95,7 +95,7 @@ func.func @group_norm(
 def test_group_norm_pk_vs_liger(B, C, G, spatial):
     import torch.nn.functional as F
 
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.group_norm import _group_norm_forward_kernel
 
     cpg = C // G               # channels per group

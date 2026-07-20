@@ -46,7 +46,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -84,7 +84,7 @@ def _rel(a, b):
     (512, 512, 512, 3, 1),     # 64 blocks (still single-wave on 170 SMs)
 ])
 def test_matmul_mma_ws_correct(M, N, K, ns, pw):
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     grid_blocks = (M // 64) * (N // 64)
     sm = torch.cuda.get_device_properties(0).multi_processor_count

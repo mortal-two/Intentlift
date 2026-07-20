@@ -27,7 +27,7 @@ import re
 
 import pytest
 
-from intentir.backend.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT,
+from intentir.backend.cuda.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT,
                                       _unescape_mlir_bytes)
 
 torch = pytest.importorskip("torch")
@@ -109,7 +109,7 @@ def _ptx(kernel):
     (1024, 1024, 1024),
 ])
 def test_matmul_mmasync_pk(M, N, K):
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     torch.manual_seed(0)
     A = torch.randn(M, K, device="cuda", dtype=torch.float16).contiguous()
@@ -155,7 +155,7 @@ def test_bf16_matmul_mmasync_pk(M, N, K, explicit_widen):
     if not torch.cuda.is_bf16_supported():
         pytest.skip("CUDA device has no BF16 tensor-core support")
 
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     torch.manual_seed(1)
     A = torch.randn(M, K, device="cuda", dtype=torch.bfloat16).contiguous()
@@ -217,7 +217,7 @@ def test_bf16_saved_bias_epilogue_stays_in_one_mma_kernel():
     if not torch.cuda.is_bf16_supported():
         pytest.skip("CUDA device has no BF16 tensor-core support")
 
-    from intentir.benchmarks.row_reduction import MatmulKernel
+    from intentir.backend.cuda.kernel_driver import MatmulKernel
 
     M, N, K = 64, 64, 32
     torch.manual_seed(2)

@@ -13,8 +13,8 @@ import subprocess
 
 import pytest
 
-import intentir.backend.compile as backend_compile
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, compile_intent_to_cubin
+import intentir.backend.cuda.compile as backend_compile
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, compile_intent_to_cubin
 
 _ADD = pathlib.Path(__file__).resolve().parents[2] / "test" / "add.mlir"
 _CUOBJDUMP = pathlib.Path(CUDA_BIN) / "cuobjdump"

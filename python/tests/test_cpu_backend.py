@@ -42,7 +42,7 @@ def _np_ref(name, arrs):
     ("matmul", [(3, 4), (4, 5)], {"M": 3, "K": 4, "N": 5}),
 ])
 def test_kernel_runs_on_cpu(name, shapes, dims):
-    from intentir.backend.cpu import run_on_cpu
+    from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction
 
     rng = np.random.default_rng(0)
@@ -56,7 +56,7 @@ def test_kernel_runs_on_cpu(name, shapes, dims):
 
 
 def test_collapsed_row_sum_output_runs_on_cpu() -> None:
-    from intentir.backend.cpu import run_on_cpu
+    from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction
 
     fn = IntentFunction.from_json(
@@ -93,7 +93,7 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
 
 
 def test_cpu_runner_reads_back_exact_f32_bits() -> None:
-    from intentir.backend.cpu import run_on_cpu
+    from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction
 
     fn = IntentFunction.from_json(
@@ -120,7 +120,7 @@ def test_cpu_runner_reads_back_exact_f32_bits() -> None:
 
 
 def test_cpu_runner_accepts_and_preserves_ieee_special_input_bits() -> None:
-    from intentir.backend.cpu import run_on_cpu
+    from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction
 
     fn = IntentFunction.from_json(

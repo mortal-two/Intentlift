@@ -22,10 +22,10 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT, _run,
+from intentir.backend.cuda.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT, _run,
                                        lower_memref_module_to_kernels)
-from intentir.backend.launch import load_module
-from intentir.backend.orchestrate import (_F32Arg, _I64Arg, _PtrArg, _launch,
+from intentir.backend.cuda.launch import load_module
+from intentir.backend.cuda.orchestrate import (_F32Arg, _I64Arg, _PtrArg, _launch,
                                           _host_func_text,
                                           _map_input_aligned_ptrs,
                                           _parse_constants, _parse_launches,
@@ -120,7 +120,7 @@ class _FlashKernel:
         self.shared = 0
         if site.dynamic_shared_ssa is not None:
             self.shared = int(consts[site.dynamic_shared_ssa][0])
-            from intentir.backend.launch import _driver
+            from intentir.backend.cuda.launch import _driver
             cuda = _driver()
             attr = cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
             cuda.cuFuncSetAttribute(self.func, attr, self.shared)
@@ -141,7 +141,7 @@ class _FlashKernel:
         # This kills the small-shape launch-overhead gap so flash-fwd reaches
         # parity at ALL shapes, not just the GPU-bound large ones. Correctness
         # harnesses synchronize explicitly after run().
-        from intentir.backend.orchestrate import CachedLauncher
+        from intentir.backend.cuda.orchestrate import CachedLauncher
         self._cached = CachedLauncher(self.func, self.grid, self.block,
                                       self.plan, shared=self.shared)
 
@@ -179,7 +179,7 @@ def test_flash_fwd_mma_pk(sq, sk, d):
     )[0, 0]
     rel_sdpa = _rel(o, sdpa)
 
-    from intentir.emitters.flash_emit import run_fused_flash
+    from intentir.backend.cuda.flash import run_fused_flash
     scalar = run_fused_flash(q.float().contiguous(), k.float().contiguous(),
                              v.float().contiguous(), scale, bk=16)
     rel_scalar = _rel(o, scalar)

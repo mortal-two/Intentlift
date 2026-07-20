@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import intentir.verify.gate2.cuda_lowering as cuda_gate
-from intentir.backend import compile as backend_compile
+import intentir.backend.cuda.compile as backend_compile
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1 import (
     Boundary,

@@ -32,7 +32,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 flag_gems = pytest.importorskip("flag_gems")
@@ -89,7 +89,7 @@ func.func @{name}(%x: tensor<{M}x{N}xf32>) {sig[0]} {{
 @pytest.mark.parametrize("desc", [False, True])
 @pytest.mark.parametrize("N", [1024, 1000])
 def test_sort_values_pk(desc, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     M = 2048
     T = _threads(N)
@@ -117,7 +117,7 @@ def test_sort_values_pk(desc, N):
 @pytest.mark.parametrize("desc", [False, True])
 @pytest.mark.parametrize("N", [1024, 1000])
 def test_argsort_pk(desc, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     M = 2048
     T = _threads(N)
@@ -151,7 +151,7 @@ def test_argsort_pk(desc, N):
 @pytest.mark.parametrize("N", [1024, 1000])
 @pytest.mark.parametrize("kk", [1, 50])
 def test_topk_pk(N, kk):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     M = 2048
     T = _threads(N)

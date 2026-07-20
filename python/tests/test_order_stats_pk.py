@@ -29,7 +29,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 flag_gems = pytest.importorskip("flag_gems")
@@ -85,7 +85,7 @@ func.func @cum{fn}_row(%x: tensor<{M}x{N}xf32>) -> tensor<{M}x{N}xf32> {{
 @pytest.mark.parametrize("fn", ["argmax", "argmin"])
 @pytest.mark.parametrize("M,N", [(4096, 1024), (2048, 4096)])
 def test_arg_reduce_pk(fn, M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     T = _threads(N)
     torch.manual_seed(0)
@@ -113,7 +113,7 @@ def test_arg_reduce_pk(fn, M, N):
 @pytest.mark.parametrize("fn", ["max", "min"])
 @pytest.mark.parametrize("M,N", [(4096, 1024), (2048, 4096)])
 def test_cumscan_pk(fn, M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
 
     T = _threads(N)
     torch.manual_seed(1)

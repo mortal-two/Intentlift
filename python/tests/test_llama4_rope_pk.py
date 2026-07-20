@@ -18,7 +18,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -79,7 +79,7 @@ func.func @llama4_rope(%qe: {R} {{intent.strides = {s}}},
 
 @pytest.mark.parametrize("bsz,seq,nh,hd", [(8, 1024, 8, 128), (4, 2048, 16, 64)])
 def test_llama4_rope_pk_vs_liger(bsz, seq, nh, hd):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.llama4_rope import _llama4_rope_kernel
 
     n_row = bsz * seq

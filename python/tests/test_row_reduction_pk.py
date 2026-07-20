@@ -20,7 +20,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 triton = pytest.importorskip("triton")
@@ -53,7 +53,7 @@ _PARITY_SLACK = 1.5
 
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 4096)])
 def test_rms_norm_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.rms_norm import (_CASTING_MODE_LLAMA,
                                            _rms_norm_forward_kernel,
                                            calculate_settings)
@@ -93,7 +93,7 @@ def test_rms_norm_pk_vs_liger(M, N):
 
 @pytest.mark.parametrize("M,N", [(8192, 1024), (4096, 4096)])
 def test_softmax_pk_vs_liger(M, N):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     from liger_kernel.ops.softmax import _softmax_forward
 
     from liger_kernel.ops.rms_norm import calculate_settings

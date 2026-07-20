@@ -14,7 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .abi import LogicalArgument
+from intentir.ir.abi import LogicalArgument
+
 from .runtime_contract import RuntimeContract
 
 
@@ -233,7 +234,7 @@ class DeviceLaunchStep:
 
 
 @dataclass(frozen=True)
-class LaunchPlan:
+class ExecutableLaunchPlan:
     steps: tuple[DeviceLaunchStep, ...]
     prelaunch_steps: tuple[str, ...] = ()
 
@@ -259,7 +260,7 @@ class LaunchPlan:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "LaunchPlan":
+    def from_dict(cls, value: Mapping[str, Any]) -> "ExecutableLaunchPlan":
         _strict_keys(
             value,
             required={"steps", "prelaunch_steps"},
@@ -277,7 +278,7 @@ class VariantRecord:
     role: str
     schedule: Mapping[str, bool | int | float | str]
     artifact: ArtifactProvenance
-    launch_plan: LaunchPlan
+    launch_plan: ExecutableLaunchPlan
     runtime_contract: RuntimeContract | None
     compile_assumptions: tuple[str, ...]
     fallback_variant_id: str | None
@@ -358,7 +359,7 @@ class VariantRecord:
             role=value["role"],
             schedule=value["schedule"],
             artifact=ArtifactProvenance.from_dict(value["artifact"]),
-            launch_plan=LaunchPlan.from_dict(value["launch_plan"]),
+            launch_plan=ExecutableLaunchPlan.from_dict(value["launch_plan"]),
             runtime_contract=(
                 RuntimeContract.from_dict(runtime_contract)
                 if runtime_contract is not None
@@ -515,9 +516,8 @@ class VariantManifest:
 __all__ = [
     "ArtifactProvenance",
     "DeviceLaunchStep",
-    "LaunchPlan",
+    "ExecutableLaunchPlan",
     "VariantManifest",
     "VariantManifestError",
     "VariantRecord",
 ]
-

@@ -13,8 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from intentir.backend.runtime_contract import ContractMatch, RuntimeLaunchFacts
-from intentir.backend.variant_manifest import (
+from intentir.backend.cuda.runtime_contract import ContractMatch, RuntimeLaunchFacts
+from intentir.backend.cuda.variant_manifest import (
     DeviceLaunchStep,
     VariantManifest,
     VariantRecord,

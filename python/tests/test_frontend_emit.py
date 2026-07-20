@@ -21,7 +21,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT
 from intentir.ir.model import IntentFunction
 
 _TEST = pathlib.Path(__file__).resolve().parents[2] / "test"
@@ -921,7 +921,7 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
     """The whole front+back path: emit intent-dialect MLIR from the JSON, run the
     body once per K-tile on the 5090D with carries in persistent CUDA buffers,
     and check the result matches the numpy interpreter run on the same JSON IR."""
-    from intentir.backend.orchestrate import run_program
+    from intentir.backend.cuda.orchestrate import run_program
     from intentir.frontend import emit_body_function
     from intentir.verify.interpret import interpret
 

@@ -31,7 +31,7 @@ import pathlib
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 
 torch = pytest.importorskip("torch")
 
@@ -59,7 +59,7 @@ def _scalar(v):
 
 
 def _kernel(k):
-    from intentir.benchmarks.row_reduction import RowReductionKernel
+    from intentir.backend.cuda.kernel_driver import RowReductionKernel
     return RowReductionKernel(k.name, {}, k.block_threads,
                               pass_name=k.pass_name, mlir_text=k.mlir_text)
 
@@ -101,7 +101,7 @@ def _autograd_grad(fwd, x, go):
 
 
 def test_sigmoid_backward():
-    from intentir.backend.backward import sigmoid_backward
+    from intentir.backend.cuda.backward import sigmoid_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -118,7 +118,7 @@ def test_sigmoid_backward():
 
 
 def test_tanh_backward():
-    from intentir.backend.backward import tanh_backward
+    from intentir.backend.cuda.backward import tanh_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -135,7 +135,7 @@ def test_tanh_backward():
 
 
 def test_silu_backward():
-    from intentir.backend.backward import silu_backward
+    from intentir.backend.cuda.backward import silu_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -152,7 +152,7 @@ def test_silu_backward():
 
 
 def test_gelu_backward():
-    from intentir.backend.backward import gelu_backward
+    from intentir.backend.cuda.backward import gelu_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -172,7 +172,7 @@ def test_gelu_backward():
 
 
 def test_elu_backward():
-    from intentir.backend.backward import elu_backward
+    from intentir.backend.cuda.backward import elu_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -198,7 +198,7 @@ def test_elu_backward():
 
 
 def test_threshold_backward():
-    from intentir.backend.backward import threshold_backward
+    from intentir.backend.cuda.backward import threshold_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -218,7 +218,7 @@ def test_threshold_backward():
 
 
 def test_dropout_backward():
-    from intentir.backend.backward import dropout_backward
+    from intentir.backend.cuda.backward import dropout_backward
     torch.manual_seed(0)
     go = torch.randn(_M, _N, device="cuda").contiguous()
     p = 0.3
@@ -246,7 +246,7 @@ def test_dropout_backward():
 # Group 2 — softmax / norm backward = row-reduction + map.                     #
 # --------------------------------------------------------------------------- #
 def test_softmax_backward():
-    from intentir.backend.backward import softmax_backward
+    from intentir.backend.cuda.backward import softmax_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -263,7 +263,7 @@ def test_softmax_backward():
 
 
 def test_log_softmax_backward():
-    from intentir.backend.backward import log_softmax_backward
+    from intentir.backend.cuda.backward import log_softmax_backward
     torch.manual_seed(0)
     x = torch.randn(_M, _N, device="cuda").contiguous()
     go = torch.randn(_M, _N, device="cuda").contiguous()
@@ -280,7 +280,7 @@ def test_log_softmax_backward():
 
 
 def test_rms_norm_backward():
-    from intentir.backend.backward import rms_norm_backward
+    from intentir.backend.cuda.backward import rms_norm_backward
     torch.manual_seed(0)
     M, N, T = 256, 1024, 128
     eps = 1e-5
@@ -315,7 +315,7 @@ def test_rms_norm_backward():
 
 
 def test_layer_norm_backward():
-    from intentir.backend.backward import layer_norm_backward
+    from intentir.backend.cuda.backward import layer_norm_backward
     torch.manual_seed(0)
     M, N, T = 256, 1024, 128
     eps = 1e-5
@@ -354,7 +354,7 @@ def test_layer_norm_backward():
 # Group 3 — scatter-grad backward = C3 scatter reduce=add.                     #
 # --------------------------------------------------------------------------- #
 def test_gather_backward():
-    from intentir.backend.backward import gather_backward
+    from intentir.backend.cuda.backward import gather_backward
     torch.manual_seed(0)
     M, N, T = 256, 1024, 128
     data = torch.randn(M, N, device="cuda", requires_grad=True)
@@ -371,7 +371,7 @@ def test_gather_backward():
 
 
 def test_embedding_backward():
-    from intentir.backend.backward import embedding_backward
+    from intentir.backend.cuda.backward import embedding_backward
     torch.manual_seed(0)
     V, D, Nidx, T = 512, 128, 256, 64
     w = torch.randn(V, D, device="cuda", requires_grad=True)
@@ -403,7 +403,7 @@ def test_embedding_backward():
 
 
 def test_nll_loss_backward():
-    from intentir.backend.backward import nll_loss_backward
+    from intentir.backend.cuda.backward import nll_loss_backward
     torch.manual_seed(0)
     M, C = 256, 64
     x = torch.randn(M, C, device="cuda", requires_grad=True)

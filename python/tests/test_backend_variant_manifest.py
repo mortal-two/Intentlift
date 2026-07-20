@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from intentir.backend.abi import LogicalArgument
-from intentir.backend.runtime_contract import RuntimeContract, RuntimePredicate
-from intentir.backend.variant_manifest import (
+from intentir.ir.abi import LogicalArgument
+from intentir.backend.cuda.runtime_contract import RuntimeContract, RuntimePredicate
+from intentir.backend.cuda.variant_manifest import (
     ArtifactProvenance,
     DeviceLaunchStep,
-    LaunchPlan,
+    ExecutableLaunchPlan,
     VariantManifest,
     VariantManifestError,
     VariantRecord,
@@ -53,7 +53,7 @@ def _variant(
         role=role,
         schedule={"tile": tile, "vector_width": 4 if contract else 1},
         artifact=_artifact(name),
-        launch_plan=LaunchPlan(
+        launch_plan=ExecutableLaunchPlan(
             steps=(
                 DeviceLaunchStep(
                     step_id="main",
@@ -194,4 +194,3 @@ def test_fallback_cannot_carry_contract() -> None:
             contract=_contract("bad", 128),
             fallback=None,
         )
-

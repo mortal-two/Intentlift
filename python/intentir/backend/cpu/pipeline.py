@@ -18,13 +18,9 @@ from pathlib import Path
 
 import numpy as np
 
-from ..frontend.emit_mlir import emit_module
-from ..ir.model import IntentFunction
-from .compile import MLIR_OPT  # reuse the resolved llvm-20 mlir-opt path
-
-LLVM_BIN = Path(MLIR_OPT).parent
-LLVM_LIB = Path("/usr/lib/llvm-20/lib")
-INTENT_OPT = Path(__file__).resolve().parents[3] / "build" / "tools" / "intent-opt" / "intent-opt"
+from ...frontend.emit_mlir import emit_module
+from ...ir.model import IntentFunction
+from ..toolchain.tools import INTENT_OPT, LLVM_BIN, LLVM_LIB
 
 _CPU_PIPELINE = [
     "-one-shot-bufferize=bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map",
@@ -168,7 +164,7 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         call_args.append(f"%in{i}")
         call_tys.append(ty)
     oty = _tt(out_shape, out_element_type)
-    from ..frontend.emit_mlir import _sanitize_mlir_symbol
+    from ...frontend.emit_mlir import _sanitize_mlir_symbol
 
     lines.append(
         f"    %y = call @{_sanitize_mlir_symbol(fn.name)}({', '.join(call_args)}) : "
@@ -313,7 +309,7 @@ def run_on_cpu(
     output array. Inputs are positional, matching fn.inputs."""
     kernel = emit_module(fn, dims, broadcast_axes=broadcast_axes)
     # infer output shape from the emitter's own shape inference via a dims-resolve
-    from ..frontend.emit_mlir import _resolve, _infer_body
+    from ...frontend.emit_mlir import _resolve, _infer_body
     env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
     env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
     _infer_body(fn.body, env, 0, dict(dims), broadcast_axes)

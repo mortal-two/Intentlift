@@ -28,7 +28,7 @@ from intentir.backend.cuda.schedules import (
     resolve_elementwise_schedule,
     resolve_row_schedule,
 )
-from intentir.backend.layer_c import LayerCResolutionError, resolve_layer_c_scalar
+from intentir.ir.layer_c import LayerCResolutionError, resolve_layer_c_scalar
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentFunction, Tensor
 from intentir.verify.gate1.model import (

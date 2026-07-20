@@ -16,7 +16,7 @@ import tempfile
 
 import pytest
 
-from intentir.backend.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
+from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
 from test_flash_bwd_pk import _FlashBwdKernel, _bwd_intent, _rel
 
 

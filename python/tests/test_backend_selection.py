@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import intentir.backend.compile as backend_compile
-from intentir.backend.selection import (
+import intentir.backend.cuda.compile as backend_compile
+from intentir.backend.cuda.selection import (
     DEFAULT_PASSES,
     LoweringTarget,
     select_variant,
