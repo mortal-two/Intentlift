@@ -42,12 +42,14 @@ from intentir.verify.gate1 import (
     ComposeMismatchError,
     assert_replay_plan_matches,
     assert_source_isolated_payload,
+    build_masked_rewriter_view,
     build_masked_rewriter_prompt,
     build_pi_ablations,
     build_normal_rewriter_prompt,
     build_normal_rewriter_view,
     build_rewriter_payload,
     build_rewriter_prompt,
+    compose_replay_plan,
     default_triton_rule_registry,
     materialize_replay_plan,
     scan_artifact_leakage,
@@ -220,6 +222,27 @@ def test_strategy_is_closed_override_only_c_and_legacy_defaults_empty() -> None:
     updated = replace(artifact, strategy=strategy)
     assert Gate1Artifact.from_json(updated.to_json()) == updated
 
+    tiled_strategy = StrategySpec(
+        [
+            StrategyBinding(
+                "reduce_sum_node",
+                StrategyFamily.REDUCTION_TILING,
+                StrategyChoice.MULTI_TILE_ACCUMULATE,
+                tile_slot="BLOCK_N",
+                accumulator_dtype="f32",
+            )
+        ]
+    )
+    tiled = replace(artifact, strategy=tiled_strategy)
+    assert Gate1Artifact.from_json(tiled.to_json()) == tiled
+    assert tiled.strategy.bindings[0].to_json() == {
+        "target_ref": "reduce_sum_node",
+        "family": "reduction_tiling",
+        "choice": "multi_tile_accumulate",
+        "tile_slot": "BLOCK_N",
+        "accumulator_dtype": "f32",
+    }
+
     with pytest.raises(SchemaError, match="requires choice 'wide'"):
         StrategyBinding(
             "column_domain",
@@ -228,6 +251,56 @@ def test_strategy_is_closed_override_only_c_and_legacy_defaults_empty() -> None:
         )
     with pytest.raises(SchemaError, match="duplicate binding"):
         StrategySpec([strategy.bindings[0], strategy.bindings[0]])
+    with pytest.raises(SchemaError, match="tile_slot"):
+        StrategyBinding(
+            "reduce_sum_node",
+            StrategyFamily.REDUCTION_TILING,
+            StrategyChoice.MULTI_TILE_ACCUMULATE,
+        )
+    with pytest.raises(SchemaError, match="canonical IntentIR dtype"):
+        replace(
+            tiled_strategy.bindings[0],
+            accumulator_dtype="source_accumulator_name",
+        )
+    with pytest.raises(SchemaError, match="valid only for reduction_tiling"):
+        StrategyBinding(
+            "column_domain",
+            StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+            StrategyChoice.WIDE,
+            tile_slot="BLOCK_N",
+            accumulator_dtype="f32",
+        )
+    with pytest.raises(SchemaError, match="cannot combine"):
+        StrategySpec(
+            [
+                strategy.bindings[-1],
+                tiled_strategy.bindings[0],
+            ]
+        )
+    with pytest.raises(SchemaError, match="not declared in C.schedule"):
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [
+                    replace(
+                        tiled_strategy.bindings[0],
+                        tile_slot="UNKNOWN_TILE",
+                    )
+                ]
+            ),
+        )
+    with pytest.raises(SchemaError, match="must name a constexpr"):
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [
+                    replace(
+                        tiled_strategy.bindings[0],
+                        tile_slot="num_warps",
+                    )
+                ]
+            ),
+        )
     with pytest.raises(SchemaError, match="is not valid for family"):
         replace(
             artifact,
@@ -559,6 +632,10 @@ def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
             "reduction_call_shape",
             "flattened",
         ),
+        "realize_multi_tile_reduce": (
+            "reduction_tiling",
+            "multi_tile_accumulate",
+        ),
     }
     cards = {card.id: card for card in registry.cards}
     assert cards["realize_masked_access"].required_fields == ["predicate"]
@@ -583,6 +660,156 @@ def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
             Frontend.TRITON,
             strategy_family="address_association",
         )
+
+
+def test_multi_tile_reduction_strategy_selects_loop_accumulation_rule() -> None:
+    artifact = replace(
+        _artifact(),
+        plan=ReplayPlan([]),
+        strategy=StrategySpec(
+            [
+                StrategyBinding(
+                    "reduce_sum_node",
+                    StrategyFamily.REDUCTION_TILING,
+                    StrategyChoice.MULTI_TILE_ACCUMULATE,
+                    tile_slot="BLOCK_N",
+                    accumulator_dtype="f32",
+                )
+            ]
+        ),
+    )
+    with pytest.raises(ComposeMismatchError):
+        assert_replay_plan_matches(
+            replace(artifact, plan=_artifact().plan),
+            default_triton_rule_registry(),
+        )
+
+    materialized, result = materialize_replay_plan(
+        artifact, default_triton_rule_registry()
+    )
+    reduce_steps = [
+        step
+        for step in materialized.plan.steps
+        if step.target_ref == "reduce_sum_node"
+    ]
+
+    assert [step.rule for step in reduce_steps] == ["realize_multi_tile_reduce"]
+    assert result.provenance.coverage == 1.0
+    changed_dtype = compose_replay_plan(
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [
+                    replace(
+                        artifact.strategy.bindings[0],
+                        accumulator_dtype="f64",
+                    )
+                ]
+            ),
+        ),
+        default_triton_rule_registry(),
+    )
+    assert changed_dtype.plan.to_json() == result.plan.to_json()
+    assert (
+        changed_dtype.provenance.strategy_digest
+        != result.provenance.strategy_digest
+    )
+
+    dual_slot_payload = artifact.to_json()
+    dual_slot_payload["interface"]["parameters"].append(
+        {"name": "BLOCK_ALT", "kind": "constexpr", "mode": "value"}
+    )
+    dual_slot_payload["schedule"]["slots"].append(
+        {
+            "name": "BLOCK_ALT",
+            "kind": "constexpr",
+            "value_type": "int",
+            "required": True,
+        }
+    )
+    dual_slot_payload["schedule"]["values"]["BLOCK_ALT"] = 64
+    dual_slot = Gate1Artifact.from_json(dual_slot_payload)
+    alternate_slot = replace(
+        dual_slot,
+        strategy=StrategySpec(
+            [replace(dual_slot.strategy.bindings[0], tile_slot="BLOCK_ALT")]
+        ),
+    )
+    dual_slot_result = compose_replay_plan(
+        dual_slot, default_triton_rule_registry()
+    )
+    alternate_slot_result = compose_replay_plan(
+        alternate_slot, default_triton_rule_registry()
+    )
+    assert alternate_slot_result.plan.to_json() == dual_slot_result.plan.to_json()
+    assert (
+        alternate_slot_result.provenance.strategy_digest
+        != dual_slot_result.provenance.strategy_digest
+    )
+
+    renamed_payload = artifact.to_json()
+    for parameter in renamed_payload["interface"]["parameters"]:
+        if parameter["name"] == "BLOCK_N":
+            parameter["name"] = "TILE_WIDTH"
+    renamed_payload["schedule"]["slots"][0]["name"] = "TILE_WIDTH"
+    renamed_payload["schedule"]["values"]["TILE_WIDTH"] = (
+        renamed_payload["schedule"]["values"].pop("BLOCK_N")
+    )
+    renamed_payload["strategy"]["bindings"][0]["tile_slot"] = "TILE_WIDTH"
+    renamed_result = compose_replay_plan(
+        Gate1Artifact.from_json(renamed_payload),
+        default_triton_rule_registry(),
+    )
+    assert renamed_result.plan_digest == result.plan_digest
+    assert (
+        renamed_result.provenance.strategy_digest
+        == result.provenance.strategy_digest
+    )
+    card = default_triton_rule_registry().get("realize_multi_tile_reduce")
+    assert "C.strategy.tile_slot" in card.api_mapping["loop"]
+    assert "convert each local partial" in card.api_mapping["carry"]
+    assert "divide exactly once" in card.api_mapping["mean"]
+    assert any("never add an IntentIR loop" in item for item in card.pitfalls)
+    assert any("lower=0" in item for item in card.pitfalls)
+    assert any("per-tile body templates" in item for item in card.pitfalls)
+
+    replay_view = build_normal_rewriter_view(
+        materialized, default_triton_rule_registry()
+    )
+    assert replay_view["strategy"] == {
+        "bindings": [
+            {
+                "target_ref": "n0",
+                "family": "reduction_tiling",
+                "choice": "multi_tile_accumulate",
+                "tile_slot": "p4",
+                "accumulator_dtype": "f32",
+            }
+        ]
+    }
+    known_refs = {
+        binding["ref"] for binding in replay_view["reference_bindings"]
+    }
+    assert {"n0", "p4"} <= known_refs
+
+    masked_view = build_masked_rewriter_view(
+        materialized, default_triton_rule_registry()
+    )
+    assert masked_view["strategy"] == {
+        "bindings": [
+            {
+                "target_ref": "n0",
+                "family": "reduction_tiling",
+                "choice": "multi_tile_accumulate",
+                "tile_slot": "scrc_p4",
+                "accumulator_dtype": "f32",
+            }
+        ]
+    }
+
+    replay_view["strategy"]["bindings"][0]["tile_slot"] = "BLOCK_N"
+    with pytest.raises(SchemaError, match="declared opaque replay reference"):
+        assert_source_isolated_payload(replay_view)
 
 
 def test_strict_pi_accepts_canonical_rules_and_requires_targets() -> None:
@@ -862,6 +1089,8 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "128" not in normal
     assert "tl.sum" in normal  # concrete API names live in selected system rule cards
     assert "one deterministic syntactic normal form" in normal
+    assert "reduction_tiling=multi_tile_accumulate" in normal
+    assert "Never collapse the loop" in normal
     assert "pre-expand a" in normal
     assert "global axis number as a local index" in normal
     assert "insertion count must equal the local rank" in normal

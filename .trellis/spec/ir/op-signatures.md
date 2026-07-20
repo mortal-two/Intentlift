@@ -72,6 +72,16 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 结果为 rank 0；它仍可在后续 elementwise 中自然 broadcast。final-stage
 `sum(partials) / M` 不得因为前端内部实现而被推成 shape `[1]`。
 
+源码可以用 `scf.for`/Triton runtime range 分 tile 实现同一个 whole-tensor reduce。
+当 loop carry 只是同一 reducer 的 partial accumulator 时，canonical J 仍只有一个
+`reduce` 且没有 J loop；源码的 serial tile traversal 属于
+`C.strategy reduction_tiling=multi_tile_accumulate`，其中 `tile_slot` 固定 tile step，
+`accumulator_dtype` 固定 loop carry 类型。只有 carry 含 whole-tensor 语义所必需的额外
+递推状态时才使用 J `loop/scan`。该 strategy 不能把全局 axes 当成本地 tile_axis，
+且只覆盖 lower=0、upper=global semantic extent、step=单一 constexpr tile slot、
+identity-seeded carry 的规范化循环；也不能因当前 specialization 只有一个 tile 而折叠
+源码 runtime loop。
+
 floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，与 Triton
 TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
 两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，

@@ -95,11 +95,31 @@ program_coordinate_width = wide
 address_association      = pointer_staged
 mask_materialization     = staged_reuse
 reduction_call_shape     = flattened
+reduction_tiling         = multi_tile_accumulate
 ```
 
 absence 表示 canonical choice。同一 target/family 最多一个 binding；target kind 必须
 匹配 family。strategy 禁止源码文本、表达式、常量、算法语义、API、rule id 和施工
 顺序。
+
+`reduction_tiling=multi_tile_accumulate` 只绑定到一个 J reduce node，并额外携带
+`tile_slot` 与 `accumulator_dtype`。它表示源码以 runtime `scf.for`/Triton range 遍历
+同一 whole-tensor reduction axis 的多个局部 tile，loop carry 仅保存该 reducer 的
+associative partial accumulator。J 仍只有一个全局 reduce，不增加 loop/scan/carry；
+RuleCard 使用 J 的 semantic extent 作为上界、`tile_slot` 指向的 constexpr C slot 作为
+步长、BoundaryReduction.tile_axis 作为 tile-local reduction axis，并按
+canonical IntentIR `accumulator_dtype`（f16/bf16/f32/f64/i1/i8/i16/i32/i64）构造
+init→partial→combine→yield→final result 数据流。mean 只在循环
+结束后按全局 semantic extent 除一次。若 source carry 含额外递推状态、无法证明完整
+domain coverage、lower 不是 0、upper 不等于 semantic extent、step 不是单一 constexpr
+slot、seed 不是 reducer identity、tile slot 不是 kernel constexpr，或 accumulator dtype
+不明确，则该 choice fail-closed，不能回退 direct reduction，也不能向 J 添加伪循环。
+Welford tuple、arg/index、计数器及其他有序 recurrence 都不属于该 choice。当前 composer
+也不允许同一 target 同时绑定 `reduction_call_shape` 与 `reduction_tiling`；需要二者组合的
+source 必须 fail-closed，不能静默丢弃任一机制。
+该 composite RuleCard 将 π 中先出现、且绑定到该 reduction 的 address/mask/access steps
+解释为每轮 tile body 的施工模板；pointer progression、tail mask 与 load 必须生成在 runtime
+loop 内，不能在循环前只加载一次再跨迭代复用。
 
 `address_association=pointer_staged` 的共享规则语义是确定的：J domain coordinate
 视为原子，只把 access `index_expression` 的顶层加法项按从左到右顺序逐项加到
@@ -174,12 +194,12 @@ Composer：
 5. 生成完整 ReplayPlan、canonical bytes/hash 和 100% leaf provenance；
 6. 保存 artifact 后，Gate1 每轮重新 compose 并精确比较。
 
-当前版本为 `deterministic_composer_v4`。strict coverage 与 card selection 均按
+当前版本为 `deterministic_composer_v5`。strict coverage 与 card selection 均按
 `target_kinds` 驱动，并按 `artifact.interface.frontend` 过滤；新增已存在于 IntentIR schema
 中的 derived mechanism card 不再需要修改 hard-coded rule-id coverage map。不同 frontend
 的同 target card 不得造成当前 frontend ambiguity。
 
-`AccessKind.SYNCHRONIZE` 是 effect construction，不是地址访问。composer-v4 不为它生成
+`AccessKind.SYNCHRONIZE` 是 effect construction，不是地址访问。composer 自 v4 起不为它生成
 `boundary.access.address` work item，而只选择 `realize_synchronize -> tl.debug_barrier`；
 因此不得构造 arange、pointer、predicate 或 load/store mask。该修正来自真实
 `high_performance_liger_cross_entropy` 的 zero-rule-match 证据。

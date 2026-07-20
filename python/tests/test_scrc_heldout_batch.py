@@ -1050,7 +1050,7 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         _batch_args(relift_rounds=1),
     )
     assert identity["schema"] == 35
-    assert identity["composer_version"] == "deterministic_composer_v4"
+    assert identity["composer_version"] == "deterministic_composer_v5"
     assert identity["performance_schema"] == "scrc_case_performance_v1"
     assert identity["gate1_gate2_metrics_schema"] == (
         "scrc_gate1_gate2_conditional_v3"

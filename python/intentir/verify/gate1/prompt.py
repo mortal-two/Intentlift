@@ -36,20 +36,29 @@ Hard constraints:
    the generated ABI/body. Never infer semantics from handle spelling.
 5. J reduction axes are global tensor axes; frontend reduction calls use the
    matching boundary.reductions.tile_axis for the local tile value.
-6. boundary.broadcasts.axes are global semantic axes, never local Triton axis
+6. When pi selects reduction_tiling=multi_tile_accumulate, keep one semantic J
+   reduction but emit the reviewed runtime tile loop from zero to the J semantic
+   extent with C.strategy.tile_slot as its exact step. Initialize the carry once
+   from BoundaryReduction.identity in C.strategy.accumulator_dtype, convert each
+   local partial to that carry dtype before combining, and finalize mean division
+   only after the loop. Treat prior address/mask/access pi steps attached to this
+   reduction as per-iteration tile-body templates: emit their pointer, mask and
+   load inside the loop, not once before it. Never collapse the loop for a
+   one-tile specialization.
+7. boundary.broadcasts.axes are global semantic axes, never local Triton axis
    numbers. A semantic broadcast may be implicit on a local tile; do not emit an
    explicit rank change unless the selected rule's global-to-local projection
    proves that a materialized consumer-local axis is absent from the operand.
-7. Reproduce each declared access predicate exactly; do not strengthen it with
+8. Reproduce each declared access predicate exactly; do not strengthen it with
    redundant domain bounds.
-8. Apply each pi rule only to its declared target and in listed construction
+9. Apply each pi rule only to its declared target and in listed construction
    order. An empty pi is valid only when the artifact has no replay work.
-9. Emit one deterministic syntactic normal form. Artifacts that differ only in
+10. Emit one deterministic syntactic normal form. Artifacts that differ only in
    one J/B literal must produce token-identical declarations, operation order,
    access order, pointer/mask construction and broadcast placement everywhere
    outside that literal's direct semantic use. Never refactor, hoist, sink,
    fold or reorder code based on a literal value.
-10. Keep one-dimensional domain coordinates one-dimensional. Before realizing a
+11. Keep one-dimensional domain coordinates one-dimensional. Before realizing a
     broadcast, establish the ordered operand-local axes, ordered consumer-local
     axes, and global axes fixed/elided by the program domain. Rank-0 operands or
     an empty missing-local-axis sequence are direct uses. Otherwise emit exactly
@@ -59,7 +68,7 @@ Hard constraints:
     projected view instead of expanding per BroadcastSpec/use. If this projection
     is ambiguous, do not guess or use the global axis number as a local index.
     Never pre-expand a coordinate globally.
-11. Return kernel source only, with no Markdown fence or explanatory prose.
+12. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 
 _MASKED_NOTE = """
@@ -283,6 +292,25 @@ def assert_source_isolated_payload(payload: dict[str, Any]) -> None:
             for ref_index, ref in enumerate(item.get("refs", [])):
                 check_reference(
                     ref, f"rule_selection[{index}].refs[{ref_index}]"
+                )
+
+        strategy = payload.get("strategy", {})
+        strategy_bindings = (
+            strategy.get("bindings", []) if isinstance(strategy, dict) else None
+        )
+        if not isinstance(strategy_bindings, list):
+            raise SchemaError("opaque strategy.bindings must be an array")
+        for index, binding in enumerate(strategy_bindings):
+            if not isinstance(binding, dict):
+                raise SchemaError(f"strategy.bindings[{index}] must be an object")
+            check_reference(
+                binding.get("target_ref"),
+                f"strategy.bindings[{index}].target_ref",
+            )
+            if "tile_slot" in binding:
+                check_reference(
+                    binding["tile_slot"],
+                    f"strategy.bindings[{index}].tile_slot",
                 )
 
 

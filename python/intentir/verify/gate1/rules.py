@@ -536,7 +536,11 @@ class RuleRegistry(StrictJSONMixin):
             {"bind_program_domain", "bind_wide_program_domain"},
             {"materialize_index_tile", "materialize_pointer_tile"},
             {"realize_masked_access", "realize_unmasked_access"},
-            {"realize_reduce", "realize_flattened_reduce"},
+            {
+                "realize_reduce",
+                "realize_flattened_reduce",
+                "realize_multi_tile_reduce",
+            },
             {"realize_k_tiled_dot", "realize_outer_product"},
         )
         for target, rules_for_target in selected_by_target.items():
@@ -814,6 +818,13 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "target_kinds": ["intent_op:reduce"],
         "construction_phase": 60,
         "required_fields": ["attrs.fn"],
+    },
+    "realize_multi_tile_reduce": {
+        "strategy_family": "reduction_tiling",
+        "strategy_choice": "multi_tile_accumulate",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.fn", "attrs.axes"],
     },
     "realize_broadcast": {
         "target_kinds": ["boundary.broadcast"],
@@ -1196,6 +1207,86 @@ def default_triton_rule_registry() -> RuleRegistry:
             pitfalls=[
                 "Do not use this card for a source call with an explicit tile axis.",
                 "Global J axes and masked contribution remain binding semantics.",
+            ],
+        ),
+        _default_triton_card(
+            "realize_multi_tile_reduce",
+            Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_tiling",
+            applies_to=["reduce", "boundary.reductions"],
+            reads=[
+                "fn",
+                "global reduction axes and semantic extent",
+                "boundary tile_axis, identity, and masked_contribution",
+                "C.strategy tile_slot",
+                "tile-start address and predicate progression",
+                "C.strategy accumulator_dtype and loop-carried association",
+                "final result dtype and mean finalization",
+            ],
+            api_mapping={
+                "loop": (
+                    "for tile_start in range(0, semantic_extent(global_axis), "
+                    "C.strategy.tile_slot): carry one accumulator in "
+                    "C.strategy.accumulator_dtype across tiles"
+                ),
+                "carry": (
+                    "initialize once from BoundaryReduction.identity in the exact "
+                    "C.strategy.accumulator_dtype; convert each local partial to "
+                    "that dtype before the cross-tile combine"
+                ),
+                "sum": (
+                    "partial = tl.sum(tile, axis=tile_axis); accumulator = "
+                    "accumulator + partial"
+                ),
+                "max": (
+                    "partial = tl.max(tile, axis=tile_axis); accumulator = "
+                    "tl.maximum(accumulator, partial)"
+                ),
+                "min": (
+                    "partial = tl.min(tile, axis=tile_axis); accumulator = "
+                    "tl.minimum(accumulator, partial)"
+                ),
+                "prod": (
+                    "define a reviewed multiply combiner for the tile reduction; "
+                    "accumulator = accumulator * partial"
+                ),
+                "mean": (
+                    "accumulate tile sums across the complete semantic axis, then "
+                    "divide exactly once after the loop by semantic_extent(global_axis)"
+                ),
+            },
+            example=(
+                "Keep one whole-tensor J reduce with no J loop. When the source walks "
+                "N in BLOCK_N tiles, initialize the reducer identity once, emit the "
+                "runtime tile loop even for a one-tile specialization, construct each "
+                "tile's declared address/mask/fill, reduce on BoundaryReduction.tile_axis, "
+                "combine the partial into the loop carry, and finalize the J result after "
+                "the loop."
+            ),
+            pitfalls=[
+                "This is schedule-only tiling: never add an IntentIR loop, scan, carry, "
+                "extra reduce node, or per-tile tensor to J.",
+                "Use the logical J-axis extent as the loop upper bound and the reviewed "
+                "C.strategy tile_slot as the tile step; never exchange those roles.",
+                "This card accepts only the normalized source loop lower=0, upper=the "
+                "semantic extent, step=one constexpr tile_slot, and seed=the reducer "
+                "identity. Reject non-zero bounds, composite/dynamic steps, or a "
+                "non-identity seed instead of guessing.",
+                "Preserve the source accumulator dtype, reducer identity, tail predicate, "
+                "masked contribution, partial cast, and partial-to-carry association "
+                "exactly.",
+                "Reduction-linked address/mask/access steps are per-tile body templates; "
+                "do not hoist their pointer progression, tail mask, or load out of the "
+                "runtime loop and reuse one tile for every iteration.",
+                "For mean, divide once after all tile sums are accumulated; never average "
+                "each tile or divide by the tile extent.",
+                "Do not unroll, collapse, or remove the runtime loop merely because the "
+                "current compiler-view specialization happens to fit one tile.",
+                "Select this card only when source evidence proves a loop-carried sequence "
+                "of associative partial reductions with no additional semantic state; "
+                "Welford tuples, arg/index carries, counters, and ordered recurrences are "
+                "not this strategy.",
             ],
         ),
         _default_triton_card(

@@ -177,6 +177,11 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "address_association=pointer_staged" in prompt
     assert "mask_materialization=staged_reuse" in prompt
     assert "reduction_call_shape=flattened" in prompt
+    assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "tile_slot" in prompt
+    assert "accumulator_dtype" in prompt
+    assert "lower bound exactly zero" in prompt
+    assert "non-identity seed" in prompt
     assert "Registered replay rule ids" not in prompt
     assert '"id": "bind_wide_program_domain"' not in prompt
     assert registry.digest in prompt
@@ -236,6 +241,8 @@ def test_scrc_lift_prompt_identity_tracks_registry_capabilities_without_api_text
     assert "do not substitute the largest finite value" in prompt
     assert "tle.program_id" in prompt
     assert "reduction_call_shape=flattened" in prompt
+    assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "only loop-carried value" in prompt
     assert "explicit source axis uses the" in prompt
     assert "m,n->mn" in prompt
     assert "encode a contraction rule choice" in prompt

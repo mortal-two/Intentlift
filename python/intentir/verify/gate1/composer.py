@@ -32,7 +32,7 @@ from .model import (
 from .rules import RuleCard, RuleRegistry, RuleSelectionMode
 
 
-COMPOSER_VERSION = "deterministic_composer_v4"
+COMPOSER_VERSION = "deterministic_composer_v5"
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -239,6 +239,8 @@ class _StrategyBindingView:
     target_ref: str
     family: str
     choice: str
+    tile_slot: str | None = None
+    accumulator_dtype: str | None = None
 
     @property
     def pointer(self) -> str:
@@ -276,6 +278,7 @@ _LEGACY_TARGET_KINDS: dict[str, tuple[str, ...]] = {
     "realize_iota": ("intent_op:iota",),
     "realize_reduce": ("intent_op:reduce",),
     "realize_flattened_reduce": ("intent_op:reduce",),
+    "realize_multi_tile_reduce": ("intent_op:reduce",),
     "realize_broadcast": ("boundary.broadcast",),
     "realize_k_tiled_dot": ("intent_op:contraction",),
     "realize_outer_product": ("intent_op:contraction",),
@@ -295,6 +298,10 @@ _LEGACY_STRATEGY: dict[str, tuple[str, str]] = {
     "materialize_pointer_tile": ("address_association", "pointer_staged"),
     "materialize_mask_tile": ("mask_materialization", "staged_reuse"),
     "realize_flattened_reduce": ("reduction_call_shape", "flattened"),
+    "realize_multi_tile_reduce": (
+        "reduction_tiling",
+        "multi_tile_accumulate",
+    ),
 }
 
 _SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset({"mask_materialization"})
@@ -316,6 +323,7 @@ _LEGACY_PHASE: dict[str, int] = {
     "realize_iota": 60,
     "realize_reduce": 60,
     "realize_flattened_reduce": 60,
+    "realize_multi_tile_reduce": 60,
     "realize_k_tiled_dot": 60,
     "realize_outer_product": 60,
     "realize_indexed_access": 60,
@@ -499,22 +507,64 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
             target_ref = binding.get("target_ref")
             family = binding.get("family")
             choice = binding.get("choice")
+            tile_slot = binding.get("tile_slot")
+            accumulator_dtype = binding.get("accumulator_dtype")
         else:
             target_ref = getattr(binding, "target_ref", None)
             family = getattr(binding, "family", None)
             choice = getattr(binding, "choice", None)
+            tile_slot = getattr(binding, "tile_slot", None)
+            accumulator_dtype = getattr(binding, "accumulator_dtype", None)
+        family = _enum_value(family)
+        choice = _enum_value(choice)
         if not all(isinstance(value, str) and value for value in (target_ref, family, choice)):
             raise ComposeError(
                 f"strategy binding {index} is not a closed target/family/choice triple"
             )
-        result.append(_StrategyBindingView(index, target_ref, family, choice))
-        json_bindings.append(
-            {"target_ref": target_ref, "family": family, "choice": choice}
+        if family == "reduction_tiling":
+            if not all(
+                isinstance(value, str) and value
+                for value in (tile_slot, accumulator_dtype)
+            ):
+                raise ComposeError(
+                    f"strategy binding {index} reduction_tiling requires closed "
+                    "tile_slot/accumulator_dtype parameters"
+                )
+        elif tile_slot is not None or accumulator_dtype is not None:
+            raise ComposeError(
+                f"strategy binding {index} carries reduction-only parameters "
+                f"for family {family!r}"
+            )
+        result.append(
+            _StrategyBindingView(
+                index,
+                target_ref,
+                family,
+                choice,
+                tile_slot,
+                accumulator_dtype,
+            )
         )
+        json_binding = {
+            "target_ref": target_ref,
+            "family": family,
+            "choice": choice,
+        }
+        if tile_slot is not None:
+            json_binding["tile_slot"] = tile_slot
+        if accumulator_dtype is not None:
+            json_binding["accumulator_dtype"] = accumulator_dtype
+        json_bindings.append(json_binding)
     return result, {
         "bindings": sorted(
             json_bindings,
-            key=lambda value: (value["target_ref"], value["family"], value["choice"]),
+            key=lambda value: (
+                value["target_ref"],
+                value["family"],
+                value["choice"],
+                value.get("tile_slot", ""),
+                value.get("accumulator_dtype", ""),
+            ),
         )
     }
 
@@ -660,6 +710,12 @@ def _refine_structural_keys(
                 "family": item.strategy_binding.family,
                 "choice": item.strategy_binding.choice,
             }
+            if item.strategy_binding.tile_slot is not None:
+                strategy["tile_slot"] = item.strategy_binding.tile_slot
+            if item.strategy_binding.accumulator_dtype is not None:
+                strategy["accumulator_dtype"] = (
+                    item.strategy_binding.accumulator_dtype
+                )
         base[item.key] = _digest(
             {
                 "kind": item.kind,
@@ -670,7 +726,7 @@ def _refine_structural_keys(
                 ),
                 "facts": _alpha_sanitize(item.facts, classes),
                 "rule": item.selected_card.id,
-                "strategy": strategy,
+                "strategy": _alpha_sanitize(strategy, classes),
             }
         )
     signatures = dict(base)

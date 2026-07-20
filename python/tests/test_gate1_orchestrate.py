@@ -1975,6 +1975,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_elementwise",
         "realize_reduce",
         "realize_flattened_reduce",
+        "realize_multi_tile_reduce",
         "realize_k_tiled_dot",
         "realize_outer_product",
     } <= {card.id for card in first.cards}
@@ -1986,6 +1987,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "materialize_pointer_tile",
         "materialize_mask_tile",
         "realize_flattened_reduce",
+        "realize_multi_tile_reduce",
     }
     assert all(
         card.override_family is not None
@@ -2021,6 +2023,16 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "program_coordinate_i64"
     ].endswith("to(tl.int64)")
     assert cards["realize_flattened_reduce"].api_mapping["sum"] == "tl.sum(tile)"
+    assert cards["realize_multi_tile_reduce"].override_family == (
+        "reduction_tiling"
+    )
+    assert "C.strategy.tile_slot" in cards[
+        "realize_multi_tile_reduce"
+    ].api_mapping["loop"]
+    assert any(
+        "runtime loop" in item
+        for item in cards["realize_multi_tile_reduce"].pitfalls
+    )
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads
     assert cards["declare_schedule_slot"].version == "2"

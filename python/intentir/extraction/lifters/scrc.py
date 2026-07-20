@@ -453,8 +453,10 @@ In addition, return exactly these top-level fields:
 - interface: {{kernel_id, frontend, function_name, parameters, grid,
   compiler_slots}}
 - schedule: {{slots, values}}; values are the source implementation's C values
-- strategy: {{bindings:[{{target_ref,family,choice}}]}}; emit only reviewed
-  non-canonical source implementation choices, never semantic facts or steps
+- strategy: {{bindings:[{{target_ref,family,choice, optional tile_slot,
+  accumulator_dtype}}]}}; emit only reviewed non-canonical source implementation
+  choices, never semantic facts or steps. The two optional fields are required
+  only for reduction_tiling=multi_tile_accumulate and forbidden otherwise
 - location_map: {{source_name, entries:[{{span:{{start_line,end_line}},
   node_refs,access_refs}}]}}
 
@@ -575,6 +577,21 @@ Cross-field rules:
   tile, keep the global J axes and BoundaryReduction.tile_axis semantic facts
   and add reduction_call_shape=flattened. An explicit source axis uses the
   canonical choice, so omit the binding;
+- if the source implements one whole-tensor reduction by a runtime loop over
+  multiple local tiles and the only loop-carried value is the associative
+  partial-reduction accumulator, keep exactly one J reduce with no J loop and
+  add reduction_tiling=multi_tile_accumulate for that reduction node. Also copy
+  the source's constexpr tile slot into tile_slot and its loop-carried dtype
+  into accumulator_dtype using the canonical IntentIR dtype vocabulary. The
+  reviewed source loop must have lower bound exactly zero, upper bound exactly
+  the semantic J-axis extent, step exactly one named constexpr C tile slot, an
+  initial carry equal to the reducer identity, and tail handling already
+  represented by BoundaryReduction/access predicates. Mean division happens
+  once after the loop. A non-zero lower bound, composite/dynamic step,
+  non-identity seed, Welford/arg-index/count state, or other additional carry is
+  not expressible by this strategy. Preserve genuinely semantic recurrence as a
+  J loop; otherwise leave J unchanged and fail closed rather than inventing a
+  schedule strategy;
 - inspect contraction subscripts and encode them completely in J. A form such
   as m,n->mn has no contracted label and selects realize_outer_product; a
   contraction with an actual tiled contracted dimension selects
@@ -605,17 +622,27 @@ Cross-field rules:
 - strategy.target_ref may reference only the target kind accepted by its
   family: program_coordinate_width targets a domain id; address_association
   and mask_materialization target an access_id; reduction_call_shape targets a
-  reduction node id.
+  reduction node id; reduction_tiling also targets a reduction node id and must
+  additionally name a declared constexpr tile_slot plus accumulator_dtype.
 
 C.strategy rules (closed, override-only vocabulary):
 - absence of a target/family binding always means the canonical RuleCard;
 - allowed family/choice pairs are program_coordinate_width=wide,
   address_association=pointer_staged, mask_materialization=staged_reuse and
-  reduction_call_shape=flattened;
+  reduction_call_shape=flattened, and
+  reduction_tiling=multi_tile_accumulate;
 - at most one binding exists for each target/family pair;
+- reduction_call_shape and reduction_tiling cannot be combined for the same
+  reduction target in the current reviewed composer. If source evidence needs
+  both flattened local calls and serial tile accumulation, fail closed instead
+  of emitting two bindings or silently dropping either mechanism;
 - strategy contains no algorithm semantics, expressions, constants, operands,
   predicates, fills, frontend API names, rule ids, construction order or refs
-  beyond target_ref. Never emit plan/pi in LiftCore, even as an empty object;
+  beyond target_ref. The only additional fields are reduction_tiling.tile_slot
+  and reduction_tiling.accumulator_dtype, both copied from source/compiler
+  evidence rather than invented; accumulator_dtype must be one of
+  f16/bf16/f32/f64/i1/i8/i16/i32/i64. Never emit plan/pi in LiftCore, even as an
+  empty object;
   the enclosing Lift finalizer adds canonical pi to the completed LiftArtifact;
 - add address_association=pointer_staged only when the source keeps pointer + scalar
   base + lane tile as staged pointer additions. In particular, an inline source
@@ -835,7 +862,12 @@ Apply this decision order before editing:
     is required to preserve semantics for arbitrary runtime extents (for
     example streaming state across multiple tiles).  If it is, encode the
     semantic loop/carry/yield in J even when a whole-tensor reduce formula is
-    denotationally equivalent.  If it is only schedule tiling, leave J unchanged.
+    denotationally equivalent. If it is only an associative partial-reduction
+    carry across source tiles, leave J unchanged and use the reviewed
+    reduction_tiling=multi_tile_accumulate strategy with the exact tile slot and
+    accumulator dtype, but only for the normalized zero-to-semantic-extent,
+    identity-seeded loop whose step is exactly one constexpr slot. Other
+    schedule-only loops leave J unchanged without inventing a strategy.
 3. Use only an already reviewed C.strategy family when it exactly describes
    the source mechanism. Never invent a new family, choice or RuleCard here.
 4. If the existing vocabulary cannot express an implementation association,

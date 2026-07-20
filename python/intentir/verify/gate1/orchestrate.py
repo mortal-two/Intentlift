@@ -1092,10 +1092,14 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "j.boundary.reductions identity/masked_contribution/tile_axis",
             "j.intent.loop.carry/yield",
         ),
-        "strategy_families": ("reduction_call_shape",),
+        "strategy_families": (
+            "reduction_call_shape",
+            "reduction_tiling",
+        ),
         "semantic_question": (
             "Check reducer semantics, axis, identity/fill, carried state and "
-            "finalized value before considering a reviewed call-shape strategy."
+            "finalized value before considering a reviewed call-shape or "
+            "schedule-only multi-tile accumulation strategy."
         ),
     },
     "predicate_effect": {
