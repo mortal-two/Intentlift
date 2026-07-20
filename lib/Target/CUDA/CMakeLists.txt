@@ -6,7 +6,7 @@ add_mlir_library(MLIRIntentTargetCUDA
   ${PROJECT_SOURCE_DIR}/include/Target
 
   DEPENDS
-  IntentTargetPassIncGen
+  IntentTargetCUDAPassIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR

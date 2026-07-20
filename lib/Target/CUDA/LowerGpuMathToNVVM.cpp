@@ -17,7 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Target/Passes.h"
+#include "Target/CUDA/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -31,7 +31,7 @@
 
 namespace intent {
 #define GEN_PASS_DEF_LOWERGPUMATHTONVVM
-#include "Target/Passes.h.inc"
+#include "Target/CUDA/Passes.h.inc"
 } // namespace intent
 
 using namespace mlir;

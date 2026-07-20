@@ -38,7 +38,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Intent/Conversion/Passes.h"
+#include "Intent/Conversion/CUDA/Passes.h"
 
 #include "MapEmit.h"
 #include "Schedule.h"
@@ -61,7 +61,7 @@
 
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTCONTRACTIONTOGPUMMA
-#include "Intent/Conversion/Passes.h.inc"
+#include "Intent/Conversion/CUDA/Passes.h.inc"
 } // namespace intent
 
 using namespace mlir;

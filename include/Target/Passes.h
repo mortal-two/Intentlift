@@ -1,17 +1,12 @@
 #ifndef INTENT_TARGET_PASSES_H
 #define INTENT_TARGET_PASSES_H
 
-#include "mlir/Pass/Pass.h"
-
-#include <memory>
+#include "Target/CUDA/Passes.h"
 
 namespace intent {
 
-#define GEN_PASS_DECL
-#include "Target/Passes.h.inc"
-
-#define GEN_PASS_REGISTRATION
-#include "Target/Passes.h.inc"
+/// Compatibility umbrella for clients that still register every target.
+inline void registerIntentTargetPasses() { registerIntentTargetCUDAPasses(); }
 
 } // namespace intent
 

@@ -1,17 +1,16 @@
 #ifndef INTENT_CONVERSION_PASSES_H
 #define INTENT_CONVERSION_PASSES_H
 
-#include "mlir/Pass/Pass.h"
-
-#include <memory>
+#include "Intent/Conversion/Common/Passes.h"
+#include "Intent/Conversion/CUDA/Passes.h"
 
 namespace intent {
 
-#define GEN_PASS_DECL
-#include "Intent/Conversion/Passes.h.inc"
-
-#define GEN_PASS_REGISTRATION
-#include "Intent/Conversion/Passes.h.inc"
+/// Compatibility umbrella for clients that still register every backend.
+inline void registerIntentConversionPasses() {
+  registerIntentConversionCommonPasses();
+  registerIntentConversionCUDAPasses();
+}
 
 } // namespace intent
 

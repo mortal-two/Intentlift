@@ -21,7 +21,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Intent/Conversion/Passes.h"
+#include "Intent/Conversion/CUDA/Passes.h"
 
 #include "MapEmit.h"
 #include "Intent/IntentDialect.h"
@@ -38,7 +38,7 @@
 
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTARGREDUCETOGPU
-#include "Intent/Conversion/Passes.h.inc"
+#include "Intent/Conversion/CUDA/Passes.h.inc"
 } // namespace intent
 
 using namespace mlir;

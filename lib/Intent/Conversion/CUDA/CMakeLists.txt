@@ -26,7 +26,7 @@ add_mlir_library(MLIRIntentConversionCUDA
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
 
   DEPENDS
-  IntentConversionPassIncGen
+  IntentConversionCUDAPassIncGen
 
   LINK_LIBS PUBLIC
   MLIRIntentConversionCommon

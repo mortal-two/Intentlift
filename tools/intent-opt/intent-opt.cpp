@@ -10,14 +10,16 @@
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
+#include "Intent/Conversion/Common/Passes.h"
+#include "Intent/Conversion/CUDA/Passes.h"
 #include "Intent/IntentDialect.h"
-#include "Intent/Conversion/Passes.h"
-#include "Target/Passes.h"
+#include "Target/CUDA/Passes.h"
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
-  intent::registerIntentConversionPasses();
-  intent::registerIntentTargetPasses();
+  intent::registerIntentConversionCommonPasses();
+  intent::registerIntentConversionCUDAPasses();
+  intent::registerIntentTargetCUDAPasses();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);

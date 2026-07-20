@@ -5,7 +5,7 @@ add_mlir_library(MLIRIntentConversionCommon
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
 
   DEPENDS
-  IntentConversionPassIncGen
+  IntentConversionCommonPassIncGen
 
   LINK_LIBS PUBLIC
   MLIRIntent
