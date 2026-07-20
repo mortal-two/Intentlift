@@ -1,31 +1,40 @@
 # 能力矩阵
 
-每行回答 **可表示 / LLM 可提取 / 可验证(到什么保证)/ v1 是否纳入**。`v1` 列就是规范第一版对外承诺的能力边界。
+每行回答 **可表示 / LLM 可提取 / Gate 可验证 / backend 必须如何处理 / v1 是否纳入**。
+这五个维度彼此独立：IR 能表示不等于某个 target 已 lower；Gate 通过也不授权 backend；
+某个 specialized pass 可执行也不证明 Lift 已闭合。
 
-> 注:lower 到哪个标准 dialect 是后续阶段的事(见 [../lowering/index.md](../lowering/index.md)),当前矩阵不含该列。
+具体 Kernel／target 的已执行 lowering 状态不写死在本稳定矩阵中，统一以机器可读
+[`spec/lowering/high-performance-kernels.json`](../../../spec/lowering/high-performance-kernels.json)
+及其 loader 为证据来源。
 
-| kernel 模式 | 可表示 | LLM 可提取 | 可验证(保证级) | v1 |
-|---|---|---|---|---|
-| elementwise / map | ✅ | ✅ 强 | 执行一致(**强**) | ✅ |
-| reduce | ✅ | ✅ 强 | 执行一致 + 结合性义务 | ✅ |
-| contraction / matmul | ✅ | ✅ 强(dot anchor) | 执行一致(**强**) | ✅ |
-| scan / recurrence | ✅(scan / loop+carry) | ⚠️ 中(需识别 carry) | 执行一致 | ✅ |
-| layout(transpose/reshape/broadcast) | ✅ | ✅ 强 | 执行一致(强) | ✅ |
-| gather / scatter(数据依赖地址) | ✅(地址即 operand) | ✅ 中 | **仅动态**执行一致 | ✅ |
-| select / where(数据依赖值) | ✅ | ✅ 强 | 执行一致(强) | ✅ |
-| segment-reduce(数据依赖分段) | ✅(segment_ids) | ⚠️ 中 | 动态执行一致 | ✅ |
-| atomic-reduce(并发归约) | ✅(归约意图 + 结合性) | ✅ 中 | 动态 + **tolerance**(浮点非结合) | ✅ |
-| sync / barrier | ✅(B 层约束,不入 A) | ✅ | N/A(切分合法性) | ✅(识别) |
-| **control-flow(数据依赖结构)** | ⚠️ 需 `loop` 逃生舱 | ⚠️ 难 | 动态执行一致 | 🔶 **门控纳入** |
-| pointer / aliasing / in-place / 多输出 | ⚠️ 需 destination-passing | ✅ | 执行一致 | ✅ |
+| Kernel 模式 | 可表示 | LLM 可提取 | Gate 验证 | Backend 合同 | v1 |
+|---|---|---|---|---|---|
+| elementwise / map | ✅ | ✅ 强 | 结构 + 动态 | generic 或 specialized；保留 dtype/broadcast | ✅ |
+| reduce | ✅ | ✅ 强 | 结构 + 动态 + 数值合同 | 消费 axes/identity/mask/order；否则 unsupported | ✅ |
+| contraction / matmul | ✅ | ✅ 强 | 结构 + 动态 | generic contraction 或 target MMA；tail/acc dtype 绑定 | ✅ |
+| scan / recurrence | ✅ | ⚠️ 中 | carry/loop 结构 + 动态 | semantic carry 必须保留；tile 可重调 | ✅ |
+| logical layout/view | ✅ | ✅ 强 | logical map 必须 hard-visible | transpose/reverse/reshape 等 value-driving map 必须消费 | ✅ |
+| gather / scatter | ✅ | ✅ 中 | logical index + 动态 | bounds/conflict/atomic obligation 必须检查或拒绝 | ✅ |
+| select / where | ✅ | ✅ 强 | 结构 + 动态 | predicate/value broadcast 必须消费 | ✅ |
+| segment-reduce | ✅ | ⚠️ 中 | 动态为主 | segment/conflict/identity 明确后再 lower | ✅ |
+| atomic-reduce | ✅ | ✅ 中 | effect + tolerance | atomic/order/reassociation obligation 不得静默忽略 | ✅ |
+| sync / barrier | ✅（B） | ✅ | effect/ordering 结构 | target 无等价机制则 unsupported | ✅（识别） |
+| data-dependent control flow | ⚠️ 门控 loop/branch | ⚠️ 难 | scoped 结构 + 动态 | 未有一等 region contract 时 fail closed | 🔶 门控 |
+| alias / in-place / 多输出 | ✅（typed destination） | ✅ | mapping/effect + 动态 | ABI、alias、write coverage、preserve-unwritten 必须消费 | ✅ |
 
-## 三元组要求
+## 五元组要求
 
-每新增一行(一种 kernel 模式),必须同时回答三个问题,不能只答"可表示":
+每新增一种 Kernel 模式，必须同时回答：
 
 - **represent**:IR 里用什么构造表示?
 - **extract**:LLM 能从混淆源码里恢复出来吗?难度?
-- **verify**:验证到什么保证?数据依赖行**全靠动态执行一致性**,这一点必须写明。
+- **verify**:Gate1/Gate2 对什么命题给出何种有限保证?
+- **lower**:generic/specialized backend 如何 consumed/checked/unsupported B?
+- **evidence**:哪份机器可读 registry、lit/device test 或 conformance record 支撑声明?
+
+禁止用“有一个 pass”“解释器能跑”或“历史 Gate2 三方曾通过”代替当前 backend
+closure 证据。
 
 ## FlashAttention 自检
 

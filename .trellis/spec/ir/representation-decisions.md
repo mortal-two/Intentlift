@@ -1,6 +1,6 @@
-# 启动期表示决策
+# 表示决策
 
-这些是地基级决策,事后改极痛,必须在启动阶段钉死。
+这些是地基级决策。实现可以迁移，但长期语义所有权不能含糊。
 
 ## 决策一:控制流 —— 进(in)
 
@@ -10,11 +10,18 @@
   - 真·数据依赖迭代(while / 收敛)——次数由数据决定。
 - **理由**:支持 FlashAttention 这类算子**强制要求**有循环构造(见 [structured-loop.md](structured-loop.md));90% 的 kernel 走无循环张量代数保持干净,前沿情况用门控逃生舱给出原则性答案,而不是"以后再说"。
 
-## 决策二:别名 / in-place / 多输出 —— destination-passing
+## 决策二：逻辑结果与 destination-passing 分层
 
-- **采用 destination-passing 风格**(linalg `outs` 风格):算子显式接收输出 buffer 作为操作数,而非纯函数式返回新张量。
-- **理由**:高性能 kernel 大量**原地改写输入、从共享中间结果写多个输出**。纯函数式张量在这点上要么表达不了、要么事后加 buffer 语义极痛。destination-passing 天然对接 MLIR bufferization,也匹配真实 kernel 写法。
-- **影响**:算子签名带 `outs`;in-place / 多输出是一等表达,不是事后补丁。
+- **A 先定义逻辑结果**：每个 output 映射到一个 logical SSA value；
+- **B 再定义 destination**：写入哪个 storage、must/may/no alias、full/partial/
+  conditional coverage、是否 preserve unwritten；
+- dialect lowering 可以使用 linalg-style `outs`，但 `outs` 是 B／bufferization 的
+  realization，不能成为逻辑返回值的唯一真值来源；
+- 多输出、in-place、共享 storage 和 optimizer update 必须使用 typed destination
+  bindings，不再依赖单个 `out` 字符串表达全部情况。
+
+这样既保留 destination-passing 对真实 Kernel 和 bufferization 的价值，又避免把
+“算出什么”与“写到哪里”混成一个字段。
 
 ## 决策三:named op(库级命名算子)—— 起步不做
 

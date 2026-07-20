@@ -1,97 +1,175 @@
 # Layer A / B / C 三层表示
 
-## 脊柱:从 SPMD 视角升到 whole-tensor 视角
+## 1. 完整语义对象
 
-kernel 源码是 **SPMD 单程序视角**(每个 program/thread 在干什么);提取就是把它升回 **whole-tensor 整张量视角**(这个算子对整个 tensor 算什么)。三层由此自动分出:
+IntentIR 从优化 Kernel 的 SPMD realization 中恢复 portable whole-tensor program。
+最终不变量是：
 
-- 描述"整张量算子算什么" → **Layer A**
-- 描述"使切分到 grid 上这件事合法的条件" → **Layer B**
-- 描述"整张量算子如何切分到 grid 上" → **Layer C**
+```text
+A = logical value semantics
+B = observable execution and legality contract
+C = replaceable implementation strategy
+J = A + B
+```
 
-## Layer A:算法意图
+因此 A 单独不是完整 Kernel 含义。A 与 B 都是绑定的；C 不改变 J，可由目标后端
+重调，也可在 Gate1 中作为同前端、同 C 结构比较的冻结实验条件。
 
-整张量级的 tensor 计算:算子类、数据类型、符号 shape、轴角色,以及**会改变输出解释的 layout**。
+## 2. Layer A：逻辑值语义
 
-- A 层是**可执行的张量程序**,是后续被源码执行一致性验证的语义对象。
-- layout 只有在"改变张量轴如何被解释"时才属于 A(例如 matmul 读 `A[i,k]` 还是 `A[k,i]`);只为局部性的内存布局属于 C。
-- A 层用**张量级原子算子**(见 [atomic-ops.md](atomic-ops.md)),必要时用带状态结构化循环(见 [structured-loop.md](structured-loop.md))。
+A 回答“在合法输入上逻辑输出值是什么”，至少包括：
 
-## Layer B:可移植正确性结构
+- 输入／输出、dtype、symbolic shape 与 semantic axes；
+- tensor value DAG；
+- elementwise、reduction、contraction、scan／semantic loop；
+- transpose、reverse、reshape、slice、pad、concat 等 logical view；
+- gather/scatter 等 data-dependent logical indexing；
+- reduction axes、结果 shape、accumulator/result dtype 与会改变值的数值 policy；
+- semantic recurrence 的 init/carry/yield/result；
+- 逻辑返回值与 SSA value 的映射。
 
-跨目标必须成立的结构:index 表达式、mask、边界、shape/layout 约束、依赖、同步、受控 atomic、**归约的结合性 / 顺序自由度**。
+判断标准：修改该字段是否会改变 logical tensor denotation。若会，它必须位于 A，
+或位于 B 中一个明确、可执行且所有消费者都必须遵守的 value-driving contract；不得只
+存在于自由字符串、source pointer 表达式或 schedule hint 中。
 
-- B 层不是性能提示——后端可以改 schedule,但**必须保持 A 层计算 + 满足 B 层约束**。
-- B 层使"把 A 层算子切分到并行硬件上"这件事合法。
-- 持久化 schema 必须显式记录每个 access 的 `index_expression`、load mask/fill、
-  store guard、effect 与 output mapping；每个 tiled reduction 必须记录 axis 及
-  identity 或 masked contribution。禁止把这些信息留在无约束自由字典中。
+## 3. Layer B：可观察执行与合法性合同
 
-## Layer C:非绑定调度提示
+B 回答“实现 A 时必须满足哪些跨目标正确性条件”，至少包括：
 
-源实现里的性能知识:tile 大小、线程数、向量宽度、流水深度、循环展开因子、仅为局部性的内存布局。
+- logical access domain 与 bounds obligation；
+- load predicate/fill 与 store guard；
+- operand-to-consumer projection；
+- destination binding、alias、mutation、partial/conditional writeback；
+- read/write/atomic effect 与可观察 ordering；
+- duplicate-index、conflict 与 atomic requirement；
+- reduction identity、masked contribution、reassociation/order freedom；
+- observable scope、storage identity、lifetime 与跨 iteration state；
+- 不可被 C 擅自改变的 numerical tolerance/order contract。
 
-- C 层是**非绑定**的:后端可拿来当重调度的先验,也可完全忽略。
-- 改 C 层影响性能,但**不改变被提升计算的含义**。
-- 在 SCRC Gate1 中，重写员只看到 C 槽，不看到绑定值；注入器随后为源与
-  重放注入完全相同的 C。C 的语义地位仍是非绑定，但“同 C 编译”是结构
-  比较成立的实验控制条件。
+B 不是注释，也不是 optimization hint。correctness-relevant B 必须使用闭合、类型化
+schema；extension map 不得承载正式语义或 backend obligation。
 
-## π:受限重放计划，不是第四层 IR
+## 4. Layer C：可替换实现策略
 
-SCRC 的 π 只保存系统规则卡 id 及对 J/B 标识的引用，用于把源实例的实现
-机制交给源码隔离重写员。π 不是语义真值，也不是 Layer D：它不得含前端
-API、源码表达式、自由 action/code/comment 或完整计算图。任何与计算含义或
-边界正确性有关的事实都必须回到 A/B；规则卡是版本化系统资产。
+C 保存不改变 J 的 realization／性能选择，例如：
 
-完整约束见 [../verification/scrc-gate1.md](../verification/scrc-gate1.md)。
+- tile/block/thread/warp 数；
+- vector width、unroll、pipeline stages；
+- shared-memory staging、prefetch、double buffer、warp specialization；
+- source-local rank insertion、address association、mask materialization；
+- target-local physical layout 与已审计的实现 variant。
 
-## 分层不变量
+C 是 non-binding schedule／strategy。Backend 可以不用某个提示，但不能借“重调 C”
+改变 A 或违反 B。若某种 fast math 会改变可观察数值，允许范围必须先由 A/B 定义；
+C 只能在该范围内选择 realization。
 
-- **A + B 是绑定的**(验证它们);**C 是非绑定的**(后端可重调)。
-- 验证检查 A 和 B;后端可以重调 C。
+## 5. 三类 index 必须分离
 
-## 因式分解原则(关键)
+一个 `index_expression` 不能同时拥有三种语义真值：
 
-一个源结构可能**同时**承载多层信息。此时必须**因式分解**成各层的份额,而不是二选一归类。
+| 信息 | 归属 | 示例 |
+|---|---|---|
+| logical tensor mapping | A | `y[i] = x[N-1-i]`、transpose、slice |
+| data-dependent logical address | A | `y[i] = x[index[i]]` |
+| access legality | B | `0 <= index[i] < N`、mask/fill/store guard |
+| program/tile 到逻辑坐标的 realization | C / witness | `pid*BLOCK+lane` |
+| shared/local physical address | C | swizzle、padding、pointer staging |
 
-**示例:softmax**(单层张量代数)
-- A:`exp` / `reduce-max` / `reduce-sum` / `div`(几个张量原子)
-- B:行长被 block 覆盖、masked load、store guard；全局归约轴为 1，但一行对应
-  一维前端 tile 时局部 `tile_axis=0`；归约标量回到 row tile 的 broadcast 可由
-  前端隐式完成，不因全局 axes=[1] 自动增加本地维度
-- C:block 大小、向量宽度、流水深度
+推荐使用受控的 affine/data index map，而不是 portable 自由字符串。Portable A/B 中
+禁止出现 `tl.program_id`、`threadIdx`、warp/lane id、前端 API spelling 或 source
+变量名。
 
-**示例:普通 tiled matmul**
-- A:`contraction(A,B,"mk,kn->mn")`，包含 whole-tensor K contraction 语义
-- B:A/B/out 的二维 index expression、两侧 K/M/N tail mask、load fill 与
-  store guard；局部 `[:,None] / [None,:]` 是 access tile 构造，不是语义
-  broadcast
-- C:`BLOCK_M/BLOCK_N/BLOCK_K`、warp/stage 与 K tiling hint
-- π:选择 K-tiled-dot、staged pointer tile 和 masked access 的实现卡
+copy 与 reverse 的 logical map 不同，因此 A 必须可区分；不能只靠 op multiset 或
+外层 output address 字符串区分。
 
-源码里的 K tile loop、accumulator 与 pointer advancement 是上述 contraction
-在给定 C 下的前端 realization，不得为了贴近 Triton 源码再灌成 J
-`loop/reduce/broadcast`。这与下述 FlashAttention 不同：普通 matmul 没有
-contraction 之外的 online state recurrence。
+## 6. 逻辑返回值与 destination 分离
 
-**示例:addr outer product**
-- A:`contraction(vec1,vec2,"m,n->mn")`，再与 runtime `alpha/beta` 的
-  elementwise scale 和输入矩阵相加；没有 contracted label
-- B:分别物化并复用 m/n 一维 predicate component，再进行局部 boolean rank
-  insertion；input/vec/output 的 stride index、mask/fill 与 store guard 保持绑定
-- C:`BLOCK_SIZE_M/BLOCK_SIZE_N`、warp/stage
-- π:选择 outer-product、mask-tile、pointer/access 与 runtime-scalar 实现卡
+以下是两个不同事实：
 
-这里的二维结果由 `vec1[:,None] * vec2[None,:]` 实现。因为 subscripts 没有被
-消去的 label，不能凭 `contraction` op 名生成 K loop、dot 或 reduction；一维
-mask component 的 staging/reuse 属于 B 的真实边界结构，也不能在二维 tile 上
-重新比较后当作等价实现。
+```text
+A.return_values:
+  output Y <- value y
 
-**示例:FlashAttention**(分层的关键案例,必须支持)
-- 它的 K 维循环**同时**是两件事:
-  - **tiling**(把 K 切块流式处理)→ 属于 **C**
-  - **online-softmax 递推**(running max / running sum / 输出累加器跨迭代携带)→ 属于 **A 的 scan**
-- 正确动作:把这一个源循环**拆**成 `C 层的 tiling hint` + `A 层的递推语义`。
-- 反例:把整个 K 循环简单归类成"schedule"会丢掉递推语义;归类成"semantics"会冻死 tiling、无法重调。
+B.destination_bindings:
+  output Y -> destination X
+  alias_kind = must_alias
+  write_coverage = partial
+  preserve_unwritten = true
+```
 
-> 见 [structured-loop.md](structured-loop.md) 了解递推在 A 层如何表达。
+单个 `out` 兼容字段不足以表达多输出、in-place、共享 storage、partial/conditional
+writeback。新 schema 不得再次把逻辑值和物理写回合并成同一个真值来源。
+
+## 7. Semantic loop 与 schedule loop 分离
+
+- whole-tensor reduction/contraction 的 source tiling loop 属 C／witness，canonical A
+  仍是 reduce/contraction；
+- online-softmax、scan、RNN state 等真正改变结果的 recurrence 属 A；
+- tail mask、state effect、数值顺序义务属于 B；
+- tile size、unroll、pipeline 属 C。
+
+canonical J 的 semantic trip 只描述语义轴与 carry。历史 `trip.tile_hint` 只能作为
+兼容输入或 lowering attribute，不得继续被解释为 A 的持久化语义。
+
+## 8. Backend 消费规则
+
+每个 B 字段必须登记为以下一类：
+
+| 类型 | backend 责任 |
+|---|---|
+| value-driving | 必须生成对应行为 |
+| legality obligation | 必须证明、生成检查或返回 unsupported |
+| optimization permission | 可以保守不用，但不得违反 |
+
+核心纪律：backend 可以不用 permission，但不能忽略 obligation。未知或未消费的
+correctness-relevant B 必须 fail closed，并在 capability/conformance record 中标记
+`consumed / checked / unsupported`。
+
+## 9. Source-validation witness 不是第四层
+
+以下信息可以进入 RuleRegistry、确定性 replay plan、fingerprint 或诊断记录，但不属于
+portable J：
+
+- source span/location；
+- 前端本地 `expand_dims`、pointer arithmetic association；
+- compiler dump presentation topology；
+- source transformation history；
+- Kernel 名、provider response、dataset identity、Gate verdict。
+
+π 仍是由 J、ABI、C 与 RuleRegistry 确定性派生的施工计划，不是 Layer D，也不拥有
+独立语义真值。
+
+## 10. 典型因式分解
+
+### Row softmax
+
+- A：reduce-max、subtract、exp、reduce-sum、divide；
+- B：tail predicate、max/sum masked contribution、store guard、数值合同；
+- C：block size、warps、vector width。
+
+### Tiled matmul
+
+- A：`contraction("mk,kn->mn")` 与 accumulator dtype；
+- B：M/N/K bounds、tail contribution、destination、允许的 reassociation；
+- C：BM/BN/BK、MMA、staging、pipeline。
+
+源码 K-tile loop、pointer advancement 与局部 rank insertion不是额外 A loop。
+
+### FlashAttention
+
+- A：QK contraction、online max/sum recurrence、output carry、normalization；
+- B：causal/tail mask、LSE/output mapping、数值与多输出合同；
+- C：Q/K tile、MMA、shared staging、software pipeline。
+
+一个源 K 循环可同时承载 A recurrence 与 C tiling，必须因式分解，而不是整体归入
+任一单层。
+
+## 11. Quality Check
+
+- [ ] 完整语义对象是否明确为 `J=A+B`？
+- [ ] logical view/index 是否位于 A？
+- [ ] bounds/mask/fill/store guard 是否位于 typed B？
+- [ ] pid/tile/lane 与 physical layout 是否留在 C／witness？
+- [ ] output value、destination、alias、writeback 是否分离？
+- [ ] semantic recurrence 与 tile loop 是否分离？
+- [ ] backend 对每个 B obligation 是否 consumed/checked/unsupported，而非静默忽略？

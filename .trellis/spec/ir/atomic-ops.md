@@ -1,71 +1,108 @@
 # 张量级原子算子集
 
-## 粒度原则(地基)
+## 粒度原则
 
-原子算子是**张量级结构化原语**(linalg 风格),不是标量、也不是库级大算子。
+原子算子是**张量级结构化原语**（linalg 风格），不是标量指令，也不是库级大算子。
 
-- **不是标量级**(`add`/`mul` 逐标量):否则 softmax 摊成几十个、FlashAttention 摊成几百个 op,LLM 生成质量崩、token 爆炸、验证困难。
-- **不是库级大算子**(`softmax`/`attention` 当单个原子):否则其内部的 mask/bound/归约(B 层约束)被吞进算子里看不见,无法验证、无法重调度。
-- **张量级刚好**:softmax = 几个原子;FlashAttention = 有限个原子(两个 contraction + 一个带状态 scan),不爆炸;且直接对应 MLIR 已有构造(linalg/vector)。
+- 不能把 softmax/attention 当黑盒，否则 logical index、mask、reduction 与数值合同不可见；
+- 也不能把整个图摊成标量 add/mul，否则 LLM 生成、审计和验证失控；
+- 正确粒度是 map/reduce/contraction/scan/view/index/effect 等有限结构化原语。
 
-## 每个算子的硬要求(吸取旧仓库教训)
+## 新增 Op 的完成定义
 
-旧仓库把 112 个算子扁平堆放、`dtype_rules`/`shape_rules` 全空、还有注册了却不可执行的算子。本项目禁止重蹈:
+新增一个 IntentIR op 不能只改 TableGen。至少同时完成：
 
-1. **可执行 reference 语义**:每个算子必须有解释器可执行的参考实现,用于源码执行一致性验证。注册了不可执行的算子不允许存在。
-2. **显式 shape / dtype 规则**:每个算子必须显式声明形状与类型推导规则,不留空。
-3. **明确的层归属**:算子产出的信息属于 A 还是 B 还是 C,必须明确(见 [layers-abc.md](layers-abc.md))。
+1. **A 值语义**：输入、输出、shape/dtype、logical axes/index 与 corner-case policy；
+2. **B 合同**：bounds、mask/fill、destination/alias/effect、conflict/order 中适用项；
+3. **C 边界**：哪些 source realization 只是可替换 schedule/strategy；
+4. **JSON/Python model**：strict schema、round-trip 与错误拒绝；
+5. **Intent MLIR**：TableGen、C++ verifier、assembly/type contract；
+6. **Frontend**：shape/dtype inference 与确定性 MLIR emission；
+7. **Reference/Gate 语义**：可执行 reference 或适用的结构 fingerprint；
+8. **Backend 状态**：generic/specialized `consumed / checked / unsupported`，不能因
+   暂无 lowering 而静默留下 residual op；
+9. **测试**：JSON round-trip、verifier negative、lit lowering，以及适用的设备执行／
+   conformance test。
 
-## 核心算子集(v1)
+Kernel-name recognizer、只对一个样本成立的手写 MLIR、解释器 fallback 都不算新增 op
+完成。
 
-> 这是受控开放集:核心集封闭明确,新增算子必须走规范(给出语义 + shape/dtype 规则 + 层归属),不得随手加。
+## 语义家族
 
-> **FlashAttention 所需子集已端到端验证(2026-06-25)。** `map.unary{exp}` /
-> `map.binary`(含 broadcast)/ `reduce`(由声明结果 shape 选择 keepdims 或
-> collapsed)/ `contraction` 与 `scf` 携带
-> carry 的递推,都已通过真实 C++ dialect → linalg → gpu → sm_120a cubin 在
-> 5090 D 上执行,且与解释器参考实现一致(execute==interpret,见
-> [../verification/validation.md](../verification/validation.md))。要求 #1
-> "每个算子必须有可执行 reference 语义"对这个子集已闭环验证。
+### Elementwise
 
-**逐元素族**(Layer A,`parallel` 迭代)
-- `map.unary` — 逐元素一元(exp / log / sqrt / abs / neg / recip / sigmoid / tanh / erf / ...)
-- `map.binary` — 逐元素二元,带 broadcast(add / sub / mul / div / max / min / pow / cmp / ...)
-- `select` — `where(cond, a, b)`,cond 是 tensor(数据依赖的"值",图形状不变)
-- `cast` — dtype 转换
+- `map_unary`：exp/log/sqrt/abs/neg/recip/sigmoid/tanh/erf 等；
+- `map_binary`：add/sub/mul/div/min/max/pow/cmp 等，logical broadcast 属 A；
+- `select`、`cast`。
 
-**归约族**(Layer A 语义 + Layer B 结合性)
-- `reduce` — 沿轴归约,op ∈ {sum, max, min, prod, any, all};带**结合性标注**
-  `associative` / `float_nondeterministic`。结果 shape 可保留归约轴为 1
-  (keepdims,供后续 broadcast),也可移除归约轴(collapsed,匹配 row-sum 等外部
-  ABI);不新增 op/字段,由声明结果 tensor shape 决定。
-- `arg_reduce`(C6)— 沿轴归约到**极值的整数索引**(argmax / argmin),而非极值本身;结果是整数 tensor(轴折叠或 keepdims)。并列取**最低索引**(与 torch 一致)。lowering:block 归约携带 `(best_val, best_idx)` 对(register-tile 局部最优 + 共享内存 pair-tree),整数输出。见 `convert-intent-arg-reduce-to-gpu`。
+### Reduction / scan / ordering
 
-**收缩族**(Layer A,`reduction` 轴 + `indexing maps`)
-- `contraction` — einsum 风格的通用收缩(matmul / batched-matmul / dot / 带轴标注)
+- `reduce`：sum/max/min/prod/any/all 等；
+- `arg_reduce`：argmax/argmin，tie policy 必须显式；
+- `scan`：cumsum/cummax/cummin 或其他受控 recurrence；
+- `sort`：排序/top-k 的 value/index 与 stability/tie policy 必须定义。
 
-**扫描 / 递推族**(Layer A)
-- `scan` — 沿轴的带 carry 递推,fn ∈ {sum, max, min}(cumsum / cummax / cummin / online-softmax 累加器)。max/min(C6)复用与 sum 相同的 Hillis-Steele block scan,仅换 combine + 单位元(-inf/+inf);一般 monoid 不可逆,exclusive 前缀取线程 `tx-1` 的 inclusive 值而非 sum 专用的 incl-segTotal 相减。复杂递推用结构化 `loop`,见 [structured-loop.md](structured-loop.md)
+Reduction 的 global axes、result shape、accumulator/result dtype 属 A；identity、masked
+contribution、reassociation/determinism 属 B；tree/tile/warp 属 C。
 
-**数据移动 / 重排族**(Layer A,纯重排)
-- `transpose` / `reshape` / `broadcast` / `slice` / `concat` / `pad`
+### Contraction / convolution
 
-**间接寻址族**(Layer A 语义,地址作为 tensor operand —— 数据依赖的"地址",图形状不变)
-- `gather` — `gather(data, indices, axis)`
-- `scatter` — `scatter(data, indices, updates, reduce ∈ {none, add, mul, max})`
-- `segment_reduce` — `segment_reduce(data, segment_ids, op)`(数据依赖的分段归约)
+- `contraction`：einsum-style logical contraction；
+- `conv`：window/stride/dilation/padding/group 的逻辑值语义。
 
-**结构控制族**(Layer A 语义 + Layer C tiling)
-- `loop` — 带状态携带的结构化循环,见 [structured-loop.md](structured-loop.md)
+MMA、tensor-core tile、shared staging 与 pipeline 都属于 C；backend 无对应 target
+能力时必须显式 unsupported 或走正确 generic path。
 
-## 归约结合性标注
+### Logical view / layout
 
-并发归约 / atomic 必须显式标注,而不是 scope-out:
+- `transpose`、`concat`、`pad`、`tile`、`flip`、`triu`；
+- reshape/slice/broadcast/reverse 等必须由显式 A op 或等价 typed logical map 表达。
 
-- `associative` — 数学上结合(整数加、max/min):归约顺序不影响结果,可 bit-exact 验证。
-- `float_nondeterministic` — 浮点加法等不结合:并发顺序影响数值结果。验证用**合理 tolerance**,而非要求 bit-exact(见 [../verification/dynamic-feedback.md](../verification/dynamic-feedback.md))。
+logical permutation 属 A；physical memory layout、local rank insertion 与 address staging
+属 C/witness。
+
+### Indirect indexing / compaction
+
+- `iota`、`gather`、`scatter`；
+- `nonzero`、`masked_select`、`masked_scatter`。
+
+index tensor 与 logical mapping 属 A；OOB、duplicate/conflict、atomic、write coverage 属
+B；coalescing/sorting/bucketing 属 C。
+
+### RNG / window / structured values
+
+- `rand`：algorithm/seed/counter 与 statistical contract 必须明确；
+- `pool`、`upsample`：window/coordinate/padding/value policy；
+- `polar`：多结果 dtype 与 output mapping。
+
+### Structured control
+
+- `loop` + `yield`：semantic recurrence 与 carry；
+- schedule-only loop 必须 re-roll 到 tensor op，tile/unroll 留在 C；
+- branch/while 等未有一等、闭合 region contract 时 fail closed。
+
+## 实现清单的权威来源
+
+当前 dialect 的确切 op 名与字段以
+`include/Intent/IntentOps.td` 为权威来源。本文件定义家族与完成标准，不复制一个容易
+漂移的“当前数量”作为长期真值。任何新增 TableGen op 都必须同步本文件所属家族或说明
+为何需要新的语义家族。
+
+## 数值与并发合同
+
+浮点 reduction/atomic 不可仅写一个模糊的 `associative` 标签。至少要区分：
+
+- 数学 reducer 与 identity；
+- masked contribution；
+- reassociation 是否允许；
+- deterministic 是否要求；
+- tolerance/NaN/tie/empty-domain policy。
+
+这些是 A/B 合同；backend realization 与 schedule 在 C 中选择。
 
 ## 不做
 
-- 不引入库级 named op(softmax/attention 当单算子)——起步阶段禁止,留作未来标准库扩展(见 [representation-decisions.md](representation-decisions.md))。
-- 不引入语义无定义、不可执行的占位算子。
+- 不引入语义未定义、不可执行、不可验证的占位 op；
+- 不用库级 named op 隐藏内部 A/B；未来若引入，必须给出固定原子展开等价定义；
+- 不为某个 backend 暂时缺能力而扭曲 portable op 语义；
+- 不把 source-local pointer arithmetic 或 Kernel 名写入 portable op schema。

@@ -13,16 +13,18 @@
 |---|---|
 | [constitution.md](constitution.md) | 项目宪法:Purpose、核心科研问题、三层脊柱、Required / Forbidden / Check Questions。 |
 | [positioning.md](positioning.md) | 科研定位:与 TVM/Halide/MLIR/反编译的区别,以及"LLM 提取规范"这条护城河。 |
-| [code-layout.md](code-layout.md) | 代码物理结构草案与待定决策(dialect 实现方式、包结构)。 |
+| [code-layout.md](code-layout.md) | 当前代码物理结构、语言分工、target namespace 与 verification/backend 边界。 |
 
 ## Pre-Development Checklist
 
 - [ ] 这个改动锚定论文科研构思了吗?(论文是锚,实现可全新)
 - [ ] 它守住了 A/B 绑定、C 非绑定的分层不变量吗?
+- [ ] 完整语义对象是否按 `J=A+B` 传递给验证与 backend?
 - [ ] 它把原子化分解留在 LLM 提取里,而不是塞进 pass 吗?
 - [ ] 它对能力边界是诚实的(标注而非假装)吗?
 
 ## Quality Check
 
 - 改动后,项目仍是"LLM 提取 + 验证裁决"的语义提升系统,不是"LLM 直接生成 kernel 代码",也不是传统编译器。
+- Lowering、backend conformance 与性能评价没有被混入 Gate verdict，也没有丢失 B obligation。
 - 没有引入 org / OptGuide / provider29 思路,没有继承旧仓库实现。

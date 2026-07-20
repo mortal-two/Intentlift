@@ -6,7 +6,8 @@
 kernel 源码
   → [LLM 提取]  IntentIR JSON   ← LLM 的产出物,人可读
   → [1:1 转换]  Intent MLIR     ← 我们自己的 dialect,确定性转写
-  → [后续]      lower 到标准 MLIR
+  → [中立合同]  IntentProgram(A+B+ABI, optional C)
+  → [lowering]  标准 MLIR / target executable
 ```
 
 ## 为什么 JSON 在前
@@ -24,10 +25,38 @@ kernel 源码
 ## 三层在表示里的组织
 
 - **Layer A**:dialect 里的算子 + region 结构(可执行语义对象)。
-- **Layer B**:挂在算子 / 模块上的约束 attribute(mask、bound、结合性、同步)。
+- **Layer B**:挂在算子 / function / program 上的 typed contract(mask、bound、
+  destination、alias、effect、reduction、scope/storage 等)。
 - **Layer C**:挂在算子上的非绑定 schedule hint attribute(tile、向量宽度、unroll 因子);可被后端覆盖。
 
-## 当前不做
+完整语义对象是 `J=A+B`。如果某个 correctness-relevant B 只能存在于外层 archive，
+则 backend hand-off 必须携带该 archive；不能因为 `IntentFunction` 能单独发射 MLIR，
+就把外层 B 静默丢掉。
 
-- 不在当前阶段设计"lower 到 linalg/vector/llvm"的 pass——那是 [../lowering/index.md](../lowering/index.md) 的后续阶段。
-- 当前焦点只有两样:**JSON 规范** 与 **Intent dialect 本身的形态**。
+## 中立 Lowering 合同
+
+规范目标是一个 verification-neutral 对象，例如：
+
+```text
+IntentProgram {
+  function          // A 与 op-local typed contract
+  boundary          // function/program-level B
+  interface         // ABI 与 tensor/scalar binding
+  schedule_hint?    // optional C
+}
+```
+
+该对象不得包含 Gate verdict、source/replay code、provider response、dataset identity
+或 paper receipt。现有 `IntentFunction`、Gate1 `SemanticArchive` 与历史 Gate2 adapter
+之间的桥接属于迁移状态；新 backend 能力不得继续把完整 B 合同放在 `verify/` 私有对象
+中。
+
+## Lowering 纪律
+
+- JSON → Intent MLIR 不做高层算子分解；
+- Intent → standard/target dialect 可以做合法 lowering、融合、特化与 schedule 选择，
+  但不能重新猜测或改变 A/B；
+- unknown correctness-relevant B 必须 fail closed；
+- backend conformance 独立于 Gate1/Gate2 verdict，并绑定其实际消费的 program digest；
+- generic 与 specialized path 必须消费同一 J；specialized 未完整命中时回退或返回
+  unsupported，不能部分消费后伪装成功。

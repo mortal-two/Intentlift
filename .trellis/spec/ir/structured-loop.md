@@ -28,8 +28,13 @@ FlashAttention = 两个 contraction + 一个"边扫 K、边更新累加器 (m, l
 
 C++ TableGen 算子已落地(`include/Intent/IntentOps.td`,verifier 见
 `lib/Intent/IntentOps.cpp`):`intent.loop scan(K,V) init(m,l,Oacc) {scan_axes,
-tile_hint} -> ... do { ^bb0(Kj, Vj, m, l, Oacc): ... intent.yield ... }`。
-- **scan 输入**:被 trip 沿 `scan_axes` 切片(每 trip 一块 `tile_hint` 行)的张量(K/V)。
+tile_hint} -> ... do { ^bb0(Kj, Vj, m, l,Oacc): ... intent.yield ... }`。
+
+这里 `tile_hint` 是现有 dialect/lowering 兼容 attribute，不是 canonical J 的 semantic
+trip 真值。新 SCRC J 的 loop 只持久化 semantic axis 与 carry；tile/unroll/pipeline
+必须由 C 或 target schedule 提供。
+- **scan 输入**:lowering 可按 C 中的 tile 沿 `scan_axes` 切片 K/V；改变 tile 不得改变
+  semantic recurrence。
 - **carry(init/yield)**:循环携带状态;result 类型 == init 类型(carry 类型循环不变,verifier 强制)。
 - **body block args** = scan 切片(按序)++ 当前 carry。
 - **lowering**:`intent.loop` → `scf.for`(trip)+ tensor `iter_args` + scan→

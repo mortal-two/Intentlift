@@ -8,31 +8,39 @@ IntentIR 是一套**带证书的语义提升(certified semantic lifting)**系统
 
 本项目的定位升级为:**让 IntentIR 成为"给 LLM 用的 kernel 理解 / 提取规范",并作为一个真正的 MLIR 生态组件,而不是玩具。**
 
-## 重写背景(为什么从零写)
+## 历史与参考边界
 
-`/home/kingdom/phdworks/TianchenIR/` 下的 `intentir`、`IntentIR`、`TianchenForge` 三个文件夹**只作参考,一律不动、不基于其修改**。它们大量草率、错误、互相缠绕(屎山)。本项目是全新重写,只锚定论文的科研构思,不继承旧实现的任何包袱。
+当前仓库已经是重写后的项目主体。历史实现与 refs 只能作为只读证据或技术参考；
+任何借鉴都必须重新满足本 spec 的 A/B/C、Gate 与 backend 合同，不能把旧命名、旧
+耦合或旧 verdict 直接带回主线。
 
-`TianchenForge` / `org` / `OptGuide` / `provider29` / `four-ratio` 是**另一条科研思路**,与本项目的 IntentIR 思想无关,不纳入。我们只从它那里借用它整理过的**前端输入 kernel**(见 [extraction/frontend-inputs.md](extraction/frontend-inputs.md))。
+`TianchenForge` / `org` / `OptGuide` / `provider29` / `four-ratio` 属于另一条科研
+思路，不拥有本项目的语义真值或验证裁决权。可复用的前端 Kernel 来源见
+[extraction/frontend-inputs.md](extraction/frontend-inputs.md)。
 
 ## 命名纪律
 
 - **IntentIR** = 本项目恢复出的三层意图表示(也是 paper 的系统名)。
 - **Intent MLIR** = IntentIR 的 MLIR dialect 形态(我们自己的 dialect)。
-- **Layer A / B / C** = IntentIR 的三层(算法意图 / 可移植正确性结构 / 非绑定调度提示)。
+- **Layer A / B / C** = 逻辑值语义 / 可观察执行与合法性合同 / 可替换实现策略。
+- **J** = 完整绑定语义对象 `A+B`；A 单独不是完整 Kernel 合同。
 - 旧仓库里的 `intent_ir` 包名、`org`、`OptGuide` 等仅是历史标识,本项目 prose 一律不沿用其语义。
 
 ## 核心链路(不可偏离)
 
-```
-kernel 源码 (Triton/TileLang/CUDA)
-  → [LLM 提取]  IntentIR JSON(人可读,三层 A/B/C)
-  → [1:1 转换]  Intent MLIR dialect(我们自己的 dialect)
-  → [验证]      schema + obligation + 动态源码执行一致性 → 契约 FULL/PARTIAL/OOS
-  ───────────── 以上是当前阶段焦点 ─────────────
-  → [后续阶段]  lower 到 linalg / vector / scf / gpu / llvm → RVV / GPU 后端
+```text
+Kernel 源码（Triton / TileLang / CUDA）
+  → [LLM Lift / Relift]  IntentIR：J=(A,B) + optional C
+  → [确定性转写]        Intent MLIR dialect
+  ├→ [Gate1]            同前端、同冻结 C 的 source/replay 结构闭合
+  ├→ [Gate2]            source/replay 声明输入域内的动态比较
+  └→ [Neutral Lowering] IntentProgram(A+B+ABI, optional C)
+                         → standard/target MLIR → executable
+                         → 独立 backend conformance + performance evidence
 ```
 
-科研核心在 **LLM 提取** 与 **验证**;MLIR 生态价值在 **Intent dialect + 后续 lowering**。lower 到标准 MLIR 是 IR/前端稳定后的下游阶段,当前不展开。
+Lift、Gate1、Gate2、backend conformance 与 performance 是不同命题。Lowering 已是
+当前工程主线的一等组成，但不得读取或参与 Gate verdict。
 
 ## Spec 导航
 
@@ -41,9 +49,9 @@ kernel 源码 (Triton/TileLang/CUDA)
 | project | [project/index.md](project/index.md) | 科研定位、不可偏离论文的约束、能力契约理念、anti-drift 规则。 | 任何架构决策、review、对外定位之前。 |
 | ir | [ir/index.md](ir/index.md) | Intent MLIR dialect 的具体形态:ABC 三层、张量级原子算子、结构化循环、JSON↔dialect。 | 改动 IR 定义、算子集、dialect、JSON schema 之前。 |
 | extraction | [extraction/index.md](extraction/index.md) | LLM 前端提取:直接提取到原子 IR、evidence 角色、前端输入清单。 | 改动提取管线、prompt、evidence、前端输入之前。 |
-| capability | [capability/index.md](capability/index.md) | 能力契约:能力矩阵、三种"不能"、诚实边界。 | 决定支持/不支持某类 kernel 模式之前。 |
-| verification | [verification/index.md](verification/index.md) | SCRC Gate1 源码隔离重放 + Gate2 三方实跑。 | 改动 Gate1/Gate2、规则库、指纹或动态输入之前。 |
-| lowering | [lowering/index.md](lowering/index.md) | (后续阶段)Intent dialect 下降到标准 MLIR 与 RVV/GPU 后端。 | 进入 lowering 阶段时再读。 |
+| capability | [capability/index.md](capability/index.md) | 能力契约：represent/extract/verify/lower 矩阵、四种“不能”、诚实边界。 | 决定支持/不支持某类 Kernel 模式之前。 |
+| verification | [verification/index.md](verification/index.md) | SCRC Gate1 源码隔离重放 + Gate2 source/replay 双腿实跑。 | 改动 Gate1/Gate2、规则库、指纹或动态输入之前。 |
+| lowering | [lowering/index.md](lowering/index.md) | verification-neutral 的标准／目标 MLIR lowering、selection、runtime 与能力证据。 | 改动 backend、pass、selector、runtime 或性能路径之前。 |
 | guides | [guides/index.md](guides/index.md) | Trellis 自带的跨层思维方法论(工程机制,非项目内容)。 | 编码前按需。 |
 
 本 spec 树只记录稳定的项目约束与设计规范,不记录任务状态、进度或计划(那些由 Trellis 的 task/workspace 管理)。
