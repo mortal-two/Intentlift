@@ -545,6 +545,13 @@ Cross-field rules:
   optional runtime parameter. Preserve it in interface order as kind=scalar,
   mode=value, dtype=none, rank=0, with no tensor_ref; replay must accept and
   forward Python None without inventing J semantics for the disabled feature;
+- KernelInterface mode describes the complete ordered ABI capability, while a
+  frozen-C specialization may compile an input/output/inout pointer to no TTIR
+  access. Preserve that formal parameter and its declared mode in exact ABI
+  order, but when its guarded feature is compile-time inactive, do not invent a
+  Layer-A operand use, Boundary access/effect, output, or alias merely to make
+  every formal parameter appear active. Source and replay must still agree on
+  the specialized TTIR access exactly;
 - canonicalize reciprocal square root in J as sqrt followed by recip. The replay
   may recover the source-native mechanism through the selected rule card;
 - when the source spells a mean as local sum divided by the runtime logical

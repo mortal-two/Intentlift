@@ -58,6 +58,7 @@ from .model import (
     Gate1Artifact,
     Gate1Status,
     ParameterKind,
+    ParameterMode,
     ReplayPlan,
 )
 from .replay import (
@@ -1609,6 +1610,14 @@ def _validate_artifact_compile_contract(
                 )
 
 
+_SPECIALIZED_ACCESS_BY_DECLARED_MODE = {
+    ParameterMode.INPUT: frozenset({"input", "unused"}),
+    ParameterMode.OUTPUT: frozenset({"output", "unused"}),
+    ParameterMode.INOUT: frozenset({"input", "output", "inout", "unused"}),
+    ParameterMode.VALUE: frozenset({"value"}),
+}
+
+
 def _validate_compiled_interface(
     result: CompileResult,
     fingerprint: TTIRFingerprint,
@@ -1695,10 +1704,12 @@ def _validate_compiled_interface(
                 f"compiled argument {parameter.name!r} dtype {actual.dtype!r} "
                 f"!= {parameter.dtype!r}"
             )
-        if actual.access != parameter.mode.value:
+        allowed_accesses = _SPECIALIZED_ACCESS_BY_DECLARED_MODE[parameter.mode]
+        if actual.access not in allowed_accesses:
             raise ValueError(
-                f"compiled argument {parameter.name!r} access {actual.access!r} "
-                f"!= interface mode {parameter.mode.value!r}"
+                f"compiled argument {parameter.name!r} specialized access "
+                f"{actual.access!r} is not a subset of declared mode "
+                f"{parameter.mode.value!r}"
             )
 
 

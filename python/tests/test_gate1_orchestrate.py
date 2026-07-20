@@ -138,6 +138,27 @@ module {
 }
 '''
 
+UNUSED_POINTER_TTIR = r'''
+module {
+  tt.func public @kernel(%x: !tt.ptr<f32>, %label: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %value = tt.load %x : !tt.ptr<f32>
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+WRITTEN_LABEL_TTIR = r'''
+module {
+  tt.func public @kernel(%x: !tt.ptr<f32>, %label: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %value = tt.load %x : !tt.ptr<f32>
+    tt.store %label, %value : !tt.ptr<f32>
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
 GOOD_CODE = '''import triton
 import triton.language as tl
 
@@ -2128,6 +2149,67 @@ def test_compiled_interface_allows_specialized_nonbinding_scalars_only() -> None
     )
     with pytest.raises(ValueError, match="omitted binding runtime argument.*n"):
         _validate_compiled_interface(result, fingerprint, semantic)
+
+
+def test_compiled_interface_accepts_unused_as_static_input_subset() -> None:
+    artifact = _artifact()
+    intent_payload = artifact.j.intent.to_json()["intent_function"]
+    intent_payload["inputs"].append(
+        {"name": "label", "dtype": "f32", "shape": [1]}
+    )
+    intent = IntentFunction.from_json(intent_payload)
+    parameters = list(artifact.interface.parameters)
+    parameters.insert(
+        1,
+        KernelParameter(
+            "label",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f32",
+            1,
+            tensor_ref="label",
+        ),
+    )
+    artifact = replace(
+        artifact,
+        j=replace(artifact.j, intent=intent),
+        interface=replace(artifact.interface, parameters=parameters),
+    )
+    python_interface = {
+        "arg_names": ["x", "label", "out", "n", "BLOCK"],
+        "constexprs": ["BLOCK"],
+        "constexpr_indices": [4],
+    }
+    result = CompileResult(
+        ok=True,
+        ttir=UNUSED_POINTER_TTIR,
+        python_interface=python_interface,
+    )
+    fingerprint = fingerprint_ttir(
+        UNUSED_POINTER_TTIR,
+        python_interface=python_interface,
+    )
+
+    _validate_compiled_interface(result, fingerprint, artifact)
+
+    incompatible = CompileResult(
+        ok=True,
+        ttir=WRITTEN_LABEL_TTIR,
+        python_interface=python_interface,
+    )
+    incompatible_fingerprint = fingerprint_ttir(
+        WRITTEN_LABEL_TTIR,
+        python_interface=python_interface,
+    )
+    with pytest.raises(
+        ValueError,
+        match="specialized access 'output'.*declared mode 'input'",
+    ):
+        _validate_compiled_interface(
+            incompatible, incompatible_fingerprint, artifact
+        )
+    comparison = compare_ttir(UNUSED_POINTER_TTIR, WRITTEN_LABEL_TTIR)
+    assert comparison.hard_passes["interface"] is False
 
 
 def test_best_candidate_rank_keeps_interface_ahead_of_semantic_score() -> None:

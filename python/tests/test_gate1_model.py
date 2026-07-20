@@ -186,6 +186,32 @@ def test_artifact_strict_json_roundtrip() -> None:
     assert CompileCase.from_json_str(case.to_json_str()) == case
 
 
+def test_compile_time_inactive_input_remains_in_complete_static_abi() -> None:
+    payload = _artifact().to_json()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "optional_label", "dtype": "f32", "shape": [1]}
+    )
+    payload["interface"]["parameters"].insert(
+        1,
+        {
+            "name": "label_ptr",
+            "kind": "pointer",
+            "mode": "input",
+            "dtype": "f32",
+            "rank": 1,
+            "tensor_ref": "optional_label",
+        },
+    )
+
+    artifact = Gate1Artifact.from_json(payload)
+
+    assert artifact.interface.parameters[1].mode is ParameterMode.INPUT
+    assert not any(
+        access.tensor == "optional_label"
+        for access in artifact.j.boundary.accesses
+    )
+
+
 def test_strategy_is_closed_override_only_c_and_legacy_defaults_empty() -> None:
     artifact = _artifact()
     assert artifact.strategy == StrategySpec()

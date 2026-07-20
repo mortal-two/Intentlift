@@ -246,6 +246,35 @@ def test_gate_adapter_drops_privileged_fields_and_keeps_typed_ab_abi() -> None:
         assert forbidden not in serialized
 
 
+def test_gate_adapter_preserves_inactive_pointer_in_static_input_abi() -> None:
+    payload = _gate_artifact().to_json()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "label", "dtype": "f32", "shape": [1]}
+    )
+    payload["interface"]["parameters"].insert(
+        1,
+        {
+            "name": "label_ptr",
+            "kind": "pointer",
+            "mode": "input",
+            "dtype": "f32",
+            "rank": 1,
+            "tensor_ref": "label",
+        },
+    )
+
+    program = intent_program_from_gate1(Gate1Artifact.from_json(payload))
+
+    argument = next(
+        item for item in program.interface.arguments if item.name == "label_ptr"
+    )
+    assert argument.role == "input"
+    assert argument.tensor_ref == "label"
+    assert not any(
+        access.tensor == "label" for access in program.boundary.accesses
+    )
+
+
 def test_gate_adapter_accepts_only_the_validated_live_report_redaction_pair() -> None:
     payload = _gate_artifact().to_json()
     source = payload.pop("source")

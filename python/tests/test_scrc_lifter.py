@@ -178,6 +178,8 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "mask_materialization=staged_reuse" in prompt
     assert "reduction_call_shape=flattened" in prompt
     assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "complete ordered ABI capability" in prompt
+    assert "compile-time inactive" in prompt
     assert "tile_slot" in prompt
     assert "accumulator_dtype" in prompt
     assert "lower bound exactly zero" in prompt
