@@ -11,7 +11,9 @@
 
 1. **对生成 = 可选 hint**:有 evidence 就喂给 LLM 增强,**没有也能靠 LLM 直接读源码生成**。evidence 不是必需前置条件,所以**新 kernel 不会因为提不出 evidence 就废**。泛化能力保住。
 2. **对 Gate1 = 诊断辅助**:规则能提多少提多少，用于帮助提升官形成 J/B 与定位表；缺失不阻断 LLM 读源码。Gate1 的裁决仍来自源码隔离重放后的双中层指纹。
-3. **对 Gate2 = 输入设计提示**:evidence 可提示需要覆盖的边界 shape/mask 条件，但最终只以源与重放的实际输出比较为准；production lowering 不参与裁决。
+3. **对 Gate2 = 输入设计提示**:evidence 可提示需要覆盖的边界 shape/mask 条件，
+   但最终只以同一 final J 的 replay 与 scalar MLIR reference 实际输出比较为准；
+   source runtime 与 production target lowering 不参与裁决。
 
 ## 一句话
 

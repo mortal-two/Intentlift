@@ -19,7 +19,8 @@ LLM 的工作是把任意 kernel **直接提取成张量级原子的 IntentIR JS
    `attrs/layer_b` 保持现有开放 JSON 表达，而 J 内的 `layer_c` 必须为空，
    具体 C 只进入独立 schedule。最终由项目严格 parser 裁决并做有界修复。
 3. SCRC Gate1 用源码隔离重放和双 TTIR 结构闭合裁决 J/π 是否装下源结构。
-4. Gate1 闭合后，Gate2 对源与重放使用同一输入矩阵独立实跑并逐输出比较。
+4. Gate1 闭合后，将最终 J 转成 typed `IntentProgram`；Gate2 对该 J 的 replay 与
+   scalar MLIR lowering 使用同一输入矩阵独立实跑并逐输出比较。
 5. 失败 → 结构化诊断回到重写员小修或提升官重提；超过上限则记录未闭合，不强行接受。
 
 ## SCRC 下必须区分两种 LLM 角色

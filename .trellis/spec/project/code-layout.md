@@ -43,7 +43,7 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
       riscv/                  # 能力边界；无实现时不得导出伪 backend
     verify/
       gate1/                  # Lift artifact、RuleRegistry、结构闭合
-      gate2/                  # source/replay 动态比较
+      gate2/                  # final-J replay/scalar reference 动态比较
       back/                   # 历史验证／lowering adapter 归档
     benchmarks/               # 公平、可复现的性能评估入口
   spec/lowering/              # 机器可读 lowering 能力与证据 registry
@@ -65,8 +65,10 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
 - C++ common conversion、CUDA fast path 与 CUDA target legalization 必须是独立
   TableGen/注册函数/CMake library。调用方必须显式 include/link 所属组件；不得恢复
   根级 pass umbrella、聚合 CMake alias 或隐式全量注册。
-- `verify/` 不拥有 production lowering。若完整 A/B/ABI 合同需要被 backend 消费，
-  应迁入 `ir/` 的中立对象，不能长期依赖 Gate2 adapter。
+- `verify/` 不拥有 production target lowering。Gate2 scalar adapter 可以调用
+  `backend/cpu` 的中立 MLIR reference execution，但不得导入 CUDA/ROCm/target selector。
+  若完整 A/B/ABI 合同需要被 backend 消费，应迁入 `ir/` 的中立对象，不能长期依赖
+  Gate2 adapter。
 - backend 根目录不得存放 flat target 实现或 compatibility facade；target package
   不得反向依赖 `benchmarks/`，CPU/RISC-V/toolchain 不得导入 CUDA。
 - selector、dispatch 与 capability registry 不得读取 Gate verdict、provider、Kernel 名、

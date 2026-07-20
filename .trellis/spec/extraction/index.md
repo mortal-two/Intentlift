@@ -34,7 +34,7 @@ source-blind replay 所需的前端适配，以及 evidence／corpus 的角色�
 1. source、launch、compiler-view ABI 参数顺序／kind／dtype／rank 可机械核对；
 2. 产出共享 IntentIR schema，不注入 target backend 特例；
 3. frontend-specific compiler representation 可用于 Gate1 fingerprint；
-4. source/replay 可在隔离 module 与同一输入合同下实际执行；
+4. replay 可隔离执行，且最终 J 可交接为 typed `IntentProgram` 供 scalar Gate2；
 5. unsupported source feature 在 Lift 前或 strict validation 中明确归类；
 6. provenance 绑定 source、capture、compiler-view 与 artifact digest；
 7. 不把其他前端的 J equality 当作本前端证书前置条件。
@@ -45,7 +45,8 @@ source-blind replay 所需的前端适配，以及 evidence／corpus 的角色�
 - [ ] ABI/capture 输入是否可信且 fail closed？
 - [ ] logical index、boundary 与 source realization 是否正确分层？
 - [ ] evidence 是否只作 hint／标尺，而不是隐藏答案或 verdict？
-- [ ] 新前端是否能独立完成 compile fingerprint 与 source/replay execution？
+- [ ] 新前端是否能独立完成 source/replay compile fingerprint、replay execution 与
+  final-J typed scalar handoff？
 
 ## Quality Check
 

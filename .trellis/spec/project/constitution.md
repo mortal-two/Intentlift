@@ -36,16 +36,21 @@ A 单独不是完整 Kernel 含义；C 不改变 J，但可作为 fixed-C replay
 - **三层 A/B/C 不变量**：A/B 是绑定的完整 J；C 是可替换的实现策略。一个源结构若同时承载多层信息，必须因式分解，不能二选一归类。
 - **逻辑 index、合法性与实现地址必须分开**：改变 logical tensor denotation 的 transpose/reverse/gather/scatter 属于 A；bounds、predicate、fill、store guard 属于 B；`program_id/tile/lane` 与物理 staging 属于 C 或 validation-only witness。
 - **LLM 只提案，验证裁决**：LLM 是受约束的提案者；正确性证据来自 strict schema、
-  Gate1 source/replay 结构闭合与 Gate2 声明输入域动态比较，不由 LLM 自证。
+  Gate1 source/replay 结构硬闭合与 Gate2 final-J replay/scalar 声明输入域动态比较，
+  不由 LLM 自证。
 - **LLM 直接提取到原子 IR**:原子化分解由 LLM 在提取阶段完成(这是科研核心价值),产出张量级原子的 IntentIR JSON。re-roll / 识别展开循环也属于 LLM 提取的一部分。
 - **张量级原子粒度**:原子算子是 `map`/`reduce`/`contraction`/`scan` 等张量级结构化原语(linalg 风格),不是标量级 `add`/`mul`,也不是库级 `softmax`/`attention` 大算子。
 - **结构化循环是一等公民**:IR 必须能表达"带状态携带的结构化循环",以支持 FlashAttention 这类递推算子;同一构造放宽即覆盖数据依赖控制流。
 - **atomic / 并发归约是一等公民**:提取成归约意图(Layer A 的 reduce/scatter)+ 结合性标注(Layer B),浮点非结合用 tolerance 验证,不 scope-out。
 - **能力契约理念**：成熟工具卖的是清晰、可审计的 represent/extract/verify/lower
   边界，不是“号称万能”（见 [capability](../capability/index.md)）。
-- **Gate 与 lowering 解耦**：Gate1/Gate2 分别裁决 Lift/replay 的结构与动态证据；
-  backend conformance 检查目标实现是否正确消费 J；performance 单独评价。任何一方都
-  不能代替另一方。
+- **Gate 与 production lowering 解耦**：Gate1 裁决 Lift/replay 结构硬闭合；Gate2
+  使用 backend-neutral scalar reference lower 裁决同一最终 J 的 replay/scalar 动态
+  证据；backend conformance 检查目标实现是否正确消费 J；performance 单独评价。
+  任何一方都不能代替另一方。
+- **不得放宽 Gate1 换取通过**：可以修正错误建模、补齐 J schema/prompt/relift/规则
+  表达与确定性诊断，但不得删除 hard category、把 hard 降为 soft、提高接受阈值、
+  用模糊 score/数值容差覆盖结构差异，或在预算耗尽后接受候选。
 - **中立 lowering 合同**：backend 必须消费完整 `A+B+ABI`，可选消费或重调 C；不得读取 Gate verdict、provider response、source path 或数据集身份来授权 lowering。
 - **B obligation 必须 fail closed**：backend 可以保守忽略 optimization permission，但不能静默忽略 value-driving 字段或 legality obligation。
 - **MLIR 流程固定**：`JSON → Intent MLIR dialect → 标准 MLIR／目标代码`。JSON 到 dialect 不做语义分解，lowering 只做受合同约束的硬件下降与合法优化。
@@ -64,6 +69,10 @@ A 单独不是完整 Kernel 含义；C 不改变 J，但可作为 fixed-C replay
   等价定义，且不能让 compiler pass 猜测语义分解。
 - **不得让 lowering 反向篡改语义**：不能因为某个 backend 暂不支持某字段，就把 correctness-relevant 信息移出 A/B、偷偷烘焙 specialization，或回退到解释器伪装成功。
 - **不得让 Gate verdict 参与 backend 选择**：selector 只能依据中立 IR/ABI、目标能力、显式 schedule 与结构 probe。
+- **不得让 Gate2 依赖 production target backend**：Gate2 的两条规范腿只有 final-J
+  replay 与 scalar MLIR reference；CUDA/ROCm/RISC-V lowering 及 source runtime 都不能
+  代替 scalar comparison。Gate1 未闭合、unsupported 或 execution incomplete 均不能
+  产生 Gate2 PASS。
 
 ## Check Questions
 

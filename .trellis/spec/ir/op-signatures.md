@@ -112,7 +112,8 @@ floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，�
 TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
 两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，
 不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由独立 backend regression
-与历史 IEEE-special 三方实验固定，不引入新 op；当前 Gate2 不裁决 lowering。
+与历史 IEEE-special 三方实验固定，不引入新 op；当前 Gate2 只裁决 scalar reference
+与 replay 的一致性，不裁决 production target lowering。
 
 JSON `const` 表示字面量或按声明 shape 的 splat materialization，例如
 `{"value":1.0,"dtype":"f32","shape":["N"]}`；它直接降为标准

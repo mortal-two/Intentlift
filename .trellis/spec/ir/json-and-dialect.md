@@ -47,9 +47,9 @@ IntentProgram {
 ```
 
 该对象不得包含 Gate verdict、source/replay code、provider response、dataset identity
-或 paper receipt。现有 `IntentFunction`、Gate1 `SemanticArchive` 与历史 Gate2 adapter
-之间的桥接属于迁移状态；新 backend 能力不得继续把完整 B 合同放在 `verify/` 私有对象
-中。
+或 paper receipt。Gate1 `SemanticArchive → IntentProgram` 是严格、digest-bound 的
+交接；Gate2 scalar adapter 只能消费这个中立对象。新 backend 能力不得继续把完整 B
+合同放在 `verify/` 私有对象中。
 
 ## Lowering 纪律
 
