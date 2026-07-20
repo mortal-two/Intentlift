@@ -346,21 +346,25 @@ C 只报告。双方都为空的 category 视为硬相等，但 `applicable=fals
 不贡献聚合 score。score 使用 active-evidence weighting，只作诊断/候选排序；Gate1
 不使用模糊相似度阈值。
 
-## 8. 因果与反泄漏
+## 8. 反泄漏与离线 mutation 诊断边界
 
 ### 8.1 π derivability
 
 正式主证据是 `saved π == fresh compose(...)`、registry digest isolation、零 orphan
 leaf 和 canonical invariance，而不是 masked replay 的分数。
 
-### 8.2 paired J/B intervention
+### 8.2 paired J/B intervention（离线诊断，不是 Gate）
+
+以下机制只用于历史报告复核或显式 mutation self-check。它不属于 canonical
+Gate1/Gate2 live 拓扑，不是 normal J 的准入条件，也不能形成 Gate0/Gate1.5。其结果
+必须标记为 diagnostic，不能计入官方 acceptance evidence。
 
 修改一个注册的合法 J/B 坐标后，冻结 interface/C/registry，**重新 compose π**，
 再由 source-blind writer 从 mutant artifact 全新生成 replay。normal replay code 不得
 进入 mutant prompt。要求出现精确、注册过的 TTIR delta；
 忽略 J、方向错误或 off-target drift 均拒绝。禁止冻结 full-J π 配 mutant J。
 
-### 8.3 C.strategy intervention
+### 8.3 C.strategy intervention（离线诊断，不是 Gate）
 
 实现机制替换只能修改一个 C.strategy binding，再重新 compose/replay。J 与 interface/
 C.schedule 必须不变；J 语义硬项应保持，预期实现结构可以变化。直接篡改 π rule
@@ -369,9 +373,8 @@ C.schedule 必须不变；J 语义硬项应保持，预期实现结构可以变�
 ### 8.4 masked-J + 实际 Lift π 终检
 
 normal replay 的 opaque rename 只关闭命名和显式文本通道，不能验证 π 的 rule
-序列、步骤数量、引用复用和依赖拓扑是否足以替代 J。因此 normal 硬闭合，且当前
-profile 要求的 paired intervention（若有）通过后，Gate1 执行一次有意构造的反事实
-攻击：
+序列、步骤数量、引用复用和依赖拓扑是否足以替代 J。因此 canonical Gate1 在 normal
+硬闭合后直接执行一次有意构造的反事实攻击，不依赖 paired intervention：
 
 ```text
 normal:   writer(full J, actual Lift π, interface, C, rules) -> 必须硬闭合
@@ -411,9 +414,9 @@ pi_ablations            = false
 gate1.interventions     = []
 ```
 
-`test/scrc_live_e2e.py` 的直接 CLI 默认值与该边界相同；paired intervention 与 π
-ablation 只能通过显式参数 opt in，产物必须标记为 diagnostic，不能冒充官方 live
-acceptance evidence。
+底层 `Gate1Config()` 与 `test/scrc_live_e2e.py` 的直接 CLI 默认值都与该边界相同；
+paired intervention 与 π ablation 只能通过显式参数 opt in，产物必须标记为
+diagnostic，不能冒充官方 live acceptance evidence。
 
 该 profile 不运行 paired J/B/C intervention，因此 `wrong_fill_delta` 不可能出现在其
 正式调用链或 acceptance evidence 中。若旧枚举仍用于 mutation/self-check，它只描述
@@ -455,7 +458,8 @@ intervention 与 actual-π masked-J 尚未接通，因此报告必须标记
 `anti_leakage_scope=primary_profile_pending_family_wide`，不得宣称完整 family
 anti-leakage 已完成。
 
-schema-31 将反泄漏终检也接入同一 fixed-C family。每个注册 paired J/B intervention
+历史 schema-31 曾将 paired mutation 诊断也接入同一 fixed-C family。每个注册
+paired J/B intervention
 只生成一份 mutant replay，并在所有 profiles 上分别与该 profile 的 normal replay
 fingerprint 检查注册 exact delta；任一确定性因果差分失败即拒绝，writer/compile/parser
 不完整则返回结构化 `intervention_evidence_incomplete`，不得伪装成 leakage 结论。
@@ -464,7 +468,7 @@ actual-π masked-J 同样只生成一份 masked replay。源码 ABI 恢复后，
 编译并形成可比较 fingerprint，且逐项 hard mismatch；任一 profile hard-close 即
 `LEAKAGE_REJECTED`，任一 profile 缺少可比较证据即 `masked_evidence_incomplete`。masked
 replay 的 pointer access/memory effect 变化本身属于 hard interface/effect 差异，不能被
-前置 artifact-interface 校验吞掉。活动策略为：
+前置 artifact-interface 校验吞掉。复核该历史协议时使用：
 
 - `fixed_c_family_exact_delta_all_profiles_v1`；
 - `actual_lift_pi_fixed_c_family_all_profile_hard_mismatch_v1`；
