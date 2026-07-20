@@ -7,4 +7,3 @@
 {"file":".trellis/spec/lowering/index.md","reason":"Scalar reference versus production target lowering separation."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Observed accepted-artifact soundness gap, canonical parser decision, and required tests."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Dense-constant scalability findings and runtime memref ABI direction."}
-{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/gate1-admission-pi-ablation-audit.md","reason":"Authoritative audit of pre-Gate1 semantic admission and non-executable pi-ablation defects."}

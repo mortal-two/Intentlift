@@ -6,4 +6,3 @@
 {"file":".trellis/spec/project/code-layout.md","reason":"Check mature target-separated package boundaries and no umbrellas."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Check implementation against the observed invalid forms and no-auto-rewrite decision."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Check scalar changes do not use interpreter or unsafe post-Gate1 shape shrinking."}
-{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/gate1-admission-pi-ablation-audit.md","reason":"Check that semantic failures live inside Gate1 and pi ablations execute through writer/compiler."}
