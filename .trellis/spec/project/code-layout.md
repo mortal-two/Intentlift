@@ -43,7 +43,7 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
       riscv/                  # 能力边界；无实现时不得导出伪 backend
     verify/
       gate1/                  # Lift artifact、RuleRegistry、结构闭合
-      gate2/                  # final-J replay/scalar reference 动态比较
+      gate2/                  # source/replay/scalar 三腿与 source-anchored 双差分
       back/                   # 历史验证／lowering adapter 归档
     benchmarks/               # 公平、可复现的性能评估入口
   spec/lowering/              # 机器可读 lowering 能力与证据 registry
