@@ -1,7 +1,7 @@
 {
   "id": "typed-layer-b-gate2",
   "name": "typed-layer-b-gate2",
-  "title": "Source-anchored Gate2 and typed Layer-B lowering readiness",
+  "title": "Typed Layer-B domains and replay-scalar Gate2 closure",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -27,6 +27,6 @@
     "python/intentir/verify/gate1/program_adapter.py",
     "python/intentir/extraction/lifters/scrc.py"
   ],
-  "notes": "Review rejected 05876fe typed predicate admission as a hidden pre-Gate and rejected a191e97 replay-scalar-only Gate2. The active correction requires source-replay plus source-scalar evidence, with handoff failures retained inside the scalar leg. Typed symbol binding remains a lowering capability, not the first admission milestone.",
+  "notes": "Phase 2.1 typed predicate admission landed in 05876fe. The scalable value-independent ranked-memref scalar ABI is implemented with one-call multi-output execution, content-addressed compilation, and an isolated worker. Task remains in progress for explicit typed symbol binding and fresh five-kernel evidence.",
   "meta": {}
 }
