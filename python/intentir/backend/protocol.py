@@ -145,6 +145,11 @@ class BackendConformanceRecord:
             item if isinstance(item, ComparisonEvidence) else ComparisonEvidence(**item)
             for item in self.comparisons
         )
+        if not comparisons:
+            raise BackendProtocolError(
+                "backend conformance requires source, replay, intent, or "
+                "oracle comparison evidence"
+            )
         object.__setattr__(self, "comparisons", comparisons)
 
     @property

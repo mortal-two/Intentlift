@@ -2016,15 +2016,37 @@ def emit_module(
             p.ssa[op.out] = p.ssa[op.result]
             env[op.out] = env[op.result]
 
-    outs = []
+    return_values = {item.output: item.value for item in fn.returns}
+    if len(return_values) != len(fn.returns):
+        raise ValueError("emit_module: duplicate logical return output")
+    unknown_return_outputs = sorted(set(return_values) - {item.name for item in fn.outputs})
+    if unknown_return_outputs:
+        raise ValueError(
+            "emit_module: logical returns reference undeclared outputs "
+            f"{unknown_return_outputs}"
+        )
+    outs: list[tuple[str, str]] = []
     for t in fn.outputs:
-        if t.name not in p.ssa:
-            raise ValueError(f"emit_module: output {t.name!r} never produced")
-        outs.append(t.name)
-    ovals = ", ".join(p.ssa[n] for n in outs)
+        value = return_values.get(t.name, t.name)
+        if value not in p.ssa:
+            raise ValueError(
+                f"emit_module: output {t.name!r} return value {value!r} was never produced"
+            )
+        if value not in env or env[value] != env[t.name]:
+            raise ValueError(
+                f"emit_module: output {t.name!r} shape {env[t.name]} does not "
+                f"match return value {value!r} shape {env.get(value)}"
+            )
+        if value not in dtypes or dtypes[value] != dtypes[t.name]:
+            raise ValueError(
+                f"emit_module: output {t.name!r} dtype {dtypes[t.name]} does not "
+                f"match return value {value!r} dtype {dtypes.get(value)}"
+            )
+        outs.append((t.name, value))
+    ovals = ", ".join(p.ssa[value] for _output, value in outs)
     # Respect i1 (comparison) / integer (iota) result element types so the
     # function signature matches the value actually produced.
-    otys = ", ".join(p._ttn(n, env) for n in outs)
+    otys = ", ".join(p._ttn(output, env) for output, _value in outs)
     name = _sanitize_mlir_symbol(fn.name if func_name is None else func_name)
 
     contract_attrs = _semantic_contract_attributes(fn)
