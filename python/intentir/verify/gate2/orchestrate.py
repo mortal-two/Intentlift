@@ -1,4 +1,4 @@
-"""SCRC Gate2 source/replay and source/scalar differential execution."""
+"""SCRC Gate2 final-J replay/scalar differential execution."""
 
 from __future__ import annotations
 
@@ -14,16 +14,11 @@ from intentir.verify.gate1.compiler import KernelSource
 
 from .compare import compare_outputs
 from .model import Gate2Result, Gate2Status, Gate2SuiteResult, Tolerance
-from .scalar import (
-    ScalarLoweringRequest,
-    ScalarLoweringRunner,
-    ScalarLoweringSpec,
-    ScalarLoweringUnavailable,
-)
+from .scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from .triton import TritonExecutionSpec, TritonRunner
 
 
-GATE2_EXECUTION_PROTOCOL = "source_replay_scalar_differential_v3"
+GATE2_EXECUTION_PROTOCOL = "final_j_replay_scalar_differential_v2"
 
 
 def _input_digest(values: Mapping[str, Any]) -> str:
@@ -57,7 +52,7 @@ class Gate2Case:
     case_id: str
     values: Mapping[str, Any]
     triton: TritonExecutionSpec
-    scalar: ScalarLoweringRequest
+    scalar: ScalarLoweringSpec
     replay_artifact_digest: str
     output_keys: tuple[str, ...]
     tolerances: Mapping[str, Tolerance] = field(default_factory=dict)
@@ -77,12 +72,11 @@ class Gate2Case:
             raise ValueError(
                 "Gate2 replay is not bound to the scalar spec's final artifact"
             )
-        if isinstance(self.scalar, ScalarLoweringSpec):
-            scalar_outputs = set(self.scalar.output_binding_map.values())
-            if set(self.output_keys) != scalar_outputs:
-                raise ValueError(
-                    "Gate2 compared outputs differ from scalar output bindings"
-                )
+        scalar_outputs = set(self.scalar.output_binding_map.values())
+        if set(self.output_keys) != scalar_outputs:
+            raise ValueError(
+                "Gate2 compared outputs differ from scalar output bindings"
+            )
         if len(self.output_keys) != len(set(self.output_keys)):
             raise ValueError("Gate2 output keys must be unique")
         unknown_tolerances = sorted(set(self.tolerances) - set(self.output_keys))
@@ -111,85 +105,57 @@ class Gate2Runner:
     def __init__(
         self,
         *,
-        source_runner: TritonRunner | None = None,
         replay_runner: TritonRunner | None = None,
         scalar_runner: ScalarLoweringRunner | None = None,
     ) -> None:
-        self.source_runner = source_runner or TritonRunner()
         self.replay_runner = replay_runner or TritonRunner()
         self.scalar_runner = scalar_runner or ScalarLoweringRunner()
 
     def run(
         self,
-        source: KernelSource,
         replay: KernelSource,
         case: Gate2Case,
     ) -> Gate2Result:
-        source_result = self.source_runner.run(
-            "source", source, case.triton, case.values
-        )
         replay_result = self.replay_runner.run(
             "replay", replay, case.triton, case.values
         )
-        scalar_result = (
-            case.scalar.execution_result()
-            if isinstance(case.scalar, ScalarLoweringUnavailable)
-            else self.scalar_runner.run(case.scalar, case.values)
-        )
-        source_replay = (
+        scalar_result = self.scalar_runner.run(case.scalar, case.values)
+        replay_scalar = (
             compare_outputs(
-                "source",
-                source_result.outputs,
                 "replay",
                 replay_result.outputs,
-                case.output_keys,
-                case.tolerances,
-            )
-            if source_result.ok and replay_result.ok
-            else None
-        )
-        source_scalar = (
-            compare_outputs(
-                "source",
-                source_result.outputs,
                 "scalar",
                 scalar_result.outputs,
                 case.output_keys,
                 case.tolerances,
             )
-            if source_result.ok and scalar_result.ok
+            if replay_result.ok and scalar_result.ok
             else None
         )
 
         if scalar_result.unsupported:
             status = Gate2Status.SCALAR_UNSUPPORTED
-        elif not source_result.ok or not replay_result.ok or not scalar_result.ok:
+        elif not replay_result.ok or not scalar_result.ok:
             status = Gate2Status.EXECUTION_FAILED
         else:
-            assert source_replay is not None and source_scalar is not None
-            if source_replay.passed and source_scalar.passed:
-                status = Gate2Status.PASS
-            elif not source_replay.passed and not source_scalar.passed:
-                status = Gate2Status.REPLAY_AND_SCALAR_DIVERGED
-            elif not source_replay.passed:
-                status = Gate2Status.REPLAY_DIVERGED
-            else:
-                status = Gate2Status.SCALAR_DIVERGED
+            assert replay_scalar is not None
+            status = (
+                Gate2Status.PASS
+                if replay_scalar.passed
+                else Gate2Status.REPLAY_SCALAR_MISMATCH
+            )
         return Gate2Result(
             case.case_id,
             status,
-            source_result,
             replay_result,
             scalar_result,
-            source_replay,
-            source_scalar,
+            replay_scalar,
             _input_digest(case.values),
             dict(case.metadata),
         )
 
     def run_suite(
         self,
-        source: KernelSource,
         replay: KernelSource,
         suite: Gate2Suite,
     ) -> Gate2SuiteResult:
@@ -197,7 +163,7 @@ class Gate2Runner:
 
         return Gate2SuiteResult(
             suite.suite_id,
-            tuple(self.run(source, replay, case) for case in suite.cases),
+            tuple(self.run(replay, case) for case in suite.cases),
         )
 
 
