@@ -186,6 +186,9 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "Tile-start-plus-lane offsets" in prompt
     assert "complete ordered ABI capability" in prompt
     assert "compile-time inactive" in prompt
+    assert "including such an\n  inactive argument" in prompt
+    assert "complete shape exactly match the trusted" in prompt
+    assert "static ABI typing, not a\n  semantic use" in prompt
     assert "tile_slot" in prompt
     assert "accumulator_dtype" in prompt
     assert "lower bound exactly zero" in prompt
@@ -624,6 +627,80 @@ def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
         step.rule == "bind_runtime_scalar" and step.refs == ["eps"]
         for step in result.artifact.plan.steps
     )
+
+
+def _inactive_tensor_payload_and_view(
+    *, tensor_shape: list[int],
+) -> tuple[dict, scrc.SCRCCompilerView]:
+    payload = _artifact_payload()
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "Optional", "dtype": "f32", "shape": tensor_shape}
+    )
+    payload["j"]["scopes"][0]["definitions"].insert(2, "Optional")
+    payload["interface"]["parameters"].insert(
+        2,
+        {
+            "name": "optional_ptr",
+            "kind": "pointer",
+            "mode": "input",
+            "dtype": "f32",
+            "rank": 1,
+            "tensor_ref": "Optional",
+        },
+    )
+    view = scrc.SCRCCompilerView(
+        {"BLOCK": 64, "num_warps": 4},
+        ("num_warps",),
+        (),
+        (
+            scrc.SCRCCompilerArgument("a_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("b_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("optional_ptr", "tensor", "f32", (1,)),
+            scrc.SCRCCompilerArgument("out_ptr", "tensor", "f32", (65,)),
+            scrc.SCRCCompilerArgument("N", "scalar", "i32", value=65),
+        ),
+        (2,),
+        ("ceil_div(N, BLOCK)",),
+        ("a_ptr", "b_ptr", "optional_ptr", "out_ptr", "N", "BLOCK"),
+        ("BLOCK",),
+    )
+    return payload, view
+
+
+def test_scrc_lift_preserves_exact_typed_inactive_tensor_abi(monkeypatch) -> None:
+    payload, view = _inactive_tensor_payload_and_view(tensor_shape=[1])
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-inactive-tensor"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+
+    artifact = scrc.extract_scrc_artifact(
+        "source", "add_kernel", compiler_view=view, max_repairs=0
+    ).artifact
+
+    parameter = artifact.interface.parameters[2]
+    assert parameter.tensor_ref == "Optional"
+    assert artifact.j.intent.inputs[2].shape == [1]
+    assert not any(
+        access.tensor == "Optional" for access in artifact.j.boundary.accesses
+    )
+
+
+def test_scrc_lift_reports_inactive_tensor_shape_rank_drift(monkeypatch) -> None:
+    payload, view = _inactive_tensor_payload_and_view(tensor_shape=[1, 1])
+    response = LLMReply(
+        json.dumps(payload), "gpt-test", {"id": "resp-inactive-rank-drift"}
+    )
+    monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
+
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source", "add_kernel", compiler_view=view, max_repairs=0
+        )
+
+    diagnostic = str(caught.value)
+    assert "J shape [1, 1] (rank 2)" in diagnostic
+    assert "compiler-view shape [1] (rank 1)" in diagnostic
 
 
 def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:

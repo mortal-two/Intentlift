@@ -560,10 +560,15 @@ Cross-field rules:
 - KernelInterface mode describes the complete ordered ABI capability, while a
   frozen-C specialization may compile an input/output/inout pointer to no TTIR
   access. Preserve that formal parameter and its declared mode in exact ABI
-  order, but when its guarded feature is compile-time inactive, do not invent a
-  Layer-A operand use, Boundary access/effect, output, or alias merely to make
-  every formal parameter appear active. Source and replay must still agree on
-  the specialized TTIR access exactly;
+  order. Every compiler-view argument with kind=tensor, including such an
+  inactive argument, still requires tensor_ref to name a typed J tensor
+  declaration whose dtype, rank and complete shape exactly match the trusted
+  compiler-view specialization. That declaration is static ABI typing, not a
+  semantic use: when the guarded feature is compile-time inactive, do not put
+  the tensor in an IntentOp operand or invent a Boundary access/effect,
+  produced output mapping, alias or storage merely to make the formal
+  parameter appear active. Source and replay must still agree on the
+  specialized TTIR access exactly;
 - canonicalize reciprocal square root in J as sqrt followed by recip. The replay
   may recover the source-native mechanism through the selected rule card;
 - when the source spells a mean as local sum divided by the runtime logical
@@ -1325,10 +1330,21 @@ def extract_scrc_artifact(
                                     f"{parameter.rank!r} != {expected_rank}"
                                 )
                             tensor = tensors.get(parameter.tensor_ref or "")
-                            if tensor is None or len(tensor.shape) != expected_rank:
+                            if tensor is None:
                                 raise ValueError(
                                     f"interface parameter {parameter.name!r} "
-                                    "tensor_ref rank differs from compiler view"
+                                    "tensor_ref must name a typed J tensor with "
+                                    "the trusted compiler-view shape "
+                                    f"{list(argument.shape)!r}"
+                                )
+                            if len(tensor.shape) != expected_rank:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    f"tensor_ref {parameter.tensor_ref!r} names "
+                                    f"J shape {tensor.shape!r} (rank "
+                                    f"{len(tensor.shape)}), expected trusted "
+                                    f"compiler-view shape {list(argument.shape)!r} "
+                                    f"(rank {expected_rank})"
                                 )
                             if _canonical_dtype(tensor.dtype) != _canonical_dtype(
                                 argument.dtype

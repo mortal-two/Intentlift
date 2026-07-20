@@ -277,8 +277,12 @@ def _interface_schema() -> dict[str, Any]:
         description=(
             "A callable parameter. tensor_ref is the only field that links a "
             "pointer/tensor parameter or a computation-valued scalar parameter "
-            "to a J tensor; semantic scalars use shape=[]. Do not invent "
-            "dimension reference fields."
+            "to a J tensor; semantic scalars use shape=[]. Every trusted "
+            "compiler-view tensor argument, including one unused by the frozen "
+            "specialization, keeps a tensor_ref whose J tensor dtype, rank and "
+            "shape exactly match that view. The inactive tensor remains a typed "
+            "ABI declaration but has no invented operation, access or effect. "
+            "Do not invent dimension reference fields."
         ),
     )
     return _closed_object(
