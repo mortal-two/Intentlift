@@ -1076,19 +1076,26 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "realize_broadcast",
             Frontend.TRITON,
-            version="2",
+            version="3",
             applies_to=["boundary.broadcasts"],
             reads=["operand", "axes"],
             api_mapping={
                 "scalar_to_tile": "use the scalar operand directly",
-                "rank_insertion": "tl.expand_dims",
+                "rank_insertion": (
+                    "bind tl.expand_dims(operand, exact local insertion axis) "
+                    "at this declared consumer"
+                ),
             },
             example=(
-                "A scalar reduction result consumed by the same 1-D tile broadcasts "
-                "implicitly; use tl.expand_dims only for an actual local rank insertion."
+                "For every non-scalar boundary.broadcast, keep the source operand "
+                "at its original rank and bind a dedicated tl.expand_dims value "
+                "at the referenced consumer. Scalar values remain direct operands."
             ),
             pitfalls=[
-                "Semantic broadcast axes do not automatically imply a local expand_dims."
+                "Do not pre-expand a domain coordinate for multiple consumers.",
+                "Do not rely on implicit broadcasting for a declared non-scalar "
+                "rank insertion.",
+                "Do not add expand_dims for a rank-0 scalar operand.",
             ],
         ),
         _default_triton_card(

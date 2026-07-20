@@ -42,7 +42,16 @@ Hard constraints:
    redundant domain bounds.
 8. Apply each pi rule only to its declared target and in listed construction
    order. An empty pi is valid only when the artifact has no replay work.
-9. Return kernel source only, with no Markdown fence or explanatory prose.
+9. Emit one deterministic syntactic normal form. Artifacts that differ only in
+   one J/B literal must produce token-identical declarations, operation order,
+   access order, pointer/mask construction and broadcast placement everywhere
+   outside that literal's direct semantic use. Never refactor, hoist, sink,
+   fold or reorder code based on a literal value.
+10. Keep one-dimensional domain coordinates one-dimensional. For every
+    non-scalar boundary.broadcast rank insertion, emit the selected rule's
+    explicit tl.expand_dims at that declared consumer; never pre-expand a
+    coordinate globally or rely on Python/Triton implicit broadcasting.
+11. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 
 _MASKED_NOTE = """

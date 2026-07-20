@@ -833,6 +833,8 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "BLOCK_N" in normal
     assert "128" not in normal
     assert "tl.sum" in normal  # concrete API names live in selected system rule cards
+    assert "one deterministic syntactic normal form" in normal
+    assert "pre-expand a" in normal
     assert '"reference_naming": "opaque_replay_refs_v1"' in normal
     assert "reduce_sum_node" not in normal
     assert "input_masked_load" not in normal

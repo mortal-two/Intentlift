@@ -2003,6 +2003,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     ].example
     assert cards["realize_masked_access"].version == "3"
     assert cards["realize_masked_access"].api_mapping["vector_conjunction"] == "&"
+    assert cards["realize_broadcast"].version == "3"
     assert cards["realize_elementwise"].version == "4"
     assert cards["realize_elementwise"].api_mapping["recip"] == "1.0 / operand"
     assert cards["realize_elementwise"].api_mapping["abs"] == "tl.abs"

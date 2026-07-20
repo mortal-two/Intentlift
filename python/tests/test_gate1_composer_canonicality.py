@@ -694,6 +694,16 @@ def test_exact_duplicate_broadcast_declarations_fail_closed() -> None:
         compose_replay_plan(artifact, default_triton_rule_registry())
 
 
+def test_broadcast_rule_requires_deterministic_explicit_rank_insertion() -> None:
+    card = default_triton_rule_registry().get(
+        "realize_broadcast", frontend=Frontend.TRITON
+    )
+
+    assert card.version == "3"
+    assert "tl.expand_dims" in card.api_mapping["rank_insertion"]
+    assert any("implicit broadcasting" in item for item in card.pitfalls)
+
+
 def test_provenance_covers_every_pi_leaf_without_orphans() -> None:
     result = compose_replay_plan(_artifact(), default_triton_rule_registry())
     expected_leaves = _leaf_pointers(result.plan.to_json())
