@@ -10,6 +10,7 @@ fail before lowering.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from intentir.ir.abi import LogicalArgument, LogicalInterface
@@ -164,6 +165,8 @@ def _value_ranks(function: IntentFunction) -> dict[str, int]:
     for op in function.body:
         operands = [ranks[name] for name in op.operands if name in ranks]
         declared_shape = op.type.get("shape") if isinstance(op.type, dict) else None
+        if declared_shape is None and op.op == "const":
+            declared_shape = op.attrs.get("shape")
         if isinstance(declared_shape, list):
             rank = len(declared_shape)
         elif op.op == "reduce" and operands:
@@ -183,6 +186,36 @@ def _value_ranks(function: IntentFunction) -> dict[str, int]:
                 if isinstance(result, str):
                     ranks[result] = rank
     return ranks
+
+
+def _artifact_from_payload(payload: dict[str, Any]) -> Gate1Artifact:
+    """Parse a raw artifact or the explicitly redacted live-report form.
+
+    Live reports replace privileged source text with a digest and byte count.
+    Those two evidence fields are not part of Gate1Artifact and must not cross
+    the neutral hand-off.  Recognize only that exact pair, validate it, then
+    retain Gate1Artifact's strict rejection of every other unknown field.
+    """
+
+    data = copy.deepcopy(payload)
+    has_digest = "source_sha256" in data
+    has_bytes = "source_bytes" in data
+    if has_digest != has_bytes:
+        raise GateProgramHandoffError(
+            "redacted Gate1 artifact requires source_sha256 and source_bytes together"
+        )
+    if has_digest:
+        digest = data.pop("source_sha256")
+        byte_count = data.pop("source_bytes")
+        if "source" in data:
+            raise GateProgramHandoffError(
+                "Gate1 artifact cannot contain source and redacted source evidence together"
+            )
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise GateProgramHandoffError("redacted Gate1 source digest is malformed")
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0:
+            raise GateProgramHandoffError("redacted Gate1 source byte count is malformed")
+    return Gate1Artifact.from_json(data)
 
 
 def _value_dtypes(function: IntentFunction) -> dict[str, str]:
@@ -277,7 +310,7 @@ def intent_program_from_gate1(artifact: Gate1Artifact | dict[str, Any]) -> Inten
     """Build the exact target-neutral lowering contract or fail closed."""
 
     if not isinstance(artifact, Gate1Artifact):
-        artifact = Gate1Artifact.from_json(artifact)
+        artifact = _artifact_from_payload(artifact)
     function, legacy_by_node = _normalize_function(artifact)
     node_by_path = {path: node_id for node_id, path in artifact.j.node_ids.items()}
     nodes = {op.node_id: op for op in function.body if op.node_id is not None}

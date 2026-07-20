@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 
 import pytest
@@ -29,6 +30,7 @@ from intentir.verify.gate1 import (
     AccessKind,
     Boundary,
     BoundaryAccess,
+    BroadcastSpec,
     Frontend,
     Gate1Artifact,
     KernelInterface,
@@ -242,6 +244,90 @@ def test_gate_adapter_drops_privileged_fields_and_keeps_typed_ab_abi() -> None:
         "replay_closed", "provider", "location_map", "provenance",
     ):
         assert forbidden not in serialized
+
+
+def test_gate_adapter_accepts_only_the_validated_live_report_redaction_pair() -> None:
+    payload = _gate_artifact().to_json()
+    source = payload.pop("source")
+    encoded = source.encode("utf-8")
+    payload["source_sha256"] = hashlib.sha256(encoded).hexdigest()
+    payload["source_bytes"] = len(encoded)
+
+    program = intent_program_from_gate1(payload)
+    assert "source_sha256" not in program.to_json_str()
+
+    malformed = dict(payload)
+    malformed.pop("source_bytes")
+    with pytest.raises(ValueError, match="requires source_sha256 and source_bytes together"):
+        intent_program_from_gate1(malformed)
+
+    unknown = dict(payload)
+    unknown["gate1_status"] = "replay_closed"
+    with pytest.raises(ValueError, match="unknown key"):
+        intent_program_from_gate1(unknown)
+
+
+def test_gate_adapter_uses_const_shape_for_scalar_broadcast_rank() -> None:
+    artifact = _gate_artifact()
+    artifact.j.intent = IntentFunction.from_json(
+        {
+            "name": "scalar_broadcast",
+            "inputs": [
+                {"name": "x", "dtype": "f32", "shape": ["M", "N"]}
+            ],
+            "outputs": [
+                {"name": "out", "dtype": "f32", "shape": ["M", "N"]}
+            ],
+            "body": [
+                {
+                    "op": "const", "result": "scale", "attrs": {
+                        "value": 0.5, "dtype": "f32", "shape": [],
+                    },
+                },
+                {
+                    "op": "map_binary", "result": "y",
+                    "operands": ["x", "scale"], "attrs": {"fn": "mul"},
+                },
+            ],
+        }
+    )
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    artifact.j.boundary = Boundary(
+        accesses=[
+            BoundaryAccess(
+                "a0", AccessKind.LOAD, "x", node_ref="n1",
+                index_expression="row * N + col",
+            ),
+            BoundaryAccess(
+                "a1", AccessKind.STORE, "out", node_ref="n1",
+                index_expression="row * N + col",
+            ),
+        ],
+        broadcasts=[BroadcastSpec("n1", "scale", [0, 1])],
+        output_mappings=[OutputMapping("out", "y", "n1")],
+    )
+    artifact.interface = KernelInterface(
+        "private_kernel_id",
+        Frontend.TRITON,
+        [
+            KernelParameter(
+                "x_ptr", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 2, tensor_ref="x",
+            ),
+            KernelParameter(
+                "out_ptr", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                "f32", 2, tensor_ref="out",
+            ),
+        ],
+        ["M"],
+        function_name="scalar_broadcast",
+    )
+
+    program = intent_program_from_gate1(artifact)
+    broadcast = program.boundary.broadcasts[0]
+    assert broadcast.source_rank == 0
+    assert broadcast.consumer_rank == 2
+    assert broadcast.inserted_semantic_axes == (0, 1)
 
 
 def test_legacy_op_layer_b_cannot_silently_cross_program_handoff() -> None:
