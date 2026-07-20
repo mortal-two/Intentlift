@@ -342,6 +342,18 @@ def test_normal_gate1_profile_keeps_real_closure_without_ablations() -> None:
     assert not config.run_composer_shadow
 
 
+def test_formal_gate1_profile_can_disable_paired_interventions() -> None:
+    config = _gate1_config(
+        "formal", relift_rounds=3, semantic_interventions=0
+    )
+
+    assert config.max_relifts == 3
+    assert not config.run_semantic_interventions
+    assert config.max_semantic_interventions == 0
+    assert config.run_masked_ablation
+    assert config.run_composer_shadow
+
+
 def test_live_case_builds_an_ordered_fixed_c_family() -> None:
     base = build_case(_args("add"))
     profiles = (
@@ -661,7 +673,8 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
             "fixed_c_family_exact_delta_all_profiles_v1"
         ),
         "paired_intervention_scope": "primary_profile",
-        "maximum_provider_attempts_per_generation": 3,
+        "maximum_provider_attempts_per_generation": 1,
+        "provider_request_policy": "effort_aware_no_blind_xhigh_retry",
         "compose_equality": "gate1_verdict_condition",
         "masked_j_role": "actual_lift_pi_terminal_attack",
         "masked_j_policy": (

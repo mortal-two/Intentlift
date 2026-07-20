@@ -329,8 +329,8 @@ class ResponsesReplayWriter:
         provider: ProviderConfig | None = None,
         model_candidates: Sequence[str] | None = None,
         effort: str = "high",
-        max_retries: int = 2,
-        timeout: float = 600.0,
+        max_retries: int | None = None,
+        timeout: float | None = None,
     ) -> None:
         self.provider = provider or get_provider()
         self.model_candidates = tuple(model_candidates or (self.provider.model,))

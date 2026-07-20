@@ -34,7 +34,9 @@ OFFICIAL_MODEL = "gpt-5.6-sol"
 OFFICIAL_EFFORT = "xhigh"
 OFFICIAL_GATE1_PROFILE = "formal"
 OFFICIAL_LOWERING_BACKEND = "cuda"
-CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate-cuda.v1"
+OFFICIAL_SEMANTIC_INTERVENTIONS = 0
+OFFICIAL_PI_ABLATIONS = False
+CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate-cuda.v2"
 DEFAULT_REGISTRY = ROOT / "spec/lowering/high-performance-kernels.json"
 DEFAULT_CAPTURE_MANIFEST = Path(
     "/home/kingdom/phdworks/TianchenIR-rebuttal/artifacts/gate_paper/"
@@ -249,8 +251,8 @@ def _official_args(args: argparse.Namespace) -> argparse.Namespace:
         seed=args.seed,
         lift_repairs=args.lift_repairs,
         relift_rounds=args.relift_rounds,
-        semantic_interventions=args.semantic_interventions,
-        pi_ablations=args.pi_ablations,
+        semantic_interventions=OFFICIAL_SEMANTIC_INTERVENTIONS,
+        pi_ablations=OFFICIAL_PI_ABLATIONS,
         pi_ablation_limit=args.pi_ablation_limit,
         pi_ablation_kinds=None,
         diagnose_rejected=False,
@@ -289,8 +291,47 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
             failures.append("provider_requested_effort_mismatch")
         if provider_request.get("api_key_recorded") is not False:
             failures.append("provider_api_key_recording_policy_mismatch")
-    if report.get("gate1", {}).get("status") != "replay_closed":
+    gate1 = report.get("gate1")
+    if not isinstance(gate1, Mapping) or gate1.get("status") != "replay_closed":
         failures.append("gate1_not_closed")
+    else:
+        interventions = gate1.get("interventions")
+        if not isinstance(interventions, list) or interventions:
+            failures.append("paired_interventions_present")
+        masked_generation = gate1.get("masked_generation")
+        if not isinstance(masked_generation, Mapping):
+            failures.append("missing_masked_j_generation")
+        else:
+            if masked_generation.get("masked") is not True:
+                failures.append("masked_j_generation_not_masked")
+            if not masked_generation.get("response_id"):
+                failures.append("missing_masked_j_response_id")
+            if masked_generation.get("requested_model") != OFFICIAL_MODEL:
+                failures.append("masked_j_requested_model_mismatch")
+            if masked_generation.get("response_model") != OFFICIAL_MODEL:
+                failures.append("masked_j_response_model_mismatch")
+        if gate1.get("masked_outcome") not in {
+            "hard_mismatch",
+            "compile_nonclosure",
+        }:
+            failures.append("masked_j_did_not_nonclose")
+    anti_leakage = report.get("gate1_anti_leakage_policy")
+    if not isinstance(anti_leakage, Mapping):
+        failures.append("missing_anti_leakage_policy")
+    else:
+        if anti_leakage.get("paired_semantic_interventions") is not False:
+            failures.append("paired_interventions_not_disabled")
+        if anti_leakage.get("maximum_interventions") != 0:
+            failures.append("paired_intervention_budget_not_zero")
+        pi_policy = anti_leakage.get("pi_ablations")
+        if (
+            not isinstance(pi_policy, Mapping)
+            or pi_policy.get("enabled") is not False
+        ):
+            failures.append("pi_ablations_not_disabled")
+    pi_ablations = report.get("pi_ablations")
+    if pi_ablations not in (None, []):
+        failures.append("pi_ablation_evidence_present")
     if report.get("gate2", {}).get("status") != "gate2_pass":
         failures.append("gate2_cuda_not_passed")
     if report.get("gate2_lowering_policy", {}).get("backend") != "cuda":
@@ -438,6 +479,14 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             "historical_candidate_json_as_input": "forbidden",
             "gate1_profile": OFFICIAL_GATE1_PROFILE,
             "lowering_backend": OFFICIAL_LOWERING_BACKEND,
+            "semantic_interventions": OFFICIAL_SEMANTIC_INTERVENTIONS,
+            "pi_ablations": OFFICIAL_PI_ABLATIONS,
+            "required_path": [
+                "fresh_lift",
+                "normal_replay",
+                "masked_j",
+                "cuda_gate2",
+            ],
             "origin": dict(case.origin),
         }
         passed, failures = _fresh_contract(report)
@@ -474,6 +523,8 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "effort": OFFICIAL_EFFORT,
         "gate1_profile": OFFICIAL_GATE1_PROFILE,
         "lowering_backend": OFFICIAL_LOWERING_BACKEND,
+        "semantic_interventions": OFFICIAL_SEMANTIC_INTERVENTIONS,
+        "pi_ablations": OFFICIAL_PI_ABLATIONS,
         "selected": len(cases),
         "fresh_full_pipeline_passed": sum(
             bool(row["fresh_full_pipeline"]) for row in rows
@@ -519,11 +570,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20260720)
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--relift-rounds", type=int, default=3)
-    parser.add_argument("--semantic-interventions", type=int, default=3)
+    parser.add_argument("--semantic-interventions", type=int, default=0)
     parser.add_argument(
         "--pi-ablations",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
     )
     parser.add_argument("--pi-ablation-limit", type=int, default=3)
     parser.add_argument("--gate2-matrix", action="store_true")

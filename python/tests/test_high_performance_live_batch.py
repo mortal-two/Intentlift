@@ -31,6 +31,8 @@ def test_official_campaign_configuration_is_not_cli_overridable() -> None:
     assert official.effort == "xhigh"
     assert official.gate1_profile == "formal"
     assert official.lowering_backend == "cuda"
+    assert official.semantic_interventions == 0
+    assert not official.pi_ablations
     assert not official.diagnose_rejected
 
 
@@ -45,7 +47,22 @@ def test_fresh_contract_rejects_wrong_model_cache_and_missing_cuda() -> None:
             "response_ids": [],
             "usage": {},
         },
-        "gate1": {"status": "replay_closed"},
+        "gate1": {
+            "status": "replay_closed",
+            "interventions": [],
+            "masked_generation": {
+                "masked": True,
+                "response_id": "resp_masked",
+                "requested_model": "gpt-5.6-sol",
+                "response_model": "gpt-5.6-sol",
+            },
+            "masked_outcome": "hard_mismatch",
+        },
+        "gate1_anti_leakage_policy": {
+            "paired_semantic_interventions": False,
+            "maximum_interventions": 0,
+            "pi_ablations": {"enabled": False},
+        },
         "gate2": {"status": "gate2_pass"},
         "gate2_lowering_policy": {"backend": "cpu"},
     }
@@ -79,11 +96,69 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
             "usage": {"total_tokens": 1},
         },
         "gate1": {"status": "replay_closed"},
+        "gate1_anti_leakage_policy": {
+            "paired_semantic_interventions": False,
+            "maximum_interventions": 0,
+            "pi_ablations": {"enabled": False},
+        },
         "gate2": {"status": "gate2_pass"},
         "gate2_lowering_policy": {"backend": "cuda"},
     }
 
+    report["gate1"].update(
+        {
+            "interventions": [],
+            "masked_generation": {
+                "masked": True,
+                "response_id": "resp_masked",
+                "requested_model": "gpt-5.6-sol",
+                "response_model": "gpt-5.6-sol",
+            },
+            "masked_outcome": "hard_mismatch",
+        }
+    )
+
     assert batch._fresh_contract(report) == (True, [])
+
+
+def test_fresh_contract_rejects_interventions_or_missing_masked_j() -> None:
+    report = {
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "lift": {
+            "ok": True,
+            "response_model": "gpt-5.6-sol",
+            "response_ids": ["resp_fresh"],
+            "usage": {"total_tokens": 1},
+        },
+        "gate1": {
+            "status": "replay_closed",
+            "interventions": [{"status": "pass"}],
+            "masked_generation": None,
+            "masked_outcome": None,
+        },
+        "gate1_anti_leakage_policy": {
+            "paired_semantic_interventions": True,
+            "maximum_interventions": 3,
+            "pi_ablations": {"enabled": True},
+        },
+        "pi_ablations": [{"status": "rejected"}],
+        "gate2": {"status": "gate2_pass"},
+        "gate2_lowering_policy": {"backend": "cuda"},
+    }
+
+    passed, failures = batch._fresh_contract(report)
+
+    assert not passed
+    assert {
+        "paired_interventions_present",
+        "missing_masked_j_generation",
+        "masked_j_did_not_nonclose",
+        "paired_interventions_not_disabled",
+        "paired_intervention_budget_not_zero",
+        "pi_ablations_not_disabled",
+        "pi_ablation_evidence_present",
+    }.issubset(failures)
 
 
 def test_performance_state_requires_measured_correct_output() -> None:

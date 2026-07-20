@@ -655,7 +655,7 @@ def _gate1_config(
     return Gate1Config(
         max_relifts=relift_rounds,
         stable_closures=1,
-        run_semantic_interventions=formal,
+        run_semantic_interventions=(formal and semantic_interventions > 0),
         max_semantic_interventions=(semantic_interventions if formal else 0),
         run_masked_ablation=formal,
         run_composer_shadow=formal,
@@ -1470,8 +1470,8 @@ def run_case(
     semantic_interventions = int(
         getattr(args, "semantic_interventions", 3)
     )
-    if semantic_interventions < 1:
-        raise ValueError("semantic_interventions must be positive")
+    if semantic_interventions < 0:
+        raise ValueError("semantic_interventions must be non-negative")
     pi_ablations_enabled = (
         bool(getattr(args, "pi_ablations", True)) and gate1_formal
     )
@@ -1539,11 +1539,17 @@ def run_case(
             "fixed_c_family_closure_policy": (
                 GATE1_FAMILY_ANTI_LEAKAGE_POLICY
             ),
-            "paired_semantic_interventions": gate1_formal,
+            "paired_semantic_interventions": (
+                gate1_formal and semantic_interventions > 0
+            ),
             "maximum_interventions": (
                 semantic_interventions if gate1_formal else 0
             ),
-            "paired_replay_generation": "fresh_from_mutated_lift_artifact",
+            "paired_replay_generation": (
+                "fresh_from_mutated_lift_artifact"
+                if gate1_formal and semantic_interventions > 0
+                else "disabled"
+            ),
             "paired_intervention_family_policy": (
                 PAIRED_INTERVENTION_FAMILY_POLICY
             ),
@@ -1552,7 +1558,10 @@ def run_case(
                 if case.gate1_specialization_profiles
                 else "primary_profile"
             ),
-            "maximum_provider_attempts_per_generation": 3,
+            "maximum_provider_attempts_per_generation": (
+                1 if args.effort.strip().lower() == "xhigh" else 4
+            ),
+            "provider_request_policy": "effort_aware_no_blind_xhigh_retry",
             "compose_equality": "gate1_verdict_condition",
             "masked_j_role": (
                 "actual_lift_pi_terminal_attack"
@@ -1705,7 +1714,6 @@ def run_case(
         provider=provider,
         model_candidates=(args.model,),
         effort=args.effort,
-        max_retries=3,
     )
     relifter = ResponsesSCRCRelifter(
         registry=registry,
