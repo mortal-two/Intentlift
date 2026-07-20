@@ -52,6 +52,35 @@ def test_registry_evidence_paths_and_cuda_fast_path_ids_are_real() -> None:
             assert kernel.candidate_fast_path_id in known_fast_paths
 
 
+def test_five_kernel_lit_evidence_tracks_the_exact_lowering_fixtures() -> None:
+    registry = load_high_performance_registry(_REGISTRY)
+    expected = {
+        "high_performance:liger_geglu": {
+            "test/lower-elementwise-to-gpu.mlir",
+        },
+        "high_performance:liger_kl_div": {
+            "test/lower-kl-div-to-gpu.mlir",
+            "test/lower-kl-div-per-row-to-gpu.mlir",
+            "test/lower-log-sub-to-nvvm.mlir",
+        },
+        "high_performance:liger_tvd": {
+            "test/lower-tvd-to-gpu.mlir",
+        },
+        "high_performance:liger_layer_norm": {
+            "test/lower-layer-norm-to-gpu.mlir",
+            "test/lower-row-deferred-col-to-gpu.mlir",
+        },
+        "high_performance:liger_rope": {
+            "test/lower-rope-to-gpu.mlir",
+        },
+    }
+
+    assert {
+        kernel_id: set(registry.by_id[kernel_id].lit_tests)
+        for kernel_id in expected
+    } == expected
+
+
 def test_registry_is_lowering_only_and_keeps_extraction_gaps_separate() -> None:
     payload = json.loads(_REGISTRY.read_text(encoding="utf-8"))
     serialized = json.dumps(payload, sort_keys=True).lower()

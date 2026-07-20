@@ -1,6 +1,6 @@
 {
   "schema_version": "intentir.lowering.high-performance.v1",
-  "updated_on": "2026-07-19",
+  "updated_on": "2026-07-20",
   "scope": "lowering_only",
   "counting": {
     "direct_jit_kernels": 28,
@@ -122,7 +122,7 @@
       "symbol": "_triton_rope",
       "mechanisms": ["rope_indexed_inplace"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_rope_pk.py::test_rope_pk_vs_liger"], "lit_tests": []},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_rope_pk.py::test_rope_pk_vs_liger"], "lit_tests": ["test/lower-rope-to-gpu.mlir"]},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["exact captured stride/in-place graph is not yet emitted by the canonical extractor"]
     },
@@ -221,7 +221,7 @@
       "symbol": "_kldiv_kernel_forward",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_loss_divergence_pk.py::test_kl_div_pk_vs_liger"], "lit_tests": ["test/lower-kl-div-per-row-to-gpu.mlir", "test/lower-log-sub-to-nvvm.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_loss_divergence_pk.py::test_kl_div_pk_vs_liger"], "lit_tests": ["test/lower-kl-div-to-gpu.mlir", "test/lower-kl-div-per-row-to-gpu.mlir", "test/lower-log-sub-to-nvvm.mlir"]},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -265,7 +265,7 @@
       "symbol": "_tv_distance_kernel",
       "mechanisms": ["elementwise"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_tvd_pk.py::test_tvd_pk_vs_liger"], "lit_tests": ["test/lower-elementwise-to-gpu.mlir"]},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_tvd_pk.py::test_tvd_pk_vs_liger"], "lit_tests": ["test/lower-tvd-to-gpu.mlir"]},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["captured reduction=3 variant is not the executed reduction=none slice"]
     },
