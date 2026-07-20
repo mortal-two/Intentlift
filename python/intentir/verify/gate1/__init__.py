@@ -130,7 +130,9 @@ from .pi_ablations import (
     PiAblationRecord,
     PiAblationSpec,
     PiAblationStatus,
+    PiStepClassification,
     build_pi_ablations,
+    classify_pi_steps,
     run_pi_ablations,
 )
 from .compiler import (
@@ -259,7 +261,7 @@ __all__ = [
     "InterventionKind", "InterventionProfileRecord", "InterventionRecord", "InterventionStatus",
     "InterventionVerdict", "SemanticIntervention",
     "PiAblationKind", "PiAblationRecord", "PiAblationSpec",
-    "PiAblationStatus",
+    "PiAblationStatus", "PiStepClassification",
     "ReliftEvidence", "ReliftGuidance", "ReliftRequest", "ReliftTrigger",
     "Relifter",
     "StagnationEvidence",
@@ -272,7 +274,7 @@ __all__ = [
     "TritonCompiler", "TritonRuntimeArgument", "analyze_failure",
     "compare_fingerprints", "compare_ttir", "default_triton_rule_registry",
     "build_semantic_interventions", "evaluate_semantic_intervention",
-    "build_pi_ablations", "run_pi_ablations",
+    "build_pi_ablations", "classify_pi_steps", "run_pi_ablations",
     "diagnose_comparison", "diagnose_compile_failure", "fingerprint_ttir",
     "parse_ttir", "sanitize_replay_diagnostic", "summarize_capability",
 ]

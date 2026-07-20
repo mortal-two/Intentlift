@@ -50,6 +50,7 @@ from intentir.verify.gate1 import (
     build_normal_rewriter_view,
     build_rewriter_payload,
     build_rewriter_prompt,
+    classify_pi_steps,
     compose_replay_plan,
     default_triton_rule_registry,
     materialize_replay_plan,
@@ -1137,22 +1138,51 @@ def test_pi_ablation_specs_are_deterministic_and_keep_normal_validation() -> Non
     specs = build_pi_ablations(artifact, registry, limit=2)
 
     assert [spec.kind.value for spec in specs] == [
+        "j_only",
         "plan_step_dropout",
-        "plan_mechanism_substitution",
     ]
-    assert specs[0].dropped_step_index == 0
-    assert specs[0].dropped_rule == "bind_wide_program_domain"
-    assert specs[0].dropped_target == "column_domain"
-    assert len(specs[0].plan.steps) == len(artifact.plan.steps) - 1
+    assert specs[0].plan.steps == []
+    assert specs[1].dropped_step_index == 0
+    assert specs[1].dropped_rule == "bind_wide_program_domain"
+    assert specs[1].dropped_target == "column_domain"
+    assert len(specs[1].plan.steps) == len(artifact.plan.steps) - 1
 
     with pytest.raises(ComposeMismatchError):
-        assert_replay_plan_matches(artifact, registry, specs[0].plan)
+        assert_replay_plan_matches(artifact, registry, specs[1].plan)
+
+    j_only_payload = build_rewriter_payload(
+        artifact,
+        registry,
+        plan_override=specs[0].plan,
+        ablation_kind=specs[0].kind.value,
+    )
+    assert j_only_payload["plan"] == {"steps": []}
+    assert j_only_payload["rule_selection"] == []
+    assert j_only_payload["rule_cards"] == []
+
+    dropout_payload = build_rewriter_payload(
+        artifact,
+        registry,
+        plan_override=specs[1].plan,
+        ablation_kind=specs[1].kind.value,
+    )
+    assert specs[1].dropped_rule not in {
+        card["id"] for card in dropout_payload["rule_cards"]
+    }
+    assert dropout_payload["ablation"] == {"kind": "plan_step_dropout"}
+
+    classifications = classify_pi_steps(artifact, registry)
+    administrative = [
+        item for item in classifications if item.role.value == "administrative"
+    ]
+    assert administrative
+    assert {item.rule for item in administrative} == {"declare_schedule_slot"}
 
     dropout_only = build_pi_ablations(
         artifact,
         registry,
         limit=1,
-        kinds=(specs[0].kind,),
+        kinds=(specs[1].kind,),
     )
     assert len(dropout_only) == 1
     assert dropout_only[0].kind.value == "plan_step_dropout"
