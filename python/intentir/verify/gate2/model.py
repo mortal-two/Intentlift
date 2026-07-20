@@ -1,4 +1,4 @@
-"""Result model for digest-bound replay/scalar Gate2 execution."""
+"""Result model for source-anchored Gate2 dynamic execution."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ import numpy as np
 
 class Gate2Status(str, Enum):
     PASS = "gate2_pass"
-    REPLAY_SCALAR_MISMATCH = "replay_scalar_mismatch"
+    REPLAY_DIVERGED = "replay_diverged"
+    SCALAR_DIVERGED = "scalar_diverged"
+    REPLAY_AND_SCALAR_DIVERGED = "replay_and_scalar_diverged"
     SCALAR_UNSUPPORTED = "scalar_unsupported"
     EXECUTION_FAILED = "execution_failed"
 
@@ -58,9 +60,11 @@ class PairwiseAgreement:
 class Gate2Result:
     case_id: str
     status: Gate2Status
+    source: ExecutionResult
     replay: ExecutionResult
     scalar: ExecutionResult
-    replay_scalar: PairwiseAgreement | None = None
+    source_replay: PairwiseAgreement | None = None
+    source_scalar: PairwiseAgreement | None = None
     input_digest: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
