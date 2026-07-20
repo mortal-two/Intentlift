@@ -1,7 +1,8 @@
 //===- ConvertIntentToLinalg.cpp - intent -> linalg/tensor/arith ----------===//
 //
-// First leg of the back-end spine. Lowers Layer-A atomic ops to standard MLIR
-// so the stock linalg->gpu->nvvm pipeline can carry them to a GPU binary.
+// Target-neutral first leg of the back-end spine. Lowers Layer-A atomic ops to
+// standard MLIR so independent CPU, CUDA, and future target pipelines can
+// continue from the same representation.
 // The general elementwise path supports right-aligned/scalar/size-1 broadcast
 // through affine input maps.  Frontends may first materialize explicit semantic
 // rank insertion (for example Boundary.broadcasts) as tensor.expand_shape.
@@ -199,8 +200,8 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
   }
   if (fn == "tanh")
     return b.create<math::TanhOp>(loc, x);
-  // CPU/linalg path: raw math.* transcendentals (libdevice concerns are the GPU
-  // pass's problem; the NVVM approx peephole lives in MapEmit.h's emitter).
+  // The common path emits target-neutral math.* operations. Approximation and
+  // target-intrinsic selection belong to the selected target pipeline.
   if (fn == "cos")
     return b.create<math::CosOp>(loc, x);
   if (fn == "sin")
@@ -767,13 +768,10 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     }
 
     // Put every surviving parallel iterator before every reduction iterator,
-    // independent of the source-axis order.  `convert-linalg-to-parallel-loops`
-    // otherwise turns a reduction over an early axis (for example axis 0 of an
-    // [N,B,H,M] attention score tensor) into a HOST scf.for wrapped around a
-    // gpu.launch.  The generic runtime would then need to interpret host CFG and
-    // relaunch the reduction kernel once per induction value.  Parallel-first
-    // loop order instead outlines one GPU kernel whose inner scf.for performs
-    // the reduction, exactly like the already-proven last-axis row reduction.
+    // independent of the source-axis order. This is the common structured form:
+    // target pipelines retain an outer parallel iteration space and an inner
+    // reduction instead of having to recover parallelism from a serial outer
+    // loop.
     //
     // Indexing maps retain the original operand/output dimension order: loop
     // dim -> input dim is a permutation; output dims remain the non-reduced
@@ -1145,8 +1143,8 @@ struct TransposeLowering : OpRewritePattern<TransposeOp> {
 
 /// Lower a static variadic concat to slice-writing linalg.generic operations.
 /// Keeping each slice as real linalg work avoids bufferization turning
-/// tensor.insert_slice into host-side memrefCopy calls, which are outside the
-/// persisted CUDA program executed by the paper runtime.
+/// tensor.insert_slice into external memrefCopy calls that a compiled target
+/// pipeline may not support inside its executable artifact.
 struct ConcatLowering : OpRewritePattern<ConcatOp> {
   using OpRewritePattern::OpRewritePattern;
 

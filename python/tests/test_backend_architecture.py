@@ -117,3 +117,27 @@ def test_intent_opt_composes_explicit_pass_components() -> None:
 
     assert all(header in driver for header in headers)
     assert all(library in cmake for library in libraries)
+
+
+def test_common_conversion_has_no_device_specific_dependency() -> None:
+    common_source = (
+        _REPO_ROOT / "lib/Intent/Conversion/ConvertIntentToLinalg.cpp"
+    ).read_text(encoding="utf-8")
+    common_cmake = (
+        _REPO_ROOT / "lib/Intent/Conversion/CMakeLists.txt"
+    ).read_text(encoding="utf-8")
+    forbidden_includes = (
+        '"mlir/Dialect/GPU/',
+        '"mlir/Dialect/NVGPU/',
+        '"mlir/Dialect/LLVMIR/NVVMDialect.h"',
+    )
+    forbidden_libraries = (
+        "MLIRGPUDialect",
+        "MLIRNVGPUDialect",
+        "MLIRNVVMDialect",
+        "MLIRIntentConversionCUDA",
+        "MLIRIntentTargetCUDA",
+    )
+
+    assert not any(item in common_source for item in forbidden_includes)
+    assert not any(item in common_cmake for item in forbidden_libraries)
