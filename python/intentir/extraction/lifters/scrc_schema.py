@@ -323,6 +323,10 @@ def _strategy_schema() -> dict[str, Any]:
         ("address_association", "pointer_staged"),
         ("mask_materialization", "staged_reuse"),
         ("reduction_call_shape", "flattened"),
+        (
+            "reduction_preheader_staging",
+            "stage_invariant_access_scaffolding",
+        ),
     ]
     variants = [
         _closed_object(

@@ -599,6 +599,15 @@ Cross-field rules:
   not expressible by this strategy. Preserve genuinely semantic recurrence as a
   J loop; otherwise leave J unchanged and fail closed rather than inventing a
   schedule strategy;
+- when that reviewed multi-tile reduction source computes row/outer-index
+  adjusted base pointers and a shared lane/range basis before the runtime loop,
+  also add
+  reduction_preheader_staging=stage_invariant_access_scaffolding for the same
+  reduction node. Select it only when those definitions are provably independent
+  of the runtime loop induction value. Tile-start-plus-lane offsets, final tile
+  addresses, tail masks, loads, local reductions and carry updates remain in the
+  loop. Do not use this choice as general LICM or for a source that rebuilds its
+  outer bases inside the loop;
 - inspect contraction subscripts and encode them completely in J. A form such
   as m,n->mn has no contracted label and selects realize_outer_product; a
   contraction with an actual tiled contracted dimension selects
@@ -629,15 +638,18 @@ Cross-field rules:
 - strategy.target_ref may reference only the target kind accepted by its
   family: program_coordinate_width targets a domain id; address_association
   and mask_materialization target an access_id; reduction_call_shape targets a
-  reduction node id; reduction_tiling also targets a reduction node id and must
-  additionally name a declared constexpr tile_slot plus accumulator_dtype.
+  reduction node id; reduction_tiling and reduction_preheader_staging target a
+  reduction node id. reduction_tiling must additionally name a declared
+  constexpr tile_slot plus accumulator_dtype, and preheader staging is valid
+  only alongside reduction_tiling for the same target.
 
 C.strategy rules (closed, override-only vocabulary):
 - absence of a target/family binding always means the canonical RuleCard;
 - allowed family/choice pairs are program_coordinate_width=wide,
   address_association=pointer_staged, mask_materialization=staged_reuse and
   reduction_call_shape=flattened, and
-  reduction_tiling=multi_tile_accumulate;
+  reduction_tiling=multi_tile_accumulate, and
+  reduction_preheader_staging=stage_invariant_access_scaffolding;
 - at most one binding exists for each target/family pair;
 - reduction_call_shape and reduction_tiling cannot be combined for the same
   reduction target in the current reviewed composer. If source evidence needs
@@ -875,6 +887,11 @@ Apply this decision order before editing:
     accumulator dtype, but only for the normalized zero-to-semantic-extent,
     identity-seeded loop whose step is exactly one constexpr slot. Other
     schedule-only loops leave J unchanged without inventing a strategy.
+    If SOURCE additionally defines outer-index adjusted access bases and a
+    shared lane/range basis before that loop, add the reviewed
+    reduction_preheader_staging=stage_invariant_access_scaffolding choice for
+    the same reduction. Keep tile-dependent offsets, masks, loads and reduction
+    work inside the loop; never use this choice as unrestricted LICM.
 3. Use only an already reviewed C.strategy family when it exactly describes
    the source mechanism. Never invent a new family, choice or RuleCard here.
 4. If the existing vocabulary cannot express an implementation association,

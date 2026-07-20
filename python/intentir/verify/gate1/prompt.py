@@ -41,10 +41,14 @@ Hard constraints:
    extent with C.strategy.tile_slot as its exact step. Initialize the carry once
    from BoundaryReduction.identity in C.strategy.accumulator_dtype, convert each
    local partial to that carry dtype before combining, and finalize mean division
-   only after the loop. Treat prior address/mask/access pi steps attached to this
-   reduction as per-iteration tile-body templates: emit their pointer, mask and
-   load inside the loop, not once before it. Never collapse the loop for a
-   one-tile specialization.
+   only after the loop. Keep iteration-dependent tile offsets, final tile
+   addresses, masks, loads, local reductions and carry updates inside the loop.
+   If and only if pi also selects
+   reduction_preheader_staging=stage_invariant_access_scaffolding, materialize
+   row/outer-index adjusted base pointers and the shared lane basis before the
+   loop and capture them into it; do not rebuild raw_pointer + outer_index *
+   stride in the loop. Never move a tile-dependent address, mask or load to the
+   preheader, and never collapse the loop for a one-tile specialization.
 7. boundary.broadcasts.axes are global semantic axes, never local Triton axis
    numbers. A semantic broadcast may be implicit on a local tile; do not emit an
    explicit rank change unless the selected rule's global-to-local projection

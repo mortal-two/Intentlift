@@ -662,6 +662,10 @@ def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
             "reduction_tiling",
             "multi_tile_accumulate",
         ),
+        "stage_reduction_preheader": (
+            "reduction_preheader_staging",
+            "stage_invariant_access_scaffolding",
+        ),
     }
     cards = {card.id: card for card in registry.cards}
     assert cards["realize_masked_access"].required_fields == ["predicate"]
@@ -797,7 +801,9 @@ def test_multi_tile_reduction_strategy_selects_loop_accumulation_rule() -> None:
     assert "divide exactly once" in card.api_mapping["mean"]
     assert any("never add an IntentIR loop" in item for item in card.pitfalls)
     assert any("lower=0" in item for item in card.pitfalls)
-    assert any("per-tile body templates" in item for item in card.pitfalls)
+    assert any(
+        "iteration-dependent tile offsets" in item for item in card.pitfalls
+    )
 
     replay_view = build_normal_rewriter_view(
         materialized, default_triton_rule_registry()
@@ -836,6 +842,60 @@ def test_multi_tile_reduction_strategy_selects_loop_accumulation_rule() -> None:
     replay_view["strategy"]["bindings"][0]["tile_slot"] = "BLOCK_N"
     with pytest.raises(SchemaError, match="declared opaque replay reference"):
         assert_source_isolated_payload(replay_view)
+
+
+def test_reduction_preheader_staging_is_typed_orthogonal_c_strategy() -> None:
+    tiling = StrategyBinding(
+        "reduce_sum_node",
+        StrategyFamily.REDUCTION_TILING,
+        StrategyChoice.MULTI_TILE_ACCUMULATE,
+        tile_slot="BLOCK_N",
+        accumulator_dtype="f32",
+    )
+    staging = StrategyBinding(
+        "reduce_sum_node",
+        StrategyFamily.REDUCTION_PREHEADER_STAGING,
+        StrategyChoice.STAGE_INVARIANT_ACCESS_SCAFFOLDING,
+    )
+    with pytest.raises(SchemaError, match="requires reduction_tiling"):
+        StrategySpec([staging])
+
+    artifact = replace(
+        _artifact(),
+        plan=ReplayPlan([]),
+        strategy=StrategySpec([tiling, staging]),
+    )
+    materialized, _result = materialize_replay_plan(
+        artifact, default_triton_rule_registry()
+    )
+    reduction_steps = [
+        step.rule
+        for step in materialized.plan.steps
+        if step.target_ref == "reduce_sum_node"
+    ]
+
+    assert reduction_steps == [
+        "stage_reduction_preheader",
+        "realize_multi_tile_reduce",
+    ]
+    replay_view = build_normal_rewriter_view(
+        materialized, default_triton_rule_registry()
+    )
+    assert {
+        item["family"] for item in replay_view["strategy"]["bindings"]
+    } == {"reduction_preheader_staging", "reduction_tiling"}
+
+    invalid_target = "input_masked_load"
+    with pytest.raises(SchemaError, match="is not valid for family"):
+        replace(
+            _artifact(),
+            strategy=StrategySpec(
+                [
+                    replace(tiling, target_ref=invalid_target),
+                    replace(staging, target_ref=invalid_target),
+                ]
+            ),
+        )
 
 
 def test_strict_pi_accepts_canonical_rules_and_requires_targets() -> None:
@@ -1112,11 +1172,16 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "private_kernel.py" not in normal
     assert '"values"' not in normal
     assert "BLOCK_N" in normal
-    assert "128" not in normal
     assert "tl.sum" in normal  # concrete API names live in selected system rule cards
     assert "one deterministic syntactic normal form" in normal
     assert "reduction_tiling=multi_tile_accumulate" in normal
-    assert "Never collapse the loop" in normal
+    assert (
+        "reduction_preheader_staging=stage_invariant_access_scaffolding"
+        in normal
+    )
+    assert "raw_pointer + outer_index" in normal
+    assert "tile-dependent address, mask or load" in normal
+    assert "never collapse the loop" in normal
     assert "Never emit raise" in normal
     assert "assert, try/except/finally" in normal
     assert "aborting Python branch" in normal

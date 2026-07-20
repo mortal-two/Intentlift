@@ -1997,6 +1997,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_reduce",
         "realize_flattened_reduce",
         "realize_multi_tile_reduce",
+        "stage_reduction_preheader",
         "realize_k_tiled_dot",
         "realize_outer_product",
     } <= {card.id for card in first.cards}
@@ -2009,6 +2010,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "materialize_mask_tile",
         "realize_flattened_reduce",
         "realize_multi_tile_reduce",
+        "stage_reduction_preheader",
     }
     assert all(
         card.override_family is not None
@@ -2053,6 +2055,16 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert any(
         "runtime loop" in item
         for item in cards["realize_multi_tile_reduce"].pitfalls
+    )
+    assert cards["stage_reduction_preheader"].override_family == (
+        "reduction_preheader_staging"
+    )
+    assert "raw_pointer + outer_index * stride" in cards[
+        "stage_reduction_preheader"
+    ].api_mapping["loop_capture"]
+    assert any(
+        "not general LICM" in item
+        for item in cards["stage_reduction_preheader"].pitfalls
     )
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads

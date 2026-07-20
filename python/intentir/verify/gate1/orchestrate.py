@@ -1080,6 +1080,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
         "strategy_families": (
             "address_association",
             "program_coordinate_width",
+            "reduction_preheader_staging",
         ),
         "semantic_question": (
             "Does J preserve semantic producer/consumer dependencies, loop "
@@ -1096,6 +1097,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
         "strategy_families": (
             "reduction_call_shape",
             "reduction_tiling",
+            "reduction_preheader_staging",
         ),
         "semantic_question": (
             "Check reducer semantics, axis, identity/fill, carried state and "

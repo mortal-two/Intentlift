@@ -279,6 +279,7 @@ _LEGACY_TARGET_KINDS: dict[str, tuple[str, ...]] = {
     "realize_reduce": ("intent_op:reduce",),
     "realize_flattened_reduce": ("intent_op:reduce",),
     "realize_multi_tile_reduce": ("intent_op:reduce",),
+    "stage_reduction_preheader": ("intent_op:reduce",),
     "realize_broadcast": ("boundary.broadcast",),
     "realize_k_tiled_dot": ("intent_op:contraction",),
     "realize_outer_product": ("intent_op:contraction",),
@@ -302,9 +303,15 @@ _LEGACY_STRATEGY: dict[str, tuple[str, str]] = {
         "reduction_tiling",
         "multi_tile_accumulate",
     ),
+    "stage_reduction_preheader": (
+        "reduction_preheader_staging",
+        "stage_invariant_access_scaffolding",
+    ),
 }
 
-_SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset({"mask_materialization"})
+_SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset(
+    {"mask_materialization", "reduction_preheader_staging"}
+)
 
 _LEGACY_PHASE: dict[str, int] = {
     "bind_program_domain": 10,
@@ -324,6 +331,7 @@ _LEGACY_PHASE: dict[str, int] = {
     "realize_reduce": 60,
     "realize_flattened_reduce": 60,
     "realize_multi_tile_reduce": 60,
+    "stage_reduction_preheader": 55,
     "realize_k_tiled_dot": 60,
     "realize_outer_product": 60,
     "realize_indexed_access": 60,
@@ -1202,18 +1210,34 @@ def _add_supplemental_strategy_items(
     for binding in bindings:
         if binding.family not in _SUPPLEMENTAL_STRATEGY_FAMILIES:
             continue
-        targets = [
-            item
-            for item in items
-            if item.kind == "boundary.access.effect"
-            and item.role == "effect"
-            and _binding_matches_item(binding, item)
-        ]
+        if binding.family == "mask_materialization":
+            targets = [
+                item
+                for item in items
+                if item.kind == "boundary.access.effect"
+                and item.role == "effect"
+                and _binding_matches_item(binding, item)
+            ]
+            target_description = "access effects"
+        elif binding.family == "reduction_preheader_staging":
+            targets = [
+                item
+                for item in items
+                if item.kind == "intent_op:reduce"
+                and item.role == "intent"
+                and _binding_matches_item(binding, item)
+            ]
+            target_description = "semantic reductions"
+        else:  # pragma: no cover - closed family set above
+            raise ComposeError(
+                f"unsupported supplemental strategy family {binding.family!r}"
+            )
         if len(targets) != 1:
             error = ZeroRuleMatchError if not targets else AmbiguousRuleMatchError
             raise error(
                 f"strategy binding {binding.family}={binding.choice} for "
-                f"{binding.target_ref!r} resolves to {len(targets)} access effects",
+                f"{binding.target_ref!r} resolves to {len(targets)} "
+                f"{target_description}",
                 work_item=f"strategy:{binding.index}",
             )
         target = targets[0]
@@ -1644,7 +1668,12 @@ def _canonical_reference_bindings(
     }
     grouped: dict[tuple[str, str], list[_WorkItem]] = {}
     for item in ordered:
-        base_role = "effect" if item.role.startswith("strategy:") else item.role
+        if item.role.startswith("strategy:"):
+            base_role = (
+                "intent" if item.kind.startswith("intent_op:") else "effect"
+            )
+        else:
+            base_role = item.role
         stem = stems.get(base_role, "r")
         identity = (stem, item.target_ref)
         grouped.setdefault(identity, []).append(item)

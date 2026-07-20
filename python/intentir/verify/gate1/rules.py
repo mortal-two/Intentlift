@@ -826,6 +826,13 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "construction_phase": 60,
         "required_fields": ["attrs.fn", "attrs.axes"],
     },
+    "stage_reduction_preheader": {
+        "strategy_family": "reduction_preheader_staging",
+        "strategy_choice": "stage_invariant_access_scaffolding",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 55,
+        "required_fields": ["attrs.fn", "attrs.axes"],
+    },
     "realize_broadcast": {
         "target_kinds": ["boundary.broadcast"],
         "construction_phase": 55,
@@ -1276,9 +1283,10 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "Preserve the source accumulator dtype, reducer identity, tail predicate, "
                 "masked contribution, partial cast, and partial-to-carry association "
                 "exactly.",
-                "Reduction-linked address/mask/access steps are per-tile body templates; "
-                "do not hoist their pointer progression, tail mask, or load out of the "
-                "runtime loop and reuse one tile for every iteration.",
+                "Keep iteration-dependent tile offsets, final tile addresses, tail "
+                "masks, loads and reduction work inside the runtime loop. Loop-invariant "
+                "outer access bases and a shared lane basis move to the preheader only "
+                "when the explicit reduction_preheader_staging choice selects it.",
                 "For mean, divide once after all tile sums are accumulated; never average "
                 "each tile or divide by the tile extent.",
                 "Do not unroll, collapse, or remove the runtime loop merely because the "
@@ -1287,6 +1295,57 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "of associative partial reductions with no additional semantic state; "
                 "Welford tuples, arg/index carries, counters, and ordered recurrences are "
                 "not this strategy.",
+            ],
+        ),
+        _default_triton_card(
+            "stage_reduction_preheader",
+            Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_preheader_staging",
+            applies_to=["reduce", "boundary.reductions"],
+            reads=[
+                "target runtime multi-tile reduction",
+                "outer program coordinates and runtime strides",
+                "reduction-linked access templates",
+                "shared lane basis used by those accesses",
+            ],
+            api_mapping={
+                "outer_bases": (
+                    "before the runtime tile loop, form each row/outer-index "
+                    "adjusted base as raw_pointer + outer_index * stride"
+                ),
+                "lane_basis": (
+                    "materialize the shared tl.arange lane basis once before "
+                    "the runtime tile loop"
+                ),
+                "loop_capture": (
+                    "capture the staged outer bases and lane basis into the "
+                    "runtime loop; do not reconstruct raw_pointer + "
+                    "outer_index * stride in the loop body"
+                ),
+                "tile_body": (
+                    "inside the loop, combine tile_start with the staged lane "
+                    "basis, add that tile-dependent offset to each staged base, "
+                    "then form the tail mask, load, reduce, and update the carry"
+                ),
+            },
+            example=(
+                "For a row reduction, compute lhs_row = lhs_ptr + "
+                "row*lhs_stride, rhs_row = rhs_ptr + row*rhs_stride, and lane "
+                "= tl.arange(...) before the runtime tile loop. Inside it, form "
+                "tile_start+lane, then lhs_row+tile_offset and "
+                "rhs_row+tile_offset before masking, loading and reducing."
+            ),
+            pitfalls=[
+                "This is a closed source-realization choice, not general LICM; "
+                "stage only values proven independent of the runtime loop "
+                "induction variable.",
+                "Never move tile_start+lane, final tile addresses, tail masks, "
+                "loads, local reductions, or carry updates out of the loop.",
+                "Never reconstruct raw_pointer + outer_index * stride inside "
+                "the loop after selecting this card.",
+                "Do not use this card without the same target's reviewed "
+                "reduction_tiling=multi_tile_accumulate binding.",
             ],
         ),
         _default_triton_card(

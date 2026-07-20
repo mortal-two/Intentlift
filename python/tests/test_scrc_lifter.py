@@ -178,6 +178,12 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "mask_materialization=staged_reuse" in prompt
     assert "reduction_call_shape=flattened" in prompt
     assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert (
+        "reduction_preheader_staging=stage_invariant_access_scaffolding"
+        in prompt
+    )
+    assert "shared lane/range basis before the runtime loop" in prompt
+    assert "Tile-start-plus-lane offsets" in prompt
     assert "complete ordered ABI capability" in prompt
     assert "compile-time inactive" in prompt
     assert "tile_slot" in prompt
