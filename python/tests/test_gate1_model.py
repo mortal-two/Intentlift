@@ -1091,6 +1091,9 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
     assert "one deterministic syntactic normal form" in normal
     assert "reduction_tiling=multi_tile_accumulate" in normal
     assert "Never collapse the loop" in normal
+    assert "Never emit raise" in normal
+    assert "assert, try/except/finally" in normal
+    assert "aborting Python branch" in normal
     assert "pre-expand a" in normal
     assert "global axis number as a local index" in normal
     assert "insertion count must equal the local rank" in normal

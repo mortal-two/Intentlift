@@ -259,6 +259,36 @@ def bad(x):
         (
             """import triton
 import triton.language as tl
+@triton.jit
+def bad(x):
+    raise RuntimeError("unsupported")
+""",
+            "Raise is forbidden",
+        ),
+        (
+            """import triton
+import triton.language as tl
+@triton.jit
+def bad(x):
+    assert x
+""",
+            "Assert is forbidden",
+        ),
+        (
+            """import triton
+import triton.language as tl
+@triton.jit
+def bad(x):
+    try:
+        x = x + 1
+    except Exception:
+        x = x - 1
+""",
+            "Try is forbidden",
+        ),
+        (
+            """import triton
+import triton.language as tl
 def bad(x):
     return x
 """,

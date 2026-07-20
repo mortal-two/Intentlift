@@ -19,7 +19,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.replay import ReplayGeneration
-from intentir.verify.gate2 import Gate2Status
+from intentir.verify.gate2 import ArgumentRole, Gate2Status, InputDistribution
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -200,6 +200,78 @@ def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
     assert eps_arg.value_key == "eps"
     assert gate2.output_keys == ("Y",)
     assert not hasattr(gate2, "lowering")
+
+
+def test_gate2_case_binds_inout_as_initialized_compared_output(
+    monkeypatch,
+) -> None:
+    case = replace(
+        build_case(_args("add", n=8, block=8)),
+        input_distributions={
+            "a_ptr": InputDistribution.UNIFORM,
+            "b_ptr": InputDistribution.NORMAL,
+        },
+        input_scales={"a_ptr": 3.0, "b_ptr": 0.5},
+    )
+    parameters = [
+        KernelParameter(
+            "a_ptr",
+            ParameterKind.POINTER,
+            ParameterMode.INOUT,
+            "f32",
+            1,
+            tensor_ref="A",
+        ),
+        KernelParameter(
+            "b_ptr",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f32",
+            1,
+            tensor_ref="B",
+        ),
+        KernelParameter(
+            "out_ptr",
+            ParameterKind.POINTER,
+            ParameterMode.OUTPUT,
+            "f32",
+            1,
+            tensor_ref="Y",
+        ),
+        KernelParameter("n_elements", ParameterKind.SCALAR, dtype="i32", rank=0),
+        KernelParameter("BLOCK", ParameterKind.CONSTEXPR, dtype="i32", rank=0),
+    ]
+    artifact = SimpleNamespace(
+        interface=SimpleNamespace(parameters=parameters),
+        schedule=SimpleNamespace(values=case.schedule_values),
+    )
+    generated_specs = []
+
+    def fake_generate(spec, *, rng):
+        generated_specs.append(spec)
+        return np.full(spec.shape, len(generated_specs), dtype=np.dtype(spec.dtype))
+
+    monkeypatch.setattr(live, "generate_tensor_input", fake_generate)
+
+    gate2 = _gate2_case(artifact, case, 20260720)
+
+    assert gate2.output_keys == ("A", "Y")
+    assert set(gate2.values) == {"A", "B", "n_elements"}
+    assert np.all(gate2.values["A"] == 1)
+    assert np.all(gate2.values["B"] == 2)
+    assert [spec.distribution for spec in generated_specs] == [
+        InputDistribution.UNIFORM,
+        InputDistribution.NORMAL,
+    ]
+    assert [spec.scale for spec in generated_specs] == [3.0, 0.5]
+    triton_arguments = {item.name: item for item in gate2.triton.arguments}
+    assert triton_arguments["a_ptr"].role is ArgumentRole.INOUT
+    assert triton_arguments["a_ptr"].value_key == "A"
+    assert triton_arguments["a_ptr"].output_key == "A"
+    assert triton_arguments["b_ptr"].role is ArgumentRole.INPUT
+    assert triton_arguments["b_ptr"].output_key is None
+    assert triton_arguments["out_ptr"].role is ArgumentRole.OUTPUT
+    assert triton_arguments["out_ptr"].output_key == "Y"
 
 
 def test_matmul_case_preserves_runtime_dims_three_c_slots_and_2d_grid() -> None:
