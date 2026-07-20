@@ -65,6 +65,23 @@ class TritonExecutionSpec:
         names = [argument.name for argument in self.arguments]
         if len(names) != len(set(names)):
             raise ValueError("duplicate Triton argument names")
+        schedule = dict(self.schedule)
+        invalid_schedule_names = sorted(
+            repr(name)
+            for name in schedule
+            if not isinstance(name, str) or not name.isidentifier()
+        )
+        if invalid_schedule_names:
+            raise ValueError(
+                "invalid Triton schedule names: "
+                + ", ".join(invalid_schedule_names)
+            )
+        overlap = sorted(set(names) & set(schedule))
+        if overlap:
+            raise ValueError(
+                "Triton arguments and schedule overlap: " + ", ".join(overlap)
+            )
+        object.__setattr__(self, "schedule", schedule)
         if not 1 <= len(self.grid) <= 3 or any(int(dim) <= 0 for dim in self.grid):
             raise ValueError("grid must contain one to three positive dimensions")
 
@@ -112,6 +129,55 @@ def _load_module(source: KernelSource, temporary: Path) -> tuple[ModuleType, str
     return module, module_name
 
 
+def _launch_by_name(
+    kernel: Any,
+    grid: tuple[int, ...],
+    runtime_arguments: Mapping[str, Any],
+    schedule: Mapping[str, int | float | bool | str],
+) -> None:
+    """Bind a complete Triton ABI by name, including interleaved constexprs."""
+
+    runtime = dict(runtime_arguments)
+    frozen_schedule = dict(schedule)
+    overlap = sorted(set(runtime) & set(frozen_schedule))
+    if overlap:
+        raise ValueError(
+            "Triton runtime arguments and schedule overlap: "
+            + ", ".join(overlap)
+        )
+    declared = getattr(kernel, "arg_names", None)
+    if not isinstance(declared, (list, tuple)) or not all(
+        isinstance(name, str) and name.isidentifier() for name in declared
+    ):
+        raise TypeError("Triton replay kernel has no valid arg_names interface")
+    declared_names = list(declared)
+    if len(declared_names) != len(set(declared_names)):
+        raise ValueError("Triton replay kernel has duplicate arg_names")
+    unknown_runtime = sorted(set(runtime) - set(declared_names))
+    if unknown_runtime:
+        raise ValueError(
+            "runtime arguments not in Triton replay interface: "
+            + ", ".join(unknown_runtime)
+        )
+    missing = sorted(
+        set(declared_names) - set(runtime) - set(frozen_schedule)
+    )
+    if missing:
+        raise ValueError(
+            "missing Triton replay interface arguments: " + ", ".join(missing)
+        )
+    expected_runtime_order = [
+        name for name in declared_names if name in runtime
+    ]
+    if list(runtime) != expected_runtime_order:
+        raise ValueError(
+            "runtime argument order differs from the Triton replay ABI: "
+            f"{list(runtime)!r} != {expected_runtime_order!r}"
+        )
+    launch_kwargs = {**runtime, **frozen_schedule}
+    kernel[grid](**launch_kwargs)
+
+
 class TritonRunner:
     """Load and launch the final-J replay executable independently."""
 
@@ -132,7 +198,7 @@ class TritonRunner:
                 module, module_name = _load_module(program, Path(tmp))
                 try:
                     kernel = getattr(module, program.function)
-                    launch_args: list[Any] = []
+                    launch_args: dict[str, Any] = {}
                     outputs: dict[str, Any] = {}
                     for argument in spec.arguments:
                         if argument.role is ArgumentRole.SCALAR:
@@ -143,7 +209,7 @@ class TritonRunner:
                             )
                             if isinstance(scalar, np.generic):
                                 scalar = scalar.item()
-                            launch_args.append(scalar)
+                            launch_args[argument.name] = scalar
                             continue
                         dtype = _torch_dtype(torch, argument.dtype or "float32")
                         if argument.role is ArgumentRole.OUTPUT:
@@ -157,9 +223,12 @@ class TritonRunner:
                             if argument.role is ArgumentRole.INOUT:
                                 tensor = tensor.clone()
                                 outputs[argument.output_key or argument.name] = tensor
-                        launch_args.append(tensor)
-                    kernel[tuple(int(dim) for dim in spec.grid)](
-                        *launch_args, **dict(spec.schedule)
+                        launch_args[argument.name] = tensor
+                    _launch_by_name(
+                        kernel,
+                        tuple(int(dim) for dim in spec.grid),
+                        launch_args,
+                        spec.schedule,
                     )
                     torch.cuda.synchronize(spec.device)
                     copied = {
@@ -170,7 +239,13 @@ class TritonRunner:
                         leg,
                         True,
                         copied,
-                        metadata={"function": program.function, "grid": list(spec.grid)},
+                        metadata={
+                            "function": program.function,
+                            "grid": list(spec.grid),
+                            "binding_protocol": (
+                                "triton_name_keyed_complete_abi_v1"
+                            ),
+                        },
                     )
                 finally:
                     sys.modules.pop(module_name, None)

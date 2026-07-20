@@ -83,6 +83,10 @@ mismatch。为了让样本通过，只能补齐 J/IntentProgram/标量 lowering 
 - scalar native code 在隔离 worker 中执行；signal、timeout、ABI 校验失败、编译／链接
   失败均是显式 execution failure，不得降级为数值 mismatch、unsupported 或 fallback；
 - replay/scalar 的异常分别保存为 `ExecutionResult`，不得吞掉异常后制造空输出通过；
+- replay Triton launch 使用 `triton_name_keyed_complete_abi_v1`：runtime tensor/scalar
+  按完整 Python ABI 名称绑定，signature 中间的 constexpr 从冻结 C.schedule 按名补入，
+  compiler-only slot 仍作为 launch option；未知、缺失、重名或 runtime/schedule overlap
+  都是 execution failure，不能用压缩后的位置参数跨过 constexpr；
 - active Gate2 与 `backend/cpu` scalar 路径不得 import `intentir.backend.cuda`、ROCm
   或任一 production target registry，也没有 target fallback。
 
