@@ -29,12 +29,12 @@ import ctypes
 import json
 from pathlib import Path
 
-from intentir.backend.compile import (INTENT_OPT, _run,
+from intentir.backend.cuda.compile import (INTENT_OPT, _run,
                                        lower_memref_module_to_kernels)
-from intentir.backend.launch import (I64Arg, PtrArg, _driver, _marshal,
+from intentir.backend.cuda.launch import (I64Arg, PtrArg, _driver, _marshal,
                                       load_module)
 from intentir.backend.launch_plan import single_launch_plan
-from intentir.backend.orchestrate import (_host_func_text,
+from intentir.backend.cuda.orchestrate import (_host_func_text,
                                            _map_input_aligned_ptrs,
                                            _parse_constants, _parse_launches,
                                            _parse_signature_blockargs,

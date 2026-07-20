@@ -43,9 +43,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from intentir.backend.compile import compile_all_kernels_fused
-from intentir.backend.launch import ensure_context, load_module
-from intentir.backend.orchestrate import (
+from intentir.backend.cuda.compile import compile_all_kernels_fused
+from intentir.backend.cuda.launch import ensure_context, load_module
+from intentir.backend.cuda.orchestrate import (
     _F32Arg,
     _I32Arg,
     _I64Arg,
@@ -362,7 +362,7 @@ def _build_plan(intent_path, tile, numel):
 def _launch_nosync(plan, out, ins):
     import torch
 
-    from intentir.backend.launch import _driver
+    from intentir.backend.cuda.launch import _driver
 
     call_args = []
     for entry in plan.args:

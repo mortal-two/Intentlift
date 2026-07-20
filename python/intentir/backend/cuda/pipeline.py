@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-import intentir.backend.compile as backend_compile
+import intentir.backend.cuda.compile as backend_compile
 import intentir.backend.cuda.orchestrate as backend_orchestrate
 from intentir.backend.cuda.selection import (
     LoweringTarget,

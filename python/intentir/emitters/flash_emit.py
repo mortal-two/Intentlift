@@ -39,9 +39,9 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from intentir.backend.compile import lower_memref_module_to_kernels
-from intentir.backend.launch import load_module
-from intentir.backend.orchestrate import (
+from intentir.backend.cuda.compile import lower_memref_module_to_kernels
+from intentir.backend.cuda.launch import load_module
+from intentir.backend.cuda.orchestrate import (
     _F32Arg,
     _I64Arg,
     _PtrArg,
