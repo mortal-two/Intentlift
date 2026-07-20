@@ -518,6 +518,13 @@ def test_active_replay_writer_exposes_no_inner_repair_channel() -> None:
     assert "control_candidate" not in parameters
 
 
+def test_gate1_defaults_exclude_paired_semantic_interventions() -> None:
+    config = Gate1Config()
+
+    assert not config.run_semantic_interventions
+    assert config.run_masked_ablation
+
+
 def test_pi_ablation_compile_case_uses_the_frozen_artifact_schedule() -> None:
     unscheduled = replace(_case(), schedule={})
     scheduled = _case_with_artifact_schedule(unscheduled, _artifact())

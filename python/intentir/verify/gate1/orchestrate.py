@@ -115,7 +115,10 @@ class Gate1Config:
 
     max_relifts: int = 5
     stable_closures: int = 1
-    run_semantic_interventions: bool = True
+    # Paired semantic interventions are an explicit offline diagnostic.  They
+    # are not part of the canonical Gate1 acceptance path and must never become
+    # active merely because a caller used the default configuration.
+    run_semantic_interventions: bool = False
     max_semantic_interventions: int = 1
     run_masked_ablation: bool = True
     # Compatibility name: exact composition is always a verdict condition;
