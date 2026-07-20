@@ -489,7 +489,7 @@ def _gate2_case(
         tensor_ref = parameter.tensor_ref
         if tensor_ref is None:
             raise ValueError(f"pointer {parameter.name!r} has no tensor_ref")
-        if parameter.mode is ParameterMode.INPUT:
+        if parameter.mode in {ParameterMode.INPUT, ParameterMode.INOUT}:
             dtype = _numpy_dtype(parameter.dtype or concrete.dtype)
             distribution = case.input_distributions.get(
                 parameter.name, InputDistribution.NORMAL
@@ -507,11 +507,25 @@ def _gate2_case(
             arguments.append(
                 TritonArgument(
                     parameter.name,
-                    ArgumentRole.INPUT,
+                    (
+                        ArgumentRole.INOUT
+                        if parameter.mode is ParameterMode.INOUT
+                        else ArgumentRole.INPUT
+                    ),
                     value_key=tensor_ref,
                     dtype=parameter.dtype or concrete.dtype,
+                    **(
+                        {"output_key": tensor_ref}
+                        if parameter.mode is ParameterMode.INOUT
+                        else {}
+                    ),
                 )
             )
+            if (
+                parameter.mode is ParameterMode.INOUT
+                and tensor_ref not in output_keys
+            ):
+                output_keys.append(tensor_ref)
         elif parameter.mode is ParameterMode.OUTPUT:
             output_keys.append(tensor_ref)
             arguments.append(

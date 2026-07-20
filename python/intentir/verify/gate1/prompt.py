@@ -68,7 +68,12 @@ Hard constraints:
     projected view instead of expanding per BroadcastSpec/use. If this projection
     is ambiguous, do not guess or use the global axis number as a local index.
     Never pre-expand a coordinate globally.
-12. Return kernel source only, with no Markdown fence or explanatory prose.
+12. Emit only the validator-supported Triton module subset. Never emit raise,
+    assert, try/except/finally, exit calls, or host-side unsupported-input
+    guards. The declared interface, grid and semantic domain are the replay
+    contract. Realize runtime tails with the declared masks, fills or tl.where;
+    never replace missing realization evidence with an aborting Python branch.
+13. Return kernel source only, with no Markdown fence or explanatory prose.
 """
 
 _MASKED_NOTE = """
