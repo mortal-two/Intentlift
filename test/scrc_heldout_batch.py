@@ -1333,9 +1333,9 @@ def _batch_identity(
     registry = _rule_registry_from_args(args)
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 36,
+        "schema": 37,
         "performance_schema": "scrc_case_performance_v1",
-        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v4",
+        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v5",
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
@@ -1419,7 +1419,11 @@ def _batch_identity(
             "tolerance": asdict(case.tolerance),
         },
         "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
-        "gate2_execution_legs": ["replay", "scalar"],
+        "gate2_execution_legs": ["source", "replay", "scalar"],
+        "gate2_required_comparisons": [
+            "source_replay",
+            "source_scalar",
+        ],
         "gate2_comparison_protocol": GATE2_COMPARISON_PROTOCOL,
         "gate2_matrix_policy": _gate2_matrix_policy_json(
             case,
