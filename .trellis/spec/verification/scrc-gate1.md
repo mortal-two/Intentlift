@@ -7,10 +7,9 @@ Gate1 只回答一个问题：源码隔离 writer 能否依据完整语义 `J`�
 施工协议 `π`，生成可编译重放，并在同一前端、同一 C 下与源 Kernel 的 TTIR
 硬结构闭合。
 
-Gate1 不执行 Kernel，不解释 JSON 得到数值结果，也不新增 semantic admission。活动
-Gate2 在 Gate1 硬闭合后执行 source、final-J replay 和 scalar lowering，并分别比较
-`source↔replay`、`source↔scalar`；Gate2 PASS 不补偿任何 Gate1 hard mismatch。
-Gate1 拒绝样本可以另做离线诊断，但该结果不是 Gate2 evidence。
+Gate1 不执行 Kernel，不解释 JSON 得到数值结果，也不新增 verifier。活动 Gate2 是
+Gate1 硬闭合后、绑定同一最终 J 的 replay/scalar 动态差分；Gate2 PASS 不补偿任何
+Gate1 hard mismatch。Gate1 拒绝样本可以另做离线诊断，但该结果不是 Gate2 evidence。
 
 当前正式协议：
 
@@ -48,9 +47,8 @@ dataflow association 差异本身不能证明 J 有语义缺口；现有 C.strat
 H(π | Canon(J), interface, C, RuleRegistry) = 0
 ```
 
-Lift/relift provider response schema 不允许提案 `plan` 或 `compose_provenance`。Lift
-finalization 在进入 Gate1 前由 composer 生成并保存 canonical `plan` 与逐叶 provenance；
-Gate1 只重算并核对身份，不把缺失 π 的提案“准入”为可重放 artifact。
+Lift/relift response schema 不允许 `plan` 或 `compose_provenance`。若 provider 输出
+任一字段，直接拒绝；接受 J/C 后再由 composer 生成并保存 `plan` 与逐叶 provenance。
 
 ## 3. J 的闭合合同
 
@@ -88,17 +86,19 @@ storage 使用 typed semantic event：scope entry/exit、node、access、state�
 
 ### 3.4 portable domain/access predicate
 
-`boundary.domains` 与 access predicate 的字符串 wire 承载 Layer-B 语义。Lift prompt
-应要求 canonical boolean `ContractExpr v1`，但 `Gate1Artifact` 构造与 Gate1 replay/
-fingerprint 不得调用 typed predicate parser 形成提前拒绝。Gate1 的职责是检验 source/
-replay 结构闭合，不是替 scalar lower 新增 semantic admission。
+`boundary.domains` 与 access predicate 的字符串 wire 只是一种 Lift 传输形式，不是
+自由文本语义。它们在 Lift/Gate1 admission 时必须由 `ir.contracts` 的唯一 canonical
+parser 无损转换为 boolean-rooted `ContractExpr v1`；同一检查在 typed IntentProgram
+handoff 保留为 defense in depth。assignment、tuple、`where/with`、区间 prose、任意
+attribute/subscript、unknown call 与 `program_id/grid_axis` 等 source-realization call
+全部 fail-closed。纯算术根和未证明类型的 bare symbol 也不是 predicate。
 
-Gate1 `REPLAY_CLOSED` 后，`intent_program_from_gate1()` 才把 predicate 转换为 typed
-contract。assignment、tuple、`where/with`、区间 prose、source-realization call 或未绑定
-symbol 若无法转换，必须记录为 Gate2 scalar handoff unavailable；同一 Gate2 case 仍然
-执行并保留 `source↔replay`。parser 不做 regex 修复、后缀提取、默认 `True`、predicate
-删除或 Kernel-name 分支，也不把失败反馈给 Lift/Relift。该失败使 Gate2 整体不能 PASS，
-但不是 Gate0、Gate1.5、`LIFT_REJECTED` 或新的准入 verdict。
+parser 不做 regex 修复、后缀提取、默认 `True`、predicate 删除或 Kernel-name 分支。
+非法 provider 输出只进入既有 bounded Lift repair，预算耗尽即 Lift 失败，不属于
+paired semantic intervention，更不可能产生 `wrong_fill_delta` acceptance evidence。
+由于 Gate1 artifact 目前保留 legacy mutable construction API，Runner 每个 relift round
+在 writer/compiler 前对当前 artifact 做完整 strict round-trip；构造后篡改只能得到
+`LIFT_REJECTED`，不得记录 `REPLAY_CLOSED`。
 
 ## 4. C.schedule 与 C.strategy
 
@@ -450,7 +450,7 @@ replay compile、interface、parser 或 setup failure 不产生 family digest。
 
 `fg_ones` 的保存真实 LLM artifact/replay 曾用 schema-30 stack 复验：6/6 normal family
 hard-close，历史三方 Gate2 6 shape × 3 seed 共 18/18 零误差 PASS。该结果不自动升级为
-当前 source/replay/scalar v3 execution protocol。family-wide paired
+当前 replay/scalar v2 execution protocol。family-wide paired
 intervention 与 actual-π masked-J 尚未接通，因此报告必须标记
 `anti_leakage_scope=primary_profile_pending_family_wide`，不得宣称完整 family
 anti-leakage 已完成。
@@ -484,23 +484,18 @@ digest。score、rank、diagnostic prose 均不得进入身份。语义失败与
 
 ## 10. Gate2
 
-活动 Gate2 协议为 `source_replay_scalar_differential_v3`。它只在 Gate1
-`REPLAY_CLOSED` 后，将 final accepted J 交接为 typed `IntentProgram`，并对 source、
-该 J 的 replay executable 与 scalar MLIR lowering 使用同一输入矩阵实跑。它分别按
-`exact_integer_tolerant_float_v2` 形成 `source_replay` 和 `source_scalar`；整数/布尔
-精确比较，浮点应用逐输出容差。只有两个比较都完成且通过才是 `gate2_pass`。
+活动 Gate2 协议为 `final_j_replay_scalar_differential_v2`。它只在 Gate1
+`REPLAY_CLOSED` 后，将 final accepted J 严格交接为 typed `IntentProgram`，并对该 J
+的 replay executable 与 scalar MLIR lowering 使用同一输入矩阵实跑。两腿均成功时按
+`exact_integer_tolerant_float_v2` 比较：整数/布尔精确比较，浮点应用逐输出容差。
+任一腿失败或 scalar unsupported 只形成 execution coverage gap；只有真实
+`replay_scalar` mismatch 是完成的语义 non-PASS。
 
-typed handoff 或 scalar binding 失败属于 Gate2 scalar leg unavailable，不能阻止
-`source_replay` 执行，也不能形成 Gate1.5。任一腿执行失败或 scalar unsupported 是
-execution coverage gap；`replay_diverged`、`scalar_diverged` 与
-`replay_and_scalar_diverged` 是完成双比较后的语义 non-PASS。
-
-Gate2 使用 source runtime 与 backend-neutral Intent→Linalg/loops→LLVM CPU scalar
-reference，但不调用 CUDA/ROCm/RISC-V production target lowering 或归档 JSON 解释器。
+Gate2 使用 backend-neutral Intent→Linalg/loops→LLVM CPU scalar reference，但不调用
+CUDA/ROCm/RISC-V production target lowering、归档 JSON 解释器或 source runtime。
 旧三方 Gate2 规范与 Lower2C/CUDA adapter 已归档，见
 [归档说明](back/gate2_production_lowering_v1/scrc-gate2-three-way.md)；中间存在的
-`source_replay_dynamic_equivalence_v1` 与 `final_j_replay_scalar_differential_v2` 都只是
-legacy report protocol。
+`source_replay_dynamic_equivalence_v1` 也只是 legacy report protocol。
 
 Gate2 使用的 replay 必须与最终 Gate1 artifact canonical digest 精确对齐。每个
 `CandidateRecord` 在形成时绑定当前 artifact digest；最终 artifact 改变但未形成新
@@ -508,9 +503,9 @@ candidate 时不得运行 Gate2，禁止选用旧轮 replay。typed `IntentProgr
 `ScalarLoweringSpec` 与 replay 必须同时绑定 final artifact digest、Gate1 J digest 和
 各自 canonical digest；fixed-C specialization evidence 遵循同一对齐规则。
 
-suite 指标只在所有 cases 都是完整合法的三腿、双差分终态时完成；若出现 `case_id`，
+suite 指标只在所有 cases 都是完整合法 replay/scalar 终态时完成；若出现 `case_id`，
 所有 cases 必须有非空唯一 ID；声明的 `status_counts` 必须等于实际计数；顶层
-`passed` 必须等于逐 case 推导值。input digest、三腿成功状态或任一 comparison evidence
+`passed` 必须等于逐 case 推导值。input digest、两腿成功状态或实际 comparison evidence
 缺失，以及任何聚合矛盾，都只进入 attempted-but-incomplete coverage，不得计作
 Gate2 non-pass，更不得计作 PASS。
 
@@ -549,12 +544,12 @@ schema-31 绑定
 artifact-replay 对齐；旧报告缺少直接 candidate digest 时，只允许通过同轮、match 状态、
 完整 compose provenance 恢复身份，否则按 coverage gap 处理。
 
-held-out identity 37 绑定当前 `scrc_gate1_gate2_conditional_v5`、
-`source_replay_scalar_differential_v3` 与 `intent_program_scalar_cpu_mlir_v1`。只有
-Gate1 `REPLAY_CLOSED`，且 evidence 显式携带当前 execution protocol、三腿均成功、
-input digest 合法并完成 `source_replay` 与 `source_scalar`，才进入当前统计；
+held-out identity 36 绑定当前 `scrc_gate1_gate2_conditional_v4`、
+`final_j_replay_scalar_differential_v2` 与 `intent_program_scalar_cpu_mlir_v1`。只有
+Gate1 `REPLAY_CLOSED`，且 evidence 显式携带当前 execution protocol、两腿均成功、
+input digest 合法并完成 replay/scalar comparison，才进入当前统计；
 scalar unsupported、setup/execution incomplete、协议不匹配和未运行样本单独进入
-coverage。旧四象限中的 `gate1_not_closed + gate2_*` 在 v5 中必须保持为 0。
+coverage。旧四象限中的 `gate1_not_closed + gate2_*` 在 v4 中必须保持为 0。
 
 schema-31 fresh `fg_log_softmax` 后，Relift prompt 使用
 `deterministic_fingerprint_structure_guidance_v1`：精确记录 loop carry/yield、reduction、
@@ -582,9 +577,8 @@ traversal loop，而不是缺失 semantic loop carry。
 ## 11. 当前明确限制
 
 以下涉及 `lowering_diverged`、`lift_diverged` 或 Lower2C 的 schema-26～32 结果均是
-旧三方、source/replay v1 与 replay/scalar v2 Gate2 的历史记录，只能按 legacy 协议
-解释；当前 Gate2 只产生 v3 三腿／双差分状态，也不把 production target lowering
-纳入裁决。
+旧三方／source-replay Gate2 的历史记录，只能按 legacy 协议解释；当前 Gate2 只产生
+replay/scalar v2 状态，也不把 production target lowering 纳入裁决。
 
 - branch-region 尚无一等 IntentIR op，因此 branch scope fail-closed；
 - loop MLIR prototype 当前只实现有限 carry dtype；
@@ -602,7 +596,7 @@ traversal loop，而不是缺失 semantic loop carry。
 - schema-26 的 `fg_arange` 在三轮 hard-diff signature 不变时仍消耗完整 Relift 预算；
   deterministic stagnation early-stop 已实现，schema-31 fresh 已验证第二次真实 replay
   后以同一 artifact/exact hard-diff digest 提前停止；其 9/9 PASS 只属于 legacy
-  source/replay diagnostic，不具备 v3 Gate2 资格；
+  source/replay diagnostic，不具备 v2 Gate2 资格；
 - scope-v3 fresh `fg_index_select` 覆盖二维间接寻址和三个 fixed-C shape profiles：两轮
   replay 均可编译，Relift 返回相同 artifact，exact family hard diff 不变后触发
   stagnation；legacy Gate2 为 6 PASS + 12 `lift_diverged`。动态复现发现安装的 FlagGems source
@@ -648,7 +642,7 @@ traversal loop，而不是缺失 semantic loop carry。
   causal drift 限制；
 - schema-26 保存的 14 份真实 Lift/replay observation 曾完成 legacy 诊断迁移：
   Gate1 normal hard-close 13/14、source/replay Gate2 v1 14/14 PASS。`fg_arange` 的
-  `Gate1 no-closure + legacy Gate2 pass` 只作历史观测；v3 不运行 rejected artifact，
+  `Gate1 no-closure + legacy Gate2 pass` 只作历史观测；v2 不运行 rejected artifact，
   该结果不得合并为 overall pass，也不替代 schema-31 fresh SCRC；
 - schema-31 已复用保存真实 `fg_ones` artifact、normal replay、paired mutant replay 与
   actual-π masked replay 完成诊断迁移：normal 6/6 hard-close、paired exact delta 6/6、

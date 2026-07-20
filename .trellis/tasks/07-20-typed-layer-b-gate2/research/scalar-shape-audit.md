@@ -28,8 +28,8 @@ Requirements:
 - compile cache key binds scalar spec/program/dtype/rank/static specialization,
   not seed/input bytes;
 - one invocation writes every output/inout buffer;
-- source, replay and scalar receive isolated instances derived from one
-  canonical input bundle with exact dtype/shape/stride/byte/alias digest;
+- replay and scalar receive isolated instances derived from one canonical input
+  bundle with exact dtype/shape/stride/byte/alias digest;
 - execution remains real MLIR/LLVM CPU scalar code;
 - no target backend fallback or interpreter.
 
@@ -51,3 +51,4 @@ runtime memref ABI
   -> declarative digest-bound shape profiles
   -> full-shape offline campaign
 ```
+
