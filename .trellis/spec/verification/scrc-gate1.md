@@ -395,6 +395,10 @@ pi_ablations            = false
 gate1.interventions     = []
 ```
 
+`test/scrc_live_e2e.py` 的直接 CLI 默认值与该边界相同；paired intervention 与 π
+ablation 只能通过显式参数 opt in，产物必须标记为 diagnostic，不能冒充官方 live
+acceptance evidence。
+
 该 profile 不运行 paired J/B/C intervention，因此 `wrong_fill_delta` 不可能出现在其
 正式调用链或 acceptance evidence 中。若旧枚举仍用于 mutation/self-check，它只描述
 人为 mutant 的诊断结果，绝不是“修正 normal J”的因果干预，更不能帮助 normal

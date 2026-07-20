@@ -1433,12 +1433,12 @@ def run_case(
     if relift_rounds < 1:
         raise ValueError("relift_rounds must be positive")
     semantic_interventions = int(
-        getattr(args, "semantic_interventions", 3)
+        getattr(args, "semantic_interventions", 0)
     )
     if semantic_interventions < 0:
         raise ValueError("semantic_interventions must be non-negative")
     pi_ablations_enabled = (
-        bool(getattr(args, "pi_ablations", True)) and gate1_formal
+        bool(getattr(args, "pi_ablations", False)) and gate1_formal
     )
     pi_ablation_limit = int(getattr(args, "pi_ablation_limit", 3))
     if pi_ablation_limit < 1:
@@ -1550,7 +1550,7 @@ def run_case(
             "replay_reference_naming": "opaque_replay_refs_v1",
             "pi_ablations": {
                 "enabled": pi_ablations_enabled,
-                "default_policy": "enabled_for_formal_live_evidence",
+                "default_policy": "disabled_by_default_opt_in_diagnostic_only",
                 "maximum": pi_ablation_limit,
                 "requires_full_pi_replay_closed": True,
                 "kinds": [kind.value for kind in pi_ablation_kinds],
@@ -1949,6 +1949,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
+
+
 def _rule_registry_from_args(args: argparse.Namespace):
     registry = default_triton_rule_registry()
     release_path = getattr(args, "rule_release", None)
@@ -1991,8 +1998,8 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
         choices=("formal", "normal"),
         default="formal",
         help=(
-            "formal runs interventions/masked/pi diagnostics; normal performs "
-            "the real source/replay closure and relift loop only"
+            "formal adds the terminal masked-J attack and composer shadow to "
+            "the real closure; normal performs closure and relift only"
         ),
     )
     parser.add_argument(
@@ -2001,17 +2008,20 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument(
         "--semantic-interventions",
-        type=_positive_int,
-        default=3,
-        help="maximum deterministic J/B coordinates checked after normal closure",
+        type=_non_negative_int,
+        default=0,
+        help=(
+            "opt-in diagnostic paired J/B/C interventions after normal closure; "
+            "zero on the live acceptance path"
+        ),
     )
     parser.add_argument(
         "--pi-ablations",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
-            "run exact pi-tamper rejection and C.strategy→recompose causal "
-            "diagnostics; formal live evidence enables them by default"
+            "opt in to exact pi-tamper and C.strategy→recompose diagnostics; "
+            "not part of live acceptance"
         ),
     )
     parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)
