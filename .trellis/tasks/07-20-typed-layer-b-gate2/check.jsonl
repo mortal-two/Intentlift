@@ -4,3 +4,5 @@
 {"file":".trellis/spec/verification/scrc-gate1.md","reason":"Check hard closure and live zero-intervention invariants."}
 {"file":".trellis/spec/verification/scrc-gate2.md","reason":"Check replay/scalar evidence, statuses, and no CUDA dependency."}
 {"file":".trellis/spec/project/code-layout.md","reason":"Check mature target-separated package boundaries and no umbrellas."}
+{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Check implementation against the observed invalid forms and no-auto-rewrite decision."}
+{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Check scalar changes do not use interpreter or unsafe post-Gate1 shape shrinking."}

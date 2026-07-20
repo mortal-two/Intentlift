@@ -5,3 +5,5 @@
 {"file":".trellis/spec/verification/scrc-gate1.md","reason":"Strict Gate1 hard closure and official zero-intervention live policy."}
 {"file":".trellis/spec/verification/scrc-gate2.md","reason":"Digest-bound replay/scalar v2 protocol and fail-closed evidence rules."}
 {"file":".trellis/spec/lowering/index.md","reason":"Scalar reference versus production target lowering separation."}
+{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Observed accepted-artifact soundness gap, canonical parser decision, and required tests."}
+{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Dense-constant scalability findings and runtime memref ABI direction."}
