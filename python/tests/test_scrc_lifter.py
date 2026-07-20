@@ -30,6 +30,10 @@ from intentir.verify.gate1.rules import (
 )
 
 
+def _parse_proposal(proposal: scrc.LiftCoreProposal) -> Gate1Artifact:
+    return Gate1Artifact.from_json(proposal.to_json())
+
+
 def _artifact_payload() -> dict:
     return {
         "j": {
@@ -365,11 +369,12 @@ def test_lift_driver_retains_sampled_iota_for_gate1_admission(
     response = LLMReply(json.dumps(payload), "gpt-test", {"id": "bad-iota"})
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "def add_kernel(...): pass",
         "add_kernel",
         max_repairs=0,
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="iota extent must equal"):
         validate_semantic_iota_extents(artifact)
 
@@ -414,22 +419,6 @@ def test_scrc_extraction_requires_unmaterialized_liftcore() -> None:
 
 def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     payload = _artifact_payload()
-    payload["j"]["node_ids"] = [
-        {"id": key, "path": value}
-        for key, value in payload["j"]["node_ids"].items()
-    ]
-    first_access = payload["j"]["boundary"]["accesses"][0]
-    first_access["fill"] = first_access.pop("fill_value")
-    first_effect = payload["j"]["boundary"]["effects"][0]
-    first_effect["tensor"] = first_effect.pop("target")
-    first_effect.update(
-        {
-            "effect_id": "e0",
-            "index_expression": "i",
-            "predicate": "i < N",
-            "value": "A[i]",
-        }
-    )
     response = LLMReply(
         json.dumps(payload),
         "gpt-test",
@@ -448,8 +437,8 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     source = "@triton.jit\ndef add_kernel(...): pass"
     result = scrc.extract_scrc_artifact(source, "add_kernel", max_repairs=0)
     assert result.artifact.source == source
-    assert result.artifact.plan.steps == []
-    assert result.artifact.compose_provenance is None
+    assert result.artifact.to_json()["plan"] == {"steps": []}
+    assert "compose_provenance" not in result.artifact.to_json()
     assert result.artifact.provenance[0].model == "gpt-test"
     assert result.provenance.response_id == "resp-test"
     assert result.provenance.response_ids == ("resp-test",)
@@ -500,8 +489,9 @@ def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:
     result = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     )
+    artifact = _parse_proposal(result.artifact)
 
-    assert result.artifact.schedule.values == {
+    assert artifact.schedule.values == {
         "BLOCK": 64,
         "num_warps": 4,
     }
@@ -513,7 +503,7 @@ def test_scrc_lift_uses_and_checks_trusted_compiler_view(monkeypatch) -> None:
         "user_input"
     ]
     assert captured["text_format"]["name"] == "scrc_lift_core"
-    rewriter_view = result.artifact.rewriter_view()
+    rewriter_view = artifact.rewriter_view()
     assert rewriter_view["j"]["intent"]["intent_function"]["layer_c"] == {}
     assert "values" not in rewriter_view["schedule"]
 
@@ -552,13 +542,14 @@ def test_semantic_relift_may_change_strategy_before_gate1_composes_pi(
     trusted = _trusted_artifact()
     context = scrc.SCRCReliftContext(1, {"schema_version": "test"}, ())
 
-    result = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         trusted.source or "",
         trusted.j.kernel_id,
         relift_context=context,
         trusted_artifact=trusted,
         max_repairs=0,
     ).artifact
+    result = _parse_proposal(proposal)
 
     assert result.interface == trusted.interface
     assert result.schedule == trusted.schedule
@@ -581,9 +572,10 @@ def test_gate1_admission_rejects_compiler_view_drift(monkeypatch) -> None:
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
     view = scrc.SCRCCompilerView({"BLOCK": 128}, (), ())
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="schedule.values differs"):
         validate_trusted_compiler_view(artifact, view)
 
@@ -629,14 +621,15 @@ def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
     result = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     )
+    artifact = _parse_proposal(result.artifact)
 
     eps = next(
-        item for item in result.artifact.interface.parameters if item.name == "eps"
+        item for item in artifact.interface.parameters if item.name == "eps"
     )
     assert eps.tensor_ref == "eps"
-    assert result.artifact.j.intent.inputs[-1].shape == []
+    assert artifact.j.intent.inputs[-1].shape == []
     materialized = materialize_replay_plan(
-        result.artifact, default_triton_rule_registry()
+        artifact, default_triton_rule_registry()
     )[0]
     assert any(
         step.rule == "bind_runtime_scalar" and step.refs == ["eps"]
@@ -689,9 +682,10 @@ def test_scrc_lift_preserves_exact_typed_inactive_tensor_abi(monkeypatch) -> Non
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
 
     parameter = artifact.interface.parameters[2]
     assert parameter.tensor_ref == "Optional"
@@ -708,14 +702,15 @@ def test_gate1_admission_reports_inactive_tensor_shape_rank_drift(monkeypatch) -
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="wrong J rank"):
         validate_trusted_compiler_view(artifact, view)
 
 
-def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
+def test_gate1_constructability_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
     payload = _artifact_payload()
     payload["j"]["intent"]["intent_function"]["inputs"].append(
         {"name": "eps", "dtype": "f32", "shape": [1]}
@@ -753,12 +748,11 @@ def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
         ("BLOCK",),
     )
 
-    with pytest.raises(scrc.SCRCLiftError) as caught:
-        scrc.extract_scrc_artifact(
-            "source", "add_kernel", compiler_view=view, max_repairs=0
-        )
-
-    assert "tensor_ref must have shape=[]" in str(caught.value)
+    proposal = scrc.extract_scrc_artifact(
+        "source", "add_kernel", compiler_view=view, max_repairs=0
+    ).artifact
+    with pytest.raises(ValueError, match=r"tensor_ref must have shape=\[\]"):
+        _parse_proposal(proposal)
 
 
 def test_gate1_admission_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
@@ -785,9 +779,10 @@ def test_gate1_admission_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
         ("BLOCK",),
     )
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", compiler_view=view, max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="parameter 'a_ptr' dtype differs"):
         validate_trusted_compiler_view(artifact, view)
 
@@ -802,9 +797,10 @@ def test_gate1_admission_rejects_concrete_c_inside_j(monkeypatch) -> None:
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="J.intent.layer_c must be empty"):
         validate_semantic_iota_extents(artifact)
 
@@ -821,9 +817,10 @@ def test_gate1_admission_rejects_semantic_names_in_opaque_reference_ids(
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
+    proposal = scrc.extract_scrc_artifact(
         "source", "add_kernel", max_repairs=0
     ).artifact
+    artifact = _parse_proposal(proposal)
     with pytest.raises(ValueError, match="must use declaration-order opaque ids"):
         validate_opaque_lift_references(artifact)
 
@@ -874,12 +871,13 @@ def test_scrc_lift_retains_nonportable_domain_for_gate1_relift(
         "source", "add_kernel", max_repairs=1
     )
 
-    assert result.artifact.j.boundary.domains == {"d0": invalid_domain}
+    artifact = _parse_proposal(result.artifact)
+    assert artifact.j.boundary.domains == {"d0": invalid_domain}
     assert result.provenance.repairs == ()
     assert invalid_domain in json.dumps(invalid_payload)
     assert len(conversations) == 1
     with pytest.raises(ValueError, match="portable boolean"):
-        validate_layer_b_predicates(result.artifact)
+        validate_layer_b_predicates(artifact)
 
 
 def test_real_relifter_sees_source_evidence_but_never_replay_source(
@@ -977,11 +975,12 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
         ),
     )
 
-    assert result.interface.to_json() == trusted.interface.to_json()
-    assert result.schedule.to_json() == trusted.schedule.to_json()
-    assert len(result.provenance) == 2
-    assert result.provenance[-1].metadata["kind"] == "semantic_relift"
-    assert result.provenance[-1].metadata["relift_round"] == 1
+    admitted = _parse_proposal(result)
+    assert admitted.interface.to_json() == trusted.interface.to_json()
+    assert admitted.schedule.to_json() == trusted.schedule.to_json()
+    assert len(admitted.provenance) == 2
+    assert admitted.provenance[-1].metadata["kind"] == "semantic_relift"
+    assert admitted.provenance[-1].metadata["relift_round"] == 1
     assert "outer-loop semantic relift" in captured["instructions"]
     assert "A TTIR op-count/association difference alone is not proof" in (
         captured["instructions"]
