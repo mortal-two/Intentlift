@@ -8,7 +8,6 @@ from dataclasses import replace
 import pytest
 
 from intentir.extraction.providers.client import ProviderError
-from intentir.extraction.lifters.scrc import LiftCoreProposal
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1.codegen import UnsafeReplayCodeError
 from intentir.verify.gate1.compiler import (
@@ -756,41 +755,6 @@ def test_gate1_admission_failure_drives_bounded_source_aware_relift() -> None:
     assert relifter.calls == 1
     assert writer.calls == [False]
     assert [item.passed for item in result.admissions] == [False, True]
-
-
-def test_raw_liftcore_constructability_failure_reaches_gate1_relift() -> None:
-    valid = _artifact()
-    payload = valid.to_json()
-    payload["plan"] = {"steps": []}
-    payload.pop("compose_provenance", None)
-    payload["j"]["boundary"]["accesses"][0]["legacy_fill"] = 0.0
-    proposal = LiftCoreProposal(payload)
-
-    class FixingRelifter:
-        def relift(self, candidate, *, source_fingerprint, history, request):
-            assert isinstance(candidate, LiftCoreProposal)
-            assert source_fingerprint is None
-            assert request.trigger is ReliftTrigger.ARTIFACT_ADMISSION_FAILED
-            return valid
-
-    writer = CaptureWriter(["GOOD"])
-    result = _runner(
-        max_relifts=2,
-        run_masked_ablation=False,
-    ).run(
-        _source(),
-        proposal,
-        _case(),
-        default_triton_rule_registry(),
-        writer,
-        relifter=FixingRelifter(),
-    )
-
-    assert result.status is Gate1Status.REPLAY_CLOSED
-    assert writer.calls == [False]
-    assert result.admissions[0].failed_category.value == (
-        "artifact_constructability"
-    )
 
 
 def _binary_artifact() -> Gate1Artifact:

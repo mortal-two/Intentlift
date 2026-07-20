@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
+from intentir.verify.gate1.composer import materialize_replay_plan
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
-    KernelInterface,
+    ParameterKind,
     ProvenanceRecord,
     ProvenanceRole,
-    ScheduleSpec,
 )
 from intentir.verify.gate1.rules import (
     RuleRegistry,
@@ -45,6 +45,29 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 SCRC_RELIFT_PROTOCOL = (
     "gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11"
 )
+
+_DTYPE_ALIASES = {
+    "float16": "f16",
+    "half": "f16",
+    "float32": "f32",
+    "float": "f32",
+    "float64": "f64",
+    "double": "f64",
+    "bfloat16": "bf16",
+    "int8": "i8",
+    "int16": "i16",
+    "int32": "i32",
+    "int64": "i64",
+    "bool": "i1",
+}
+
+
+def _canonical_dtype(value: str | None) -> str | None:
+    if value is None:
+        return None
+    spelling = value.casefold().removeprefix("torch.")
+    return _DTYPE_ALIASES.get(spelling, spelling)
+
 
 @dataclass(frozen=True)
 class SCRCProvenance:
@@ -88,79 +111,14 @@ def _sanitized_response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
 
 
 @dataclass(frozen=True)
-class LiftCoreProposal:
-    """JSON-constructable Lift proposal awaiting Gate1 semantic admission."""
-
-    payload: Mapping[str, Any]
-
-    def __post_init__(self) -> None:
-        normalized = json.loads(json.dumps(dict(self.payload), allow_nan=False))
-        required = {
-            "j", "interface", "schedule", "strategy", "location_map",
-            "plan", "provenance",
-        }
-        optional = {"source"}
-        unknown = set(normalized) - required - optional
-        missing = required - set(normalized)
-        if unknown:
-            raise ValueError(
-                "LiftCoreProposal contains unknown top-level fields: "
-                + ", ".join(sorted(unknown))
-            )
-        if missing:
-            raise ValueError(
-                "LiftCoreProposal is missing top-level fields: "
-                + ", ".join(sorted(missing))
-            )
-        for name in required - {"provenance"}:
-            if not isinstance(normalized[name], dict):
-                raise TypeError(f"LiftCoreProposal.{name} must be an object")
-        if not isinstance(normalized["provenance"], list):
-            raise TypeError("LiftCoreProposal.provenance must be an array")
-        if "source" in normalized and not isinstance(normalized["source"], str):
-            raise TypeError("LiftCoreProposal.source must be a string")
-        object.__setattr__(self, "payload", normalized)
-
-    @property
-    def source(self) -> str | None:
-        value = self.payload.get("source")
-        return value if isinstance(value, str) else None
-
-    @property
-    def kernel_id(self) -> str | None:
-        j = self.payload.get("j")
-        value = j.get("kernel_id") if isinstance(j, dict) else None
-        return value if isinstance(value, str) else None
-
-    @property
-    def provenance(self) -> tuple[ProvenanceRecord, ...]:
-        return tuple(
-            ProvenanceRecord.from_json(item)
-            for item in self.payload["provenance"]
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        return json.loads(json.dumps(self.payload, allow_nan=False))
-
-
-def _artifact_payload(
-    artifact: Gate1Artifact | LiftCoreProposal,
-) -> dict[str, Any]:
-    return artifact.to_json()
-
-
-@dataclass(frozen=True)
 class SCRCExtraction:
     """Unmaterialized LiftCore proposal consumed by Gate1 admission."""
 
-    artifact: Gate1Artifact | LiftCoreProposal
+    artifact: Gate1Artifact
     provenance: SCRCProvenance
 
     def __post_init__(self) -> None:
-        payload = self.artifact.to_json()
-        if payload.get("plan") != {"steps": []} or (
-            "compose_provenance" in payload
-        ):
+        if self.artifact.plan.steps or self.artifact.compose_provenance is not None:
             raise ValueError(
                 "SCRCExtraction must not materialize pi before Gate1 admission"
             )
@@ -757,6 +715,94 @@ Do not emit source or provenance fields; the driver attaches them itself.
 """
 
 
+def _validate_opaque_lift_references(artifact: Gate1Artifact) -> None:
+    """Reject source-semantic spellings in Lift-owned J/C reference ids.
+
+    Materialized pi is composer-owned and may deterministically reference a J
+    tensor handle; the source-blind writer still receives its opaque rendering.
+    """
+
+    def require_declaration_order(
+        actual: list[str], prefix: str, label: str
+    ) -> None:
+        expected = [f"{prefix}{index}" for index in range(len(actual))]
+        if actual != expected:
+            raise ValueError(
+                f"{label} must use declaration-order opaque ids: "
+                f"{actual!r} != {expected!r}"
+            )
+
+    def walk_ops(op):
+        yield op
+        for child in op.body:
+            yield from walk_ops(child)
+
+    node_ids = list(artifact.j.node_ids)
+    domain_ids = list(artifact.j.boundary.domains)
+    access_ids = [access.access_id for access in artifact.j.boundary.accesses]
+    effect_ids = [
+        effect.effect_id for effect in artifact.j.boundary.effects
+    ]
+    scope_ids = [scope.scope_id for scope in artifact.j.scopes]
+    storage_ids = [storage.storage_id for storage in artifact.j.storage]
+    state_ids = [
+        state.state_id
+        for top in artifact.j.intent.body
+        for op in walk_ops(top)
+        for state in op.carry
+    ]
+    require_declaration_order(node_ids, "n", "j.node_ids")
+    require_declaration_order(domain_ids, "d", "j.boundary.domains")
+    require_declaration_order(access_ids, "a", "j.boundary.accesses.access_id")
+    require_declaration_order(effect_ids, "e", "j.boundary.effects.effect_id")
+    require_declaration_order(scope_ids, "q", "j.scopes.scope_id")
+    require_declaration_order(state_ids, "s", "j.intent.loop.carry.state_id")
+    require_declaration_order(storage_ids, "b", "j.storage.storage_id")
+
+    owned_groups = (
+        node_ids, domain_ids, access_ids, effect_ids, scope_ids, state_ids,
+        storage_ids,
+    )
+    all_owned = [value for group in owned_groups for value in group]
+    if len(all_owned) != len(set(all_owned)):
+        raise ValueError("Lift-owned opaque ids must be globally collision-free")
+    opaque_targets = set(all_owned)
+    abi_targets = {
+        parameter.name for parameter in artifact.interface.parameters
+    } | {slot.name for slot in artifact.schedule.slots}
+    tensor_targets = {
+        tensor.name
+        for tensor in [
+            *artifact.j.intent.inputs,
+            *artifact.j.intent.outputs,
+        ]
+    }
+    for index, step in enumerate(artifact.plan.steps):
+        references = [
+            *([step.node_ref] if step.node_ref is not None else []),
+            *step.refs,
+        ]
+        for ref in references:
+            if ref in opaque_targets or ref in abi_targets:
+                continue
+            if ref in tensor_targets:
+                continue
+            raise ValueError(
+                f"plan.steps[{index}] reference {ref!r} is not an opaque "
+                "Lift-owned id or a trusted ABI/C name"
+            )
+
+    for index, binding in enumerate(artifact.strategy.bindings):
+        if (
+            binding.target_ref not in opaque_targets
+            and binding.target_ref not in abi_targets
+        ):
+            raise ValueError(
+                f"strategy.bindings[{index}].target_ref is not an opaque "
+                "Lift-owned id or trusted ABI/C name"
+            )
+
+
 def _scrc_lift_prompt(
     source: str,
     name_hint: str,
@@ -783,7 +829,7 @@ def _scrc_relift_prompt(
     name_hint: str,
     registry: RuleRegistry,
     compiler_view: SCRCCompilerView | None,
-    trusted_artifact: Gate1Artifact | LiftCoreProposal,
+    trusted_artifact: Gate1Artifact,
     context: SCRCReliftContext,
 ) -> tuple[str, str]:
     instructions = (
@@ -905,12 +951,12 @@ provided; do not invent or discuss a previous replay implementation. Emit the
 complete corrected LiftArtifact JSON only, without plan/pi.
 """
     )
-    trusted_payload = _artifact_payload(trusted_artifact)
     fields = {
-        name: trusted_payload[name]
-        for name in (
-            "j", "interface", "schedule", "strategy", "location_map",
-        )
+        "j": trusted_artifact.j.to_json(),
+        "interface": trusted_artifact.interface.to_json(),
+        "schedule": trusted_artifact.schedule.to_json(),
+        "strategy": trusted_artifact.strategy.to_json(),
+        "location_map": trusted_artifact.location_map.to_json(),
     }
     admission_relift = (
         context.request.get("trigger") == "artifact_admission_failed"
@@ -974,7 +1020,7 @@ def scrc_lift_prompt_sha256(
 def scrc_relift_prompt_sha256(
     source: str,
     name_hint: str,
-    trusted_artifact: Gate1Artifact | LiftCoreProposal,
+    trusted_artifact: Gate1Artifact,
     context: SCRCReliftContext,
     *,
     registry: RuleRegistry | None = None,
@@ -998,6 +1044,75 @@ def scrc_relift_prompt_sha256(
     ).hexdigest()
 
 
+def _shape_preserving_iotas(
+    value: str,
+    producers: Mapping[str, Any],
+    *,
+    seen: frozenset[str] = frozenset(),
+) -> tuple[Any, ...]:
+    """Find iota ancestors through rank-preserving elementwise operations."""
+
+    if value in seen:
+        return ()
+    producer = producers.get(value)
+    if producer is None:
+        return ()
+    if producer.op == "iota":
+        return (producer,)
+    if producer.op not in {"cast", "map_unary", "map_binary", "select"}:
+        return ()
+    next_seen = seen | {value}
+    return tuple(
+        ancestor
+        for operand in producer.operands
+        for ancestor in _shape_preserving_iotas(
+            operand, producers, seen=next_seen
+        )
+    )
+
+
+def _validate_scrc_iota_extents(artifact: Gate1Artifact) -> None:
+    """Require shape-preserving iota chains to retain semantic extents.
+
+    This closes a real J-schema gap: a runtime output extent such as ``size``
+    must not silently become the sampled compiler-view value ``1003``. Physical
+    block/lane association remains governed by the Lift/Relift layer-authority
+    contract rather than by a pattern-matching schedule verifier.
+    """
+
+    intent = artifact.j.intent
+    top_level_ops = tuple(intent.body)
+    producers = {
+        op.result: op
+        for op in top_level_ops
+        if isinstance(op.result, str)
+    }
+    output_values = {
+        mapping.output: mapping.value
+        for mapping in artifact.j.boundary.output_mappings
+    }
+
+    for output in intent.outputs:
+        if len(output.shape) != 1:
+            continue
+        declared_extent = output.shape[0]
+        if not isinstance(declared_extent, (int, str)) or isinstance(
+            declared_extent, bool
+        ):
+            continue
+        value = output_values.get(output.name, output.name)
+        for iota in _shape_preserving_iotas(value, producers):
+            iota_extent = iota.attrs.get("n")
+            if iota_extent != declared_extent:
+                raise ValueError(
+                    "J.intent iota extent must equal its rank-1 semantic "
+                    f"output extent: attrs.n={iota_extent!r}, "
+                    f"output {output.name!r} shape={output.shape!r}; keep "
+                    "runtime extents symbolic instead of copying the sampled "
+                    "compiler-view value"
+                )
+
+
 def extract_scrc_artifact(
     source: str,
     name_hint: str,
@@ -1008,13 +1123,13 @@ def extract_scrc_artifact(
     max_repairs: int = 3,
     effort: str | None = None,
     relift_context: SCRCReliftContext | None = None,
-    trusted_artifact: Gate1Artifact | LiftCoreProposal | None = None,
+    trusted_artifact: Gate1Artifact | None = None,
 ) -> SCRCExtraction:
-    """Run LiftCore and return a constructable proposal for Gate1 admission.
+    """Run the complete Lift and return a full J/C/pi SCRC artifact.
 
-    The source-aware LLM produces LiftCore (J, interface, C and location). This
-    function attaches only transport metadata; Gate1 owns semantic admission
-    and deterministic π composition.
+    The source-aware LLM produces LiftCore (J, interface, C and location).  This
+    function then performs Lift's deterministic pi finalization before the
+    artifact crosses the Lift/Gate1 boundary.
     """
 
     registry = registry if registry is not None else default_triton_rule_registry()
@@ -1062,8 +1177,8 @@ def extract_scrc_artifact(
             if "plan" in payload or "compose_provenance" in payload:
                 raise ValueError(
                     "LiftCore response must not contain plan/pi or "
-                    "compose_provenance; Gate1 owns deterministic pi "
-                    "composition"
+                    "compose_provenance; Lift's deterministic pi finalizer "
+                    "owns them"
                 )
             expected_lift_core_fields = {
                 "j", "interface", "schedule", "strategy", "location_map",
@@ -1077,9 +1192,48 @@ def extract_scrc_artifact(
             j_payload = payload.get("j")
             if not isinstance(j_payload, dict):
                 raise TypeError("j must be an object")
+            if not isinstance(j_payload.get("scopes"), list) or not j_payload["scopes"]:
+                raise ValueError(
+                    "fresh Lift/relift J requires a non-empty portable scopes tree"
+                )
+            if not isinstance(j_payload.get("storage"), list):
+                raise ValueError("fresh Lift/relift J requires storage array")
+            node_ids = payload.get("j", {}).get("node_ids")
+            if isinstance(node_ids, list):
+                normalized_ids: dict[str, str] = {}
+                for index, item in enumerate(node_ids):
+                    if not isinstance(item, dict):
+                        raise TypeError("node_ids array entries must be objects")
+                    node_id = item.get("id", item.get("node_id"))
+                    path = item.get("path", item.get("json_path"))
+                    if not isinstance(node_id, str) or not isinstance(path, str):
+                        raise TypeError(
+                            f"node_ids[{index}] requires string id/node_id and path/json_path"
+                        )
+                    normalized_ids[node_id] = path
+                payload["j"]["node_ids"] = normalized_ids
+            # One observed provider spelling uses the source prose term
+            # ``fill`` for the persisted ``fill_value`` field. Normalize only
+            # this enumerated wire alias before the strict artifact parser.
+            boundary = payload.get("j", {}).get("boundary", {})
+            for access in boundary.get("accesses", []):
+                if "fill" in access and "fill_value" not in access:
+                    access["fill_value"] = access.pop("fill")
+            for effect_index, effect in enumerate(boundary.get("effects", [])):
+                if "target" not in effect and isinstance(effect.get("tensor"), str):
+                    effect["target"] = effect["tensor"]
+                effect.setdefault("effect_id", f"e{effect_index}")
+                for extra in (
+                    "index_expression",
+                    "predicate",
+                    "tensor",
+                    "value",
+                ):
+                    effect.pop(extra, None)
             payload["source"] = source
-            # LiftCore carries no composed π. Gate1 parses the semantic object
-            # and owns deterministic plan composition after named admission.
+            # Gate1Artifact is the persisted post-compose object.  The Lift
+            # wire object deliberately has no plan, so use an empty temporary
+            # value only to run the strict J/interface/C parser.
             payload["plan"] = {"steps": []}
             metadata: dict[str, Any] = {
                 "prompt_sha256": prompt_sha,
@@ -1096,12 +1250,9 @@ def extract_scrc_artifact(
                         "relift_round": relift_context.relift_round,
                     }
                 )
-                previous = _artifact_payload(trusted_artifact).get(
-                    "provenance", []
-                )
-                if not isinstance(previous, list):
-                    raise TypeError("trusted artifact provenance must be an array")
-                previous_provenance = list(previous)
+                previous_provenance = [
+                    item.to_json() for item in trusted_artifact.provenance
+                ]
             payload["provenance"] = [
                 *previous_provenance,
                 ProvenanceRecord(
@@ -1112,7 +1263,7 @@ def extract_scrc_artifact(
                     metadata=metadata,
                 ).to_json(),
             ]
-            artifact = LiftCoreProposal(payload)
+            artifact = Gate1Artifact.from_json(payload)
             if trusted_artifact is not None:
                 admission_relift = (
                     relift_context is not None
@@ -1120,21 +1271,15 @@ def extract_scrc_artifact(
                     == "artifact_admission_failed"
                 )
                 if not admission_relift:
-                    artifact_json = artifact.to_json()
-                    trusted_json = _artifact_payload(trusted_artifact)
-                    if KernelInterface.from_json(
-                        artifact_json["interface"]
-                    ).to_json() != KernelInterface.from_json(
-                        trusted_json["interface"]
-                    ).to_json():
+                    if artifact.interface.to_json() != (
+                        trusted_artifact.interface.to_json()
+                    ):
                         raise ValueError(
                             "semantic relift changed trusted interface"
                         )
-                    if ScheduleSpec.from_json(
-                        artifact_json["schedule"]
-                    ).to_json() != ScheduleSpec.from_json(
-                        trusted_json["schedule"]
-                    ).to_json():
+                    if artifact.schedule.to_json() != (
+                        trusted_artifact.schedule.to_json()
+                    ):
                         raise ValueError(
                             "semantic relift changed trusted schedule C"
                         )
@@ -1150,6 +1295,233 @@ def extract_scrc_artifact(
                         response_id
                         for response_id in (
                             *(item.response_id for item in rejected_attempts),
+                            reply.raw.get("id"),
+                        )
+                        if isinstance(response_id, str) and response_id
+                    ),
+                    response_model=(
+                        reply.raw.get("model")
+                        if isinstance(reply.raw.get("model"), str)
+                        else None
+                    ),
+                    usage=_sanitized_response_usage(reply.raw),
+                ),
+            )
+            if compiler_view is not None:
+                if compiler_view.parameter_order:
+                    actual_order = [
+                        item.name for item in artifact.interface.parameters
+                    ]
+                    if actual_order != list(compiler_view.parameter_order):
+                        raise ValueError(
+                            "interface parameter order differs from trusted "
+                            f"compiler view: {actual_order!r} != "
+                            f"{list(compiler_view.parameter_order)!r}"
+                        )
+                if compiler_view.constexpr_parameters:
+                    actual_constexprs = [
+                        item.name
+                        for item in artifact.interface.parameters
+                        if item.kind is ParameterKind.CONSTEXPR
+                    ]
+                    if actual_constexprs != list(
+                        compiler_view.constexpr_parameters
+                    ):
+                        raise ValueError(
+                            "interface constexpr parameters differ from "
+                            "trusted compiler view"
+                        )
+                if compiler_view.arguments:
+                    runtime_parameters = [
+                        item
+                        for item in artifact.interface.parameters
+                        if item.kind is not ParameterKind.CONSTEXPR
+                    ]
+                    expected_names = [
+                        item.name for item in compiler_view.arguments
+                    ]
+                    actual_names = [item.name for item in runtime_parameters]
+                    if actual_names != expected_names:
+                        raise ValueError(
+                            "interface runtime parameter order differs from "
+                            f"trusted compiler view: {actual_names!r} != "
+                            f"{expected_names!r}"
+                        )
+                    tensors = {
+                        tensor.name: tensor
+                        for tensor in [
+                            *artifact.j.intent.inputs,
+                            *artifact.j.intent.outputs,
+                        ]
+                    }
+                    scalar_extents = {
+                        item.name: int(item.value)
+                        for item in compiler_view.arguments
+                        if item.kind == "scalar"
+                        and isinstance(item.value, int)
+                        and not isinstance(item.value, bool)
+                    }
+                    for parameter, argument in zip(
+                        runtime_parameters,
+                        compiler_view.arguments,
+                        strict=True,
+                    ):
+                        pointer = parameter.kind in {
+                            ParameterKind.POINTER,
+                            ParameterKind.TENSOR,
+                        }
+                        if pointer != (argument.kind == "tensor"):
+                            raise ValueError(
+                                f"interface parameter {parameter.name!r} kind "
+                                "differs from trusted compiler view"
+                            )
+                        if _canonical_dtype(parameter.dtype) != _canonical_dtype(
+                            argument.dtype
+                        ):
+                            raise ValueError(
+                                f"interface parameter {parameter.name!r} dtype "
+                                "differs from trusted compiler view"
+                            )
+                        if argument.kind == "tensor":
+                            expected_rank = len(argument.shape)
+                            if parameter.rank != expected_rank:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} rank "
+                                    f"{parameter.rank!r} != {expected_rank}"
+                                )
+                            tensor = tensors.get(parameter.tensor_ref or "")
+                            if tensor is None:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    "tensor_ref must name a typed J tensor with "
+                                    "the trusted compiler-view shape "
+                                    f"{list(argument.shape)!r}"
+                                )
+                            if len(tensor.shape) != expected_rank:
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    f"tensor_ref {parameter.tensor_ref!r} names "
+                                    f"J shape {tensor.shape!r} (rank "
+                                    f"{len(tensor.shape)}), expected trusted "
+                                    f"compiler-view shape {list(argument.shape)!r} "
+                                    f"(rank {expected_rank})"
+                                )
+                            if _canonical_dtype(tensor.dtype) != _canonical_dtype(
+                                argument.dtype
+                            ):
+                                raise ValueError(
+                                    f"interface parameter {parameter.name!r} "
+                                    "J tensor dtype differs from compiler view"
+                                )
+                            for declared, concrete in zip(
+                                tensor.shape, argument.shape, strict=True
+                            ):
+                                if isinstance(declared, str):
+                                    if declared not in scalar_extents:
+                                        raise ValueError(
+                                            f"J tensor {tensor.name!r} uses "
+                                            f"shape symbol {declared!r} absent "
+                                            "from compiler scalar arguments"
+                                        )
+                                    if scalar_extents[declared] != concrete:
+                                        raise ValueError(
+                                            f"J tensor {tensor.name!r} shape "
+                                            f"symbol {declared!r} binds to "
+                                            f"{scalar_extents[declared]}, not "
+                                            f"concrete extent {concrete}"
+                                        )
+                                elif int(declared) != concrete:
+                                    raise ValueError(
+                                        f"J tensor {tensor.name!r} static extent "
+                                        f"{declared} != {concrete}"
+                                    )
+                        else:
+                            if parameter.rank not in (None, 0):
+                                raise ValueError(
+                                    f"scalar parameter {parameter.name!r} rank must "
+                                    "be absent or zero"
+                                )
+                            if parameter.tensor_ref is not None:
+                                tensor = tensors.get(parameter.tensor_ref)
+                                input_names = {
+                                    item.name for item in artifact.j.intent.inputs
+                                }
+                                if tensor is None or tensor.name not in input_names:
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref must name a J input"
+                                    )
+                                if tensor.shape:
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref must have shape=[]"
+                                    )
+                                if _canonical_dtype(tensor.dtype) != _canonical_dtype(
+                                    argument.dtype
+                                ):
+                                    raise ValueError(
+                                        f"scalar parameter {parameter.name!r} "
+                                        "tensor_ref dtype differs from compiler view"
+                                    )
+                if compiler_view.grid and len(artifact.interface.grid) != len(
+                    compiler_view.grid
+                ):
+                    raise ValueError(
+                        "interface.grid rank differs from trusted compiler view"
+                    )
+                if compiler_view.grid_contract and tuple(
+                    artifact.interface.grid
+                ) != tuple(compiler_view.grid_contract):
+                    raise ValueError(
+                        "interface.grid differs from trusted grid contract: "
+                        f"{artifact.interface.grid!r} != "
+                        f"{list(compiler_view.grid_contract)!r}"
+                    )
+                if dict(artifact.schedule.values) != dict(
+                    compiler_view.schedule_values
+                ):
+                    raise ValueError(
+                        "schedule.values differs from trusted compiler view: "
+                        f"{artifact.schedule.values!r} != "
+                        f"{dict(compiler_view.schedule_values)!r}"
+                    )
+                if tuple(artifact.interface.compiler_slots) != tuple(
+                    compiler_view.compiler_slots
+                ):
+                    raise ValueError(
+                        "interface.compiler_slots differs from trusted compiler view"
+                    )
+                if [item.to_json() for item in artifact.j.boundary.aliases] != [
+                    item.to_json() for item in compiler_view.aliases
+                ]:
+                    raise ValueError(
+                        "boundary.aliases differs from trusted compiler view"
+                    )
+            # Pi finalization belongs to Lift.  Gate1 receives only a complete
+            # artifact and independently recomputes the expected pi for an
+            # integrity check; it never fills in a missing replay plan.
+            artifact, _ = materialize_replay_plan(artifact, registry)
+            _validate_opaque_lift_references(artifact)
+            registry.validate_strict_plan(
+                artifact.plan,
+                frontend=artifact.interface.frontend,
+                artifact=artifact,
+            )
+            return SCRCExtraction(
+                artifact,
+                SCRCProvenance(
+                    reply.model,
+                    prompt_sha,
+                    attempt + 1,
+                    response_id=reply.raw.get("id"),
+                    repairs=tuple(repairs),
+                    response_ids=tuple(
+                        response_id
+                        for response_id in (
+                            *(
+                                item.response_id
+                                for item in rejected_attempts
+                            ),
                             reply.raw.get("id"),
                         )
                         if isinstance(response_id, str) and response_id
@@ -1215,12 +1587,12 @@ class ResponsesSCRCRelifter:
 
     def relift(
         self,
-        artifact: Gate1Artifact | LiftCoreProposal,
+        artifact: Gate1Artifact,
         *,
         source_fingerprint: "TTIRFingerprint | None",
         history: tuple["ReliftEvidence", ...],
         request: "ReliftRequest",
-    ) -> Gate1Artifact | LiftCoreProposal:
+    ) -> Gate1Artifact:
         relift_round = len(self._records) + 1
         request_json = request.to_json()
         if request_json.get("trigger") not in {
@@ -1241,16 +1613,8 @@ class ResponsesSCRCRelifter:
                 raise TypeError(
                     "semantic relift accepts only source-free ReliftEvidence"
                 )
-            artifact_json = _artifact_payload(artifact)
-            source_text = artifact_json.get("source")
-            j_json = artifact_json.get("j")
-            kernel_id = (
-                j_json.get("kernel_id") if isinstance(j_json, dict) else None
-            )
-            if not isinstance(source_text, str):
+            if artifact.source is None:
                 raise ValueError("semantic relift requires retained source text")
-            if not isinstance(kernel_id, str) or not kernel_id:
-                raise ValueError("semantic relift requires retained kernel_id")
             context = SCRCReliftContext(
                 relift_round=relift_round,
                 source_fingerprint=_source_fingerprint_prompt_view(
@@ -1263,8 +1627,8 @@ class ResponsesSCRCRelifter:
                 request=request_json,
             )
             extraction = extract_scrc_artifact(
-                source_text,
-                kernel_id,
+                artifact.source,
+                artifact.j.kernel_id,
                 registry=self.registry,
                 provider=self.provider,
                 compiler_view=self.compiler_view,
@@ -1303,7 +1667,6 @@ class ResponsesSCRCRelifter:
 
 
 __all__ = [
-    "LiftCoreProposal",
     "ResponsesSCRCRelifter",
     "SCRC_RELIFT_PROTOCOL",
     "SCRCCompilerArgument",
