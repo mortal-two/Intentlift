@@ -34,7 +34,7 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
   tools/intent-opt/           # 自有 opt 驱动(注册 Intent dialect + 标准 dialect)
   python/intentir/
     ir/                       # IntentProgram(A+B+ABI, optional C) 与中立语义模型
-    extraction/               # LLM 提取(prompt、re-roll、evidence、provider 客户端)
+    extraction/               # 原始 LiftCore proposal；不做 A/B/π 语义准入
     frontend/                 # JSON／IntentFunction → Intent MLIR
     backend/
       toolchain/              # host MLIR/LLVM 工具发现；不依赖具体 target
@@ -42,7 +42,7 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
       cpu/                    # CPU lowering / runner 的唯一实现
       riscv/                  # 能力边界；无实现时不得导出伪 backend
     verify/
-      gate1/                  # Lift artifact、RuleRegistry、结构闭合
+      gate1/                  # A/B/interface/π 准入、可执行 π 证明、结构闭合
       gate2/                  # final-J replay/scalar reference 动态比较
       back/                   # 历史验证／lowering adapter 归档
     benchmarks/               # 公平、可复现的性能评估入口
@@ -69,6 +69,10 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
   `backend/cpu` 的中立 MLIR reference execution，但不得导入 CUDA/ROCm/target selector。
   若完整 A/B/ABI 合同需要被 backend 消费，应迁入 `ir/` 的中立对象，不能长期依赖
   Gate2 adapter。
+- formal pipeline 的依赖方向固定为
+  `extraction -> gate1 -> gate2 -> backend conformance/performance`。Gate1 可以消费
+  source/compiler view 作裁决，但 extraction 不得调用 Gate1 semantic parser 冒充提前
+  准入；production backend 也不得反向影响 Gate1/Gate2 verdict。
 - backend 根目录不得存放 flat target 实现或 compatibility facade；target package
   不得反向依赖 `benchmarks/`，CPU/RISC-V/toolchain 不得导入 CUDA。
 - selector、dispatch 与 capability registry 不得读取 Gate verdict、provider、Kernel 名、

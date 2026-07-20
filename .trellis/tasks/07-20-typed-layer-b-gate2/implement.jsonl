@@ -7,3 +7,4 @@
 {"file":".trellis/spec/lowering/index.md","reason":"Scalar reference versus production target lowering separation."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Observed accepted-artifact soundness gap, canonical parser decision, and required tests."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Dense-constant scalability findings and runtime memref ABI direction."}
+{"file":"python/intentir/verify/gate1/pi_ablations.py","reason":"Executable J-only and exhaustive causal-step pi necessity evidence owned by formal Gate1."}

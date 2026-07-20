@@ -7,17 +7,19 @@ pipeline without weakening Gate1:
 
 ```text
 fresh real LLM Lift/Relift
+  -> Gate1 named A/B/interface/π admission
+  -> executable J-only + all-causal-step π necessity
   -> strict Gate1 source/replay hard closure
   -> typed IntentProgram(A+B+ABI) handoff
   -> final-J replay/scalar Gate2 v2
   -> independent per-target backend conformance
 ```
 
-The immediate shared blocker is that Gate1 currently accepts free-form Layer-B
-domain strings which later fail the typed contract parser. KLDiv's accepted
-artifact contains `b = grid_axis(0), 0 <= b < 2048`; TVD and LayerNorm have
-equivalent natural-language spellings. This must be fixed at the Lift/schema
-boundary so the LLM produces a genuinely executable J.
+The shared blocker was an ownership error: extraction parsed semantic fields
+before Gate1, while some Layer-B strings still escaped to a later typed handoff.
+Extraction must now retain only transport-level constructability; Gate1 must own
+all semantic admission and turn precise failures into bounded source-aware
+Relift, so the LLM produces a genuinely executable J without a hidden Gate0.
 
 ## Non-negotiable invariants
 
@@ -26,8 +28,8 @@ boundary so the LLM produces a genuinely executable J.
 - Do not infer missing predicate/fill/alias/conflict fields or add kernel-name
   special cases.
 - Official live remains fresh, uncached, `gpt-5.6-sol/xhigh`, with zero paired
-  semantic interventions and no pi ablations. `wrong_fill_delta` is not on the
-  acceptance path; masked-J remains a terminal anti-leakage attack.
+  semantic interventions, required executable π ablations and terminal masked-J.
+  `wrong_fill_delta` is not on the acceptance path.
 - Gate2 v2 has exactly two required legs: final-J replay and scalar MLIR
   reference. It cannot import or fall back to CUDA/ROCm production lowering.
 - Production backend conformance happens only after Gate2.
@@ -36,30 +38,34 @@ boundary so the LLM produces a genuinely executable J.
 
 ## Requirements
 
-1. Define one canonical, typed portable grammar/model for Layer-B domain
-   predicates and use it in both Gate1 validation and IntentProgram handoff.
-2. Update the LLM prompt/schema/repair diagnostics so invalid natural-language
-   predicates are rejected early and repaired by the LLM, not rewritten by
-   deterministic code.
-3. Preserve compatibility only for expressions that are already valid under
-   the canonical grammar; fail closed on assignment/prose/source-local syntax.
-4. Add generic tests for valid logical predicates and invalid forms observed in
-   KLDiv/TVD/LayerNorm.
-5. Re-run fresh real LLM Gate1/Gate2 for the five kernels as capability becomes
+1. Extraction emits a raw `LiftCoreProposal` and checks only JSON serialization,
+   closed top-level fields/container kinds and provenance. It must not parse A/B,
+   infer missing fields, validate opaque ids/interface, or compose π.
+2. Gate1 owns named hard admission categories for constructability, Layer A,
+   Layer B, opaque identity, interface/compiler view and π capability/completeness.
+3. Use one canonical typed Layer-B grammar in Gate1 and IntentProgram handoff;
+   fail closed on assignment/prose/source-local syntax and drive bounded Relift.
+4. Formal Gate1 executes J-only and every RuleCard-classified causal π dropout
+   through a fresh writer, compile and score-free hard comparison. Canonicality
+   pre-rejection is not evidence; unexpected closure rejects; incomplete
+   infrastructure yields `NO_CLOSURE`.
+5. Add generic tests for observed KLDiv/TVD/LayerNorm forms and the complete π
+   verdict matrix.
+6. Re-run fresh real LLM Gate1/Gate2 for the five kernels as capability becomes
    available. Old source/replay v1 reports remain diagnostic only.
-6. Make scalar execution scalable for legitimate captured shapes without a
+7. Make scalar execution scalable for legitimate captured shapes without a
    JSON/NumPy interpreter or kernel-name profiles. Any small profile must be a
    declared, ABI-valid specialization shared by replay and scalar.
-7. After Gate2 passes, run independent target-specific lowering conformance,
+8. After Gate2 passes, run independent target-specific lowering conformance,
    keeping common, CUDA, CPU/reference, and future backends physically separate.
 
 ## Current evidence
 
-- Typed predicate admission landed in `05876fe`: the three observed binder/prose
-  forms now fail before Gate1, enter ordinary bounded Lift repair, and cannot be
-  reintroduced through post-construction mutation. The canonical specs now
-  describe this current behavior; explicit typed free-symbol binding remains a
-  follow-up capability rather than an inferred compatibility rule.
+- Raw proposal and Gate1-owned admission are implemented on this task branch;
+  observed binder/prose forms become `layer_b_semantics` evidence and enter
+  bounded Relift rather than failing in extraction or after Gate1.
+- π necessity now reaches a fresh writer/compile/hard compare. RuleCards classify
+  causal vs administrative steps; `canonicality_rejected` is historical only.
 - The active scalar reference now uses a value-independent MLIR module, one
   ranked-memref C entry for all outputs, a content-addressed toolchain-bound
   cache, and a crash/timeout-isolated worker. The old dense-input,
@@ -78,10 +84,12 @@ boundary so the LLM produces a genuinely executable J.
 ## Completion criteria
 
 - Typed-domain validation lands with unit and integration tests.
-- Invalid observed domain forms fail during Lift/Gate1 artifact validation with
+- Invalid observed domain forms fail during Gate1 named admission with
   actionable repair diagnostics.
 - No Gate1 comparator/tolerance relaxation appears in the diff.
 - At least KLDiv is re-lifted fresh through Gate1 and replay/scalar Gate2 v2;
   remaining kernels have honest terminal evidence or explicit capability gaps.
 - Gate2 architecture tests prove no production CUDA dependency.
+- Formal live reports prove J-only plus all causal-step π probes were executed;
+  every probe has one writer attempt and a compile nonclosure or hard mismatch.
 - Target lower results, when run, are reported separately from Gate2.

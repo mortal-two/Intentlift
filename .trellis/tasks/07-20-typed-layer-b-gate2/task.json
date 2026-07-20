@@ -24,9 +24,10 @@
     "python/intentir/ir/contracts.py",
     "python/intentir/verify/gate1/model.py",
     "python/intentir/verify/gate1/orchestrate.py",
+    "python/intentir/verify/gate1/pi_ablations.py",
     "python/intentir/verify/gate1/program_adapter.py",
     "python/intentir/extraction/lifters/scrc.py"
   ],
-  "notes": "Phase 2.1 typed predicate admission landed in 05876fe. The scalable value-independent ranked-memref scalar ABI is implemented with one-call multi-output execution, content-addressed compilation, and an isolated worker. Task remains in progress for explicit typed symbol binding and fresh five-kernel evidence.",
+  "notes": "Extraction now emits raw LiftCore proposals; Gate1 owns named A/B/interface/pi admission and executable J-only/all-causal-step pi necessity. Gate2 remains same-J replay/scalar v2. The scalable value-independent ranked-memref scalar ABI is implemented. Task remains in progress for fresh five-kernel evidence and post-Gate2 backend conformance.",
   "meta": {}
 }
