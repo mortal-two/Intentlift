@@ -29,8 +29,10 @@ from .orchestrate import (
 )
 from .scalar import (
     SCALAR_LOWERING_PROTOCOL,
+    ScalarLoweringRequest,
     ScalarLoweringRunner,
     ScalarLoweringSpec,
+    ScalarLoweringUnavailable,
     scalar_broadcast_axes,
 )
 from .triton import (
@@ -58,8 +60,10 @@ __all__ = [
     "OutputAgreement",
     "PairwiseAgreement",
     "SCALAR_LOWERING_PROTOCOL",
+    "ScalarLoweringRequest",
     "ScalarLoweringRunner",
     "ScalarLoweringSpec",
+    "ScalarLoweringUnavailable",
     "TensorInputSpec",
     "Tolerance",
     "TritonArgument",
