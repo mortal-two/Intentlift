@@ -7,7 +7,6 @@ from dataclasses import replace
 import pytest
 
 from intentir.ir.model import IntentFunction
-from intentir.verify.gate1.admission import validate_layer_b_predicates
 from intentir.verify.gate1 import (
     AccessKind,
     Boundary,
@@ -429,35 +428,33 @@ def test_unknown_keys_are_rejected_at_every_closed_boundary() -> None:
         "row + 1",
     ],
 )
-def test_gate1_artifact_retains_nonportable_domain_for_gate1_admission(
+def test_gate1_artifact_rejects_nonportable_domain_predicates(
     predicate: str,
 ) -> None:
     payload = _artifact().to_json()
     payload["j"]["boundary"]["domains"]["column_domain"] = predicate
 
-    artifact = Gate1Artifact.from_json(payload)
     with pytest.raises(
-        ValueError,
+        SchemaError,
         match=r"Boundary\.domains\.column_domain must be a portable boolean",
     ):
-        validate_layer_b_predicates(artifact)
+        Gate1Artifact.from_json(payload)
 
-    assert artifact.j.boundary.domains["column_domain"] == predicate
+    assert payload["j"]["boundary"]["domains"]["column_domain"] == predicate
 
 
-def test_gate1_artifact_retains_nonportable_access_for_gate1_admission() -> None:
+def test_gate1_artifact_rejects_nonportable_access_predicate() -> None:
     payload = _artifact().to_json()
     invalid = "row := coordinate(grid_axis=0) with row < M"
     payload["j"]["boundary"]["accesses"][0]["predicate"] = invalid
 
-    artifact = Gate1Artifact.from_json(payload)
     with pytest.raises(
-        ValueError,
-        match=r"BoundaryAccess\[input_masked_load\]\.predicate must be a portable boolean",
+        SchemaError,
+        match=r"BoundaryAccess\.predicate must be a portable boolean",
     ):
-        validate_layer_b_predicates(artifact)
+        Gate1Artifact.from_json(payload)
 
-    assert artifact.j.boundary.accesses[0].predicate == invalid
+    assert payload["j"]["boundary"]["accesses"][0]["predicate"] == invalid
 
 
 def test_pi_schema_has_only_rule_node_ref_and_refs() -> None:
