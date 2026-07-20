@@ -223,9 +223,8 @@ def test_saved_gate2_requires_current_digest_bound_reacceptance(
     )
 
     class FakeRunner:
-        def run(self, source, replay, gate2_case):
+        def run(self, replay, gate2_case):
             captured.update(
-                source=source,
                 replay=replay,
                 gate2_case=gate2_case,
             )
@@ -256,7 +255,6 @@ def test_saved_gate2_requires_current_digest_bound_reacceptance(
         "required_gate1_state": "replay_closed",
         "status": "gate2_pass",
     }
-    assert captured["source"] == "SOURCE"
     assert captured["gate2_case"] == "GATE2_CASE"
 
 
@@ -270,8 +268,8 @@ def test_saved_gate2_suite_uses_current_digest_bound_matrix(
     )
 
     class FakeRunner:
-        def run_suite(self, source, replay, suite):
-            captured.update(source=source, replay=replay, suite=suite)
+        def run_suite(self, replay, suite):
+            captured.update(replay=replay, suite=suite)
             return SimpleNamespace(passed=True)
 
     monkeypatch.setattr(
@@ -300,5 +298,4 @@ def test_saved_gate2_suite_uses_current_digest_bound_matrix(
         "passed": True,
         "cases": [],
     }
-    assert captured["source"] == "SOURCE"
     assert captured["suite"] == "SUITE"

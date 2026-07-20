@@ -609,23 +609,13 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
 def _gate2_case_evidence(
     case_id: str, status: str = "gate2_pass"
 ) -> dict[str, object]:
-    source_replay_passed = status in {
-        "gate2_pass",
-        "scalar_diverged",
-    }
-    source_scalar_passed = status in {
-        "gate2_pass",
-        "replay_diverged",
-    }
     return {
         "case_id": case_id,
         "status": status,
         "input_digest": "a" * 64,
-        "source": {"ok": True},
         "replay": {"ok": True},
         "scalar": {"ok": True},
-        "source_replay": {"passed": source_replay_passed},
-        "source_scalar": {"passed": source_scalar_passed},
+        "replay_scalar": {"passed": status == "gate2_pass"},
     }
 
 
@@ -750,12 +740,12 @@ def test_gate2_suite_metrics_accept_a_complete_semantic_nonpass_suite() -> None:
                 "passed": False,
                 "status_counts": {
                     "gate2_pass": 1,
-                    "scalar_diverged": 1,
+                    "replay_scalar_mismatch": 1,
                 },
                 "cases": [
                     _gate2_case_evidence("c0"),
                     _gate2_case_evidence(
-                        "c1", "scalar_diverged"
+                        "c1", "replay_scalar_mismatch"
                     ),
                 ],
             },
@@ -825,7 +815,7 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
             "gate2": {
                 "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 **_gate2_case_evidence(
-                    "single-mismatch", "scalar_diverged"
+                    "single-mismatch", "replay_scalar_mismatch"
                 ),
             },
         },
@@ -849,7 +839,7 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
 
     metrics = summarize_gate1_gate2(rows)
 
-    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v5"
+    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v4"
     assert metrics["quadrants"] == {
         "gate1_closed_gate2_pass": 1,
         "gate1_closed_gate2_nonpass": 1,
@@ -1075,11 +1065,11 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 37
+    assert identity["schema"] == 36
     assert identity["composer_version"] == "deterministic_composer_v5"
     assert identity["performance_schema"] == "scrc_case_performance_v1"
     assert identity["gate1_gate2_metrics_schema"] == (
-            "scrc_gate1_gate2_conditional_v5"
+        "scrc_gate1_gate2_conditional_v4"
     )
     assert identity["relift_rounds"] == 3
     assert identity["semantic_interventions"] == 3
@@ -1122,17 +1112,9 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         "gate2_verdict_independence": True,
     }
     assert identity["gate2_execution_protocol"] == (
-        "source_replay_scalar_differential_v3"
+        "final_j_replay_scalar_differential_v2"
     )
-    assert identity["gate2_execution_legs"] == [
-        "source",
-        "replay",
-        "scalar",
-    ]
-    assert identity["gate2_required_comparisons"] == [
-        "source_replay",
-        "source_scalar",
-    ]
+    assert identity["gate2_execution_legs"] == ["replay", "scalar"]
     assert identity["gate2_comparison_protocol"] == (
         "exact_integer_tolerant_float_v2"
     )

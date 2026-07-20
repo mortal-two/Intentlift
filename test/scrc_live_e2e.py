@@ -2,10 +2,13 @@
 
 This harness invokes the production Gate1 entry point and can additionally run
 the exact same immutable replay observation over a declared fixed-C runtime
-profile family. Gate2 runs either the reviewed execution contract or a strict
-declarative shape/value/seed matrix.  Every case executes the source, the
-final-J replay, and the typed scalar MLIR lowering, then requires both
-source/replay and source/scalar agreement.
+profile family.  Normal replay, paired interventions and actual-pi masked-J
+each reuse one immutable replay over the complete family; no profile-local
+writer or repair path exists. Gate2 runs either the reviewed execution contract
+or a strict declarative shape/value/seed matrix over the final-J replay and the
+typed scalar MLIR lowering. It does not execute the source as a verdict leg or
+add an alternate correctness path: all decisions are still made by the
+production SCRC lifter, Gate1, and Gate2 implementations.
 """
 
 from __future__ import annotations
@@ -84,7 +87,6 @@ from intentir.verify.gate2 import (
     GATE2_COMPARISON_PROTOCOL,
     InputDistribution,
     ScalarLoweringSpec,
-    ScalarLoweringUnavailable,
     TensorInputSpec,
     Tolerance,
     TritonArgument,
@@ -501,8 +503,7 @@ def _gate2_case(
     case: LiveKernelCase,
     seed: int,
     *,
-    program: IntentProgram | None,
-    scalar_handoff_error: str | None = None,
+    program: IntentProgram,
     final_artifact_digest: str,
     gate1_j_digest: str,
     replay_artifact_digest: str,
@@ -594,44 +595,18 @@ def _gate2_case(
     triton = TritonExecutionSpec(
         tuple(arguments), case.grid, dict(artifact.schedule.values)
     )
-    if program is None:
-        if not scalar_handoff_error:
-            raise ValueError(
-                "missing IntentProgram requires a scalar handoff error"
-            )
-        scalar = ScalarLoweringUnavailable(
-            final_artifact_digest,
-            gate1_j_digest,
-            scalar_handoff_error,
-            failure_class="intent_program_handoff",
-        )
-    else:
-        if scalar_handoff_error is not None:
-            raise ValueError(
-                "scalar handoff error cannot accompany an IntentProgram"
-            )
-        try:
-            scalar = ScalarLoweringSpec.create(
-                program,
-                final_artifact_digest=final_artifact_digest,
-                gate1_j_digest=gate1_j_digest,
-                dims=_symbolic_dims(program, case),
-                input_bindings={
-                    tensor.name: tensor.name
-                    for tensor in program.function.inputs
-                },
-                output_bindings={
-                    tensor.name: tensor.name
-                    for tensor in program.function.outputs
-                },
-            )
-        except Exception as exc:
-            scalar = ScalarLoweringUnavailable(
-                final_artifact_digest,
-                gate1_j_digest,
-                f"{type(exc).__name__}: {exc}",
-                failure_class="scalar_spec_binding",
-            )
+    scalar = ScalarLoweringSpec.create(
+        program,
+        final_artifact_digest=final_artifact_digest,
+        gate1_j_digest=gate1_j_digest,
+        dims=_symbolic_dims(program, case),
+        input_bindings={
+            tensor.name: tensor.name for tensor in program.function.inputs
+        },
+        output_bindings={
+            tensor.name: tensor.name for tensor in program.function.outputs
+        },
+    )
     return Gate2Case(
         case_id or f"{case.name}.live",
         values,
@@ -784,8 +759,7 @@ def _gate2_suite(
     case: LiveKernelCase,
     seeds: tuple[int, ...],
     *,
-    program: IntentProgram | None,
-    scalar_handoff_error: str | None = None,
+    program: IntentProgram,
     final_artifact_digest: str,
     gate1_j_digest: str,
     replay_artifact_digest: str,
@@ -811,7 +785,6 @@ def _gate2_suite(
                         profiled,
                         seed,
                         program=program,
-                        scalar_handoff_error=scalar_handoff_error,
                         final_artifact_digest=final_artifact_digest,
                         gate1_j_digest=gate1_j_digest,
                         replay_artifact_digest=replay_artifact_digest,
@@ -833,7 +806,6 @@ def _execution_json(result) -> dict[str, Any]:
     return {
         "leg": result.leg,
         "ok": result.ok,
-        "unsupported": result.unsupported,
         "error": result.error,
         "metadata": dict(result.metadata),
         "outputs": {
@@ -853,15 +825,11 @@ def _gate2_evidence_json(result) -> dict[str, Any]:
         "status": result.status.value,
         "input_digest": result.input_digest,
         "metadata": dict(result.metadata),
-        "source": _execution_json(result.source),
         "replay": _execution_json(result.replay),
         "scalar": _execution_json(result.scalar),
-        "source_replay": None
-        if result.source_replay is None
-        else asdict(result.source_replay),
-        "source_scalar": None
-        if result.source_scalar is None
-        else asdict(result.source_scalar),
+        "replay_scalar": None
+        if result.replay_scalar is None
+        else asdict(result.replay_scalar),
     }
 
 
@@ -1609,10 +1577,9 @@ def run_case(
         },
         "gate2_execution_policy": {
             "protocol": GATE2_EXECUTION_PROTOCOL,
-            "legs": ["source", "replay", "scalar"],
-            "required_comparisons": ["source_replay", "source_scalar"],
+            "legs": ["replay", "scalar"],
+            "required_comparison": "replay_scalar",
             "target_backend_in_verdict": False,
-            "source_binding": "captured_source_kernel_v1",
             "replay_binding": "final_gate1_artifact_digest_exact_match_v1",
             "scalar_binding": "typed_intent_program_from_final_gate1_j_v1",
         },
@@ -1883,32 +1850,31 @@ def run_case(
             "Gate1 closed without canonical final J identity"
         )
         return finish(3)
-    scalar_handoff_error: str | None = None
     try:
-        intent_program: IntentProgram | None = intent_program_from_gate1(
-            verified_artifact
-        )
+        intent_program = intent_program_from_gate1(verified_artifact)
     except Exception as exc:
-        intent_program = None
-        scalar_handoff_error = f"{type(exc).__name__}: {exc}"
-    if intent_program is None:
-        report["gate2_scalar_binding"] = {
-            "status": "unavailable",
-            "policy": "typed_intent_program_from_final_gate1_j_v1",
+        key = "gate2_suite" if gate2_matrix_enabled else "gate2"
+        report[key] = {
+            "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+            "status": "scalar_contract_unsupported",
             "final_artifact_digest": final_artifact_digest,
             "gate1_j_digest": gate1_j_digest,
-            "error": scalar_handoff_error,
+            "error": f"{type(exc).__name__}: {exc}",
         }
-    else:
-        report["gate2_scalar_binding"] = {
-            "status": "available",
-            "policy": "typed_intent_program_from_final_gate1_j_v1",
-            "final_artifact_digest": final_artifact_digest,
-            "gate1_j_digest": gate1_j_digest,
-            "intent_j_digest": intent_program.j_digest,
-            "intent_contract_digest": intent_program.contract_digest,
-            "intent_program_digest": intent_program.program_digest,
-        }
+        _progress(
+            "gate2_complete",
+            kernel=case.name,
+            status="scalar_contract_unsupported",
+        )
+        return finish(4)
+    report["gate2_scalar_binding"] = {
+        "policy": "typed_intent_program_from_final_gate1_j_v1",
+        "final_artifact_digest": final_artifact_digest,
+        "gate1_j_digest": gate1_j_digest,
+        "intent_j_digest": intent_program.j_digest,
+        "intent_contract_digest": intent_program.contract_digest,
+        "intent_program_digest": intent_program.program_digest,
+    }
     replay = KernelSource.from_code(
         gate2_replay.generation.code,
         verified_artifact.interface.function_name,
@@ -1927,14 +1893,12 @@ def run_case(
     if gate2_matrix_enabled:
         try:
             gate2_suite = runner.run_suite(
-                case.kernel_source,
                 replay,
                 _gate2_suite(
                     verified_artifact,
                     case,
                     gate2_seeds,
                     program=intent_program,
-                    scalar_handoff_error=scalar_handoff_error,
                     final_artifact_digest=final_artifact_digest,
                     gate1_j_digest=gate1_j_digest,
                     replay_artifact_digest=gate2_replay.artifact_digest,
@@ -1964,14 +1928,12 @@ def run_case(
         return finish(0 if gate2_suite.passed else 4)
     try:
         gate2 = runner.run(
-            case.kernel_source,
             replay,
             _gate2_case(
                 verified_artifact,
                 case,
                 args.seed,
                 program=intent_program,
-                scalar_handoff_error=scalar_handoff_error,
                 final_artifact_digest=final_artifact_digest,
                 gate1_j_digest=gate1_j_digest,
                 replay_artifact_digest=gate2_replay.artifact_digest,

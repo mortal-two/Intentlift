@@ -11,49 +11,32 @@ from .orchestrate import GATE2_EXECUTION_PROTOCOL
 
 
 _COMPLETED_STATUSES = frozenset(
-    {
-        "gate2_pass",
-        "replay_diverged",
-        "scalar_diverged",
-        "replay_and_scalar_diverged",
-    }
+    {"gate2_pass", "replay_scalar_mismatch"}
 )
 
 
-def _has_source_anchored_evidence(case: Mapping[str, Any]) -> bool:
-    source = case.get("source")
+def _has_replay_scalar_evidence(case: Mapping[str, Any]) -> bool:
     replay = case.get("replay")
     scalar = case.get("scalar")
-    source_replay = case.get("source_replay")
-    source_scalar = case.get("source_scalar")
+    agreement = case.get("replay_scalar")
     status = case.get("status")
     input_digest = case.get("input_digest")
     if not (
-        isinstance(source, Mapping)
-        and source.get("ok") is True
-        and isinstance(replay, Mapping)
+        isinstance(replay, Mapping)
         and replay.get("ok") is True
         and isinstance(scalar, Mapping)
         and scalar.get("ok") is True
-        and isinstance(source_replay, Mapping)
-        and isinstance(source_replay.get("passed"), bool)
-        and isinstance(source_scalar, Mapping)
-        and isinstance(source_scalar.get("passed"), bool)
+        and isinstance(agreement, Mapping)
+        and isinstance(agreement.get("passed"), bool)
         and isinstance(input_digest, str)
         and re.fullmatch(r"[0-9a-f]{64}", input_digest) is not None
     ):
         return False
-    replay_passed = source_replay["passed"]
-    scalar_passed = source_scalar["passed"]
-    if replay_passed and scalar_passed:
-        expected = "gate2_pass"
-    elif not replay_passed and scalar_passed:
-        expected = "replay_diverged"
-    elif replay_passed and not scalar_passed:
-        expected = "scalar_diverged"
-    else:
-        expected = "replay_and_scalar_diverged"
-    return status == expected
+    return (
+        status == "gate2_pass"
+        if agreement["passed"]
+        else status == "replay_scalar_mismatch"
+    )
 
 
 def extract_gate1_gate2_observation(
@@ -75,7 +58,7 @@ def extract_gate1_gate2_observation(
         "gate2_case_statuses": [],
     }
 
-    # Gate2 v3 is digest-bound to an accepted final J.  Rejected-sample
+    # Gate2 v2 is digest-bound to an accepted final J.  Rejected-sample
     # diagnostics from older report schemas are not Gate2 observations.
     if not observation["gate1_closed"]:
         return observation
@@ -134,7 +117,7 @@ def extract_gate1_gate2_observation(
             status in _COMPLETED_STATUSES for status in statuses
         )
         comparisons_complete = bool(case_mappings) and all(
-            _has_source_anchored_evidence(case) for case in case_mappings
+            _has_replay_scalar_evidence(case) for case in case_mappings
         )
 
         any_case_id = any("case_id" in case for case in case_mappings)
@@ -198,7 +181,7 @@ def extract_gate1_gate2_observation(
         observation["gate2_case_statuses"] = [status]
         completed = (
             status in _COMPLETED_STATUSES
-            and _has_source_anchored_evidence(evidence)
+            and _has_replay_scalar_evidence(evidence)
         )
         observation["gate2_comparison_completed"] = completed
         if completed:
@@ -263,7 +246,7 @@ def summarize_gate1_gate2(
 
     statuses = sorted({str(item["gate1_status"]) for item in observations})
     return {
-        "schema": "scrc_gate1_gate2_conditional_v5",
+        "schema": "scrc_gate1_gate2_conditional_v4",
         "gate1_observed_samples": len(observations),
         "rows_without_gate1_verdict": len(rows) - len(observations),
         "quadrants": {

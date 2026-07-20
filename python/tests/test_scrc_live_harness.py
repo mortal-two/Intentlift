@@ -26,12 +26,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.replay import ReplayGeneration
-from intentir.verify.gate2 import (
-    ArgumentRole,
-    Gate2Status,
-    InputDistribution,
-    ScalarLoweringUnavailable,
-)
+from intentir.verify.gate2 import ArgumentRole, Gate2Status, InputDistribution
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -292,19 +287,6 @@ def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
     assert eps_arg.value_key == "eps"
     assert gate2.output_keys == ("Y",)
     assert gate2.scalar.program is program
-
-    unavailable = _gate2_case(
-        artifact,
-        case,
-        20260715,
-        program=None,
-        scalar_handoff_error="ContractError: untyped predicate",
-        final_artifact_digest="a" * 64,
-        gate1_j_digest="b" * 64,
-        replay_artifact_digest="a" * 64,
-    )
-    assert isinstance(unavailable.scalar, ScalarLoweringUnavailable)
-    assert unavailable.scalar.failure_class == "intent_program_handoff"
 
 
 def test_gate2_case_binds_inout_as_initialized_compared_output(
@@ -810,11 +792,10 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         "family": None,
     }
     assert report["gate2_execution_policy"] == {
-        "protocol": "source_replay_scalar_differential_v3",
-        "legs": ["source", "replay", "scalar"],
-        "required_comparisons": ["source_replay", "source_scalar"],
+        "protocol": "final_j_replay_scalar_differential_v2",
+        "legs": ["replay", "scalar"],
+        "required_comparison": "replay_scalar",
         "target_backend_in_verdict": False,
-        "source_binding": "captured_source_kernel_v1",
         "replay_binding": "final_gate1_artifact_digest_exact_match_v1",
         "scalar_binding": "typed_intent_program_from_final_gate1_j_v1",
     }
