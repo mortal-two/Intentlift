@@ -1019,9 +1019,6 @@ def _batch_args(**overrides) -> Namespace:
         "lift_repairs": 2,
         "relift_rounds": 3,
         "semantic_interventions": 3,
-        "pi_ablations": True,
-        "pi_ablation_limit": 3,
-        "pi_ablation_kinds": None,
         "gate2_matrix": False,
         "gate2_seeds": None,
     }
@@ -1119,8 +1116,8 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         "exact_integer_tolerant_float_v2"
     )
     assert identity["pi_ablations"]
-    assert identity["pi_ablation_limit"] == 3
-    assert identity["pi_ablation_kinds"] == []
+    assert identity["pi_ablation_coverage"] == "all_rulecard_causal_steps"
+    assert identity["pi_ablation_verdict_role"] == "gate1_hard_condition"
     assert identity["pi_ablation_requires_closed_control"] is True
     assert identity["pi_ablation_opaque_reference_discipline"] == (
         "resolve_handles_never_emit_v1"
@@ -1197,8 +1194,9 @@ def test_batch_parser_and_case_args_preserve_relift_policy() -> None:
     assert parsed.model == "gpt-5.6-sol"
     assert parsed.effort == "xhigh"
     assert parsed.relift_rounds == 3
-    assert parsed.pi_ablations
-    assert not _parser().parse_args(["--no-pi-ablations"]).pi_ablations
+    assert not hasattr(parsed, "pi_ablations")
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["--no-pi-ablations"])
     assert _case_args(parsed).relift_rounds == 3
     with pytest.raises(SystemExit):
         _parser().parse_args(["--relift-rounds", "0"])

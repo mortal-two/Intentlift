@@ -72,7 +72,6 @@ from intentir.verify.gate1.specialization import (
 from intentir.verify.gate1.interventions import (
     PAIRED_INTERVENTION_FAMILY_POLICY,
 )
-from intentir.verify.gate1.pi_ablations import PiAblationKind, run_pi_ablations
 from intentir.verify.gate1.replay import ResponsesReplayWriter
 from intentir.verify.gate1.rule_release import load_rule_release
 from intentir.verify.gate1.rules import default_triton_rule_registry
@@ -634,6 +633,7 @@ def _gate1_config(
         run_semantic_interventions=(formal and semantic_interventions > 0),
         max_semantic_interventions=(semantic_interventions if formal else 0),
         run_masked_ablation=formal,
+        run_pi_ablations=formal,
         run_composer_shadow=formal,
     )
 
@@ -1154,6 +1154,15 @@ def _gate1_evidence_json(gate1) -> dict[str, Any]:
             serialized["generation"].update(
                 _generation_evidence(intervention.generation)
             )
+    for serialized, ablation in zip(
+        payload.get("pi_ablations", []),
+        getattr(gate1, "pi_ablations", ()),
+        strict=True,
+    ):
+        if ablation.generation is not None:
+            serialized["generation"].update(
+                _generation_evidence(ablation.generation)
+            )
     return payload
 
 
@@ -1194,7 +1203,7 @@ def _pi_ablation_evidence_json(records) -> list[dict[str, Any]]:
 
 
 def _pi_ablation_control_evidence(gate1) -> dict[str, Any]:
-    """Require a valid canonical-pi structural control before diagnostics."""
+    """Describe the normal hard-closed control used by Gate1 π probes."""
 
     if getattr(gate1, "source_fingerprint", None) is None:
         return {
@@ -1202,16 +1211,21 @@ def _pi_ablation_control_evidence(gate1) -> dict[str, Any]:
             "reason": "source_fingerprint_unavailable",
             "gate1_status": gate1.status.value,
         }
-    if not gate1.replay_closed:
+    normal_control_closed = any(
+        candidate.overall_hard_pass
+        for candidate in getattr(gate1, "candidates", ())
+    )
+    if not normal_control_closed:
         return {
             "valid": False,
-            "reason": "canonical_pi_control_not_replay_closed",
+            "reason": "canonical_pi_control_not_hard_closed",
             "gate1_status": gate1.status.value,
         }
     return {
         "valid": True,
-        "reason": "canonical_pi_control_replay_closed",
+        "reason": "canonical_pi_control_hard_closed",
         "gate1_status": gate1.status.value,
+        "verdict_role": "gate1_hard_condition",
     }
 
 
@@ -1438,20 +1452,7 @@ def run_case(
     )
     if semantic_interventions < 0:
         raise ValueError("semantic_interventions must be non-negative")
-    pi_ablations_enabled = (
-        bool(getattr(args, "pi_ablations", False)) and gate1_formal
-    )
-    pi_ablation_limit = int(getattr(args, "pi_ablation_limit", 3))
-    if pi_ablation_limit < 1:
-        raise ValueError("pi_ablation_limit must be positive")
-    requested_pi_ablation_kinds = tuple(
-        PiAblationKind(value)
-        for value in (getattr(args, "pi_ablation_kinds", None) or ())
-    )
-    pi_ablation_kinds = requested_pi_ablation_kinds or (
-        PiAblationKind.PLAN_STEP_DROPOUT,
-        PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
-    )
+    pi_ablations_enabled = gate1_formal
     report: dict[str, Any] = {
         "case": case.name,
         "model": args.model,
@@ -1551,13 +1552,18 @@ def run_case(
             "replay_reference_naming": "opaque_replay_refs_v1",
             "pi_ablations": {
                 "enabled": pi_ablations_enabled,
-                "default_policy": "disabled_by_default_opt_in_diagnostic_only",
-                "maximum": pi_ablation_limit,
+                "default_policy": "required_by_formal_gate1",
                 "requires_full_pi_replay_closed": True,
-                "kinds": [kind.value for kind in pi_ablation_kinds],
-                "verdict_role": "diagnostic",
-                "pi_mutation_execution": "reject_before_writer",
-                "mechanism_substitution": "c_strategy_then_recompose",
+                "kinds": ["j_only", "plan_step_dropout"],
+                "coverage": "all_rulecard_causal_steps",
+                "verdict_role": "gate1_hard_condition",
+                "pi_mutation_execution": (
+                    "fresh_writer_compile_score_free_hard_compare"
+                ),
+                "canonicality_rejection_role": "not_evidence",
+                "administrative_step_policy": (
+                    "explicit_rulecard_classification_not_ablated"
+                ),
                 "opaque_reference_discipline": (
                     "resolve_handles_never_emit_v1"
                 ),
@@ -1798,41 +1804,18 @@ def run_case(
                 )
             )
     if pi_ablations_enabled:
-        pi_ablation_control = _pi_ablation_control_evidence(gate1)
-        report["pi_ablation_control"] = pi_ablation_control
-    else:
-        pi_ablation_control = None
-    if pi_ablation_control is not None and pi_ablation_control["valid"]:
-        _progress("pi_ablation_start", kernel=case.name)
-        pi_ablation_started = time.perf_counter()
-        try:
-            pi_ablations = run_pi_ablations(
-                verified_artifact,
-                gate1.source_fingerprint,
-                _compile_case(case),
-                registry,
-                writer,
-                compiler=gate1_runner.compiler,
-                comparator=gate1_runner.comparator,
-                limit=pi_ablation_limit,
-                kinds=pi_ablation_kinds,
-            )
-        finally:
-            _record_stage_ms(
-                stage_ms, "pi_ablation", pi_ablation_started
-            )
-        report["pi_ablations"] = _pi_ablation_evidence_json(pi_ablations)
+        pi_ablations = tuple(getattr(gate1, "pi_ablations", ()))
+        report["pi_ablation_control"] = (
+            _pi_ablation_control_evidence(gate1)
+        )
+        report["pi_ablations"] = _pi_ablation_evidence_json(
+            pi_ablations
+        )
         _progress(
             "pi_ablation_complete",
             kernel=case.name,
             statuses=[item.status.value for item in pi_ablations],
-        )
-    elif pi_ablation_control is not None:
-        report["pi_ablations"] = []
-        _progress(
-            "pi_ablation_skipped",
-            kernel=case.name,
-            reason=pi_ablation_control["reason"],
+            gate1_status=gate1.status.value,
         )
     if not gate1.replay_closed:
         report["gate2_not_attempted"] = {
@@ -2035,22 +2018,6 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
             "opt-in diagnostic paired J/B/C interventions after normal closure; "
             "zero on the live acceptance path"
         ),
-    )
-    parser.add_argument(
-        "--pi-ablations",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "opt in to exact pi-tamper and C.strategy→recompose diagnostics; "
-            "not part of live acceptance"
-        ),
-    )
-    parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)
-    parser.add_argument(
-        "--pi-ablation-kind",
-        dest="pi_ablation_kinds",
-        action="append",
-        choices=tuple(kind.value for kind in PiAblationKind),
     )
     parser.add_argument(
         "--relift-rounds",

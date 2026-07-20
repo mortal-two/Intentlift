@@ -16,6 +16,32 @@ sys.modules[SPEC.name] = batch
 SPEC.loader.exec_module(batch)
 
 
+def _formal_pi_policy() -> dict[str, object]:
+    return {
+        "enabled": True,
+        "verdict_role": "gate1_hard_condition",
+        "coverage": "all_rulecard_causal_steps",
+        "pi_mutation_execution": (
+            "fresh_writer_compile_score_free_hard_compare"
+        ),
+    }
+
+
+def _formal_pi_evidence() -> list[dict[str, object]]:
+    return [
+        {
+            "status": "degraded",
+            "supports_pi_necessity": True,
+            "necessity_evidence_complete": True,
+            "attempts": 1,
+        }
+    ]
+
+
+def _formal_pi_control() -> dict[str, object]:
+    return {"valid": True, "verdict_role": "gate1_hard_condition"}
+
+
 def test_official_high_performance_campaign_resolves_28_authentic_sources() -> None:
     cases = batch.load_cases()
 
@@ -82,7 +108,8 @@ def test_official_campaign_configuration_is_not_cli_overridable() -> None:
     assert official.gate1_profile == "formal"
     assert not hasattr(official, "lowering_backend")
     assert official.semantic_interventions == 0
-    assert not official.pi_ablations
+    assert batch.OFFICIAL_PI_ABLATIONS
+    assert not hasattr(official, "pi_ablations")
     assert not hasattr(official, "diagnose_rejected")
 
 
@@ -111,8 +138,10 @@ def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
         "gate1_anti_leakage_policy": {
             "paired_semantic_interventions": False,
             "maximum_interventions": 0,
-            "pi_ablations": {"enabled": False},
+            "pi_ablations": _formal_pi_policy(),
         },
+        "pi_ablations": _formal_pi_evidence(),
+        "pi_ablation_control": _formal_pi_control(),
         "gate2": {
             "execution_protocol": "legacy_three_way",
             "status": "gate2_pass",
@@ -163,8 +192,10 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
         "gate1_anti_leakage_policy": {
             "paired_semantic_interventions": False,
             "maximum_interventions": 0,
-            "pi_ablations": {"enabled": False},
+            "pi_ablations": _formal_pi_policy(),
         },
+        "pi_ablations": _formal_pi_evidence(),
+        "pi_ablation_control": _formal_pi_control(),
         "gate2": {
             "execution_protocol": batch.GATE2_EXECUTION_PROTOCOL,
             "status": "gate2_pass",
@@ -232,6 +263,7 @@ def test_fresh_contract_rejects_interventions_or_missing_masked_j() -> None:
             "pi_ablations": {"enabled": True},
         },
         "pi_ablations": [{"status": "rejected"}],
+        "pi_ablation_control": {"valid": False},
         "gate2": {
             "execution_protocol": "source_replay_dynamic_equivalence_v1",
             "status": "gate2_pass",
@@ -252,8 +284,9 @@ def test_fresh_contract_rejects_interventions_or_missing_masked_j() -> None:
         "masked_j_did_not_nonclose",
         "paired_interventions_not_disabled",
         "paired_intervention_budget_not_zero",
-        "pi_ablations_not_disabled",
-        "pi_ablation_evidence_present",
+        "pi_ablation_policy_mismatch",
+        "pi_ablation_evidence_not_causal_kill",
+        "pi_ablation_control_invalid",
     }.issubset(failures)
 
 

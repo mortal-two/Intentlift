@@ -466,7 +466,7 @@ def test_matmul_entry_uses_reviewed_probe_defaults() -> None:
     assert args.relift_rounds == 3
     assert args.gate1_profile == "formal"
     assert args.semantic_interventions == 0
-    assert not args.pi_ablations
+    assert not hasattr(args, "pi_ablations")
     assert not hasattr(args, "lowering_backend")
 
 
@@ -484,6 +484,7 @@ def test_normal_gate1_profile_keeps_real_closure_without_ablations() -> None:
     assert not config.run_semantic_interventions
     assert config.max_semantic_interventions == 0
     assert not config.run_masked_ablation
+    assert not config.run_pi_ablations
     assert not config.run_composer_shadow
 
 
@@ -496,6 +497,7 @@ def test_formal_gate1_profile_can_disable_paired_interventions() -> None:
     assert not config.run_semantic_interventions
     assert config.max_semantic_interventions == 0
     assert config.run_masked_ablation
+    assert config.run_pi_ablations
     assert config.run_composer_shadow
 
 
@@ -735,6 +737,7 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
     assert captured["gate1_config"].max_relifts == 4
     assert not captured["gate1_config"].run_semantic_interventions
     assert captured["gate1_config"].max_semantic_interventions == 0
+    assert captured["gate1_config"].run_pi_ablations
     assert report["relift_policy"]["protocol"] == (
         "gate1_fixed_c_family_anti_leakage_diff_guided_pi_relift_v11"
     )
@@ -831,22 +834,24 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         "ttir_score_semantics": "active_evidence_weighted_v2",
         "replay_reference_naming": "opaque_replay_refs_v1",
         "pi_ablations": {
-            "enabled": False,
-            "default_policy": "disabled_by_default_opt_in_diagnostic_only",
-            "maximum": 3,
+            "enabled": True,
+            "default_policy": "required_by_formal_gate1",
             "requires_full_pi_replay_closed": True,
-            "kinds": [
-                "plan_step_dropout",
-                "plan_mechanism_substitution",
-            ],
-            "verdict_role": "diagnostic",
-            "pi_mutation_execution": "reject_before_writer",
-            "mechanism_substitution": "c_strategy_then_recompose",
+            "kinds": ["j_only", "plan_step_dropout"],
+            "coverage": "all_rulecard_causal_steps",
+            "verdict_role": "gate1_hard_condition",
+            "pi_mutation_execution": (
+                "fresh_writer_compile_score_free_hard_compare"
+            ),
+            "canonicality_rejection_role": "not_evidence",
+            "administrative_step_policy": (
+                "explicit_rulecard_classification_not_ablated"
+            ),
             "opaque_reference_discipline": "resolve_handles_never_emit_v1",
         },
     }
-    assert "pi_ablation_control" not in report
-    assert "pi_ablations" not in report
+    assert report["pi_ablation_control"]["valid"] is False
+    assert report["pi_ablations"] == []
     assert report["relifts"] == []
     assert report["performance"]["schema"] == "scrc_case_performance_v1"
     assert report["performance"]["verdict_role"] == "observation_only"
@@ -1023,16 +1028,17 @@ def test_live_parser_exposes_no_rejected_gate2_control() -> None:
         _parser("add").parse_args(["--diagnose-rejected"])
 
 
-def test_live_parser_keeps_causal_diagnostics_opt_in() -> None:
+def test_live_parser_keeps_only_semantic_interventions_opt_in() -> None:
     defaults = _parser("add").parse_args([])
     opted_in = _parser("add").parse_args(
-        ["--semantic-interventions", "3", "--pi-ablations"]
+        ["--semantic-interventions", "3"]
     )
 
     assert defaults.semantic_interventions == 0
-    assert not defaults.pi_ablations
+    assert not hasattr(defaults, "pi_ablations")
     assert opted_in.semantic_interventions == 3
-    assert opted_in.pi_ablations
+    with pytest.raises(SystemExit):
+        _parser("add").parse_args(["--no-pi-ablations"])
     with pytest.raises(SystemExit):
         _parser("add").parse_args(["--semantic-interventions", "-1"])
 
@@ -1058,21 +1064,26 @@ def test_pi_ablation_report_keeps_source_blind_generated_code() -> None:
 def test_pi_diagnostics_require_a_closed_canonical_pi_control() -> None:
     rejected = SimpleNamespace(
         source_fingerprint=object(),
-        replay_closed=False,
+        candidates=(SimpleNamespace(overall_hard_pass=False),),
         status=Gate1Status.NO_CLOSURE,
     )
     accepted = SimpleNamespace(
         source_fingerprint=object(),
-        replay_closed=True,
+        candidates=(SimpleNamespace(overall_hard_pass=True),),
         status=Gate1Status.REPLAY_CLOSED,
     )
 
     assert _pi_ablation_control_evidence(rejected) == {
         "valid": False,
-        "reason": "canonical_pi_control_not_replay_closed",
+        "reason": "canonical_pi_control_not_hard_closed",
         "gate1_status": "no_closure",
     }
-    assert _pi_ablation_control_evidence(accepted)["valid"]
+    assert _pi_ablation_control_evidence(accepted) == {
+        "valid": True,
+        "reason": "canonical_pi_control_hard_closed",
+        "gate1_status": "replay_closed",
+        "verdict_role": "gate1_hard_condition",
+    }
 
 
 def test_gate2_replay_selection_prefers_hard_close_then_final_round_best() -> None:
