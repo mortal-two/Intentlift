@@ -64,3 +64,17 @@ without satisfying current semantic validation.
   repaired full artifact can proceed with zero interventions.
 - Gate1 accepted fixtures remain convertible by `intent_program_from_gate1`.
 
+## Phase 2.1 implementation status (2026-07-20)
+
+Commit `05876fe` implements canonical boolean-role checking in
+`ir.contracts`, applies it at Gate1 domain/access construction and typed
+handoff, adds exact prompt/schema guidance, and revalidates the current mutable
+artifact before every Gate1 admission round. The focused plus Gate1/Gate2/live
+contract suite passes 450 tests; no comparator, hard category, tolerance,
+CUDA/ROCm path, or intervention budget changed.
+
+This closes the observed assignment/prose/source-call syntax gap. Full free
+symbol resolution is still a separate capability: a mature domain contract
+needs explicit logical-coordinate binders and a typed environment for tensor
+shape/scalar symbols. Do not solve that gap with identifier blacklists or by
+inferring binders from expression position.

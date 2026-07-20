@@ -78,8 +78,17 @@ mapping、accumulator/result dtype、destination、alias、conflict 或 reductio
 ## Predicate 与 index ownership
 
 `domain/access/effect/destination` predicate 使用 `ContractExpr` 的封闭 AST。v1 只接受
-常量、symbol、算术、布尔、比较、`ceil_div/min/max`；任意 call、attribute、source
-helper 或 frontend API 均拒绝。历史自由字符串只有能无损解析成该 AST 时才可迁移。
+常量、symbol、算术、布尔、比较与白名单二元 `ceil_div/cdiv/min/max`；任意其他 call、
+attribute、subscript、source helper 或 frontend API 均拒绝。predicate 必须递归类型为
+boolean：算术操作数为 scalar，comparison 的操作数为 scalar，`and/or/not` 的操作数为
+boolean。没有 symbol type evidence 时 bare symbol 按 scalar 处理，不能靠 truthiness
+成为 predicate；未来 typed boolean symbol 必须由显式 symbol table 证明。
+
+Gate1 LiftCore 的历史字符串 wire 只有能无损解析成上述 AST 时才可迁移，且在进入
+source/replay closure 前完成 admission。assignment、binder/prose 或 source-coordinate
+call 失败后只能由 source-aware LLM 重发完整 artifact；不得由 deterministic code
+抽取 suffix、替换常量、删除 predicate 或增加 legacy fallback。Gate1 每轮还必须重验
+当前 artifact 值，不能让 dataclass 构造后的原地 mutation 绕过 admission。
 
 每个 access 只记录 index ownership：
 
@@ -113,4 +122,3 @@ backend.*    -> intentir.ir
 只迁移 J、logical ABI 与 optional C；`kernel_id/node_ids` 的 archive 外壳、source、
 location map、plan/replay、provenance/provider/Gate status 全部丢弃。无法无损迁移的
 legacy correctness fact直接拒绝 hand-off。
-

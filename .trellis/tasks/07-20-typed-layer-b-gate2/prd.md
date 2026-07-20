@@ -55,6 +55,11 @@ boundary so the LLM produces a genuinely executable J.
 
 ## Current evidence
 
+- Typed predicate admission landed in `05876fe`: the three observed binder/prose
+  forms now fail before Gate1, enter ordinary bounded Lift repair, and cannot be
+  reintroduced through post-construction mutation. The canonical specs now
+  describe this current behavior; explicit typed free-symbol binding remains a
+  follow-up capability rather than an inferred compatibility rule.
 - GeGLU: Gate1 closed; typed handoff succeeds; full capture is `[65536,256]`;
   unresolved B obligations and scalar execution scale remain.
 - KLDiv: Gate1 closed after `reduction_preheader_staging`; typed handoff rejects
@@ -75,4 +80,3 @@ boundary so the LLM produces a genuinely executable J.
   remaining kernels have honest terminal evidence or explicit capability gaps.
 - Gate2 architecture tests prove no production CUDA dependency.
 - Target lower results, when run, are reported separately from Gate2.
-

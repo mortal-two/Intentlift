@@ -20,7 +20,13 @@
   "subtasks": [],
   "children": [],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "",
+  "relatedFiles": [
+    "python/intentir/ir/contracts.py",
+    "python/intentir/verify/gate1/model.py",
+    "python/intentir/verify/gate1/orchestrate.py",
+    "python/intentir/verify/gate1/program_adapter.py",
+    "python/intentir/extraction/lifters/scrc.py"
+  ],
+  "notes": "Phase 2.1 typed predicate admission landed in 05876fe; task remains in progress for typed symbol binding, scalable scalar ABI, and fresh five-kernel evidence.",
   "meta": {}
 }

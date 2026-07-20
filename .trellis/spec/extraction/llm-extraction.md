@@ -14,26 +14,47 @@ LLM 的工作是把任意 kernel **直接提取成张量级原子的 IntentIR JS
    compiler slots、alias contract),以及可选 evidence hint(见
    [evidence.md](evidence.md))。C 若只存在于 launch site，禁止要求模型从
    kernel 函数体猜值。
-2. LLM 在 IntentIR 规范与 Gate1Artifact wire JSON Schema 约束下,提出
-   J/π/C/接口/定位表。固定协议对象禁止未知键；IntentIR 的
-   `attrs/layer_b` 保持现有开放 JSON 表达，而 J 内的 `layer_c` 必须为空，
-   具体 C 只进入独立 schedule。最终由项目严格 parser 裁决并做有界修复。
+2. LLM 在 IntentIR 规范与 LiftCore wire JSON Schema 约束下，提出
+   J(A+B)、接口、C.schedule/C.strategy 与定位表。LiftCore 禁止输出 `plan/π`；
+   同一次 Lift 在严格 J/C admission 后由 deterministic composer 生成 π 与逐叶
+   provenance，再把完整 LiftArtifact 交给 Gate1。固定协议对象禁止未知键；
+   op-specific `attrs` 仍由 IntentIR op vocabulary 管理，但 correctness-relevant B
+   只能进入 program-boundary 的 closed records，active handoff 拒绝 legacy
+   `op.layer_b`。J 内的 `layer_c` 必须为空，具体 C 只进入独立 schedule。
+   最终由项目严格 parser 裁决并做有界的 source-aware Lift repair。
 3. SCRC Gate1 用源码隔离重放和双 TTIR 结构闭合裁决 J/π 是否装下源结构。
 4. Gate1 闭合后，将最终 J 转成 typed `IntentProgram`；Gate2 对该 J 的 replay 与
    scalar MLIR lowering 使用同一输入矩阵独立实跑并逐输出比较。
-5. 失败 → 结构化诊断回到重写员小修或提升官重提；超过上限则记录未闭合，不强行接受。
+5. schema/admission 失败只进入有界 Lift repair；形成合法 artifact 后，normal replay
+   没有 inner repair。Gate1 hard diff 只回到 source-aware relifter 重新提出完整 J/C core；
+   超过上限则记录未闭合，不强行接受。
 
 ## SCRC 下必须区分两种 LLM 角色
 
-- **提升官/lifter**：可看源 Kernel，负责提出 J、受限 π、接口、C 和定位表；
+- **提升官/lifter**：可看源 Kernel，负责提出 J、接口、C 和定位表；π 由同一次
+  Lift 的 deterministic finalizer 生成；
 - **重写员/rewriter**：绝对不可看源码，只能接收 J、π、接口、C 槽和可信
   规则卡，生成用于 [../verification/scrc-gate1.md](../verification/scrc-gate1.md)
   compile-only/TTIR 闭合的重放 Kernel。
 
 两者不能复用同一个包含源码的 conversation/context。LocationMap、源 TTIR、
-C 绑定值与源侧差异明细只能留在提升侧；重写员的小修反馈只允许固定失败
-类别和重放自身的清洗后编译错误。重写员生成代码是验证探针，不改变
+C 绑定值与源侧差异明细只能留在提升侧；重写员不接收 prior replay、候选代码、
+编译错误或 comparator feedback，也不存在 replay repair API。只有已经形成的 Gate1
+结构化 hard diff/净化诊断能进入下一轮 source-aware relift。重写员生成代码是验证探针，不改变
 “LLM 直接提取到原子 IntentIR”这一科研主线，也不能成为生产语义真值。
+
+## Layer-B predicate admission
+
+LiftCore 中 `boundary.domains` 与 access predicate 虽以字符串传输，但不是自由文本。
+它们必须无损解析成同一个 target-neutral `ContractExpr v1` AST，并递归证明根为 boolean：
+算术只消费/产生 scalar，comparison 产生 boolean，`and/or/not` 只消费 boolean。当前没有
+symbol type environment，因此 bare symbol 不得靠 Python truthiness 充当 predicate。
+
+合法形式例如 `0 <= row < n_rows`；赋值、tuple、`where/with`、区间 prose、attribute、
+任意 source helper 以及 `program_id/grid_axis/grid_coordinate` 等 realization call 均拒绝。
+失败 candidate 保持原文并进入普通 bounded Lift repair；compiler 不抽取后缀、不补
+`True`、不删除 predicate，也不根据 Kernel 名改写。Gate1 每轮 admission 还会对当前
+artifact 做完整 strict round-trip，阻断构造后 mutation 绕过。
 
 当前 Responses 路径允许调用侧显式选择模型与 reasoning effort，不把具体模型
 硬编码进 lifter。2026-07-14 的首个真实闭环使用 `gpt-5.6-sol/xhigh`：add 的

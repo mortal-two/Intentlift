@@ -84,6 +84,22 @@ storage 使用 typed semantic event：scope entry/exit、node、access、state�
 同一 storage，no_alias 在不同 storage。read-before-init、use-after-last、非法 escape、
 错误 mutability 和跨 scope endpoint 都拒绝。
 
+### 3.4 portable domain/access predicate
+
+`boundary.domains` 与 access predicate 的字符串 wire 只是一种 Lift 传输形式，不是
+自由文本语义。它们在 Lift/Gate1 admission 时必须由 `ir.contracts` 的唯一 canonical
+parser 无损转换为 boolean-rooted `ContractExpr v1`；同一检查在 typed IntentProgram
+handoff 保留为 defense in depth。assignment、tuple、`where/with`、区间 prose、任意
+attribute/subscript、unknown call 与 `program_id/grid_axis` 等 source-realization call
+全部 fail-closed。纯算术根和未证明类型的 bare symbol 也不是 predicate。
+
+parser 不做 regex 修复、后缀提取、默认 `True`、predicate 删除或 Kernel-name 分支。
+非法 provider 输出只进入既有 bounded Lift repair，预算耗尽即 Lift 失败，不属于
+paired semantic intervention，更不可能产生 `wrong_fill_delta` acceptance evidence。
+由于 Gate1 artifact 目前保留 legacy mutable construction API，Runner 每个 relift round
+在 writer/compiler 前对当前 artifact 做完整 strict round-trip；构造后篡改只能得到
+`LIFT_REJECTED`，不得记录 `REPLAY_CLOSED`。
+
 ## 4. C.schedule 与 C.strategy
 
 `C.schedule` 来自可信 compiler view，在 normal relift 中逐字节冻结。
