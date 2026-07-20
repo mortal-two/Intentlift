@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "test/high_performance_live_batch.py"
@@ -21,6 +23,54 @@ def test_official_high_performance_campaign_resolves_28_authentic_sources() -> N
     assert len({case.function_name for case in cases}) == 28
     assert all(case.source_path.is_file() for case in cases)
     assert all(case.compiler_view().grid for case in cases)
+    assert all(case.origin["capture_abi_exact"] is True for case in cases)
+
+
+def test_tvd_capture_preserves_the_interleaved_constexpr_abi() -> None:
+    case = next(
+        item for item in batch.load_cases()
+        if item.origin["kernel_id"] == "high_performance:liger_tvd"
+    )
+
+    assert case.parameter_order[8:15] == (
+        "label_ptr", "ignore_index", "n_cols", "scale",
+        "BLOCK_SIZE", "HAS_LABEL", "reduction",
+    )
+    assert case.constexpr_parameters == (
+        "ignore_index", "BLOCK_SIZE", "HAS_LABEL", "reduction"
+    )
+
+
+def test_capture_abi_mismatch_fails_before_provider_use(tmp_path: Path) -> None:
+    source = tmp_path / "captured.py"
+    source.write_text(
+        "import triton\n"
+        "import triton.language as tl\n"
+        "@triton.jit\n"
+        "def kernel(x, FLAG: tl.constexpr, out):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    launch = {
+        "preflight": {
+            "python_interface": {"arg_names": ["x", "FLAG", "out"]}
+        },
+        "parameters": {"x": {}, "FLAG": {}, "out": {}},
+    }
+    compiler = {
+        "parameter_order": ["x", "out", "FLAG"],
+        "arguments": [{"name": "x"}, {"name": "out"}],
+        "constexpr_parameters": ["FLAG"],
+    }
+
+    with pytest.raises(ValueError, match="ABI order mismatch before LLM"):
+        batch._validate_capture_abi(
+            kernel_id="high_performance:synthetic",
+            function_name="kernel",
+            source_path=source,
+            launch=launch,
+            compiler=compiler,
+        )
 
 
 def test_official_campaign_configuration_is_not_cli_overridable() -> None:

@@ -11,6 +11,7 @@ accepted as Lift input.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import math
 import os
@@ -43,7 +44,7 @@ CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate.v3"
 DEFAULT_REGISTRY = ROOT / "spec/lowering/high-performance-kernels.json"
 DEFAULT_CAPTURE_MANIFEST = Path(
     "/home/kingdom/phdworks/TianchenIR-rebuttal/artifacts/gate_paper/"
-    "provider29_capture_2026-07-16_complete/manifest.json"
+    "provider29_capture_2026-07-20_full_abi_fix/manifest.json"
 )
 
 
@@ -154,6 +155,91 @@ def _capture_by_name(path: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _ast_parameter_order(source_path: Path, function_name: str) -> tuple[str, ...]:
+    """Read the authoritative focused snapshot signature without importing it."""
+
+    try:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        raise ValueError(
+            f"captured source {source_path} has invalid Python syntax: {exc.msg}"
+        ) from exc
+    functions = [
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+    if len(functions) != 1:
+        raise ValueError(
+            f"captured source requires exactly one {function_name!r} definition, "
+            f"found {len(functions)}"
+        )
+    args = functions[0].args
+    if args.vararg is not None or args.kwarg is not None:
+        raise ValueError(f"captured kernel {function_name!r} has a variadic signature")
+    return tuple(
+        item.arg for item in [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    )
+
+
+def _validate_capture_abi(
+    *,
+    kernel_id: str,
+    function_name: str,
+    source_path: Path,
+    launch: Mapping[str, Any],
+    compiler: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Require AST, compiled launch interface and compiler view to agree exactly.
+
+    This runs while loading cases, before any provider/LLM request.  Comparing
+    sets is insufficient because an interleaved constexpr changes positional
+    binding even when all names are present.
+    """
+
+    ast_order = _ast_parameter_order(source_path, function_name)
+    preflight = launch.get("preflight")
+    python_interface = (
+        preflight.get("python_interface")
+        if isinstance(preflight, Mapping) else None
+    )
+    launch_order = (
+        tuple(python_interface.get("arg_names", ()))
+        if isinstance(python_interface, Mapping) else ()
+    )
+    compiler_order = tuple(compiler.get("parameter_order", ()))
+    if not launch_order or not compiler_order:
+        raise ValueError(f"{kernel_id} capture is missing an ordered ABI witness")
+    if not ast_order == launch_order == compiler_order:
+        raise ValueError(
+            f"{kernel_id} capture ABI order mismatch before LLM: "
+            f"AST={list(ast_order)!r}, launch={list(launch_order)!r}, "
+            f"compiler_view={list(compiler_order)!r}"
+        )
+
+    runtime_order = tuple(
+        str(argument.get("name"))
+        for argument in compiler.get("arguments", ())
+        if isinstance(argument, Mapping)
+    )
+    constexprs = tuple(str(name) for name in compiler.get("constexpr_parameters", ()))
+    constexpr_set = set(constexprs)
+    if tuple(name for name in ast_order if name not in constexpr_set) != runtime_order:
+        raise ValueError(
+            f"{kernel_id} runtime argument projection differs from the source ABI"
+        )
+    if tuple(name for name in ast_order if name in constexpr_set) != constexprs:
+        raise ValueError(
+            f"{kernel_id} constexpr projection differs from the source ABI"
+        )
+    parameters = launch.get("parameters")
+    if not isinstance(parameters, Mapping) or set(parameters) != set(ast_order):
+        raise ValueError(
+            f"{kernel_id} launch binding does not cover the exact source ABI"
+        )
+    return ast_order
+
+
 def _captured_case(
     kernel: Mapping[str, Any], capture: Mapping[str, Any]
 ) -> CapturedLiveKernelCase:
@@ -188,6 +274,16 @@ def _captured_case(
     compiler = case.get("compiler_view")
     if not isinstance(compiler, Mapping):
         raise ValueError(f"{kernel_id} capture has no compiler view")
+    source_path = Path(str(case["source_path"])).resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"captured source snapshot is missing: {source_path}")
+    parameter_order = _validate_capture_abi(
+        kernel_id=kernel_id,
+        function_name=expected_symbol,
+        source_path=source_path,
+        launch=launch,
+        compiler=compiler,
+    )
     arguments = tuple(
         SCRCCompilerArgument(
             str(argument["name"]),
@@ -198,9 +294,6 @@ def _captured_case(
         )
         for argument in compiler.get("arguments", [])
     )
-    source_path = Path(str(case["source_path"])).resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(f"captured source snapshot is missing: {source_path}")
     return CapturedLiveKernelCase(
         name=kernel_id.replace(":", "_").replace(".", "_"),
         function_name=expected_symbol,
@@ -210,7 +303,7 @@ def _captured_case(
         schedule_values=dict(compiler["schedule_values"]),
         compiler_slots=tuple(compiler.get("compiler_slots", ())),
         grid_contract=tuple(compiler.get("grid_contract", ())),
-        parameter_order=tuple(compiler.get("parameter_order", ())),
+        parameter_order=parameter_order,
         constexpr_parameters=tuple(
             compiler.get("constexpr_parameters", ())
         ),
@@ -224,6 +317,7 @@ def _captured_case(
             "runtime_source_path": launch.get("runtime_source_path"),
             "runtime_source_sha256": launch.get("runtime_source_sha256"),
             "source_snapshot": case.get("origin", {}).get("snapshot"),
+            "capture_abi_exact": True,
         },
         tolerance=_dtype_tolerance(arguments),
     )
