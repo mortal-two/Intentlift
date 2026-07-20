@@ -68,6 +68,14 @@ from .model import (
     ParameterMode,
     ReplayPlan,
 )
+from .pi_ablations import (
+    PiAblationKind,
+    PiAblationRecord,
+    PiAblationStatus,
+    PiStepClassification,
+    classify_pi_steps,
+    run_pi_ablations,
+)
 from .replay import (
     ReplayGeneration,
     ReplayWriter,
@@ -128,6 +136,9 @@ class Gate1Config:
     run_semantic_interventions: bool = False
     max_semantic_interventions: int = 1
     run_masked_ablation: bool = True
+    # Formal acceptance profiles enable this. Lightweight/diagnostic callers
+    # may skip the expensive exhaustive counterfactual suite explicitly.
+    run_pi_ablations: bool = False
     # Compatibility name: exact composition is always a verdict condition;
     # this flag controls only whether detailed comparison records are emitted.
     run_composer_shadow: bool = True
@@ -839,6 +850,7 @@ class Gate1TerminationReason(str, Enum):
         "intervention_evidence_incomplete"
     )
     MASKED_EVIDENCE_INCOMPLETE = "masked_evidence_incomplete"
+    PI_EVIDENCE_INCOMPLETE = "pi_evidence_incomplete"
     REPLAY_PROVIDER_UNAVAILABLE = "replay_provider_unavailable"
     DETERMINISTIC_STAGNATION = "deterministic_stagnation"
     RELIFTER_UNAVAILABLE = "relifter_unavailable"
@@ -907,6 +919,8 @@ class Gate1ExecutionResult:
     termination: Gate1Termination | None = None
     masked_family_evidence: Mapping[str, Any] | None = None
     admissions: tuple[Gate1AdmissionRecord, ...] = ()
+    pi_ablations: tuple[PiAblationRecord, ...] = ()
+    pi_step_classifications: tuple[PiStepClassification, ...] = ()
 
     @property
     def replay_closed(self) -> bool:
@@ -975,6 +989,10 @@ class Gate1ExecutionResult:
             "anti_leakage_basis": self.anti_leakage_basis,
             "composer_shadow": [item.to_json() for item in self.composer_shadow],
             "admissions": [item.to_json() for item in self.admissions],
+            "pi_ablations": [item.to_json() for item in self.pi_ablations],
+            "pi_step_classifications": [
+                item.to_json() for item in self.pi_step_classifications
+            ],
             "stagnation": (
                 None if self.stagnation is None else self.stagnation.to_json()
             ),
@@ -3700,6 +3718,107 @@ class Gate1Runner:
                 break
 
             if closed_record is not None and stable >= self.config.stable_closures:
+                pi_step_classifications = classify_pi_steps(current, registry)
+                pi_ablation_records: tuple[PiAblationRecord, ...] = ()
+                if self.config.run_pi_ablations:
+                    assert source_fp is not None
+                    pi_ablation_records = run_pi_ablations(
+                        current,
+                        source_fp,
+                        compile_case,
+                        registry,
+                        writer,
+                        compiler=self.compiler,
+                        comparator=self.comparator,
+                        limit=None,
+                        kinds=(
+                            PiAblationKind.J_ONLY,
+                            PiAblationKind.PLAN_STEP_DROPOUT,
+                        ),
+                        seen_generation_ids=seen_generation_ids,
+                    )
+                    causal_step_count = sum(
+                        item.role.value == "causal"
+                        for item in pi_step_classifications
+                    )
+                    expected_probe_count = (
+                        causal_step_count + 1 if causal_step_count else 0
+                    )
+                    incomplete = [
+                        item
+                        for item in pi_ablation_records
+                        if not item.necessity_evidence_complete
+                    ]
+                    if len(pi_ablation_records) != expected_probe_count:
+                        diagnostics.append(
+                            "executable pi necessity coverage is incomplete: "
+                            f"expected {expected_probe_count} probes, observed "
+                            f"{len(pi_ablation_records)}"
+                        )
+                    if incomplete or (
+                        len(pi_ablation_records) != expected_probe_count
+                    ):
+                        diagnostics.extend(
+                            "pi necessity probe "
+                            f"{item.spec.ablation_id} incomplete: "
+                            f"{item.status.value}: {item.diagnostic}"
+                            for item in incomplete
+                        )
+                        return Gate1ExecutionResult(
+                            Gate1Status.NO_CLOSURE,
+                            current,
+                            source_compile,
+                            source_fp,
+                            tuple(history),
+                            best,
+                            leakage_report,
+                            diagnostics=tuple(diagnostics),
+                            anti_leakage_basis=(
+                                "executable_pi_necessity_incomplete"
+                            ),
+                            composer_shadow=tuple(composer_shadow_records),
+                            termination=_termination_for_round(
+                                Gate1TerminationReason.PI_EVIDENCE_INCOMPLETE,
+                                relift_round=relift_round,
+                                history=history,
+                                config=self.config,
+                            ),
+                            admissions=tuple(admission_records),
+                            pi_ablations=pi_ablation_records,
+                            pi_step_classifications=pi_step_classifications,
+                        )
+                    survived = [
+                        item
+                        for item in pi_ablation_records
+                        if item.status is PiAblationStatus.UNEXPECTED_CLOSURE
+                    ]
+                    if survived:
+                        diagnostics.extend(
+                            "pi necessity probe unexpectedly hard-closed: "
+                            f"{item.spec.ablation_id}"
+                            for item in survived
+                        )
+                        return Gate1ExecutionResult(
+                            Gate1Status.LEAKAGE_REJECTED,
+                            current,
+                            source_compile,
+                            source_fp,
+                            tuple(history),
+                            best,
+                            leakage_report,
+                            diagnostics=tuple(diagnostics),
+                            anti_leakage_basis=(
+                                "executable_pi_ablation_hard_closure"
+                            ),
+                            composer_shadow=tuple(composer_shadow_records),
+                            admissions=tuple(admission_records),
+                            pi_ablations=pi_ablation_records,
+                            pi_step_classifications=pi_step_classifications,
+                        )
+                    diagnostics.append(
+                        "J-only and every causal pi-step dropout reached a "
+                        "fresh writer, compile, and score-free hard mismatch"
+                    )
                 intervention_records: tuple[InterventionRecord, ...] = ()
                 paired_intervention_passed = False
                 if self.config.run_semantic_interventions:
@@ -3767,6 +3886,11 @@ class Gate1Runner:
                                         history=history,
                                         config=self.config,
                                     ),
+                                    admissions=tuple(admission_records),
+                                    pi_ablations=pi_ablation_records,
+                                    pi_step_classifications=(
+                                        pi_step_classifications
+                                    ),
                                 )
                             return Gate1ExecutionResult(
                                 Gate1Status.LEAKAGE_REJECTED,
@@ -3783,6 +3907,11 @@ class Gate1Runner:
                                     "paired_intervention_fixed_c_family"
                                     if specialization_family is not None
                                     else "paired_intervention"
+                                ),
+                                admissions=tuple(admission_records),
+                                pi_ablations=pi_ablation_records,
+                                pi_step_classifications=(
+                                    pi_step_classifications
                                 ),
                             )
                         diagnostics.append(
@@ -3831,6 +3960,11 @@ class Gate1Runner:
                                 masked_family_evidence=(
                                     masked_probe.family_to_json()
                                 ),
+                                admissions=tuple(admission_records),
+                                pi_ablations=pi_ablation_records,
+                                pi_step_classifications=(
+                                    pi_step_classifications
+                                ),
                             )
                         if not masked_probe.family_complete_hard_mismatch:
                             diagnostics.append(
@@ -3867,6 +4001,11 @@ class Gate1Runner:
                                 ),
                                 masked_family_evidence=(
                                     masked_probe.family_to_json()
+                                ),
+                                admissions=tuple(admission_records),
+                                pi_ablations=pi_ablation_records,
+                                pi_step_classifications=(
+                                    pi_step_classifications
                                 ),
                             )
                     if (
@@ -3907,6 +4046,9 @@ class Gate1Runner:
                             masked_family_evidence=(
                                 masked_probe.family_to_json()
                             ),
+                            admissions=tuple(admission_records),
+                            pi_ablations=pi_ablation_records,
+                            pi_step_classifications=pi_step_classifications,
                         )
                     if (
                         specialization_family is None
@@ -3931,8 +4073,15 @@ class Gate1Runner:
                             masked_family_evidence=(
                                 masked_probe.family_to_json()
                             ),
+                            admissions=tuple(admission_records),
+                            pi_ablations=pi_ablation_records,
+                            pi_step_classifications=pi_step_classifications,
                         )
                 anti_leakage_parts = ["compose_equality"]
+                if self.config.run_pi_ablations:
+                    anti_leakage_parts.append(
+                        "executable_pi_necessity_all_causal_steps"
+                    )
                 if paired_intervention_passed:
                     anti_leakage_parts.append(
                         "paired_intervention_fixed_c_family"
@@ -3975,6 +4124,8 @@ class Gate1Runner:
                         else masked_probe.family_to_json()
                     ),
                     admissions=tuple(admission_records),
+                    pi_ablations=pi_ablation_records,
+                    pi_step_classifications=pi_step_classifications,
                 )
 
             if round_transport_failure:
