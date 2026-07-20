@@ -2,7 +2,7 @@
 
 **Question (user):** can our generated kernels *beat Triton* like the paper, using tensor cores — not settle for correctness/parity?
 
-**Method (audited SOUND by trellis-check).** `bench_clusters.py` times ours, torch (ATen/cuDNN/CUB), **and the real flag_gems (Triton)** — all in-process under `do_bench_cudagraph` (launch overhead removed for every contender), per-contender correctness asserted. flag_gems is benched in-process via the M0 shim (`intentir/backend/flaggems_shim.py`: its stale triton-3.3–3.5 version gate dropped a constexpr arg on 3.6; we patch `libentry.minor_version=5`). f32 both sides. Ratio = ours / **faster-of{torch, flag_gems}** (the tougher reference), <1 = we win.
+**Method (audited SOUND by trellis-check).** `bench_clusters.py` times ours, torch (ATen/cuDNN/CUB), **and the real flag_gems (Triton)** — all in-process under `do_bench_cudagraph` (launch overhead removed for every contender), per-contender correctness asserted. flag_gems is benched in-process via the M0 shim (`intentir.benchmarks.flaggems_shim`: its stale triton-3.3–3.5 version gate dropped a constexpr arg on 3.6; we patch `libentry.minor_version=5`). f32 both sides. Ratio = ours / **faster-of{torch, flag_gems}** (the tougher reference), <1 = we win.
 
 ## Final 3-way table (RTX 5090D sm_120a)
 

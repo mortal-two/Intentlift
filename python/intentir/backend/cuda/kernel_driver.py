@@ -13,8 +13,8 @@ MEASUREMENT (cost real debug time — encode here, do not relearn):
     and brackets just the kernel via CUDA events.
   * Two traps that fabricate a 4-38x phantom slowdown:
       (1) a ``torch.cuda.synchronize()`` INSIDE the timed launch (what
-          ``backend.launch.launch`` does) breaks do_bench -> ~6800us for a 178us
-          kernel. Use the no-sync ``thunk`` here.
+          ``intentir.backend.cuda.launch.launch`` does) breaks do_bench ->
+          ~6800us for a 178us kernel. Use the no-sync ``thunk`` here.
       (2) a hand-rolled CUDA-event loop floors at ~730us for EVERY kernel
           (incl. torch.copy_ and liger) -> a fake "366 GB/s ceiling". It is the
           timer, not the kernel.

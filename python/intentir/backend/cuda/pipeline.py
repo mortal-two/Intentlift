@@ -228,7 +228,8 @@ def execute_cuda_artifact(
 
     ``intent_module`` supplies the logical ABI used by the host orchestrator.
     Its hash must match the source compiled into ``program``.  The compiler
-    callback passed to :func:`backend.orchestrate.run_program` returns only the
+    callback passed to
+    :func:`intentir.backend.cuda.orchestrate.run_program` returns only the
     persisted kernels, so execution cannot silently rebuild or substitute a
     different binary.
     """

@@ -50,6 +50,34 @@ def test_cuda_implementation_does_not_reference_removed_modules() -> None:
         assert not any(name in source for name in forbidden), module_path
 
 
+def test_python_tree_does_not_reference_removed_backend_namespaces() -> None:
+    forbidden = (
+        "intentir.backend.abi",
+        "intentir.backend.autotune",
+        "intentir.backend.backward",
+        "intentir.backend.compile",
+        "intentir.backend.cuda_dispatch",
+        "intentir.backend.flaggems_shim",
+        "intentir.backend.launch",
+        "intentir.backend.layer_c",
+        "intentir.backend.opgraph",
+        "intentir.backend.orchestrate",
+        "intentir.backend.pipeline",
+        "intentir.backend.runtime_contract",
+        "intentir.backend.schedules",
+        "intentir.backend.selection",
+        "intentir.backend.variant_manifest",
+        "intentir.backend.variant_planner",
+    )
+    this_file = Path(__file__).resolve()
+
+    for module_path in (_REPO_ROOT / "python").rglob("*.py"):
+        if module_path.resolve() == this_file or "back" in module_path.parts:
+            continue
+        source = module_path.read_text(encoding="utf-8")
+        assert not any(name in source for name in forbidden), module_path
+
+
 def test_backend_package_does_not_reexport_cuda_api() -> None:
     source = (_BACKEND_ROOT / "__init__.py").read_text(encoding="utf-8")
     assert "from intentir.backend.cuda" not in source

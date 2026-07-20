@@ -1,4 +1,4 @@
-"""Tests for the parameterized fused-FlashAttention emitter (``bench/flash_emit``).
+"""Tests for ``intentir.backend.cuda.flash``, the fused-FlashAttention emitter.
 
 Validates four things end to end on the 5090D:
 
@@ -6,7 +6,8 @@ Validates four things end to end on the 5090D:
   a spread of (sq, sk, d, bk), including a non-divisible TAIL shape (3,10,4,4).
 * TILE-INVARIANCE (retune safety) — for a fixed shape, every ``bk`` schedule gives
   the identical Layer-A output (the schedule is non-binding).
-* vs TRITON — agrees with the independent ``bench/triton_flash`` golden.
+* vs TRITON — agrees with the independent
+  ``intentir.benchmarks.triton_flash`` golden.
 * RETUNE MECHANISM — ``retune_sweep`` times each ``bk`` (compile-once) and selects a
   ``bk`` whose output is correct (no timing assertion — one-thread-per-query makes
   the absolute latency deltas small; this is the mechanism, not a perf claim).

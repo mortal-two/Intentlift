@@ -31,7 +31,8 @@ Three properties this validates:
 * **correctness** — ``run_fused_flash`` matches exact ``softmax((Q@K.T)*scale)@V``.
 * **tile-invariance (retune safety)** — varying ``bk`` (the K-tile schedule) gives
   the identical Layer-A output: the schedule is non-binding.
-* **vs Triton** — agrees with ``bench/triton_flash.py``'s independent golden.
+* **vs Triton** — agrees with an independent Triton golden in the benchmark
+  suite.
 """
 
 from __future__ import annotations

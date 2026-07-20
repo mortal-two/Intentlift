@@ -3,8 +3,9 @@
 
 The biggest deferred class (07-06 P4). flag_gems has 24 ``*_backward`` entrypoints;
 almost all are compositions of mechanisms IntentIR already lowers, so this is
-authoring + verify (like the extraction bulk), NOT new passes. ``backend.backward``
-authors each gradient as an intent-MLIR func that ONE existing pass lowers
+authoring + verify (like the extraction bulk), NOT new passes.
+``intentir.backend.cuda.backward`` authors each gradient as an intent-MLIR func
+that ONE existing pass lowers
 unchanged; three mechanism groups:
 
   1. pointwise activation backward = pure map (grad_in = grad_out * act'(x)):
