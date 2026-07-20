@@ -10,7 +10,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from intentir.ir.model import IntentFunction
+from intentir.ir import (
+    BoundaryContract,
+    IntentFunction,
+    IntentProgram,
+    LogicalArgument,
+    LogicalInterface,
+)
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import (
     Gate1Status,
@@ -63,6 +69,54 @@ def _args(kernel: str, **overrides) -> Namespace:
     }
     values.update(overrides)
     return Namespace(**values)
+
+
+def _logical_interface(
+    function: IntentFunction,
+    parameters: list[KernelParameter],
+) -> LogicalInterface:
+    tensors = {
+        tensor.name: tensor
+        for tensor in [*function.inputs, *function.outputs]
+    }
+    roles = {
+        ParameterMode.INPUT: "input",
+        ParameterMode.OUTPUT: "output",
+        ParameterMode.INOUT: "inout",
+        ParameterMode.VALUE: "parameter",
+    }
+    arguments = []
+    for parameter in parameters:
+        if parameter.kind is ParameterKind.CONSTEXPR:
+            continue
+        if parameter.kind is ParameterKind.POINTER:
+            tensor = tensors[parameter.tensor_ref]
+            arguments.append(
+                LogicalArgument(
+                    parameter.name,
+                    "tensor",
+                    roles[parameter.mode],
+                    parameter.dtype,
+                    rank=len(tensor.shape),
+                    symbolic_shape=tuple(str(item) for item in tensor.shape),
+                    tensor_ref=parameter.tensor_ref,
+                )
+            )
+        else:
+            arguments.append(
+                LogicalArgument(
+                    parameter.name,
+                    "scalar",
+                    roles[parameter.mode],
+                    parameter.dtype,
+                    tensor_ref=parameter.tensor_ref,
+                )
+            )
+    return LogicalInterface(
+        function.name,
+        tuple(arguments),
+        tuple(item.name for item in function.outputs),
+    )
 
 
 def test_row_sum_case_carries_full_trusted_compiler_view() -> None:
@@ -163,7 +217,28 @@ def test_rmsnorm_case_rejects_multi_program_column_reduction() -> None:
 def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
     case = build_case(_args("rmsnorm", m=4, n=37, block=64, eps=1.0e-5))
     intent = IntentFunction.from_json(
-        json.loads((ROOT / "corpus/kernels/rms_norm/intent.json").read_text())
+        {
+            "name": "rms_norm",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": ["M", "N"]},
+                {"name": "W", "dtype": "f32", "shape": ["N"]},
+                {"name": "eps", "dtype": "f32", "shape": []},
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": ["M", "N"]}
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "cast",
+                    "result": "value",
+                    "operands": ["X"],
+                    "attrs": {"to_dtype": "f32"},
+                    "type": {"dtype": "f32", "shape": ["M", "N"]},
+                }
+            ],
+            "returns": [{"output": "Y", "value": "value"}],
+        }
     )
     parameters = [
         KernelParameter(
@@ -191,15 +266,26 @@ def test_rmsnorm_gate2_case_binds_eps_as_f32_semantic_scalar() -> None:
         schedule=SimpleNamespace(values=case.schedule_values),
         j=SimpleNamespace(intent=intent),
     )
+    program = IntentProgram(
+        intent, BoundaryContract(), _logical_interface(intent, parameters)
+    )
 
-    gate2 = _gate2_case(artifact, case, 20260715)
+    gate2 = _gate2_case(
+        artifact,
+        case,
+        20260715,
+        program=program,
+        final_artifact_digest="a" * 64,
+        gate1_j_digest="b" * 64,
+        replay_artifact_digest="a" * 64,
+    )
 
     assert isinstance(gate2.values["eps"], np.float32)
     assert gate2.values["eps"] == np.float32(1.0e-5)
     eps_arg = next(item for item in gate2.triton.arguments if item.name == "eps")
     assert eps_arg.value_key == "eps"
     assert gate2.output_keys == ("Y",)
-    assert not hasattr(gate2, "lowering")
+    assert gate2.scalar.program is program
 
 
 def test_gate2_case_binds_inout_as_initialized_compared_output(
@@ -233,6 +319,41 @@ def test_gate2_case_binds_inout_as_initialized_compared_output(
         interface=SimpleNamespace(parameters=parameters),
         schedule=SimpleNamespace(values=case.schedule_values),
     )
+    intent = IntentFunction.from_json(
+        {
+            "name": "inout_add",
+            "inputs": [{"name": "B", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [
+                {"name": "A", "dtype": "f32", "shape": ["N"]},
+                {"name": "Y", "dtype": "f32", "shape": ["N"]},
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "cast",
+                    "result": "a_value",
+                    "operands": ["B"],
+                    "attrs": {"to_dtype": "f32"},
+                    "type": {"dtype": "f32", "shape": ["N"]},
+                },
+                {
+                    "id": "n1",
+                    "op": "cast",
+                    "result": "y_value",
+                    "operands": ["B"],
+                    "attrs": {"to_dtype": "f32"},
+                    "type": {"dtype": "f32", "shape": ["N"]},
+                },
+            ],
+            "returns": [
+                {"output": "A", "value": "a_value"},
+                {"output": "Y", "value": "y_value"},
+            ],
+        }
+    )
+    program = IntentProgram(
+        intent, BoundaryContract(), _logical_interface(intent, parameters)
+    )
     generated_specs = []
 
     def fake_generate(spec, *, rng):
@@ -241,7 +362,15 @@ def test_gate2_case_binds_inout_as_initialized_compared_output(
 
     monkeypatch.setattr(live, "generate_tensor_input", fake_generate)
 
-    gate2 = _gate2_case(artifact, case, 20260720)
+    gate2 = _gate2_case(
+        artifact,
+        case,
+        20260720,
+        program=program,
+        final_artifact_digest="a" * 64,
+        gate1_j_digest="b" * 64,
+        replay_artifact_digest="a" * 64,
+    )
 
     assert gate2.output_keys == ("A", "Y")
     assert set(gate2.values) == {"A", "B", "n_elements"}
@@ -586,7 +715,6 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         relift_rounds=4,
         gate2_matrix=False,
         gate2_seeds=None,
-        diagnose_rejected=False,
     )
 
     code, report = live.run_case(case, args)
@@ -661,10 +789,12 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         "family": None,
     }
     assert report["gate2_execution_policy"] == {
-        "protocol": "source_replay_dynamic_equivalence_v1",
-        "legs": ["source", "replay"],
-        "production_lowering_in_verdict": False,
+        "protocol": "final_j_replay_scalar_differential_v2",
+        "legs": ["replay", "scalar"],
+        "required_comparison": "replay_scalar",
+        "target_backend_in_verdict": False,
         "replay_binding": "final_gate1_artifact_digest_exact_match_v1",
+        "scalar_binding": "typed_intent_program_from_final_gate1_j_v1",
     }
     assert report["gate2_comparison_policy"] == {
         "protocol": "exact_integer_tolerant_float_v2",
@@ -822,11 +952,10 @@ def test_performance_counts_family_intervention_and_masked_compiles() -> None:
     assert counts["masked_j_compile"] == 2
 
 
-def test_live_parser_records_independent_gate2_for_rejected_replays_by_default() -> None:
-    assert _parser("add").parse_args([]).diagnose_rejected
-    assert not _parser("add").parse_args(
-        ["--no-diagnose-rejected"]
-    ).diagnose_rejected
+def test_live_parser_exposes_no_rejected_gate2_control() -> None:
+    assert not hasattr(_parser("add").parse_args([]), "diagnose_rejected")
+    with pytest.raises(SystemExit):
+        _parser("add").parse_args(["--diagnose-rejected"])
 
 
 def test_live_parser_enables_final_pi_audit_by_default() -> None:
@@ -969,7 +1098,7 @@ def test_gate2_replay_selection_never_falls_back_across_artifacts() -> None:
     )
 
 
-def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
+def test_rejected_gate1_never_enters_digest_bound_gate2(
     monkeypatch,
 ) -> None:
     case = build_case(_args("add"))
@@ -1064,6 +1193,13 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
         lambda artifact, registry: "final-artifact",
     )
     monkeypatch.setattr(
+        live,
+        "assert_replay_plan_matches",
+        lambda artifact, registry: SimpleNamespace(
+            provenance=SimpleNamespace(gate1_j_digest="unused", j_digest="b" * 64)
+        ),
+    )
+    monkeypatch.setattr(
         live, "_gate2_case", lambda *args, **kwargs: "gate2-case"
     )
     monkeypatch.setattr(
@@ -1079,7 +1215,6 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
         relift_rounds=2,
         gate2_matrix=False,
         gate2_seeds=None,
-        diagnose_rejected=True,
     )
 
     code, report = live.run_case(case, args)
@@ -1089,13 +1224,12 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
     assert report["performance"]["gate1_observation"][
         "outer_loop_termination"
     ] == "deterministic_stagnation"
-    assert report["gate2_diagnostic"] == {
-        "kind": "offline_gate2_for_gate1_rejected_sample",
-        "independent": True,
-        "gate1_status": Gate1Status.NO_CLOSURE.value,
-        "status": Gate2Status.PASS.value,
+    assert report["gate2_not_attempted"] == {
+        "reason": "gate1_not_accepted",
+        "required_binding": "final_accepted_gate1_j",
     }
-    assert captured["gate2_case"] == "gate2-case"
+    assert "gate2_case" not in captured
+    assert "gate2_diagnostic" not in report
     assert report["gate2_replay_alignment"]["status"] == "aligned"
 
     # A later Relift may replace the final artifact and fail before producing
@@ -1112,6 +1246,7 @@ def test_rejected_gate1_records_independent_gate2_without_overwriting_status(
         "policy": "final_gate1_artifact_digest_exact_match_v1",
         "status": "coverage_gap",
         "final_artifact_digest": "final-artifact",
+        "final_gate1_j_digest": "b" * 64,
         "candidate_artifact_digest": None,
         "candidate_relift_round": None,
         "reason": (

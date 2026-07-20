@@ -1313,7 +1313,6 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         pi_ablations=args.pi_ablations,
         pi_ablation_limit=args.pi_ablation_limit,
         pi_ablation_kinds=args.pi_ablation_kinds,
-        diagnose_rejected=args.diagnose_rejected,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
         rule_release=getattr(args, "rule_release", None),
@@ -1334,9 +1333,9 @@ def _batch_identity(
     registry = _rule_registry_from_args(args)
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 35,
+        "schema": 36,
         "performance_schema": "scrc_case_performance_v1",
-        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v3",
+        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v4",
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
@@ -1407,7 +1406,6 @@ def _batch_identity(
         "gate1_specialization_policy": _gate1_specialization_policy_json(
             case
         ),
-        "diagnose_rejected": bool(args.diagnose_rejected),
         "gate2_input_policy": {
             "default_distribution": InputDistribution.NORMAL.value,
             "argument_distributions": {
@@ -1421,7 +1419,7 @@ def _batch_identity(
             "tolerance": asdict(case.tolerance),
         },
         "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
-        "gate2_execution_legs": ["source", "replay"],
+        "gate2_execution_legs": ["replay", "scalar"],
         "gate2_comparison_protocol": GATE2_COMPARISON_PROTOCOL,
         "gate2_matrix_policy": _gate2_matrix_policy_json(
             case,
@@ -1741,11 +1739,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path, default=Path("/tmp/scrc_heldout_batch"))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--lift-cache-dir", type=Path)
-    parser.add_argument(
-        "--diagnose-rejected",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-    )
     return parser
 
 

@@ -1,10 +1,19 @@
-"""Gate2 source/replay orchestration tests."""
+"""Gate2 final-J replay/scalar differential orchestration tests."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from intentir.ir import (
+    BoundaryContract,
+    IntentFunction,
+    IntentProgram,
+    LogicalArgument,
+    LogicalInterface,
+)
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate2 import (
     ArgumentRole,
@@ -13,6 +22,8 @@ from intentir.verify.gate2 import (
     Gate2Runner,
     Gate2Status,
     Gate2Suite,
+    ScalarLoweringRunner,
+    ScalarLoweringSpec,
     Tolerance,
     TritonArgument,
     TritonExecutionSpec,
@@ -20,7 +31,16 @@ from intentir.verify.gate2 import (
 )
 
 
-class _FakeTritonRunner:
+FINAL_ARTIFACT_DIGEST = "a" * 64
+GATE1_J_DIGEST = "b" * 64
+ROOT = Path(__file__).resolve().parents[2]
+HAVE_SCALAR_TOOLS = (
+    (ROOT / "build/tools/intent-opt/intent-opt").exists()
+    and Path("/usr/lib/llvm-20/bin/mlir-runner").exists()
+)
+
+
+class _FakeReplayRunner:
     def __init__(
         self,
         outputs: dict[str, np.ndarray],
@@ -43,9 +63,92 @@ class _FakeTritonRunner:
         )
 
 
+class _FakeScalarRunner:
+    def __init__(
+        self,
+        outputs: dict[str, np.ndarray],
+        *,
+        ok: bool = True,
+        unsupported: bool = False,
+        error: str = "",
+    ) -> None:
+        self.outputs = outputs
+        self.ok = ok
+        self.unsupported = unsupported
+        self.error = error
+        self.calls: list[str] = []
+
+    def run(self, spec, values):
+        self.calls.append(str(values.get("case_name", "scalar")))
+        return ExecutionResult(
+            "scalar",
+            self.ok,
+            {name: value.copy() for name, value in self.outputs.items()},
+            error=self.error,
+            unsupported=self.unsupported,
+        )
+
+
+def _program() -> IntentProgram:
+    function = IntentFunction.from_json(
+        {
+            "name": "gate2_identity",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "cast",
+                    "result": "value",
+                    "operands": ["X"],
+                    "attrs": {"to_dtype": "f32"},
+                    "type": {"dtype": "f32", "shape": ["N"]},
+                }
+            ],
+            "returns": [{"output": "Y", "value": "value"}],
+        }
+    )
+    interface = LogicalInterface(
+        "gate2_identity",
+        (
+            LogicalArgument(
+                "x_ptr",
+                "tensor",
+                "input",
+                "f32",
+                rank=1,
+                symbolic_shape=("N",),
+                tensor_ref="X",
+            ),
+            LogicalArgument(
+                "y_ptr",
+                "tensor",
+                "output",
+                "f32",
+                rank=1,
+                symbolic_shape=("N",),
+                tensor_ref="Y",
+            ),
+        ),
+        ("Y",),
+    )
+    return IntentProgram(function, BoundaryContract(), interface)
+
+
+def _scalar_spec() -> ScalarLoweringSpec:
+    return ScalarLoweringSpec.create(
+        _program(),
+        final_artifact_digest=FINAL_ARTIFACT_DIGEST,
+        gate1_j_digest=GATE1_J_DIGEST,
+        dims={"N": 1},
+        input_bindings={"X": "X"},
+        output_bindings={"Y": "Y"},
+    )
+
+
 def _case(
     *,
-    case_id: str = "dynamic-equivalence",
+    case_id: str = "replay-scalar",
     values: dict[str, object] | None = None,
     tolerance: Tolerance | None = None,
 ) -> Gate2Case:
@@ -64,12 +167,14 @@ def _case(
             ),
             (1,),
         ),
+        _scalar_spec(),
+        FINAL_ARTIFACT_DIGEST,
         ("Y",),
         {} if tolerance is None else {"Y": tolerance},
     )
 
 
-def _dummy_source() -> KernelSource:
+def _dummy_replay() -> KernelSource:
     return KernelSource.from_code("", "kernel")
 
 
@@ -77,9 +182,9 @@ def test_gate2_integer_and_boolean_outputs_use_exact_comparison() -> None:
     large = np.asarray([2**60], dtype=np.int64)
     adjacent = np.asarray([2**60 + 1], dtype=np.int64)
     integer = compare_outputs(
-        "source",
-        {"Y": large},
         "replay",
+        {"Y": large},
+        "scalar",
         {"Y": adjacent},
         ("Y",),
         {"Y": Tolerance(rtol=1.0, atol=1.0)},
@@ -88,9 +193,9 @@ def test_gate2_integer_and_boolean_outputs_use_exact_comparison() -> None:
     assert integer.outputs[0].max_abs_error == 1.0
 
     boolean = compare_outputs(
-        "source",
-        {"Y": np.asarray([True, False])},
         "replay",
+        {"Y": np.asarray([True, False])},
+        "scalar",
         {"Y": np.asarray([False, False])},
         ("Y",),
     )
@@ -99,79 +204,126 @@ def test_gate2_integer_and_boolean_outputs_use_exact_comparison() -> None:
 
 
 @pytest.mark.parametrize(
-    ("source", "replay", "status"),
+    ("replay", "scalar", "status"),
     [
         (0.0, 0.0, Gate2Status.PASS),
-        (0.0, 1.0, Gate2Status.REPLAY_DIVERGED),
+        (0.0, 1.0, Gate2Status.REPLAY_SCALAR_MISMATCH),
     ],
 )
-def test_gate2_classifies_only_source_replay_agreement(
-    source: float,
+def test_gate2_classifies_replay_scalar_agreement(
     replay: float,
+    scalar: float,
     status: Gate2Status,
 ) -> None:
     array = lambda value: np.asarray([value], dtype=np.float32)
     runner = Gate2Runner(
-        source_runner=_FakeTritonRunner({"Y": array(source)}),
-        replay_runner=_FakeTritonRunner({"Y": array(replay)}),
+        replay_runner=_FakeReplayRunner({"Y": array(replay)}),
+        scalar_runner=_FakeScalarRunner({"Y": array(scalar)}),
     )
 
-    result = runner.run(_dummy_source(), _dummy_source(), _case())
+    result = runner.run(_dummy_replay(), _case())
 
     assert result.status is status
-    assert result.source_replay is not None
-    assert result.source_replay.passed is (status is Gate2Status.PASS)
-    assert not hasattr(result, "lowering")
+    assert result.replay_scalar is not None
+    assert result.replay_scalar.passed is (status is Gate2Status.PASS)
+    assert not hasattr(result, "source")
+    assert result.input_digest
 
 
-def test_gate2_execution_failure_is_not_a_semantic_divergence() -> None:
+def test_gate2_execution_failure_is_not_a_semantic_mismatch() -> None:
     output = np.asarray([3.0], dtype=np.float32)
     runner = Gate2Runner(
-        source_runner=_FakeTritonRunner({"Y": output}),
-        replay_runner=_FakeTritonRunner(
+        replay_runner=_FakeReplayRunner(
             {}, ok=False, error="synthetic replay failure"
+        ),
+        scalar_runner=_FakeScalarRunner({"Y": output}),
+    )
+
+    result = runner.run(_dummy_replay(), _case())
+
+    assert result.status is Gate2Status.EXECUTION_FAILED
+    assert not result.replay.ok
+    assert result.scalar.ok
+    assert result.replay_scalar is None
+
+
+def test_gate2_scalar_unsupported_is_fail_closed() -> None:
+    output = np.asarray([3.0], dtype=np.float32)
+    runner = Gate2Runner(
+        replay_runner=_FakeReplayRunner({"Y": output}),
+        scalar_runner=_FakeScalarRunner(
+            {}, ok=False, unsupported=True, error="unsupported op"
         ),
     )
 
-    result = runner.run(_dummy_source(), _dummy_source(), _case())
+    result = runner.run(_dummy_replay(), _case())
 
-    assert result.status is Gate2Status.EXECUTION_FAILED
-    assert result.source.ok
-    assert not result.replay.ok
-    assert result.source_replay is None
+    assert result.status is Gate2Status.SCALAR_UNSUPPORTED
+    assert result.replay_scalar is None
+    assert not result.passed
+
+
+@pytest.mark.skipif(not HAVE_SCALAR_TOOLS, reason="needs scalar MLIR toolchain")
+def test_scalar_runner_executes_the_typed_program_not_a_cuda_fallback() -> None:
+    spec = ScalarLoweringSpec.create(
+        _program(),
+        final_artifact_digest=FINAL_ARTIFACT_DIGEST,
+        gate1_j_digest=GATE1_J_DIGEST,
+        dims={"N": 3},
+        input_bindings={"X": "input"},
+        output_bindings={"Y": "result"},
+    )
+    value = np.asarray([-1.0, 2.0, 4.5], dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["result"], value)
+    assert result.metadata["target_backend_in_verdict"] is False
+    assert "CUDA" not in result.metadata["path"]
 
 
 def test_gate2_uses_per_output_tolerance_for_floating_values() -> None:
-    source = np.asarray([1.0], dtype=np.float32)
-    replay = np.asarray([1.0005], dtype=np.float32)
+    replay = np.asarray([1.0], dtype=np.float32)
+    scalar = np.asarray([1.0005], dtype=np.float32)
     strict = Gate2Runner(
-        source_runner=_FakeTritonRunner({"Y": source}),
-        replay_runner=_FakeTritonRunner({"Y": replay}),
-    ).run(_dummy_source(), _dummy_source(), _case())
+        replay_runner=_FakeReplayRunner({"Y": replay}),
+        scalar_runner=_FakeScalarRunner({"Y": scalar}),
+    ).run(_dummy_replay(), _case())
     tolerant = Gate2Runner(
-        source_runner=_FakeTritonRunner({"Y": source}),
-        replay_runner=_FakeTritonRunner({"Y": replay}),
+        replay_runner=_FakeReplayRunner({"Y": replay}),
+        scalar_runner=_FakeScalarRunner({"Y": scalar}),
     ).run(
-        _dummy_source(),
-        _dummy_source(),
+        _dummy_replay(),
         _case(tolerance=Tolerance(rtol=1.0e-3, atol=0.0)),
     )
 
-    assert strict.status is Gate2Status.REPLAY_DIVERGED
+    assert strict.status is Gate2Status.REPLAY_SCALAR_MISMATCH
     assert tolerant.status is Gate2Status.PASS
 
 
-class _CaseAwareRunner:
-    def __init__(self, *, replay: bool) -> None:
-        self.replay = replay
+class _CaseAwareReplayRunner:
+    def __init__(self) -> None:
         self.calls: list[str] = []
 
     def run(self, leg, program, spec, values):
         name = str(values["case_name"])
         self.calls.append(name)
-        delta = 1.0 if self.replay and values.get("diverge") else 0.0
+        return ExecutionResult(
+            leg, True, {"Y": np.asarray(values["X"], dtype=np.float32)}
+        )
+
+
+class _CaseAwareScalarRunner:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def run(self, spec, values):
+        name = str(values["case_name"])
+        self.calls.append(name)
+        delta = 1.0 if values.get("diverge") else 0.0
         output = np.asarray(values["X"], dtype=np.float32) + delta
-        return ExecutionResult(leg, True, {"Y": output})
+        return ExecutionResult("scalar", True, {"Y": output})
 
 
 def test_gate2_suite_runs_every_case_and_aggregates_strictly() -> None:
@@ -184,32 +336,43 @@ def test_gate2_suite_runs_every_case_and_aggregates_strictly() -> None:
         },
     )
     second = _case(
-        case_id="matrix.replay-diverged",
+        case_id="matrix.replay-scalar-mismatch",
         values={
             "X": np.asarray([2.0], dtype=np.float32),
             "case_name": "fail",
             "diverge": True,
         },
     )
-    source_runner = _CaseAwareRunner(replay=False)
-    replay_runner = _CaseAwareRunner(replay=True)
+    replay_runner = _CaseAwareReplayRunner()
+    scalar_runner = _CaseAwareScalarRunner()
     result = Gate2Runner(
-        source_runner=source_runner,
         replay_runner=replay_runner,
+        scalar_runner=scalar_runner,
     ).run_suite(
-        _dummy_source(),
-        _dummy_source(),
+        _dummy_replay(),
         Gate2Suite("strict.matrix", (first, second)),
     )
 
     assert not result.passed
-    assert result.failed_case_ids == ("matrix.replay-diverged",)
+    assert result.failed_case_ids == ("matrix.replay-scalar-mismatch",)
     assert result.status_counts == {
         "gate2_pass": 1,
-        "replay_diverged": 1,
+        "replay_scalar_mismatch": 1,
     }
-    assert source_runner.calls == ["pass", "fail"]
     assert replay_runner.calls == ["pass", "fail"]
+    assert scalar_runner.calls == ["pass", "fail"]
+
+
+def test_gate2_rejects_unaligned_replay_and_scalar_artifacts() -> None:
+    with pytest.raises(ValueError, match="not bound"):
+        Gate2Case(
+            "misaligned",
+            {"X": np.asarray([0.0], dtype=np.float32)},
+            _case().triton,
+            _scalar_spec(),
+            "c" * 64,
+            ("Y",),
+        )
 
 
 def test_gate2_suite_rejects_duplicate_case_ids() -> None:

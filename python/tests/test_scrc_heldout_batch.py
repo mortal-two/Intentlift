@@ -606,7 +606,20 @@ def test_batch_status_uses_existing_gate_verdicts() -> None:
     ) == "gate2_suite_failed"
 
 
-def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
+def _gate2_case_evidence(
+    case_id: str, status: str = "gate2_pass"
+) -> dict[str, object]:
+    return {
+        "case_id": case_id,
+        "status": status,
+        "input_digest": "a" * 64,
+        "replay": {"ok": True},
+        "scalar": {"ok": True},
+        "replay_scalar": {"passed": status == "gate2_pass"},
+    }
+
+
+def test_batch_ignores_pre_v2_rejected_sample_gate2_diagnostics() -> None:
     observation = extract_gate1_gate2_observation(
         {
             "gate1": {"status": "leakage_rejected"},
@@ -622,13 +635,13 @@ def test_batch_extracts_gate1_rejection_and_independent_gate2_pass() -> None:
     assert observation == {
         "gate1_status": "leakage_rejected",
         "gate1_closed": False,
-        "gate2_evidence_kind": "diagnostic",
-        "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
-        "gate2_attempted": True,
-        "gate2_comparison_completed": True,
-        "gate2_status": "gate2_pass",
-        "gate2_pass": True,
-        "gate2_case_statuses": ["gate2_pass"],
+        "gate2_evidence_kind": None,
+        "gate2_execution_protocol": None,
+        "gate2_attempted": False,
+        "gate2_comparison_completed": False,
+        "gate2_status": None,
+        "gate2_pass": None,
+        "gate2_case_statuses": [],
     }
 
 
@@ -706,8 +719,8 @@ def test_gate2_suite_metrics_accept_a_complete_all_pass_suite() -> None:
                 "passed": True,
                 "status_counts": {"gate2_pass": 2},
                 "cases": [
-                    {"case_id": "c0", "status": "gate2_pass"},
-                    {"case_id": "c1", "status": "gate2_pass"},
+                    _gate2_case_evidence("c0"),
+                    _gate2_case_evidence("c1"),
                 ],
             },
         }
@@ -721,17 +734,19 @@ def test_gate2_suite_metrics_accept_a_complete_all_pass_suite() -> None:
 def test_gate2_suite_metrics_accept_a_complete_semantic_nonpass_suite() -> None:
     observation = extract_gate1_gate2_observation(
         {
-            "gate1": {"status": "no_closure"},
-            "gate2_diagnostic_suite": {
+            "gate1": {"status": "replay_closed"},
+            "gate2_suite": {
                 "execution_protocol": GATE2_EXECUTION_PROTOCOL,
                 "passed": False,
                 "status_counts": {
                     "gate2_pass": 1,
-                    "replay_diverged": 1,
+                    "replay_scalar_mismatch": 1,
                 },
                 "cases": [
-                    {"case_id": "c0", "status": "gate2_pass"},
-                    {"case_id": "c1", "status": "replay_diverged"},
+                    _gate2_case_evidence("c0"),
+                    _gate2_case_evidence(
+                        "c1", "replay_scalar_mismatch"
+                    ),
                 ],
             },
         }
@@ -780,9 +795,9 @@ def test_batch_does_not_count_execution_or_setup_failure_as_semantic_nonpass() -
     assert execution_failed["gate2_attempted"]
     assert not execution_failed["gate2_comparison_completed"]
     assert execution_failed["gate2_pass"] is None
-    assert setup_failed["gate2_attempted"]
+    assert not setup_failed["gate2_attempted"]
     assert not setup_failed["gate2_comparison_completed"]
-    assert setup_failed["gate2_status"] == "setup_failed"
+    assert setup_failed["gate2_status"] is None
     assert setup_failed["gate2_pass"] is None
 
 
@@ -792,14 +807,16 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
             "gate1": {"status": "replay_closed"},
             "gate2": {
                 "execution_protocol": GATE2_EXECUTION_PROTOCOL,
-                "status": "gate2_pass",
+                **_gate2_case_evidence("single-pass"),
             },
         },
         {
             "gate1": {"status": "replay_closed"},
             "gate2": {
                 "execution_protocol": GATE2_EXECUTION_PROTOCOL,
-                "status": "replay_diverged",
+                **_gate2_case_evidence(
+                    "single-mismatch", "replay_scalar_mismatch"
+                ),
             },
         },
         {
@@ -822,18 +839,18 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
 
     metrics = summarize_gate1_gate2(rows)
 
-    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v3"
+    assert metrics["schema"] == "scrc_gate1_gate2_conditional_v4"
     assert metrics["quadrants"] == {
         "gate1_closed_gate2_pass": 1,
         "gate1_closed_gate2_nonpass": 1,
-        "gate1_not_closed_gate2_pass": 1,
+        "gate1_not_closed_gate2_pass": 0,
         "gate1_not_closed_gate2_nonpass": 0,
     }
     assert metrics["quadrant_coverage"] == {
-        "eligible_completed_samples": 3,
+        "eligible_completed_samples": 2,
         "attempted_but_incomplete": 0,
-        "unattempted": 1,
-        "completion_coverage": 0.75,
+        "unattempted": 2,
+        "completion_coverage": 0.5,
     }
     assert metrics["replay_closed"] == {
         "samples": 2,
@@ -847,13 +864,13 @@ def test_batch_conditional_metrics_report_probability_and_evaluation_coverage() 
     }
     assert metrics["not_replay_closed"] == {
         "samples": 2,
-        "gate2_attempted": 1,
-        "gate2_comparison_completed": 1,
-        "gate2_pass": 1,
+        "gate2_attempted": 0,
+        "gate2_comparison_completed": 0,
+        "gate2_pass": 0,
         "gate2_nonpass": 0,
-        "attempt_coverage": 0.5,
-        "completion_coverage": 0.5,
-        "pass_probability_given_completed": 1.0,
+        "attempt_coverage": 0.0,
+        "completion_coverage": 0.0,
+        "pass_probability_given_completed": None,
     }
     assert metrics["by_gate1_status"]["no_closure"][
         "pass_probability_given_completed"
@@ -895,13 +912,13 @@ def test_gate1_gate2_quadrants_exclude_execution_and_setup_failure() -> None:
         "gate1_closed_gate2_pass": 0,
         "gate1_closed_gate2_nonpass": 0,
         "gate1_not_closed_gate2_pass": 0,
-        "gate1_not_closed_gate2_nonpass": 1,
+        "gate1_not_closed_gate2_nonpass": 0,
     }
     assert metrics["quadrant_coverage"] == {
-        "eligible_completed_samples": 1,
-        "attempted_but_incomplete": 2,
-        "unattempted": 0,
-        "completion_coverage": 1 / 3,
+        "eligible_completed_samples": 0,
+        "attempted_but_incomplete": 1,
+        "unattempted": 2,
+        "completion_coverage": 0.0,
     }
 
 
@@ -1005,7 +1022,6 @@ def _batch_args(**overrides) -> Namespace:
         "pi_ablations": True,
         "pi_ablation_limit": 3,
         "pi_ablation_kinds": None,
-        "diagnose_rejected": False,
         "gate2_matrix": False,
         "gate2_seeds": None,
     }
@@ -1049,11 +1065,11 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         build_heldout_case("fg_dot"),
         _batch_args(relift_rounds=1),
     )
-    assert identity["schema"] == 35
+    assert identity["schema"] == 36
     assert identity["composer_version"] == "deterministic_composer_v5"
     assert identity["performance_schema"] == "scrc_case_performance_v1"
     assert identity["gate1_gate2_metrics_schema"] == (
-        "scrc_gate1_gate2_conditional_v3"
+        "scrc_gate1_gate2_conditional_v4"
     )
     assert identity["relift_rounds"] == 3
     assert identity["semantic_interventions"] == 3
@@ -1096,9 +1112,9 @@ def test_resume_requires_the_exact_current_batch_identity() -> None:
         "gate2_verdict_independence": True,
     }
     assert identity["gate2_execution_protocol"] == (
-        "source_replay_dynamic_equivalence_v1"
+        "final_j_replay_scalar_differential_v2"
     )
-    assert identity["gate2_execution_legs"] == ["source", "replay"]
+    assert identity["gate2_execution_legs"] == ["replay", "scalar"]
     assert identity["gate2_comparison_protocol"] == (
         "exact_integer_tolerant_float_v2"
     )

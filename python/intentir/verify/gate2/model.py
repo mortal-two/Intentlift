@@ -1,4 +1,4 @@
-"""Result model for SCRC Gate2 source/replay dynamic execution."""
+"""Result model for digest-bound replay/scalar Gate2 execution."""
 
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ import numpy as np
 
 class Gate2Status(str, Enum):
     PASS = "gate2_pass"
-    REPLAY_DIVERGED = "replay_diverged"
+    REPLAY_SCALAR_MISMATCH = "replay_scalar_mismatch"
+    SCALAR_UNSUPPORTED = "scalar_unsupported"
     EXECUTION_FAILED = "execution_failed"
 
 
@@ -33,6 +34,7 @@ class ExecutionResult:
     ok: bool
     outputs: Mapping[str, np.ndarray] = field(default_factory=dict)
     error: str = ""
+    unsupported: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -56,9 +58,10 @@ class PairwiseAgreement:
 class Gate2Result:
     case_id: str
     status: Gate2Status
-    source: ExecutionResult
     replay: ExecutionResult
-    source_replay: PairwiseAgreement | None = None
+    scalar: ExecutionResult
+    replay_scalar: PairwiseAgreement | None = None
+    input_digest: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property

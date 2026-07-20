@@ -83,7 +83,7 @@ def test_official_campaign_configuration_is_not_cli_overridable() -> None:
     assert not hasattr(official, "lowering_backend")
     assert official.semantic_interventions == 0
     assert not official.pi_ablations
-    assert not official.diagnose_rejected
+    assert not hasattr(official, "diagnose_rejected")
 
 
 def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
@@ -120,7 +120,7 @@ def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
         "gate2_execution_policy": {
             "protocol": "legacy_three_way",
             "legs": ["source", "replay", "lowering"],
-            "production_lowering_in_verdict": True,
+            "target_backend_in_verdict": True,
         },
     }
 
@@ -135,8 +135,11 @@ def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
         "requested_effort_mismatch",
         "gate2_execution_protocol_mismatch",
         "gate2_execution_legs_mismatch",
-        "production_lowering_entered_gate2_verdict",
+        "target_backend_entered_gate2_verdict",
+        "gate2_required_comparison_mismatch",
         "gate2_evidence_protocol_mismatch",
+        "missing_gate2_scalar_binding",
+        "missing_replay_scalar_comparison_evidence",
     }
 
 
@@ -162,14 +165,18 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
             "pi_ablations": {"enabled": False},
         },
         "gate2": {
-            "execution_protocol": "source_replay_dynamic_equivalence_v1",
+            "execution_protocol": batch.GATE2_EXECUTION_PROTOCOL,
             "status": "gate2_pass",
+            "scalar": {"ok": True},
+            "replay_scalar": {"passed": True},
         },
         "gate2_execution_policy": {
-            "protocol": "source_replay_dynamic_equivalence_v1",
-            "legs": ["source", "replay"],
-            "production_lowering_in_verdict": False,
+            "protocol": batch.GATE2_EXECUTION_PROTOCOL,
+            "legs": ["replay", "scalar"],
+            "required_comparison": "replay_scalar",
+            "target_backend_in_verdict": False,
         },
+        "gate2_scalar_binding": {"intent_program_digest": "typed"},
     }
 
     report["gate1"].update(

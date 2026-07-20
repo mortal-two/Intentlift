@@ -213,7 +213,7 @@ def test_saved_artifact_rehydrates_actual_source_without_metadata_fields(
     assert payload["source_sha256"] == "digest"
 
 
-def test_saved_gate2_is_explicitly_diagnostic_and_independent(
+def test_saved_gate2_requires_current_digest_bound_reacceptance(
     monkeypatch,
 ) -> None:
     captured = {}
@@ -223,15 +223,16 @@ def test_saved_gate2_is_explicitly_diagnostic_and_independent(
     )
 
     class FakeRunner:
-        def run(self, source, replay, gate2_case):
+        def run(self, replay, gate2_case):
             captured.update(
-                source=source,
                 replay=replay,
                 gate2_case=gate2_case,
             )
             return SimpleNamespace(status=SimpleNamespace(value="gate2_pass"))
 
-    monkeypatch.setattr(recheck, "_gate2_case", lambda *args: "GATE2_CASE")
+    monkeypatch.setattr(
+        recheck, "_gate2_case", lambda *args, **kwargs: "GATE2_CASE"
+    )
     monkeypatch.setattr(
         recheck,
         "_gate2_evidence_json",
@@ -243,19 +244,21 @@ def test_saved_gate2_is_explicitly_diagnostic_and_independent(
         artifact,
         "REPLAY",
         seed=7,
+        final_artifact_digest="a" * 64,
+        gate1_j_digest="b" * 64,
+        program="PROGRAM",
         runner=FakeRunner(),
     )
 
     assert payload == {
-        "independent": True,
-        "verdict_role": "diagnostic_never_upgrades_gate1",
+        "saved_observation_recheck": True,
+        "required_gate1_state": "replay_closed",
         "status": "gate2_pass",
     }
-    assert captured["source"] == "SOURCE"
     assert captured["gate2_case"] == "GATE2_CASE"
 
 
-def test_saved_gate2_suite_is_independent_and_uses_declared_matrix(
+def test_saved_gate2_suite_uses_current_digest_bound_matrix(
     monkeypatch,
 ) -> None:
     captured = {}
@@ -265,11 +268,13 @@ def test_saved_gate2_suite_is_independent_and_uses_declared_matrix(
     )
 
     class FakeRunner:
-        def run_suite(self, source, replay, suite):
-            captured.update(source=source, replay=replay, suite=suite)
+        def run_suite(self, replay, suite):
+            captured.update(replay=replay, suite=suite)
             return SimpleNamespace(passed=True)
 
-    monkeypatch.setattr(recheck, "_gate2_suite", lambda *args: "SUITE")
+    monkeypatch.setattr(
+        recheck, "_gate2_suite", lambda *args, **kwargs: "SUITE"
+    )
     monkeypatch.setattr(
         recheck,
         "_gate2_suite_evidence_json",
@@ -281,14 +286,16 @@ def test_saved_gate2_suite_is_independent_and_uses_declared_matrix(
         artifact,
         "REPLAY",
         seeds=(1, 2, 3),
+        final_artifact_digest="a" * 64,
+        gate1_j_digest="b" * 64,
+        program="PROGRAM",
         runner=FakeRunner(),
     )
 
     assert payload == {
-        "independent": True,
-        "verdict_role": "diagnostic_never_upgrades_gate1",
+        "saved_observation_recheck": True,
+        "required_gate1_state": "replay_closed",
         "passed": True,
         "cases": [],
     }
-    assert captured["source"] == "SOURCE"
     assert captured["suite"] == "SUITE"

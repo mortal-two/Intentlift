@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -9,7 +10,33 @@ from typing import Any
 from .orchestrate import GATE2_EXECUTION_PROTOCOL
 
 
-_COMPLETED_STATUSES = frozenset({"gate2_pass", "replay_diverged"})
+_COMPLETED_STATUSES = frozenset(
+    {"gate2_pass", "replay_scalar_mismatch"}
+)
+
+
+def _has_replay_scalar_evidence(case: Mapping[str, Any]) -> bool:
+    replay = case.get("replay")
+    scalar = case.get("scalar")
+    agreement = case.get("replay_scalar")
+    status = case.get("status")
+    input_digest = case.get("input_digest")
+    if not (
+        isinstance(replay, Mapping)
+        and replay.get("ok") is True
+        and isinstance(scalar, Mapping)
+        and scalar.get("ok") is True
+        and isinstance(agreement, Mapping)
+        and isinstance(agreement.get("passed"), bool)
+        and isinstance(input_digest, str)
+        and re.fullmatch(r"[0-9a-f]{64}", input_digest) is not None
+    ):
+        return False
+    return (
+        status == "gate2_pass"
+        if agreement["passed"]
+        else status == "replay_scalar_mismatch"
+    )
 
 
 def extract_gate1_gate2_observation(
@@ -31,13 +58,16 @@ def extract_gate1_gate2_observation(
         "gate2_case_statuses": [],
     }
 
+    # Gate2 v2 is digest-bound to an accepted final J.  Rejected-sample
+    # diagnostics from older report schemas are not Gate2 observations.
+    if not observation["gate1_closed"]:
+        return observation
+
     evidence: Mapping[str, Any] | None = None
     is_suite = False
     for report_key, evidence_kind, suite in (
         ("gate2_suite", "suite", True),
         ("gate2", "single", False),
-        ("gate2_diagnostic_suite", "diagnostic_suite", True),
-        ("gate2_diagnostic", "diagnostic", False),
     ):
         candidate = report.get(report_key)
         if isinstance(candidate, Mapping):
@@ -86,6 +116,9 @@ def extract_gate1_gate2_observation(
         statuses_terminal = all(
             status in _COMPLETED_STATUSES for status in statuses
         )
+        comparisons_complete = bool(case_mappings) and all(
+            _has_replay_scalar_evidence(case) for case in case_mappings
+        )
 
         any_case_id = any("case_id" in case for case in case_mappings)
         case_ids = [case.get("case_id") for case in case_mappings]
@@ -123,6 +156,7 @@ def extract_gate1_gate2_observation(
         completed = (
             all_statuses_present
             and statuses_terminal
+            and comparisons_complete
             and case_ids_valid
             and status_counts_valid
             and isinstance(suite_passed, bool)
@@ -145,7 +179,10 @@ def extract_gate1_gate2_observation(
     observation["gate2_status"] = status if isinstance(status, str) else None
     if isinstance(status, str):
         observation["gate2_case_statuses"] = [status]
-        completed = status in _COMPLETED_STATUSES
+        completed = (
+            status in _COMPLETED_STATUSES
+            and _has_replay_scalar_evidence(evidence)
+        )
         observation["gate2_comparison_completed"] = completed
         if completed:
             observation["gate2_pass"] = status == "gate2_pass"
@@ -209,7 +246,7 @@ def summarize_gate1_gate2(
 
     statuses = sorted({str(item["gate1_status"]) for item in observations})
     return {
-        "schema": "scrc_gate1_gate2_conditional_v3",
+        "schema": "scrc_gate1_gate2_conditional_v4",
         "gate1_observed_samples": len(observations),
         "rows_without_gate1_verdict": len(rows) - len(observations),
         "quadrants": {

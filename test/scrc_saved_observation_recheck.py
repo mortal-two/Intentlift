@@ -5,10 +5,11 @@ persisted LiftArtifact and persisted replay source, then reruns current artifact
 validation, source/replay Triton compilation and normal hard comparison.  It
 never calls Lift, Relift or a replay model.  An optional anti-leakage migration
 reuses the saved intervention and actual-pi masked-J replay sources, without
-repairing or regenerating either. Gate2 is optional and remains an independent
-diagnostic: it can neither close nor upgrade Gate1. Fixed-C family execution is
-also optional; when enabled, each saved replay arm is evaluated by the current
-in-loop full-family policy.
+repairing or regenerating either. Gate2 is optional, but it runs only when the
+saved artifact is re-accepted by the current Gate1 and can be bound to a typed
+IntentProgram plus the current replay/scalar protocol. Fixed-C family execution
+is also optional; when enabled, each saved replay arm is evaluated by the
+current in-loop full-family policy.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from intentir.verify.gate1.orchestrate import (
     Gate1Runner,
     canonical_artifact_digest,
 )
+from intentir.verify.gate1.composer import assert_replay_plan_matches
+from intentir.verify.gate1.program_adapter import intent_program_from_gate1
 from intentir.verify.gate1.replay import StaticReplayWriter
 from intentir.verify.gate1.rule_release import load_rule_release
 from intentir.verify.gate1.rules import default_triton_rule_registry
@@ -237,21 +240,31 @@ def run_saved_gate2(
     replay_code: str,
     *,
     seed: int,
+    final_artifact_digest: str,
+    gate1_j_digest: str,
+    program: Any,
     runner: Gate2Runner | None = None,
 ) -> dict[str, Any]:
-    """Run current Gate2 without granting it any Gate1 verdict authority."""
+    """Run current Gate2 for a saved replay re-accepted by current Gate1."""
 
     replay = KernelSource.from_code(
         replay_code, artifact.interface.function_name
     )
     result = (runner or Gate2Runner()).run(
-        case.kernel_source,
         replay,
-        _gate2_case(artifact, case, seed),
+        _gate2_case(
+            artifact,
+            case,
+            seed,
+            program=program,
+            final_artifact_digest=final_artifact_digest,
+            gate1_j_digest=gate1_j_digest,
+            replay_artifact_digest=final_artifact_digest,
+        ),
     )
     return {
-        "independent": True,
-        "verdict_role": "diagnostic_never_upgrades_gate1",
+        "saved_observation_recheck": True,
+        "required_gate1_state": "replay_closed",
         **_gate2_evidence_json(result),
     }
 
@@ -262,6 +275,9 @@ def run_saved_gate2_suite(
     replay_code: str,
     *,
     seeds: tuple[int, ...],
+    final_artifact_digest: str,
+    gate1_j_digest: str,
+    program: Any,
     runner: Gate2Runner | None = None,
 ) -> dict[str, Any]:
     """Run the current declared Gate2 matrix as independent evidence."""
@@ -270,13 +286,20 @@ def run_saved_gate2_suite(
         replay_code, artifact.interface.function_name
     )
     result = (runner or Gate2Runner()).run_suite(
-        case.kernel_source,
         replay,
-        _gate2_suite(artifact, case, seeds),
+        _gate2_suite(
+            artifact,
+            case,
+            seeds,
+            program=program,
+            final_artifact_digest=final_artifact_digest,
+            gate1_j_digest=gate1_j_digest,
+            replay_artifact_digest=final_artifact_digest,
+        ),
     )
     return {
-        "independent": True,
-        "verdict_role": "diagnostic_never_upgrades_gate1",
+        "saved_observation_recheck": True,
+        "required_gate1_state": "replay_closed",
         **_gate2_suite_evidence_json(result),
     }
 
@@ -383,8 +406,15 @@ def run_saved_recheck(
             result.artifact,
             registry,
         )
+        current_composed = assert_replay_plan_matches(
+            result.artifact, registry
+        )
+        current_gate1_j_digest = current_composed.provenance.j_digest
+        current_program = intent_program_from_gate1(result.artifact)
     except Exception as exc:
         current_artifact_digest = None
+        current_gate1_j_digest = None
+        current_program = None
         current_artifact_identity_error = f"{type(exc).__name__}: {exc}"
     else:
         current_artifact_identity_error = None
@@ -412,8 +442,18 @@ def run_saved_recheck(
             result.artifact,
             aligned_generation.code,
             seeds=(seed, seed + 1, seed + 2),
+            final_artifact_digest=current_artifact_digest,
+            gate1_j_digest=current_gate1_j_digest,
+            program=current_program,
         )
-        if run_gate2_matrix and aligned_generation is not None
+        if (
+            run_gate2_matrix
+            and result.replay_closed
+            and aligned_generation is not None
+            and current_artifact_digest is not None
+            and current_gate1_j_digest is not None
+            and current_program is not None
+        )
         else None
     )
     gate2 = (
@@ -422,8 +462,19 @@ def run_saved_recheck(
             result.artifact,
             aligned_generation.code,
             seed=seed,
+            final_artifact_digest=current_artifact_digest,
+            gate1_j_digest=current_gate1_j_digest,
+            program=current_program,
         )
-        if run_gate2 and gate2_suite is None and aligned_generation is not None
+        if (
+            run_gate2
+            and gate2_suite is None
+            and result.replay_closed
+            and aligned_generation is not None
+            and current_artifact_digest is not None
+            and current_gate1_j_digest is not None
+            and current_program is not None
+        )
         else None
     )
     gate2_status = (

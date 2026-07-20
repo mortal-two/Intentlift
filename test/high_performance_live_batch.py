@@ -40,7 +40,7 @@ OFFICIAL_EFFORT = "xhigh"
 OFFICIAL_GATE1_PROFILE = "formal"
 OFFICIAL_SEMANTIC_INTERVENTIONS = 0
 OFFICIAL_PI_ABLATIONS = False
-CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate.v3"
+CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate.v4"
 DEFAULT_REGISTRY = ROOT / "spec/lowering/high-performance-kernels.json"
 DEFAULT_CAPTURE_MANIFEST = Path(
     "/home/kingdom/phdworks/TianchenIR-rebuttal/artifacts/gate_paper/"
@@ -352,7 +352,6 @@ def _official_args(args: argparse.Namespace) -> argparse.Namespace:
         pi_ablations=OFFICIAL_PI_ABLATIONS,
         pi_ablation_limit=args.pi_ablation_limit,
         pi_ablation_kinds=None,
-        diagnose_rejected=False,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
         gate1_profile=OFFICIAL_GATE1_PROFILE,
@@ -438,16 +437,34 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
         failures.append("gate2_not_passed")
     elif gate2.get("execution_protocol") != GATE2_EXECUTION_PROTOCOL:
         failures.append("gate2_evidence_protocol_mismatch")
+    gate2_cases = (
+        gate2.get("cases", [])
+        if isinstance(gate2, Mapping) and isinstance(gate2.get("cases"), list)
+        else ([gate2] if isinstance(gate2, Mapping) else [])
+    )
+    if not gate2_cases or any(
+        not isinstance(case, Mapping)
+        or not isinstance(case.get("replay_scalar"), Mapping)
+        or case["replay_scalar"].get("passed") is not True
+        or not isinstance(case.get("scalar"), Mapping)
+        or case["scalar"].get("ok") is not True
+        for case in gate2_cases
+    ):
+        failures.append("missing_replay_scalar_comparison_evidence")
     gate2_policy = report.get("gate2_execution_policy")
     if not isinstance(gate2_policy, Mapping):
         failures.append("missing_gate2_execution_policy")
     else:
         if gate2_policy.get("protocol") != GATE2_EXECUTION_PROTOCOL:
             failures.append("gate2_execution_protocol_mismatch")
-        if gate2_policy.get("legs") != ["source", "replay"]:
+        if gate2_policy.get("legs") != ["replay", "scalar"]:
             failures.append("gate2_execution_legs_mismatch")
-        if gate2_policy.get("production_lowering_in_verdict") is not False:
-            failures.append("production_lowering_entered_gate2_verdict")
+        if gate2_policy.get("required_comparison") != "replay_scalar":
+            failures.append("gate2_required_comparison_mismatch")
+        if gate2_policy.get("target_backend_in_verdict") is not False:
+            failures.append("target_backend_entered_gate2_verdict")
+    if not isinstance(report.get("gate2_scalar_binding"), Mapping):
+        failures.append("missing_gate2_scalar_binding")
     return not failures, failures
 
 
@@ -597,7 +614,7 @@ def run_campaign(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 "fresh_lift",
                 "normal_replay",
                 "masked_j",
-                "source_replay_gate2",
+                "replay_scalar_gate2",
             ],
             "origin": dict(case.origin),
         }

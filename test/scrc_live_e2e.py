@@ -25,6 +25,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.ir.program import IntentProgram
 from intentir.extraction.lifters.scrc import (
     ResponsesSCRCRelifter,
     SCRC_RELIFT_PROTOCOL,
@@ -57,6 +58,8 @@ from intentir.verify.gate1.orchestrate import (
     Gate1Runner,
     canonical_artifact_digest,
 )
+from intentir.verify.gate1.composer import assert_replay_plan_matches
+from intentir.verify.gate1.program_adapter import intent_program_from_gate1
 from intentir.verify.gate1.specialization import (
     GATE1_FAMILY_DIFF_POLICY,
     GATE1_FAMILY_RELIFT_GUIDANCE_POLICY,
@@ -81,6 +84,7 @@ from intentir.verify.gate2 import (
     Gate2Suite,
     GATE2_COMPARISON_PROTOCOL,
     InputDistribution,
+    ScalarLoweringSpec,
     TensorInputSpec,
     Tolerance,
     TritonArgument,
@@ -453,11 +457,54 @@ def _runtime_by_name(case: LiveKernelCase) -> dict[str, SCRCCompilerArgument]:
     return {argument.name: argument for argument in case.arguments}
 
 
+def _symbolic_dims(
+    program: IntentProgram, case: LiveKernelCase
+) -> dict[str, int]:
+    runtime = _runtime_by_name(case)
+    tensors = {
+        tensor.name: tensor
+        for tensor in [*program.function.inputs, *program.function.outputs]
+    }
+    dims: dict[str, int] = {}
+    for parameter in program.interface.arguments:
+        if parameter.kind != "tensor" or parameter.tensor_ref is None:
+            continue
+        argument = runtime.get(parameter.name)
+        tensor = tensors.get(parameter.tensor_ref)
+        if argument is None or tensor is None:
+            raise ValueError(
+                f"typed ABI tensor {parameter.name!r}/{parameter.tensor_ref!r} "
+                "has no captured runtime binding"
+            )
+        if len(tensor.shape) != len(argument.shape):
+            raise ValueError(
+                f"IntentProgram tensor {tensor.name!r} rank differs from capture"
+            )
+        for declared, concrete in zip(
+            tensor.shape, argument.shape, strict=True
+        ):
+            if isinstance(declared, str):
+                previous = dims.setdefault(declared, concrete)
+                if previous != concrete:
+                    raise ValueError(
+                        f"symbolic dim {declared!r} has inconsistent bindings"
+                    )
+            elif int(declared) != concrete:
+                raise ValueError(
+                    f"static J extent {declared} differs from {concrete}"
+                )
+    return dims
+
+
 def _gate2_case(
     artifact,
     case: LiveKernelCase,
     seed: int,
     *,
+    program: IntentProgram,
+    final_artifact_digest: str,
+    gate1_j_digest: str,
+    replay_artifact_digest: str,
     case_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> Gate2Case:
@@ -546,10 +593,24 @@ def _gate2_case(
     triton = TritonExecutionSpec(
         tuple(arguments), case.grid, dict(artifact.schedule.values)
     )
+    scalar = ScalarLoweringSpec.create(
+        program,
+        final_artifact_digest=final_artifact_digest,
+        gate1_j_digest=gate1_j_digest,
+        dims=_symbolic_dims(program, case),
+        input_bindings={
+            tensor.name: tensor.name for tensor in program.function.inputs
+        },
+        output_bindings={
+            tensor.name: tensor.name for tensor in program.function.outputs
+        },
+    )
     return Gate2Case(
         case_id or f"{case.name}.live",
         values,
         triton,
+        scalar,
+        replay_artifact_digest,
         tuple(output_keys),
         {output_key: case.tolerance for output_key in output_keys},
         dict(metadata or {}),
@@ -695,6 +756,11 @@ def _gate2_suite(
     artifact,
     case: LiveKernelCase,
     seeds: tuple[int, ...],
+    *,
+    program: IntentProgram,
+    final_artifact_digest: str,
+    gate1_j_digest: str,
+    replay_artifact_digest: str,
 ) -> Gate2Suite:
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("Gate2 matrix seeds must be non-empty and unique")
@@ -716,6 +782,10 @@ def _gate2_suite(
                         artifact,
                         profiled,
                         seed,
+                        program=program,
+                        final_artifact_digest=final_artifact_digest,
+                        gate1_j_digest=gate1_j_digest,
+                        replay_artifact_digest=replay_artifact_digest,
                         case_id=(
                             f"{case.name}.{shape_profile.profile_id}."
                             f"{value_profile.profile_id}.seed{seed}"
@@ -751,12 +821,13 @@ def _gate2_evidence_json(result) -> dict[str, Any]:
         "execution_protocol": GATE2_EXECUTION_PROTOCOL,
         "case_id": result.case_id,
         "status": result.status.value,
+        "input_digest": result.input_digest,
         "metadata": dict(result.metadata),
-        "source": _execution_json(result.source),
         "replay": _execution_json(result.replay),
-        "source_replay": None
-        if result.source_replay is None
-        else asdict(result.source_replay),
+        "scalar": _execution_json(result.scalar),
+        "replay_scalar": None
+        if result.replay_scalar is None
+        else asdict(result.replay_scalar),
     }
 
 
@@ -913,16 +984,13 @@ def _finalize_performance_report(
         masked_compiles = int(isinstance(gate1.get("masked_compile"), dict))
         masked_source_compiles = 0
     gate2_trials = 0
-    for key in ("gate2_suite", "gate2_diagnostic_suite"):
+    for key in ("gate2_suite",):
         suite = report.get(key)
         if isinstance(suite, dict) and isinstance(suite.get("cases"), list):
             gate2_trials = len(suite["cases"])
             break
     else:
-        gate2_trials = int(
-            isinstance(report.get("gate2"), dict)
-            or isinstance(report.get("gate2_diagnostic"), dict)
-        )
+        gate2_trials = int(isinstance(report.get("gate2"), dict))
 
     timings: dict[str, float | None] = {
         key: (
@@ -1507,9 +1575,11 @@ def run_case(
         },
         "gate2_execution_policy": {
             "protocol": GATE2_EXECUTION_PROTOCOL,
-            "legs": ["source", "replay"],
-            "production_lowering_in_verdict": False,
+            "legs": ["replay", "scalar"],
+            "required_comparison": "replay_scalar",
+            "target_backend_in_verdict": False,
             "replay_binding": "final_gate1_artifact_digest_exact_match_v1",
+            "scalar_binding": "typed_intent_program_from_final_gate1_j_v1",
         },
         "gate2_comparison_policy": {
             "protocol": GATE2_COMPARISON_PROTOCOL,
@@ -1640,12 +1710,15 @@ def run_case(
     _progress("gate1_complete", kernel=case.name, status=gate1.status.value)
     verified_artifact = getattr(gate1, "artifact", artifact)
     try:
+        composed = assert_replay_plan_matches(verified_artifact, registry)
         final_artifact_digest = canonical_artifact_digest(
             verified_artifact,
             registry,
         )
+        gate1_j_digest = composed.provenance.j_digest
     except Exception as exc:
         final_artifact_digest = None
+        gate1_j_digest = None
         artifact_identity_error = f"{type(exc).__name__}: {exc}"
     else:
         artifact_identity_error = None
@@ -1657,6 +1730,7 @@ def run_case(
         "policy": "final_gate1_artifact_digest_exact_match_v1",
         "status": "aligned" if gate2_replay is not None else "coverage_gap",
         "final_artifact_digest": final_artifact_digest,
+        "final_gate1_j_digest": gate1_j_digest,
         "candidate_artifact_digest": (
             None
             if gate2_replay is None
@@ -1739,82 +1813,10 @@ def run_case(
             reason=pi_ablation_control["reason"],
         )
     if not gate1.replay_closed:
-        if (
-            getattr(args, "diagnose_rejected", False)
-            and gate2_replay is not None
-            and gate2_replay.generation is not None
-        ):
-            replay = KernelSource.from_code(
-                gate2_replay.generation.code,
-                verified_artifact.interface.function_name,
-            )
-            _progress("gate2_diagnostic_start", kernel=case.name)
-            gate2_started = time.perf_counter()
-            try:
-                runner = Gate2Runner()
-                if gate2_matrix_enabled:
-                    diagnostic_suite = runner.run_suite(
-                        case.kernel_source,
-                        replay,
-                        _gate2_suite(
-                            verified_artifact,
-                            case,
-                            gate2_seeds,
-                        ),
-                    )
-                    report["gate2_diagnostic_suite"] = {
-                        "kind": "offline_gate2_for_gate1_rejected_sample",
-                        "independent": True,
-                        "gate1_status": gate1.status.value,
-                        **_gate2_suite_evidence_json(diagnostic_suite),
-                    }
-                    _progress(
-                        "gate2_diagnostic_complete",
-                        kernel=case.name,
-                        status=(
-                            "gate2_pass"
-                            if diagnostic_suite.passed
-                            else "gate2_suite_failed"
-                        ),
-                        cases=len(diagnostic_suite.cases),
-                    )
-                else:
-                    diagnostic = runner.run(
-                        case.kernel_source,
-                        replay,
-                        _gate2_case(
-                            verified_artifact,
-                            case,
-                            args.seed,
-                        ),
-                    )
-                    report["gate2_diagnostic"] = {
-                        "kind": "offline_gate2_for_gate1_rejected_sample",
-                        "independent": True,
-                        "gate1_status": gate1.status.value,
-                        **_gate2_evidence_json(diagnostic),
-                    }
-                    _progress(
-                        "gate2_diagnostic_complete",
-                        kernel=case.name,
-                        status=diagnostic.status.value,
-                    )
-            except Exception as exc:
-                key = (
-                    "gate2_diagnostic_suite"
-                    if gate2_matrix_enabled
-                    else "gate2_diagnostic"
-                )
-                report[key] = {
-                    "execution_protocol": GATE2_EXECUTION_PROTOCOL,
-                    "kind": "offline_gate2_for_gate1_rejected_sample",
-                    "independent": True,
-                    "gate1_status": gate1.status.value,
-                    "status": "setup_failed",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            finally:
-                _record_stage_ms(stage_ms, "gate2", gate2_started)
+        report["gate2_not_attempted"] = {
+            "reason": "gate1_not_accepted",
+            "required_binding": "final_accepted_gate1_j",
+        }
         return finish(3)
 
     if gate2_replay is None or gate2_replay.generation is None:
@@ -1822,6 +1824,36 @@ def run_case(
             "Gate1 closed without an executable replay observation"
         )
         return finish(3)
+    if final_artifact_digest is None or gate1_j_digest is None:
+        report["gate1"]["diagnostics"].append(
+            "Gate1 closed without canonical final J identity"
+        )
+        return finish(3)
+    try:
+        intent_program = intent_program_from_gate1(verified_artifact)
+    except Exception as exc:
+        key = "gate2_suite" if gate2_matrix_enabled else "gate2"
+        report[key] = {
+            "execution_protocol": GATE2_EXECUTION_PROTOCOL,
+            "status": "scalar_contract_unsupported",
+            "final_artifact_digest": final_artifact_digest,
+            "gate1_j_digest": gate1_j_digest,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        _progress(
+            "gate2_complete",
+            kernel=case.name,
+            status="scalar_contract_unsupported",
+        )
+        return finish(4)
+    report["gate2_scalar_binding"] = {
+        "policy": "typed_intent_program_from_final_gate1_j_v1",
+        "final_artifact_digest": final_artifact_digest,
+        "gate1_j_digest": gate1_j_digest,
+        "intent_j_digest": intent_program.j_digest,
+        "intent_contract_digest": intent_program.contract_digest,
+        "intent_program_digest": intent_program.program_digest,
+    }
     replay = KernelSource.from_code(
         gate2_replay.generation.code,
         verified_artifact.interface.function_name,
@@ -1836,15 +1868,19 @@ def run_case(
     _progress("gate2_start", kernel=case.name)
     runner = Gate2Runner()
     gate2_started = time.perf_counter()
+    assert gate2_replay.artifact_digest is not None
     if gate2_matrix_enabled:
         try:
             gate2_suite = runner.run_suite(
-                case.kernel_source,
                 replay,
                 _gate2_suite(
                     verified_artifact,
                     case,
                     gate2_seeds,
+                    program=intent_program,
+                    final_artifact_digest=final_artifact_digest,
+                    gate1_j_digest=gate1_j_digest,
+                    replay_artifact_digest=gate2_replay.artifact_digest,
                 ),
             )
         except Exception as exc:
@@ -1871,12 +1907,15 @@ def run_case(
         return finish(0 if gate2_suite.passed else 4)
     try:
         gate2 = runner.run(
-            case.kernel_source,
             replay,
             _gate2_case(
                 verified_artifact,
                 case,
                 args.seed,
+                program=intent_program,
+                final_artifact_digest=final_artifact_digest,
+                gate1_j_digest=gate1_j_digest,
+                replay_artifact_digest=gate2_replay.artifact_digest,
             ),
         )
     except Exception as exc:
@@ -1987,15 +2026,6 @@ def _parser(default_kernel: str) -> argparse.ArgumentParser:
         default=3,
         help="total Gate1 artifact rounds, including the initial Lift",
     )
-    parser.add_argument(
-        "--diagnose-rejected",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "record independent Gate2 evidence for the final compiled replay "
-            "even when Gate1 rejects it"
-        ),
-    )
     parser.add_argument("--report")
     if default_kernel == "matmul":
         parser.set_defaults(m=17, n=13, k=19)
@@ -2017,10 +2047,6 @@ def main(default_kernel: str = "add") -> int:
         ),
         "gate2": report.get("gate2", {}).get("status"),
         "gate2_suite": report.get("gate2_suite", {}).get("passed"),
-        "gate2_diagnostic": report.get("gate2_diagnostic", {}).get("status"),
-        "gate2_diagnostic_suite": report.get(
-            "gate2_diagnostic_suite", {}
-        ).get("passed"),
         "relifts": len(report.get("relifts", [])),
         "report": args.report,
     }

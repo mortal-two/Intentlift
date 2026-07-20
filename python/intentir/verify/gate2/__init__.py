@@ -1,4 +1,4 @@
-"""SCRC Gate2: source/replay dynamic execution equivalence."""
+"""SCRC Gate2: final-J replay/scalar dynamic differential verification."""
 
 from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs
 from .inputs import (
@@ -27,6 +27,12 @@ from .orchestrate import (
     Gate2Runner,
     Gate2Suite,
 )
+from .scalar import (
+    SCALAR_LOWERING_PROTOCOL,
+    ScalarLoweringRunner,
+    ScalarLoweringSpec,
+    scalar_broadcast_axes,
+)
 from .triton import (
     ArgumentRole,
     TritonArgument,
@@ -51,6 +57,9 @@ __all__ = [
     "InputDistribution",
     "OutputAgreement",
     "PairwiseAgreement",
+    "SCALAR_LOWERING_PROTOCOL",
+    "ScalarLoweringRunner",
+    "ScalarLoweringSpec",
     "TensorInputSpec",
     "Tolerance",
     "TritonArgument",
@@ -62,4 +71,5 @@ __all__ = [
     "generate_input_matrix",
     "generate_tensor_input",
     "summarize_gate1_gate2",
+    "scalar_broadcast_axes",
 ]

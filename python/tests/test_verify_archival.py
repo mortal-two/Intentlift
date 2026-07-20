@@ -86,7 +86,7 @@ def test_active_scrc_verification_does_not_import_archived_interpreter() -> None
         assert "intentir.verify.back" not in source, path
 
 
-def test_production_lowering_gate2_path_is_archived_and_not_active() -> None:
+def test_cuda_gate2_path_stays_archived_while_scalar_verification_is_active() -> None:
     archived = (
         PYTHON_ROOT
         / "intentir"
@@ -102,6 +102,7 @@ def test_production_lowering_gate2_path_is_archived_and_not_active() -> None:
     active_gate2 = PYTHON_ROOT / "intentir" / "verify" / "gate2"
     assert not (active_gate2 / "lower2c.py").exists()
     assert not (active_gate2 / "cuda_lowering.py").exists()
+    assert (active_gate2 / "scalar.py").is_file()
     assert not (PROJECT_ROOT / "test/high_performance_live_benchmark.py").exists()
     assert (
         PROJECT_ROOT
@@ -109,15 +110,14 @@ def test_production_lowering_gate2_path_is_archived_and_not_active() -> None:
     ).is_file()
 
     forbidden_tokens = {
-        "Lower2C",
         "CudaLowering",
         "GateIntentBundle",
         "lowering_backend",
         "gate2_lowering_policy",
         "source_lowering",
-        "replay_lowering",
         "LOWER2C_PROTOCOL",
         "CUDA_LOWERING_PROTOCOL",
+        "intentir.backend.cuda",
     }
     active_paths = [
         *active_gate2.glob("*.py"),
@@ -131,7 +131,7 @@ def test_production_lowering_gate2_path_is_archived_and_not_active() -> None:
             assert token not in source, (path, token)
 
 
-def test_importing_active_gate2_does_not_load_archived_or_backend_lowering() -> None:
+def test_importing_active_gate2_loads_no_archived_or_cuda_lowering() -> None:
     probe = subprocess.run(
         [
             sys.executable,
@@ -140,10 +140,12 @@ def test_importing_active_gate2_does_not_load_archived_or_backend_lowering() -> 
                 "import sys; import intentir.verify.gate2 as gate2; "
                 "assert not hasattr(gate2, 'Lower2CSpec'); "
                 "assert not hasattr(gate2, 'CudaLoweringSpec'); "
+                "assert hasattr(gate2, 'ScalarLoweringSpec'); "
                 "assert not any(name.startswith("
                 "'intentir.verify.back.gate2_production_lowering_v1') "
                 "for name in sys.modules); "
-                "assert 'intentir.backend.cpu' not in sys.modules"
+                "assert not any(name.startswith('intentir.backend.cuda') "
+                "for name in sys.modules)"
             ),
         ],
         check=False,
