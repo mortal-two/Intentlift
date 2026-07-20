@@ -290,7 +290,7 @@ struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {
 };
 
 /// Lower `intent.iota` to the backend-neutral rank-1 linalg realization used by
-/// Gate2 and production lowering. The scalar value is the current iteration
+/// production lowering. The scalar value is the current iteration
 /// index, cast to the declared integer width when necessary; no source-specific
 /// tile or program-id structure is materialized.
 struct IotaLowering : OpRewritePattern<IotaOp> {

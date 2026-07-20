@@ -86,6 +86,74 @@ def test_active_scrc_verification_does_not_import_archived_interpreter() -> None
         assert "intentir.verify.back" not in source, path
 
 
+def test_production_lowering_gate2_path_is_archived_and_not_active() -> None:
+    archived = (
+        PYTHON_ROOT
+        / "intentir"
+        / "verify"
+        / "back"
+        / "gate2_production_lowering_v1"
+    )
+    assert (archived / "lower2c.py").is_file()
+    assert (archived / "cuda_lowering.py").is_file()
+    assert (archived / "orchestrate.py").is_file()
+    assert (archived / "model.py").is_file()
+
+    active_gate2 = PYTHON_ROOT / "intentir" / "verify" / "gate2"
+    assert not (active_gate2 / "lower2c.py").exists()
+    assert not (active_gate2 / "cuda_lowering.py").exists()
+    assert not (PROJECT_ROOT / "test/high_performance_live_benchmark.py").exists()
+    assert (
+        PROJECT_ROOT
+        / "test/back/high_performance_live_gate_cuda_benchmark_v1.py"
+    ).is_file()
+
+    forbidden_tokens = {
+        "Lower2C",
+        "CudaLowering",
+        "GateIntentBundle",
+        "lowering_backend",
+        "gate2_lowering_policy",
+        "source_lowering",
+        "replay_lowering",
+        "LOWER2C_PROTOCOL",
+        "CUDA_LOWERING_PROTOCOL",
+    }
+    active_paths = [
+        *active_gate2.glob("*.py"),
+        PROJECT_ROOT / "test" / "scrc_live_e2e.py",
+        PROJECT_ROOT / "test" / "scrc_heldout_batch.py",
+        PROJECT_ROOT / "test" / "high_performance_live_batch.py",
+    ]
+    for path in active_paths:
+        source = path.read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            assert token not in source, (path, token)
+
+
+def test_importing_active_gate2_does_not_load_archived_or_backend_lowering() -> None:
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import intentir.verify.gate2 as gate2; "
+                "assert not hasattr(gate2, 'Lower2CSpec'); "
+                "assert not hasattr(gate2, 'CudaLoweringSpec'); "
+                "assert not any(name.startswith("
+                "'intentir.verify.back.gate2_production_lowering_v1') "
+                "for name in sys.modules); "
+                "assert 'intentir.backend.cpu' not in sys.modules"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+
+
 def test_inner_replay_repair_is_archived_and_absent_from_active_gate1() -> None:
     replay = importlib.import_module("intentir.verify.gate1.replay")
     forbidden_parameters = {

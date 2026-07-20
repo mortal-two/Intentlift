@@ -1,4 +1,4 @@
-"""SCRC Gate2: source/replay/lowering three-way execution."""
+"""SCRC Gate2 source/replay dynamic execution."""
 
 from __future__ import annotations
 
@@ -8,10 +8,11 @@ from typing import Any, Mapping
 from intentir.verify.gate1.compiler import KernelSource
 
 from .compare import compare_outputs
-from .cuda_lowering import CudaLoweringRunner, CudaLoweringSpec
-from .lower2c import Lower2CRunner, Lower2CSpec
 from .model import Gate2Result, Gate2Status, Gate2SuiteResult, Tolerance
 from .triton import TritonExecutionSpec, TritonRunner
+
+
+GATE2_EXECUTION_PROTOCOL = "source_replay_dynamic_equivalence_v1"
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,6 @@ class Gate2Case:
     case_id: str
     values: Mapping[str, Any]
     triton: TritonExecutionSpec
-    lowering: Lower2CSpec | CudaLoweringSpec
     output_keys: tuple[str, ...]
     tolerances: Mapping[str, Tolerance] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -46,35 +46,15 @@ class Gate2Suite:
             raise ValueError("Gate2 suite case_id values must be unique")
 
 
-def _classify(source_replay: bool, source_lowering: bool, replay_lowering: bool) -> Gate2Status:
-    pattern = (source_replay, source_lowering, replay_lowering)
-    if pattern == (True, True, True):
-        return Gate2Status.PASS
-    if pattern == (True, False, False):
-        return Gate2Status.LOWERING_DIVERGED
-    if pattern == (False, True, False):
-        return Gate2Status.REPLAY_DIVERGED
-    if pattern == (False, False, True):
-        return Gate2Status.LIFT_DIVERGED
-    if pattern == (False, False, False):
-        return Gate2Status.ALL_DIVERGED
-    # With finite tolerances, approximate equality is not mathematically
-    # transitive.  Do not force an attribution when two pairings pass and one
-    # fails at a tolerance boundary.
-    return Gate2Status.INCONCLUSIVE
-
-
 class Gate2Runner:
     def __init__(
         self,
         *,
         source_runner: TritonRunner | None = None,
         replay_runner: TritonRunner | None = None,
-        lowering_runner: Lower2CRunner | CudaLoweringRunner | None = None,
     ) -> None:
         self.source_runner = source_runner or TritonRunner()
         self.replay_runner = replay_runner or TritonRunner()
-        self.lowering_runner = lowering_runner or Lower2CRunner()
 
     def run(
         self,
@@ -88,8 +68,6 @@ class Gate2Runner:
         replay_result = self.replay_runner.run(
             "replay", replay, case.triton, case.values
         )
-        lowering_result = self.lowering_runner.run(case.lowering, case.values)
-
         source_replay = (
             compare_outputs(
                 "source",
@@ -102,73 +80,22 @@ class Gate2Runner:
             if source_result.ok and replay_result.ok
             else None
         )
-        source_lowering = (
-            compare_outputs(
-                "source",
-                source_result.outputs,
-                "lowering",
-                lowering_result.outputs,
-                case.output_keys,
-                case.tolerances,
-            )
-            if source_result.ok and lowering_result.ok
-            else None
-        )
-        replay_lowering = (
-            compare_outputs(
-                "replay",
-                replay_result.outputs,
-                "lowering",
-                lowering_result.outputs,
-                case.output_keys,
-                case.tolerances,
-            )
-            if replay_result.ok and lowering_result.ok
-            else None
-        )
 
-        if lowering_result.unsupported:
-            return Gate2Result(
-                case.case_id,
-                Gate2Status.LOWERING_UNSUPPORTED,
-                source_result,
-                replay_result,
-                lowering_result,
-                source_replay,
-                source_lowering,
-                replay_lowering,
-                metadata=dict(case.metadata),
+        if not source_result.ok or not replay_result.ok:
+            status = Gate2Status.EXECUTION_FAILED
+        else:
+            assert source_replay is not None
+            status = (
+                Gate2Status.PASS
+                if source_replay.passed
+                else Gate2Status.REPLAY_DIVERGED
             )
-        if not source_result.ok or not replay_result.ok or not lowering_result.ok:
-            return Gate2Result(
-                case.case_id,
-                Gate2Status.EXECUTION_FAILED,
-                source_result,
-                replay_result,
-                lowering_result,
-                source_replay,
-                source_lowering,
-                replay_lowering,
-                metadata=dict(case.metadata),
-            )
-
-        assert source_replay is not None
-        assert source_lowering is not None
-        assert replay_lowering is not None
-        status = _classify(
-            source_replay.passed,
-            source_lowering.passed,
-            replay_lowering.passed,
-        )
         return Gate2Result(
             case.case_id,
             status,
             source_result,
             replay_result,
-            lowering_result,
             source_replay,
-            source_lowering,
-            replay_lowering,
             dict(case.metadata),
         )
 
@@ -186,4 +113,9 @@ class Gate2Runner:
         )
 
 
-__all__ = ["Gate2Case", "Gate2Runner", "Gate2Suite"]
+__all__ = [
+    "GATE2_EXECUTION_PROTOCOL",
+    "Gate2Case",
+    "Gate2Runner",
+    "Gate2Suite",
+]

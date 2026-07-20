@@ -16,7 +16,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, TypeVar
+from typing import Any, Callable, ClassVar, TypeVar
 
 from intentir.ir.model import IntentFunction
 
@@ -128,6 +128,11 @@ def _dtype_key(value: str) -> str:
         "bool": "i1",
     }
     return aliases.get(key, key)
+
+
+_REDUCTION_ACCUMULATOR_DTYPES = frozenset(
+    {"f16", "bf16", "f32", "f64", "i1", "i8", "i16", "i32", "i64"}
+)
 
 
 def _json_value(value: Any, path: str) -> JsonValue:
@@ -614,6 +619,7 @@ class StrategyFamily(str, Enum):
     ADDRESS_ASSOCIATION = "address_association"
     MASK_MATERIALIZATION = "mask_materialization"
     REDUCTION_CALL_SHAPE = "reduction_call_shape"
+    REDUCTION_TILING = "reduction_tiling"
 
 
 class StrategyChoice(str, Enum):
@@ -628,6 +634,7 @@ class StrategyChoice(str, Enum):
     POINTER_STAGED = "pointer_staged"
     STAGED_REUSE = "staged_reuse"
     FLATTENED = "flattened"
+    MULTI_TILE_ACCUMULATE = "multi_tile_accumulate"
 
 
 _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
@@ -635,6 +642,7 @@ _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
     StrategyFamily.ADDRESS_ASSOCIATION: StrategyChoice.POINTER_STAGED,
     StrategyFamily.MASK_MATERIALIZATION: StrategyChoice.STAGED_REUSE,
     StrategyFamily.REDUCTION_CALL_SHAPE: StrategyChoice.FLATTENED,
+    StrategyFamily.REDUCTION_TILING: StrategyChoice.MULTI_TILE_ACCUMULATE,
 }
 
 
@@ -2247,6 +2255,8 @@ class StrategyBinding(StrictJSONMixin):
     target_ref: str
     family: StrategyFamily
     choice: StrategyChoice
+    tile_slot: str | None = None
+    accumulator_dtype: str | None = None
 
     def __post_init__(self) -> None:
         self.target_ref = _string(self.target_ref, "StrategyBinding.target_ref")
@@ -2258,27 +2268,58 @@ class StrategyBinding(StrictJSONMixin):
                 f"StrategyBinding family {self.family.value!r} requires choice "
                 f"{expected.value!r}, not {self.choice.value!r}"
             )
+        if self.family is StrategyFamily.REDUCTION_TILING:
+            self.tile_slot = _string(
+                self.tile_slot, "StrategyBinding.tile_slot"
+            )
+            self.accumulator_dtype = _string(
+                self.accumulator_dtype,
+                "StrategyBinding.accumulator_dtype",
+            )
+            if self.accumulator_dtype not in _REDUCTION_ACCUMULATOR_DTYPES:
+                raise SchemaError(
+                    "StrategyBinding.accumulator_dtype must use a canonical "
+                    "IntentIR dtype"
+                )
+        elif self.tile_slot is not None or self.accumulator_dtype is not None:
+            raise SchemaError(
+                "StrategyBinding tile_slot/accumulator_dtype are valid only "
+                "for reduction_tiling"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "StrategyBinding":
         data = _strict_object(
             value,
             path="StrategyBinding",
-            allowed={"target_ref", "family", "choice"},
+            allowed={
+                "target_ref",
+                "family",
+                "choice",
+                "tile_slot",
+                "accumulator_dtype",
+            },
             required={"target_ref", "family", "choice"},
         )
         return cls(
             target_ref=data["target_ref"],
             family=data["family"],
             choice=data["choice"],
+            tile_slot=data.get("tile_slot"),
+            accumulator_dtype=data.get("accumulator_dtype"),
         )
 
     def to_json(self) -> dict[str, str]:
-        return {
+        result = {
             "target_ref": self.target_ref,
             "family": self.family.value,
             "choice": self.choice.value,
         }
+        if self.tile_slot is not None:
+            result["tile_slot"] = self.tile_slot
+        if self.accumulator_dtype is not None:
+            result["accumulator_dtype"] = self.accumulator_dtype
+        return result
 
 
 @dataclass
@@ -2301,6 +2342,27 @@ class StrategySpec(StrictJSONMixin):
                     f"{binding.target_ref!r} and family {binding.family.value!r}"
                 )
             seen.add(key)
+        reduction_families = {
+            StrategyFamily.REDUCTION_CALL_SHAPE,
+            StrategyFamily.REDUCTION_TILING,
+        }
+        reduction_targets: dict[str, set[StrategyFamily]] = {}
+        for binding in self.bindings:
+            if binding.family in reduction_families:
+                reduction_targets.setdefault(binding.target_ref, set()).add(
+                    binding.family
+                )
+        conflicts = {
+            target: families
+            for target, families in reduction_targets.items()
+            if len(families) > 1
+        }
+        if conflicts:
+            target = sorted(conflicts)[0]
+            raise SchemaError(
+                "StrategySpec cannot combine reduction_call_shape and "
+                f"reduction_tiling for target {target!r}"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "StrategySpec":
@@ -2762,13 +2824,28 @@ class Gate1Artifact(StrictJSONMixin):
                 if access.predicate is not None
             },
             StrategyFamily.REDUCTION_CALL_SHAPE: reduction_targets,
+            StrategyFamily.REDUCTION_TILING: reduction_targets,
         }
+        schedule_slots = {slot.name: slot for slot in self.schedule.slots}
         for binding in self.strategy.bindings:
             if binding.target_ref not in strategy_targets[binding.family]:
                 raise SchemaError(
                     f"StrategyBinding target {binding.target_ref!r} is not valid "
                     f"for family {binding.family.value!r}"
                 )
+            if binding.family is StrategyFamily.REDUCTION_TILING:
+                assert binding.tile_slot is not None
+                slot = schedule_slots.get(binding.tile_slot)
+                if slot is None:
+                    raise SchemaError(
+                        f"reduction_tiling tile_slot {binding.tile_slot!r} "
+                        "is not declared in C.schedule"
+                    )
+                if slot.kind is not ScheduleSlotKind.CONSTEXPR:
+                    raise SchemaError(
+                        "reduction_tiling tile_slot must name a constexpr "
+                        "kernel schedule slot"
+                    )
 
         valid_plan_refs = (
             node_refs
@@ -3365,6 +3442,38 @@ def _opaque_plan_json(
     }
 
 
+def _strategy_rewriter_json(
+    strategy: StrategySpec,
+    opaque_reference: Callable[[str], str],
+) -> dict[str, Any]:
+    """Expose source decisions while alpha-renaming every referenced handle."""
+
+    bindings: list[dict[str, str]] = []
+    for binding in strategy.bindings:
+        item = {
+            "target_ref": opaque_reference(binding.target_ref),
+            "family": binding.family.value,
+            "choice": binding.choice.value,
+        }
+        if binding.tile_slot is not None:
+            item["tile_slot"] = opaque_reference(binding.tile_slot)
+        if binding.accumulator_dtype is not None:
+            item["accumulator_dtype"] = binding.accumulator_dtype
+        bindings.append(item)
+    return {
+        "bindings": sorted(
+            bindings,
+            key=lambda item: (
+                item["target_ref"],
+                item["family"],
+                item["choice"],
+                item.get("tile_slot", ""),
+                item.get("accumulator_dtype", ""),
+            ),
+        )
+    }
+
+
 def _opaque_scope_json(
     scope: PortableScope, aliases: dict[str, str]
 ) -> dict[str, Any]:
@@ -3599,6 +3708,10 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         },
         "interface": interface,
         "schedule": artifact.schedule.rewriter_view(),
+        "strategy": _strategy_rewriter_json(
+            artifact.strategy,
+            lambda ref: _opaque_reference(ref, aliases),
+        ),
         "plan": _opaque_plan_json(artifact.plan, aliases),
         "reference_naming": "opaque_replay_refs_v1",
         "reference_bindings": bindings,
@@ -3891,6 +4004,10 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             ],
         },
         "schedule": masked_schedule,
+        "strategy": _strategy_rewriter_json(
+            artifact.strategy,
+            opaque_reference,
+        ),
         "plan": masked_plan,
     }
 

@@ -270,11 +270,19 @@ def _rename_restore_collisions(
     ).visit(tree)
 
 
-def restore_masked_replay_module(code: str, artifact: Gate1Artifact) -> str:
+def restore_masked_replay_module(
+    code: str,
+    artifact: Gate1Artifact,
+    registry: RuleRegistry | None = None,
+) -> str:
     """Restore an opaque masked-replay module to the source ABI deterministically."""
 
     opaque_function, parameter_names, schedule_names = opaque_replay_abi(artifact)
-    validate_triton_module(code, required_function=opaque_function)
+    validate_triton_module(
+        code,
+        required_function=opaque_function,
+        registry=registry,
+    )
     inverse = {
         opaque: original
         for original, opaque in {**parameter_names, **schedule_names}.items()
@@ -297,7 +305,9 @@ def restore_masked_replay_module(code: str, artifact: Gate1Artifact) -> str:
     ast.fix_missing_locations(restored)
     result = ast.unparse(restored).strip() + "\n"
     validate_triton_module(
-        result, required_function=artifact.interface.function_name
+        result,
+        required_function=artifact.interface.function_name,
+        registry=registry,
     )
     return result
 
@@ -305,14 +315,23 @@ def restore_masked_replay_module(code: str, artifact: Gate1Artifact) -> str:
 def _extract_replay_module(
     response: str,
     artifact: Gate1Artifact,
+    registry: RuleRegistry,
     *,
     masked: bool,
 ) -> str:
     function_name = artifact.interface.function_name
     if not masked:
-        return extract_python_module(response, required_function=function_name)
+        return extract_python_module(
+            response,
+            required_function=function_name,
+            registry=registry,
+        )
     opaque_function, parameter_names, _ = opaque_replay_abi(artifact)
-    code = extract_python_module(response, required_function=opaque_function)
+    code = extract_python_module(
+        response,
+        required_function=opaque_function,
+        registry=registry,
+    )
     tree = ast.parse(code, mode="exec")
     _validate_opaque_signature(
         _target_function(tree, opaque_function), artifact, parameter_names
@@ -373,7 +392,10 @@ class ResponsesReplayWriter:
                     timeout=self.timeout,
                 )
                 code = _extract_replay_module(
-                    reply.text, artifact, masked=masked
+                    reply.text,
+                    artifact,
+                    registry,
+                    masked=masked,
                 )
                 code_sha = hashlib.sha256(code.encode("utf-8")).hexdigest()
                 response_id = reply.raw.get("id")
@@ -455,7 +477,12 @@ class StaticReplayWriter:
             code, self._normal_index = self._take(
                 self._normal, self._normal_index
             )
-        code = _extract_replay_module(code, artifact, masked=masked)
+        code = _extract_replay_module(
+            code,
+            artifact,
+            registry,
+            masked=masked,
+        )
         code_sha = hashlib.sha256(code.encode("utf-8")).hexdigest()
         mode = "masked" if masked else "normal"
         return ReplayGeneration(

@@ -90,16 +90,26 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 结果为 rank 0；它仍可在后续 elementwise 中自然 broadcast。final-stage
 `sum(partials) / M` 不得因为前端内部实现而被推成 shape `[1]`。
 
+源码可以用 `scf.for`/Triton runtime range 分 tile 实现同一个 whole-tensor reduce。
+当 loop carry 只是同一 reducer 的 partial accumulator 时，canonical J 仍只有一个
+`reduce` 且没有 J loop；源码的 serial tile traversal 属于
+`C.strategy reduction_tiling=multi_tile_accumulate`，其中 `tile_slot` 固定 tile step，
+`accumulator_dtype` 固定 loop carry 类型。只有 carry 含 whole-tensor 语义所必需的额外
+递推状态时才使用 J `loop/scan`。该 strategy 不能把全局 axes 当成本地 tile_axis，
+且只覆盖 lower=0、upper=global semantic extent、step=单一 constexpr tile slot、
+identity-seeded carry 的规范化循环；也不能因当前 specialization 只有一个 tile 而折叠
+源码 runtime loop。
+
 floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，与 Triton
 TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
 两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，
-不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由 IEEE-special Gate2
-三方矩阵固定，不引入新 op。
+不得改成传播单侧 NaN 的 `maximumf/minimumf`。这项约束由独立 backend regression
+与历史 IEEE-special 三方实验固定，不引入新 op；当前 Gate2 不裁决 lowering。
 
 JSON `const` 表示字面量或按声明 shape 的 splat materialization，例如
 `{"value":1.0,"dtype":"f32","shape":["N"]}`；它直接降为标准
-`arith.constant`，不是新增库级 named op。shape 中的符号必须由 Gate2 dims
-解析，零输入函数同样允许产生该输出。
+`arith.constant`，不是新增库级 named op。shape 中的符号必须由具体 lowering／执行
+调用显式绑定，零输入函数同样允许产生该输出。
 
 所有 interface `tensor_ref` 的 dtype 必须与被引用 J tensor 的 dtype 一致。
 pointer 所指 tensor 可以是 rank 0，此时 compiler view 使用 `shape=[]`；它仍是

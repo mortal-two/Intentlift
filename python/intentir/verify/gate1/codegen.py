@@ -8,12 +8,12 @@ Python subset before replay code is handed to the isolated compiler process.
 
 The accepted subset is sufficient for ordinary, self-contained Triton kernels:
 
-* imports are limited to ``triton``, ``triton.language as tl`` and the
-  explicitly allowlisted pure Triton ``libdevice`` namespace;
+* imports are limited to ``triton``, ``triton.language as tl`` and the pure
+  Triton ``libdevice`` namespace when the active RuleRegistry declares calls;
 * every top-level definition is decorated only with ``@triton.jit``;
-* function calls are limited to public ``tl`` functions, explicitly
-  allowlisted pure ``libdevice`` functions, ``range`` and simple scalar
-  constructors (plus Triton's tensor ``.to`` conversion);
+* function calls are limited to public ``tl`` functions, RuleRegistry-declared
+  pure ``libdevice`` functions, ``range`` and simple scalar constructors (plus
+  Triton's tensor ``.to`` conversion);
 * Python facilities that can perform host I/O, reflection, dynamic execution,
   non-terminating loops, or hidden imports are rejected.
 
@@ -26,7 +26,10 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import TYPE_CHECKING, Collection, NoReturn
+
+if TYPE_CHECKING:
+    from .rules import RuleRegistry
 
 __all__ = [
     "CodeExtractionError",
@@ -65,12 +68,6 @@ _PYTHON_FENCE_LABELS = {"", "py", "python", "python3"}
 # These are the only non-Triton call targets admitted in a kernel body.  They
 # are constructors/iteration helpers with no I/O or reflection capability.
 _SAFE_BUILTIN_CALLS = {"bool", "float", "int", "range"}
-
-# A small set of pure Triton frontend helpers that are not re-exported as
-# direct ``tl.*`` functions.  Keep this namespace/function allowlist explicit:
-# importing the trusted Triton module is safe, while arbitrary nested Python
-# attribute dispatch remains forbidden.
-_SAFE_LIBDEVICE_CALLS = {"pow"}
 
 # Public ``tl`` calls are generally dataflow-building operations.  The handful
 # below are intentionally excluded because they accept executable/opaque code
@@ -186,13 +183,47 @@ def extract_python_code(response: str) -> str:
 
 
 def extract_python_module(
-    response: str, *, required_function: str | None = None
+    response: str,
+    *,
+    required_function: str | None = None,
+    registry: RuleRegistry | None = None,
 ) -> str:
     """Extract and validate a model-generated Triton module."""
 
     code = extract_python_code(response)
-    validate_triton_module(code, required_function=required_function)
+    validate_triton_module(
+        code,
+        required_function=required_function,
+        registry=registry,
+    )
     return code
+
+
+def _resolve_libdevice_calls(
+    *,
+    registry: RuleRegistry | None,
+    allowed_libdevice_calls: Collection[str] | None,
+) -> frozenset[str]:
+    if registry is not None and allowed_libdevice_calls is not None:
+        raise ValueError(
+            "pass either registry or allowed_libdevice_calls, not both"
+        )
+    if allowed_libdevice_calls is None:
+        if registry is None:
+            from .rules import default_triton_rule_registry
+
+            registry = default_triton_rule_registry()
+        allowed_libdevice_calls = registry.namespace_calls(
+            "libdevice", frontend="triton"
+        )
+    result: set[str] = set()
+    for name in allowed_libdevice_calls:
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z_]\w*", name) is None:
+            raise ValueError(
+                "allowed_libdevice_calls must contain Python identifiers"
+            )
+        result.add(name)
+    return frozenset(result)
 
 
 def _is_name(node: ast.AST, name: str) -> bool:
@@ -300,6 +331,7 @@ def _validate_call(
     node: ast.Call,
     jit_functions: set[str],
     imported_namespaces: set[str],
+    allowed_libdevice_calls: frozenset[str],
 ) -> None:
     target = node.func
     if isinstance(target, ast.Name):
@@ -316,7 +348,7 @@ def _validate_call(
         if _is_name(target.value, "libdevice"):
             if (
                 "libdevice" not in imported_namespaces
-                or target.attr not in _SAFE_LIBDEVICE_CALLS
+                or target.attr not in allowed_libdevice_calls
             ):
                 _fail(node, f"call to `libdevice.{target.attr}` is forbidden")
             return
@@ -352,6 +384,7 @@ def _validate_function(
     *,
     jit_functions: set[str],
     imported_namespaces: set[str],
+    allowed_libdevice_calls: frozenset[str],
 ) -> None:
     _check_identifier(node.name, node, "function name")
     args = node.args
@@ -397,7 +430,7 @@ def _validate_function(
                 elif _is_name(child.value, "libdevice"):
                     if (
                         "libdevice" not in imported_namespaces
-                        or child.attr not in _SAFE_LIBDEVICE_CALLS
+                        or child.attr not in allowed_libdevice_calls
                     ):
                         _fail(
                             child,
@@ -406,7 +439,12 @@ def _validate_function(
                 elif child.attr != "to":
                     _fail(child, f"attribute access {child.attr!r} is forbidden")
             elif isinstance(child, ast.Call):
-                _validate_call(child, jit_functions, imported_namespaces)
+                _validate_call(
+                    child,
+                    jit_functions,
+                    imported_namespaces,
+                    allowed_libdevice_calls,
+                )
                 if any(keyword.arg is None for keyword in child.keywords):
                     _fail(child, "dynamic **keyword expansion is forbidden")
             elif isinstance(child, ast.For):
@@ -455,7 +493,11 @@ def _validate_jit_call_graph(
 
 
 def validate_triton_module(
-    code: str, *, required_function: str | None = None
+    code: str,
+    *,
+    required_function: str | None = None,
+    registry: RuleRegistry | None = None,
+    allowed_libdevice_calls: Collection[str] | None = None,
 ) -> ModuleValidation:
     """Validate ``code`` against Gate1's strict Triton replay policy.
 
@@ -464,6 +506,10 @@ def validate_triton_module(
     second parse when they need function metadata.
     """
 
+    reviewed_libdevice_calls = _resolve_libdevice_calls(
+        registry=registry,
+        allowed_libdevice_calls=allowed_libdevice_calls,
+    )
     if not isinstance(code, str) or not code.strip():
         raise UnsafeReplayCodeError("replay module is empty")
     try:
@@ -511,6 +557,7 @@ def validate_triton_module(
             node,
             jit_functions=function_names,
             imported_namespaces=imported_namespaces,
+            allowed_libdevice_calls=reviewed_libdevice_calls,
         )
     _validate_jit_call_graph(function_nodes, function_names)
     functions = tuple(node.name for node in function_nodes)

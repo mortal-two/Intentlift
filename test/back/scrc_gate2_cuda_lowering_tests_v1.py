@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import intentir.verify.gate2.cuda_lowering as cuda_gate
 import intentir.backend.cuda.compile as backend_compile
+import intentir.verify.back.gate2_production_lowering_v1.cuda_lowering as cuda_gate
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1 import (
     Boundary,
@@ -27,7 +27,7 @@ from intentir.verify.gate1 import (
     SemanticArchive,
 )
 from intentir.verify.gate1.compiler import KernelSource
-from intentir.verify.gate2 import (
+from intentir.verify.back.gate2_production_lowering_v1 import (
     ArgumentRole,
     CudaLoweringOptions,
     CudaLoweringRunner,

@@ -22,6 +22,7 @@ from typing import Any, Mapping, Sequence
 
 from .model import (
     AccessKind,
+    Frontend,
     Gate1Artifact,
     ParameterKind,
     ReplayPlan,
@@ -31,7 +32,7 @@ from .model import (
 from .rules import RuleCard, RuleRegistry, RuleSelectionMode
 
 
-COMPOSER_VERSION = "deterministic_composer_v3"
+COMPOSER_VERSION = "deterministic_composer_v5"
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -238,6 +239,8 @@ class _StrategyBindingView:
     target_ref: str
     family: str
     choice: str
+    tile_slot: str | None = None
+    accumulator_dtype: str | None = None
 
     @property
     def pointer(self) -> str:
@@ -268,12 +271,14 @@ _LEGACY_TARGET_KINDS: dict[str, tuple[str, ...]] = {
     "materialize_pointer_tile": ("boundary.access.address",),
     "realize_masked_access": ("boundary.access.effect",),
     "realize_unmasked_access": ("boundary.access.effect",),
+    "realize_synchronize": ("boundary.access.effect",),
     "materialize_mask_tile": ("boundary.access.effect",),
     "realize_elementwise": ("intent_op:map_unary", "intent_op:map_binary"),
     "realize_const": ("intent_op:const",),
     "realize_iota": ("intent_op:iota",),
     "realize_reduce": ("intent_op:reduce",),
     "realize_flattened_reduce": ("intent_op:reduce",),
+    "realize_multi_tile_reduce": ("intent_op:reduce",),
     "realize_broadcast": ("boundary.broadcast",),
     "realize_k_tiled_dot": ("intent_op:contraction",),
     "realize_outer_product": ("intent_op:contraction",),
@@ -293,6 +298,10 @@ _LEGACY_STRATEGY: dict[str, tuple[str, str]] = {
     "materialize_pointer_tile": ("address_association", "pointer_staged"),
     "materialize_mask_tile": ("mask_materialization", "staged_reuse"),
     "realize_flattened_reduce": ("reduction_call_shape", "flattened"),
+    "realize_multi_tile_reduce": (
+        "reduction_tiling",
+        "multi_tile_accumulate",
+    ),
 }
 
 _SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset({"mask_materialization"})
@@ -307,12 +316,14 @@ _LEGACY_PHASE: dict[str, int] = {
     "materialize_mask_tile": 45,
     "realize_masked_access": 50,
     "realize_unmasked_access": 50,
+    "realize_synchronize": 50,
     "realize_broadcast": 55,
     "realize_elementwise": 60,
     "realize_const": 60,
     "realize_iota": 60,
     "realize_reduce": 60,
     "realize_flattened_reduce": 60,
+    "realize_multi_tile_reduce": 60,
     "realize_k_tiled_dot": 60,
     "realize_outer_product": 60,
     "realize_indexed_access": 60,
@@ -441,6 +452,11 @@ def _legacy_semantic_match(card: RuleCard, item: _WorkItem) -> bool:
             and item.facts.get("kind") in {"load", "store", "atomic"}
             and item.facts.get("predicate") is None
         )
+    if card.id == "realize_synchronize":
+        return (
+            item.role == "effect"
+            and item.facts.get("kind") == AccessKind.SYNCHRONIZE.value
+        )
     if card.id == "materialize_mask_tile":
         return item.role == "strategy:mask_materialization"
     if card.id == "realize_k_tiled_dot":
@@ -472,8 +488,7 @@ def _phase_key(card: RuleCard) -> tuple[int, str]:
 
 
 def _registry_json(registry: RuleRegistry) -> dict[str, Any]:
-    cards = sorted((card.to_json() for card in registry.cards), key=lambda x: x["id"])
-    return {"cards": cards}
+    return registry.canonical_json()
 
 
 def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView], dict[str, Any]]:
@@ -492,22 +507,64 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
             target_ref = binding.get("target_ref")
             family = binding.get("family")
             choice = binding.get("choice")
+            tile_slot = binding.get("tile_slot")
+            accumulator_dtype = binding.get("accumulator_dtype")
         else:
             target_ref = getattr(binding, "target_ref", None)
             family = getattr(binding, "family", None)
             choice = getattr(binding, "choice", None)
+            tile_slot = getattr(binding, "tile_slot", None)
+            accumulator_dtype = getattr(binding, "accumulator_dtype", None)
+        family = _enum_value(family)
+        choice = _enum_value(choice)
         if not all(isinstance(value, str) and value for value in (target_ref, family, choice)):
             raise ComposeError(
                 f"strategy binding {index} is not a closed target/family/choice triple"
             )
-        result.append(_StrategyBindingView(index, target_ref, family, choice))
-        json_bindings.append(
-            {"target_ref": target_ref, "family": family, "choice": choice}
+        if family == "reduction_tiling":
+            if not all(
+                isinstance(value, str) and value
+                for value in (tile_slot, accumulator_dtype)
+            ):
+                raise ComposeError(
+                    f"strategy binding {index} reduction_tiling requires closed "
+                    "tile_slot/accumulator_dtype parameters"
+                )
+        elif tile_slot is not None or accumulator_dtype is not None:
+            raise ComposeError(
+                f"strategy binding {index} carries reduction-only parameters "
+                f"for family {family!r}"
+            )
+        result.append(
+            _StrategyBindingView(
+                index,
+                target_ref,
+                family,
+                choice,
+                tile_slot,
+                accumulator_dtype,
+            )
         )
+        json_binding = {
+            "target_ref": target_ref,
+            "family": family,
+            "choice": choice,
+        }
+        if tile_slot is not None:
+            json_binding["tile_slot"] = tile_slot
+        if accumulator_dtype is not None:
+            json_binding["accumulator_dtype"] = accumulator_dtype
+        json_bindings.append(json_binding)
     return result, {
         "bindings": sorted(
             json_bindings,
-            key=lambda value: (value["target_ref"], value["family"], value["choice"]),
+            key=lambda value: (
+                value["target_ref"],
+                value["family"],
+                value["choice"],
+                value.get("tile_slot", ""),
+                value.get("accumulator_dtype", ""),
+            ),
         )
     }
 
@@ -653,6 +710,12 @@ def _refine_structural_keys(
                 "family": item.strategy_binding.family,
                 "choice": item.strategy_binding.choice,
             }
+            if item.strategy_binding.tile_slot is not None:
+                strategy["tile_slot"] = item.strategy_binding.tile_slot
+            if item.strategy_binding.accumulator_dtype is not None:
+                strategy["accumulator_dtype"] = (
+                    item.strategy_binding.accumulator_dtype
+                )
         base[item.key] = _digest(
             {
                 "kind": item.kind,
@@ -663,7 +726,7 @@ def _refine_structural_keys(
                 ),
                 "facts": _alpha_sanitize(item.facts, classes),
                 "rule": item.selected_card.id,
-                "strategy": strategy,
+                "strategy": _alpha_sanitize(strategy, classes),
             }
         )
     signatures = dict(base)
@@ -857,11 +920,36 @@ def _enumerate_work_items(artifact: Gate1Artifact) -> list[_WorkItem]:
             )
         )
 
-    access_items: dict[str, tuple[_WorkItem, _WorkItem]] = {}
     matched_effects: set[int] = set()
     for index, access in enumerate(artifact.j.boundary.accesses):
         payload = access.to_json()
         pointer = f"/j/boundary/accesses/{index}"
+        if access.kind is AccessKind.SYNCHRONIZE:
+            effect_sources = [pointer]
+            for effect_index, declared_effect in enumerate(
+                artifact.j.boundary.effects
+            ):
+                if _effect_matches_access(declared_effect, access):
+                    effect_sources.append(
+                        f"/j/boundary/effects/{effect_index}"
+                    )
+                    matched_effects.add(effect_index)
+            effect = _WorkItem(
+                key=f"access-effect:{access.access_id}",
+                kind="boundary.access.effect",
+                role="effect",
+                target_ref=access.access_id,
+                target_pointer=f"{pointer}/access_id",
+                facts=payload,
+                semantic_key=_semantic_key("boundary.access.effect", payload),
+                aliases=(access.access_id,),
+                source_pointers=tuple(effect_sources),
+            )
+            node_dependency = node_to_item.get(access.node_ref or "")
+            if node_dependency is not None:
+                effect.dependencies.add(node_dependency)
+            items.append(effect)
+            continue
         address = _WorkItem(
             key=f"access-address:{access.access_id}",
             kind="boundary.access.address",
@@ -897,7 +985,6 @@ def _enumerate_work_items(artifact: Gate1Artifact) -> list[_WorkItem]:
             else:
                 address.dependencies.add(node_dependency)
         items.extend((address, effect))
-        access_items[access.access_id] = (address, effect)
 
     unmatched_effects = sorted(
         set(range(len(artifact.j.boundary.effects))) - matched_effects
@@ -1025,11 +1112,13 @@ def _select_card(
     registry: RuleRegistry,
     bindings: Sequence[_StrategyBindingView],
     consumed_bindings: set[int],
+    *,
+    frontend: Frontend,
 ) -> RuleCard:
     cards_for_kind = [
         card
         for card in registry.cards
-        if item.kind in _card_target_kinds(card)
+        if card.frontend is frontend and item.kind in _card_target_kinds(card)
     ]
 
     if item.role.startswith("strategy:"):
@@ -1750,7 +1839,13 @@ def compose_replay_plan(
 
     consumed_bindings: set[int] = set()
     for item in items:
-        _select_card(item, registry, bindings, consumed_bindings)
+        _select_card(
+            item,
+            registry,
+            bindings,
+            consumed_bindings,
+            frontend=artifact.interface.frontend,
+        )
     unconsumed = [binding for binding in bindings if binding.index not in consumed_bindings]
     if unconsumed:
         binding = unconsumed[0]

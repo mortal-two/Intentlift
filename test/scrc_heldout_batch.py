@@ -45,12 +45,13 @@ from intentir.verify.gate1.pi_ablations import PiAblationKind
 from intentir.verify.gate1.specialization import (
     GATE1_FAMILY_RELIFT_GUIDANCE_POLICY,
 )
+from intentir.verify.gate1.rule_release import load_rule_release
 from intentir.verify.gate1.rules import default_triton_rule_registry
 from intentir.verify.gate1.ttir import TTIR_FINGERPRINT_SCHEMA
 from intentir.verify.gate2 import (
     GATE2_COMPARISON_PROTOCOL,
+    GATE2_EXECUTION_PROTOCOL,
     InputDistribution,
-    LOWER2C_PROTOCOL,
     Tolerance,
     boundary_1d_extents,
     extract_gate1_gate2_observation,
@@ -1315,18 +1316,27 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         diagnose_rejected=args.diagnose_rejected,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
+        rule_release=getattr(args, "rule_release", None),
     )
+
+
+def _rule_registry_from_args(args: argparse.Namespace):
+    registry = default_triton_rule_registry()
+    release_path = getattr(args, "rule_release", None)
+    if release_path is not None:
+        registry = load_rule_release(Path(release_path)).apply(registry)
+    return registry.frozen_snapshot()
 
 
 def _batch_identity(
     case: LiveKernelCase, args: argparse.Namespace
 ) -> dict[str, Any]:
-    registry = default_triton_rule_registry()
+    registry = _rule_registry_from_args(args)
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
     return {
-        "schema": 34,
+        "schema": 35,
         "performance_schema": "scrc_case_performance_v1",
-        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v2",
+        "gate1_gate2_metrics_schema": "scrc_gate1_gate2_conditional_v3",
         "model": args.model,
         "effort": args.effort,
         "seed": args.seed,
@@ -1410,7 +1420,8 @@ def _batch_identity(
             "argument_scales": dict(sorted(case.input_scales.items())),
             "tolerance": asdict(case.tolerance),
         },
-        "lower2c_protocol": LOWER2C_PROTOCOL,
+        "gate2_execution_protocol": GATE2_EXECUTION_PROTOCOL,
+        "gate2_execution_legs": ["source", "replay"],
         "gate2_comparison_protocol": GATE2_COMPARISON_PROTOCOL,
         "gate2_matrix_policy": _gate2_matrix_policy_json(
             case,
@@ -1657,7 +1668,7 @@ def _load_cached_lift(
 ) -> tuple[Gate1Artifact, dict[str, Any]]:
     saved = json.loads(path.read_text(encoding="utf-8"))
     source_sha = hashlib.sha256(case.source_text.encode("utf-8")).hexdigest()
-    registry = default_triton_rule_registry()
+    registry = _rule_registry_from_args(args)
     if saved.get("model") != args.model or saved.get("effort") != args.effort:
         raise ValueError("cached lift model/effort differs from this batch")
     if saved.get("source", {}).get("sha256") != source_sha:
@@ -1691,6 +1702,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--effort", default="xhigh")
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument(
+        "--rule-release",
+        type=Path,
+        help=(
+            "explicit approved Gate1 RuleRegistry release; one frozen snapshot "
+            "is used by the entire held-out batch"
+        ),
+    )
     parser.add_argument("--gate2-matrix", action="store_true")
     parser.add_argument(
         "--gate2-seed", dest="gate2_seeds", action="append", type=int

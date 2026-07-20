@@ -43,6 +43,12 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 _STRING = {"type": "string", "minLength": 1}
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
+_REDUCTION_ACCUMULATOR_DTYPE = {
+    "type": "string",
+    "enum": [
+        "f16", "bf16", "f32", "f64", "i1", "i8", "i16", "i32", "i64",
+    ],
+}
 _LOOP_INIT_VALUE = {
     "anyOf": [
         _STRING,
@@ -312,24 +318,49 @@ def _schedule_schema() -> dict[str, Any]:
 
 
 def _strategy_schema() -> dict[str, Any]:
-    bindings = [
+    simple_bindings = [
         ("program_coordinate_width", "wide"),
         ("address_association", "pointer_staged"),
         ("mask_materialization", "staged_reuse"),
         ("reduction_call_shape", "flattened"),
     ]
-    binding = {
-        "oneOf": [
-            _closed_object(
-                {
-                    "target_ref": _STRING,
-                    "family": {"type": "string", "enum": [family]},
-                    "choice": {"type": "string", "enum": [choice]},
+    variants = [
+        _closed_object(
+            {
+                "target_ref": _STRING,
+                "family": {"type": "string", "enum": [family]},
+                "choice": {"type": "string", "enum": [choice]},
+            },
+            ("target_ref", "family", "choice"),
+        )
+        for family, choice in simple_bindings
+    ]
+    variants.append(
+        _closed_object(
+            {
+                "target_ref": _STRING,
+                "family": {
+                    "type": "string",
+                    "enum": ["reduction_tiling"],
                 },
-                ("target_ref", "family", "choice"),
-            )
-            for family, choice in bindings
-        ]
+                "choice": {
+                    "type": "string",
+                    "enum": ["multi_tile_accumulate"],
+                },
+                "tile_slot": _STRING,
+                "accumulator_dtype": _REDUCTION_ACCUMULATOR_DTYPE,
+            },
+            (
+                "target_ref",
+                "family",
+                "choice",
+                "tile_slot",
+                "accumulator_dtype",
+            ),
+        )
+    )
+    binding = {
+        "oneOf": variants
     }
     return _closed_object(
         {"bindings": _array(binding)},

@@ -10,14 +10,18 @@ from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters import scrc
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1.composer import materialize_replay_plan
-from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.model import Frontend, Gate1Artifact
 from intentir.verify.gate1.orchestrate import (
     ReliftEvidence,
     ReliftGuidance,
     ReliftRequest,
     ReliftTrigger,
 )
-from intentir.verify.gate1.rules import default_triton_rule_registry
+from intentir.verify.gate1.rules import (
+    RuleCard,
+    RuleRegistry,
+    default_triton_rule_registry,
+)
 
 
 def _artifact_payload() -> dict:
@@ -161,7 +165,8 @@ def _trusted_artifact() -> Gate1Artifact:
 
 
 def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
-    prompt = scrc.build_scrc_lift_instructions(default_triton_rule_registry())
+    registry = default_triton_rule_registry()
+    prompt = scrc.build_scrc_lift_instructions(registry)
     assert "Return one JSON object for LiftCore" in prompt
     assert "LiftCore response schema forbids plan/pi" in prompt
     assert "same\nLift operation deterministically materializes pi" in prompt
@@ -172,17 +177,53 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "address_association=pointer_staged" in prompt
     assert "mask_materialization=staged_reuse" in prompt
     assert "reduction_call_shape=flattened" in prompt
+    assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "tile_slot" in prompt
+    assert "accumulator_dtype" in prompt
+    assert "lower bound exactly zero" in prompt
+    assert "non-identity seed" in prompt
     assert "Registered replay rule ids" not in prompt
     assert '"id": "bind_wide_program_domain"' not in prompt
+    assert registry.digest in prompt
+    assert '"target_kinds"' in prompt
     assert "COLLAPSED" in prompt
     assert "at least one of" in prompt
     assert "global [M,N] row reduce" in prompt
     assert "tile_axis=0" in prompt
+    assert "Mean/RSTD [M]" in prompt
+    assert "require no boundary-driven rank insertion" in prompt
+    assert "local Triton insertion positions" in prompt
     assert "copy `col < N`" in prompt
     assert "staged pointer additions" in prompt
     assert "load(ptr + row*N + lane)" in prompt
     assert "offset = row*N + lane" in prompt
     assert "index_expression string alone" in prompt
+
+
+def test_scrc_lift_prompt_identity_tracks_registry_capabilities_without_api_text() -> None:
+    base = default_triton_rule_registry()
+    added = RuleCard(
+        "realize_reviewed_new_op",
+        Frontend.TRITON,
+        target_kinds=["intent_op:reviewed_new_op"],
+        construction_phase=60,
+        required_fields=["operands"],
+        api_mapping={"unsafe_canary": "libdevice.private_canary"},
+    )
+    extended = RuleRegistry([*base.cards, added])
+
+    assert scrc.scrc_lift_prompt_sha256("SOURCE", "kernel", registry=base) != (
+        scrc.scrc_lift_prompt_sha256("SOURCE", "kernel", registry=extended)
+    )
+    prompt = scrc.build_scrc_lift_instructions(extended)
+    assert "intent_op:reviewed_new_op" in prompt
+    assert "private_canary" not in prompt
+    assert "realize_reviewed_new_op" not in prompt
+
+    empty = RuleRegistry([])
+    assert scrc.scrc_lift_prompt_sha256("SOURCE", "kernel", registry=empty) != (
+        scrc.scrc_lift_prompt_sha256("SOURCE", "kernel", registry=base)
+    )
     assert "runtime scalar consumed by the computation" in prompt
     assert "shape=[]" in prompt
     assert "canonicalize reciprocal square root" in prompt
@@ -200,6 +241,8 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "do not substitute the largest finite value" in prompt
     assert "tle.program_id" in prompt
     assert "reduction_call_shape=flattened" in prompt
+    assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "only loop-carried value" in prompt
     assert "explicit source axis uses the" in prompt
     assert "m,n->mn" in prompt
     assert "encode a contraction rule choice" in prompt

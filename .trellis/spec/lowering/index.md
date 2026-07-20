@@ -33,8 +33,9 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 `intent → linalg/tensor/arith → scf.parallel → gpu → nvvm → PTX → ptxas → cubin
 → CUDA Driver-API launch`。**朴素(unfused)attention 与 fused FlashAttention
 (online-softmax,单 kernel)都在 5090 D 上真实执行**。历史 bring-up 曾与现已
-归档的 NumPy 解释器对照到 rel ~1e-7；当前正式验证改由
-[SCRC Gate2](../verification/scrc-gate2.md) 的 source/replay/lowering 三方实跑。
+归档的 NumPy 解释器对照到 rel ~1e-7。2026-07-20 起，正式
+[SCRC Gate2](../verification/scrc-gate2.md) 只比较 source/replay；production
+lowering 正确性由独立 backend regression／benchmark 维护，不进入 Gate2 verdict。
 
 CUDA 实现只存在于 `python/intentir/backend/cuda/`；旧的 flat module 已删除，
 不得以 facade、module alias 或根包 re-export 的形式恢复。
@@ -102,14 +103,19 @@ interchange + carry privatization(把 query/batch 并行维提到 trip 循环外
 把**同一份提取出来的 intent dialect** 走 `intent → linalg →`(one-shot-bufferize
 → linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**。历史
 测试已覆盖 add / silu / softmax / rms_norm / gelu_tanh / matmul；这条真实执行链
-现作为 Gate2 的 production-lowering 腿。**没有任何 GPU 专用机制**——同一条 IntentIR、
-两个后端。`python/tests/test_cpu_backend.py`(确定性,无 GPU)。
+现在是独立 backend 能力，不再作为 Gate2 production-lowering 腿。**没有任何 GPU
+专用机制**——同一条 IntentIR、两个后端。`python/tests/test_cpu_backend.py`
+(确定性,无 GPU)。
 
 这就是"多后端余量":换后端 = 换 `linalg → <target>` 尾巴(CPU 已通,RVV 是下一个
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
 上量化 retune 收益)。dialect 设计不被任何单一后端绑架。
 
-### SCRC Gate2 CPU 腿的真实增量(2026-07-15)
+### 历史三方 Gate2 为 CPU lowering 带来的增量(2026-07-15，已归档)
+
+以下内容记录旧三方 Gate2 曾触发的 backend 修复，只是历史工程证据，不属于当前
+Gate2 裁决协议。旧设计见
+[归档 spec](../verification/back/gate2_production_lowering_v1/scrc-gate2-three-way.md)。
 
 首批 FlagGems live artifact 又验证并补齐了三条非解释器路径：
 

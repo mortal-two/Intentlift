@@ -1,7 +1,7 @@
 """SCRC verification entry point.
 
 The active verification design consists only of Gate1 (source-isolated replay
-closure) and Gate2 (three-way execution).  Pre-SCRC helpers are archived under
+closure) and Gate2 (source/replay dynamic execution).  Historical helpers are archived under
 ``intentir.verify.back`` and are intentionally not re-exported here.
 """
 

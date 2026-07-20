@@ -68,6 +68,17 @@ from .rules import (
     RuleSelectionMode,
     default_triton_rule_registry,
 )
+from .rule_release import (
+    RULE_RELEASE_SCHEMA,
+    RuleChangeKind,
+    RuleRelease,
+    RuleReleaseApplyError,
+    RuleReleaseChange,
+    RuleReleaseStatus,
+    apply_rule_release,
+    load_rule_release,
+    rule_card_digest,
+)
 from .composer import (
     COMPOSER_VERSION,
     AmbiguousRuleMatchError,
@@ -203,6 +214,9 @@ __all__ = [
     "ProvenanceRecord",
     "ProvenanceRole", "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuleCard", "RuleRegistry",
     "RuleSelectionMode",
+    "RULE_RELEASE_SCHEMA", "RuleChangeKind", "RuleRelease",
+    "RuleReleaseApplyError", "RuleReleaseChange", "RuleReleaseStatus",
+    "apply_rule_release", "load_rule_release", "rule_card_digest",
     "COMPOSER_VERSION", "AmbiguousRuleMatchError",
     "CanonicalReferenceBinding", "ComposeDependencyError", "ComposeError",
     "ComposeMismatchError", "ComposeProvenance", "ComposeResult",

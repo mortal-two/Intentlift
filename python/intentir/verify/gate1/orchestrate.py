@@ -1092,10 +1092,14 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "j.boundary.reductions identity/masked_contribution/tile_axis",
             "j.intent.loop.carry/yield",
         ),
-        "strategy_families": ("reduction_call_shape",),
+        "strategy_families": (
+            "reduction_call_shape",
+            "reduction_tiling",
+        ),
         "semantic_question": (
             "Check reducer semantics, axis, identity/fill, carried state and "
-            "finalized value before considering a reviewed call-shape strategy."
+            "finalized value before considering a reviewed call-shape or "
+            "schedule-only multi-tile accumulation strategy."
         ),
     },
     "predicate_effect": {
@@ -2011,7 +2015,11 @@ def _run_masked_j_probe(
         )
 
     try:
-        restored_code = restore_masked_replay_module(generation.code, artifact)
+        restored_code = restore_masked_replay_module(
+            generation.code,
+            artifact,
+            registry,
+        )
     except Exception as exc:
         diagnostic = (
             "masked-J/full-pi attack produced no legal source-ABI replay and "
@@ -2052,9 +2060,10 @@ def _run_masked_j_probe(
             family_contract_digest=family_contract_digest,
         )
 
-    replay_source = KernelSource.from_code(
+    replay_source = KernelSource.from_replay(
         restored_code,
         artifact.interface.function_name,
+        registry,
     )
     restored_code_sha256 = hashlib.sha256(
         restored_code.encode("utf-8")
@@ -2411,7 +2420,11 @@ def _run_semantic_interventions(
         function_name = spec.artifact.interface.function_name
         try:
             compiled = compiler.compile(
-                KernelSource.from_code(generation.code, function_name),
+                KernelSource.from_replay(
+                    generation.code,
+                    function_name,
+                    registry,
+                ),
                 compile_case,
             )
         except Exception as exc:
@@ -2538,9 +2551,10 @@ def _run_semantic_interventions_family(
             for spec in specs
         )
 
-    baseline_source = KernelSource.from_code(
+    baseline_source = KernelSource.from_replay(
         baseline_record.generation.code,
         artifact.interface.function_name,
+        registry,
     )
     baseline_by_profile: dict[
         str, tuple[CompileResult | None, TTIRFingerprint | None, str]
@@ -2625,9 +2639,10 @@ def _run_semantic_interventions_family(
             )
             continue
 
-        mutant_source = KernelSource.from_code(
+        mutant_source = KernelSource.from_replay(
             generation.code,
             spec.artifact.interface.function_name,
+            registry,
         )
         profile_records: list[InterventionProfileRecord] = []
         for profile in specialization_family.profiles:
@@ -2967,6 +2982,9 @@ class Gate1Runner:
         relifter: Relifter | None = None,
         specialization_family: Any | None = None,
     ) -> Gate1ExecutionResult:
+        if not isinstance(registry, RuleRegistry):
+            registry = RuleRegistry.from_json(registry)
+        registry = registry.frozen_snapshot()
         history: list[CandidateRecord] = []
         diagnostics: list[str] = []
         best: CandidateRecord | None = None
@@ -3184,8 +3202,10 @@ class Gate1Runner:
                         "function_name",
                         current.interface.kernel_id,
                     )
-                    replay_source = KernelSource.from_code(
-                        generation.code, function_name
+                    replay_source = KernelSource.from_replay(
+                        generation.code,
+                        function_name,
+                        registry,
                     )
                     compile_result = self.compiler.compile(
                         replay_source, compile_case

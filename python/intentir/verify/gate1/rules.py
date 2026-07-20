@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any
 
 from .model import (
+    AccessKind,
     Frontend,
     Gate1Artifact,
     ParameterKind,
@@ -229,14 +230,27 @@ class RuleCard(StrictJSONMixin):
 class RuleRegistry(StrictJSONMixin):
     """Ordered, duplicate-safe registry of frontend rule cards."""
 
-    def __init__(self, cards: list[RuleCard] | None = None) -> None:
+    def __init__(
+        self,
+        cards: list[RuleCard] | None = None,
+        *,
+        frozen: bool = False,
+    ) -> None:
         self._cards: dict[str, RuleCard] = {}
+        self._frozen = False
         for card in cards or []:
             self.register(card)
+        self._frozen = bool(frozen)
+
+    @staticmethod
+    def _clone_card(card: RuleCard) -> RuleCard:
+        """Detach registry-owned cards from caller-owned mutable objects."""
+
+        return RuleCard.from_json(card.to_json())
 
     @property
     def cards(self) -> tuple[RuleCard, ...]:
-        return tuple(self._cards.values())
+        return tuple(self._clone_card(card) for card in self._cards.values())
 
     def __len__(self) -> int:
         return len(self._cards)
@@ -245,20 +259,44 @@ class RuleRegistry(StrictJSONMixin):
         return isinstance(rule_id, str) and rule_id in self._cards
 
     @property
+    def frozen(self) -> bool:
+        return self._frozen
+
+    def frozen_snapshot(self) -> "RuleRegistry":
+        """Return an immutable, detached snapshot for one Gate1 run/batch."""
+
+        return RuleRegistry(list(self.cards), frozen=True)
+
+    @property
     def digest(self) -> str:
         """Stable registry identity recorded with prompts/evidence."""
 
         payload = json.dumps(
-            self.to_json(), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            self.canonical_json(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    def canonical_json(self) -> dict[str, Any]:
+        """Return the order-independent semantic registry snapshot."""
+
+        return {
+            "cards": sorted(
+                (card.to_json() for card in self._cards.values()),
+                key=lambda card: card["id"],
+            )
+        }
+
     def register(self, card: RuleCard) -> None:
+        if self._frozen:
+            raise SchemaError("cannot mutate a frozen RuleRegistry snapshot")
         if not isinstance(card, RuleCard):
             card = RuleCard.from_json(card)
         if card.id in self._cards:
             raise SchemaError(f"duplicate rule card id: {card.id}")
-        self._cards[card.id] = card
+        self._cards[card.id] = self._clone_card(card)
 
     def get(self, rule_id: str, *, frontend: Frontend | str | None = None) -> RuleCard:
         rule_id = _string(rule_id, "RuleRegistry.rule_id")
@@ -272,7 +310,67 @@ class RuleRegistry(StrictJSONMixin):
                 raise SchemaError(
                     f"rule {rule_id!r} belongs to {card.frontend.value}, not {expected.value}"
                 )
-        return card
+        return self._clone_card(card)
+
+    def cards_for_target_kind(
+        self,
+        target_kind: str,
+        *,
+        frontend: Frontend | str | None = None,
+    ) -> tuple[RuleCard, ...]:
+        """Return cards that explicitly cover one composer work-item kind."""
+
+        target_kind = _string(target_kind, "RuleRegistry.target_kind")
+        expected = (
+            _enum(Frontend, frontend, "RuleRegistry.frontend")
+            if frontend is not None
+            else None
+        )
+        semantic_op = (
+            target_kind.removeprefix("intent_op:")
+            if target_kind.startswith("intent_op:")
+            else None
+        )
+        result: list[RuleCard] = []
+        for card in self._cards.values():
+            if expected is not None and card.frontend is not expected:
+                continue
+            if target_kind in card.target_kinds or (
+                semantic_op is not None
+                and (
+                    semantic_op in card.applies_to
+                    or target_kind in card.applies_to
+                )
+            ):
+                result.append(self._clone_card(card))
+        return tuple(result)
+
+    def namespace_calls(
+        self,
+        namespace: str,
+        *,
+        frontend: Frontend | str | None = None,
+    ) -> set[str]:
+        """Derive reviewed namespace call names from RuleCard API mappings."""
+
+        namespace = _string(namespace, "RuleRegistry.namespace")
+        if re.fullmatch(r"[A-Za-z_]\w*", namespace) is None:
+            raise SchemaError("RuleRegistry.namespace must be an identifier")
+        expected = (
+            _enum(Frontend, frontend, "RuleRegistry.frontend")
+            if frontend is not None
+            else None
+        )
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(namespace)}\.([A-Za-z_]\w*)\s*\("
+        )
+        calls: set[str] = set()
+        for card in self._cards.values():
+            if expected is not None and card.frontend is not expected:
+                continue
+            for spelling in card.api_mapping.values():
+                calls.update(pattern.findall(spelling))
+        return calls
 
     def resolve(
         self,
@@ -438,7 +536,11 @@ class RuleRegistry(StrictJSONMixin):
             {"bind_program_domain", "bind_wide_program_domain"},
             {"materialize_index_tile", "materialize_pointer_tile"},
             {"realize_masked_access", "realize_unmasked_access"},
-            {"realize_reduce", "realize_flattened_reduce"},
+            {
+                "realize_reduce",
+                "realize_flattened_reduce",
+                "realize_multi_tile_reduce",
+            },
             {"realize_k_tiled_dot", "realize_outer_product"},
         )
         for target, rules_for_target in selected_by_target.items():
@@ -450,25 +552,17 @@ class RuleRegistry(StrictJSONMixin):
                         f"{sorted(conflict)!r} for target {target!r}"
                     )
 
-        rule_by_op = {
-            "map_unary": {"realize_elementwise"},
-            "map_binary": {"realize_elementwise"},
-            "const": {"realize_const"},
-            "iota": {"realize_iota"},
-            "reduce": {"realize_reduce", "realize_flattened_reduce"},
-            "contraction": {"realize_k_tiled_dot", "realize_outer_product"},
-            "transpose": {"realize_transpose"},
-            "concat": {"realize_concat"},
-            "cast": {"realize_cast"},
-            "select": {"realize_select"},
-            "loop": {"realize_loop_carry"},
-            "gather": {"realize_indexed_access"},
-        }
+        coverage_frontend = frontend or artifact.interface.frontend
         for node_id, path in artifact.j.node_ids.items():
             operation = operation_at(path)
             op_name = operation.get("op")
-            rules = rule_by_op.get(op_name)
-            if rules is None:
+            rules = {
+                card.id
+                for card in self.cards_for_target_kind(
+                    f"intent_op:{op_name}", frontend=coverage_frontend
+                )
+            }
+            if not rules:
                 raise SchemaError(
                     f"strict pi has no registered coverage rule for IntentIR op "
                     f"{op_name!r} at {node_id!r}"
@@ -477,6 +571,13 @@ class RuleRegistry(StrictJSONMixin):
 
         for access in artifact.j.boundary.accesses:
             target = {access.access_id}
+            if access.kind is AccessKind.SYNCHRONIZE:
+                require(
+                    {"realize_synchronize"},
+                    target,
+                    f"synchronization for access {access.access_id!r}",
+                )
+                continue
             require(
                 {"materialize_index_tile", "materialize_pointer_tile"},
                 target,
@@ -646,7 +747,7 @@ class RuleRegistry(StrictJSONMixin):
         return cls([RuleCard.from_json(card) for card in cards])
 
     def to_json(self) -> dict[str, Any]:
-        return {"cards": [card.to_json() for card in self._cards.values()]}
+        return self.canonical_json()
 
 
 _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
@@ -678,6 +779,11 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "target_kinds": ["boundary.access.effect"],
         "construction_phase": 50,
         "required_fields": ["predicate"],
+    },
+    "realize_synchronize": {
+        "target_kinds": ["boundary.access.effect"],
+        "construction_phase": 50,
+        "required_fields": ["kind", "!index_expression"],
     },
     "materialize_mask_tile": {
         "strategy_family": "mask_materialization",
@@ -712,6 +818,13 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "target_kinds": ["intent_op:reduce"],
         "construction_phase": 60,
         "required_fields": ["attrs.fn"],
+    },
+    "realize_multi_tile_reduce": {
+        "strategy_family": "reduction_tiling",
+        "strategy_choice": "multi_tile_accumulate",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 60,
+        "required_fields": ["attrs.fn", "attrs.axes"],
     },
     "realize_broadcast": {
         "target_kinds": ["boundary.broadcast"],
@@ -905,6 +1018,23 @@ def default_triton_rule_registry() -> RuleRegistry:
             ],
         ),
         _default_triton_card(
+            "realize_synchronize",
+            Frontend.TRITON,
+            version="1",
+            applies_to=["boundary.accesses", "boundary.effects"],
+            reads=["kind", "effect scope", "ordering relative to accesses"],
+            api_mapping={"program_barrier": "tl.debug_barrier"},
+            example=(
+                "Emit one program-instance barrier at the declared synchronization "
+                "effect; it has no pointer or index tile."
+            ),
+            pitfalls=[
+                "A synchronization effect is not a memory address and must not "
+                "materialize tl.arange, a pointer, or a load/store mask.",
+                "Preserve its declared order relative to surrounding effects.",
+            ],
+        ),
+        _default_triton_card(
             "materialize_mask_tile",
             Frontend.TRITON,
             version="2",
@@ -935,7 +1065,7 @@ def default_triton_rule_registry() -> RuleRegistry:
         _default_triton_card(
             "realize_elementwise",
             Frontend.TRITON,
-            version="4",
+            version="5",
             applies_to=["map_unary", "map_binary"],
             reads=["fn", "operands", "dtype"],
             api_mapping={
@@ -950,6 +1080,10 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "rsqrt": "tl.rsqrt",
                 "recip": "1.0 / operand",
                 "sigmoid": "tl.sigmoid",
+                "tanh": (
+                    "from triton.language.extra.cuda import libdevice; "
+                    "libdevice.tanh(operand)"
+                ),
                 "pow": (
                     "from triton.language.extra.cuda import libdevice; "
                     "libdevice.pow(lhs, rhs)"
@@ -962,6 +1096,8 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "A J scalar input remains a runtime operand; never bake its sampled value.",
                 "For pow, use only the allowlisted Triton libdevice import and "
                 "keep a runtime exponent as a runtime operand.",
+                "For tanh, use only the reviewed libdevice.tanh spelling; do not "
+                "substitute an algebraic approximation.",
             ],
         ),
         _default_triton_card(
@@ -1074,28 +1210,163 @@ def default_triton_rule_registry() -> RuleRegistry:
             ],
         ),
         _default_triton_card(
-            "realize_broadcast",
+            "realize_multi_tile_reduce",
             Frontend.TRITON,
-            version="3",
-            applies_to=["boundary.broadcasts"],
-            reads=["operand", "axes"],
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_tiling",
+            applies_to=["reduce", "boundary.reductions"],
+            reads=[
+                "fn",
+                "global reduction axes and semantic extent",
+                "boundary tile_axis, identity, and masked_contribution",
+                "C.strategy tile_slot",
+                "tile-start address and predicate progression",
+                "C.strategy accumulator_dtype and loop-carried association",
+                "final result dtype and mean finalization",
+            ],
             api_mapping={
-                "scalar_to_tile": "use the scalar operand directly",
-                "rank_insertion": (
-                    "bind tl.expand_dims(operand, exact local insertion axis) "
-                    "at this declared consumer"
+                "loop": (
+                    "for tile_start in range(0, semantic_extent(global_axis), "
+                    "C.strategy.tile_slot): carry one accumulator in "
+                    "C.strategy.accumulator_dtype across tiles"
+                ),
+                "carry": (
+                    "initialize once from BoundaryReduction.identity in the exact "
+                    "C.strategy.accumulator_dtype; convert each local partial to "
+                    "that dtype before the cross-tile combine"
+                ),
+                "sum": (
+                    "partial = tl.sum(tile, axis=tile_axis); accumulator = "
+                    "accumulator + partial"
+                ),
+                "max": (
+                    "partial = tl.max(tile, axis=tile_axis); accumulator = "
+                    "tl.maximum(accumulator, partial)"
+                ),
+                "min": (
+                    "partial = tl.min(tile, axis=tile_axis); accumulator = "
+                    "tl.minimum(accumulator, partial)"
+                ),
+                "prod": (
+                    "define a reviewed multiply combiner for the tile reduction; "
+                    "accumulator = accumulator * partial"
+                ),
+                "mean": (
+                    "accumulate tile sums across the complete semantic axis, then "
+                    "divide exactly once after the loop by semantic_extent(global_axis)"
                 ),
             },
             example=(
-                "For every non-scalar boundary.broadcast, keep the source operand "
-                "at its original rank and bind a dedicated tl.expand_dims value "
-                "at the referenced consumer. Scalar values remain direct operands."
+                "Keep one whole-tensor J reduce with no J loop. When the source walks "
+                "N in BLOCK_N tiles, initialize the reducer identity once, emit the "
+                "runtime tile loop even for a one-tile specialization, construct each "
+                "tile's declared address/mask/fill, reduce on BoundaryReduction.tile_axis, "
+                "combine the partial into the loop carry, and finalize the J result after "
+                "the loop."
             ),
             pitfalls=[
-                "Do not pre-expand a domain coordinate for multiple consumers.",
-                "Do not rely on implicit broadcasting for a declared non-scalar "
-                "rank insertion.",
-                "Do not add expand_dims for a rank-0 scalar operand.",
+                "This is schedule-only tiling: never add an IntentIR loop, scan, carry, "
+                "extra reduce node, or per-tile tensor to J.",
+                "Use the logical J-axis extent as the loop upper bound and the reviewed "
+                "C.strategy tile_slot as the tile step; never exchange those roles.",
+                "This card accepts only the normalized source loop lower=0, upper=the "
+                "semantic extent, step=one constexpr tile_slot, and seed=the reducer "
+                "identity. Reject non-zero bounds, composite/dynamic steps, or a "
+                "non-identity seed instead of guessing.",
+                "Preserve the source accumulator dtype, reducer identity, tail predicate, "
+                "masked contribution, partial cast, and partial-to-carry association "
+                "exactly.",
+                "Reduction-linked address/mask/access steps are per-tile body templates; "
+                "do not hoist their pointer progression, tail mask, or load out of the "
+                "runtime loop and reuse one tile for every iteration.",
+                "For mean, divide once after all tile sums are accumulated; never average "
+                "each tile or divide by the tile extent.",
+                "Do not unroll, collapse, or remove the runtime loop merely because the "
+                "current compiler-view specialization happens to fit one tile.",
+                "Select this card only when source evidence proves a loop-carried sequence "
+                "of associative partial reductions with no additional semantic state; "
+                "Welford tuples, arg/index carries, counters, and ordered recurrences are "
+                "not this strategy.",
+            ],
+        ),
+        _default_triton_card(
+            "realize_broadcast",
+            Frontend.TRITON,
+            version="5",
+            applies_to=["boundary.broadcasts"],
+            reads=[
+                "operand",
+                "operand global shape and rank",
+                "consumer global shape and rank",
+                "global semantic broadcast axes",
+                "program-domain-fixed or elided global axes",
+                "operand local tile axes after producer realization",
+                "consumer local tile axes before this use",
+                "existing projected local views available for reuse",
+            ],
+            api_mapping={
+                "scalar_to_tile": (
+                    "use a rank-0 scalar operand directly; scalar broadcasting "
+                    "never requires synthetic tl.expand_dims"
+                ),
+                "global_to_local_axis_map": (
+                    "first remove global axes fixed or elided by the program-domain "
+                    "projection, then map each surviving global axis to its ordered "
+                    "consumer-local tile position; a global axis number is never a "
+                    "tl.expand_dims axis number"
+                ),
+                "local_realization_modes": (
+                    "classify each operand relation as exactly one of "
+                    "launch_replication, implicit_scalar_broadcast, "
+                    "implicit_tile_broadcast, address_or_producer_materialized, or "
+                    "explicit_expand_dims; only the last mode emits a rank operation"
+                ),
+                "projected_global_broadcast": (
+                    "use the operand directly when every declared global broadcast "
+                    "axis is program-fixed/elided, or when the producer already "
+                    "materialized the same ordered local tile axes as the consumer"
+                ),
+                "local_rank_insertion": (
+                    "only after projection, compute the ordered consumer-local axes "
+                    "missing from the operand-local axes; bind one tl.expand_dims per "
+                    "missing axis at its final consumer-local position, in ascending "
+                    "position order"
+                ),
+                "reuse_projected_view": (
+                    "materialize at most one projected local view for the same "
+                    "operand, missing-local-axis sequence, and consumer tile shape; "
+                    "reuse it instead of expanding once per BroadcastSpec or use"
+                ),
+                "shape_postcondition": (
+                    "the number of explicit insertions equals consumer local rank "
+                    "minus operand local rank, and the resulting ordered local axes "
+                    "and tile shape exactly match the consumer before elementwise use"
+                ),
+            },
+            example=(
+                "For LayerNorm [M,N], program_id fixes M. Mean/RSTD [M], eps scalar, "
+                "and W/B [N] therefore become scalar or [BLOCK_N] local values and are "
+                "used directly; global axes [1] or [0] do not authorize [1,BLOCK_N] "
+                "values. If a genuine 2-D consumer tile keeps global axes [M,N] while "
+                "an operand local tile represents only [N], project M to local position "
+                "0 and emit exactly tl.expand_dims(operand, 0). For RoPE, PID-selected "
+                "batch/head/token axes and an already shaped cos/sin producer are direct "
+                "uses; only a true local 2-D offset/value mesh inserts a missing axis."
+            ),
+            pitfalls=[
+                "Boundary.broadcasts.axes are global semantic axes, not unconditional "
+                "local tl.expand_dims instructions.",
+                "Never pass a global semantic axis number directly to tl.expand_dims; "
+                "program selection and tile-axis permutation can change or remove it.",
+                "Do not emit one expand_dims per broadcast declaration or consumer; "
+                "reuse an already materialized identical local projected view.",
+                "Do not pre-expand a domain coordinate or a producer whose local tile "
+                "already has the consumer's ordered axes.",
+                "Do not add expand_dims merely until ranks happen to match, and never "
+                "use it to hide a non-broadcast extent or dataflow mismatch.",
+                "If operand-local axes, consumer-local axes, or their global-to-local "
+                "projection cannot be established from J/B/C and prior pi steps, fail "
+                "closed and return to source-aware Lift instead of guessing.",
             ],
         ),
         _default_triton_card(

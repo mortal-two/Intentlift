@@ -8,7 +8,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "test/high_performance_live_benchmark.py"
+SCRIPT = ROOT / "test/back/high_performance_live_gate_cuda_benchmark_v1.py"
 SPEC = importlib.util.spec_from_file_location(
     "high_performance_live_benchmark", SCRIPT
 )

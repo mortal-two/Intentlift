@@ -1,4 +1,4 @@
-"""IntentIR production-lowering execution leg for Gate2.
+"""Archived IntentIR production-lowering execution leg from three-way Gate2.
 
 The project currently lowers the Intent dialect through linalg/loops to LLVM
 and executes it with ``mlir-runner``.  This module exposes that existing path as

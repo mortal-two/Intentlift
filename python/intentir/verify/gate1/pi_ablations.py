@@ -130,6 +130,7 @@ _COMPUTE_RULES = {
     "realize_iota",
     "realize_reduce",
     "realize_flattened_reduce",
+    "realize_multi_tile_reduce",
     "realize_broadcast",
     "realize_k_tiled_dot",
     "realize_outer_product",
@@ -157,6 +158,7 @@ _MECHANISM_SUBSTITUTIONS = {
     "bind_wide_program_domain": "bind_program_domain",
     "realize_reduce": "realize_flattened_reduce",
     "realize_flattened_reduce": "realize_reduce",
+    "realize_multi_tile_reduce": "realize_reduce",
 }
 
 
@@ -293,6 +295,7 @@ def build_pi_ablations(
                     "bind_wide_program_domain": StrategyFamily.PROGRAM_COORDINATE_WIDTH,
                     "materialize_pointer_tile": StrategyFamily.ADDRESS_ASSOCIATION,
                     "realize_flattened_reduce": StrategyFamily.REDUCTION_CALL_SHAPE,
+                    "realize_multi_tile_reduce": StrategyFamily.REDUCTION_TILING,
                 }.get(original.rule)
                 if reverse_family is None:
                     return tuple(specs[:limit])
@@ -439,8 +442,10 @@ def run_pi_ablations(
 
         try:
             compiled = compiler.compile(
-                KernelSource.from_code(
-                    generation.code, intervention_artifact.interface.function_name
+                KernelSource.from_replay(
+                    generation.code,
+                    intervention_artifact.interface.function_name,
+                    registry,
                 ),
                 compile_case,
             )

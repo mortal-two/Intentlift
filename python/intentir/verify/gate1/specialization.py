@@ -843,6 +843,9 @@ class Gate1FamilyRunner:
             raise ValueError(
                 "Gate1 family run requires exactly one of writer or generation"
             )
+        if not isinstance(registry, RuleRegistry):
+            registry = RuleRegistry.from_json(registry)
+        registry = registry.frozen_snapshot()
         diagnostics: list[str] = []
         assert_replay_plan_matches(artifact, registry)
         for profile in family.profiles:
@@ -934,8 +937,10 @@ class Gate1FamilyRunner:
         if generation is None:
             assert writer is not None
             generation = writer.generate(artifact, registry, masked=False)
-        replay_source = KernelSource.from_code(
-            generation.code, artifact.interface.function_name
+        replay_source = KernelSource.from_replay(
+            generation.code,
+            artifact.interface.function_name,
+            registry,
         )
         records: list[Gate1SpecializationRecord] = []
         for profile, source_compile, source_fp, seed in source_results:

@@ -1,7 +1,7 @@
 # 旧验证实现归档
 
-这里保存 SCRC 之前的验证/解释执行代码。它们继续可执行，是为了不破坏历史
-测试与已有调用方；但不再参与新的正确性主线。
+这里保存已退出当前主线的验证实现，包括 pre-SCRC 代码与旧三方 Gate2 adapter。
+它们用于历史复核与已有调用方兼容，但不再参与新的正确性主线。
 
 特别说明：`legacy_v0/replay_repair_prompt.py` **已经归档**。文件仍然存在，是为了
 按项目要求保留历史接口和实验复现能力，不代表活动流程仍有内层 replay repair。
@@ -12,7 +12,7 @@ import/call graph 中，才属于架构回归，`test_verify_archival.py` 会直
 新的验证只有两个过程：
 
 1. `intentir.verify.gate1`：源码隔离重放、双 TTIR 指纹闭合；
-2. `intentir.verify.gate2`：源、重放、IntentIR production lowering 三方实跑。
+2. `intentir.verify.gate2`：源与重放两腿动态实跑及逐输出比较。
 
 约束：`gate1/`、`gate2/` 和新的 extraction 主路径不得导入本目录。旧路径
 `intentir.verify.interpret` 只是兼容转发层。
@@ -25,6 +25,8 @@ import/call graph 中，才属于架构回归，`test_verify_archival.py` 会直
 - `legacy_v0/masked_ratio.py` 保留旧 fuzzy masked-J ratio/threshold 复现实验；
 - `legacy_v0/replay_repair_prompt.py` 保留旧的
   `CURRENT_REPLAY_CANDIDATE/CONTROLLED_REPLAY_UPDATE` prompt 复现能力；
+- `gate2_production_lowering_v1/` 保留旧 source/replay/CPU-or-CUDA-lowering
+  三方 Gate2 adapter、结果模型和统计口径；
 - `intentir.verify.interpret` 保留原公开导入路径，但只转发旧符号；
 - 历史 corpus/universe/CUDA demo 必须显式导入
   `intentir.verify.back.legacy_v0`，避免被误认为新验证主线；
@@ -33,6 +35,10 @@ import/call graph 中，才属于架构回归，`test_verify_archival.py` 会直
 
 兼容可执行不等于仍在新主线中；归档实现不得作为 Gate1 或
 Gate2 的备用裁决器。
+
+活动 `gate2/`、live/held-out 入口和正式 campaign 不得导入
+`gate2_production_lowering_v1`。通用 backend lowering 仍可独立开发和测试，但其
+输出不进入当前 Gate2 verdict。
 
 活动 ReplayWriter 接口不接受 `base_candidate`、`control_candidate` 或
 `repair_candidate`。normal、masked-J、paired intervention 与 π/C 诊断都只能从各自

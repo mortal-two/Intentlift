@@ -410,20 +410,6 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
     assert view["j"]["storage"][0]["storage_id"].startswith("b")
     assert view["j"]["boundary"]["effects"][0]["effect_id"].startswith("e")
 
-    from intentir.verify.gate2 import Lower2CSpec
-
-    lower = Lower2CSpec.from_artifact(
-        artifact,
-        dims={"N": 8},
-        input_bindings={"x": "runtime_x"},
-        output_key="runtime_y",
-    )
-    metadata = lower.semantic_contract_metadata()
-    assert metadata["semantic_contract"] == "validated_j_scope_storage_v1"
-    assert metadata["semantic_scope_count"] == 2
-    assert metadata["semantic_storage_count"] == 2
-
-
 def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
     return {
         "kernel_id": "aliased_destination",
