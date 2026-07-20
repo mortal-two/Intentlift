@@ -428,25 +428,33 @@ def test_unknown_keys_are_rejected_at_every_closed_boundary() -> None:
         "row + 1",
     ],
 )
-def test_gate1_artifact_retains_domain_predicates_for_gate1_replay(
+def test_gate1_artifact_rejects_nonportable_domain_predicates(
     predicate: str,
 ) -> None:
     payload = _artifact().to_json()
     payload["j"]["boundary"]["domains"]["column_domain"] = predicate
 
-    artifact = Gate1Artifact.from_json(payload)
+    with pytest.raises(
+        SchemaError,
+        match=r"Boundary\.domains\.column_domain must be a portable boolean",
+    ):
+        Gate1Artifact.from_json(payload)
 
-    assert artifact.j.boundary.domains["column_domain"] == predicate
+    assert payload["j"]["boundary"]["domains"]["column_domain"] == predicate
 
 
-def test_gate1_artifact_retains_access_predicate_for_gate1_replay() -> None:
+def test_gate1_artifact_rejects_nonportable_access_predicate() -> None:
     payload = _artifact().to_json()
     invalid = "row := coordinate(grid_axis=0) with row < M"
     payload["j"]["boundary"]["accesses"][0]["predicate"] = invalid
 
-    artifact = Gate1Artifact.from_json(payload)
+    with pytest.raises(
+        SchemaError,
+        match=r"BoundaryAccess\.predicate must be a portable boolean",
+    ):
+        Gate1Artifact.from_json(payload)
 
-    assert artifact.j.boundary.accesses[0].predicate == invalid
+    assert payload["j"]["boundary"]["accesses"][0]["predicate"] == invalid
 
 
 def test_pi_schema_has_only_rule_node_ref_and_refs() -> None:

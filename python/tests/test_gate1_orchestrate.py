@@ -694,15 +694,10 @@ def test_gate1_rejects_incomplete_lift_artifact_instead_of_generating_pi() -> No
     assert writer.calls == []
 
 
-def test_gate1_replay_is_not_blocked_by_untyped_layer_b() -> None:
+def test_gate1_readmission_rejects_mutated_nonportable_layer_b() -> None:
     artifact = _artifact()
     invalid = "lane = grid_axis(0), lane < n"
     artifact.j.boundary.domains["lane_domain"] = invalid
-    artifact.plan = ReplayPlan([])
-    artifact.compose_provenance = None
-    artifact = materialize_replay_plan(
-        artifact, default_triton_rule_registry()
-    )[0]
     writer = CaptureWriter(["GOOD"])
 
     result = _runner(run_masked_ablation=False).run(
@@ -713,9 +708,13 @@ def test_gate1_replay_is_not_blocked_by_untyped_layer_b() -> None:
         writer,
     )
 
-    assert result.status is Gate1Status.REPLAY_CLOSED
-    assert writer.calls == [False]
+    assert result.status is Gate1Status.LIFT_REJECTED
+    assert writer.calls == []
     assert artifact.j.boundary.domains["lane_domain"] == invalid
+    assert any(
+        "Boundary.domains.lane_domain must be a portable boolean" in item
+        for item in result.diagnostics
+    )
 
 
 def _binary_artifact() -> Gate1Artifact:
@@ -2112,8 +2111,6 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads
     assert cards["declare_schedule_slot"].version == "2"
-    assert cards["declare_schedule_slot"].ablation_role.value == "administrative"
-    assert cards["bind_runtime_scalar"].ablation_role.value == "causal"
     assert any(
         "compiler slot is not a kernel parameter" in item
         for item in cards["declare_schedule_slot"].pitfalls

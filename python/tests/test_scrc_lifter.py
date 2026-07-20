@@ -842,15 +842,17 @@ def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
     assert "attempt 2" in str(caught.value)
 
 
-def test_scrc_lift_retains_untyped_domain_for_gate2_scalar_handoff(
+def test_scrc_lift_repairs_nonportable_domain_without_rewriting_it(
     monkeypatch,
 ) -> None:
     invalid_payload = _artifact_payload()
     invalid_domain = "b = grid_axis(0), 0 <= b < 2048"
     invalid_payload["j"]["boundary"]["domains"]["d0"] = invalid_domain
+    valid_payload = _artifact_payload()
     replies = iter(
         [
             LLMReply(json.dumps(invalid_payload), "gpt-test", {"id": "resp-bad"}),
+            LLMReply(json.dumps(valid_payload), "gpt-test", {"id": "resp-good"}),
         ]
     )
     conversations: list[str] = []
@@ -865,10 +867,15 @@ def test_scrc_lift_retains_untyped_domain_for_gate2_scalar_handoff(
         "source", "add_kernel", max_repairs=1
     )
 
-    assert result.artifact.j.boundary.domains == {"d0": invalid_domain}
-    assert result.provenance.repairs == ()
+    assert result.artifact.j.boundary.domains == {"d0": "0 <= i < N"}
+    assert result.provenance.repairs
+    assert "Boundary.domains.d0 must be a portable boolean" in (
+        result.provenance.repairs[0]
+    )
     assert invalid_domain in json.dumps(invalid_payload)
-    assert len(conversations) == 1
+    assert "wrong_fill_delta" not in " ".join(result.provenance.repairs)
+    assert "Re-emit the complete corrected LiftArtifact JSON only" in conversations[1]
+    assert "Boundary.domains.d0 must be a portable boolean" in conversations[1]
 
 
 def test_real_relifter_sees_source_evidence_but_never_replay_source(
