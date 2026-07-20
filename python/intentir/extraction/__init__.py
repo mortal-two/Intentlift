@@ -23,8 +23,6 @@ from .lifters.scrc import (
     scrc_relift_prompt_sha256,
 )
 from .lifters.scrc_schema import (
-    scrc_artifact_json_schema,
-    scrc_artifact_text_format,
     scrc_lift_core_json_schema,
     scrc_lift_core_text_format,
 )
@@ -54,8 +52,6 @@ __all__ = [
     "extract_scrc_artifact",
     "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
-    "scrc_artifact_json_schema",
-    "scrc_artifact_text_format",
     "scrc_lift_core_json_schema",
     "scrc_lift_core_text_format",
 ]

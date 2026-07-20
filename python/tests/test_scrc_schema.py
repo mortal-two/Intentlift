@@ -1,22 +1,20 @@
 from __future__ import annotations
 
 from intentir.extraction.lifters.scrc_schema import (
-    scrc_artifact_json_schema,
-    scrc_artifact_text_format,
     scrc_lift_core_json_schema,
     scrc_lift_core_text_format,
 )
 
 
 def _parameter_schema() -> dict:
-    schema = scrc_artifact_json_schema()
+    schema = scrc_lift_core_json_schema()
     return schema["properties"]["interface"]["properties"]["parameters"][
         "items"
     ]
 
 
 def test_scrc_wire_schema_closes_gate1_objects() -> None:
-    schema = scrc_artifact_json_schema()
+    schema = scrc_lift_core_json_schema()
 
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
@@ -43,7 +41,7 @@ def test_scrc_wire_schema_closes_gate1_objects() -> None:
 
 
 def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
-    strategy = scrc_artifact_json_schema()["properties"]["strategy"]
+    strategy = scrc_lift_core_json_schema()["properties"]["strategy"]
     assert strategy["additionalProperties"] is False
     variants = strategy["properties"]["bindings"]["items"]["oneOf"]
     pairs = {
@@ -92,7 +90,7 @@ def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
 
 
 def test_scrc_wire_schema_preserves_open_intent_payloads() -> None:
-    schema = scrc_artifact_json_schema()
+    schema = scrc_lift_core_json_schema()
     op = schema["$defs"]["intent_op"]
     intent_function = schema["properties"]["j"]["properties"]["intent"][
         "properties"
@@ -116,15 +114,13 @@ def test_scrc_text_format_uses_schema_guidance_plus_local_validation() -> None:
     assert text_format["name"] == "scrc_lift_core"
     assert text_format["strict"] is False
     assert text_format["schema"] == scrc_lift_core_json_schema()
-    assert scrc_artifact_json_schema() == scrc_lift_core_json_schema()
-    assert scrc_artifact_text_format() == scrc_lift_core_text_format()
 
 
 def test_scrc_schema_calls_do_not_share_mutable_nodes() -> None:
-    first = scrc_artifact_json_schema()
+    first = scrc_lift_core_json_schema()
     first["properties"]["j"]["properties"]["kernel_id"]["type"] = "null"
 
-    second = scrc_artifact_json_schema()
+    second = scrc_lift_core_json_schema()
     assert second["properties"]["j"]["properties"]["kernel_id"][
         "type"
     ] == "string"

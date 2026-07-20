@@ -534,21 +534,7 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
     }
 
 
-def scrc_artifact_json_schema() -> dict[str, Any]:
-    """Compatibility alias for the historical LiftCore schema name."""
-
-    return scrc_lift_core_json_schema()
-
-
-def scrc_artifact_text_format() -> dict[str, Any]:
-    """Compatibility alias for the historical LiftCore format name."""
-
-    return scrc_lift_core_text_format()
-
-
 __all__ = [
-    "scrc_artifact_json_schema",
-    "scrc_artifact_text_format",
     "scrc_lift_core_json_schema",
     "scrc_lift_core_text_format",
 ]
