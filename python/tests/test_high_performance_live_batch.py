@@ -136,13 +136,10 @@ def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
         "gate2_execution_protocol_mismatch",
         "gate2_execution_legs_mismatch",
         "target_backend_entered_gate2_verdict",
-        "gate2_required_comparisons_mismatch",
+        "gate2_required_comparison_mismatch",
         "gate2_evidence_protocol_mismatch",
         "missing_gate2_scalar_binding",
-        "missing_source_execution_evidence",
-        "missing_replay_execution_evidence",
-        "missing_source_replay_comparison_evidence",
-        "missing_source_scalar_comparison_evidence",
+        "missing_replay_scalar_comparison_evidence",
         "missing_scalar_execution_metadata",
     }
 
@@ -171,8 +168,6 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
         "gate2": {
             "execution_protocol": batch.GATE2_EXECUTION_PROTOCOL,
             "status": "gate2_pass",
-            "source": {"ok": True},
-            "replay": {"ok": True},
             "scalar": {
                 "ok": True,
                 "metadata": {
@@ -188,13 +183,12 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
                     },
                 },
             },
-            "source_replay": {"passed": True},
-            "source_scalar": {"passed": True},
+            "replay_scalar": {"passed": True},
         },
         "gate2_execution_policy": {
             "protocol": batch.GATE2_EXECUTION_PROTOCOL,
-            "legs": ["source", "replay", "scalar"],
-            "required_comparisons": ["source_replay", "source_scalar"],
+            "legs": ["replay", "scalar"],
+            "required_comparison": "replay_scalar",
             "target_backend_in_verdict": False,
         },
         "gate2_scalar_binding": {"intent_program_digest": "typed"},

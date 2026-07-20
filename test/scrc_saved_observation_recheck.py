@@ -7,7 +7,7 @@ never calls Lift, Relift or a replay model.  An optional anti-leakage migration
 reuses the saved intervention and actual-pi masked-J replay sources, without
 repairing or regenerating either. Gate2 is optional, but it runs only when the
 saved artifact is re-accepted by the current Gate1 and can be bound to a typed
-IntentProgram plus the current source-anchored Gate2 protocol. Fixed-C family execution
+IntentProgram plus the current replay/scalar protocol. Fixed-C family execution
 is also optional; when enabled, each saved replay arm is evaluated by the
 current in-loop full-family policy.
 """
@@ -251,7 +251,6 @@ def run_saved_gate2(
         replay_code, artifact.interface.function_name
     )
     result = (runner or Gate2Runner()).run(
-        case.kernel_source,
         replay,
         _gate2_case(
             artifact,
@@ -287,7 +286,6 @@ def run_saved_gate2_suite(
         replay_code, artifact.interface.function_name
     )
     result = (runner or Gate2Runner()).run_suite(
-        case.kernel_source,
         replay,
         _gate2_suite(
             artifact,
