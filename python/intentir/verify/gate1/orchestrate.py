@@ -24,6 +24,12 @@ from typing import Any, Mapping, Protocol
 
 from intentir.extraction.providers.client import ProviderError
 
+from .admission import (
+    requires_opaque_lift_references,
+    validate_layer_b_predicates,
+    validate_opaque_lift_references,
+    validate_semantic_iota_extents,
+)
 from .compare import TTIRComparator, TTIRComparison
 from .composer import (
     ComposeError,
@@ -332,6 +338,7 @@ class ReliftTrigger(str, Enum):
     silently converted into the same optimization loop.
     """
 
+    ARTIFACT_ADMISSION_FAILED = "artifact_admission_failed"
     REPLAY_GENERATION_FAILED = "replay_generation_failed"
     REPLAY_COMPILE_FAILED = "replay_compile_failed"
     REPLAY_EVALUATION_FAILED = "replay_evaluation_failed"
@@ -731,7 +738,7 @@ class Relifter(Protocol):
         self,
         artifact: Gate1Artifact,
         *,
-        source_fingerprint: TTIRFingerprint,
+        source_fingerprint: TTIRFingerprint | None,
         history: tuple[ReliftEvidence, ...],
         request: ReliftRequest,
     ) -> Gate1Artifact: ...
@@ -739,6 +746,44 @@ class Relifter(Protocol):
 
 GATE1_STAGNATION_POLICY = "exact_artifact_and_hard_diff_v1"
 GATE1_TERMINATION_POLICY = "structured_no_closure_termination_v1"
+GATE1_ADMISSION_POLICY = "gate1_typed_semantic_admission_v1"
+
+
+class Gate1AdmissionCategory(str, Enum):
+    ARTIFACT_CONSTRUCTABILITY = "artifact_constructability"
+    LAYER_A_SEMANTICS = "layer_a_semantics"
+    LAYER_B_SEMANTICS = "layer_b_semantics"
+    OPAQUE_IDENTITY = "opaque_identity"
+    INTERFACE_CONTRACT = "interface_contract"
+    PI_CAPABILITY = "pi_capability"
+    PI_COMPLETENESS = "pi_completeness"
+
+
+@dataclass(frozen=True)
+class Gate1AdmissionRecord:
+    artifact_round: int
+    passed_categories: tuple[Gate1AdmissionCategory, ...]
+    failed_category: Gate1AdmissionCategory | None = None
+    diagnostic: str = ""
+    canonical_plan_digest: str | None = None
+    policy: str = GATE1_ADMISSION_POLICY
+
+    @property
+    def passed(self) -> bool:
+        return self.failed_category is None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "policy": self.policy,
+            "artifact_round": self.artifact_round,
+            "passed": self.passed,
+            "passed_categories": [x.value for x in self.passed_categories],
+            "failed_category": (
+                None if self.failed_category is None else self.failed_category.value
+            ),
+            "diagnostic": self.diagnostic,
+            "canonical_plan_digest": self.canonical_plan_digest,
+        }
 
 
 @dataclass(frozen=True)
@@ -857,6 +902,7 @@ class Gate1ExecutionResult:
     stagnation: StagnationEvidence | None = None
     termination: Gate1Termination | None = None
     masked_family_evidence: Mapping[str, Any] | None = None
+    admissions: tuple[Gate1AdmissionRecord, ...] = ()
 
     @property
     def replay_closed(self) -> bool:
@@ -924,6 +970,7 @@ class Gate1ExecutionResult:
             "interventions": [item.to_json() for item in self.interventions],
             "anti_leakage_basis": self.anti_leakage_basis,
             "composer_shadow": [item.to_json() for item in self.composer_shadow],
+            "admissions": [item.to_json() for item in self.admissions],
             "stagnation": (
                 None if self.stagnation is None else self.stagnation.to_json()
             ),
@@ -3009,6 +3056,7 @@ class Gate1Runner:
         source_fp: TTIRFingerprint | None = None
         leakage_report: LeakageReport | None = None
         composer_shadow_records: list[ComposerShadowRecord] = []
+        admission_records: list[Gate1AdmissionRecord] = []
         previous_stagnation_state: tuple[
             str, str, int, tuple[str, ...]
         ] | None = None
@@ -3017,12 +3065,26 @@ class Gate1Runner:
 
         for relift_round in range(self.config.max_relifts):
             artifact_digest: str | None = None
+            admission_category = Gate1AdmissionCategory.ARTIFACT_CONSTRUCTABILITY
+            admission_passes: list[Gate1AdmissionCategory] = []
             try:
                 # Gate1Artifact remains mutable for legacy construction APIs.
                 # Re-parse the exact current value at every admission round so
                 # post-construction mutation cannot bypass the strict J/B
                 # schema and later be reported as replay_closed.
-                Gate1Artifact.from_json(current.to_json())
+                current = Gate1Artifact.from_json(current.to_json())
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.LAYER_A_SEMANTICS
+                validate_semantic_iota_extents(current)
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.LAYER_B_SEMANTICS
+                validate_layer_b_predicates(current)
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.OPAQUE_IDENTITY
+                if requires_opaque_lift_references(current):
+                    validate_opaque_lift_references(current)
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.INTERFACE_CONTRACT
                 compile_case = _case_with_artifact_schedule(case, current)
                 if specialization_family is not None:
                     from .specialization import Gate1SpecializationFamily
@@ -3049,32 +3111,53 @@ class Gate1Runner:
                             "Gate1 CompileCase"
                         )
                 _validate_artifact_compile_contract(source, current, compile_case)
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.PI_CAPABILITY
+                submitted_compose_provenance = current.compose_provenance
+                composed = compose_replay_plan(current, registry)
+                admission_passes.append(admission_category)
+                admission_category = Gate1AdmissionCategory.PI_COMPLETENESS
+                if current.plan.steps:
+                    assert_replay_plan_matches(current, registry)
+                elif current.compose_provenance is not None:
+                    raise ComposeError(
+                        "unmaterialized LiftCore cannot carry compose_provenance"
+                    )
+                current = replace(
+                    current,
+                    plan=composed.plan,
+                    compose_provenance=composed.provenance.to_json(),
+                )
                 registry.validate_strict_plan(
                     current.plan,
                     frontend=current.interface.frontend,
                     artifact=current,
                 )
-                # The complete artifact, including pi, is owned by Lift.
-                # Gate1 only recomputes the deterministic expectation to reject
-                # corruption or drift; it never materializes a missing plan.
-                composed = assert_replay_plan_matches(current, registry)
+                admission_passes.append(admission_category)
                 artifact_digest = _canonical_artifact_digest(composed)
                 if (
-                    current.compose_provenance is not None
-                    and current.compose_provenance
+                    submitted_compose_provenance is not None
+                    and submitted_compose_provenance
                     != composed.provenance.to_json()
                 ):
                     raise ComposeError(
                         "stored compose_provenance does not equal fresh "
                         "deterministic composition"
                     )
+                admission_records.append(
+                    Gate1AdmissionRecord(
+                        relift_round,
+                        tuple(admission_passes),
+                        canonical_plan_digest=_replay_plan_digest(composed.plan),
+                    )
+                )
                 if self.config.run_composer_shadow:
                     shadow = _composer_shadow_record(
                         current, registry, relift_round
                     )
                     composer_shadow_records.append(shadow)
                 diagnostics.append(
-                    "deterministic pi equality and leaf provenance recomputation "
+                    "Gate1 semantic admission and deterministic pi composition "
                     f"passed at relift round {relift_round}"
                 )
                 source_text, _ = source.read_code()
@@ -3117,18 +3200,88 @@ class Gate1Runner:
                         f"{MAX_EXACT_COMPOSED_PLAN_STEPS}"
                     )
             except Exception as exc:
-                diagnostics.append(f"artifact validation failed: {type(exc).__name__}: {exc}")
-                return Gate1ExecutionResult(
-                    Gate1Status.LIFT_REJECTED,
-                    current,
-                    source_compile,
-                    source_fp,
-                    tuple(history),
-                    best,
-                    leakage_report,
-                    diagnostics=tuple(diagnostics),
-                    composer_shadow=tuple(composer_shadow_records),
+                diagnostic = f"{type(exc).__name__}: {exc}"
+                admission_records.append(
+                    Gate1AdmissionRecord(
+                        relift_round,
+                        tuple(admission_passes),
+                        failed_category=admission_category,
+                        diagnostic=diagnostic,
+                    )
                 )
+                diagnostics.append(
+                    "Gate1 artifact admission failed "
+                    f"[{admission_category.value}]: {diagnostic}"
+                )
+                diagnosis = Diagnosis(
+                    FailureCause.ARTIFACT_SCHEMA,
+                    Responsibility.LIFT_ARTIFACT,
+                    (diagnostic,),
+                    (),
+                    ("j", "interface", "schedule", "strategy", "location_map"),
+                    "Gate1 semantic admission failed before replay. Re-read "
+                    "SOURCE and emit a complete corrected LiftCore; no "
+                    "deterministic rewrite is permitted.",
+                )
+                candidate = CandidateRecord(
+                    relift_round,
+                    0,
+                    None,
+                    None,
+                    None,
+                    diagnosis,
+                    adopted=True,
+                    relift_trigger=ReliftTrigger.ARTIFACT_ADMISSION_FAILED,
+                )
+                history.append(candidate)
+                if best is None:
+                    best = candidate
+                if relift_round + 1 >= self.config.max_relifts:
+                    termination = _termination_for_round(
+                        Gate1TerminationReason.RELIFT_BUDGET_EXHAUSTED,
+                        relift_round=relift_round,
+                        history=history,
+                        config=self.config,
+                        hard_difference_categories=(admission_category.value,),
+                    )
+                    break
+                if relifter is None:
+                    termination = _termination_for_round(
+                        Gate1TerminationReason.RELIFTER_UNAVAILABLE,
+                        relift_round=relift_round,
+                        history=history,
+                        config=self.config,
+                        hard_difference_categories=(admission_category.value,),
+                    )
+                    break
+                request = _relift_request_for_round(
+                    relift_round, (candidate,), candidate
+                )
+                diagnostics.append(
+                    "Gate1 admission failure is entering bounded source-aware "
+                    f"Relift with category={admission_category.value}"
+                )
+                try:
+                    current = relifter.relift(
+                        current,
+                        source_fingerprint=source_fp,
+                        history=(ReliftEvidence.from_candidate(candidate),),
+                        request=request,
+                    )
+                except Exception as relift_exc:
+                    diagnostics.append(
+                        "semantic relift failed after Gate1 admission: "
+                        f"{type(relift_exc).__name__}: {relift_exc}"
+                    )
+                    termination = _termination_for_round(
+                        Gate1TerminationReason.RELIFT_FAILED,
+                        relift_round=relift_round,
+                        history=history,
+                        config=self.config,
+                        hard_difference_categories=(admission_category.value,),
+                    )
+                    break
+                continue
             if not leakage_report.passed:
                 diagnostics.extend(v.detail for v in leakage_report.violations)
                 return Gate1ExecutionResult(
@@ -3815,6 +3968,7 @@ class Gate1Runner:
                         if masked_probe is None
                         else masked_probe.family_to_json()
                     ),
+                    admissions=tuple(admission_records),
                 )
 
             if round_transport_failure:
@@ -3978,6 +4132,7 @@ class Gate1Runner:
             composer_shadow=tuple(composer_shadow_records),
             stagnation=stagnation,
             termination=termination,
+            admissions=tuple(admission_records),
         )
 
 
@@ -3985,7 +4140,10 @@ __all__ = [
     "CandidateRecord",
     "ComposerShadowRecord",
     "ComposerShadowStatus",
+    "GATE1_ADMISSION_POLICY",
     "Gate1Config",
+    "Gate1AdmissionCategory",
+    "Gate1AdmissionRecord",
     "Gate1ExecutionResult",
     "Gate1Runner",
     "Gate1Termination",
