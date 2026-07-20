@@ -146,11 +146,26 @@ def _execution_element_type(dtype: str) -> str:
     raise ValueError(f"unsupported CPU execution dtype {dtype!r}")
 
 
-def _build_main(fn: IntentFunction, kernel_mlir: str,
-                inputs: list[np.ndarray], out_shape,
-                out_element_type: str) -> str:
-    """Wrap the emitted kernel with a @main that feeds constant inputs, calls it,
-    and prints the (memref) result for read-back."""
+def _build_main(
+    fn: IntentFunction,
+    kernel_mlir: str,
+    inputs: list[np.ndarray],
+    output_shapes: Sequence[Sequence[int]],
+    output_element_types: Sequence[str],
+    selected_output: int,
+) -> str:
+    """Build a wrapper that reads back one result of a possibly multi-result fn.
+
+    A separate wrapper invocation is used for every logical result.  This keeps
+    RunnerUtils parsing unambiguous without changing the lowered kernel or
+    relying on textual delimiters in ``printMemref*`` output.
+    """
+    if len(output_shapes) != len(fn.outputs):
+        raise ValueError("CPU wrapper output shape arity mismatch")
+    if len(output_element_types) != len(fn.outputs):
+        raise ValueError("CPU wrapper output dtype arity mismatch")
+    if selected_output < 0 or selected_output >= len(fn.outputs):
+        raise ValueError("CPU wrapper selected output is out of range")
     body = kernel_mlir[kernel_mlir.index("{") + 1 : kernel_mlir.rindex("}")]
     lines = ["module {", body.rstrip()]
     lines.append("  func.func @main() {")
@@ -163,12 +178,28 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         )
         call_args.append(f"%in{i}")
         call_tys.append(ty)
-    oty = _tt(out_shape, out_element_type)
+    output_types = [
+        _tt(shape, element_type)
+        for shape, element_type in zip(
+            output_shapes, output_element_types, strict=True
+        )
+    ]
+    result_type = (
+        output_types[0]
+        if len(output_types) == 1
+        else f"({', '.join(output_types)})"
+    )
+    result_binding = "%y" if len(output_types) == 1 else f"%y:{len(output_types)}"
     from ...frontend.emit_mlir import _sanitize_mlir_symbol
 
     lines.append(
-        f"    %y = call @{_sanitize_mlir_symbol(fn.name)}({', '.join(call_args)}) : "
-        f"({', '.join(call_tys)}) -> {oty}")
+        f"    {result_binding} = call @{_sanitize_mlir_symbol(fn.name)}"
+        f"({', '.join(call_args)}) : ({', '.join(call_tys)}) -> {result_type}"
+    )
+    selected_value = "%y" if len(output_types) == 1 else f"%y#{selected_output}"
+    out_shape = tuple(output_shapes[selected_output])
+    out_element_type = output_element_types[selected_output]
+    oty = output_types[selected_output]
     rank = len(out_shape)
     dims = ", ".join(f"d{i}" for i in range(rank))
     identity_map = f"affine_map<({dims}) -> ({dims})>"
@@ -188,7 +219,8 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         )
         lines.append(f"      iterator_types = [{iterators}]")
         lines.append(
-            f"    }} ins(%y : {oty}) outs(%print_init : {print_tensor_type}) {{"
+            f"    }} ins({selected_value} : {oty}) "
+            f"outs(%print_init : {print_tensor_type}) {{"
         )
         lines.append(
             f"    ^bb0(%value: {out_element_type}, %unused: i32):"
@@ -215,7 +247,8 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         lines.append(f"      indexing_maps = [{identity_map}, {identity_map}],")
         lines.append(f"      iterator_types = [{iterators}]")
         lines.append(
-            f"    }} ins(%y : {oty}) outs(%print_init : {print_tensor_type}) {{"
+            f"    }} ins({selected_value} : {oty}) "
+            f"outs(%print_init : {print_tensor_type}) {{"
         )
         lines.append("    ^bb0(%value: f64, %unused: i64):")
         lines.append("      %print_value = arith.bitcast %value : f64 to i64")
@@ -229,7 +262,7 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
         print_element_type = "i64"
         print_tensor_type = _tt(out_shape, print_element_type)
         if out_element_type == "i64":
-            print_value = "%y"
+            print_value = selected_value
         else:
             lines.append(
                 f"    %print_init = tensor.empty() : {print_tensor_type}"
@@ -240,7 +273,8 @@ def _build_main(fn: IntentFunction, kernel_mlir: str,
             )
             lines.append(f"      iterator_types = [{iterators}]")
             lines.append(
-                f"    }} ins(%y : {oty}) outs(%print_init : {print_tensor_type}) {{"
+                f"    }} ins({selected_value} : {oty}) "
+                f"outs(%print_init : {print_tensor_type}) {{"
             )
             lines.append(
                 f"    ^bb0(%value: {out_element_type}, %unused: i64):"
@@ -298,6 +332,102 @@ def _parse_memref(stdout: str, shape, element_type: str) -> np.ndarray:
     return vals.reshape(shape) if shape else vals.reshape(())
 
 
+def _infer_output_contracts(
+    fn: IntentFunction,
+    dims: Mapping[str, int],
+    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None,
+) -> tuple[list[tuple[int, ...]], list[str]]:
+    from ...frontend.emit_mlir import _infer_body, _resolve
+
+    env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
+    env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
+    _infer_body(fn.body, env, 0, dict(dims), broadcast_axes)
+    for op in fn.body:
+        if op.out is not None:
+            env[op.out] = env.get(op.result, env.get(op.out))
+    shapes = [tuple(env[tensor.name]) for tensor in fn.outputs]
+    element_types = [_execution_element_type(tensor.dtype) for tensor in fn.outputs]
+    return shapes, element_types
+
+
+def _run_cpu_wrapper(src: str) -> str:
+    p1 = subprocess.run(
+        [str(INTENT_OPT), "-convert-intent-to-linalg"],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    if p1.returncode:
+        raise RuntimeError(f"intent-opt failed: {p1.stderr[:300]}")
+    p2 = subprocess.run(
+        [str(LLVM_BIN / "mlir-opt"), *_CPU_PIPELINE],
+        input=p1.stdout,
+        capture_output=True,
+        text=True,
+    )
+    if p2.returncode:
+        raise RuntimeError(f"mlir-opt failed: {p2.stderr[:300]}")
+    p3 = subprocess.run(
+        [
+            str(LLVM_BIN / "mlir-runner"),
+            "-e",
+            "main",
+            "-entry-point-result=void",
+            f"--shared-libs={LLVM_LIB / 'libmlir_runner_utils.so'}",
+            f"--shared-libs={LLVM_LIB / 'libmlir_c_runner_utils.so'}",
+        ],
+        input=p2.stdout,
+        capture_output=True,
+        text=True,
+    )
+    if p3.returncode or "data =" not in p3.stdout:
+        raise RuntimeError(
+            f"mlir-runner failed: {(p3.stderr or p3.stdout)[:300]}"
+        )
+    return p3.stdout
+
+
+def run_on_cpu_outputs(
+    fn: IntentFunction,
+    dims: dict[str, int],
+    inputs: list[np.ndarray],
+    *,
+    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+) -> dict[str, np.ndarray]:
+    """Lower and execute every logical result of a flat IntentFunction.
+
+    Inputs are positional in ``fn.inputs`` order.  Logical outputs are returned
+    by declared ABI name, including explicit ``IntentReturn`` mappings handled
+    by the frontend emitter.
+    """
+    if len(inputs) != len(fn.inputs):
+        raise ValueError(
+            "CPU execution input arity mismatch: "
+            f"expected {len(fn.inputs)}, got {len(inputs)}"
+        )
+    if not fn.outputs:
+        raise ValueError("CPU execution requires at least one logical output")
+    kernel = emit_module(fn, dims, broadcast_axes=broadcast_axes)
+    output_shapes, output_element_types = _infer_output_contracts(
+        fn, dims, broadcast_axes
+    )
+    outputs: dict[str, np.ndarray] = {}
+    for index, tensor in enumerate(fn.outputs):
+        src = _build_main(
+            fn,
+            kernel,
+            inputs,
+            output_shapes,
+            output_element_types,
+            index,
+        )
+        stdout = _run_cpu_wrapper(src)
+        outputs[tensor.name] = _parse_memref(
+            stdout, output_shapes[index], output_element_types[index]
+        )
+    return outputs
+
+
 def run_on_cpu(
     fn: IntentFunction,
     dims: dict[str, int],
@@ -305,35 +435,11 @@ def run_on_cpu(
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
 ) -> np.ndarray:
-    """Lower a flat IntentFunction to CPU LLVM and JIT-execute it; return the
-    output array. Inputs are positional, matching fn.inputs."""
-    kernel = emit_module(fn, dims, broadcast_axes=broadcast_axes)
-    # infer output shape from the emitter's own shape inference via a dims-resolve
-    from ...frontend.emit_mlir import _resolve, _infer_body
-    env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
-    env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
-    _infer_body(fn.body, env, 0, dict(dims), broadcast_axes)
-    for op in fn.body:
-        if op.out is not None:
-            env[op.out] = env.get(op.result, env.get(op.out))
-    out_shape = tuple(env[fn.outputs[0].name])
-    out_element_type = _execution_element_type(fn.outputs[0].dtype)
-
-    src = _build_main(fn, kernel, inputs, out_shape, out_element_type)
-    p1 = subprocess.run([str(INTENT_OPT), "-convert-intent-to-linalg"],
-                        input=src, capture_output=True, text=True)
-    if p1.returncode:
-        raise RuntimeError(f"intent-opt failed: {p1.stderr[:300]}")
-    p2 = subprocess.run([str(LLVM_BIN / "mlir-opt"), *_CPU_PIPELINE],
-                        input=p1.stdout, capture_output=True, text=True)
-    if p2.returncode:
-        raise RuntimeError(f"mlir-opt failed: {p2.stderr[:300]}")
-    p3 = subprocess.run(
-        [str(LLVM_BIN / "mlir-runner"), "-e", "main",
-         "-entry-point-result=void",
-         f"--shared-libs={LLVM_LIB / 'libmlir_runner_utils.so'}",
-         f"--shared-libs={LLVM_LIB / 'libmlir_c_runner_utils.so'}"],
-        input=p2.stdout, capture_output=True, text=True)
-    if p3.returncode or "data =" not in p3.stdout:
-        raise RuntimeError(f"mlir-runner failed: {(p3.stderr or p3.stdout)[:300]}")
-    return _parse_memref(p3.stdout, out_shape, out_element_type)
+    """Execute a single-output IntentFunction on the CPU lowering path."""
+    if len(fn.outputs) != 1:
+        raise ValueError(
+            "run_on_cpu requires exactly one output; use run_on_cpu_outputs"
+        )
+    return run_on_cpu_outputs(
+        fn, dims, inputs, broadcast_axes=broadcast_axes
+    )[fn.outputs[0].name]

@@ -92,6 +92,51 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
     np.testing.assert_allclose(actual, x.sum(axis=1), rtol=1.0e-6, atol=1.0e-6)
 
 
+def test_multiple_logical_outputs_run_on_cpu() -> None:
+    from intentir.backend.cpu.pipeline import run_on_cpu_outputs
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "multi_result_scalar_lowering",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": ["N"]}
+                ],
+                "outputs": [
+                    {"name": "Neg", "dtype": "f32", "shape": ["N"]},
+                    {"name": "Square", "dtype": "f32", "shape": ["N"]},
+                ],
+                "body": [
+                    {
+                        "op": "map_unary",
+                        "result": "Neg",
+                        "operands": ["X"],
+                        "attrs": {"fn": "neg"},
+                    },
+                    {
+                        "op": "map_binary",
+                        "result": "Square",
+                        "operands": ["X", "X"],
+                        "attrs": {"fn": "mul"},
+                    },
+                ],
+                "returns": [
+                    {"output": "Neg", "value": "Neg"},
+                    {"output": "Square", "value": "Square"},
+                ],
+            }
+        }
+    )
+    value = np.asarray([-2.0, 0.5, 3.0], dtype=np.float32)
+
+    actual = run_on_cpu_outputs(fn, {"N": 3}, [value])
+
+    assert tuple(actual) == ("Neg", "Square")
+    np.testing.assert_array_equal(actual["Neg"], -value)
+    np.testing.assert_array_equal(actual["Square"], value * value)
+
+
 def test_cpu_runner_reads_back_exact_f32_bits() -> None:
     from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction
