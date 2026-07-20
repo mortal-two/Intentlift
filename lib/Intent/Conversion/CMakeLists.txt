@@ -21,7 +21,3 @@ add_mlir_library(MLIRIntentConversionCommon
 )
 
 add_subdirectory(CUDA)
-
-# Preserve the historical aggregate target while allowing CPU and future
-# targets to link only the target-neutral Intent -> Linalg conversion.
-add_library(MLIRIntentConversion ALIAS MLIRIntentConversionCUDA)
