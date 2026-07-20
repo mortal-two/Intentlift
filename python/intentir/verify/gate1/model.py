@@ -199,7 +199,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
     fn = _strict_object(
         fn,
         path=f"{path}.intent_function",
-        allowed={"name", "inputs", "outputs", "layer_c", "body"},
+        allowed={"name", "inputs", "outputs", "returns", "layer_c", "body"},
         required={"name"},
     )
     _string(fn["name"], f"{path}.intent_function.name")
@@ -249,6 +249,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         "NEG_INF", "POS_INF", "ZERO", "ONE", "zeros", "ones",
         "false", "true",
     }
+    declared_node_ids: set[str] = set()
 
     def is_literal_reference(item: Any) -> bool:
         if item is None or isinstance(item, (bool, int, float)):
@@ -333,12 +334,17 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
             item,
             path=op_path,
             allowed={
-                "op", "result", "operands", "attrs", "type", "layer_b", "out",
+                "id", "op", "result", "operands", "attrs", "type", "layer_b", "out",
                 "scope_id", "carry", "trip", "scan", "body", "yield",
             },
             required={"op"},
         )
         op_name = _string(op["op"], f"{op_path}.op")
+        if "id" in op:
+            node_id = _string(op["id"], f"{op_path}.id")
+            if node_id in declared_node_ids:
+                raise SchemaError(f"{op_path}.id duplicates node id {node_id!r}")
+            declared_node_ids.add(node_id)
         produced = result_names(op, op_path)
         if "operands" in op:
             operands = _string_list(op["operands"], f"{op_path}.operands")
@@ -572,7 +578,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
     if "layer_c" in fn:
         _json_value(fn["layer_c"], f"{path}.intent_function.layer_c")
     body = fn.get("body", [])
-    validate_sequence(
+    visible_after, _definitions = validate_sequence(
         body,
         f"{path}.intent_function.body",
         {
@@ -581,6 +587,34 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         },
         strict_operands=True,
     )
+    if "returns" in fn:
+        returns = fn["returns"]
+        if not isinstance(returns, list):
+            raise SchemaError(f"{path}.intent_function.returns must be an array")
+        output_names = [
+            _string(tensor["name"], f"{path}.intent_function.outputs[{index}].name")
+            for index, tensor in enumerate(fn.get("outputs", []))
+        ]
+        returned_outputs: list[str] = []
+        for index, item in enumerate(returns):
+            return_path = f"{path}.intent_function.returns[{index}]"
+            binding = _strict_object(
+                item,
+                path=return_path,
+                allowed={"output", "value"},
+                required={"output", "value"},
+            )
+            output = _string(binding["output"], f"{return_path}.output")
+            value = _string(binding["value"], f"{return_path}.value")
+            returned_outputs.append(output)
+            if value not in visible_after:
+                raise SchemaError(
+                    f"{return_path}.value references unknown Layer-A value {value!r}"
+                )
+        if returned_outputs != output_names:
+            raise SchemaError(
+                "IntentFunction.returns must cover outputs once and in ABI order"
+            )
 
     normalized = {"intent_function": copy.deepcopy(fn)}
     return IntentFunction.from_json(normalized)

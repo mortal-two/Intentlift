@@ -26,6 +26,27 @@ class Tensor:
         return {"name": self.name, "dtype": self.dtype, "shape": list(self.shape)}
 
 
+@dataclass(frozen=True)
+class IntentReturn:
+    """One Layer-A logical result binding.
+
+    ``value`` is an SSA value produced by the semantic graph.  ``output`` is
+    the logical function result it defines.  Caller-owned destinations and
+    alias/writeback behavior deliberately do not live here; those are Layer-B
+    contracts on :class:`intentir.ir.program.IntentProgram`.
+    """
+
+    output: str
+    value: str
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> "IntentReturn":
+        return cls(output=d["output"], value=d["value"])
+
+    def to_json(self) -> dict[str, str]:
+        return {"output": self.output, "value": self.value}
+
+
 @dataclass
 class LoopValueType:
     """Portable type carried across a semantic loop iteration.
@@ -182,6 +203,7 @@ class IntentOp:
     scan: list[LoopScanInput] = field(default_factory=list)  # per-iter sliced inputs
     body: list["IntentOp"] = field(default_factory=list)
     yields: list[str] = field(default_factory=list)  # JSON key "yield"
+    node_id: str | None = None  # canonical stable Layer-A node id
 
     @classmethod
     def from_json(cls, d: dict) -> "IntentOp":
@@ -190,6 +212,7 @@ class IntentOp:
         yields = list(d.get("yield", []))
         return cls(
             op=d["op"],
+            node_id=d.get("id"),
             result=result,
             operands=list(d.get("operands", [])),
             attrs=dict(d.get("attrs", {})),
@@ -214,6 +237,8 @@ class IntentOp:
 
     def to_json(self) -> dict:
         d: dict[str, Any] = {"op": self.op}
+        if self.node_id is not None:
+            d["id"] = self.node_id
         if self.result is not None:
             d["result"] = self.result
         if self.operands:
@@ -248,6 +273,7 @@ class IntentFunction:
     outputs: list[Tensor] = field(default_factory=list)
     layer_c: dict[str, Any] = field(default_factory=dict)  # non-binding schedule
     body: list[IntentOp] = field(default_factory=list)
+    returns: list[IntentReturn] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, d: dict) -> "IntentFunction":
@@ -256,6 +282,7 @@ class IntentFunction:
             name=fn["name"],
             inputs=[Tensor.from_json(t) for t in fn.get("inputs", [])],
             outputs=[Tensor.from_json(t) for t in fn.get("outputs", [])],
+            returns=[IntentReturn.from_json(item) for item in fn.get("returns", [])],
             layer_c=dict(fn.get("layer_c", {})),
             body=[IntentOp.from_json(o) for o in fn.get("body", [])],
         )
@@ -265,15 +292,16 @@ class IntentFunction:
         return cls.from_json(json.loads(s))
 
     def to_json(self) -> dict:
-        return {
-            "intent_function": {
-                "name": self.name,
-                "inputs": [t.to_json() for t in self.inputs],
-                "outputs": [t.to_json() for t in self.outputs],
-                "layer_c": self.layer_c,
-                "body": [o.to_json() for o in self.body],
-            }
+        function = {
+            "name": self.name,
+            "inputs": [t.to_json() for t in self.inputs],
+            "outputs": [t.to_json() for t in self.outputs],
+            "layer_c": self.layer_c,
+            "body": [o.to_json() for o in self.body],
         }
+        if self.returns:
+            function["returns"] = [item.to_json() for item in self.returns]
+        return {"intent_function": function}
 
     def to_json_str(self, indent: int = 2) -> str:
         return json.dumps(self.to_json(), indent=indent)

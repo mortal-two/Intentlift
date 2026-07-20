@@ -25,9 +25,9 @@ kernel 源码
 ## 三层在表示里的组织
 
 - **Layer A**:dialect 里的算子 + region 结构(可执行语义对象)。
-- **Layer B**:挂在算子 / function / program 上的 typed contract(mask、bound、
+- **Layer B**:统一挂在 program boundary 上的 typed contract(mask、bound、
   destination、alias、effect、reduction、scope/storage 等)。
-- **Layer C**:挂在算子上的非绑定 schedule hint attribute(tile、向量宽度、unroll 因子);可被后端覆盖。
+- **Layer C**:独立的非绑定 schedule hint(tile、向量宽度、unroll 因子);可被后端覆盖。
 
 完整语义对象是 `J=A+B`。如果某个 correctness-relevant B 只能存在于外层 archive，
 则 backend hand-off 必须携带该 archive；不能因为 `IntentFunction` 能单独发射 MLIR，

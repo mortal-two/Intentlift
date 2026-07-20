@@ -6,6 +6,7 @@
 
 ```json
 {
+  "schema": "intentir.program.v1",
   "intent_program": {
     "function": {
       "name": "flash_attention_fwd",
@@ -19,10 +20,15 @@
       "aliases": [], "effects": [], "reductions": [],
       "scopes": [], "storage": []
     },
-    "interface": { /* target-neutral tensor/scalar ABI binding */ },
+    "interface": {
+      "function": "flash_attention_fwd",
+      "arguments": [ /* ordered target-neutral tensor/scalar ABI binding */ ],
+      "outputs": ["O"]
+    },
     "schedule_hint": {
-      "ops": {"loop_sk": {"tile": {"Sk": "BK"}}},
-      "vector_width": 128
+      "values": {"BK": 128},
+      "grid": ["B * H * Sq"],
+      "strategies": []
     }
   }
 }
@@ -36,6 +42,8 @@
 - 历史 reader 可以兼容 `intent_function`、`op.layer_b`、`op.out` 和
   `trip.tile_hint`；canonical writer 不得继续生成这些字段。无法无损转换的
   correctness 字段必须进入 unresolved contract 并 fail closed，不能静默丢弃。
+- 精确 strict schema、三种 digest 与 backend obligation 规则见
+  [intent-program.md](intent-program.md)。
 
 ## 单个 op 的通用形态
 

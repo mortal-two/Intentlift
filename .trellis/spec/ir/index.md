@@ -27,6 +27,7 @@ IR 设计不得被某个 target 的临时缺口绑架，但也不能设计成 ba
 | [layers-abc.md](layers-abc.md) | A/B/C 三层定义、分层不变量、softmax/FlashAttention 分层示例。 |
 | [atomic-ops.md](atomic-ops.md) | 张量级原子算子集、粒度原则、数据移动 / 间接寻址 / 归约结合性。 |
 | [op-signatures.md](op-signatures.md) | **具体形态**:JSON 顶层结构、每个 op 的 operands/results/attrs/层归属、`loop` 形态。 |
+| [intent-program.md](intent-program.md) | **中立编译合同**：canonical wire schema、digest、typed predicate 与 backend obligation ledger。 |
 | [structured-loop.md](structured-loop.md) | 带状态结构化循环、FlashAttention 因式分解、数据依赖控制流逃生舱。 |
 | [flashattention-example.md](flashattention-example.md) | **Worked example**：FlashAttention 的 A/B/C 语义所有权与递推×tiling 因式分解。 |
 | [json-and-dialect.md](json-and-dialect.md) | JSON(人可读,LLM 产出)↔ Intent MLIR dialect 的 1:1 关系。 |
