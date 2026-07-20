@@ -82,26 +82,26 @@ lowering pass 的隐式输入。反过来，paper receipt 也不得成为 Gate l
 
 ### Python 后端
 
-- `intentir.backend.compile`：generic 编译、direct memref/GPU 编译、PTX 提取、
+- `intentir.backend.cuda.compile`：generic 编译、direct memref/GPU 编译、PTX 提取、
   `ptxas` cubin；
-- `intentir.backend.orchestrate`：单/多 kernel、destination passing、alias、
+- `intentir.backend.cuda.orchestrate`：单/多 kernel、destination passing、alias、
   scalar/global、dynamic shared memory 和 CUDA Driver launch；
 - `intentir.frontend.emit_mlir`：`IntentFunction` 到真实 Intent dialect MLIR；
-- `intentir.backend.selection.select_variant`：覆盖全部 22 个 direct pass，
+- `intentir.backend.cuda.selection.select_variant`：覆盖全部 22 个 direct pass，
   只基于 target、typed MLIR marker 和 C++ whole-graph structural probe；
-- `intentir.backend.pipeline.lower_to_cuda`：generic/direct 自动选择与真实编译；
-- `intentir.backend.pipeline.lower_function_to_cuda`：供 Gate adapter 直接提交
-  已接受的 `IntentFunction`。
-- `intentir.backend.layer_c`、`variant_planner`：Layer-C 参数解析、候选枚举、
-  backend legality、constraints-on/off 消融；
-- `intentir.backend.runtime_contract`、`variant_manifest`、`cuda_dispatch`：
+- `intentir.backend.cuda.pipeline.lower_to_cuda`：generic/direct 自动选择与真实编译；
+- `intentir.backend.cuda.pipeline.lower_function_to_cuda`：当前过渡入口，供 Gate
+  adapter 提交已接受的 `IntentFunction`；它不是最终 `A+B+ABI` hand-off。
+- `intentir.ir.layer_c`、`intentir.backend.cuda.variant_planner`：Layer-C 参数解析、
+  候选枚举、backend legality、constraints-on/off 消融；
+- `intentir.backend.cuda.runtime_contract`、`variant_manifest`、`dispatch`：
   runtime guard、同 bundle conservative fallback、预调优顺序、prepared dispatch。
 
-### 中立 API
+### 当前 target-specific API
 
 ```python
-from intentir.backend.pipeline import lower_function_to_cuda, lower_to_cuda
-from intentir.backend.selection import LoweringTarget
+from intentir.backend.cuda.pipeline import lower_function_to_cuda, lower_to_cuda
+from intentir.backend.cuda.selection import LoweringTarget
 
 program = lower_function_to_cuda(
     accepted_intent_function,
@@ -115,6 +115,9 @@ dataset identity 或 kernel/function 名称。schedule/ablation 通过显式
 `pass_overrides` 进入，但 override 仍必须由真实 C++ pass 完整消费同一个 MLIR，
 否则自动回落 generic。
 
+这个 API 已经与 Gate verdict 解耦，但单独的 `IntentFunction` 仍不足以表达完整
+`A+B+ABI`，因此不能把它命名为最终的中立 lowering 合同。
+
 ## Gate adapter 必须保留的 A/B/C 信息
 
 旧 Gate2 lowering 只取 `Gate1Artifact.j.intent` 并运行 CPU `Lower2C`，这不是
@@ -126,28 +129,38 @@ dataset identity 或 kernel/function 名称。schedule/ablation 通过显式
 - C：`artifact.schedule` 与具体 `CompileCase` 中的 grid、warp/thread、tile、
   stage、layout 和 target 条件。
 
-建议 adapter 生成中立 bundle：
+最终 adapter 必须生成与验证器无关的 `IntentProgram`，运行时绑定另行放入 lowering
+request；不能把 `Gate` 写进 production DTO 名称：
 
 ```python
 @dataclass(frozen=True)
-class GateIntentBundle:
+class IntentProgram:
     function: IntentFunction
+    boundary: BoundaryContract
+    interface: LogicalABI
+    schedule_hint: LayerC | None
+
+@dataclass(frozen=True)
+class LoweringRequest:
+    program: IntentProgram
     concrete_extents: Mapping[str, int]
     input_bindings: Mapping[str, str]
     output_bindings: tuple[str, ...]
-    output_aliases: Mapping[str, str]
-    source_schedule: Mapping[str, Scalar]
-    source_grid: tuple[int, ...]
-    contract_mapping: tuple[ContractMapping, ...]
+    target: BackendTarget
 ```
 
-任何未映射的 B/C correctness 字段必须 fail closed，不能静默丢弃后继续 lower。
-Gate1/Gate2 如何证明这些字段可信，属于新的 verification 层；字段一旦被接受，
-编译和 CUDA 执行统一复用本分支后端。
+任何未映射的 correctness-relevant B 必须 fail closed，不能静默丢弃后继续 lower。
+C 可以被忽略或重调，但不得被重新解释为 B。Gate1/Gate2 如何证明 B 字段可信，
+属于 verification 层；字段一旦被接受，编译和 CUDA 执行统一复用本分支后端。
 
-Gate2 已有 `Gate2Runner(lowering_runner=...)` 注入缝。下一步应实现
-`CudaLoweringRunner.run(spec, values)`，内部调用中立 API，而不是修改或复用
-paper verifier。
+当前 `python/intentir/verify/gate2/cuda_lowering.py::GateIntentBundle` 只是迁移期
+Gate adapter；它不得上移到 `ir/` 或成为 backend API。等 `IntentProgram` 接管完整
+B/ABI 后，应迁移调用方并删除该类型，不保留 alias/facade。
+
+Gate2 已有 `Gate2Runner(lowering_runner=...)` 注入缝，且当前
+`CudaLoweringRunner.lower/execute` 已通过 `CudaLoweringSpec(GateIntentBundle)` 调用
+CUDA backend。下一步不是再造 runner，而是把它的输入迁移为中立
+`LoweringRequest(IntentProgram, target)`；runner 仍不得读取或复用 paper verifier。
 
 ## 不进入共享 lowering core 的内容
 
@@ -173,13 +186,17 @@ paper verifier。
 - 中立 direct elementwise 路径真实完成 structural probe、specialized MLIR、
   NVVM/PTX/ptxas，并生成 ELF cubin。
 
-## 下一合并阶段
+## 后续语义迁移阶段
 
-1. 在 Gate 工作树自身提交或隔离现有未提交修改后，把上述合并栈合入；
-2. 实现 `GateIntentBundle` adapter，并检查 loop body 内嵌 Layer-B，不能只遍历
-   顶层 `fn.body`；
-3. 实现 `CudaLoweringRunner`，覆盖多输出、alias、writeback 和 side effect；
-4. 继续迁移尚未中立化的 `RowSchedule`、`ElementwiseSchedule`、各 specialized
-   materializer 和 Linear multi-cubin bundle；guard、fallback、variant planner、
-   manifest 与 prepared dispatch 已进入中立 backend；
-5. 分层运行全部 lit、Python lowering、CUDA PK 与 performance regression。
+1. 实现中立 `IntentProgram` 与 B-obligation consumption ledger，并检查 loop body
+   内嵌 Layer-B，不能只遍历顶层 `fn.body`；
+2. 让 `CudaLoweringRunner` 消费 `LoweringRequest(IntentProgram, target)`，覆盖
+   多输出、alias、writeback 和 side effect；迁移完成后删除 `GateIntentBundle`；
+3. 把 correctness-critical B 按 op family typed 化并闭环消费：accumulator/result
+   dtype、logical return/destination、alias/effect、reduction identity/order、
+   gather/scatter bounds/conflict；
+4. 消除 common `intent.loop` lowering 对 `trip.tile_hint` 的语义依赖；无 C 时仍须
+   正确 lower，CUDA planning 可以选择或重调 tile；
+5. CUDA schedule、materializer、variant manifest、prepared dispatch 继续留在
+   `backend/cuda/`，只把真正 target-neutral 的 protocol/contract 放入 `ir/`；
+6. 分层运行全部 lit、Python lowering、CUDA PK 与 performance regression。

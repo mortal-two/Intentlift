@@ -44,7 +44,7 @@ trip 真值。新 SCRC J 的 loop 只持久化 semantic axis 与 carry；tile/un
   trip 循环执行,与解释器一致(见 [../lowering/index.md](../lowering/index.md))。
 - **残项**:从 `intent.loop` 直接产出 *fused* 单 kernel(query-outer/per-query-carry
   schedule)需要 interchange + carry privatization;今天 fused 形态由
-  `bench/flash_emit.py` 发射。
+  `python/intentir/backend/cuda/flash.py` 发射。
 
 ## 三类循环的处理
 

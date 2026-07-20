@@ -36,8 +36,8 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 归档的 NumPy 解释器对照到 rel ~1e-7；当前正式验证改由
 [SCRC Gate2](../verification/scrc-gate2.md) 的 source/replay/lowering 三方实跑。
 
-CUDA 实现固化在 `python/intentir/backend/cuda/`；旧的
-`backend/compile.py`、`launch.py`、`orchestrate.py` 等只允许作为单向兼容 facade。
+CUDA 实现只存在于 `python/intentir/backend/cuda/`；旧的 flat module 已删除，
+不得以 facade、module alias 或根包 re-export 的形式恢复。
 C++ pass 分为：
 
 - `MLIRIntentConversionCommon`：`lib/Intent/Conversion/ConvertIntentToLinalg.cpp`；
@@ -45,7 +45,7 @@ C++ pass 分为：
 - `MLIRIntentTargetCUDA`：`lib/Target/CUDA/`。
 
 Pass TableGen 与注册 API 同样位于 `include/Intent/Conversion/{Common,CUDA}/`
-和 `include/Target/CUDA/`；旧 umbrella 不得成为新的实现所有者。**血泪规则**
+和 `include/Target/CUDA/`；不保留兼容 umbrella。**血泪规则**
 (后续 RVV /其它后端起步前必读):
 
 - **bare-ptr 调用约定要求静态 shape 的 memref**——kernel 边界用运行时 scalar
@@ -63,9 +63,10 @@ Pass TableGen 与注册 API 同样位于 `include/Intent/Conversion/{Common,CUDA
   一个 fused kernel,一线程一 query。**不要**用 trip-OUTER 的 tensor-iter_args
   形态:朴素 `tensor.empty` body 过不了 one-shot-bufferize;destination-passing
   形态能 bufferize,但其 GPU 映射(query 并行在串行 trip 循环内)不是已证的
-  单-kernel 路径。`bench/flash_emit.py` 把这个已验证形态按 (Sq,Sk,D,BK) 参数化,
-  是 C++ `intent.loop` lowering 应当镜像的 codegen 规格。
-- **retune / freeze 已落地为机制**:`bench/flash_emit.py::retune_sweep` 在保持
+  单-kernel 路径。`python/intentir/backend/cuda/flash.py` 把这个已验证形态按
+  (Sq,Sk,D,BK) 参数化，是 C++ `intent.loop` lowering 应当镜像的 codegen 规格。
+- **retune / freeze 已落地为机制**:
+  `python/intentir/backend/cuda/flash.py::retune_sweep` 在保持
   A/B 不变下扫 BK∈{1,2,4,8,16},所有候选 bit-一致(最大偏差 1.8e-7),证明
   Layer C 的非绑定-schedule 性质。**perf 未调优、未声明**(一线程/query +
   每调用 host 同步),retune 这里是机制不是性能数字。
@@ -82,24 +83,27 @@ Pass TableGen 与注册 API 同样位于 `include/Intent/Conversion/{Common,CUDA
 - lowering `intent.loop` → `scf.for`(trip)+ tensor `iter_args` + scan→
   `tensor.extract_slice` + body→linalg(`LoopLowering`,见 `test/lower-loop.mlir`)。
 - **执行 = host 驱动 trip 循环**:发射出的 body 每个 K-tile launch 一次
-  (`orchestrate.run_program` 已支持多输出返回 3 个 carry),carry 放在常驻
-  CUDA buffer 里前递,末尾 `O=Oacc/l`。这就是 NON-fused tiled flash 的真实跑
+  (`python/intentir/backend/cuda/orchestrate.py::run_program` 已支持多输出返回
+  3 个 carry),carry 放在常驻 CUDA buffer 里前递,末尾 `O=Oacc/l`。这就是
+  NON-fused tiled flash 的真实跑
   法 —— kernel 在 5090D 上跑,host 控制循环。与 `interpret(JSON)` 一致到 1.3e-7。
 
 **残项(命名的优化,不是前/后端缺口):** 直接从 `intent.loop` 自动发射*fused*
-单 kernel(即已证的 `flash_fused.mlir` schedule);今天 fused kernel 由
-`bench/flash_emit.py` 发射,尚未由 loop lowering 产出。需要 interchange + carry
-privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query 私有化)。
+单 kernel(即已证的 `test/flash_fused.mlir` schedule);今天 fused kernel 由
+`python/intentir/backend/cuda/flash.py` 发射,尚未由 loop lowering 产出。需要
+interchange + carry privatization(把 query/batch 并行维提到 trip 循环外、carry
+按 query 私有化)。
 
 ## 多后端余量已验证(2026-06-26):同一 IntentIR 也在 CPU 上执行
 
 `intent → linalg` 这一段是**后端中立**的;只有 device 尾巴(此处 GPU 的
-`gpu/nvvm/ptxas`)是特化的。为证明这不是嘴上说说,`python/intentir/backend/cpu.py`
+`gpu/nvvm/ptxas`)是特化的。为证明这不是嘴上说说，
+`python/intentir/backend/cpu/pipeline.py`
 把**同一份提取出来的 intent dialect** 走 `intent → linalg →`(one-shot-bufferize
 → linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**。历史
 测试已覆盖 add / silu / softmax / rms_norm / gelu_tanh / matmul；这条真实执行链
 现作为 Gate2 的 production-lowering 腿。**没有任何 GPU 专用机制**——同一条 IntentIR、
-两个后端。`test_cpu_backend.py`(确定性,无 GPU)。
+两个后端。`python/tests/test_cpu_backend.py`(确定性,无 GPU)。
 
 这就是"多后端余量":换后端 = 换 `linalg → <target>` 尾巴(CPU 已通,RVV 是下一个
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
@@ -117,7 +121,7 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
   `mean_kernel_2` 的 rank-0 i32 `M → f32` 已三方执行通过；full reduction 没有
   surviving axis 时默认 rank 0；C++ `ReduceLowering` 已补
   collapse-all→extract→`tensor.from_elements` 路径，并从源码重新构建
-  `intent-opt`、通过 `lower-reduce.mlir`，不依赖旧二进制漂移。
+  `intent-opt`、通过 `test/lower-reduce.mlir`，不依赖旧二进制漂移。
 - final-stage max/min/prod 与 `sqrt(sum(partials))` 已分别通过真实 FlagGems
   source/replay/CPU-lowering 三方执行；prod 沿用已有 `ReduceLowering` 乘法
   combiner，没有新增 IntentIR op。
@@ -160,21 +164,23 @@ flash 那条 ~983x 的差距是**一线程/query** 的 bring-up 粒度造成的(
 - **默认映射把每个元素映成一个 block**(threads (1,1,1),正是 flash 慢的同款病)。
   `-scf-parallel-loop-tiling=parallel-loop-tile-sizes=1,256` 把最内连续维切成
   **256 线程合并访存(coalesced)的 block**。这是 **Layer-C 的 schedule 选择**
-  (tile 尺寸),A/B 不动。落点:`compile.py::compile_all_kernels_fused(tile)` +
-  `orchestrate.run_program(compile_all=…)` 钩子。
+  (tile 尺寸),A/B 不动。落点:
+  `python/intentir/backend/cuda/compile.py::compile_all_kernels_fused(tile)` +
+  `python/intentir/backend/cuda/orchestrate.py::run_program(compile_all=…)` 钩子。
 - **结果**(RTX 5090 D / f32 / 工作集 > 101MB L2 / median-of-5 / 不做 per-iter
   sync):IntentIR 自动融合 kernel **比未融合的 Triton 组合快 1.41–1.53x**(正好踩
   在 6:4 的流量上限),**与手写的单融合 Triton kernel 打平(~1.00x)**——证明这一
   胜来自库没做的融合,不是 codegen 取巧;打平也证明自动生成的 kernel 是称职的
   (GB/s 与手写 Triton copy 同档)。三条链都赢:`(a+b)*c`、SwiGLU(`silu(a)*b+c`)、
-  GeGLU(`gelu(a)*b+c`,xformers/vLLM 的 FFN 块)。`bench/fused_elementwise.py` +
-  `test_fused_elementwise.py` + `corpus/PERF_FUSION.md`。
+  GeGLU(`gelu(a)*b+c`,xformers/vLLM 的 FFN 块)。
+  `python/intentir/benchmarks/fused_elementwise.py` +
+  `python/tests/test_fused_elementwise.py` + `corpus/reports/PERF_FUSION.md`。
 - baseline 用干净的内联 Triton kernel(最强最公平的 Triton;flag_gems 的
   `pointwise_dynamic` 在这些尺寸上撞 Triton-3.6 launcher 参数数 bug)。SwiGLU 的
   未融合 baseline 已经用**融合的** `silu_and_mul` + 单独 `add`(库能做到的最好),
   所以不是稻草人。
-- **范围**:这是 elementwise 前沿。flash 的延迟差距(`corpus/PERF.md`)是另一条
-  尚未触碰的前沿,**不被本节覆盖**。
+- **范围**:这是 elementwise 前沿。flash 的延迟差距
+  (`corpus/reports/PERF.md`)是另一条尚未触碰的前沿,**不被本节覆盖**。
 
 ## PK 真实算子库:高性能 row-reduction codegen vs 真实 liger(2026-06-26)
 
@@ -192,8 +198,9 @@ torch 上撞 `torch.distributed.tensor` 崩,但 forward launcher(`rms_norm_forwa
    carry,没碰过 barrier/shuffle。
 2. 真实 liger rms_norm 在 5090D 上跑通(rel 1.4e-7)。
 
-**rms_norm 真实 PK(`bench/rmsnorm_emit.py` + `test_rmsnorm_pk.py` +
-`corpus/PERF_RMSNORM.md`):** 我们 MLIR 生成的 **read-once、block-cooperative**
+**rms_norm 真实 PK(`python/intentir/backend/cuda/kernel_driver.py` +
+`python/tests/test_row_reduction_pk.py`):**
+我们 MLIR 生成的 **read-once、block-cooperative**
 row kernel(一 block/row;`T=num_warps*32` 镜像 liger `calculate_settings`;每线程
 `memref.alloca<Kxf32>` 缓存,只读一次 x;`gpu.all_reduce` 求平方和;rstd 用 NVVM
 `rsqrt.approx.f` intrinsic——`math.sqrt`/`math.rsqrt` 走 libdevice `__nv_*` 是死路;
