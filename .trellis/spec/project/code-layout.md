@@ -19,11 +19,20 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
   CMakeLists.txt              # 顶层:find_package(MLIR), 加子目录
   include/Intent/             # Intent dialect、op 与 conversion pass 声明
     IntentOps.td/.h
-    Conversion/Passes.h       # 通用／CUDA lowering pass API
-  include/Target/             # target 侧 pass API；未实现 target 不得伪装支持
+    Conversion/
+      Common/Passes.{h,td}    # target-neutral Intent → standard MLIR
+      CUDA/Passes.{h,td}      # CUDA fast-path conversion
+      Passes.h                # 旧的全量注册兼容 umbrella
+  include/Target/
+    CUDA/Passes.{h,td}        # CUDA/NVGPU/NVVM target pass
+    Passes.h                  # 兼容 umbrella；未实现 target 不得伪装支持
   lib/Intent/
     IntentOps.cpp             # dialect op verifier／语义约束
-    Conversion/               # Intent → linalg / GPU / NVVM 等 pass
+    Conversion/
+      ConvertIntentToLinalg.cpp # target-neutral common conversion
+      CUDA/                    # CUDA/NVGPU fast-path realization
+  lib/Target/
+    CUDA/                      # NVVM peephole / target legalization
   tools/intent-opt/           # 自有 opt 驱动(注册 Intent dialect + 标准 dialect)
   python/intentir/
     ir/                       # IntentFunction 与可移植语义模型
@@ -31,7 +40,8 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
     frontend/                 # JSON／IntentFunction → Intent MLIR
     backend/
       common/                 # 跨 target 能力与中立记录
-      cuda/                   # CUDA selection / compile / launch / dispatch
+      cuda/                   # CUDA selection / compile / launch / dispatch 的唯一实现
+      cpu/                    # CPU target namespace；迁移期可保留 flat compatibility facade
       riscv/                  # 能力边界；无实现时不得导出伪 backend
     verify/
       gate1/                  # Lift artifact、RuleRegistry、结构闭合
@@ -54,6 +64,8 @@ TianchenIR/                   # 项目根(2026-06-26:原 tianchenir/ 内容上�
 - 每步要能 build、能被 `intent-opt` 解析、能过 lit 测试,才算真进展。
 - 不为赶进度写 Python 模拟 dialect 充数——dialect 就是 C++ MLIR。
 - 新 backend 必须放入 target-specific namespace；共享层不得偷偷绑定 CUDA。
+- C++ common conversion、CUDA fast path 与 CUDA target legalization 必须是独立
+  TableGen/注册函数/CMake library；旧 umbrella 只能负责兼容聚合，不能重新拥有实现。
 - `verify/` 不拥有 production lowering。若完整 A/B/ABI 合同需要被 backend 消费，
   应迁入 `ir/` 或 `backend/common/` 的中立对象，不能长期依赖 Gate2 adapter。
 - selector、dispatch 与 capability registry 不得读取 Gate verdict、provider、Kernel 名、

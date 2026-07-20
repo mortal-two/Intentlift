@@ -21,7 +21,9 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 - **A/B 绑定,C 可重调**:后端把 Layer A(计算)和 Layer B(约束)当绑定,Layer C 仅作 schedule 指引。
 - **freeze vs retune**:freeze-tiling 直接复用源 schedule;retune 在保持 A/B 不变下为目标搜索 schedule 参数,把 Layer C 当先验而非承诺。论文在 RVV 上量化了 retune 的收益。
 - **契约引导特化**:契约成立时,后端可生成 in-contract 快路径(特化维度、去边界处理、向量化),并保留契约外的保守 fallback。
-- **lower 目标**(预期,非当前承诺):map/reduce/contraction → `linalg`;数据移动 / gather/scatter → `tensor`/`linalg`;select → `arith`;结构化 `loop` → `scf`;向量化 → `vector`。
+- **common lower 基线**：map/reduce/contraction → `linalg`；iota、数据移动、
+  gather 与受支持 scatter → `tensor`/`linalg`；select → `arith`；结构化
+  semantic loop → `scf`。向量化和设备映射属于各 target 尾部。
 
 ## GPU 后端已验证(2026-06-25,RTX 5090 D / sm_120a / 系统 MLIR 20.1.8)
 
@@ -34,9 +36,17 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 归档的 NumPy 解释器对照到 rel ~1e-7；当前正式验证改由
 [SCRC Gate2](../verification/scrc-gate2.md) 的 source/replay/lowering 三方实跑。
 
-实现细节固化在 `python/intentir/backend/`(`compile.py` / `launch.py` /
-`orchestrate.py`)与 C++ pass `lib/Intent/Transforms/`。**血泪规则**(后续 RVV /
-其它后端起步前必读):
+CUDA 实现固化在 `python/intentir/backend/cuda/`；旧的
+`backend/compile.py`、`launch.py`、`orchestrate.py` 等只允许作为单向兼容 facade。
+C++ pass 分为：
+
+- `MLIRIntentConversionCommon`：`lib/Intent/Conversion/ConvertIntentToLinalg.cpp`；
+- `MLIRIntentConversionCUDA`：`lib/Intent/Conversion/CUDA/`；
+- `MLIRIntentTargetCUDA`：`lib/Target/CUDA/`。
+
+Pass TableGen 与注册 API 同样位于 `include/Intent/Conversion/{Common,CUDA}/`
+和 `include/Target/CUDA/`；旧 umbrella 不得成为新的实现所有者。**血泪规则**
+(后续 RVV /其它后端起步前必读):
 
 - **bare-ptr 调用约定要求静态 shape 的 memref**——kernel 边界用运行时 scalar
   参数驱动尺寸,绝不在边界上留 `memref<?x...>`。
@@ -123,9 +133,10 @@ privatization(把 query/batch 并行维提到 trip 循环外、carry 按 query �
   一致。修复由真实 max Gate2 矩阵的 `source=replay=+inf, lowering=NaN` 三方模式
   触发，并由 max/min IEEE-special GPU+CPU 回归固定。
 
-边界仍明确：当前通用 CPU `convert-intent-to-linalg` 没有 iota/gather lowering，
-integer output 也没有通用 read-back。因此 arange/trace/eye 仍是 queued 能力缺口，
-没有被解释器或手写 MLIR 假装成 Gate2 PASS。
+当前 common `convert-intent-to-linalg` 已实现 iota 与 gather，CPU runner 也支持
+i1/i8/i16/i32/i64 输出的通用 read-back。它们是否对某个具体 artifact 可用仍由
+op shape/dtype、B obligation 与 capability/conformance record 决定；不得再用一条
+过时的全局缺口描述掩盖逐能力的 supported/unsupported 结果。
 
 ## 自动融合(elementwise 前沿,2026-06-26)——**不是 PK 标准**(自我审查,2026-06-26)
 
