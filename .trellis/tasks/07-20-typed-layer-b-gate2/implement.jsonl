@@ -1,0 +1,7 @@
+{"file":".trellis/spec/project/constitution.md","reason":"Gate1 non-relaxation, Gate/backend separation, and mature compiler invariants."}
+{"file":".trellis/spec/ir/layers-abc.md","reason":"Layer A/B/C ownership and portable semantic boundary."}
+{"file":".trellis/spec/ir/intent-program.md","reason":"Typed A+B+ABI neutral handoff contract."}
+{"file":".trellis/spec/extraction/llm-extraction.md","reason":"LLM Lift/repair responsibilities and source-aware relift boundary."}
+{"file":".trellis/spec/verification/scrc-gate1.md","reason":"Strict Gate1 hard closure and official zero-intervention live policy."}
+{"file":".trellis/spec/verification/scrc-gate2.md","reason":"Digest-bound replay/scalar v2 protocol and fail-closed evidence rules."}
+{"file":".trellis/spec/lowering/index.md","reason":"Scalar reference versus production target lowering separation."}
