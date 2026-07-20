@@ -35,6 +35,7 @@ from intentir.extraction.lifters.scrc import (
     SCRCLiftError,
     extract_scrc_artifact,
 )
+from intentir.extraction.providers.client import ProviderError
 from intentir.extraction.providers.provider import get_provider
 from intentir.verify.gate1.compiler import (
     CompileCase,
@@ -1622,6 +1623,25 @@ def run_case(
                 max_repairs=args.lift_repairs,
                 effort=args.effort,
             )
+        except ProviderError as exc:
+            report["lift"] = {
+                "ok": False,
+                "attempts": [],
+                "failure": {
+                    "kind": "provider_request_failure",
+                    "diagnostic": str(exc),
+                    "lift_core_response_available": False,
+                    "candidate_available": False,
+                    "semantic_relift_eligible": False,
+                },
+            }
+            _record_stage_ms(stage_ms, "initial_lift", lift_started)
+            _progress(
+                "lift_provider_failed",
+                kernel=case.name,
+                diagnostic=str(exc),
+            )
+            return finish(2)
         except SCRCLiftError as exc:
             report["lift"] = {
                 "ok": False,

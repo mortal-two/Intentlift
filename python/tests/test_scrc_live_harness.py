@@ -17,6 +17,7 @@ from intentir.ir import (
     LogicalArgument,
     LogicalInterface,
 )
+from intentir.extraction.providers.client import ProviderError
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import (
     Gate1Status,
@@ -862,6 +863,72 @@ def test_live_case_wires_real_relifter_policy_into_gate1(monkeypatch) -> None:
         "normal_replay_writer"
     ] == 0
     assert code == 3
+
+
+def test_live_case_records_initial_provider_failure_as_terminal_evidence(
+    monkeypatch,
+) -> None:
+    case = build_case(_args("add"))
+    provider = ProviderConfig(
+        "test",
+        "https://example.invalid",
+        "secret",
+        "gpt-5.6-sol",
+        reasoning_effort="xhigh",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(live, "get_provider", lambda: provider)
+
+    def fail_extract(*args, **kwargs):
+        captured["provider"] = kwargs["provider"]
+        captured["effort"] = kwargs["effort"]
+        raise ProviderError(
+            "provider call failed after 1 tries: HTTP 408: stream closed"
+        )
+
+    monkeypatch.setattr(live, "extract_scrc_artifact", fail_extract)
+
+    class ForbiddenGate1Runner:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("provider failure must not reach Gate1")
+
+    monkeypatch.setattr(live, "Gate1Runner", ForbiddenGate1Runner)
+    args = Namespace(
+        model="gpt-5.6-sol",
+        effort="xhigh",
+        seed=20260720,
+        lift_repairs=2,
+        relift_rounds=3,
+        gate2_matrix=False,
+        gate2_seeds=None,
+    )
+
+    code, report = live.run_case(case, args)
+
+    assert code == 2
+    assert captured["provider"] == provider
+    assert captured["effort"] == "xhigh"
+    assert report["lift"] == {
+        "ok": False,
+        "attempts": [],
+        "failure": {
+            "kind": "provider_request_failure",
+            "diagnostic": (
+                "provider call failed after 1 tries: HTTP 408: stream closed"
+            ),
+            "lift_core_response_available": False,
+            "candidate_available": False,
+            "semantic_relift_eligible": False,
+        },
+    }
+    assert "gate1" not in report
+    assert report["relift_policy"]["semantic_guidance"][
+        "transport_failure_relift"
+    ] == "disabled_without_hard_diff"
+    assert report["performance"]["timing_ms"]["initial_lift"] is not None
+    assert report["performance"]["timing_ms"]["gate1_loop"] is None
+    assert report["performance"]["timing_ms"]["gate2"] is None
 
 
 def test_add_compatibility_case_keeps_existing_defaults() -> None:

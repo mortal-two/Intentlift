@@ -317,6 +317,9 @@ J gap / strategy gap / no-expressible-change 判断。没有语义依据时必�
 provider timeout、配额或 model cooldown 在尚未形成 replay candidate/hard diff 时不具备
 语义指导价值，不调用 Relift；它们单独记录为 replay provider unavailable。合法 replay
 被 AST policy 拒绝、编译失败或 hard mismatch 仍按现有 source-free 证据回流 Lift。
+初始 Lift 的 provider request failure 遵循相同原则：live harness 必须保存结构化
+`lift.failure`（无 LiftCore response、无 candidate、不可 semantic Relift）后终止该 case，
+不得以未捕获异常丢失报告，也不得把传输重试解释成 J repair。
 
 ## 7. TTIR 判定
 
