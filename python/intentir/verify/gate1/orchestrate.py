@@ -737,12 +737,12 @@ def _relift_request_for_round(
 class Relifter(Protocol):
     def relift(
         self,
-        artifact: Gate1Artifact,
+        artifact: Any,
         *,
         source_fingerprint: TTIRFingerprint | None,
         history: tuple[ReliftEvidence, ...],
         request: ReliftRequest,
-    ) -> Gate1Artifact: ...
+    ) -> Any: ...
 
 
 GATE1_STAGNATION_POLICY = "exact_artifact_and_hard_diff_v1"
@@ -886,7 +886,7 @@ class Gate1Termination:
 @dataclass(frozen=True)
 class Gate1ExecutionResult:
     status: Gate1Status
-    artifact: Gate1Artifact
+    artifact: Any
     source_compile: CompileResult | None
     source_fingerprint: TTIRFingerprint | None
     candidates: tuple[CandidateRecord, ...] = ()
@@ -3038,7 +3038,7 @@ class Gate1Runner:
     def run(
         self,
         source: KernelSource,
-        artifact: Gate1Artifact,
+        artifact: Any,
         case: CompileCase,
         registry: RuleRegistry,
         writer: ReplayWriter,
