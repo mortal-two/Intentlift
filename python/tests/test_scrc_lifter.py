@@ -9,12 +9,6 @@ import pytest
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters import scrc
 from intentir.ir.model import IntentFunction
-from intentir.verify.gate1.admission import (
-    validate_layer_b_predicates,
-    validate_opaque_lift_references,
-    validate_semantic_iota_extents,
-    validate_trusted_compiler_view,
-)
 from intentir.verify.gate1.composer import materialize_replay_plan
 from intentir.verify.gate1.model import Frontend, Gate1Artifact
 from intentir.verify.gate1.orchestrate import (
@@ -170,13 +164,14 @@ def _trusted_artifact() -> Gate1Artifact:
     )[0]
 
 
-def test_scrc_lift_core_prompt_assigns_pi_to_gate1_admission() -> None:
+def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     registry = default_triton_rule_registry()
     prompt = scrc.build_scrc_lift_instructions(registry)
     assert "Return one JSON object for LiftCore" in prompt
     assert "LiftCore response schema forbids plan/pi" in prompt
-    assert "Gate1 validates typed J/interface/C" in prompt
-    assert "deterministically composes canonical pi" in prompt
+    assert "same\nLift operation deterministically materializes pi" in prompt
+    assert "complete LiftArtifact to Gate1" in prompt
+    assert "Gate1 does not generate missing pi" in prompt
     assert "C.strategy rules" in prompt
     assert "program_coordinate_width=wide" in prompt
     assert "address_association=pointer_staged" in prompt
@@ -270,7 +265,7 @@ def test_scrc_lift_prompt_identity_tracks_registry_capabilities_without_api_text
     assert "m,n->mn" in prompt
     assert "encode a contraction rule choice" in prompt
     assert "Never emit plan/pi in LiftCore" in prompt
-    assert "Gate1 admission derives canonical pi" in prompt
+    assert "enclosing Lift finalizer adds canonical pi" in prompt
     assert "exact symbolic runtime extent name" in prompt
     assert "Never substitute a sampled" in prompt
     assert "J.intent Layer A must be invariant" in prompt
@@ -330,14 +325,14 @@ def _iota_extent_artifact(n, output_extent):
 def test_iota_extent_contract_accepts_static_boundaries_and_runtime_symbol(
     n, output_extent
 ) -> None:
-    validate_semantic_iota_extents(
+    scrc._validate_scrc_iota_extents(
         _iota_extent_artifact(n, output_extent)
     )
 
 
 def test_iota_extent_contract_rejects_sampled_and_random_mismatches() -> None:
     with pytest.raises(ValueError, match="keep runtime extents symbolic"):
-        validate_semantic_iota_extents(
+        scrc._validate_scrc_iota_extents(
             _iota_extent_artifact(1003, "size")
         )
 
@@ -346,12 +341,12 @@ def test_iota_extent_contract_rejects_sampled_and_random_mismatches() -> None:
         extent = rng.randint(1, 4096)
         wrong = extent + rng.choice((-1, 1))
         with pytest.raises(ValueError, match="iota extent"):
-            validate_semantic_iota_extents(
+            scrc._validate_scrc_iota_extents(
                 _iota_extent_artifact(wrong, extent)
             )
 
 
-def test_lift_driver_retains_sampled_iota_for_gate1_admission(
+def test_lift_driver_rejects_sampled_iota_extent_before_pi(
     monkeypatch,
 ) -> None:
     payload = _artifact_payload()
@@ -365,13 +360,14 @@ def test_lift_driver_retains_sampled_iota_for_gate1_admission(
     response = LLMReply(json.dumps(payload), "gpt-test", {"id": "bad-iota"})
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
-        "def add_kernel(...): pass",
-        "add_kernel",
-        max_repairs=0,
-    ).artifact
-    with pytest.raises(ValueError, match="iota extent must equal"):
-        validate_semantic_iota_extents(artifact)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "def add_kernel(...): pass",
+            "add_kernel",
+            max_repairs=0,
+        )
+
+    assert "iota extent must equal" in str(caught.value)
 
 
 def test_compiler_view_accepts_rank_zero_tensor_pointer() -> None:
@@ -398,18 +394,14 @@ def test_compiler_view_preserves_disabled_optional_none_argument() -> None:
     assert view.to_json()["schedule_values"] == {"BIAS_TYPE": "none"}
 
 
-def test_scrc_extraction_requires_unmaterialized_liftcore() -> None:
+def test_scrc_extraction_rejects_an_incomplete_lift_artifact() -> None:
     payload = _artifact_payload()
     payload["plan"] = {"steps": []}
     incomplete = Gate1Artifact.from_json(payload)
     provenance = scrc.SCRCProvenance("gpt-test", "prompt", 1)
 
-    assert scrc.SCRCExtraction(incomplete, provenance).artifact is incomplete
-    complete = materialize_replay_plan(
-        incomplete, default_triton_rule_registry()
-    )[0]
-    with pytest.raises(ValueError, match="must not materialize pi"):
-        scrc.SCRCExtraction(complete, provenance)
+    with pytest.raises(ValueError, match="complete LiftArtifact"):
+        scrc.SCRCExtraction(incomplete, provenance)
 
 
 def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
@@ -448,8 +440,8 @@ def test_scrc_lift_driver_attaches_source_and_provenance(monkeypatch) -> None:
     source = "@triton.jit\ndef add_kernel(...): pass"
     result = scrc.extract_scrc_artifact(source, "add_kernel", max_repairs=0)
     assert result.artifact.source == source
-    assert result.artifact.plan.steps == []
-    assert result.artifact.compose_provenance is None
+    assert result.artifact.plan.steps
+    assert result.artifact.compose_provenance is not None
     assert result.artifact.provenance[0].model == "gpt-test"
     assert result.provenance.response_id == "resp-test"
     assert result.provenance.response_ids == ("resp-test",)
@@ -532,7 +524,7 @@ def test_scrc_lift_rejects_provider_supplied_pi(monkeypatch) -> None:
     assert "must not contain plan/pi" in str(caught.value)
 
 
-def test_semantic_relift_may_change_strategy_before_gate1_composes_pi(
+def test_semantic_relift_may_change_strategy_and_always_recomposes_pi(
     monkeypatch,
 ) -> None:
     payload = _artifact_payload()
@@ -563,29 +555,28 @@ def test_semantic_relift_may_change_strategy_before_gate1_composes_pi(
     assert result.interface == trusted.interface
     assert result.schedule == trusted.schedule
     assert result.strategy.to_json() == payload["strategy"]
-    assert result.plan.steps == []
-    assert result.compose_provenance is None
-    materialized = materialize_replay_plan(
-        result, default_triton_rule_registry()
-    )[0]
-    assert any(
-        step.rule == "bind_wide_program_domain"
-        for step in materialized.plan.steps
-    )
+    assert any(step.rule == "bind_wide_program_domain" for step in result.plan.steps)
+    assert result.compose_provenance is not None
 
 
-def test_gate1_admission_rejects_compiler_view_drift(monkeypatch) -> None:
+def test_scrc_lift_rejects_compiler_view_drift(monkeypatch) -> None:
     response = LLMReply(
         json.dumps(_artifact_payload()), "gpt-test", {"id": "resp-drift"}
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
     view = scrc.SCRCCompilerView({"BLOCK": 128}, (), ())
 
-    artifact = scrc.extract_scrc_artifact(
-        "source", "add_kernel", compiler_view=view, max_repairs=0
-    ).artifact
-    with pytest.raises(ValueError, match="schedule.values differs"):
-        validate_trusted_compiler_view(artifact, view)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source",
+            "add_kernel",
+            compiler_view=view,
+            max_repairs=0,
+        )
+
+    assert "schedule.values differs from trusted compiler view" in str(
+        caught.value
+    )
 
 
 def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
@@ -635,12 +626,9 @@ def test_scrc_lift_accepts_runtime_scalar_tensor_ref(monkeypatch) -> None:
     )
     assert eps.tensor_ref == "eps"
     assert result.artifact.j.intent.inputs[-1].shape == []
-    materialized = materialize_replay_plan(
-        result.artifact, default_triton_rule_registry()
-    )[0]
     assert any(
         step.rule == "bind_runtime_scalar" and step.refs == ["eps"]
-        for step in materialized.plan.steps
+        for step in result.artifact.plan.steps
     )
 
 
@@ -701,18 +689,21 @@ def test_scrc_lift_preserves_exact_typed_inactive_tensor_abi(monkeypatch) -> Non
     )
 
 
-def test_gate1_admission_reports_inactive_tensor_shape_rank_drift(monkeypatch) -> None:
+def test_scrc_lift_reports_inactive_tensor_shape_rank_drift(monkeypatch) -> None:
     payload, view = _inactive_tensor_payload_and_view(tensor_shape=[1, 1])
     response = LLMReply(
         json.dumps(payload), "gpt-test", {"id": "resp-inactive-rank-drift"}
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
-        "source", "add_kernel", compiler_view=view, max_repairs=0
-    ).artifact
-    with pytest.raises(ValueError, match="wrong J rank"):
-        validate_trusted_compiler_view(artifact, view)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source", "add_kernel", compiler_view=view, max_repairs=0
+        )
+
+    diagnostic = str(caught.value)
+    assert "J shape [1, 1] (rank 2)" in diagnostic
+    assert "compiler-view shape [1] (rank 1)" in diagnostic
 
 
 def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
@@ -761,7 +752,7 @@ def test_scrc_lift_rejects_non_scalar_semantic_tensor_ref(monkeypatch) -> None:
     assert "tensor_ref must have shape=[]" in str(caught.value)
 
 
-def test_gate1_admission_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
+def test_scrc_lift_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
     payload = _artifact_payload()
     payload["j"]["intent"]["intent_function"]["inputs"][0]["dtype"] = "f16"
     payload["interface"]["parameters"][0]["dtype"] = "f16"
@@ -785,14 +776,15 @@ def test_gate1_admission_rejects_j_tensor_dtype_drift(monkeypatch) -> None:
         ("BLOCK",),
     )
 
-    artifact = scrc.extract_scrc_artifact(
-        "source", "add_kernel", compiler_view=view, max_repairs=0
-    ).artifact
-    with pytest.raises(ValueError, match="parameter 'a_ptr' dtype differs"):
-        validate_trusted_compiler_view(artifact, view)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact(
+            "source", "add_kernel", compiler_view=view, max_repairs=0
+        )
+
+    assert "interface parameter 'a_ptr' dtype differs" in str(caught.value)
 
 
-def test_gate1_admission_rejects_concrete_c_inside_j(monkeypatch) -> None:
+def test_scrc_lift_rejects_concrete_c_inside_j(monkeypatch) -> None:
     payload = _artifact_payload()
     payload["j"]["intent"]["intent_function"]["layer_c"] = {
         "tile_size": 64
@@ -802,14 +794,13 @@ def test_gate1_admission_rejects_concrete_c_inside_j(monkeypatch) -> None:
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
-        "source", "add_kernel", max_repairs=0
-    ).artifact
-    with pytest.raises(ValueError, match="J.intent.layer_c must be empty"):
-        validate_semantic_iota_extents(artifact)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact("source", "add_kernel", max_repairs=0)
+
+    assert "J.intent.layer_c must be empty" in str(caught.value)
 
 
-def test_gate1_admission_rejects_semantic_names_in_opaque_reference_ids(
+def test_scrc_lift_rejects_semantic_names_in_opaque_reference_ids(
     monkeypatch,
 ) -> None:
     payload = _artifact_payload()
@@ -821,11 +812,11 @@ def test_gate1_admission_rejects_semantic_names_in_opaque_reference_ids(
     )
     monkeypatch.setattr(scrc, "call_responses", lambda *args, **kwargs: response)
 
-    artifact = scrc.extract_scrc_artifact(
-        "source", "add_kernel", max_repairs=0
-    ).artifact
-    with pytest.raises(ValueError, match="must use declaration-order opaque ids"):
-        validate_opaque_lift_references(artifact)
+    with pytest.raises(scrc.SCRCLiftError) as caught:
+        scrc.extract_scrc_artifact("source", "add_kernel", max_repairs=0)
+
+    assert "must use declaration-order opaque ids" in str(caught.value)
+    assert "a_load" in str(caught.value)
 
 
 def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
@@ -851,15 +842,17 @@ def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
     assert "attempt 2" in str(caught.value)
 
 
-def test_scrc_lift_retains_nonportable_domain_for_gate1_relift(
+def test_scrc_lift_repairs_nonportable_domain_without_rewriting_it(
     monkeypatch,
 ) -> None:
     invalid_payload = _artifact_payload()
     invalid_domain = "b = grid_axis(0), 0 <= b < 2048"
     invalid_payload["j"]["boundary"]["domains"]["d0"] = invalid_domain
+    valid_payload = _artifact_payload()
     replies = iter(
         [
             LLMReply(json.dumps(invalid_payload), "gpt-test", {"id": "resp-bad"}),
+            LLMReply(json.dumps(valid_payload), "gpt-test", {"id": "resp-good"}),
         ]
     )
     conversations: list[str] = []
@@ -874,12 +867,15 @@ def test_scrc_lift_retains_nonportable_domain_for_gate1_relift(
         "source", "add_kernel", max_repairs=1
     )
 
-    assert result.artifact.j.boundary.domains == {"d0": invalid_domain}
-    assert result.provenance.repairs == ()
+    assert result.artifact.j.boundary.domains == {"d0": "0 <= i < N"}
+    assert result.provenance.repairs
+    assert "Boundary.domains.d0 must be a portable boolean" in (
+        result.provenance.repairs[0]
+    )
     assert invalid_domain in json.dumps(invalid_payload)
-    assert len(conversations) == 1
-    with pytest.raises(ValueError, match="portable boolean"):
-        validate_layer_b_predicates(result.artifact)
+    assert "wrong_fill_delta" not in " ".join(result.provenance.repairs)
+    assert "Re-emit the complete corrected LiftArtifact JSON only" in conversations[1]
+    assert "Boundary.domains.d0 must be a portable boolean" in conversations[1]
 
 
 def test_real_relifter_sees_source_evidence_but_never_replay_source(

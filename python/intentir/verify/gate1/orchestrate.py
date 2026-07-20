@@ -29,7 +29,6 @@ from .admission import (
     validate_layer_b_predicates,
     validate_opaque_lift_references,
     validate_semantic_iota_extents,
-    validate_trusted_compiler_view,
 )
 from .compare import TTIRComparator, TTIRComparison
 from .composer import (
@@ -3045,7 +3044,6 @@ class Gate1Runner:
         *,
         relifter: Relifter | None = None,
         specialization_family: Any | None = None,
-        trusted_compiler_view: Mapping[str, Any] | Any | None = None,
     ) -> Gate1ExecutionResult:
         if not isinstance(registry, RuleRegistry):
             registry = RuleRegistry.from_json(registry)
@@ -3113,7 +3111,6 @@ class Gate1Runner:
                             "Gate1 CompileCase"
                         )
                 _validate_artifact_compile_contract(source, current, compile_case)
-                validate_trusted_compiler_view(current, trusted_compiler_view)
                 admission_passes.append(admission_category)
                 admission_category = Gate1AdmissionCategory.PI_CAPABILITY
                 submitted_compose_provenance = current.compose_provenance

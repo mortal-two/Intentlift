@@ -112,15 +112,21 @@ def _sanitized_response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
 
 @dataclass(frozen=True)
 class SCRCExtraction:
-    """Unmaterialized LiftCore proposal consumed by Gate1 admission."""
+    """Completed Lift result consumed by Gate1.
+
+    ``artifact`` already contains Lift-owned J, C, canonical pi and compose
+    provenance.  Gate1 may recompute pi to verify integrity, but must never be
+    responsible for completing a partial Lift result.
+    """
 
     artifact: Gate1Artifact
     provenance: SCRCProvenance
 
     def __post_init__(self) -> None:
-        if self.artifact.plan.steps or self.artifact.compose_provenance is not None:
+        if self.artifact.compose_provenance is None:
             raise ValueError(
-                "SCRCExtraction must not materialize pi before Gate1 admission"
+                "SCRCExtraction requires a complete LiftArtifact with "
+                "Lift-generated pi provenance"
             )
 
 
@@ -153,11 +159,6 @@ class SCRCReliftContext:
 def _source_fingerprint_prompt_view(source_fingerprint: Any) -> dict[str, Any]:
     """Keep deterministic semantic coordinates, omit the full edge graph."""
 
-    if source_fingerprint is None:
-        return {
-            "available": False,
-            "reason": "artifact admission failed before replay comparison",
-        }
     payload = source_fingerprint.to_dict()
     digest = getattr(source_fingerprint, "digest", None)
     if not isinstance(digest, str) or not digest:
@@ -424,9 +425,9 @@ def build_scrc_lift_instructions(registry: RuleRegistry) -> str:
     return f"""You are the SCRC lift agent. You may read the source kernel.
 Return one JSON object for LiftCore. Do not emit prose or markdown.
 LiftCore is the source-aware LLM substage of one complete Lift operation.
-The LiftCore response schema forbids plan/pi. Extraction retains the proposal;
-Gate1 validates typed J/interface/C and deterministically composes canonical pi
-before any source-blind writer call.
+The LiftCore response schema forbids plan/pi; after J/C validation, the same
+Lift operation deterministically materializes pi and provenance and returns a
+complete LiftArtifact to Gate1. Gate1 does not generate missing pi.
 
 J.intent must follow this IntentIR vocabulary:
 {INTENTIR_SCHEMA}
@@ -691,7 +692,7 @@ C.strategy rules (closed, override-only vocabulary):
   evidence rather than invented; accumulator_dtype must be one of
   f16/bf16/f32/f64/i1/i8/i16/i32/i64. Never emit plan/pi in LiftCore, even as an
   empty object;
-  Gate1 admission derives canonical pi and reports mechanism gaps;
+  the enclosing Lift finalizer adds canonical pi to the completed LiftArtifact;
 - add address_association=pointer_staged only when the source keeps pointer + scalar
   base + lane tile as staged pointer additions. In particular, an inline source
   access such as `load(ptr + row*N + lane)` or
@@ -842,8 +843,8 @@ reports to correct the semantic archive J and C.strategy. The deterministic
 composer will rebuild pi after this response is accepted.
 
 RELIFT_EVIDENCE.request records why the outer loop was entered.  The current
-authorized triggers are artifact_admission_failed, replay_generation_failed,
-replay_compile_failed, replay_evaluation_failed and normal_no_closure.  No replay candidate is ever
+authorized triggers are replay_generation_failed, replay_compile_failed,
+replay_evaluation_failed and normal_no_closure.  No replay candidate is ever
 patched in place.  Use the sanitized failure diagnosis or deterministic TTIR
 comparison to decide whether J omitted/misstated source semantics or
 C.strategy selected the wrong reviewed implementation mechanism. Scores are
@@ -938,46 +939,27 @@ rewrite global `iota(n)` as `block = iota / BLOCK`, `base = block * BLOCK`,
 `lane = iota - base`, even when distributing later arithmetic would be
 algebraically equivalent.
 
-For normal replay/hard-difference Relift you may change exactly these fields:
+You may change exactly these fields:
 - j
 - strategy
 - location_map
 
 You must copy interface and schedule byte-for-byte as JSON values from
-TRUSTED_IMMUTABLE_FIELDS. For artifact_admission_failed only, you may correct
-interface and schedule against SOURCE and TRUSTED_COMPILER_VIEW; Gate1 will
-re-run every check and no deterministic code rewrites them. Replay source is deliberately not
+TRUSTED_IMMUTABLE_FIELDS.  Do not infer, improve, reorder or otherwise edit
+them.  The driver rejects any drift.  Replay source is deliberately not
 provided; do not invent or discuss a previous replay implementation. Emit the
 complete corrected LiftArtifact JSON only, without plan/pi.
 """
     )
-    fields = {
-        "j": trusted_artifact.j.to_json(),
+    immutable = {
         "interface": trusted_artifact.interface.to_json(),
         "schedule": trusted_artifact.schedule.to_json(),
+    }
+    editable = {
+        "j": trusted_artifact.j.to_json(),
         "strategy": trusted_artifact.strategy.to_json(),
         "location_map": trusted_artifact.location_map.to_json(),
     }
-    admission_relift = (
-        context.request.get("trigger") == "artifact_admission_failed"
-    )
-    immutable = (
-        {}
-        if admission_relift
-        else {
-            "interface": fields["interface"],
-            "schedule": fields["schedule"],
-        }
-    )
-    editable = (
-        fields
-        if admission_relift
-        else {
-            "j": fields["j"],
-            "strategy": fields["strategy"],
-            "location_map": fields["location_map"],
-        }
-    )
     user = (
         f'Relift the kernel with kernel_id "{name_hint}".\n\n'
         "TRUSTED_IMMUTABLE_FIELDS:\n"
@@ -1264,49 +1246,26 @@ def extract_scrc_artifact(
                 ).to_json(),
             ]
             artifact = Gate1Artifact.from_json(payload)
-            if trusted_artifact is not None:
-                admission_relift = (
-                    relift_context is not None
-                    and relift_context.request.get("trigger")
-                    == "artifact_admission_failed"
+            if artifact.j.intent.layer_c:
+                raise ValueError(
+                    "J.intent.layer_c must be empty; concrete C belongs only "
+                    "in schedule.values"
                 )
-                if not admission_relift:
-                    if artifact.interface.to_json() != (
-                        trusted_artifact.interface.to_json()
-                    ):
-                        raise ValueError(
-                            "semantic relift changed trusted interface"
-                        )
-                    if artifact.schedule.to_json() != (
-                        trusted_artifact.schedule.to_json()
-                    ):
-                        raise ValueError(
-                            "semantic relift changed trusted schedule C"
-                        )
-            return SCRCExtraction(
-                artifact,
-                SCRCProvenance(
-                    reply.model,
-                    prompt_sha,
-                    attempt + 1,
-                    response_id=reply.raw.get("id"),
-                    repairs=tuple(repairs),
-                    response_ids=tuple(
-                        response_id
-                        for response_id in (
-                            *(item.response_id for item in rejected_attempts),
-                            reply.raw.get("id"),
-                        )
-                        if isinstance(response_id, str) and response_id
-                    ),
-                    response_model=(
-                        reply.raw.get("model")
-                        if isinstance(reply.raw.get("model"), str)
-                        else None
-                    ),
-                    usage=_sanitized_response_usage(reply.raw),
-                ),
-            )
+            _validate_scrc_iota_extents(artifact)
+            _validate_opaque_lift_references(artifact)
+            if trusted_artifact is not None:
+                if artifact.interface.to_json() != (
+                    trusted_artifact.interface.to_json()
+                ):
+                    raise ValueError(
+                        "semantic relift changed trusted interface"
+                    )
+                if artifact.schedule.to_json() != (
+                    trusted_artifact.schedule.to_json()
+                ):
+                    raise ValueError(
+                        "semantic relift changed trusted schedule C"
+                    )
             if compiler_view is not None:
                 if compiler_view.parameter_order:
                     actual_order = [
@@ -1589,14 +1548,13 @@ class ResponsesSCRCRelifter:
         self,
         artifact: Gate1Artifact,
         *,
-        source_fingerprint: "TTIRFingerprint | None",
+        source_fingerprint: "TTIRFingerprint",
         history: tuple["ReliftEvidence", ...],
         request: "ReliftRequest",
     ) -> Gate1Artifact:
         relift_round = len(self._records) + 1
         request_json = request.to_json()
         if request_json.get("trigger") not in {
-            "artifact_admission_failed",
             "replay_generation_failed",
             "replay_compile_failed",
             "replay_evaluation_failed",
