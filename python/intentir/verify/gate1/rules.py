@@ -833,6 +833,13 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "construction_phase": 55,
         "required_fields": ["attrs.fn", "attrs.axes"],
     },
+    "fuse_reduction_tile_outputs": {
+        "strategy_family": "reduction_tile_fusion",
+        "strategy_choice": "shared_producer_outputs",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 56,
+        "required_fields": ["attrs.fn", "attrs.axes"],
+    },
     "realize_broadcast": {
         "target_kinds": ["boundary.broadcast"],
         "construction_phase": 55,
@@ -1346,6 +1353,63 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "the loop after selecting this card.",
                 "Do not use this card without the same target's reviewed "
                 "reduction_tiling=multi_tile_accumulate binding.",
+            ],
+        ),
+        _default_triton_card(
+            "fuse_reduction_tile_outputs",
+            Frontend.TRITON,
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_tile_fusion",
+            applies_to=["reduce", "output_mappings", "boundary.accesses"],
+            reads=[
+                "target runtime multi-tile reduction",
+                "reduction operand producer closure",
+                "non-reduced outputs sharing that per-tile producer closure",
+                "their boundary output mappings, accesses, effects, and predicates",
+                "J operation and replay-plan order within the shared tile body",
+            ],
+            api_mapping={
+                "single_tile_body": (
+                    "inside each selected reduction_tiling runtime-loop iteration, "
+                    "realize the shared per-tile producer closure once and use its "
+                    "values for both the local partial reduction and every declared "
+                    "non-reduced output selected by this strategy"
+                ),
+                "side_outputs": (
+                    "keep the selected non-reduced output computations and their "
+                    "declared stores inside that same tile iteration, using exactly "
+                    "their Boundary predicates and effects"
+                ),
+                "shared_accesses": (
+                    "form each shared tile address, mask, and load once per iteration; "
+                    "do not emit an eager copy of that access/producer chain before "
+                    "the loop or a second loop for the side output"
+                ),
+                "reduction_result": (
+                    "update only the reviewed associative reduction carry in the "
+                    "loop, then realize the reduced scalar/output consumers after "
+                    "the loop as required by J"
+                ),
+            },
+            example=(
+                "When one normalized row-tile loop loads two inputs, derives both "
+                "a tile-shaped side output and a scalar partial reduction, store "
+                "the side output and update the carry from the same loaded tile."
+            ),
+            pitfalls=[
+                "This is source-realization fusion, not a new fused semantic op; keep "
+                "the whole-tensor J DAG, outputs, accesses, and effects unchanged.",
+                "Select it only when source evidence places the complete side-output "
+                "path in the same normalized runtime tile loop and it shares the "
+                "reduction's per-tile producer closure.",
+                "Do not use it when the source computes the side output before the "
+                "loop, after the loop, or in a separate loop.",
+                "Do not duplicate shared loads or producer operations outside the "
+                "loop, and do not move the final reduced output store into the loop.",
+                "The only loop-carried value remains the reviewed reduction carry; "
+                "additional semantic state requires a J loop instead.",
+                "This choice requires reduction_tiling=multi_tile_accumulate on the "
+                "same reduction target.",
             ],
         ),
         _default_triton_card(

@@ -2021,6 +2021,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_flattened_reduce",
         "realize_multi_tile_reduce",
         "stage_reduction_preheader",
+        "fuse_reduction_tile_outputs",
         "realize_k_tiled_dot",
         "realize_outer_product",
     } <= {card.id for card in first.cards}
@@ -2034,6 +2035,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_flattened_reduce",
         "realize_multi_tile_reduce",
         "stage_reduction_preheader",
+        "fuse_reduction_tile_outputs",
     }
     assert all(
         card.override_family is not None
@@ -2088,6 +2090,16 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert any(
         "not general LICM" in item
         for item in cards["stage_reduction_preheader"].pitfalls
+    )
+    assert cards["fuse_reduction_tile_outputs"].override_family == (
+        "reduction_tile_fusion"
+    )
+    assert "shared per-tile producer closure once" in cards[
+        "fuse_reduction_tile_outputs"
+    ].api_mapping["single_tile_body"]
+    assert any(
+        "separate loop" in item
+        for item in cards["fuse_reduction_tile_outputs"].pitfalls
     )
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads

@@ -341,6 +341,7 @@ def _strategy_schema() -> dict[str, Any]:
             "reduction_preheader_staging",
             "stage_invariant_access_scaffolding",
         ),
+        ("reduction_tile_fusion", "shared_producer_outputs"),
     ]
     variants = [
         _closed_object(

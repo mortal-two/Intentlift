@@ -765,7 +765,7 @@ def test_materialized_artifact_persists_exact_compose_provenance() -> None:
 
 def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
     registry = default_triton_rule_registry()
-    assert len(registry.cards) == 27
+    assert len(registry.cards) == 28
     assert "realize_synchronize" in registry
     artifact, result = materialize_replay_plan(_iota_artifact(), registry)
     iota_steps = [

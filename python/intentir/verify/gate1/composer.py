@@ -280,6 +280,7 @@ _LEGACY_TARGET_KINDS: dict[str, tuple[str, ...]] = {
     "realize_flattened_reduce": ("intent_op:reduce",),
     "realize_multi_tile_reduce": ("intent_op:reduce",),
     "stage_reduction_preheader": ("intent_op:reduce",),
+    "fuse_reduction_tile_outputs": ("intent_op:reduce",),
     "realize_broadcast": ("boundary.broadcast",),
     "realize_k_tiled_dot": ("intent_op:contraction",),
     "realize_outer_product": ("intent_op:contraction",),
@@ -307,10 +308,18 @@ _LEGACY_STRATEGY: dict[str, tuple[str, str]] = {
         "reduction_preheader_staging",
         "stage_invariant_access_scaffolding",
     ),
+    "fuse_reduction_tile_outputs": (
+        "reduction_tile_fusion",
+        "shared_producer_outputs",
+    ),
 }
 
 _SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset(
-    {"mask_materialization", "reduction_preheader_staging"}
+    {
+        "mask_materialization",
+        "reduction_preheader_staging",
+        "reduction_tile_fusion",
+    }
 )
 
 _LEGACY_PHASE: dict[str, int] = {
@@ -332,6 +341,7 @@ _LEGACY_PHASE: dict[str, int] = {
     "realize_flattened_reduce": 60,
     "realize_multi_tile_reduce": 60,
     "stage_reduction_preheader": 55,
+    "fuse_reduction_tile_outputs": 56,
     "realize_k_tiled_dot": 60,
     "realize_outer_product": 60,
     "realize_indexed_access": 60,
@@ -1219,7 +1229,10 @@ def _add_supplemental_strategy_items(
                 and _binding_matches_item(binding, item)
             ]
             target_description = "access effects"
-        elif binding.family == "reduction_preheader_staging":
+        elif binding.family in {
+            "reduction_preheader_staging",
+            "reduction_tile_fusion",
+        }:
             targets = [
                 item
                 for item in items

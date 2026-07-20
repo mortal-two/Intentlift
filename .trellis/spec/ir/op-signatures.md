@@ -108,6 +108,13 @@ SCRC 中 `reduce.attrs.axes` 始终是全局逻辑张量轴；前端局部 tile 
 identity-seeded carry 的规范化循环；也不能因当前 specialization 只有一个 tile 而折叠
 源码 runtime loop。
 
+若该规范化 loop 还从同一 per-tile producer closure 产生 non-reduced output，C 可显式
+选择 `reduction_tile_fusion=shared_producer_outputs`，使 replay 在每轮共享一次
+address/load/producer，并在同一轮完成 side-output store 与 local partial accumulation。
+这不创建 named/fused J op，也不改变 Layer-A 输出或 Layer-B effect；该 choice 必须与
+同 target 的 `reduction_tiling=multi_tile_accumulate` 同时存在。source 在 loop 外或另一
+loop 产生输出、producer 不共享、或有额外 loop-carried semantic state 时不得选择。
+
 floating `reduce(fn=max/min)` 的 NaN 行为采用 number-preference 语义，与 Triton
 TTIR 的 `arith.maxnumf/minnumf` 一致：只有一个 operand 为 NaN 时选择数值 operand，
 两者均为 NaN 时结果仍为 NaN。production CPU/GPU lowering 必须保持这一语义，

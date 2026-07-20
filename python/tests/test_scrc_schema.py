@@ -63,6 +63,7 @@ def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
             "reduction_preheader_staging",
             "stage_invariant_access_scaffolding",
         ),
+        ("reduction_tile_fusion", "shared_producer_outputs"),
     }
     assert all(variant["additionalProperties"] is False for variant in variants)
     tiled = next(

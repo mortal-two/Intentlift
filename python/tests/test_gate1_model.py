@@ -705,6 +705,10 @@ def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
             "reduction_preheader_staging",
             "stage_invariant_access_scaffolding",
         ),
+        "fuse_reduction_tile_outputs": (
+            "reduction_tile_fusion",
+            "shared_producer_outputs",
+        ),
     }
     cards = {card.id: card for card in registry.cards}
     assert cards["realize_masked_access"].required_fields == ["predicate"]
@@ -932,6 +936,71 @@ def test_reduction_preheader_staging_is_typed_orthogonal_c_strategy() -> None:
                 [
                     replace(tiling, target_ref=invalid_target),
                     replace(staging, target_ref=invalid_target),
+                ]
+            ),
+        )
+
+
+def test_reduction_tile_fusion_is_typed_orthogonal_c_strategy() -> None:
+    tiling = StrategyBinding(
+        "reduce_sum_node",
+        StrategyFamily.REDUCTION_TILING,
+        StrategyChoice.MULTI_TILE_ACCUMULATE,
+        tile_slot="BLOCK_N",
+        accumulator_dtype="f32",
+    )
+    fusion = StrategyBinding(
+        "reduce_sum_node",
+        StrategyFamily.REDUCTION_TILE_FUSION,
+        StrategyChoice.SHARED_PRODUCER_OUTPUTS,
+    )
+    with pytest.raises(SchemaError, match="requires reduction_tiling"):
+        StrategySpec([fusion])
+
+    artifact = replace(
+        _artifact(),
+        plan=ReplayPlan([]),
+        strategy=StrategySpec([tiling, fusion]),
+    )
+    materialized, result = materialize_replay_plan(
+        artifact, default_triton_rule_registry()
+    )
+    reduction_steps = [
+        step.rule
+        for step in materialized.plan.steps
+        if step.target_ref == "reduce_sum_node"
+    ]
+
+    assert reduction_steps == [
+        "fuse_reduction_tile_outputs",
+        "realize_multi_tile_reduce",
+    ]
+    assert result.provenance.coverage == 1.0
+    replay_view = build_normal_rewriter_view(
+        materialized, default_triton_rule_registry()
+    )
+    assert {
+        item["family"] for item in replay_view["strategy"]["bindings"]
+    } == {"reduction_tile_fusion", "reduction_tiling"}
+
+    card = default_triton_rule_registry().get(
+        "fuse_reduction_tile_outputs"
+    )
+    assert "shared per-tile producer closure once" in card.api_mapping[
+        "single_tile_body"
+    ]
+    assert "same tile iteration" in card.api_mapping["side_outputs"]
+    assert any(
+        "not a new fused semantic op" in item for item in card.pitfalls
+    )
+
+    with pytest.raises(SchemaError, match="is not valid for family"):
+        replace(
+            _artifact(),
+            strategy=StrategySpec(
+                [
+                    replace(tiling, target_ref="input_masked_load"),
+                    replace(fusion, target_ref="input_masked_load"),
                 ]
             ),
         )
@@ -1218,6 +1287,8 @@ def test_artifact_scan_and_prompts_preserve_isolation() -> None:
         "reduction_preheader_staging=stage_invariant_access_scaffolding"
         in normal
     )
+    assert "reduction_tile_fusion=shared_producer_outputs" in normal
+    assert "maximal per-tile" in normal
     assert "raw_pointer + outer_index" in normal
     assert "tile-dependent address, mask or load" in normal
     assert "never collapse the loop" in normal

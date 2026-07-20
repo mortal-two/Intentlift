@@ -1063,7 +1063,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "j.intent.loop.body/carry/yield",
             "j.boundary.output_mappings",
         ),
-        "strategy_families": (),
+        "strategy_families": ("reduction_tile_fusion",),
         "semantic_question": (
             "Re-derive the whole-tensor algebra from SOURCE and compare it "
             "with J. A lowering-only TTIR op count is not by itself a J op."
@@ -1081,6 +1081,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "address_association",
             "program_coordinate_width",
             "reduction_preheader_staging",
+            "reduction_tile_fusion",
         ),
         "semantic_question": (
             "Does J preserve semantic producer/consumer dependencies, loop "
@@ -1098,6 +1099,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "reduction_call_shape",
             "reduction_tiling",
             "reduction_preheader_staging",
+            "reduction_tile_fusion",
         ),
         "semantic_question": (
             "Check reducer semantics, axis, identity/fill, carried state and "
@@ -1115,6 +1117,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
         "strategy_families": (
             "mask_materialization",
             "address_association",
+            "reduction_tile_fusion",
         ),
         "semantic_question": (
             "Check observable read/write/atomic effects, masks, fill values, "

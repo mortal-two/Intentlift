@@ -49,6 +49,16 @@ Hard constraints:
    loop and capture them into it; do not rebuild raw_pointer + outer_index *
    stride in the loop. Never move a tile-dependent address, mask or load to the
    preheader, and never collapse the loop for a one-tile specialization.
+   If pi additionally selects
+   reduction_tile_fusion=shared_producer_outputs, realize the maximal per-tile
+   J producer closure shared by the reduction and the selected non-reduced
+   outputs exactly once inside each runtime-loop iteration. Keep those outputs'
+   computations and declared stores in the same iteration with their exact
+   Boundary predicates/effects, and feed the same produced values to the local
+   partial reduction. Do not emit an eager copy of the shared loads/producers
+   before the loop or a second side-output loop. Only the associative reduction
+   carry crosses iterations; realize consumers of the final reduced value after
+   the loop.
 7. boundary.broadcasts.axes are global semantic axes, never local Triton axis
    numbers. A semantic broadcast may be implicit on a local tile; do not emit an
    explicit rank change unless the selected rule's global-to-local projection

@@ -182,6 +182,8 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
         "reduction_preheader_staging=stage_invariant_access_scaffolding"
         in prompt
     )
+    assert "reduction_tile_fusion=shared_producer_outputs" in prompt
+    assert "shared per-tile producer" in prompt
     assert "shared lane/range basis before the runtime loop" in prompt
     assert "Tile-start-plus-lane offsets" in prompt
     assert "complete ordered ABI capability" in prompt
@@ -257,6 +259,7 @@ def test_scrc_lift_prompt_identity_tracks_registry_capabilities_without_api_text
     assert "tle.program_id" in prompt
     assert "reduction_call_shape=flattened" in prompt
     assert "reduction_tiling=multi_tile_accumulate" in prompt
+    assert "reduction_tile_fusion=shared_producer_outputs" in prompt
     assert "only loop-carried value" in prompt
     assert "explicit source axis uses the" in prompt
     assert "m,n->mn" in prompt

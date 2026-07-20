@@ -669,6 +669,7 @@ class StrategyFamily(str, Enum):
     REDUCTION_CALL_SHAPE = "reduction_call_shape"
     REDUCTION_TILING = "reduction_tiling"
     REDUCTION_PREHEADER_STAGING = "reduction_preheader_staging"
+    REDUCTION_TILE_FUSION = "reduction_tile_fusion"
 
 
 class StrategyChoice(str, Enum):
@@ -687,6 +688,7 @@ class StrategyChoice(str, Enum):
     STAGE_INVARIANT_ACCESS_SCAFFOLDING = (
         "stage_invariant_access_scaffolding"
     )
+    SHARED_PRODUCER_OUTPUTS = "shared_producer_outputs"
 
 
 _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
@@ -697,6 +699,9 @@ _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
     StrategyFamily.REDUCTION_TILING: StrategyChoice.MULTI_TILE_ACCUMULATE,
     StrategyFamily.REDUCTION_PREHEADER_STAGING: (
         StrategyChoice.STAGE_INVARIANT_ACCESS_SCAFFOLDING
+    ),
+    StrategyFamily.REDUCTION_TILE_FUSION: (
+        StrategyChoice.SHARED_PRODUCER_OUTPUTS
     ),
 }
 
@@ -2432,11 +2437,22 @@ class StrategySpec(StrictJSONMixin):
             for binding in self.bindings
             if binding.family is StrategyFamily.REDUCTION_PREHEADER_STAGING
         }
-        missing_tiling = sorted(preheader_targets - tiled_targets)
-        if missing_tiling:
+        fused_output_targets = {
+            binding.target_ref
+            for binding in self.bindings
+            if binding.family is StrategyFamily.REDUCTION_TILE_FUSION
+        }
+        missing_preheader_tiling = sorted(preheader_targets - tiled_targets)
+        if missing_preheader_tiling:
             raise SchemaError(
                 "reduction_preheader_staging requires reduction_tiling for "
-                "the same target(s): " + ", ".join(missing_tiling)
+                "the same target(s): " + ", ".join(missing_preheader_tiling)
+            )
+        missing_fusion_tiling = sorted(fused_output_targets - tiled_targets)
+        if missing_fusion_tiling:
+            raise SchemaError(
+                "reduction_tile_fusion requires reduction_tiling for the same "
+                "target(s): " + ", ".join(missing_fusion_tiling)
             )
 
     @classmethod
@@ -2901,6 +2917,7 @@ class Gate1Artifact(StrictJSONMixin):
             StrategyFamily.REDUCTION_CALL_SHAPE: reduction_targets,
             StrategyFamily.REDUCTION_TILING: reduction_targets,
             StrategyFamily.REDUCTION_PREHEADER_STAGING: reduction_targets,
+            StrategyFamily.REDUCTION_TILE_FUSION: reduction_targets,
         }
         schedule_slots = {slot.name: slot for slot in self.schedule.slots}
         for binding in self.strategy.bindings:

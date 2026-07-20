@@ -112,6 +112,8 @@ address_association      = pointer_staged
 mask_materialization     = staged_reuse
 reduction_call_shape     = flattened
 reduction_tiling         = multi_tile_accumulate
+reduction_preheader_staging = stage_invariant_access_scaffolding
+reduction_tile_fusion    = shared_producer_outputs
 ```
 
 absence 表示 canonical choice。同一 target/family 最多一个 binding；target kind 必须
@@ -136,6 +138,17 @@ source 必须 fail-closed，不能静默丢弃任一机制。
 该 composite RuleCard 将 π 中先出现、且绑定到该 reduction 的 address/mask/access steps
 解释为每轮 tile body 的施工模板；pointer progression、tail mask 与 load 必须生成在 runtime
 loop 内，不能在循环前只加载一次再跨迭代复用。
+
+`reduction_preheader_staging=stage_invariant_access_scaffolding` 与
+`reduction_tile_fusion=shared_producer_outputs` 都是依附于同一 target
+`reduction_tiling` 的正交 C choice。前者只把 source 已在 loop 前构造、且可证明与
+tile induction 无关的 outer-index base 与共享 lane basis 放入 preheader；最终 tile
+address、mask、load 与 carry update 仍在 loop 内。后者只在 source 的同一规范化 tile
+loop 用共享 per-tile producer 同时计算 non-reduced output 和 reduction partial 时选择：
+共享 address/load/producer 每轮只实现一次，side-output store 与 partial/carry update
+同处一轮，final reduced-output consumer 留在 loop 后。两者都不改变 J DAG、Boundary
+access/effect/output mapping，也不是通用 LICM/fusion；source 使用分离 loop、side output
+不共享 producer 或存在额外 semantic carry 时必须省略/fail closed。
 
 `address_association=pointer_staged` 的共享规则语义是确定的：J domain coordinate
 视为原子，只把 access `index_expression` 的顶层加法项按从左到右顺序逐项加到

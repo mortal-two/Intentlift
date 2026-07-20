@@ -625,6 +625,17 @@ Cross-field rules:
   addresses, tail masks, loads, local reductions and carry updates remain in the
   loop. Do not use this choice as general LICM or for a source that rebuilds its
   outer bases inside the loop;
+- when that same normalized multi-tile reduction loop also computes and stores
+  one or more non-reduced outputs from the reduction's shared per-tile producer
+  closure, add reduction_tile_fusion=shared_producer_outputs for the reduction
+  node. Keep the whole-tensor J DAG, outputs and Boundary effects unchanged;
+  this choice says only that replay realizes the shared tile loads/producers
+  once inside the reduction loop, uses them for both the side outputs and local
+  partial reduction, and keeps the side-output stores in that loop. Select it
+  only when SOURCE places the complete side-output path in the same loop. Omit
+  it when the source computes that output before, after, or in a separate loop,
+  when it does not share the reduction producer closure, or when another
+  loop-carried value would require a semantic J loop;
 - inspect contraction subscripts and encode them completely in J. A form such
   as m,n->mn has no contracted label and selects realize_outer_product; a
   contraction with an actual tiled contracted dimension selects
@@ -655,10 +666,11 @@ Cross-field rules:
 - strategy.target_ref may reference only the target kind accepted by its
   family: program_coordinate_width targets a domain id; address_association
   and mask_materialization target an access_id; reduction_call_shape targets a
-  reduction node id; reduction_tiling and reduction_preheader_staging target a
-  reduction node id. reduction_tiling must additionally name a declared
-  constexpr tile_slot plus accumulator_dtype, and preheader staging is valid
-  only alongside reduction_tiling for the same target.
+  reduction node id; reduction_tiling, reduction_preheader_staging and
+  reduction_tile_fusion target a reduction node id. reduction_tiling must
+  additionally name a declared constexpr tile_slot plus accumulator_dtype;
+  preheader staging and tile fusion are valid only alongside reduction_tiling
+  for the same target.
 
 C.strategy rules (closed, override-only vocabulary):
 - absence of a target/family binding always means the canonical RuleCard;
@@ -666,7 +678,8 @@ C.strategy rules (closed, override-only vocabulary):
   address_association=pointer_staged, mask_materialization=staged_reuse and
   reduction_call_shape=flattened, and
   reduction_tiling=multi_tile_accumulate, and
-  reduction_preheader_staging=stage_invariant_access_scaffolding;
+  reduction_preheader_staging=stage_invariant_access_scaffolding, and
+  reduction_tile_fusion=shared_producer_outputs;
 - at most one binding exists for each target/family pair;
 - reduction_call_shape and reduction_tiling cannot be combined for the same
   reduction target in the current reviewed composer. If source evidence needs
@@ -909,6 +922,12 @@ Apply this decision order before editing:
     reduction_preheader_staging=stage_invariant_access_scaffolding choice for
     the same reduction. Keep tile-dependent offsets, masks, loads and reduction
     work inside the loop; never use this choice as unrestricted LICM.
+    If SOURCE also computes and stores a non-reduced output from the same
+    per-tile producer closure inside that normalized loop, add the reviewed
+    reduction_tile_fusion=shared_producer_outputs choice for the same reduction.
+    Preserve J and Boundary semantics; this choice only prevents replay from
+    duplicating the shared tile path outside the loop. Do not select it for an
+    output computed outside or in a separate loop.
 3. Use only an already reviewed C.strategy family when it exactly describes
    the source mechanism. Never invent a new family, choice or RuleCard here.
 4. If the existing vocabulary cannot express an implementation association,
