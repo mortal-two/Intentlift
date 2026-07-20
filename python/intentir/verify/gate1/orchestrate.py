@@ -3015,6 +3015,11 @@ class Gate1Runner:
         for relift_round in range(self.config.max_relifts):
             artifact_digest: str | None = None
             try:
+                # Gate1Artifact remains mutable for legacy construction APIs.
+                # Re-parse the exact current value at every admission round so
+                # post-construction mutation cannot bypass the strict J/B
+                # schema and later be reported as replay_closed.
+                Gate1Artifact.from_json(current.to_json())
                 compile_case = _case_with_artifact_schedule(case, current)
                 if specialization_family is not None:
                     from .specialization import Gate1SpecializationFamily

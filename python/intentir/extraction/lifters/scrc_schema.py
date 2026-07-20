@@ -41,6 +41,16 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 _STRING = {"type": "string", "minLength": 1}
+_PORTABLE_PREDICATE_STRING = {
+    "type": "string",
+    "minLength": 1,
+    "description": (
+        "One boolean ContractExpr v1 expression: symbols/literals, arithmetic, "
+        "comparisons, and/or/not, and only ceil_div/cdiv/min/max calls. No "
+        "assignment, prose, range notation, frontend calls, attributes, or "
+        "program/grid/tile/lane coordinate construction."
+    ),
+}
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
 _REDUCTION_ACCUMULATOR_DTYPE = {
@@ -159,7 +169,7 @@ def _boundary_schema() -> dict[str, Any]:
                 "enum": ["load", "store", "atomic", "synchronize"],
             },
             "tensor": _STRING,
-            "predicate": _nullable(_STRING),
+            "predicate": _nullable(_PORTABLE_PREDICATE_STRING),
             "fill_value": {},
             "node_ref": _nullable(_STRING),
             "index_expression": _nullable(_STRING),
@@ -225,7 +235,7 @@ def _boundary_schema() -> dict[str, Any]:
         {
             "domains": {
                 "type": "object",
-                "additionalProperties": {"type": "string"},
+                "additionalProperties": _PORTABLE_PREDICATE_STRING,
             },
             "accesses": _array(access),
             "broadcasts": _array(broadcast),

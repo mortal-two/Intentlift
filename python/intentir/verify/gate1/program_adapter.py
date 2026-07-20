@@ -34,7 +34,7 @@ from intentir.ir.contracts import (
     ScopeContract,
     StorageContract,
     WriteCoverage,
-    parse_contract_expression,
+    parse_contract_predicate,
 )
 from intentir.ir.model import IntentFunction
 from intentir.ir.program import IntentProgram, ScheduleHint, StrategyHint
@@ -323,7 +323,7 @@ def intent_program_from_gate1(artifact: Gate1Artifact | dict[str, Any]) -> Inten
     dtypes = _value_dtypes(function)
 
     domains = tuple(
-        DomainContract(name, name, parse_contract_expression(predicate))
+        DomainContract(name, name, parse_contract_predicate(predicate))
         for name, predicate in artifact.j.boundary.domains.items()
     )
     accesses: list[AccessContract] = []
@@ -339,7 +339,7 @@ def intent_program_from_gate1(artifact: Gate1Artifact | dict[str, Any]) -> Inten
                 mode=_ACCESS_MODE[item.kind],
                 tensor=item.tensor,
                 node_ref=node_ref,
-                predicate=(parse_contract_expression(item.predicate) if item.predicate is not None else None),
+                predicate=(parse_contract_predicate(item.predicate) if item.predicate is not None else None),
                 fill_value=item.fill_value,
                 index_role=IndexRole.LOGICAL_NODE if logical else IndexRole.REALIZATION_ONLY,
                 logical_index_node=node_ref if logical else None,
@@ -395,7 +395,7 @@ def intent_program_from_gate1(artifact: Gate1Artifact | dict[str, Any]) -> Inten
                 f"destination {parameter.name!r} requires exactly one write access"
             )
         access = matching_accesses[0]
-        predicate = parse_contract_expression(access.predicate) if access.predicate is not None else None
+        predicate = parse_contract_predicate(access.predicate) if access.predicate is not None else None
         coverage = WriteCoverage.PREDICATED if predicate is not None else WriteCoverage.FULL
         conflict = ConflictKind.ATOMIC if access.kind is AccessKind.ATOMIC else ConflictKind.UNKNOWN
         destinations.append(

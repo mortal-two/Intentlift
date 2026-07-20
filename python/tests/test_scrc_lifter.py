@@ -206,6 +206,10 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
     assert "load(ptr + row*N + lane)" in prompt
     assert "offset = row*N + lane" in prompt
     assert "index_expression string alone" in prompt
+    assert "one boolean ContractExpr" in prompt
+    assert '`"d0":"0 <= row < n_rows"`' in prompt
+    assert "`program_id`, `grid_axis`" in prompt
+    assert "not portable Layer B" in prompt
 
 
 def test_scrc_lift_prompt_identity_tracks_registry_capabilities_without_api_text() -> None:
@@ -756,6 +760,42 @@ def test_scrc_lift_error_retains_all_rejected_responses(monkeypatch) -> None:
     assert caught.value.attempts[0].response_text == '{"bad": 1}'
     assert "attempt 1" in str(caught.value)
     assert "attempt 2" in str(caught.value)
+
+
+def test_scrc_lift_repairs_nonportable_domain_without_rewriting_it(
+    monkeypatch,
+) -> None:
+    invalid_payload = _artifact_payload()
+    invalid_domain = "b = grid_axis(0), 0 <= b < 2048"
+    invalid_payload["j"]["boundary"]["domains"]["d0"] = invalid_domain
+    valid_payload = _artifact_payload()
+    replies = iter(
+        [
+            LLMReply(json.dumps(invalid_payload), "gpt-test", {"id": "resp-bad"}),
+            LLMReply(json.dumps(valid_payload), "gpt-test", {"id": "resp-good"}),
+        ]
+    )
+    conversations: list[str] = []
+
+    def fake_call(instructions, user_input, **kwargs):
+        del instructions, kwargs
+        conversations.append(user_input)
+        return next(replies)
+
+    monkeypatch.setattr(scrc, "call_responses", fake_call)
+    result = scrc.extract_scrc_artifact(
+        "source", "add_kernel", max_repairs=1
+    )
+
+    assert result.artifact.j.boundary.domains == {"d0": "0 <= i < N"}
+    assert result.provenance.repairs
+    assert "Boundary.domains.d0 must be a portable boolean" in (
+        result.provenance.repairs[0]
+    )
+    assert invalid_domain in json.dumps(invalid_payload)
+    assert "wrong_fill_delta" not in " ".join(result.provenance.repairs)
+    assert "Re-emit the complete corrected LiftArtifact JSON only" in conversations[1]
+    assert "Boundary.domains.d0 must be a portable boolean" in conversations[1]
 
 
 def test_real_relifter_sees_source_evidence_but_never_replay_source(

@@ -228,7 +228,7 @@ def _iota_artifact() -> Gate1Artifact:
             ),
             node_ids={"iota_node": "body[0]"},
             boundary=Boundary(
-                domains={"global_ordinal": "global_ordinal in [0, N)"},
+                domains={"global_ordinal": "0 <= global_ordinal < N"},
                 accesses=[
                     BoundaryAccess(
                         access_id="store_out",
@@ -301,7 +301,7 @@ def _transpose_artifact() -> Gate1Artifact:
                 }
             ),
             node_ids={"transpose_node": "body[0]"},
-            boundary=Boundary(domains={"program": "program_id(0) < 1"}),
+            boundary=Boundary(domains={"program": "0 <= element_ordinal < 1"}),
         ),
         interface=KernelInterface(
             kernel_id="transpose_kernel",
@@ -352,7 +352,7 @@ def _concat_artifact() -> Gate1Artifact:
                 }
             ),
             node_ids={"concat_node": "body[0]"},
-            boundary=Boundary(domains={"program": "program_id(0) < 1"}),
+            boundary=Boundary(domains={"program": "0 <= element_ordinal < 1"}),
         ),
         interface=KernelInterface(
             kernel_id="concat_kernel",

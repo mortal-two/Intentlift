@@ -25,7 +25,13 @@ from intentir.ir import (
     ScheduleHint,
     WriteCoverage,
 )
-from intentir.ir.contracts import parse_contract_expression
+from intentir.ir.contracts import (
+    ContractExpr,
+    DomainContract,
+    ExprOp,
+    parse_contract_expression,
+    parse_contract_predicate,
+)
 from intentir.verify.gate1 import (
     AccessKind,
     Boundary,
@@ -141,10 +147,23 @@ def test_logical_index_and_output_destination_contracts_are_hard_digest_fields()
 
 
 def test_predicate_parser_and_obligation_ledger_fail_closed() -> None:
-    expression = parse_contract_expression("(row < M) & (col < N)")
+    expression = parse_contract_predicate("(row < M) & (col < N)")
     assert expression.symbols == {"row", "M", "col", "N"}
     with pytest.raises(ContractError, match="outside portable expression"):
         parse_contract_expression("helper(row)")
+    with pytest.raises(ContractError, match="must be a boolean expression"):
+        parse_contract_predicate("row + 1")
+    with pytest.raises(ContractError, match="requires boolean operands"):
+        parse_contract_predicate("(row < M) and mask")
+    with pytest.raises(ContractError, match="domain predicate must be a boolean"):
+        DomainContract(
+            "d0",
+            "d0",
+            ContractExpr(
+                ExprOp.ADD,
+                (ContractExpr.symbol("row"), ContractExpr.constant(1)),
+            ),
+        )
 
     program = IntentProgram(
         _function(),
@@ -163,6 +182,41 @@ def test_predicate_parser_and_obligation_ledger_fail_closed() -> None:
     ledger = ObligationLedger(program.contract_digest, required, results)
     with pytest.raises(ContractError, match="does not support"):
         ledger.assert_supported()
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "0 <= row < n_rows",
+        "0 <= row and row < n_rows",
+        "(row < n_rows) | ((col >= 0) & (col < n_cols))",
+        "not (row >= n_rows)",
+        "col < ceil_div(n_cols, 2)",
+        "True",
+    ],
+)
+def test_portable_predicate_parser_accepts_typed_boolean_forms(
+    predicate: str,
+) -> None:
+    parse_contract_predicate(predicate)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "b = grid_axis(0), 0 <= b < 2048",
+        "row = grid_coordinate(0) where 0 <= row < 2048",
+        "row := coordinate(grid_axis=0) with 0 <= row < 2048",
+        "global_ordinal in [0, N)",
+        "program_id(0) < 1",
+        "2048",
+    ],
+)
+def test_portable_predicate_parser_rejects_binders_prose_and_source_calls(
+    predicate: str,
+) -> None:
+    with pytest.raises(ContractError):
+        parse_contract_predicate(predicate)
 
 
 def _gate_artifact() -> Gate1Artifact:

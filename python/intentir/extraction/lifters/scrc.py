@@ -468,6 +468,18 @@ predicate, optional fill_value, optional node_ref. Never emit a field named
 identity or masked_contribution. Every effects entry uses exactly effect_id,
 kind, target, optional node_ref, and access_ref (the matching access_id or null
 for a non-access effect); access details stay in accesses, not effects.
+Every boundary.domains value and access predicate is one boolean ContractExpr
+v1 string. Use logical symbols/literals, arithmetic, comparisons (including a
+chained comparison such as `0 <= row < n_rows`), `and`/`or`/`not`, and only the
+two-argument calls `ceil_div`, `cdiv`, `min`, or `max`. A domain value is only
+the predicate describing the logical set; its object key remains the opaque
+domain id (for example `"d0":"0 <= row < n_rows"`). Never define or bind the
+coordinate inside the string. Assignment, `:=`, commas/tuples, `where`, `with`,
+`in [lo, hi)`, attributes, subscripts, source helpers, and calls such as
+`program_id`, `grid_axis`, `grid_coordinate`, or `coordinate` are invalid.
+Program/block/tile/lane mapping belongs to C or validation-only realization,
+not portable Layer B. For an unconditional access omit predicate; do not emit a
+prose spelling or a source-coordinate call that happens to evaluate true.
 Reduction tile_axis is the axis of the frontend-local tile value passed to the
 source reduction call, never a C schedule slot name such as BLOCK_N and never a
 blind copy of the global J reduce axis. For example, a global [M,N] row reduce

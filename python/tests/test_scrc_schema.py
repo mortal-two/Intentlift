@@ -33,6 +33,14 @@ def test_scrc_wire_schema_closes_gate1_objects() -> None:
     assert "strategy" in schema["required"]
     assert "plan" not in schema["properties"]
 
+    boundary = schema["properties"]["j"]["properties"]["boundary"]
+    domain_text = boundary["properties"]["domains"]["additionalProperties"]
+    access_predicate = boundary["properties"]["accesses"]["items"][
+        "properties"
+    ]["predicate"]["anyOf"][0]
+    assert "boolean ContractExpr v1" in domain_text["description"]
+    assert access_predicate == domain_text
+
 
 def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
     strategy = scrc_artifact_json_schema()["properties"]["strategy"]

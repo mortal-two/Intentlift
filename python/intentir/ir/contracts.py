@@ -300,6 +300,95 @@ def parse_contract_expression(value: str) -> ContractExpr:
     return _expr_from_ast(parsed.body)
 
 
+_COMPARISON_EXPR_OPS = frozenset(
+    {
+        ExprOp.EQUAL,
+        ExprOp.NOT_EQUAL,
+        ExprOp.LESS,
+        ExprOp.LESS_EQUAL,
+        ExprOp.GREATER,
+        ExprOp.GREATER_EQUAL,
+    }
+)
+_SCALAR_EXPR_OPS = frozenset(
+    {
+        ExprOp.NEGATE,
+        ExprOp.ADD,
+        ExprOp.SUBTRACT,
+        ExprOp.MULTIPLY,
+        ExprOp.DIVIDE,
+        ExprOp.FLOOR_DIVIDE,
+        ExprOp.MODULO,
+        ExprOp.POWER,
+        ExprOp.CEIL_DIVIDE,
+        ExprOp.MINIMUM,
+        ExprOp.MAXIMUM,
+    }
+)
+
+
+def _contract_expression_kind(expression: ContractExpr) -> str:
+    """Infer the closed v1 scalar/boolean role without guessing symbol types."""
+
+    if expression.op is ExprOp.CONSTANT:
+        return "boolean" if isinstance(expression.value, bool) else "scalar"
+    if expression.op is ExprOp.SYMBOL:
+        # V1 has no symbol type environment.  A bare symbol therefore cannot
+        # prove that a domain/access expression is a predicate.
+        return "scalar"
+
+    argument_kinds = tuple(
+        _contract_expression_kind(argument) for argument in expression.arguments
+    )
+    if expression.op in _SCALAR_EXPR_OPS:
+        if any(kind != "scalar" for kind in argument_kinds):
+            raise ContractError(
+                f"scalar expression {expression.op.value!r} requires scalar operands"
+            )
+        return "scalar"
+    if expression.op in {ExprOp.NOT, ExprOp.AND, ExprOp.OR}:
+        if any(kind != "boolean" for kind in argument_kinds):
+            raise ContractError(
+                f"boolean expression {expression.op.value!r} requires boolean operands"
+            )
+        return "boolean"
+    if expression.op in _COMPARISON_EXPR_OPS:
+        if any(kind != "scalar" for kind in argument_kinds):
+            raise ContractError(
+                f"comparison {expression.op.value!r} requires scalar operands"
+            )
+        return "boolean"
+    raise ContractError(f"unsupported portable expression op {expression.op.value!r}")
+
+
+def require_contract_predicate(
+    expression: ContractExpr | Mapping[str, Any],
+    *,
+    context: str = "predicate",
+) -> ContractExpr:
+    """Require a typed boolean-rooted ContractExpr and return it unchanged."""
+
+    result = (
+        expression
+        if isinstance(expression, ContractExpr)
+        else ContractExpr.from_dict(expression)
+    )
+    if _contract_expression_kind(result) != "boolean":
+        raise ContractError(
+            f"{context} must be a boolean expression rooted at a comparison, "
+            "boolean operator, or boolean constant"
+        )
+    return result
+
+
+def parse_contract_predicate(value: str) -> ContractExpr:
+    """Parse portable predicate text and require a boolean-rooted expression."""
+
+    return require_contract_predicate(
+        parse_contract_expression(value), context="predicate text"
+    )
+
+
 class AccessMode(str, Enum):
     READ = "read"
     WRITE = "write"
@@ -419,8 +508,11 @@ class DomainContract:
     def __post_init__(self) -> None:
         object.__setattr__(self, "contract_id", _identifier(self.contract_id, "domain contract id"))
         object.__setattr__(self, "name", _identifier(self.name, "domain name"))
-        if not isinstance(self.predicate, ContractExpr):
-            object.__setattr__(self, "predicate", ContractExpr.from_dict(self.predicate))
+        object.__setattr__(
+            self,
+            "predicate",
+            require_contract_predicate(self.predicate, context="domain predicate"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {"contract_id": self.contract_id, "name": self.name, "predicate": self.predicate.to_dict()}
@@ -448,8 +540,12 @@ class AccessContract:
         object.__setattr__(self, "tensor", _identifier(self.tensor, "access tensor"))
         if self.node_ref is not None:
             object.__setattr__(self, "node_ref", _identifier(self.node_ref, "access node_ref"))
-        if self.predicate is not None and not isinstance(self.predicate, ContractExpr):
-            object.__setattr__(self, "predicate", ContractExpr.from_dict(self.predicate))
+        if self.predicate is not None:
+            object.__setattr__(
+                self,
+                "predicate",
+                require_contract_predicate(self.predicate, context="access predicate"),
+            )
         object.__setattr__(self, "fill_value", _scalar(self.fill_value, "access fill_value"))
         object.__setattr__(self, "index_role", _enum(IndexRole, self.index_role, "access index_role"))
         if self.logical_index_node is not None:
@@ -578,8 +674,12 @@ class EffectContract:
         for name in ("node_ref", "access_ref"):
             if getattr(self, name) is not None:
                 object.__setattr__(self, name, _identifier(getattr(self, name), f"effect {name}"))
-        if self.predicate is not None and not isinstance(self.predicate, ContractExpr):
-            object.__setattr__(self, "predicate", ContractExpr.from_dict(self.predicate))
+        if self.predicate is not None:
+            object.__setattr__(
+                self,
+                "predicate",
+                require_contract_predicate(self.predicate, context="effect predicate"),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"contract_id": self.contract_id, "mode": self.mode.value, "target": self.target}
@@ -621,8 +721,14 @@ class DestinationBinding:
         object.__setattr__(self, "conflict", _enum(ConflictKind, self.conflict, "destination conflict"))
         if self.access_ref is not None:
             object.__setattr__(self, "access_ref", _identifier(self.access_ref, "destination access_ref"))
-        if self.predicate is not None and not isinstance(self.predicate, ContractExpr):
-            object.__setattr__(self, "predicate", ContractExpr.from_dict(self.predicate))
+        if self.predicate is not None:
+            object.__setattr__(
+                self,
+                "predicate",
+                require_contract_predicate(
+                    self.predicate, context="destination predicate"
+                ),
+            )
         if self.coverage in {WriteCoverage.PREDICATED, WriteCoverage.PARTIAL} and self.predicate is None:
             raise ContractError("conditional/partial destination requires a predicate")
         if self.coverage is WriteCoverage.FULL and self.predicate is not None:
@@ -995,5 +1101,6 @@ __all__ = [
     "JsonScalar", "NanPolicy", "ObligationCategory", "ObligationLedger",
     "ObligationResult", "ObligationStatus", "ReassociationPolicy", "ReductionContract",
     "ScopeContract", "ScopeKind", "StorageContract", "StorageMutability", "WriteCoverage",
-    "parse_contract_expression",
+    "parse_contract_expression", "parse_contract_predicate",
+    "require_contract_predicate",
 ]

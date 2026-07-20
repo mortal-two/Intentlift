@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, ClassVar, TypeVar
 
+from intentir.ir.contracts import ContractError, parse_contract_predicate
 from intentir.ir.model import IntentFunction
 
 
@@ -89,6 +90,19 @@ def _string(value: Any, path: str, *, nonempty: bool = True) -> str:
     if nonempty and not value:
         raise SchemaError(f"{path} must not be empty")
     return value
+
+
+def _portable_predicate(value: Any, path: str) -> str:
+    """Validate a Layer-B predicate with the canonical target-neutral grammar."""
+
+    text = _string(value, path)
+    try:
+        parse_contract_predicate(text)
+    except ContractError as exc:
+        raise SchemaError(
+            f"{path} must be a portable boolean ContractExpr v1 predicate: {exc}"
+        ) from exc
+    return text
 
 
 def _boolean(value: Any, path: str) -> bool:
@@ -768,7 +782,9 @@ class BoundaryAccess(StrictJSONMixin):
         self.kind = _enum(AccessKind, self.kind, "BoundaryAccess.kind")
         self.tensor = _string(self.tensor, "BoundaryAccess.tensor")
         if self.predicate is not None:
-            self.predicate = _string(self.predicate, "BoundaryAccess.predicate")
+            self.predicate = _portable_predicate(
+                self.predicate, "BoundaryAccess.predicate"
+            )
         self.fill_value = _json_value(self.fill_value, "BoundaryAccess.fill_value")
         if self.node_ref is not None:
             self.node_ref = _string(self.node_ref, "BoundaryAccess.node_ref")
@@ -1018,7 +1034,9 @@ class Boundary(StrictJSONMixin):
         if not isinstance(self.domains, dict):
             raise SchemaError("Boundary.domains must be an object")
         self.domains = {
-            _string(key, "Boundary.domains key"): _string(value, f"Boundary.domains.{key}")
+            _string(key, "Boundary.domains key"): _portable_predicate(
+                value, f"Boundary.domains.{key}"
+            )
             for key, value in self.domains.items()
         }
         self.accesses = [

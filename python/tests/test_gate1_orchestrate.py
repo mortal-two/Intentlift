@@ -687,6 +687,29 @@ def test_gate1_rejects_incomplete_lift_artifact_instead_of_generating_pi() -> No
     assert writer.calls == []
 
 
+def test_gate1_readmission_rejects_mutated_nonportable_layer_b() -> None:
+    artifact = _artifact()
+    invalid = "lane = grid_axis(0), lane < n"
+    artifact.j.boundary.domains["lane_domain"] = invalid
+    writer = CaptureWriter(["GOOD"])
+
+    result = _runner(run_masked_ablation=False).run(
+        _source(),
+        artifact,
+        _case(),
+        default_triton_rule_registry(),
+        writer,
+    )
+
+    assert result.status is Gate1Status.LIFT_REJECTED
+    assert writer.calls == []
+    assert artifact.j.boundary.domains["lane_domain"] == invalid
+    assert any(
+        "Boundary.domains.lane_domain must be a portable boolean" in item
+        for item in result.diagnostics
+    )
+
+
 def _binary_artifact() -> Gate1Artifact:
     artifact = _artifact()
     intent = IntentFunction.from_json(
