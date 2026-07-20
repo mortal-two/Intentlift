@@ -17,7 +17,7 @@
 2. **静态 obligation 检查**:在 evidence 与 LLM 自报 claim 上评估义务(anchor 覆盖、结构化访问、guarded bounds、接口一致、地址独立性、结构化同步、受控 atomic 等)。每个义务返回 **PASS / FAIL / UNKNOWN**。
 3. **动态源码执行一致性**:在记录的输入上跑原 kernel,与 IntentIR 解释器(或后续后端代码)输出对比。记录 input shape/dtype/seed/tolerance/源版本。这是离线 / 编译期检查,不在生产快路径上。
 
-> **此检查已在 5090 D 上跑通(2026-06-25)。** FlashAttention 这一类:`verify/interpret.py`(numpy 解释器,即 Layer A 参考语义)与**真实下降到 sm_120a 并执行的 fused kernel** 在多形状 / 多 seed(含 Sk 不整除 BK 的 tail-tile)上对比,execute==interpret 相对误差 ~3.9e-7。注意这条等式是**内部**一致性(解释器 vs 编译执行,两者独立派生),与 vs-torch / vs-Triton 的外部一致性互补——后者证"算法对",前者证"lower 没改变 IR 语义"(certified semantic lifting 的落点)。浮点 reduce 用 tolerance 而非 bit-exact(见 [../ir/atomic-ops.md](../ir/atomic-ops.md) 结合性标注)。
+> **此检查已在 5090 D 上跑通(2026-06-25)。** FlashAttention 这一类:`verify/back/legacy_v0/interpret.py`(numpy 解释器,即 Layer A 参考语义)与**真实下降到 sm_120a 并执行的 fused kernel** 在多形状 / 多 seed(含 Sk 不整除 BK 的 tail-tile)上对比,execute==interpret 相对误差 ~3.9e-7。注意这条等式是**内部**一致性(解释器 vs 编译执行,两者独立派生),与 vs-torch / vs-Triton 的外部一致性互补——后者证"算法对",前者证"lower 没改变 IR 语义"(certified semantic lifting 的落点)。浮点 reduce 用 tolerance 而非 bit-exact(见 [../ir/atomic-ops.md](../ir/atomic-ops.md) 结合性标注)。
 
 ## obligation 的三态语义
 

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from intentir.ir.model import IntentFunction
-from intentir.verify.interpret import interpret
+from intentir.verify.back.legacy_v0.interpret import interpret
 
 _JSON = pathlib.Path(__file__).resolve().parents[2] / "test" / "flashattention_fwd.intent.json"
 

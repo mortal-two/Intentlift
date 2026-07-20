@@ -32,7 +32,7 @@ import numpy as np
 import pytest
 
 from intentir.backend.cuda.compile import CUDA_BIN, INTENT_OPT, MLIR_OPT
-from intentir.verify.interpret import _philox_uniform
+from intentir.verify.back.legacy_v0.interpret import _philox_uniform
 
 torch = pytest.importorskip("torch")
 

@@ -33,15 +33,8 @@ def test_verify_package_exports_only_active_gates() -> None:
     assert probe.returncode == 0, probe.stderr
 
 
-def test_public_interpreter_path_is_only_a_legacy_compatibility_shim() -> None:
-    shim = importlib.import_module("intentir.verify.interpret")
-    archived = importlib.import_module(
-        "intentir.verify.back.legacy_v0.interpret"
-    )
-
-    assert shim.interpret is archived.interpret
-    assert shim.InterpError is archived.InterpError
-    assert shim._philox_uniform is archived._philox_uniform
+def test_public_interpreter_compatibility_shim_is_removed() -> None:
+    assert not (PYTHON_ROOT / "intentir" / "verify" / "interpret.py").exists()
 
 
 def test_repair_and_fuzzy_ratio_era_gate1_models_are_explicitly_archived() -> None:

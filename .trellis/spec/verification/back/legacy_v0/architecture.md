@@ -88,7 +88,7 @@ FULL/PARTIAL/OOS 等级，也不能把 lift 等价宣称为证明。随机值、
 
 - **检查什么**:Layer A 的 **numpy 可执行指称**。把每个 IntentIR 程序变成一个**具体的值函数**。
 - **救活什么**:这是让"正确性"对 **A 和 B 两个问题都可定义**的那块基石。没有 L2,源 kernel 与 GPU 输出都"无可对照"——A、B 都退化成无法裁决。
-- **工具 / 文件**:`python/intentir/verify/interpret.py`(指称),`python/tests/test_interpret.py`(golden 测试)。
+- **工具 / 文件**:`python/intentir/verify/back/legacy_v0/interpret.py`(指称),`python/tests/test_interpret.py`(golden 测试)。
 - **保证**:给每个 IntentIR 程序一个具体值函数。**浮点结果按 policy 做 tolerance 比较,绝不宣称 exact**:numpy `sum` 是 pairwise、`einsum` dispatch 到 BLAS,**即便自比也是 tolerance 级**(见 `interpret.py` 文件头注释)。
 - **状态**:**BUILT**(`map_binary`/`map_unary`/`reduce`/`contraction`/`select`/`cast`/`transpose`)。已能执行**完整的非 online attention**(由原子算子组合),并在 `test_interpret.py` 中**同时匹配 numpy 参考与 torch SDPA**(`test_attention_matches_reference`、`test_attention_matches_torch_if_available`,后者 torch 缺失则跳过)。**`loop`(带状态携带)尚未实现**——多结果 op 当前直接 `raise InterpError`(`interpret.py:99`),是下一步(对应 roadmap M3)。
 
@@ -173,7 +173,7 @@ FULL/PARTIAL/OOS 等级，也不能把 lift 等价宣称为证明。随机值、
 
 **今天已 BUILT**:
 - **L1**:三个 well-formedness verifier(`lib/Intent/IntentOps.cpp`),过 lit 测试。
-- **L2**:numpy 参考解释器(`python/intentir/verify/interpret.py`),7 个原子算子 + 完整非 online attention,匹配 numpy 与 torch SDPA。
+- **L2**:numpy 参考解释器(`python/intentir/verify/back/legacy_v0/interpret.py`),7 个原子算子 + 完整非 online attention,匹配 numpy 与 torch SDPA。
 - **L7**:lit/FileCheck 回归 harness(`test/`、`check-intent`),round-trip 与 negative-diagnostic 套件 green。
 
 **通向成熟的有序路径**:

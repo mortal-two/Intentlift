@@ -923,7 +923,7 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
     and check the result matches the numpy interpreter run on the same JSON IR."""
     from intentir.backend.cuda.orchestrate import run_program
     from intentir.frontend import emit_body_function
-    from intentir.verify.interpret import interpret
+    from intentir.verify.back.legacy_v0.interpret import interpret
 
     fn = _fn_with_f32_accumulators()
     Sq, Sk, D, BK = _DIMS["Sq"], _DIMS["Sk"], _DIMS["D"], _DIMS["BK"]

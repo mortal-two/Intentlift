@@ -2,7 +2,7 @@
 
 Every other execution test compares against an EXTERNAL reference (torch / Triton
 / an inline numpy recompute). Those prove the *algorithm* is right. The two tests
-here instead compare against ``verify/interpret.py`` run on the JSON IR
+here instead compare against the explicitly archived NumPy interpreter run on the JSON IR
 (``test/flashattention_fwd.intent.json``) — our executable spec.
 
 1. ``test_lifting_certificate_intent_dialect`` — THE certified-lifting check.
@@ -60,7 +60,7 @@ def test_lifting_certificate_intent_dialect(scale) -> None:
     convert-intent-to-linalg). The real certified-lifting check: the executed
     side goes through the compiler's dialect lowering."""
     from intentir.backend.cuda.orchestrate import run_program
-    from intentir.verify.interpret import interpret
+    from intentir.verify.back.legacy_v0.interpret import interpret
 
     fn = _flash_fn()
     rng = np.random.default_rng(0)
@@ -101,7 +101,7 @@ def test_fused_emitter_matches_interpreter(sq, sk, d, scale, bk, seed) -> None:
     implementation correctness + tile-invariance check; NOT a lowering certificate
     (the emitter bypasses the intent dialect — see module docstring)."""
     from intentir.backend.cuda.flash import run_fused_flash
-    from intentir.verify.interpret import interpret
+    from intentir.verify.back.legacy_v0.interpret import interpret
 
     fn = _flash_fn()
     rng = np.random.default_rng(seed)

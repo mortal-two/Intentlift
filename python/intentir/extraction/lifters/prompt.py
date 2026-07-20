@@ -8,7 +8,7 @@ answer to softmax / layernorm / attention / etc.
 
 from __future__ import annotations
 
-# --- op vocabulary, kept 1:1 with verify/interpret.py and the intent dialect ---
+# --- op vocabulary, kept 1:1 with the archived interpreter and intent dialect ---
 SCHEMA = """\
 IntentIR is a three-layer, tensor-level, atomic intermediate representation.
 You LIFT a kernel into the math it computes over whole tensors -- never threads,

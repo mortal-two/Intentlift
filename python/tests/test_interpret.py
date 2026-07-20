@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from intentir.ir.model import IntentFunction
-from intentir.verify.interpret import interpret
+from intentir.verify.back.legacy_v0.interpret import interpret
 
 
 def _run(fn_json: dict, **inputs: np.ndarray) -> dict[str, np.ndarray]:

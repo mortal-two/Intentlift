@@ -4,7 +4,7 @@ This is the ``JSON -> intent MLIR dialect`` front-end leg. It walks the
 :class:`~intentir.ir.model.IntentFunction` body generically (it is driven by the
 op list, not hard-coded to FlashAttention) and prints `intent`-dialect text at
 concrete shapes, doing einsum/broadcast/reduce shape inference that matches the
-numpy interpreter (``intentir.verify.interpret``).
+archived NumPy interpreter (``intentir.verify.back.legacy_v0.interpret``).
 
 Two artifacts are produced from the *same* JSON:
 

@@ -42,7 +42,7 @@ def _np_ref(name, arrs):
 ])
 def test_cuda_extraction_matches_reference(name, shapes, dims):
     from intentir.ir.model import IntentFunction
-    from intentir.verify.interpret import interpret
+    from intentir.verify.back.legacy_v0.interpret import interpret
 
     jf = CUDA_DIR / name / "intent.json"
     if not jf.exists():

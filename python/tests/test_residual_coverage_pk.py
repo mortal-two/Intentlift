@@ -43,7 +43,7 @@ torch = pytest.importorskip("torch")
 flag_gems = pytest.importorskip("flag_gems")
 
 from intentir.ir.model import IntentFunction  # noqa: E402
-from intentir.verify.interpret import interpret  # noqa: E402
+from intentir.verify.back.legacy_v0.interpret import interpret  # noqa: E402
 
 _HAS_CUDA = torch.cuda.is_available()
 
