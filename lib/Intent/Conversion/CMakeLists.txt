@@ -1,27 +1,5 @@
-add_mlir_library(MLIRIntentConversion
+add_mlir_library(MLIRIntentConversionCommon
   ConvertIntentToLinalg.cpp
-  ConvertIntentRowReductionToGPU.cpp
-  ConvertIntentElementwiseToGPU.cpp
-  ConvertIntentGatherToGPU.cpp
-  ConvertIntentLayoutToGPU.cpp
-  ConvertIntentCompactToGPU.cpp
-  ConvertIntentRngToGPU.cpp
-  ConvertIntentArgReduceToGPU.cpp
-  ConvertIntentSortToGPU.cpp
-  ConvertIntentPoolToGPU.cpp
-  ConvertIntentUpsampleToGPU.cpp
-  ConvertIntentPolarToGPU.cpp
-  ConvertIntentConvToGPU.cpp
-  ConvertIntentConvToGPUMMA.cpp
-  ConvertIntentContractionToGPU.cpp
-  ConvertIntentContractionToGPUMMA.cpp
-  ConvertIntentContractionToGPUMMAWS.cpp
-  ConvertIntentLoopContractionToGPU.cpp
-  ConvertIntentFlashMMAToGPU.cpp
-  ConvertIntentAttentionBackwardToGPU.cpp
-  ConvertIntentSplitKReduceToGPU.cpp
-  ConvertIntentSplitKReduceVarargsToGPU.cpp
-  ConvertIntentSplitKReduceBackwardToGPU.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
@@ -40,10 +18,10 @@ add_mlir_library(MLIRIntentConversion
   MLIRArithDialect
   MLIRMathDialect
   MLIRSCFDialect
-  MLIRGPUDialect
-  MLIRNVGPUDialect
-  MLIRNVVMDialect
-  MLIRVectorDialect
-  MLIRMemRefDialect
-  MLIRFuncDialect
 )
+
+add_subdirectory(CUDA)
+
+# Preserve the historical aggregate target while allowing CPU and future
+# targets to link only the target-neutral Intent -> Linalg conversion.
+add_library(MLIRIntentConversion ALIAS MLIRIntentConversionCUDA)

@@ -1,0 +1,49 @@
+add_mlir_library(MLIRIntentConversionCUDA
+  ConvertIntentRowReductionToGPU.cpp
+  ConvertIntentElementwiseToGPU.cpp
+  ConvertIntentGatherToGPU.cpp
+  ConvertIntentLayoutToGPU.cpp
+  ConvertIntentCompactToGPU.cpp
+  ConvertIntentRngToGPU.cpp
+  ConvertIntentArgReduceToGPU.cpp
+  ConvertIntentSortToGPU.cpp
+  ConvertIntentPoolToGPU.cpp
+  ConvertIntentUpsampleToGPU.cpp
+  ConvertIntentPolarToGPU.cpp
+  ConvertIntentConvToGPU.cpp
+  ConvertIntentConvToGPUMMA.cpp
+  ConvertIntentContractionToGPU.cpp
+  ConvertIntentContractionToGPUMMA.cpp
+  ConvertIntentContractionToGPUMMAWS.cpp
+  ConvertIntentLoopContractionToGPU.cpp
+  ConvertIntentFlashMMAToGPU.cpp
+  ConvertIntentAttentionBackwardToGPU.cpp
+  ConvertIntentSplitKReduceToGPU.cpp
+  ConvertIntentSplitKReduceVarargsToGPU.cpp
+  ConvertIntentSplitKReduceBackwardToGPU.cpp
+
+  ADDITIONAL_HEADER_DIRS
+  ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
+
+  DEPENDS
+  IntentConversionPassIncGen
+
+  LINK_LIBS PUBLIC
+  MLIRIntentConversionCommon
+  MLIRIntent
+  MLIRIR
+  MLIRSupport
+  MLIRPass
+  MLIRTransformUtils
+  MLIRLinalgDialect
+  MLIRTensorDialect
+  MLIRArithDialect
+  MLIRMathDialect
+  MLIRSCFDialect
+  MLIRGPUDialect
+  MLIRNVGPUDialect
+  MLIRNVVMDialect
+  MLIRVectorDialect
+  MLIRMemRefDialect
+  MLIRFuncDialect
+)

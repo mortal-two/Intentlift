@@ -1,28 +1,4 @@
-add_mlir_library(MLIRIntentTarget
-  LowerBf16MmaToNVVM.cpp
-  LowerGpuMathToNVVM.cpp
+add_subdirectory(CUDA)
 
-  ADDITIONAL_HEADER_DIRS
-  ${PROJECT_SOURCE_DIR}/include/Target
-
-  DEPENDS
-  IntentTargetPassIncGen
-
-  LINK_LIBS PUBLIC
-  MLIRIR
-  MLIRSupport
-  MLIRPass
-  MLIRTransformUtils
-  MLIRArithDialect
-  MLIRGPUDialect
-  MLIRGPUToNVVMTransforms
-  MLIRLLVMCommonConversion
-  MLIRMathDialect
-  MLIRMemRefDialect
-  MLIRLLVMDialect
-  MLIRNVGPUDialect
-  MLIRNVGPUToNVVM
-  MLIRNVVMDialect
-  MLIRSCFDialect
-  MLIRSCFTransforms
-)
+# Compatibility name for existing tools; concrete target code is CUDA-only.
+add_library(MLIRIntentTarget ALIAS MLIRIntentTargetCUDA)
