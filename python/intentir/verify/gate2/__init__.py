@@ -1,4 +1,4 @@
-"""SCRC Gate2: source-anchored replay and scalar differential verification."""
+"""SCRC Gate2: final-J replay/scalar dynamic differential verification."""
 
 from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs
 from .inputs import (
