@@ -16,7 +16,11 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from intentir.backend.cpu.pipeline import run_on_cpu_outputs
+from intentir.backend.cpu.abi import (
+    CPUABIValidationError,
+    CPUBackendUnsupportedError,
+)
+from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
 from intentir.ir.model import IntentOp
 from intentir.ir.program import IntentProgram
 
@@ -246,12 +250,13 @@ class ScalarLoweringRunner:
             )
         try:
             broadcast_axes = scalar_broadcast_axes(spec.program)
-            logical_outputs = run_on_cpu_outputs(
+            execution = execute_on_cpu_outputs(
                 spec.program.function,
                 spec.dims_map,
                 inputs,
                 broadcast_axes=broadcast_axes,
             )
+            logical_outputs = execution.outputs
             output_bindings = spec.output_binding_map
             outputs = {
                 output_bindings[name]: np.asarray(value)
@@ -275,9 +280,10 @@ class ScalarLoweringRunner:
                     "scalar_spec_digest": spec.spec_digest,
                     "broadcast_consumer_count": len(broadcast_axes),
                     "target_backend_in_verdict": False,
+                    "execution_evidence": dict(execution.metadata),
                 },
             )
-        except (NotImplementedError, ValueError) as exc:
+        except (CPUBackendUnsupportedError, NotImplementedError) as exc:
             return ExecutionResult(
                 "scalar",
                 False,
@@ -287,6 +293,18 @@ class ScalarLoweringRunner:
                     "protocol": SCALAR_LOWERING_PROTOCOL,
                     "final_artifact_digest": spec.final_artifact_digest,
                     "scalar_spec_digest": spec.spec_digest,
+                },
+            )
+        except CPUABIValidationError as exc:
+            return ExecutionResult(
+                "scalar",
+                False,
+                error=f"{type(exc).__name__}: {exc}",
+                metadata={
+                    "protocol": SCALAR_LOWERING_PROTOCOL,
+                    "final_artifact_digest": spec.final_artifact_digest,
+                    "scalar_spec_digest": spec.spec_digest,
+                    "failure_class": "abi_validation",
                 },
             )
         except Exception as exc:

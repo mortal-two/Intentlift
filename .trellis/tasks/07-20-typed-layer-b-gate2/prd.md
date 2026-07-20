@@ -60,6 +60,11 @@ boundary so the LLM produces a genuinely executable J.
   reintroduced through post-construction mutation. The canonical specs now
   describe this current behavior; explicit typed free-symbol binding remains a
   follow-up capability rather than an inferred compatibility rule.
+- The active scalar reference now uses a value-independent MLIR module, one
+  ranked-memref C entry for all outputs, a content-addressed toolchain-bound
+  cache, and a crash/timeout-isolated worker. The old dense-input,
+  per-output `mlir-runner` path was deleted rather than retained as a fallback.
+  Execution provenance is report-only and does not alter Gate2 comparison.
 - GeGLU: Gate1 closed; typed handoff succeeds; full capture is `[65536,256]`;
   unresolved B obligations and scalar execution scale remain.
 - KLDiv: Gate1 closed after `reduction_preheader_staging`; typed handoff rejects

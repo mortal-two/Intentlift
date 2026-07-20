@@ -102,12 +102,19 @@ interchange + carry privatization(把 query/batch 并行维提到 trip 循环外
 `gpu/nvvm/ptxas`)是特化的。为证明这不是嘴上说说，
 `python/intentir/backend/cpu/pipeline.py`
 把**同一份提取出来的 intent dialect** 走 `intent → linalg →`(one-shot-bufferize
-→ linalg-to-loops → … → LLVM)`→ mlir-runner JIT` **在 CPU 上真实执行**。历史
-测试已覆盖 add / silu / softmax / rms_norm / gelu_tanh / matmul；当前 Gate2 只通过
+→ buffer deallocation → linalg-to-loops → … → LLVM)`→ shared object`，再通过
+ranked-memref C ABI **在隔离 CPU worker 中真实执行**。活动 module 不含 runtime 输入
+payload，同一 dtype/shape specialization 可对不同输入复用 content-addressed 编译结果；
+一个 public entry 一次调用写回全部逻辑输出。历史测试已覆盖 add / silu / softmax /
+rms_norm / gelu_tanh / matmul；当前 Gate2 只通过
 `ScalarLoweringSpec` 复用这条链的 backend-neutral scalar/reference 子集，与 final-J
 replay 做差分。该用途不授予 CPU production conformance，也不允许 target selection
 或 GPU fallback。CPU 作为 production backend 的完整正确性仍由独立回归维护。
 `python/tests/test_cpu_backend.py`(确定性,无 GPU)。
+
+旧 `dense<runtime-input>` wrapper、逐输出重复编译、`mlir-runner` 文本打印／解析路径已从
+活动实现删除，不保留 compatibility fallback。它们只在下方历史记录中解释曾经触发的
+修复，不能作为当前 Gate2 evidence。
 
 这就是"多后端余量":换后端 = 换 `linalg → <target>` 尾巴(CPU 已通,RVV 是下一个
 ——`intent → linalg → vector`(RVV 向量化)`→ llvm`,A/B 绑定、C 重调;论文在 RVV
@@ -145,8 +152,10 @@ Gate2 裁决协议。旧设计见
   一致。修复由真实 max Gate2 矩阵的 `source=replay=+inf, lowering=NaN` 三方模式
   触发，并由 max/min IEEE-special GPU+CPU 回归固定。
 
-当前 common `convert-intent-to-linalg` 已实现 iota 与 gather，CPU runner 也支持
-i1/i8/i16/i32/i64 输出的通用 read-back。它们是否对某个具体 artifact 可用仍由
+当前 common `convert-intent-to-linalg` 已实现 iota 与 gather，CPU ranked-memref ABI
+也支持经真实回归验证的 f16/f32/f64、i1/i8/i16/i32/i64 storage；BF16 因 NumPy
+没有可移植的原生 storage 而明确 unsupported，不会伪装为 f32。它们是否对某个具体
+artifact 可用仍由
 op shape/dtype、B obligation 与 capability/conformance record 决定；不得再用一条
 过时的全局缺口描述掩盖逐能力的 supported/unsupported 结果。
 

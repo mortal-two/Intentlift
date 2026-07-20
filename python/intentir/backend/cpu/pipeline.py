@@ -1,441 +1,330 @@
-"""IntentIR -> linalg -> LLVM -> CPU execution via mlir-runner.
+"""Typed IntentIR -> scalar MLIR -> LLVM CPU reference execution.
 
-The point is architectural, not performance: the SAME intent dialect that the GPU
-path lowers reaches a completely different backend through standard MLIR, with no
-GPU-specific machinery. intent->linalg is backend-neutral; only the device tail
-(gpu/nvvm here, an RVV/vector tail later) is specialized. This module proves that
-neutrality by actually executing a lifted kernel on the CPU and reading the result
-back.  This is an independent backend capability, not a Gate2 verdict leg and not
-a JSON interpreter. See spec/lowering/index.md ("多后端余量").
+This is the formal scalar leg of replay/scalar Gate2.  It lowers the same typed
+``IntentFunction`` admitted by Gate1 through the backend-neutral Intent-to-
+Linalg path, compiles one value-independent shared object, and invokes one
+ranked-memref entry for all logical outputs.  It contains no source-runtime,
+JSON-interpreter, CUDA/ROCm, or production-target fallback.
 """
 
 from __future__ import annotations
 
-import re
-import subprocess
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
 from ...frontend.emit_mlir import emit_module
 from ...ir.model import IntentFunction
-from ..toolchain.tools import INTENT_OPT, LLVM_BIN, LLVM_LIB
-
-_CPU_PIPELINE = [
-    "-one-shot-bufferize=bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map",
-    "-convert-linalg-to-loops",
-    "-convert-math-to-libm",
-    "-convert-scf-to-cf",
-    "-convert-cf-to-llvm",
-    "-expand-strided-metadata",  # lower memref.expand_shape (reduce keepdims)
-    "-finalize-memref-to-llvm",
-    "-convert-func-to-llvm",
-    "-convert-arith-to-llvm",
-    "-reconcile-unrealized-casts",
-]
+from .abi import (
+    CPU_ENTRY_SYMBOL,
+    CPUABIValidationError,
+    CPUBackendUnsupportedError,
+    mlir_element_type,
+    numpy_dtype,
+    validate_array,
+)
+from .compiler import compile_cpu_module
+from .runtime import execute_isolated
 
 
-def _dense(arr: np.ndarray, element_type: str = "f32") -> str:
-    """numpy array -> MLIR dense<...> attribute literal."""
-    if element_type == "i1":
-        a = np.asarray(arr, dtype=np.bool_)
-
-        def scalar(value) -> str:
-            return "true" if bool(value) else "false"
-
-    elif element_type.startswith("i"):
-        a = np.asarray(arr, dtype=np.int64)
-
-        def scalar(value) -> str:
-            return str(int(value))
-
-    elif element_type == "f16":
-        a = np.asarray(arr, dtype=np.float16)
-
-        def scalar(value: float) -> str:
-            # MLIR 20's dense-elements parser does not accept the `0xHhhhh`
-            # FloatAttr spelling inside a nested list. Decimal conversion from
-            # an already-quantized f16 value round-trips exactly to f16.
-            text = repr(float(np.asarray(value, dtype=np.float16)))
-            return text if any(c in text for c in ".eE") else text + ".0"
-
-    elif element_type == "bf16":
-        # NumPy has no portable bfloat16 dtype. Round an f32 value to the
-        # nearest-even BF16 payload and use MLIR's `0xRhhhh` spelling.
-        a = np.asarray(arr, dtype=np.float32)
-
-        def scalar(value: float) -> str:
-            bits = np.asarray(value, dtype=np.float32).view(np.uint32).item()
-            rounded = bits + 0x7FFF + ((bits >> 16) & 1)
-            bf16_value = np.asarray(
-                np.uint32(((rounded >> 16) & 0xFFFF) << 16), dtype=np.uint32
-            ).view(np.float32).item()
-            text = repr(float(bf16_value))
-            return text if any(c in text for c in ".eE") else text + ".0"
-
-    elif element_type == "f64":
-        a = np.asarray(arr, dtype=np.float64)
-
-        def scalar(value: float) -> str:
-            text = repr(float(np.asarray(value, dtype=np.float64)))
-            return text if any(c in text for c in ".eE") else text + ".0"
-
-    else:
-        a = np.asarray(arr, dtype=np.float32)
-
-        def scalar(value: float) -> str:
-            # Hex float attributes preserve every f32 input bit exactly and
-            # are also the MLIR spelling accepted for +/-inf, NaN and -0.0.
-            bits = np.asarray(value, dtype=np.float32).view(np.uint32).item()
-            return f"0x{bits:08X}"
-
-    if a.ndim == 0:
-        return scalar(a.item())
-
-    def rec(x):
-        if x.ndim == 1:
-            return "[" + ", ".join(scalar(v) for v in x) + "]"
-        return "[" + ", ".join(rec(x[i]) for i in range(x.shape[0])) + "]"
-
-    return rec(a)
+CPU_COMPUTE_SYMBOL = "intentir_cpu_compute_v1"
 
 
-def _tt(shape, element_type: str = "f32") -> str:
+@dataclass(frozen=True)
+class CPUExecutionResult:
+    """All logical outputs and non-verdict execution provenance for one call."""
+
+    outputs: Mapping[str, np.ndarray]
+    metadata: Mapping[str, Any]
+
+
+def _tensor_type(shape: Sequence[int], element_type: str) -> str:
+    if shape:
+        return f"tensor<{'x'.join(str(extent) for extent in shape)}x{element_type}>"
+    return f"tensor<{element_type}>"
+
+
+def _memref_type(shape: Sequence[int], element_type: str) -> str:
+    if shape:
+        return f"memref<{'x'.join(str(extent) for extent in shape)}x{element_type}>"
+    return f"memref<{element_type}>"
+
+
+def _checked_dims(dims: Mapping[str, int]) -> dict[str, int]:
+    if not isinstance(dims, Mapping) or not all(
+        isinstance(name, str)
+        and name
+        and isinstance(extent, int)
+        and not isinstance(extent, bool)
+        and extent >= 0
+        for name, extent in dims.items()
+    ):
+        raise CPUABIValidationError(
+            "CPU execution dims must map names to non-negative integers"
+        )
+    return dict(dims)
+
+
+def _infer_contracts(
+    fn: IntentFunction,
+    dims: Mapping[str, int],
+    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None,
+) -> tuple[
+    list[tuple[int, ...]],
+    list[str],
+    list[tuple[int, ...]],
+    list[str],
+]:
+    from ...frontend.emit_mlir import _infer_body, _resolve
+
+    extents = dict(dims)
+    input_shapes = [tuple(_resolve(tensor.shape, extents)) for tensor in fn.inputs]
+    input_element_types = [mlir_element_type(tensor.dtype) for tensor in fn.inputs]
+
+    env = {
+        tensor.name: list(shape)
+        for tensor, shape in zip(fn.inputs, input_shapes, strict=True)
+    }
+    env.update(
+        {
+            tensor.name: _resolve(tensor.shape, extents)
+            for tensor in fn.outputs
+        }
+    )
+    _infer_body(fn.body, env, 0, extents, broadcast_axes)
+    for op in fn.body:
+        if op.out is not None:
+            env[op.out] = env.get(op.result, env.get(op.out))
+    output_shapes = [tuple(env[tensor.name]) for tensor in fn.outputs]
+    output_element_types = [
+        mlir_element_type(tensor.dtype) for tensor in fn.outputs
+    ]
     return (
-        f"tensor<{'x'.join(str(s) for s in shape)}x{element_type}>"
-        if shape
-        else f"tensor<{element_type}>"
+        input_shapes,
+        input_element_types,
+        output_shapes,
+        output_element_types,
     )
 
 
-_INTEGER_OUTPUT_DTYPES = {
-    "i1": np.bool_,
-    "bool": np.bool_,
-    "i8": np.int8,
-    "i16": np.int16,
-    "i32": np.int32,
-    "i64": np.int64,
-}
-
-
-def _execution_element_type(dtype: str) -> str:
-    """Return the element type emitted by the CPU execution frontend."""
-
-    spelling = dtype.casefold().removeprefix("torch.")
-    aliases = {
-        "half": "f16",
-        "float16": "f16",
-        "bfloat16": "bf16",
-        "float": "f32",
-        "float32": "f32",
-        "double": "f64",
-        "float64": "f64",
-        "int8": "i8",
-        "int16": "i16",
-        "int32": "i32",
-        "int64": "i64",
-    }
-    spelling = aliases.get(spelling, spelling)
-    if spelling == "bool":
-        return "i1"
-    if spelling in _INTEGER_OUTPUT_DTYPES or spelling in {
-        "f16", "bf16", "f32", "f64",
-    }:
-        return spelling
-    raise ValueError(f"unsupported CPU execution dtype {dtype!r}")
-
-
-def _build_main(
-    fn: IntentFunction,
+def _append_cpu_entry(
     kernel_mlir: str,
-    inputs: list[np.ndarray],
+    *,
+    input_shapes: Sequence[Sequence[int]],
+    input_element_types: Sequence[str],
     output_shapes: Sequence[Sequence[int]],
     output_element_types: Sequence[str],
-    selected_output: int,
 ) -> str:
-    """Build a wrapper that reads back one result of a possibly multi-result fn.
+    module = kernel_mlir.rstrip()
+    if not module.endswith("}"):
+        raise ValueError("CPU compute emitter did not produce a complete module")
 
-    A separate wrapper invocation is used for every logical result.  This keeps
-    RunnerUtils parsing unambiguous without changing the lowered kernel or
-    relying on textual delimiters in ``printMemref*`` output.
-    """
-    if len(output_shapes) != len(fn.outputs):
-        raise ValueError("CPU wrapper output shape arity mismatch")
-    if len(output_element_types) != len(fn.outputs):
-        raise ValueError("CPU wrapper output dtype arity mismatch")
-    if selected_output < 0 or selected_output >= len(fn.outputs):
-        raise ValueError("CPU wrapper selected output is out of range")
-    body = kernel_mlir[kernel_mlir.index("{") + 1 : kernel_mlir.rindex("}")]
-    lines = ["module {", body.rstrip()]
-    lines.append("  func.func @main() {")
-    call_args, call_tys = [], []
-    for i, (t, arr) in enumerate(zip(fn.inputs, inputs)):
-        element_type = _execution_element_type(t.dtype)
-        ty = _tt(np.shape(arr), element_type)
-        lines.append(
-            f"    %in{i} = arith.constant dense<{_dense(arr, element_type)}> : {ty}"
+    compute_declaration = f"func.func @{CPU_COMPUTE_SYMBOL}("
+    if module.count(compute_declaration) != 1:
+        raise ValueError("CPU compute module has an ambiguous entry declaration")
+    module = module.replace(
+        compute_declaration,
+        f"func.func private @{CPU_COMPUTE_SYMBOL}(",
+        1,
+    )
+
+    input_types = [
+        _tensor_type(shape, element_type)
+        for shape, element_type in zip(
+            input_shapes, input_element_types, strict=True
         )
-        call_args.append(f"%in{i}")
-        call_tys.append(ty)
-    output_types = [
-        _tt(shape, element_type)
+    ]
+    output_tensor_types = [
+        _tensor_type(shape, element_type)
         for shape, element_type in zip(
             output_shapes, output_element_types, strict=True
         )
     ]
-    result_type = (
-        output_types[0]
-        if len(output_types) == 1
-        else f"({', '.join(output_types)})"
-    )
-    result_binding = "%y" if len(output_types) == 1 else f"%y:{len(output_types)}"
-    from ...frontend.emit_mlir import _sanitize_mlir_symbol
+    output_memref_types = [
+        _memref_type(shape, element_type)
+        for shape, element_type in zip(
+            output_shapes, output_element_types, strict=True
+        )
+    ]
 
-    lines.append(
-        f"    {result_binding} = call @{_sanitize_mlir_symbol(fn.name)}"
-        f"({', '.join(call_args)}) : ({', '.join(call_tys)}) -> {result_type}"
+    arguments = [
+        *(f"%input{index}: {ty}" for index, ty in enumerate(input_types)),
+        *(
+            f"%output{index}: {ty}"
+            for index, ty in enumerate(output_memref_types)
+        ),
+    ]
+    call_arguments = ", ".join(
+        f"%input{index}" for index in range(len(input_types))
     )
-    selected_value = "%y" if len(output_types) == 1 else f"%y#{selected_output}"
-    out_shape = tuple(output_shapes[selected_output])
-    out_element_type = output_element_types[selected_output]
-    oty = output_types[selected_output]
-    rank = len(out_shape)
-    dims = ", ".join(f"d{i}" for i in range(rank))
-    identity_map = f"affine_map<({dims}) -> ({dims})>"
-    iterators = ", ".join('"parallel"' for _ in range(rank))
-    if out_element_type in {"f16", "bf16", "f32"}:
-        # RunnerUtils prints floats with limited decimal precision. Extend
-        # half/BF16 values to f32, then bitcast to i32 so Gate2 reads exact
-        # produced values without textual rounding.
-        print_element_type = "i32"
-        print_tensor_type = _tt(out_shape, print_element_type)
-        lines.append(
-            f"    %print_init = tensor.empty() : {print_tensor_type}"
-        )
-        lines.append("    %print_values = linalg.generic {")
-        lines.append(
-            f"      indexing_maps = [{identity_map}, {identity_map}],"
-        )
-        lines.append(f"      iterator_types = [{iterators}]")
-        lines.append(
-            f"    }} ins({selected_value} : {oty}) "
-            f"outs(%print_init : {print_tensor_type}) {{"
-        )
-        lines.append(
-            f"    ^bb0(%value: {out_element_type}, %unused: i32):"
-        )
-        print_source = "%value"
-        if out_element_type != "f32":
-            lines.append(
-                f"      %print_f32 = arith.extf %value : "
-                f"{out_element_type} to f32"
-            )
-            print_source = "%print_f32"
-        lines.append(
-            f"      %print_value = arith.bitcast {print_source} : f32 to i32"
-        )
-        lines.append("      linalg.yield %print_value : i32")
-        lines.append(f"    }} -> {print_tensor_type}")
-        print_value = "%print_values"
-        printer = "printMemrefI32"
-    elif out_element_type == "f64":
-        print_element_type = "i64"
-        print_tensor_type = _tt(out_shape, print_element_type)
-        lines.append(f"    %print_init = tensor.empty() : {print_tensor_type}")
-        lines.append("    %print_values = linalg.generic {")
-        lines.append(f"      indexing_maps = [{identity_map}, {identity_map}],")
-        lines.append(f"      iterator_types = [{iterators}]")
-        lines.append(
-            f"    }} ins({selected_value} : {oty}) "
-            f"outs(%print_init : {print_tensor_type}) {{"
-        )
-        lines.append("    ^bb0(%value: f64, %unused: i64):")
-        lines.append("      %print_value = arith.bitcast %value : f64 to i64")
-        lines.append("      linalg.yield %print_value : i64")
-        lines.append(f"    }} -> {print_tensor_type}")
-        print_value = "%print_values"
-        printer = "printMemrefI64"
+    call_argument_types = ", ".join(input_types)
+    if len(output_tensor_types) == 1:
+        result_binding = "%result"
+        result_type = output_tensor_types[0]
     else:
-        # Normalize every signed integer width to i64 for RunnerUtils printing,
-        # then cast the parsed values back to the declared IntentIR dtype.
-        print_element_type = "i64"
-        print_tensor_type = _tt(out_shape, print_element_type)
-        if out_element_type == "i64":
-            print_value = selected_value
-        else:
-            lines.append(
-                f"    %print_init = tensor.empty() : {print_tensor_type}"
-            )
-            lines.append("    %print_values = linalg.generic {")
-            lines.append(
-                f"      indexing_maps = [{identity_map}, {identity_map}],"
-            )
-            lines.append(f"      iterator_types = [{iterators}]")
-            lines.append(
-                f"    }} ins({selected_value} : {oty}) "
-                f"outs(%print_init : {print_tensor_type}) {{"
-            )
-            lines.append(
-                f"    ^bb0(%value: {out_element_type}, %unused: i64):"
-            )
-            extension = "extui" if out_element_type == "i1" else "extsi"
-            lines.append(
-                f"      %print_value = arith.{extension} %value : "
-                f"{out_element_type} to i64"
-            )
-            lines.append("      linalg.yield %print_value : i64")
-            lines.append(f"    }} -> {print_tensor_type}")
-            print_value = "%print_values"
-        printer = "printMemrefI64"
+        result_binding = f"%result:{len(output_tensor_types)}"
+        result_type = f"({', '.join(output_tensor_types)})"
 
-    mref = (
-        f"memref<{'x'.join(str(s) for s in out_shape)}x{print_element_type}>"
-        if out_shape
-        else f"memref<{print_element_type}>"
+    lines = [module[:-1].rstrip()]
+    lines.append(
+        f"  func.func @{CPU_ENTRY_SYMBOL}({', '.join(arguments)}) "
+        "attributes {llvm.emit_c_interface} {"
     )
     lines.append(
-        f"    %m = bufferization.to_memref {print_value} : "
-        f"{print_tensor_type} to {mref}"
+        f"    {result_binding} = call @{CPU_COMPUTE_SYMBOL}({call_arguments}) "
+        f": ({call_argument_types}) -> {result_type}"
     )
-    lines.append(
-        f"    %u = memref.cast %m : {mref} to "
-        f"memref<*x{print_element_type}>"
-    )
-    lines.append(
-        f"    call @{printer}(%u) : "
-        f"(memref<*x{print_element_type}>) -> ()"
-    )
-    lines.append("    return")
-    lines.append("  }")
-    lines.append(
-        f"  func.func private @{printer}(%a: "
-        f"memref<*x{print_element_type}>)"
-    )
-    lines.append("}")
-    return "\n".join(lines)
+    for index, (tensor_type, memref_type) in enumerate(
+        zip(output_tensor_types, output_memref_types, strict=True)
+    ):
+        value = "%result" if len(output_tensor_types) == 1 else f"%result#{index}"
+        lines.append(
+            "    bufferization.materialize_in_destination "
+            f"{value} in writable %output{index} : "
+            f"({tensor_type}, {memref_type}) -> ()"
+        )
+    lines.extend(("    return", "  }", "}"))
+    return "\n".join(lines) + "\n"
 
 
-def _parse_memref(stdout: str, shape, element_type: str) -> np.ndarray:
-    idx = stdout.index("data =")
-    nums = re.findall(r"-?\d+", stdout[idx + 6:])
-    raw = [int(x) for x in nums]
-    if element_type in {"f16", "bf16", "f32"}:
-        vals = np.asarray(raw, dtype=np.int32).view(np.float32)
-        if element_type == "f16":
-            vals = vals.astype(np.float16)
-    elif element_type == "f64":
-        vals = np.asarray(raw, dtype=np.int64).view(np.float64)
-    else:
-        dtype = _INTEGER_OUTPUT_DTYPES[element_type]
-        vals = np.asarray(raw, dtype=np.int64).astype(dtype, copy=False)
-    return vals.reshape(shape) if shape else vals.reshape(())
-
-
-def _infer_output_contracts(
+def emit_cpu_module(
     fn: IntentFunction,
     dims: Mapping[str, int],
-    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None,
-) -> tuple[list[tuple[int, ...]], list[str]]:
-    from ...frontend.emit_mlir import _infer_body, _resolve
-
-    env = {t.name: _resolve(t.shape, dims) for t in fn.inputs}
-    env.update({t.name: _resolve(t.shape, dims) for t in fn.outputs})
-    _infer_body(fn.body, env, 0, dict(dims), broadcast_axes)
-    for op in fn.body:
-        if op.out is not None:
-            env[op.out] = env.get(op.result, env.get(op.out))
-    shapes = [tuple(env[tensor.name]) for tensor in fn.outputs]
-    element_types = [_execution_element_type(tensor.dtype) for tensor in fn.outputs]
-    return shapes, element_types
-
-
-def _run_cpu_wrapper(src: str) -> str:
-    p1 = subprocess.run(
-        [str(INTENT_OPT), "-convert-intent-to-linalg"],
-        input=src,
-        capture_output=True,
-        text=True,
-    )
-    if p1.returncode:
-        raise RuntimeError(f"intent-opt failed: {p1.stderr[:300]}")
-    p2 = subprocess.run(
-        [str(LLVM_BIN / "mlir-opt"), *_CPU_PIPELINE],
-        input=p1.stdout,
-        capture_output=True,
-        text=True,
-    )
-    if p2.returncode:
-        raise RuntimeError(f"mlir-opt failed: {p2.stderr[:300]}")
-    p3 = subprocess.run(
-        [
-            str(LLVM_BIN / "mlir-runner"),
-            "-e",
-            "main",
-            "-entry-point-result=void",
-            f"--shared-libs={LLVM_LIB / 'libmlir_runner_utils.so'}",
-            f"--shared-libs={LLVM_LIB / 'libmlir_c_runner_utils.so'}",
-        ],
-        input=p2.stdout,
-        capture_output=True,
-        text=True,
-    )
-    if p3.returncode or "data =" not in p3.stdout:
-        raise RuntimeError(
-            f"mlir-runner failed: {(p3.stderr or p3.stdout)[:300]}"
-        )
-    return p3.stdout
-
-
-def run_on_cpu_outputs(
-    fn: IntentFunction,
-    dims: dict[str, int],
-    inputs: list[np.ndarray],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
-) -> dict[str, np.ndarray]:
-    """Lower and execute every logical result of a flat IntentFunction.
+) -> str:
+    """Emit the input-value-independent scalar module with one public entry."""
 
-    Inputs are positional in ``fn.inputs`` order.  Logical outputs are returned
-    by declared ABI name, including explicit ``IntentReturn`` mappings handled
-    by the frontend emitter.
-    """
+    if not fn.outputs:
+        raise ValueError("CPU execution requires at least one logical output")
+    if any(op.op == "loop" for op in fn.body):
+        raise CPUBackendUnsupportedError(
+            "scalar CPU execution does not yet lower structured IntentIR loops"
+        )
+    checked_dims = _checked_dims(dims)
+    (
+        input_shapes,
+        input_element_types,
+        output_shapes,
+        output_element_types,
+    ) = _infer_contracts(fn, checked_dims, broadcast_axes)
+    kernel = emit_module(
+        fn,
+        checked_dims,
+        func_name=CPU_COMPUTE_SYMBOL,
+        broadcast_axes=broadcast_axes,
+    )
+    return _append_cpu_entry(
+        kernel,
+        input_shapes=input_shapes,
+        input_element_types=input_element_types,
+        output_shapes=output_shapes,
+        output_element_types=output_element_types,
+    )
+
+
+def execute_on_cpu_outputs(
+    fn: IntentFunction,
+    dims: Mapping[str, int],
+    inputs: Sequence[np.ndarray],
+    *,
+    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+) -> CPUExecutionResult:
+    """Compile once and execute all logical outputs with one native call."""
+
     if len(inputs) != len(fn.inputs):
-        raise ValueError(
+        raise CPUABIValidationError(
             "CPU execution input arity mismatch: "
             f"expected {len(fn.inputs)}, got {len(inputs)}"
         )
     if not fn.outputs:
-        raise ValueError("CPU execution requires at least one logical output")
-    kernel = emit_module(fn, dims, broadcast_axes=broadcast_axes)
-    output_shapes, output_element_types = _infer_output_contracts(
-        fn, dims, broadcast_axes
+        raise CPUABIValidationError(
+            "CPU execution requires at least one logical output"
+        )
+    checked_dims = _checked_dims(dims)
+    (
+        input_shapes,
+        _input_element_types,
+        output_shapes,
+        _output_element_types,
+    ) = _infer_contracts(fn, checked_dims, broadcast_axes)
+
+    checked_inputs = [
+        validate_array(
+            value,
+            shape=shape,
+            dtype=tensor.dtype,
+            context=f"CPU input {tensor.name!r}",
+        )
+        for tensor, shape, value in zip(
+            fn.inputs, input_shapes, inputs, strict=True
+        )
+    ]
+    output_storage = [
+        np.empty(shape, dtype=numpy_dtype(tensor.dtype), order="C")
+        for tensor, shape in zip(fn.outputs, output_shapes, strict=True)
+    ]
+    for tensor, shape, value in zip(
+        fn.outputs, output_shapes, output_storage, strict=True
+    ):
+        validate_array(
+            value,
+            shape=shape,
+            dtype=tensor.dtype,
+            context=f"CPU output {tensor.name!r}",
+            writable=True,
+        )
+
+    module = emit_cpu_module(
+        fn, checked_dims, broadcast_axes=broadcast_axes
     )
-    outputs: dict[str, np.ndarray] = {}
-    for index, tensor in enumerate(fn.outputs):
-        src = _build_main(
+    compiled = compile_cpu_module(module)
+    runtime = execute_isolated(compiled, checked_inputs, output_storage)
+    logical_outputs = {
+        tensor.name: value
+        for tensor, value in zip(fn.outputs, runtime.outputs, strict=True)
+    }
+    metadata = {
+        **compiled.evidence,
+        **runtime.metadata,
+        "compute_symbol": CPU_COMPUTE_SYMBOL,
+        "input_count": len(checked_inputs),
+        "output_count": len(logical_outputs),
+        "module_depends_on_runtime_values": False,
+    }
+    return CPUExecutionResult(logical_outputs, metadata)
+
+
+def run_on_cpu_outputs(
+    fn: IntentFunction,
+    dims: Mapping[str, int],
+    inputs: Sequence[np.ndarray],
+    *,
+    broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+) -> dict[str, np.ndarray]:
+    """Compatibility-shaped result API backed only by the memref ABI path."""
+
+    return dict(
+        execute_on_cpu_outputs(
             fn,
-            kernel,
+            dims,
             inputs,
-            output_shapes,
-            output_element_types,
-            index,
-        )
-        stdout = _run_cpu_wrapper(src)
-        outputs[tensor.name] = _parse_memref(
-            stdout, output_shapes[index], output_element_types[index]
-        )
-    return outputs
+            broadcast_axes=broadcast_axes,
+        ).outputs
+    )
 
 
 def run_on_cpu(
     fn: IntentFunction,
-    dims: dict[str, int],
-    inputs: list[np.ndarray],
+    dims: Mapping[str, int],
+    inputs: Sequence[np.ndarray],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
 ) -> np.ndarray:
-    """Execute a single-output IntentFunction on the CPU lowering path."""
+    """Execute a single-output IntentFunction on the scalar CPU path."""
+
     if len(fn.outputs) != 1:
         raise ValueError(
             "run_on_cpu requires exactly one output; use run_on_cpu_outputs"
@@ -443,3 +332,13 @@ def run_on_cpu(
     return run_on_cpu_outputs(
         fn, dims, inputs, broadcast_axes=broadcast_axes
     )[fn.outputs[0].name]
+
+
+__all__ = [
+    "CPU_COMPUTE_SYMBOL",
+    "CPUExecutionResult",
+    "emit_cpu_module",
+    "execute_on_cpu_outputs",
+    "run_on_cpu",
+    "run_on_cpu_outputs",
+]

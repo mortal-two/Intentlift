@@ -36,7 +36,9 @@ GATE1_J_DIGEST = "b" * 64
 ROOT = Path(__file__).resolve().parents[2]
 HAVE_SCALAR_TOOLS = (
     (ROOT / "build/tools/intent-opt/intent-opt").exists()
-    and Path("/usr/lib/llvm-20/bin/mlir-runner").exists()
+    and Path("/usr/lib/llvm-20/bin/mlir-opt").exists()
+    and Path("/usr/lib/llvm-20/bin/mlir-translate").exists()
+    and Path("/usr/lib/llvm-20/bin/clang-20").exists()
 )
 
 
@@ -281,6 +283,12 @@ def test_scalar_runner_executes_the_typed_program_not_a_cuda_fallback() -> None:
     np.testing.assert_array_equal(result.outputs["result"], value)
     assert result.metadata["target_backend_in_verdict"] is False
     assert "CUDA" not in result.metadata["path"]
+    execution = result.metadata["execution_evidence"]
+    assert execution["abi_protocol"] == "intentir_cpu_ranked_memref_abi_v1"
+    assert execution["native_call_count"] == 1
+    assert execution["module_depends_on_runtime_values"] is False
+    assert len(execution["scalar_module_digest"]) == 64
+    assert len(execution["shared_object_digest"]) == 64
 
 
 def test_gate2_uses_per_output_tolerance_for_floating_values() -> None:

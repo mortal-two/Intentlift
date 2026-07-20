@@ -140,6 +140,7 @@ def test_fresh_contract_rejects_wrong_model_cache_and_gate2_protocol() -> None:
         "gate2_evidence_protocol_mismatch",
         "missing_gate2_scalar_binding",
         "missing_replay_scalar_comparison_evidence",
+        "missing_scalar_execution_metadata",
     }
 
 
@@ -167,7 +168,21 @@ def test_fresh_contract_accepts_only_the_locked_full_pipeline() -> None:
         "gate2": {
             "execution_protocol": batch.GATE2_EXECUTION_PROTOCOL,
             "status": "gate2_pass",
-            "scalar": {"ok": True},
+            "scalar": {
+                "ok": True,
+                "metadata": {
+                    "protocol": batch.SCALAR_LOWERING_PROTOCOL,
+                    "target_backend_in_verdict": False,
+                    "execution_evidence": {
+                        "schema": batch.CPU_EXECUTION_EVIDENCE_SCHEMA,
+                        "abi_protocol": batch.CPU_MEMREF_ABI_PROTOCOL,
+                        "runtime_protocol": batch.CPU_RUNTIME_PROTOCOL,
+                        "native_call_count": 1,
+                        "isolated_process": True,
+                        "module_depends_on_runtime_values": False,
+                    },
+                },
+            },
             "replay_scalar": {"passed": True},
         },
         "gate2_execution_policy": {

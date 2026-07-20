@@ -27,9 +27,13 @@ from intentir.extraction.lifters.scrc import (
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate2 import (
     GATE2_EXECUTION_PROTOCOL,
+    SCALAR_LOWERING_PROTOCOL,
     InputDistribution,
     Tolerance,
 )
+from intentir.backend.cpu.abi import CPU_MEMREF_ABI_PROTOCOL
+from intentir.backend.cpu.compiler import CPU_EXECUTION_EVIDENCE_SCHEMA
+from intentir.backend.cpu.runtime import CPU_RUNTIME_PROTOCOL
 
 import scrc_live_e2e as live
 
@@ -451,6 +455,36 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
         for case in gate2_cases
     ):
         failures.append("missing_replay_scalar_comparison_evidence")
+    for case in gate2_cases:
+        if not isinstance(case, Mapping):
+            continue
+        scalar = case.get("scalar")
+        scalar_metadata = (
+            scalar.get("metadata") if isinstance(scalar, Mapping) else None
+        )
+        if not isinstance(scalar_metadata, Mapping):
+            failures.append("missing_scalar_execution_metadata")
+            continue
+        if scalar_metadata.get("protocol") != SCALAR_LOWERING_PROTOCOL:
+            failures.append("scalar_lowering_protocol_mismatch")
+        if scalar_metadata.get("target_backend_in_verdict") is not False:
+            failures.append("scalar_target_backend_entered_verdict")
+        execution = scalar_metadata.get("execution_evidence")
+        if not isinstance(execution, Mapping):
+            failures.append("missing_scalar_execution_evidence")
+            continue
+        if execution.get("schema") != CPU_EXECUTION_EVIDENCE_SCHEMA:
+            failures.append("scalar_execution_evidence_schema_mismatch")
+        if execution.get("abi_protocol") != CPU_MEMREF_ABI_PROTOCOL:
+            failures.append("scalar_memref_abi_protocol_mismatch")
+        if execution.get("runtime_protocol") != CPU_RUNTIME_PROTOCOL:
+            failures.append("scalar_runtime_protocol_mismatch")
+        if execution.get("native_call_count") != 1:
+            failures.append("scalar_native_call_count_mismatch")
+        if execution.get("isolated_process") is not True:
+            failures.append("scalar_runtime_not_isolated")
+        if execution.get("module_depends_on_runtime_values") is not False:
+            failures.append("scalar_module_contains_runtime_values")
     gate2_policy = report.get("gate2_execution_policy")
     if not isinstance(gate2_policy, Mapping):
         failures.append("missing_gate2_execution_policy")
@@ -465,6 +499,7 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
             failures.append("target_backend_entered_gate2_verdict")
     if not isinstance(report.get("gate2_scalar_binding"), Mapping):
         failures.append("missing_gate2_scalar_binding")
+    failures = list(dict.fromkeys(failures))
     return not failures, failures
 
 

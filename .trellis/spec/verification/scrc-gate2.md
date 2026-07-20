@@ -77,6 +77,11 @@ mismatch。为了让样本通过，只能补齐 J/IntentProgram/标量 lowering 
   unresolved B obligation、非法 broadcast/scope 或缺失 output 必须 fail closed；
 - scalar 的规范路径必须经过项目真实 Intent MLIR lowering 与 LLVM CPU execution，
   不得用 kernel-name 分支、手写期望值或解释器伪装；
+- scalar module 只绑定 typed IntentProgram、声明 dtype/shape 与 dims specialization，
+  runtime tensor 值不得序列化为 `dense` 常量或进入编译 cache key；所有逻辑输出必须
+  通过一个 `llvm.emit_c_interface` ranked-memref entry 在一次 native call 中产生；
+- scalar native code 在隔离 worker 中执行；signal、timeout、ABI 校验失败、编译／链接
+  失败均是显式 execution failure，不得降级为数值 mismatch、unsupported 或 fallback；
 - replay/scalar 的异常分别保存为 `ExecutionResult`，不得吞掉异常后制造空输出通过；
 - active Gate2 与 `backend/cpu` scalar 路径不得 import `intentir.backend.cuda`、ROCm
   或任一 production target registry，也没有 target fallback。
@@ -117,7 +122,11 @@ tolerance 是数值语义政策，不是过门工具。不得针对失败 kernel
 单 case 与 suite evidence 必须携带
 `execution_protocol=final_j_replay_scalar_differential_v2`。scalar result 必须携带
 `protocol=intent_program_scalar_cpu_mlir_v1` 以及 final artifact、Gate1 J、
-IntentProgram 和 scalar spec digest。
+IntentProgram 和 scalar spec digest。scalar result 还应保存
+`intentir_cpu_execution_evidence_v1` provenance：ranked-memref ABI、静态 scalar module、
+lowering pipeline、toolchain、cache key 与 shared object digest，以及一次调用／隔离执行
+记录。cache path、runtime pointer 不得进入报告；`cache_hit` 只是非确定 telemetry，
+不得进入任何 semantic evidence digest、comparator、tolerance、supported 分类或 verdict。
 
 活动汇总 schema 为 `scrc_gate1_gate2_conditional_v4`：
 

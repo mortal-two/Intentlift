@@ -4,10 +4,11 @@ This harness invokes the production Gate1 entry point and can additionally run
 the exact same immutable replay observation over a declared fixed-C runtime
 profile family.  Normal replay, paired interventions and actual-pi masked-J
 each reuse one immutable replay over the complete family; no profile-local
-writer or repair path exists. Gate2 can run either the reviewed execution contract or a strict
-declarative shape/value/seed matrix over the source and replay legs. It does not add a verifier or an alternate
-correctness path: all decisions are still made by the production SCRC lifter,
-Gate1, and Gate2 implementations.
+writer or repair path exists. Gate2 runs either the reviewed execution contract
+or a strict declarative shape/value/seed matrix over the final-J replay and the
+typed scalar MLIR lowering. It does not execute the source as a verdict leg or
+add an alternate correctness path: all decisions are still made by the
+production SCRC lifter, Gate1, and Gate2 implementations.
 """
 
 from __future__ import annotations

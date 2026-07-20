@@ -27,6 +27,6 @@
     "python/intentir/verify/gate1/program_adapter.py",
     "python/intentir/extraction/lifters/scrc.py"
   ],
-  "notes": "Phase 2.1 typed predicate admission landed in 05876fe; task remains in progress for typed symbol binding, scalable scalar ABI, and fresh five-kernel evidence.",
+  "notes": "Phase 2.1 typed predicate admission landed in 05876fe. The scalable value-independent ranked-memref scalar ABI is implemented with one-call multi-output execution, content-addressed compilation, and an isolated worker. Task remains in progress for explicit typed symbol binding and fresh five-kernel evidence.",
   "meta": {}
 }

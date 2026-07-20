@@ -1,8 +1,8 @@
-"""Second backend: lifted kernels execute on CPU (intent -> linalg -> LLVM JIT).
+"""Gate2 scalar backend: typed kernels execute through MLIR and a memref ABI.
 
-Deterministic and GPU-free -- it uses the committed extraction artifacts, numpy
-inputs, and mlir-runner. Proves intent->linalg is backend-neutral (the GPU tail
-is the only specialized part). Skips if the MLIR CPU tools aren't present.
+Deterministic and GPU-free: runtime values cross a ranked-memref C interface and
+never become MLIR constants.  All logical outputs are produced by one isolated
+native call.  Skips if the MLIR CPU tools are unavailable.
 """
 
 from __future__ import annotations
@@ -14,10 +14,17 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-_HAVE = (ROOT / "build/tools/intent-opt/intent-opt").exists() and \
-        Path("/usr/lib/llvm-20/bin/mlir-runner").exists()
+_HAVE = all(
+    path.exists()
+    for path in (
+        ROOT / "build/tools/intent-opt/intent-opt",
+        Path("/usr/lib/llvm-20/bin/mlir-opt"),
+        Path("/usr/lib/llvm-20/bin/mlir-translate"),
+        Path("/usr/lib/llvm-20/bin/clang-20"),
+    )
+)
 
-pytestmark = pytest.mark.skipif(not _HAVE, reason="needs intent-opt + mlir-runner")
+pytestmark = pytest.mark.skipif(not _HAVE, reason="needs the scalar MLIR toolchain")
 
 
 def _np_ref(name, arrs):
@@ -93,7 +100,7 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
 
 
 def test_multiple_logical_outputs_run_on_cpu() -> None:
-    from intentir.backend.cpu.pipeline import run_on_cpu_outputs
+    from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
     from intentir.ir.model import IntentFunction
 
     fn = IntentFunction.from_json(
@@ -130,11 +137,15 @@ def test_multiple_logical_outputs_run_on_cpu() -> None:
     )
     value = np.asarray([-2.0, 0.5, 3.0], dtype=np.float32)
 
-    actual = run_on_cpu_outputs(fn, {"N": 3}, [value])
+    execution = execute_on_cpu_outputs(fn, {"N": 3}, [value])
+    actual = execution.outputs
 
     assert tuple(actual) == ("Neg", "Square")
     np.testing.assert_array_equal(actual["Neg"], -value)
     np.testing.assert_array_equal(actual["Square"], value * value)
+    assert execution.metadata["native_call_count"] == 1
+    assert execution.metadata["output_count"] == 2
+    assert execution.metadata["isolated_process"] is True
 
 
 def test_cpu_runner_reads_back_exact_f32_bits() -> None:
@@ -192,3 +203,168 @@ def test_cpu_runner_accepts_and_preserves_ieee_special_input_bits() -> None:
     np.testing.assert_array_equal(
         actual.view(np.uint32), values.view(np.uint32)
     )
+
+
+def test_cpu_module_does_not_embed_runtime_input_values() -> None:
+    from intentir.backend.cpu.pipeline import emit_cpu_module
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": "value_independent_identity",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+
+    small = emit_cpu_module(fn, {"N": 7})
+    large = emit_cpu_module(fn, {"N": 700_000})
+
+    assert "dense<" not in small
+    assert "91.181175" not in small
+    assert "intentir_cpu_entry_v1" in small
+    assert small.count("bufferization.materialize_in_destination") == 1
+    assert abs(len(large) - len(small)) < 100
+
+
+def test_structured_loop_is_explicitly_unsupported_not_reinterpreted() -> None:
+    from intentir.backend.cpu.abi import CPUBackendUnsupportedError
+    from intentir.backend.cpu.pipeline import emit_cpu_module
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": "unsupported_structured_loop",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [{"op": "loop"}],
+        }
+    )
+
+    with pytest.raises(CPUBackendUnsupportedError, match="structured IntentIR loops"):
+        emit_cpu_module(fn, {"N": 4})
+
+
+def test_cpu_compilation_cache_is_independent_of_runtime_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
+    from intentir.ir.model import IntentFunction
+
+    monkeypatch.setenv("INTENTIR_CPU_CACHE_DIR", str(tmp_path / "cpu-cache"))
+    fn = IntentFunction.from_json(
+        {
+            "name": "cache_identity",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+    first_value = np.asarray([1.25, -8.0, 0.0], dtype=np.float32)
+    second_value = np.asarray([91.181175, 2.5, -0.0], dtype=np.float32)
+
+    first = execute_on_cpu_outputs(fn, {"N": 3}, [first_value])
+    second = execute_on_cpu_outputs(fn, {"N": 3}, [second_value])
+
+    np.testing.assert_array_equal(first.outputs["Y"], first_value)
+    np.testing.assert_array_equal(second.outputs["Y"], second_value)
+    assert first.metadata["cache_hit"] is False
+    assert second.metadata["cache_hit"] is True
+    for key in (
+        "scalar_module_digest",
+        "lowering_pipeline_digest",
+        "toolchain_digest",
+        "cache_key",
+        "shared_object_digest",
+        "abi_protocol",
+    ):
+        assert first.metadata[key] == second.metadata[key]
+
+
+def test_cpu_cache_rebuilds_a_corrupted_shared_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
+    from intentir.ir.model import IntentFunction
+
+    cache = tmp_path / "cpu-cache"
+    monkeypatch.setenv("INTENTIR_CPU_CACHE_DIR", str(cache))
+    fn = IntentFunction.from_json(
+        {
+            "name": "cache_integrity_identity",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": "f32"},
+                }
+            ],
+        }
+    )
+    value = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    first = execute_on_cpu_outputs(fn, {"N": 3}, [value])
+    shared_object = cache / f"{first.metadata['cache_key']}.so"
+    shared_object.write_bytes(b"corrupt")
+
+    rebuilt = execute_on_cpu_outputs(fn, {"N": 3}, [value])
+
+    assert rebuilt.metadata["cache_hit"] is False
+    assert rebuilt.metadata["shared_object_digest"] == first.metadata[
+        "shared_object_digest"
+    ]
+    np.testing.assert_array_equal(rebuilt.outputs["Y"], value)
+
+
+@pytest.mark.parametrize(
+    "dtype,values",
+    [
+        ("f16", np.asarray([-2.0, 0.5, 3.0], dtype=np.float16)),
+        ("f64", np.asarray([-2.0, 0.5, 3.0], dtype=np.float64)),
+        ("i1", np.asarray([True, False, True], dtype=np.bool_)),
+        ("i8", np.asarray([-2, 0, 3], dtype=np.int8)),
+        ("i16", np.asarray([-2, 0, 3], dtype=np.int16)),
+        ("i32", np.asarray([-2, 0, 3], dtype=np.int32)),
+        ("i64", np.asarray([-2, 0, 3], dtype=np.int64)),
+    ],
+)
+def test_verified_memref_storage_types(dtype, values) -> None:
+    from intentir.backend.cpu.pipeline import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": f"identity_{dtype}",
+            "inputs": [{"name": "X", "dtype": dtype, "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": dtype, "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"dtype": dtype},
+                }
+            ],
+        }
+    )
+
+    actual = run_on_cpu(fn, {"N": 3}, [values])
+
+    np.testing.assert_array_equal(actual, values)

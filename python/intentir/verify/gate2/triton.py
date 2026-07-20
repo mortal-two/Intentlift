@@ -1,4 +1,4 @@
-"""Actual source/replay Triton execution legs for Gate2."""
+"""Actual final-J replay Triton execution adapter for Gate2."""
 
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ def _load_module(source: KernelSource, temporary: Path) -> tuple[ModuleType, str
 
 
 class TritonRunner:
-    """Load and launch one Triton program; source and replay use separate calls."""
+    """Load and launch the final-J replay executable independently."""
 
     def run(
         self,

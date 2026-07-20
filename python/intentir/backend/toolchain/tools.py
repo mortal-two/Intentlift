@@ -14,6 +14,18 @@ INTENT_OPT = os.environ.get(
 MLIR_OPT = os.environ.get("MLIR_OPT", "/usr/lib/llvm-20/bin/mlir-opt")
 LLVM_BIN = Path(MLIR_OPT).parent
 LLVM_LIB = Path(os.environ.get("LLVM_LIB", "/usr/lib/llvm-20/lib"))
+MLIR_TRANSLATE = os.environ.get(
+    "MLIR_TRANSLATE", str(LLVM_BIN / "mlir-translate")
+)
+CLANG = os.environ.get("CLANG", str(LLVM_BIN / "clang-20"))
 
 
-__all__ = ["INTENT_OPT", "LLVM_BIN", "LLVM_LIB", "MLIR_OPT", "REPO_ROOT"]
+__all__ = [
+    "CLANG",
+    "INTENT_OPT",
+    "LLVM_BIN",
+    "LLVM_LIB",
+    "MLIR_OPT",
+    "MLIR_TRANSLATE",
+    "REPO_ROOT",
+]
