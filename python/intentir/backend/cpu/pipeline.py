@@ -1,10 +1,11 @@
 """Typed IntentIR -> scalar MLIR -> LLVM CPU reference execution.
 
-This is the formal scalar leg of replay/scalar Gate2.  It lowers the same typed
-``IntentFunction`` admitted by Gate1 through the backend-neutral Intent-to-
-Linalg path, compiles one value-independent shared object, and invokes one
-ranked-memref entry for all logical outputs.  It contains no source-runtime,
-JSON-interpreter, CUDA/ROCm, or production-target fallback.
+This is the scalar leg of source-anchored Gate2.  After Gate1 closes, it lowers
+the typed ``IntentFunction`` derived from that final J through the
+backend-neutral Intent-to-Linalg path, compiles one value-independent shared
+object, and invokes one ranked-memref entry for all logical outputs.  It
+contains no source-runtime, JSON-interpreter, CUDA/ROCm, or production-target
+fallback.
 """
 
 from __future__ import annotations
