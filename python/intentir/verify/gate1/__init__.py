@@ -63,6 +63,7 @@ from .prompt import (
     build_rewriter_prompt,
 )
 from .rules import (
+    RuleAblationRole,
     RuleCard,
     RuleRegistry,
     RuleSelectionMode,
@@ -212,7 +213,7 @@ __all__ = [
     "LeakageReport", "LeakageViolation", "LocationEntry", "LocationMap",
     "OutputMapping", "ParameterKind", "ParameterMode", "PortableScope",
     "ProvenanceRecord",
-    "ProvenanceRole", "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuleCard", "RuleRegistry",
+    "ProvenanceRole", "ReductionBoundary", "ReplayPlan", "ReplayStep", "RuleAblationRole", "RuleCard", "RuleRegistry",
     "RuleSelectionMode",
     "RULE_RELEASE_SCHEMA", "RuleChangeKind", "RuleRelease",
     "RuleReleaseApplyError", "RuleReleaseChange", "RuleReleaseStatus",

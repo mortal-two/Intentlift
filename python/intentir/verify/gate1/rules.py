@@ -32,6 +32,13 @@ class RuleSelectionMode(str, Enum):
     OVERRIDE = "override"
 
 
+class RuleAblationRole(str, Enum):
+    """Whether one instantiated rule step carries causal construction evidence."""
+
+    CAUSAL = "causal"
+    ADMINISTRATIVE = "administrative"
+
+
 @dataclass
 class RuleCard(StrictJSONMixin):
     """One system-owned replay mechanism card.
@@ -51,6 +58,7 @@ class RuleCard(StrictJSONMixin):
     example: str = ""
     pitfalls: list[str] = field(default_factory=list)
     selection_mode: RuleSelectionMode = RuleSelectionMode.DERIVED
+    ablation_role: RuleAblationRole = RuleAblationRole.CAUSAL
     override_family: str | None = None
     strategy_family: str | None = None
     strategy_choice: str | None = None
@@ -78,6 +86,11 @@ class RuleCard(StrictJSONMixin):
             RuleSelectionMode,
             self.selection_mode,
             "RuleCard.selection_mode",
+        )
+        self.ablation_role = _enum(
+            RuleAblationRole,
+            self.ablation_role,
+            "RuleCard.ablation_role",
         )
         if self.override_family is not None:
             self.override_family = _string(
@@ -162,6 +175,7 @@ class RuleCard(StrictJSONMixin):
             allowed={
                 "id", "frontend", "version", "applies_to", "reads",
                 "api_mapping", "example", "pitfalls", "selection_mode",
+                "ablation_role",
                 "override_family", "strategy_family", "strategy_choice",
                 "target_kinds", "construction_phase", "required_fields",
                 "provides", "requires",
@@ -181,6 +195,7 @@ class RuleCard(StrictJSONMixin):
             example=data.get("example", ""),
             pitfalls=_string_list(data.get("pitfalls", []), "RuleCard.pitfalls", unique=True),
             selection_mode=data.get("selection_mode", RuleSelectionMode.DERIVED.value),
+            ablation_role=data.get("ablation_role", RuleAblationRole.CAUSAL.value),
             override_family=data.get("override_family"),
             strategy_family=data.get("strategy_family"),
             strategy_choice=data.get("strategy_choice"),
@@ -212,6 +227,7 @@ class RuleCard(StrictJSONMixin):
             "example": self.example,
             "pitfalls": list(self.pitfalls),
             "selection_mode": self.selection_mode.value,
+            "ablation_role": self.ablation_role.value,
             "target_kinds": list(self.target_kinds),
             "required_fields": list(self.required_fields),
             "provides": list(self.provides),
@@ -876,6 +892,7 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "required_fields": ["name", "kind"],
     },
     "declare_schedule_slot": {
+        "ablation_role": RuleAblationRole.ADMINISTRATIVE,
         "target_kinds": ["schedule.slot"],
         "construction_phase": 30,
         "required_fields": ["name", "kind"],
@@ -1690,6 +1707,6 @@ def default_triton_rule_registry() -> RuleRegistry:
 
 
 __all__ = [
-    "RuleCard", "RuleRegistry", "RuleSelectionMode",
+    "RuleAblationRole", "RuleCard", "RuleRegistry", "RuleSelectionMode",
     "default_triton_rule_registry",
 ]
