@@ -3,7 +3,9 @@
 本目录只借用 Trellis 的文件布局。工作项是普通 Markdown，不使用 `task.json` 状态机、
 Trellis CLI、自动 session 或 workflow phase。
 
-当前活动工作项：无。下一项必须单独建任务，不与已完成提交混杂。
+当前活动工作项：
+
+- [28 Real Kernels 04：正式 LLM Lift/Replay/Lowering/Performance 批次](07-22-28-kernel-llm-batch-04/task.md)
 
 最近完成：
 
