@@ -100,5 +100,17 @@ parser 的所有分歧。此阶段禁止修改 response、禁止放宽 parser、
   loop contract、`id` completeness 与 non-loop body，不再只修 canary 撞到的一项。
 - 新增不可修改真实反例测试；阶段 0 定向回归 `10 passed`，在线 LLM 调用新增为 0。
 
-下一步进入阶段 1：建立一个纯声明、只识别 `op == "loop"` 的全局 IntentOp 结构合同，并让
-parser、wire schema 和 grammar 共同消费；不得创建 operation catalog 或 response repair。
+## 阶段 1 完成记录（2026-07-22）
+
+- 新增 `intent_op_contract.py` 作为唯一结构真相；它只识别全局结构判别
+  `op == "loop"`，其余任意现在或未来 opcode 一律走同一个 non-loop shape，没有 op catalog。
+- Responses JSON Schema、Gate1 strict parser 结构预检和 Lift wire grammar 均由该合同投影；
+  删除原 schema/parser 分别维护的 loop 字段集合，没有引入 composer、registry 或 repair。
+- canonical `IntentOp.to_json()` 保留合法 loop 的空 `scan`，消除 parse/serialize 后把 required
+  字段折叠为 absent 的反向漂移；`id` 也纳入 schema，补齐 canonical node-id 表达。
+- v2 raw response 现在会在新的局部 wire/结构边界拒绝，而不是进入 archive ownership 验证后
+  才发现五个 non-loop `scope_id`；历史 v1/v2 evidence 未改写，只明确标记 wire epoch 已退役。
+- 阶段 1 定向编译与回归：`89 passed`；在线 LLM 调用新增为 0。
+
+下一步进入阶段 2：对真实 canonical fixtures 与确定性 mutation 建立双向接受域 conformance，
+然后运行全量回归；在这些离线证据闭合前不冻结 v3、不调用 LLM。

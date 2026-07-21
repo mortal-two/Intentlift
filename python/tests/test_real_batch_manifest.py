@@ -65,17 +65,22 @@ def test_protocol_v2_is_self_contained_and_keeps_the_frozen_cases() -> None:
     assert len(v2.cases) == 28
 
 
-def test_protocol_v2_lift_wire_lock_matches_actual_request_path() -> None:
-    manifest = load_batch_manifest(_MANIFEST_V2)
-    assert verify_lift_wire_lock(manifest.data["lift_wire"]) == (
-        current_lift_wire_identity()
-    )
-
-
-def test_protocol_v2_preflight_is_28_of_28_and_current() -> None:
+def test_protocol_v2_lift_wire_lock_is_frozen_and_retired() -> None:
     manifest = load_batch_manifest(_MANIFEST_V2)
     receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
-    verify_formal_preflight(receipt, manifest, _MANIFEST_V2)
+    assert receipt["lift_wire"] == manifest.data["lift_wire"]
+    assert current_lift_wire_identity() != manifest.data["lift_wire"]
+    with pytest.raises(LiftWireError, match="differs"):
+        verify_lift_wire_lock(manifest.data["lift_wire"])
+
+
+def test_protocol_v2_preflight_remains_complete_historical_evidence() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
+    assert receipt["manifest_digest"] == manifest.digest
+    assert receipt["manifest_file_sha256"] == hashlib.sha256(
+        _MANIFEST_V2.read_bytes()
+    ).hexdigest()
     assert receipt["summary"] == {
         "blocking_capability": None,
         "cute_compiled": 2,
@@ -88,6 +93,8 @@ def test_protocol_v2_preflight_is_28_of_28_and_current() -> None:
         "triton_compiled": 26,
         "triton_total": 26,
     }
+    # Gate1's frozen compiler-path identity happens to remain current: the
+    # epoch was retired by Lift wire drift, not by a compiler-path change.
     assert receipt["gate1_code"] == current_gate1_code_identity()
     cute_cases = [item for item in receipt["cases"] if item["frontend"] == "cute"]
     assert [item["async_copy_opcode"] for item in cute_cases] == [
@@ -96,11 +103,10 @@ def test_protocol_v2_preflight_is_28_of_28_and_current() -> None:
     ]
 
 
-def test_protocol_v2_preflight_rejects_code_identity_drift() -> None:
+def test_protocol_v2_preflight_cannot_be_reused_after_wire_epoch_drift() -> None:
     manifest = load_batch_manifest(_MANIFEST_V2)
     receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
-    receipt["gate1_code"][0]["sha256"] = "0" * 64
-    with pytest.raises(ValueError, match="Gate1 code identity drifted"):
+    with pytest.raises(ValueError, match="Lift wire differs"):
         verify_formal_preflight(receipt, manifest, _MANIFEST_V2)
 
 

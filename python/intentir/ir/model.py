@@ -260,7 +260,10 @@ class IntentOp:
             d["carry"] = [item.to_json() for item in self.carry]
         if self.trip is not None:
             d["trip"] = self.trip.to_json()
-        if self.scan:
+        # ``scan`` is required by the canonical structured-loop wire contract,
+        # and an empty scan list is semantically meaningful.  Do not collapse
+        # it into field absence during a strict parse/to_json round trip.
+        if self.op == "loop" or self.scan:
             d["scan"] = [item.to_json() for item in self.scan]
         if self.body:
             d["body"] = [x.to_json() for x in self.body]

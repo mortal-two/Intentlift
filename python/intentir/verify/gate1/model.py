@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
 
+from intentir.ir.intent_op_contract import (
+    IntentOpContractError,
+    validate_intent_op_structure,
+)
 from intentir.ir.model import IntentFunction
 from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
 
@@ -338,15 +342,11 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         *,
         strict_operands: bool,
     ) -> list[str]:
-        op = _strict_object(
-            item,
-            path=op_path,
-            allowed={
-                "id", "op", "result", "operands", "attrs", "type",
-                "scope_id", "carry", "trip", "scan", "body", "yield",
-            },
-            required={"op"},
-        )
+        try:
+            validate_intent_op_structure(item, path=op_path, recursive=False)
+        except IntentOpContractError as exc:
+            raise SchemaError(str(exc)) from exc
+        op = _object(item, op_path)
         op_name = _string(op["op"], f"{op_path}.op")
         if "id" in op:
             node_id = _string(op["id"], f"{op_path}.id")
@@ -367,38 +367,13 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                         f"{op_path}.operands reference value(s) outside the current "
                         f"scope: {', '.join(unknown_operands)}"
                     )
-        if "scope_id" in op and op["scope_id"] is not None:
-            _string(op["scope_id"], f"{op_path}.scope_id")
-        if "yield" in op:
-            _string_list(op["yield"], f"{op_path}.yield")
         for open_key in ("attrs", "type"):
             if open_key in op and op[open_key] is not None:
                 _json_value(op[open_key], f"{op_path}.{open_key}")
 
         if op_name != "loop":
-            for loop_key in ("carry", "trip", "scan", "yield"):
-                if loop_key in op:
-                    raise SchemaError(
-                        f"{op_path}.{loop_key} is only valid for op='loop'"
-                    )
-            if op.get("body"):
-                validate_sequence(
-                    op["body"], f"{op_path}.body", visible,
-                    strict_operands=True,
-                )
-            elif "body" in op and not isinstance(op["body"], list):
-                raise SchemaError(f"{op_path}.body must be an array")
             return produced
 
-        required_loop_fields = {"result", "scope_id", "carry", "trip", "scan", "body", "yield"}
-        missing_loop_fields = sorted(required_loop_fields - set(op))
-        if missing_loop_fields:
-            raise SchemaError(
-                f"{op_path} semantic loop is missing required key(s): "
-                + ", ".join(missing_loop_fields)
-            )
-        if not isinstance(op["result"], list) or not produced:
-            raise SchemaError(f"{op_path}.result must be a non-empty array for a semantic loop")
         loop_scope = _string(op["scope_id"], f"{op_path}.scope_id")
 
         trip = _strict_object(

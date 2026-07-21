@@ -8,7 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 # Heavier deps (numpy for the reference interpreter, http client for the LLM
 # provider) are opt-in so the core model stays import-light.
-verify = ["numpy"]
+verify = ["numpy", "jsonschema>=3.2"]
 
 [build-system]
 requires = ["setuptools>=64"]

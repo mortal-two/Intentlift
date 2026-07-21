@@ -12,6 +12,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from intentir.ir.intent_op_contract import intent_op_json_schema
+
 
 def _closed_object(
     properties: dict[str, Any],
@@ -55,16 +57,6 @@ _PORTABLE_PREDICATE_STRING = {
 }
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
-_LOOP_INIT_VALUE = {
-    "anyOf": [
-        _STRING,
-        {"type": "number"},
-        {"type": "boolean"},
-        {"type": "null"},
-    ]
-}
-
-
 def _tensor_schema() -> dict[str, Any]:
     return _closed_object(
         {
@@ -73,68 +65,6 @@ def _tensor_schema() -> dict[str, Any]:
             "shape": _array(_INT_OR_STRING),
         },
         ("name", "dtype", "shape"),
-    )
-
-
-def _intent_op_schema() -> dict[str, Any]:
-    loop_value_type = _closed_object(
-        {
-            "dtype": _STRING,
-            "shape": _array(_INT_OR_STRING),
-        },
-        ("dtype", "shape"),
-    )
-    state_binding = _closed_object(
-        {
-            "state_id": _STRING,
-            "init_value": _LOOP_INIT_VALUE,
-            "body_argument": _STRING,
-            "next_value": _STRING,
-            "result_value": _STRING,
-            "type": loop_value_type,
-        },
-        (
-            "state_id", "init_value", "body_argument", "next_value",
-            "result_value", "type",
-        ),
-        description=(
-            "One explicit semantic loop binding. result/yield arrays must "
-            "repeat result_value/next_value in exactly the same order."
-        ),
-    )
-    trip = _closed_object(
-        {"axis": _STRING},
-        ("axis",),
-        description=(
-            "Semantic trip dimension only. Tile/block choices belong to "
-            "C.schedule and must not be copied into J."
-        ),
-    )
-    scan_input = _closed_object(
-        {
-            "name": _STRING,
-            "from": _STRING,
-            "axis": {"type": "integer", "minimum": 0},
-        },
-        ("name", "from", "axis"),
-    )
-    return _closed_object(
-        {
-            "op": _STRING,
-            "result": {
-                "anyOf": [_STRING, _STRING_ARRAY, {"type": "null"}]
-            },
-            "operands": _STRING_ARRAY,
-            "attrs": {"type": "object"},
-            "type": _nullable({"type": "object"}),
-            "scope_id": _nullable(_STRING),
-            "carry": _array(state_binding),
-            "trip": _nullable(trip),
-            "scan": _array(scan_input),
-            "body": _array({"$ref": "#/$defs/intent_op"}),
-            "yield": _STRING_ARRAY,
-        },
-        ("op",),
     )
 
 
@@ -631,7 +561,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
         },
         ("schema", "j", "interface", "schedule", "pi", "location_map"),
     )
-    schema["$defs"] = {"intent_op": _intent_op_schema()}
+    schema["$defs"] = {"intent_op": intent_op_json_schema()}
     return copy.deepcopy(schema)
 
 

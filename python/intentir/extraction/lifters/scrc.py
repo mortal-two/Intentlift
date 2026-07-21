@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
+from intentir.ir.intent_op_contract import render_intent_op_wire_grammar
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
@@ -530,6 +531,9 @@ frontend API, source identifier, source fragment, prose, or rule identity in pi.
 
 The source is already alpha-renamed. Do not invent or recover original names.
 Output JSON only.
+
+IntentOp structural contract:
+{render_intent_op_wire_grammar()}
 
 Layer-A operation grammar:
 {INTENTIR_SCHEMA}
