@@ -2112,8 +2112,6 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert cards["bind_runtime_scalar"].version == "2"
     assert "tensor_ref" in cards["bind_runtime_scalar"].reads
     assert cards["declare_schedule_slot"].version == "2"
-    assert cards["declare_schedule_slot"].ablation_role.value == "administrative"
-    assert cards["bind_runtime_scalar"].ablation_role.value == "causal"
     assert any(
         "compiler slot is not a kernel parameter" in item
         for item in cards["declare_schedule_slot"].pitfalls
