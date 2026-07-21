@@ -118,3 +118,27 @@ v4 除 9 个 invalid route sources 外还有 1 个 invalid sharing source；这�
 
 下一步进入阶段 2：补真实 v4 frozen response、runner invalid-Lift 状态机和完整关系 mutation
 conformance，然后运行全量回归；在这些证据闭合前不得冻结 v5。
+
+## 阶段 2 与 v5 调用合同记录（2026-07-22，0 次 LLM）
+
+- conformance 现在覆盖 raw anchor/graph-ID 双向混淆、dangling `i*`、duplicate declaration、
+  route/order/sharing 所有 endpoint、order cycle、repeated anchor、round-trip 与输入不变性；真实
+  v4 response 离线精确拒绝在 `pi.routes[0].source='c1'`，并核对 9 个 invalid route sources 与
+  1 个 invalid sharing source。
+- formal runner 离线模拟 invalid Lift：ledger 只有一次 failed Lift，artifact/Gate1 不存在，
+  normal Replay 与 masked-J 均为 0；冻结 v4 receipt 的 call/hash/token/lineage 也有 committed test。
+- 第一轮全量回归得到 `769 passed, 4 skipped, 2 failed`；两个失败都只因旧测试仍把已冻结 v4
+  wire/preflight 当 current。没有功能测试失败，因此没有刷新 v4，而是切换新 epoch。
+- protocol-v5 manifest 完整复制 v4 的 28 cases、repositories、call budget 与除 Lift 外的所有
+  protocol；语义/调用 diff 为 0。仅 schema/batch ID/Lift wire identity 改变：
+  - manifest digest：`bf6716ba75c0087a506031101a5628f30c06c29d08dfdaf60ef5a0bfcea5ceeb`
+  - manifest file SHA：`98056f9035d839e5d51f8b209accf0806606b7fbab2bca283a302c50265716cf`
+  - Lift wire：`intentir.lift-wire.v5`
+- v5 Lift wire 首次把共享 grammar 所在的 `verify/gate1/pi.py` 纳入 request-path hash；v4 identity
+  保留为历史常量，current verifier 明确拒绝 v4 冒充 v5。
+- v5 recovery 绑定 exact v4 receipt SHA，同时验证 v4 manifest/preflight、一次 failed Lift、
+  invalid response SHA、0 artifact/Gate1、v4→v3 lineage、source/provider identity；不只按路径或
+  `status` 软匹配。定向回归 `161 passed`，在线 LLM 调用新增为 0。
+
+下一步运行切换 v5 后的完整全量回归。只有全绿并提交后，才生成 0-LLM v5 preflight；任何
+preflight identity 覆盖的代码若再改变，必须废弃并重新生成，不能直接开始 canary。

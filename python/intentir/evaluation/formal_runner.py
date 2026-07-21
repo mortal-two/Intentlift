@@ -52,12 +52,16 @@ from .real_batch import (
     SCHEMA_V2,
     SCHEMA_V3,
     SCHEMA_V4,
+    SCHEMA_V5,
     V2_BATCH_ID,
     V2_MANIFEST_DIGEST,
     V2_MANIFEST_FILE_SHA256,
     V3_BATCH_ID,
     V3_MANIFEST_DIGEST,
     V3_MANIFEST_FILE_SHA256,
+    V4_BATCH_ID,
+    V4_MANIFEST_DIGEST,
+    V4_MANIFEST_FILE_SHA256,
     compiler_pythonpath,
     cute_compile_case,
     cute_entry_symbol,
@@ -73,6 +77,7 @@ RUN_SCHEMA = "intentir.formal-real-llm-case.v1"
 RUN_SCHEMA_V2 = "intentir.formal-real-llm-case.v2"
 RUN_SCHEMA_V3 = "intentir.formal-real-llm-case.v3"
 RUN_SCHEMA_V4 = "intentir.formal-real-llm-case.v4"
+RUN_SCHEMA_V5 = "intentir.formal-real-llm-case.v5"
 _V2_ATTEMPT_CLASSES = frozenset(
     {"protocol_v2_first_attempt", "protocol_v2_recovery"}
 )
@@ -82,17 +87,35 @@ _V3_ATTEMPT_CLASSES = frozenset(
 _V4_ATTEMPT_CLASSES = frozenset(
     {"protocol_v4_first_attempt", "protocol_v4_recovery"}
 )
+_V5_ATTEMPT_CLASSES = frozenset(
+    {"protocol_v5_first_attempt", "protocol_v5_recovery"}
+)
 _ATTEMPT_CLASSES_BY_SCHEMA = {
     SCHEMA_V2: _V2_ATTEMPT_CLASSES,
     SCHEMA_V3: _V3_ATTEMPT_CLASSES,
     SCHEMA_V4: _V4_ATTEMPT_CLASSES,
+    SCHEMA_V5: _V5_ATTEMPT_CLASSES,
 }
 _RUN_SCHEMA_BY_MANIFEST = {
     SCHEMA_V1: RUN_SCHEMA,
     SCHEMA_V2: RUN_SCHEMA_V2,
     SCHEMA_V3: RUN_SCHEMA_V3,
     SCHEMA_V4: RUN_SCHEMA_V4,
+    SCHEMA_V5: RUN_SCHEMA_V5,
 }
+
+_V4_RECOVERY_RECEIPT_SHA256 = (
+    "98a3efbc9b9027e2480e68347e053ea62ce7014b6f34db95b707fd39364573d2"
+)
+_V4_PREFLIGHT_SHA256 = (
+    "74862a1402776d68988f3e704b2ceb22d61e89a5849e6a8c1da6c278e585fa30"
+)
+_V4_INVALID_RESPONSE_SHA256 = (
+    "289aa3b37fb04c198941f31f76e31a4d05b118049dcf149e4593e8bde8e7db0a"
+)
+_V3_RECOVERY_RECEIPT_SHA256 = (
+    "ae69d449cc70d7e812dbd4de4382aa164e837b6bcd8b1246211fc982de8df7c1"
+)
 
 
 class FormalRunError(RuntimeError):
@@ -494,6 +517,14 @@ def _lineage(
             predecessor,
             payload,
         )
+    if manifest_schema == SCHEMA_V5:
+        return _v5_recovery_lineage(
+            manifest,
+            case_id,
+            attempt_class,
+            predecessor,
+            payload,
+        )
     if (
         predecessor.get("case_id") != case_id
         or predecessor.get("status") != "lift_failed"
@@ -628,6 +659,101 @@ def _v4_recovery_lineage(
         raise FormalRunError("protocol-v4 predecessor source identity differs")
     if predecessor.get("provider") != manifest.data["provider"]:
         raise FormalRunError("protocol-v4 predecessor provider identity differs")
+    return {
+        "attempt_class": attempt_class,
+        "predecessor": {
+            "schema": predecessor["schema"],
+            "batch_id": predecessor["batch_id"],
+            "case_id": predecessor["case_id"],
+            "status": predecessor["status"],
+            "attempt_class": predecessor_lineage["attempt_class"],
+            "manifest_digest": predecessor["manifest_digest"],
+            "manifest_file_sha256": predecessor["manifest_file_sha256"],
+            "receipt_sha256": _sha256(payload),
+        },
+    }
+
+
+def _v5_recovery_lineage(
+    manifest: BatchManifest,
+    case_id: str,
+    attempt_class: str,
+    predecessor: Mapping[str, Any],
+    payload: bytes,
+) -> Mapping[str, Any]:
+    """Bind v5 recovery to the exact frozen v4 pi-endpoint rejection."""
+
+    if attempt_class != "protocol_v5_recovery":
+        raise FormalRunError("protocol-v5 recovery classification is invalid")
+    if _sha256(payload) != _V4_RECOVERY_RECEIPT_SHA256:
+        raise FormalRunError(
+            "protocol-v5 recovery requires the exact frozen protocol-v4 receipt"
+        )
+    if (
+        predecessor.get("case_id") != case_id
+        or predecessor.get("status") != "lift_failed"
+        or predecessor.get("schema") != RUN_SCHEMA_V4
+        or predecessor.get("batch_id") != V4_BATCH_ID
+        or predecessor.get("manifest_digest") != V4_MANIFEST_DIGEST
+        or predecessor.get("manifest_file_sha256")
+        != V4_MANIFEST_FILE_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v5 recovery requires the frozen protocol-v4 Lift failure"
+        )
+    calls = predecessor.get("calls")
+    if (
+        not isinstance(calls, list)
+        or len(calls) != 1
+        or calls[0].get("kind") != "lift"
+        or calls[0].get("status") != "failed"
+        or calls[0].get("attempts") != 1
+        or calls[0].get("response_sha256") != _V4_INVALID_RESPONSE_SHA256
+        or "pi route instance is unknown" not in str(calls[0].get("diagnostic"))
+        or predecessor.get("artifacts") != {}
+        or predecessor.get("gate1") is not None
+    ):
+        raise FormalRunError(
+            "protocol-v5 predecessor is not the one-call pi endpoint rejection"
+        )
+    preflight = predecessor.get("preflight")
+    if (
+        not isinstance(preflight, dict)
+        or preflight.get("schema") != "intentir.real-llm-batch-preflight.v4"
+        or preflight.get("sha256") != _V4_PREFLIGHT_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v5 predecessor lacks the frozen protocol-v4 preflight"
+        )
+    predecessor_lineage = predecessor.get("lineage")
+    previous = (
+        predecessor_lineage.get("predecessor")
+        if isinstance(predecessor_lineage, dict)
+        else None
+    )
+    if (
+        not isinstance(predecessor_lineage, dict)
+        or predecessor_lineage.get("attempt_class")
+        != "protocol_v4_recovery"
+        or not isinstance(previous, dict)
+        or previous.get("receipt_sha256") != _V3_RECOVERY_RECEIPT_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v5 predecessor lacks exact protocol-v4 recovery lineage"
+        )
+    case = manifest.case(case_id)
+    source = predecessor.get("source")
+    expected_source = case["source"]
+    if not isinstance(source, dict) or any(
+        source.get(key) != expected_source[key]
+        for key in (
+            "repository", "path", "symbol", "frontend", "file_sha256",
+            "symbol_sha256",
+        )
+    ):
+        raise FormalRunError("protocol-v5 predecessor source identity differs")
+    if predecessor.get("provider") != manifest.data["provider"]:
+        raise FormalRunError("protocol-v5 predecessor provider identity differs")
     return {
         "attempt_class": attempt_class,
         "predecessor": {
@@ -895,6 +1021,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         "--attempt-class",
         choices=sorted(
             _V2_ATTEMPT_CLASSES | _V3_ATTEMPT_CLASSES | _V4_ATTEMPT_CLASSES
+            | _V5_ATTEMPT_CLASSES
         ),
     )
     parser.add_argument("--predecessor-receipt", type=Path)
@@ -923,5 +1050,6 @@ __all__ = [
     "RUN_SCHEMA_V2",
     "RUN_SCHEMA_V3",
     "RUN_SCHEMA_V4",
+    "RUN_SCHEMA_V5",
     "run_formal_gate1_case",
 ]

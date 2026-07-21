@@ -36,6 +36,7 @@ _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
+_MANIFEST_V5 = _ROOT / "test" / "real_llm_batch_28_v5.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 _PREFLIGHT_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "preflight.json"
@@ -331,6 +332,112 @@ def test_protocol_v4_recovery_binds_exact_v3_gate1_failure() -> None:
             "liger_swiglu_forward",
             "protocol_v4_recovery",
             None,
+        )
+
+
+def test_protocol_v5_recovery_binds_exact_v4_pi_endpoint_rejection() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V5)
+    predecessor = _RECOVERY_V4 / "liger_swiglu_forward" / "receipt.json"
+    lineage = formal_runner._lineage(
+        manifest,
+        "liger_swiglu_forward",
+        "protocol_v5_recovery",
+        predecessor,
+    )
+    assert lineage == {
+        "attempt_class": "protocol_v5_recovery",
+        "predecessor": {
+            "schema": "intentir.formal-real-llm-case.v4",
+            "batch_id": "tianchenir-formal-real-kernels-protocol-v4-2026-07-22",
+            "case_id": "liger_swiglu_forward",
+            "status": "lift_failed",
+            "attempt_class": "protocol_v4_recovery",
+            "manifest_digest": "0da031b95049acf5884e1adb60126253ab5441d6f7de142a0373e2659ab98b18",
+            "manifest_file_sha256": "3d8be701069c404cce043779ca953113ec3c8cf2655dd1df6140430cebe800a9",
+            "receipt_sha256": "98a3efbc9b9027e2480e68347e053ea62ce7014b6f34db95b707fd39364573d2",
+        },
+    }
+    with pytest.raises(FormalRunError, match="requires its predecessor"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v5_recovery",
+            None,
+        )
+
+
+def test_protocol_v5_recovery_rejects_nonexact_v4_receipt(
+    tmp_path: Path,
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V5)
+    original = _RECOVERY_V4 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    receipt["history"].append({"status": "tampered", "at": "never"})
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(FormalRunError, match="exact frozen protocol-v4 receipt"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v5_recovery",
+            predecessor,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda receipt: receipt.update({"status": "gate1_failed"}), "Lift failure"),
+        (
+            lambda receipt: receipt["calls"].append(
+                {"kind": "normal_replay", "status": "failed", "attempts": 1}
+            ),
+            "one-call pi endpoint rejection",
+        ),
+        (
+            lambda receipt: receipt["preflight"].update({"sha256": "0" * 64}),
+            "frozen protocol-v4 preflight",
+        ),
+        (
+            lambda receipt: receipt["lineage"].update(
+                {"attempt_class": "protocol_v4_first_attempt"}
+            ),
+            "exact protocol-v4 recovery lineage",
+        ),
+        (
+            lambda receipt: receipt["source"].update({"symbol_sha256": "0" * 64}),
+            "source identity differs",
+        ),
+        (
+            lambda receipt: receipt["provider"].update({"model": "other"}),
+            "provider identity differs",
+        ),
+    ],
+)
+def test_protocol_v5_structurally_rejects_tampered_v4_predecessor(
+    tmp_path: Path,
+    monkeypatch,
+    mutation,
+    message: str,
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V5)
+    original = _RECOVERY_V4 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    mutation(receipt)
+    payload = json.dumps(receipt, sort_keys=True).encode()
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_bytes(payload)
+    monkeypatch.setattr(
+        formal_runner,
+        "_V4_RECOVERY_RECEIPT_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    with pytest.raises(FormalRunError, match=message):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v5_recovery",
+            predecessor,
         )
 
 

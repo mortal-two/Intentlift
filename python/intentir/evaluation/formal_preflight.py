@@ -21,7 +21,8 @@ from .real_batch import (
 
 PREFLIGHT_SCHEMA_V2 = "intentir.real-llm-batch-preflight.v2"
 PREFLIGHT_SCHEMA_V3 = "intentir.real-llm-batch-preflight.v3"
-PREFLIGHT_SCHEMA = "intentir.real-llm-batch-preflight.v4"
+PREFLIGHT_SCHEMA_V4 = "intentir.real-llm-batch-preflight.v4"
+PREFLIGHT_SCHEMA = "intentir.real-llm-batch-preflight.v5"
 _CODE_PATHS = (
     "python/intentir/evaluation/lift_wire.py",
     "python/intentir/evaluation/real_batch.py",
@@ -30,6 +31,7 @@ _CODE_PATHS = (
     "python/intentir/ir/intent_op_contract.py",
     "python/intentir/ir/model.py",
     "python/intentir/verify/gate1/model.py",
+    "python/intentir/verify/gate1/pi.py",
     "python/intentir/verify/gate1/_triton_worker.py",
     "python/intentir/verify/gate1/compiler.py",
     "python/intentir/verify/gate1/ttir.py",
@@ -51,6 +53,8 @@ def _schema_for_manifest(manifest_schema: str) -> str:
     if manifest_schema == "intentir.real-llm-batch-28.v3":
         return PREFLIGHT_SCHEMA_V3
     if manifest_schema == "intentir.real-llm-batch-28.v4":
+        return PREFLIGHT_SCHEMA_V4
+    if manifest_schema == "intentir.real-llm-batch-28.v5":
         return PREFLIGHT_SCHEMA
     raise ValueError("formal preflight requires a versioned Lift-wire manifest")
 
@@ -282,6 +286,7 @@ __all__ = [
     "PREFLIGHT_SCHEMA",
     "PREFLIGHT_SCHEMA_V2",
     "PREFLIGHT_SCHEMA_V3",
+    "PREFLIGHT_SCHEMA_V4",
     "build_formal_preflight",
     "current_gate1_code_identity",
     "verify_formal_preflight",

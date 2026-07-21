@@ -26,12 +26,15 @@ from .lift_wire import (
     LIFT_CLIENT_FILES,
     LIFT_CLIENT_FILES_V2,
     LIFT_CLIENT_FILES_V3,
+    LIFT_CLIENT_FILES_V4,
     LIFT_PROTOCOL,
     LIFT_PROTOCOL_V2,
     LIFT_PROTOCOL_V3,
+    LIFT_PROTOCOL_V4,
     LIFT_WIRE_VERSION,
     LIFT_WIRE_VERSION_V2,
     LIFT_WIRE_VERSION_V3,
+    LIFT_WIRE_VERSION_V4,
 )
 
 
@@ -39,11 +42,13 @@ SCHEMA_V1 = "intentir.real-llm-batch-28.v1"
 SCHEMA_V2 = "intentir.real-llm-batch-28.v2"
 SCHEMA_V3 = "intentir.real-llm-batch-28.v3"
 SCHEMA_V4 = "intentir.real-llm-batch-28.v4"
+SCHEMA_V5 = "intentir.real-llm-batch-28.v5"
 # Historical public name retained for archived Task04 callers.
 SCHEMA = SCHEMA_V1
 V2_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v2-2026-07-22"
 V3_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v3-2026-07-22"
 V4_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v4-2026-07-22"
+V5_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v5-2026-07-22"
 V2_MANIFEST_DIGEST = (
     "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e"
 )
@@ -55,6 +60,12 @@ V3_MANIFEST_DIGEST = (
 )
 V3_MANIFEST_FILE_SHA256 = (
     "2528ae016445afd63f9c0083213ab2594b97756bcd7b1950edb28e1273212205"
+)
+V4_MANIFEST_DIGEST = (
+    "0da031b95049acf5884e1adb60126253ab5441d6f7de142a0373e2659ab98b18"
+)
+V4_MANIFEST_FILE_SHA256 = (
+    "3d8be701069c404cce043779ca953113ec3c8cf2655dd1df6140430cebe800a9"
 )
 CASE_COUNT = 28
 STRATA = (
@@ -88,6 +99,7 @@ _TOP_KEYS_V1 = frozenset(
 _TOP_KEYS_V2 = _TOP_KEYS_V1 | {"lift_wire"}
 _TOP_KEYS_V3 = _TOP_KEYS_V2
 _TOP_KEYS_V4 = _TOP_KEYS_V3
+_TOP_KEYS_V5 = _TOP_KEYS_V4
 _CASE_KEYS = frozenset(
     {
         "case_id",
@@ -628,6 +640,8 @@ def _validate_protocols(data: Mapping[str, Any]) -> None:
     elif data["schema"] == SCHEMA_V3:
         expected["lift"] = LIFT_PROTOCOL_V3
     elif data["schema"] == SCHEMA_V4:
+        expected["lift"] = LIFT_PROTOCOL_V4
+    elif data["schema"] == SCHEMA_V5:
         expected["lift"] = LIFT_PROTOCOL
     if protocols != expected:
         raise ManifestError("formal batch protocols differ from the frozen epoch")
@@ -658,6 +672,9 @@ def _validate_lift_wire(data: Mapping[str, Any]) -> None:
         expected_version = LIFT_WIRE_VERSION_V3
         expected_files = LIFT_CLIENT_FILES_V3
     elif data["schema"] == SCHEMA_V4:
+        expected_version = LIFT_WIRE_VERSION_V4
+        expected_files = LIFT_CLIENT_FILES_V4
+    elif data["schema"] == SCHEMA_V5:
         expected_version = LIFT_WIRE_VERSION
         expected_files = LIFT_CLIENT_FILES
     else:  # pragma: no cover - guarded by validate_batch_manifest
@@ -748,6 +765,8 @@ def validate_batch_manifest(
         data = _closed(raw, _TOP_KEYS_V3, "manifest")
     elif schema == SCHEMA_V4:
         data = _closed(raw, _TOP_KEYS_V4, "manifest")
+    elif schema == SCHEMA_V5:
+        data = _closed(raw, _TOP_KEYS_V5, "manifest")
     else:
         raise ManifestError(f"unsupported batch schema {schema!r}")
     if not isinstance(data["batch_id"], str) or not data["batch_id"]:
@@ -758,6 +777,8 @@ def validate_batch_manifest(
         raise ManifestError("protocol-v3 batch_id differs from the frozen epoch")
     if schema == SCHEMA_V4 and data["batch_id"] != V4_BATCH_ID:
         raise ManifestError("protocol-v4 batch_id differs from the frozen epoch")
+    if schema == SCHEMA_V5 and data["batch_id"] != V5_BATCH_ID:
+        raise ManifestError("protocol-v5 batch_id differs from the frozen epoch")
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(data["frozen_date"])) is None:
         raise ManifestError("frozen_date must use YYYY-MM-DD")
     for path, key in _walk_keys(data):
