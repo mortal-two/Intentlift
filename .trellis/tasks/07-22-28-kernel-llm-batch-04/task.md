@@ -139,3 +139,19 @@ Lower_cuda(J, C?, sm_120a) -> executable
 只做 manifest 候选审计与环境 probe：从真实仓库解析 28 个精确 symbol/specialization，核对
 source digest、可导入/可编译性、observer 支持、运行输入和基线计时。此阶段不调用 LLM，
 也不实现缺口；先产出“可进入正式批次/明确阻塞”的逐 case 表，再冻结 Task04 manifest。
+
+## 里程碑 0 实际进展（2026-07-22）
+
+- `test/real_llm_batch_28.json` 已冻结 28 个 exact path/symbol/file digest/symbol
+  digest，四个机制分层各 7 项；manifest canonical digest 为
+  `12e2507433f23d6405cfa1dd0f1ff1169671a664822c07b0f5ecfbdc93570154`。
+- source/repository/ABI/protocol/budget/1.10x performance threshold validator 已闭合；此阶段
+  `online_llm_calls=0`。
+- RTX 5090 D、Triton 3.6、Intent/MLIR/PTX toolchain 与 provider 配置可用。
+- 新 compiler epoch 对 26/26 Triton source specialization 真实生成 TTIR/TTGIR；原始 digest
+  保存在 `artifacts/real_llm_batch_28/preflight.json`。
+- 两个 CuTe async-copy anchor 的源码 pin 已通过，但本机尚无 `cutlass.cute`，且系统尚无
+  CuTe Level-2 observer；因此 overall readiness 是 26/28，正式 LLM 调用仍被 fail-closed。
+
+下一步不是删掉 CuTe anchor 或把它冒充普通 copy，而是闭合通用 CuTe frontend/compiler
+observer，再重新生成 28/28 preflight receipt。
