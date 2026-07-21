@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import intentir.evaluation.formal_runner as formal_runner
 from intentir.evaluation.formal_runner import (
     FormalRunError,
     LedgerReplayWriter,
@@ -30,6 +31,7 @@ from direct_fixtures import make_copy_artifact
 
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
+_MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
 
@@ -173,6 +175,30 @@ def test_formal_cute_case_has_generic_lift_and_compile_bindings() -> None:
     }
     assert "f32_tma_tile_128" not in json.dumps(lift_input)
     assert cute_entry_symbol(source, case["source"]["symbol"]) == "go"
+
+
+def test_formal_v2_rejects_wire_drift_before_provider_or_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    data = json.loads(json.dumps(manifest.data))
+    data["lift_wire"]["schema_sha256"] = "0" * 64
+    drifted = type(manifest)(data, manifest.source_root, manifest.digest)
+    monkeypatch.setattr(formal_runner, "load_batch_manifest", lambda *args, **kwargs: drifted)
+
+    def provider_must_not_run(*args, **kwargs):
+        raise AssertionError("provider resolution happened before wire verification")
+
+    monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    output = tmp_path / "formal"
+    with pytest.raises(FormalRunError, match="Lift wire differs"):
+        formal_runner.run_formal_gate1_case(
+            _MANIFEST_V2,
+            "liger_swiglu_forward",
+            output_root=output,
+            preflight_path=tmp_path / "missing-preflight.json",
+        )
+    assert not output.exists()
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:

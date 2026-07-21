@@ -116,3 +116,23 @@ CuTe compiler/validator/fingerprint 接到 source-blind Replay。此阶段在线
 
 下一步只做阶段 0：冻结自包含 protocol-v2 manifest、wire SHA 与新的 28/28 preflight；在
 这些 evidence 提交前不得启动 recovery canary。
+
+## 阶段 0 完成记录（2026-07-22）
+
+- 新增自包含 `test/real_llm_batch_28_v2.json`；它不引用/继承 v1，28 个 case、source pin、
+  specialization、relation 与 1.10x 门槛和 v1 完全一致，但使用独立 batch id 与 canonical
+  digest `486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e`。
+- `lift_wire` 固定 `intentir.lift-wire.v2`，分别绑定实际 Responses JSON Schema、固定 Lift
+  instructions，以及 request serializer / Lift / schema 三个实现文件的 SHA-256；v1 loader
+  与 frozen digest 保持不变，不发生静默升级。
+- formal runner 在创建 case ledger 或解析 provider 前校验 wire lock；任一 manifest/code hash
+  漂移均 fail closed，测试确认不会触达 provider。
+- 新 preflight `artifacts/real_llm_batch_28_v2/preflight.json` 由离线 builder 真实生成：
+  repository/source/symbol pins 28/28，Triton 26/26、CuTe 2/2，source observer 28/28、
+  replay arm 28/28，`overall_ready=true`，`online_llm_calls=0`。
+- preflight 同时绑定当前环境、Lift wire、formal runner、两个 compiler worker、validator、
+  normalizer/fingerprint 与两个 orchestrator 的逐文件 SHA；正式运行前会重新核验。
+- 阶段 0/1 定向回归当前为 `48 passed`；Task04 manifest、preflight 与失败 receipt 均未修改。
+
+下一步进入阶段 2：只运行 `liger_swiglu_forward` protocol-v2 recovery canary。若 Lift wire
+仍失败，立即停止；只有 Lift 合法且 normal Gate1 闭合，才允许该 case 的一次 masked-J。

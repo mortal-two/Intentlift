@@ -27,6 +27,7 @@ from intentir.extraction.providers.client import (
     responses_request_body,
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
+from intentir.evaluation.lift_wire import LiftWireError, verify_lift_wire_lock
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.cute_compiler import CuteCompiler, CuteKernelSource
 from intentir.verify.gate1.cute_orchestrate import CuteGate1Runner
@@ -55,6 +56,7 @@ from .real_batch import (
     scrc_compiler_view,
     triton_compile_case,
 )
+from .formal_preflight import verify_formal_preflight
 
 
 RUN_SCHEMA = "intentir.formal-real-llm-case.v1"
@@ -390,17 +392,25 @@ def _initial_receipt(
     return receipt
 
 
-def _validate_preflight(manifest: BatchManifest, preflight_path: Path) -> None:
+def _validate_preflight(
+    manifest: BatchManifest, preflight_path: Path, manifest_path: Path
+) -> None:
     try:
         preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise FormalRunError(f"cannot read frozen preflight: {exc}") from exc
-    if preflight.get("manifest_digest") != manifest.digest:
-        raise FormalRunError("preflight is not bound to the active manifest")
-    if preflight.get("online_llm_calls") != 0:
-        raise FormalRunError("preflight already reports online calls")
-    if preflight.get("summary", {}).get("overall_ready") is not True:
-        raise FormalRunError("formal preflight is not 28/28 ready")
+    if "lift_wire" in manifest.data:
+        try:
+            verify_formal_preflight(preflight, manifest, manifest_path)
+        except (ValueError, OSError) as exc:
+            raise FormalRunError(str(exc)) from exc
+    else:
+        if preflight.get("manifest_digest") != manifest.digest:
+            raise FormalRunError("preflight is not bound to the active manifest")
+        if preflight.get("online_llm_calls") != 0:
+            raise FormalRunError("preflight already reports online calls")
+        if preflight.get("summary", {}).get("overall_ready") is not True:
+            raise FormalRunError("formal preflight is not 28/28 ready")
 
 
 def run_formal_gate1_case(
@@ -417,7 +427,14 @@ def run_formal_gate1_case(
     manifest = load_batch_manifest(
         manifest_path, verify_sources=True, verify_repositories=True
     )
-    _validate_preflight(manifest, Path(preflight_path).resolve())
+    if "lift_wire" in manifest.data:
+        try:
+            verify_lift_wire_lock(manifest.data["lift_wire"])
+        except LiftWireError as exc:
+            raise FormalRunError(str(exc)) from exc
+    _validate_preflight(
+        manifest, Path(preflight_path).resolve(), manifest_path
+    )
     case = manifest.case(case_id)
     case_dir = Path(output_root).resolve() / case_id
     receipt_path = case_dir / "receipt.json"

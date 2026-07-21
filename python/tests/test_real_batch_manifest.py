@@ -15,15 +15,32 @@ from intentir.evaluation.real_batch import (
     triton_compile_case,
     validate_batch_manifest,
 )
+from intentir.evaluation.lift_wire import (
+    LiftWireError,
+    current_lift_wire_identity,
+    verify_lift_wire_lock,
+)
+from intentir.evaluation.formal_preflight import (
+    current_gate1_code_identity,
+    verify_formal_preflight,
+)
 
 
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
+_MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
+_PREFLIGHT_V2 = (
+    _ROOT / "artifacts" / "real_llm_batch_28_v2" / "preflight.json"
+)
 
 
 def _raw() -> dict:
     return json.loads(_MANIFEST.read_text())
+
+
+def _raw_v2() -> dict:
+    return json.loads(_MANIFEST_V2.read_text())
 
 
 def test_formal_manifest_has_28_verified_source_symbols() -> None:
@@ -34,6 +51,74 @@ def test_formal_manifest_has_28_verified_source_symbols() -> None:
         case["benchmark"]["threshold"]["maximum"] <= 1.10
         for case in manifest.cases
     )
+
+
+def test_protocol_v2_is_self_contained_and_keeps_the_frozen_cases() -> None:
+    v1 = load_batch_manifest(_MANIFEST)
+    v2 = load_batch_manifest(_MANIFEST_V2)
+    assert v1.digest == "12e2507433f23d6405cfa1dd0f1ff1169671a664822c07b0f5ecfbdc93570154"
+    assert v2.digest == "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e"
+    assert v2.digest != v1.digest
+    assert v2.data["batch_id"] != v1.data["batch_id"]
+    assert v2.data["cases"] == v1.data["cases"]
+    assert "base_manifest" not in v2.data
+    assert len(v2.cases) == 28
+
+
+def test_protocol_v2_lift_wire_lock_matches_actual_request_path() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    assert verify_lift_wire_lock(manifest.data["lift_wire"]) == (
+        current_lift_wire_identity()
+    )
+
+
+def test_protocol_v2_preflight_is_28_of_28_and_current() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
+    verify_formal_preflight(receipt, manifest, _MANIFEST_V2)
+    assert receipt["summary"] == {
+        "blocking_capability": None,
+        "cute_compiled": 2,
+        "cute_total": 2,
+        "overall_ready": True,
+        "replay_arm_ready": 28,
+        "source_observer_ready": 28,
+        "source_pins_verified": 28,
+        "symbol_pins_verified": 28,
+        "triton_compiled": 26,
+        "triton_total": 26,
+    }
+    assert receipt["gate1_code"] == current_gate1_code_identity()
+    cute_cases = [item for item in receipt["cases"] if item["frontend"] == "cute"]
+    assert [item["async_copy_opcode"] for item in cute_cases] == [
+        "cp.async.bulk.shared",
+        "cp.async.bulk.tensor.1d.shared",
+    ]
+
+
+def test_protocol_v2_preflight_rejects_code_identity_drift() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
+    receipt["gate1_code"][0]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="Gate1 code identity drifted"):
+        verify_formal_preflight(receipt, manifest, _MANIFEST_V2)
+
+
+def test_protocol_v2_rejects_open_or_drifted_wire_metadata() -> None:
+    raw = _raw_v2()
+    raw["lift_wire"]["extra"] = "not-closed"
+    with pytest.raises(ManifestError, match="unknown keys"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+    raw = _raw_v2()
+    raw["lift_wire"]["client_files"][0]["path"] = "../client.py"
+    with pytest.raises(ManifestError, match="inside its repository root"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+    expected = copy.deepcopy(_raw_v2()["lift_wire"])
+    expected["prompt_sha256"] = "0" * 64
+    with pytest.raises(LiftWireError, match="differs"):
+        verify_lift_wire_lock(expected)
 
 
 def test_preflight_receipt_is_bound_to_manifest_and_current_worker() -> None:
