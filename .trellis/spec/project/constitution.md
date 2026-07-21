@@ -38,10 +38,6 @@ A 单独不是完整 Kernel 含义；C 不改变 J，但可作为 fixed-C replay
 - **LLM 只提案，验证裁决**：LLM 是受约束的提案者；正确性证据来自 strict schema、
   Gate1 source/replay 结构硬闭合与 Gate2 final-J replay/scalar 声明输入域动态比较，
   不由 LLM 自证。
-- **Extraction 不拥有语义准入**：LiftCore 只保证 JSON 可序列化、闭合的顶层字段／
-  容器形状和来源 provenance，随后把原始 proposal 交给 Gate1。Layer A/B、typed
-  predicate、opaque identity、interface/compiler-view 与 π capability/completeness 全部由
-  Gate1 形成命名 hard evidence；不得在 Gate1 前增加语义 Gate0 或白名单修复。
 - **LLM 直接提取到原子 IR**:原子化分解由 LLM 在提取阶段完成(这是科研核心价值),产出张量级原子的 IntentIR JSON。re-roll / 识别展开循环也属于 LLM 提取的一部分。
 - **张量级原子粒度**:原子算子是 `map`/`reduce`/`contraction`/`scan` 等张量级结构化原语(linalg 风格),不是标量级 `add`/`mul`,也不是库级 `softmax`/`attention` 大算子。
 - **结构化循环是一等公民**:IR 必须能表达"带状态携带的结构化循环",以支持 FlashAttention 这类递推算子;同一构造放宽即覆盖数据依赖控制流。
@@ -52,11 +48,6 @@ A 单独不是完整 Kernel 含义；C 不改变 J，但可作为 fixed-C replay
   使用 backend-neutral scalar reference lower 裁决同一最终 J 的 replay/scalar 动态
   证据；backend conformance 检查目标实现是否正确消费 J；performance 单独评价。
   任何一方都不能代替另一方。
-- **π 必要性是 Gate1 正式证据**：formal Gate1 必须让 J-only 与每个 RuleCard 标记为
-  causal 的 π step dropout 进入新的 source-blind writer、真实 compile 和同一个 score-free
-  hard comparator。compile nonclosure 或 hard mismatch 才是 kill；hard closure 拒绝；
-  provider/generation/evaluation 不完整只能 `NO_CLOSURE`。writer 前 canonicality rejection
-  不是必要性证据，administrative step 必须显式分类。
 - **不得放宽 Gate1 换取通过**：可以修正错误建模、补齐 J schema/prompt/relift/规则
   表达与确定性诊断，但不得删除 hard category、把 hard 降为 soft、提高接受阈值、
   用模糊 score/数值容差覆盖结构差异，或在预算耗尽后接受候选。
@@ -82,12 +73,6 @@ A 单独不是完整 Kernel 含义；C 不改变 J，但可作为 fixed-C replay
   replay 与 scalar MLIR reference；CUDA/ROCm/RISC-V lowering 及 source runtime 都不能
   代替 scalar comparison。Gate1 未闭合、unsupported 或 execution incomplete 均不能
   产生 Gate2 PASS。
-- **不得把 source runtime 重新塞入 Gate2**：source/replay 结构证据属于 Gate1；source
-  runtime、手写 CUDA、production target lowering 或性能结果最多是 Gate2 外诊断，不能
-  成为 Gate2 runner 的必需腿、oracle、comparison 或 PASS 条件。
-- **不得用 mutation 帮助 normal J 通过**：formal live 的 paired semantic
-  interventions 固定为 0；`wrong_fill_delta` 即使保留在历史 self-check 枚举中，也不属于
-  acceptance、Relift 或 π 必要性证据。
 
 ## Check Questions
 

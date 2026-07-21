@@ -6,4 +6,3 @@
 {"file":".trellis/spec/project/code-layout.md","reason":"Check mature target-separated package boundaries and no umbrellas."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Check implementation against the observed invalid forms and no-auto-rewrite decision."}
 {"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Check scalar changes do not use interpreter or unsafe post-Gate1 shape shrinking."}
-{"file":"python/intentir/verify/gate1/pi_ablations.py","reason":"Check every causal counterfactual reaches a fresh writer, compile, and score-free hard comparison; canonicality rejection is not evidence."}

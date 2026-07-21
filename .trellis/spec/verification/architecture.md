@@ -2,18 +2,13 @@
 
 当前项目的验证架构只有两个过程：
 
-1. [SCRC Gate1](scrc-gate1.md)：原始 LiftCore 的命名语义准入、可执行 π 必要性、
-   源码隔离重放与中层结构闭合；
+1. [SCRC Gate1](scrc-gate1.md)：源码隔离重放与中层结构闭合；
 2. [SCRC Gate2](scrc-gate2.md)：Gate1 最终 J 的 replay 与 scalar MLIR lowering
    两腿动态实跑和逐输出比较。
 
 两者在正式流水线中按 Gate1→Gate2 顺序执行。Gate1 hard closure 是活动 Gate2 的
 资格前提；Gate1 拒绝样本的任何离线动态实验都只是诊断，不是 Gate2。Gate2 不是
 Gate1 的真值标签，也不得覆盖 Gate1 的结构或反作弊拒绝。
-
-Extraction 不是第三个 gate：它只检查 proposal 的 JSON／顶层容器可构造性和
-provenance。A/B/interface/π 的任何语义失败都必须在 Gate1 留下命名 evidence；不得
-把 typed predicate whitelist、默认字段填充或提前 π composition 伪装成 Gate0。
 
 Gate2 使用真实的 backend-neutral scalar MLIR reference lower，但 IntentIR production
 target lowering、归档解释器和 backend benchmark 均不拥有 Gate2 裁决权。旧三方

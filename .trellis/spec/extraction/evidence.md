@@ -22,9 +22,6 @@
 ## 设计约束
 
 - 禁止把"规则能否提出 evidence"作为"能否提取该 kernel"的门槛。
-- Extraction 的 hard boundary 仅限 JSON 可序列化、必需顶层字段／容器形状和
-  provenance；A/B predicate、opaque id、interface 与 π 的语义合法性统一由 Gate1
-  命名准入。不得在 extraction 新增语义 Gate0 或静默字段修复。
 - evidence 提取器可以逐前端做(Triton TTIR / TileLang TIR / CUDA PTX)，但缺失不导致提取中止；后续由 Gate1/Gate2 给出是否闭合的实际结果。
 
 ## 与论文机制的关系(有意识的 refinement)

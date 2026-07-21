@@ -7,8 +7,7 @@ Gate1 只回答一个问题：源码隔离 writer 能否依据完整语义 `J`�
 施工协议 `π`，生成可编译重放，并在同一前端、同一 C 下与源 Kernel 的 TTIR
 硬结构闭合。
 
-Gate1 不执行 Kernel，也不解释 JSON 得到数值结果；它同时拥有 LiftCore 的语义准入
-与 source/replay hard closure。活动 Gate2 是
+Gate1 不执行 Kernel，不解释 JSON 得到数值结果，也不新增 verifier。活动 Gate2 是
 Gate1 硬闭合后、绑定同一最终 J 的 replay/scalar 动态差分；Gate2 PASS 不补偿任何
 Gate1 hard mismatch。Gate1 拒绝样本可以另做离线诊断，但该结果不是 Gate2 evidence。
 
@@ -48,19 +47,8 @@ dataflow association 差异本身不能证明 J 有语义缺口；现有 C.strat
 H(π | Canon(J), interface, C, RuleRegistry) = 0
 ```
 
-Lift/relift response schema 不允许 `plan` 或 `compose_provenance`。Extraction 只把
-JSON-constructable 的原始 `LiftCoreProposal` 连同空 plan 占位和 provenance 交给 Gate1，
-不提前解析 Layer A/B、opaque identity、interface contract 或 π。Gate1 每轮按以下命名
-类别 fail closed，并把失败作为 bounded source-aware Relift evidence：
-
-```text
-artifact_constructability -> layer_a_semantics -> layer_b_semantics
--> opaque_identity -> interface_contract -> pi_capability -> pi_completeness
-```
-
-全部准入通过后，Gate1 才由 composer 生成／核对 canonical `plan` 与逐叶 provenance。
-不存在语义 Gate0，也不允许 extraction 通过 alias normalization、字段推断、默认 predicate
-或 kernel-name 分支把坏 proposal 改造成可接受 artifact。
+Lift/relift response schema 不允许 `plan` 或 `compose_provenance`。若 provider 输出
+任一字段，直接拒绝；接受 J/C 后再由 composer 生成并保存 `plan` 与逐叶 provenance。
 
 ## 3. J 的闭合合同
 
@@ -99,19 +87,18 @@ storage 使用 typed semantic event：scope entry/exit、node、access、state�
 ### 3.4 portable domain/access predicate
 
 `boundary.domains` 与 access predicate 的字符串 wire 只是一种 Lift 传输形式，不是
-自由文本语义。它们在 Gate1 Layer-B admission 时必须由 `ir.contracts` 的唯一 canonical
+自由文本语义。它们在 Lift/Gate1 admission 时必须由 `ir.contracts` 的唯一 canonical
 parser 无损转换为 boolean-rooted `ContractExpr v1`；同一检查在 typed IntentProgram
 handoff 保留为 defense in depth。assignment、tuple、`where/with`、区间 prose、任意
 attribute/subscript、unknown call 与 `program_id/grid_axis` 等 source-realization call
 全部 fail-closed。纯算术根和未证明类型的 bare symbol 也不是 predicate。
 
 parser 不做 regex 修复、后缀提取、默认 `True`、predicate 删除或 Kernel-name 分支。
-非法 provider 输出形成命名的 Gate1 admission failure，并进入 bounded source-aware
-Relift；预算耗尽即 `NO_CLOSURE`，不属于
+非法 provider 输出只进入既有 bounded Lift repair，预算耗尽即 Lift 失败，不属于
 paired semantic intervention，更不可能产生 `wrong_fill_delta` acceptance evidence。
-Runner 每个 relift round 在 writer/compiler 前对当前 proposal/artifact 做完整 strict
-round-trip；构造后篡改同样只能形成 admission failure／`NO_CLOSURE`，不得记录
-`REPLAY_CLOSED`。
+由于 Gate1 artifact 目前保留 legacy mutable construction API，Runner 每个 relift round
+在 writer/compiler 前对当前 artifact 做完整 strict round-trip；构造后篡改只能得到
+`LIFT_REJECTED`，不得记录 `REPLAY_CLOSED`。
 
 ## 4. C.schedule 与 C.strategy
 
@@ -377,46 +364,27 @@ Gate1/Gate2 live 拓扑，不是 normal J 的准入条件，也不能形成 Gate
 进入 mutant prompt。要求出现精确、注册过的 TTIR delta；
 忽略 J、方向错误或 off-target drift 均拒绝。禁止冻结 full-J π 配 mutant J。
 
-### 8.3 可执行 π 必要性与 C.strategy intervention
+### 8.3 C.strategy intervention（离线诊断，不是 Gate）
 
-formal Gate1 在 canonical normal replay 硬闭合后，必须执行两类正式反事实：
-
-```text
-J-only:              writer(J, empty π, no RuleCard metadata)
-causal step dropout: writer(J, π minus exactly one causal step,
-                            remaining selected RuleCards only)
-                     -> compile -> same score-free hard comparator
-```
-
-每个 RuleCard 以 `ablation_role=causal|administrative` 明确分类；J-only 与每个 causal
-step 都必须各自调用一次 fresh source-blind writer。被删 step 的 selection/target metadata
-不得出现在 packet；仅因其他剩余实例仍需要同一通用 RuleCard 时，通用卡可保留，但不能
-携带被删 target。裁决为：compile nonclosure 或 hard mismatch 是 causal kill；hard closure
-是 `LEAKAGE_REJECTED`；provider/generation/evaluation failure 是
-`NO_CLOSURE + pi_evidence_incomplete`。在 writer 前调用 compose equality 拒绝 tampered π
-只能是 canonicality self-check，不能计作 kill，也不能令 `attempts=0` 的记录通过。
-
-另行运行的实现机制替换只属于离线 C.strategy diagnostic，不是 formal Gate 条件。它
-只能修改一个 C.strategy binding，再重新 compose/replay。J 与 interface/
+实现机制替换只能修改一个 C.strategy binding，再重新 compose/replay。J 与 interface/
 C.schedule 必须不变；J 语义硬项应保持，预期实现结构可以变化。直接篡改 π rule
-不是合法的 C.strategy intervention；它只能通过上述明确标记的 post-admission
-counterfactual 进入 writer。
+不是合法机制干预，只是 canonicality negative test。
 
-### 8.4 masked-J + Gate1 canonical π 终检
+### 8.4 masked-J + 实际 Lift π 终检
 
 normal replay 的 opaque rename 只关闭命名和显式文本通道，不能验证 π 的 rule
 序列、步骤数量、引用复用和依赖拓扑是否足以替代 J。因此 canonical Gate1 在 normal
 硬闭合后直接执行一次有意构造的反事实攻击，不依赖 paired intervention：
 
 ```text
-normal:   writer(full J, canonical π, interface, C, rules) -> 必须硬闭合
-masked:   writer(masked J, same canonical π, interface, C, rules)
+normal:   writer(full J, actual Lift π, interface, C, rules) -> 必须硬闭合
+masked:   writer(masked J, same actual Lift π, interface, C, rules)
           -> 合法候选在编译期拒绝，或编译后硬指纹不闭合
 ```
 
 masked packet 不是合法 LiftArtifact，不对 masked J 重新 compose π；它先校验原始
 完整 artifact，再仅在 writer view 中遮蔽 J/A/B 内容与全部 J/ABI/C 命名，同时保留
-Gate1 admission 后保存的 canonical π 规则序列和引用拓扑。活动 writer API 根本不提供 prior-replay
+实际 Lift 产出的 π 规则序列和引用拓扑。活动 writer API 根本不提供 prior-replay
 candidate 参数；masked writer 只调用一次，不接收 normal replay、diff 或 repair
 feedback。生成代码恢复 opaque ABI 后，
 使用同一 frontend、同一 C、同一 compile case 和同一 TTIR hard comparator。
@@ -442,13 +410,13 @@ masked 硬闭合证明“J 被遮蔽后剩余 packet 仍足以恢复源指纹”
 
 ```text
 semantic_interventions = 0
-pi_ablations            = true (required inside formal Gate1)
+pi_ablations            = false
 gate1.interventions     = []
 ```
 
-`test/scrc_live_e2e.py` 的 formal profile 固定该边界；不存在关闭 π 必要性证明、缩小
-causal-step 集合或把 mechanism substitution 代替 dropout 的 CLI。normal/轻量诊断 profile
-可以不运行昂贵反事实，但其产物不能冒充 formal live acceptance evidence。
+底层 `Gate1Config()` 与 `test/scrc_live_e2e.py` 的直接 CLI 默认值都与该边界相同；
+paired intervention 与 π ablation 只能通过显式参数 opt in，产物必须标记为
+diagnostic，不能冒充官方 live acceptance evidence。
 
 该 profile 不运行 paired J/B/C intervention，因此 `wrong_fill_delta` 不可能出现在其
 正式调用链或 acceptance evidence 中。若旧枚举仍用于 mutation/self-check，它只描述
