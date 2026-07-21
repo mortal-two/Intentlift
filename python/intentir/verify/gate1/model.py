@@ -3103,8 +3103,10 @@ class Gate1Artifact(StrictJSONMixin):
             name for name, slot in schedule_by_name.items()
             if slot.kind is ScheduleSlotKind.CONSTEXPR
         }
-        if constexprs != declared_constexprs:
-            raise SchemaError("interface constexpr parameters and C slots differ")
+        if not declared_constexprs <= constexprs:
+            raise SchemaError(
+                "pure-C constexpr slots must be interface constexpr parameters"
+            )
         compiler_slots = set(self.interface.compiler_slots)
         declared_compiler = {
             name for name, slot in schedule_by_name.items()
@@ -3447,8 +3449,16 @@ def _opaque_reference_data(
 
     runtime_index = 0
     constexpr_index = 0
+    c_constexprs = {
+        slot.name
+        for slot in artifact.schedule.slots
+        if slot.kind is ScheduleSlotKind.CONSTEXPR
+    }
     for index, parameter in enumerate(artifact.interface.parameters):
-        if parameter.kind is ParameterKind.CONSTEXPR:
+        if (
+            parameter.kind is ParameterKind.CONSTEXPR
+            and parameter.name in c_constexprs
+        ):
             stem = f"c{constexpr_index}"
             constexpr_index += 1
         else:

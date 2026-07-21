@@ -17,6 +17,11 @@ canonical C 只有 `{slots, values}`；每个 slot 由匿名名、kind、source-
 value type 和 required bit 构成。`role` 可以表达 `tile_extent/num_warps/vector_width`，不能
 表达 mask placement、operator、predicate 或 source family。
 
+`constexpr` 只描述前端绑定时机，不决定所有权。会改变 logical shape/domain/predicate/
+result relation 的 constexpr 是 J 的 semantic specialization parameter：它在匿名 interface
+中使用 `p*` handle，具体冻结值只留在 harness，绝不进入 C。只有不改变 J denotation 的
+tile/block/stage 等 constexpr 才使用 `c*` 并成为 C slot。
+
 ## π
 
 π 是 Intent 外的 Gate1 witness，由 Lift LLM 直接产生。它可以表达匿名 realization
@@ -43,3 +48,7 @@ realization）。mechanism tag 不得携带逻辑 operator、combiner、predicat
 逻辑参数按位置连接 J；不建立第二份 ABI 语义对象，也不把实名映射交给 Replay。
 Gate1 observer 同样按位置 alpha-normalize 源与 Replay 的参数 spelling；arity、kind、rank、
 dtype、constexpr 位置与 C 值仍是硬合同。
+
+Gate1 编译时，semantic constexpr 的具体值按源码声明位置从同一冻结 invocation 复制到
+Replay；这只是调用绑定，不是 C，也不建立 `LogicalABI`。其 logical consequence 必须已经在
+J 中，pi 无权补写。

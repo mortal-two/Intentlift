@@ -293,11 +293,20 @@ def _replay_case(
     ):
         if source_name not in source_case.schedule:
             raise ValueError(f"source constexpr {source_name!r} is unbound")
-        expected = artifact.schedule.values.get(parameter.name)
-        if source_case.schedule[source_name] != expected:
-            raise ValueError(
-                f"source constexpr position for {parameter.name!r} differs from C"
-            )
+        slot = slots.get(parameter.name)
+        if slot is None:
+            # Semantic constexpr values belong to the frozen invocation harness,
+            # not C. Copy the positional binding without persisting or exposing
+            # it through the Replay packet.
+            expected = source_case.schedule[source_name]
+        else:
+            if slot.kind is not ScheduleSlotKind.CONSTEXPR:
+                raise ValueError("interface constexpr has a non-constexpr C slot")
+            expected = artifact.schedule.values.get(parameter.name)
+            if source_case.schedule[source_name] != expected:
+                raise ValueError(
+                    f"source constexpr position for {parameter.name!r} differs from C"
+                )
         schedule[parameter_names[parameter.name]] = expected
         consumed_source_schedule.add(source_name)
 

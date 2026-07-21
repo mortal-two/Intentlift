@@ -181,6 +181,108 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     assert "selected_kernel" not in anonymous
 
 
+def test_semantic_constexpr_is_anonymous_p_and_never_pure_c() -> None:
+    source = """import triton
+import triton.language as tl
+
+@triton.jit
+def selected_kernel(X, Y, N, VALID: tl.constexpr, BLOCK: tl.constexpr):
+    offsets = tl.arange(0, BLOCK)
+    mask = offsets < VALID
+    value = tl.load(X + offsets, mask=mask, other=0.0)
+    tl.store(Y + offsets, value, mask=mask)
+"""
+    view = SCRCCompilerView(
+        schedule_values={"BLOCK": 128, "num_warps": 4},
+        semantic_values={"VALID": 17},
+        compiler_slots=("num_warps",),
+        arguments=(
+            SCRCCompilerArgument("X", "tensor", "f32", (17,)),
+            SCRCCompilerArgument("Y", "tensor", "f32", (17,)),
+            SCRCCompilerArgument("N", "scalar", "i32", value=17),
+        ),
+        grid=(1,),
+        grid_contract=("1",),
+        parameter_order=("X", "Y", "N", "VALID", "BLOCK"),
+        constexpr_parameters=("VALID", "BLOCK"),
+    )
+    request = scrc.prepare_scrc_lift(
+        source, compiler_view=view, source_symbol="selected_kernel"
+    )
+    payload = json.loads(request.user_input)
+    compiler_view = payload["harness_compiler_view"]
+    assert "def scrc_k0(p0, p1, p2, p3: tl.constexpr, c0: tl.constexpr)" in (
+        payload["anonymous_source"]
+    )
+    assert compiler_view["semantic_values"] == {"p3": 17}
+    assert compiler_view["schedule_values"] == {"c0": 128, "c1": 4}
+    assert compiler_view["parameter_order"] == ["p0", "p1", "p2", "p3", "c0"]
+    assert compiler_view["constexpr_parameters"] == ["p3", "c0"]
+
+
+def test_compiler_view_rejects_semantic_schedule_overlap() -> None:
+    with pytest.raises(ValueError, match="must be disjoint"):
+        SCRCCompilerView(
+            schedule_values={"N": 8},
+            semantic_values={"N": 8},
+            parameter_order=("N",),
+            constexpr_parameters=("N",),
+        )
+
+
+def test_lift_keeps_semantic_constexpr_outside_c(monkeypatch) -> None:
+    response = make_reduce_artifact().to_json()
+    response.pop("source")
+    response.pop("provenance")
+    response["interface"]["parameters"].insert(
+        3,
+        {
+            "name": "p3",
+            "kind": "constexpr",
+            "mode": "value",
+            "dtype": "i32",
+            "rank": 0,
+        },
+    )
+    response["j"]["boundary"]["domains"]["d0"] = "v1 < p3"
+    response["interface"]["grid"] = ["1"]
+
+    def fake_call(instructions, user, **kwargs):
+        del instructions, kwargs
+        view = json.loads(user)["harness_compiler_view"]
+        assert view["semantic_values"] == {"p3": 4}
+        assert view["schedule_values"] == {"c0": 128}
+        return LLMReply(json.dumps(response), "test-model", {"id": "resp-sem"})
+
+    monkeypatch.setattr(scrc, "call_responses", fake_call)
+    compiler_view = SCRCCompilerView(
+        schedule_values={"BLOCK": 128},
+        semantic_values={"VALID": 4},
+        arguments=(
+            SCRCCompilerArgument("X", "tensor", "f32", (2, 4)),
+            SCRCCompilerArgument("Y", "tensor", "f32", (2,)),
+            SCRCCompilerArgument("N", "scalar", "i32", value=4),
+        ),
+        grid=(1,),
+        grid_contract=("1",),
+        parameter_order=("X", "Y", "N", "VALID", "BLOCK"),
+        constexpr_parameters=("VALID", "BLOCK"),
+    )
+    source = """@triton.jit
+def private_reduce(X, Y, N, VALID: tl.constexpr, BLOCK: tl.constexpr):
+    value = tl.load(X)
+    tl.store(Y, value)
+"""
+    extraction = scrc.extract_scrc_artifact(
+        source, compiler_view=compiler_view
+    )
+    assert extraction.artifact.schedule.values == {"c0": 128}
+    assert [
+        item.name for item in extraction.artifact.interface.parameters
+    ] == ["p0", "p1", "p2", "p3", "c0"]
+    assert extraction.artifact.interface.parameters[3].kind.value == "constexpr"
+
+
 def test_source_symbol_selection_fails_closed() -> None:
     source = "def present(x):\n    return x\n"
     with pytest.raises(ValueError, match="must resolve exactly once"):

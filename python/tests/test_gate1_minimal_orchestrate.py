@@ -9,8 +9,8 @@ from intentir.verify.gate1.compiler import (
     KernelSource,
     RuntimeArgument,
 )
-from intentir.verify.gate1.model import Gate1Status
-from intentir.verify.gate1.orchestrate import Gate1Runner
+from intentir.verify.gate1.model import Gate1Artifact, Gate1Status
+from intentir.verify.gate1.orchestrate import Gate1Runner, _replay_case
 from intentir.verify.gate1.replay import StaticReplayWriter
 
 
@@ -137,3 +137,39 @@ def test_source_schedule_value_must_match_c_before_replay() -> None:
     assert result.normal_calls == 0
     assert writer.calls == []
     assert "differs from C" in (result.normal.diagnostic or "")
+
+
+def test_semantic_constexpr_binding_is_copied_from_harness_not_c() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["interface"]["parameters"].insert(
+        3,
+        {
+            "name": "p3",
+            "kind": "constexpr",
+            "mode": "value",
+            "dtype": "i32",
+            "rank": 0,
+        },
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    source_case = CompileCase(
+        arguments={
+            "X": RuntimeArgument.tensor((4, 8), "float32"),
+            "Y": RuntimeArgument.tensor((4,), "float32"),
+            "N": RuntimeArgument.scalar(8, "int32"),
+        },
+        grid=(1,),
+        schedule={"VALID": 8, "BLOCK": 128},
+    )
+    source_compile = CompileResult(
+        True,
+        ttir=GOOD_TTIR,
+        python_interface={
+            "arg_names": ["X", "Y", "N", "VALID", "BLOCK"],
+            "constexprs": ["VALID", "BLOCK"],
+            "constexpr_indices": [3, 4],
+        },
+    )
+    replay_case = _replay_case(artifact, source_case, source_compile)
+    assert replay_case.schedule == {"p3": 8, "c0": 128}
+    assert artifact.schedule.values == {"c0": 128}
