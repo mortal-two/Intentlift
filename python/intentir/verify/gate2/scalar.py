@@ -1,9 +1,9 @@
-"""Backend-neutral Gate2 adapter for deterministic scalar CPU lowering.
+"""Backend-neutral scalar leg for source-anchored Gate2 verification.
 
-The active Gate2 compares an executable replay of the final accepted J with a
-scalar execution of the same typed :class:`IntentProgram`.  This module owns
-only the verification adapter.  It has no CUDA/ROCm imports, target selection,
-or production-backend fallback.
+The scalar leg executes the final J's typed :class:`IntentProgram`.  Gate2
+compares that result with the source result independently of its source/replay
+comparison.  This module has no CUDA/ROCm imports, target selection, or
+production-backend fallback.
 """
 
 from __future__ import annotations
@@ -180,6 +180,72 @@ class ScalarLoweringSpec:
         )
 
 
+@dataclass(frozen=True)
+class ScalarLoweringUnavailable:
+    """Structured scalar-leg setup failure retained inside Gate2.
+
+    A failed IntentProgram handoff or scalar shape binding must not prevent the
+    source/replay comparison from executing.  This request carries the same
+    final-J identity as an executable scalar request and becomes an unsupported
+    scalar execution result when Gate2 runs.
+    """
+
+    final_artifact_digest: str
+    gate1_j_digest: str
+    error: str
+    failure_class: str = "intent_program_handoff"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "final_artifact_digest",
+            _checked_digest(self.final_artifact_digest, "final artifact digest"),
+        )
+        object.__setattr__(
+            self,
+            "gate1_j_digest",
+            _checked_digest(self.gate1_j_digest, "Gate1 J digest"),
+        )
+        if not isinstance(self.error, str) or not self.error:
+            raise ValueError("unavailable scalar lowering requires an error")
+        if not isinstance(self.failure_class, str) or not self.failure_class:
+            raise ValueError(
+                "unavailable scalar lowering requires a failure class"
+            )
+
+    @property
+    def spec_digest(self) -> str:
+        return _digest(
+            {
+                "schema": SCALAR_LOWERING_PROTOCOL,
+                "availability": "unavailable",
+                "final_artifact_digest": self.final_artifact_digest,
+                "gate1_j_digest": self.gate1_j_digest,
+                "failure_class": self.failure_class,
+                "error": self.error,
+            }
+        )
+
+    def execution_result(self) -> ExecutionResult:
+        return ExecutionResult(
+            "scalar",
+            False,
+            error=self.error,
+            unsupported=True,
+            metadata={
+                "protocol": SCALAR_LOWERING_PROTOCOL,
+                "final_artifact_digest": self.final_artifact_digest,
+                "gate1_j_digest": self.gate1_j_digest,
+                "scalar_spec_digest": self.spec_digest,
+                "failure_class": self.failure_class,
+                "setup_completed": False,
+            },
+        )
+
+
+ScalarLoweringRequest = ScalarLoweringSpec | ScalarLoweringUnavailable
+
+
 def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     result: list[IntentOp] = []
     for op in body:
@@ -322,7 +388,9 @@ class ScalarLoweringRunner:
 
 __all__ = [
     "SCALAR_LOWERING_PROTOCOL",
+    "ScalarLoweringRequest",
     "ScalarLoweringRunner",
     "ScalarLoweringSpec",
+    "ScalarLoweringUnavailable",
     "scalar_broadcast_axes",
 ]
