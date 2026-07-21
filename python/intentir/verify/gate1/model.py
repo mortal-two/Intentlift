@@ -174,12 +174,12 @@ def _unique(items: list[Any], key: str, path: str) -> None:
 def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFunction:
     """Strictly validate IntentFunction, including closed semantic loops.
 
-    Operation-specific ``attrs``/``type``/``layer_b`` remain extensible because
-    the IntentIR dialect owns those vocabularies.  Loop state is different: it
-    carries cross-region SSA semantics, so SCRC requires a closed, typed
-    ``init -> body_argument -> next_value -> result_value`` contract and checks
-    its positional ``result``/``yield`` witnesses rather than trusting them as
-    unrelated open JSON.
+    Operation-specific ``attrs`` and ``type`` remain extensible while the
+    compositional IntentOp core is being audited.  Layer B is never accepted at
+    op scope, and destination/writeback contracts never use a per-op ``out``
+    shortcut.  Loop state carries cross-region SSA semantics, so SCRC requires
+    a closed, typed ``init -> body_argument -> next_value -> result_value``
+    contract and checks its positional ``result``/``yield`` witnesses.
     """
 
     root = _object(value, path)
@@ -331,7 +331,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
             item,
             path=op_path,
             allowed={
-                "id", "op", "result", "operands", "attrs", "type", "layer_b", "out",
+                "id", "op", "result", "operands", "attrs", "type",
                 "scope_id", "carry", "trip", "scan", "body", "yield",
             },
             required={"op"},
@@ -356,13 +356,11 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                         f"{op_path}.operands reference value(s) outside the current "
                         f"scope: {', '.join(unknown_operands)}"
                     )
-        if "out" in op and op["out"] is not None:
-            _string(op["out"], f"{op_path}.out")
         if "scope_id" in op and op["scope_id"] is not None:
             _string(op["scope_id"], f"{op_path}.scope_id")
         if "yield" in op:
             _string_list(op["yield"], f"{op_path}.yield")
-        for open_key in ("attrs", "type", "layer_b"):
+        for open_key in ("attrs", "type"):
             if open_key in op and op[open_key] is not None:
                 _json_value(op[open_key], f"{op_path}.{open_key}")
 
@@ -644,16 +642,14 @@ class ScheduleSlotKind(str, Enum):
 class AccessKind(str, Enum):
     LOAD = "load"
     STORE = "store"
-    ATOMIC = "atomic"
-    SYNCHRONIZE = "synchronize"
+    UPDATE = "update"
 
 
 class EffectKind(str, Enum):
     READ = "read"
     WRITE = "write"
     READ_WRITE = "read_write"
-    ATOMIC = "atomic"
-    SYNCHRONIZE = "synchronize"
+    UPDATE = "update"
 
 
 class AliasKind(str, Enum):
@@ -730,7 +726,7 @@ class BoundaryAccess(StrictJSONMixin):
             self.index_expression = _string(
                 self.index_expression, "BoundaryAccess.index_expression"
             )
-        if self.kind in {AccessKind.LOAD, AccessKind.STORE, AccessKind.ATOMIC}:
+        if self.kind in {AccessKind.LOAD, AccessKind.STORE, AccessKind.UPDATE}:
             if self.index_expression is None:
                 raise SchemaError(
                     f"BoundaryAccess {self.access_id!r} requires index_expression"
@@ -1369,10 +1365,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         tensor.name for tensor in archive.intent.inputs
     )
     state_records: list[tuple[Any, str, str]] = []
-    destination_targets: set[str] = set()
-    destination_write_events: dict[
-        str, set[tuple[SemanticEventKind, str | None]]
-    ] = {}
     referenced_loop_scopes: set[str] = set()
     order = 0
 
@@ -1425,10 +1417,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             event_ref = (SemanticEventKind.NODE, node_id or path)
             for value in [*produced, *op.operands]:
                 value_events.setdefault(value, set()).add(event_ref)
-            if op.out is not None:
-                destination_targets.add(op.out)
-                value_events.setdefault(op.out, set()).add(event_ref)
-                destination_write_events.setdefault(op.out, set()).add(event_ref)
             if op.op != "loop":
                 if op.scope_id is not None:
                     raise SchemaError(
@@ -1537,8 +1525,7 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
     access_effect_kind = {
         AccessKind.LOAD: EffectKind.READ,
         AccessKind.STORE: EffectKind.WRITE,
-        AccessKind.ATOMIC: EffectKind.ATOMIC,
-        AccessKind.SYNCHRONIZE: EffectKind.SYNCHRONIZE,
+        AccessKind.UPDATE: EffectKind.UPDATE,
     }
     for access in archive.boundary.accesses:
         if access.node_ref is None:
@@ -1790,26 +1777,15 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 )
 
         write_events: set[tuple[str, str]] = set()
-        for member in item.members:
-            for key in destination_write_events.get(member, set()):
-                _kind, node_ref = key
-                matching_access = any(
-                    access.tensor == member
-                    and access.kind in {AccessKind.STORE, AccessKind.ATOMIC}
-                    and access.node_ref == node_ref
-                    for access in archive.boundary.accesses
-                )
-                if not matching_access:
-                    write_events.add(("node", f"{node_ref}:{member}"))
         for access in archive.boundary.accesses:
             if access.tensor not in item.members or access.kind not in {
-                AccessKind.STORE, AccessKind.ATOMIC,
+                AccessKind.STORE, AccessKind.UPDATE,
             }:
                 continue
             write_events.add(("access", access.access_id))
         for effect in archive.boundary.effects:
             if effect.target not in item.members or effect.kind not in {
-                EffectKind.WRITE, EffectKind.READ_WRITE, EffectKind.ATOMIC,
+                EffectKind.WRITE, EffectKind.READ_WRITE, EffectKind.UPDATE,
             }:
                 continue
             assert effect.effect_id is not None
@@ -1852,15 +1828,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 f"semantic loop state {state.state_id!r} storage must live in its loop "
                 "scope, cross iterations, and escape as the loop result"
             )
-
-    missing_destinations = sorted(
-        target for target in destination_targets if target not in member_owner
-    )
-    if missing_destinations:
-        raise SchemaError(
-            "destination-passing value(s) require semantic storage: "
-            + ", ".join(missing_destinations)
-        )
 
     for alias in archive.boundary.aliases:
         left = member_owner.get(alias.left)
@@ -3074,11 +3041,11 @@ def _opaque_intent_op(
     if "result" in result:
         result["result"] = _opaque_json_exact(result["result"], aliases)
     for key in (
-        "operands", "out", "scope_id", "carry", "trip", "scan", "yield",
+        "operands", "scope_id", "carry", "trip", "scan", "yield",
     ):
         if key in result:
             result[key] = _opaque_json_exact(result[key], aliases)
-    for key in ("attrs", "type", "layer_b"):
+    for key in ("attrs", "type"):
         if key in result:
             result[key] = _opaque_json_exact(result[key], aliases)
     if "body" in result:

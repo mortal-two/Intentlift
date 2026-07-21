@@ -122,6 +122,12 @@ LLM 的开放世界职责包括：
 组合覆盖 fusion、copy/reverse、atomic、pipeline 背后的逻辑关系；验证完成前不得据此
 宣称相应 Kernel family 已受支持。
 
+2026-07-21 的第一轮真实源码审计已经完成，详见
+[IntentOp_健壮性审计_2026-07-21.md](IntentOp_健壮性审计_2026-07-21.md)。审计冻结的是
+结构禁令与 fail-closed 能力边界，不是尚未完成的 logical-map/update/result-relation
+schema。特别地，per-op `layer_b`、`out`、J 内 `trip.tile_hint` 以及 J 中的
+`atomic/synchronize` spelling 已从活动系统删除。
+
 ### 5.1 Elementwise expression
 
 ```text

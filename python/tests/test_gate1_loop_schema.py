@@ -58,7 +58,6 @@ def _loop_archive() -> dict:
                         "result": "y",
                         "operands": ["acc"],
                         "attrs": {"fn": "identity"},
-                        "out": "y",
                     },
                 ],
             }
@@ -66,10 +65,26 @@ def _loop_archive() -> dict:
         "node_ids": {"n0": "body[0]", "n1": "body[1]"},
         "boundary": {
             "domains": {},
-            "accesses": [],
+            "accesses": [
+                {
+                    "access_id": "a0",
+                    "kind": "store",
+                    "tensor": "y",
+                    "node_ref": "n1",
+                    "index_expression": "0",
+                }
+            ],
             "broadcasts": [],
             "aliases": [],
-            "effects": [],
+            "effects": [
+                {
+                    "effect_id": "e0",
+                    "kind": "write",
+                    "target": "y",
+                    "node_ref": "n1",
+                    "access_ref": "a0",
+                }
+            ],
             "output_mappings": [],
             "reductions": [],
         },
@@ -80,7 +95,7 @@ def _loop_archive() -> dict:
                 "parent_scope": None,
                 "captures": [],
                 "definitions": ["x", "acc", "y"],
-                "effects": [],
+                "effects": ["e0"],
             },
             {
                 "scope_id": "scope0",
@@ -259,27 +274,7 @@ def test_scope_captures_definitions_and_effects_are_exact() -> None:
 
 
 def _loop_archive_with_store_effect() -> dict:
-    payload = _loop_archive()
-    payload["boundary"]["accesses"] = [
-        {
-            "access_id": "a0",
-            "kind": "store",
-            "tensor": "y",
-            "node_ref": "n1",
-            "index_expression": "0",
-        }
-    ]
-    payload["boundary"]["effects"] = [
-        {
-            "effect_id": "e0",
-            "kind": "write",
-            "target": "y",
-            "node_ref": "n1",
-            "access_ref": "a0",
-        }
-    ]
-    payload["scopes"][0]["effects"] = ["e0"]
-    return payload
+    return _loop_archive()
 
 
 def test_access_effect_identity_scope_and_write_once_are_cross_checked() -> None:
@@ -325,11 +320,6 @@ def test_storage_lifetime_and_loop_state_membership_are_fail_closed() -> None:
     }
     with pytest.raises(SchemaError, match="use outside declared lifetime"):
         SemanticArchive.from_json(truncated_lifetime)
-
-    missing_destination = _loop_archive()
-    missing_destination["storage"] = missing_destination["storage"][:1]
-    with pytest.raises(SchemaError, match="destination-passing value"):
-        SemanticArchive.from_json(missing_destination)
 
     unrelated_last = _loop_archive_with_store_effect()
     unrelated_last["storage"][0]["last_use_event"] = {
@@ -442,7 +432,6 @@ def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
                         "result": "y",
                         "operands": ["x"],
                         "attrs": {"to_dtype": "f32"},
-                        "out": "y",
                     }
                 ],
             }
@@ -556,24 +545,13 @@ def test_node_ids_are_canonical_json_paths_not_free_text_channels() -> None:
         SemanticArchive.from_json(payload)
 
 
-def test_non_scrc_intentir_still_reads_legacy_loop_shape_for_archived_callers() -> None:
+def test_direct_intent_model_rejects_legacy_loop_shape() -> None:
     payload = _loop_archive()["intent"]
     loop = payload["intent_function"]["body"][0]
-    loop.pop("scope_id")
-    loop["carry"] = [{"name": "acc", "init": "ZERO"}]
     loop["trip"] = {"axis": "N", "tile_hint": "BLOCK_N"}
-    loop["body"][1]["operands"][0] = "acc"
 
-    parsed = IntentFunction.from_json(copy.deepcopy(payload))
-    state = parsed.body[0].carry[0]
-    assert state.body_argument == "acc"
-    assert state.next_value == "acc_next"
-    assert state.result_value == "acc"
+    with pytest.raises(ValueError, match="tile_hint"):
+        IntentFunction.from_json(copy.deepcopy(payload))
 
-    with pytest.raises(SchemaError):
-        SemanticArchive.from_json(
-            {
-                **_loop_archive(),
-                "intent": payload,
-            }
-        )
+    with pytest.raises(SchemaError, match="tile_hint"):
+        SemanticArchive.from_json({**_loop_archive(), "intent": payload})

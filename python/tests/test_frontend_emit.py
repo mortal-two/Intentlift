@@ -39,14 +39,9 @@ def _fn() -> IntentFunction:
 
 
 def _fn_with_f32_accumulators() -> IntentFunction:
-    """The legacy loop fixture predates explicit contraction accumulator types."""
+    """The canonical fixture declares contraction precision in op.type."""
 
-    fn = _fn()
-    loop = next(op for op in fn.body if op.op == "loop")
-    for op in loop.body:
-        if op.op == "contraction":
-            op.layer_b["accumulator_dtype"] = "f32"
-    return fn
+    return _fn()
 
 
 def _flat_fn(name: str) -> IntentFunction:
@@ -297,135 +292,26 @@ def test_emit_select_keeps_existing_condition_broadcast_axis() -> None:
     assert "tensor<4x1xi1>, tensor<4x8xf32>, tensor<4x8xf32>" in mlir
 
 
+def test_per_op_layer_b_is_rejected_instead_of_affecting_lowering() -> None:
+    with pytest.raises(ValueError, match="layer_b"):
+        IntentFunction.from_json({
+            "intent_function": {
+                "name": "forbidden_second_b_channel",
+                "inputs": [{"name": "X", "dtype": "f32", "shape": [4]}],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": [4]}],
+                "body": [{
+                    "op": "cast",
+                    "result": "Y",
+                    "operands": ["X"],
+                    "attrs": {"to_dtype": "f32"},
+                    "layer_b": {"invented_proof": True},
+                }],
+            }
+        })
+
+
 @_needs_opt
-def test_gather_emits_typed_bounds_fact_only_from_layer_b() -> None:
-    from intentir.frontend import emit_module
-
-    fn = IntentFunction.from_json({
-        "intent_function": {
-            "name": "bounded_gather",
-            "inputs": [
-                {"name": "W", "dtype": "f32", "shape": [3]},
-                {"name": "I", "dtype": "i32", "shape": []},
-            ],
-            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
-            "body": [{
-                "op": "gather",
-                "result": "Y",
-                "operands": ["W", "I"],
-                "attrs": {"axis": 0, "mode": "take"},
-                "layer_b": {"index_in_bounds": True},
-            }],
-        }
-    })
-
-    mlir = emit_module(fn, {})
-    assert "intent.index_bounds_proven = true" in mlir
-    _intent_opt(mlir)
-
-
-def test_validated_bounds_assumptions_emit_typed_scalar_equalities() -> None:
-    from intentir.frontend import emit_module
-
-    fn = IntentFunction.from_json({
-        "intent_function": {
-            "name": "bounded_scalar_specialization",
-            "inputs": [
-                {"name": "W", "dtype": "f32", "shape": [3]},
-                {"name": "I", "dtype": "i32", "shape": []},
-            ],
-            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
-            "body": [{
-                "op": "gather",
-                "result": "Y",
-                "operands": ["W", "I"],
-                "attrs": {"axis": 0, "mode": "take"},
-                "layer_b": {
-                    "index_in_bounds": True,
-                    "index_bounds_proof": {
-                        "kind": "closed_integer_interval",
-                        "assumptions": [{
-                            "kind": "validated_layer_b_integer_equality",
-                            "input": "I",
-                            "equals": 2,
-                        }],
-                    },
-                },
-            }],
-        }
-    })
-
-    mlir = emit_module(fn, {})
-    assert "intent.scalar_equalities = array<i64: 1, 2>" in mlir
-
-
-def test_free_text_scalar_contract_does_not_emit_typed_equality() -> None:
-    from intentir.frontend import emit_module
-
-    fn = IntentFunction.from_json({
-        "intent_function": {
-            "name": "unproved_scalar_specialization",
-            "inputs": [{"name": "I", "dtype": "i32", "shape": []}],
-            "outputs": [{"name": "Y", "dtype": "i32", "shape": []}],
-            "body": [{
-                "op": "map_binary",
-                "result": "Y",
-                "operands": ["I", "I"],
-                "attrs": {"fn": "add"},
-                "layer_b": {
-                    "contracts": [{"id": "I_eq_2", "holds": True, "value": 2}]
-                },
-            }],
-        }
-    })
-
-    assert "intent.scalar_equalities" not in emit_module(fn, {})
-
-
-def test_direct_overwrite_layer_b_emits_typed_inplace_contract() -> None:
-    from intentir.frontend import emit_module
-
-    fn = IntentFunction.from_json({
-        "intent_function": {
-            "name": "rms_norm_add_alias",
-            "inputs": [
-                {"name": "X", "dtype": "f32", "shape": [4, 8]},
-                {"name": "Y", "dtype": "f32", "shape": [4, 8]},
-            ],
-            "outputs": [
-                {"name": "X_out", "dtype": "f32", "shape": [4, 8]},
-                {"name": "H1", "dtype": "f32", "shape": [4, 8]},
-            ],
-            "body": [
-                {
-                    "op": "map_binary",
-                    "result": "X_out",
-                    "operands": ["X", "Y"],
-                    "attrs": {"fn": "add"},
-                    "layer_b": {
-                        "mutation": {
-                            "kind": "in_place_overwrite",
-                            "input": "X",
-                            "output": "X_out",
-                            "storage": "x_ptr",
-                        }
-                    },
-                },
-                {
-                    "op": "map_unary",
-                    "result": "H1",
-                    "operands": ["X_out"],
-                    "attrs": {"fn": "neg"},
-                },
-            ],
-        }
-    })
-
-    mlir = emit_module(fn, {})
-    assert "intent.inplace = array<i64: 0, -1>" in mlir
-
-
-def test_gather_does_not_promote_free_text_contract_to_bounds_proof() -> None:
+def test_bare_gather_emitter_never_invents_bounds_proof() -> None:
     from intentir.frontend import emit_module
 
     fn = IntentFunction.from_json({
@@ -441,18 +327,15 @@ def test_gather_does_not_promote_free_text_contract_to_bounds_proof() -> None:
                 "result": "Y",
                 "operands": ["W", "I"],
                 "attrs": {"axis": 0, "mode": "take"},
-                "layer_b": {
-                    "contracts": [{
-                        "id": "invented_gather_indices_in_bounds",
-                        "holds": True,
-                    }],
-                },
             }],
         }
     })
 
     mlir = emit_module(fn, {})
     assert "intent.index_bounds_proven" not in mlir
+    assert "intent_layer_b_json" not in mlir
+    assert "intent.inplace" not in mlir
+    _intent_opt(mlir)
 
 
 @_needs_opt
@@ -465,8 +348,12 @@ def test_all_emitters_sanitize_live_llm_function_name() -> None:
     loop_fn.name = raw_name
     modules = [
         emit_module(_flat_fn(raw_name), {}),
-        emit_loop_module(loop_fn, _DIMS, func_name=raw_name),
-        emit_body_function(loop_fn, _DIMS, func_name=raw_name),
+        emit_loop_module(
+            loop_fn, _DIMS, func_name=raw_name, schedule_tile=_DIMS["BK"]
+        ),
+        emit_body_function(
+            loop_fn, _DIMS, func_name=raw_name, schedule_tile=_DIMS["BK"]
+        ),
     ]
 
     for mlir in modules:
@@ -478,10 +365,9 @@ def test_all_emitters_sanitize_live_llm_function_name() -> None:
 def test_emit_loop_module_lowers() -> None:
     from intentir.frontend import emit_loop_module
 
-    # Generic lowering currently needs homogeneous scalar operand types.  The
-    # legacy fixture omits dot accumulator obligations, so use an explicitly
-    # annotated variant for this lowering-specific test.
-    mlir = emit_loop_module(_fn_with_f32_accumulators(), _DIMS)
+    mlir = emit_loop_module(
+        _fn_with_f32_accumulators(), _DIMS, schedule_tile=_DIMS["BK"]
+    )
     assert "intent.loop" in mlir and "intent.yield" in mlir
     lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
     assert "scf.for" in lowered
@@ -493,7 +379,9 @@ def test_emit_loop_module_lowers() -> None:
 def test_emit_body_lowers() -> None:
     from intentir.frontend import emit_body_function
 
-    mlir = emit_body_function(_fn_with_f32_accumulators(), _DIMS)
+    mlir = emit_body_function(
+        _fn_with_f32_accumulators(), _DIMS, schedule_tile=_DIMS["BK"]
+    )
     # body args: outer (Q, scale) + scan tiles + explicit loop state arguments.
     for name in (
         "%Q", "%scale", "%Kj", "%Vj", "%m_iter", "%l_iter", "%Oacc_iter",
@@ -505,19 +393,19 @@ def test_emit_body_lowers() -> None:
 
 
 @_needs_opt
-def test_legacy_loop_preserves_mixed_float_dtypes_and_verifies() -> None:
-    """P4 parsing is distinct from optional generic lowering support."""
+def test_semantic_loop_uses_external_schedule_tile_and_typed_accumulators() -> None:
+    """The MLIR tile comes from the explicit C projection, never from J."""
     from intentir.frontend import emit_body_function
 
-    mlir = emit_body_function(_fn(), _DIMS)
+    mlir = emit_body_function(_fn(), _DIMS, schedule_tile=_DIMS["BK"])
     assert "%Q: tensor<4x4xf16>" in mlir
     assert "%Kj: tensor<2x4xf16>" in mlir
     assert (
-        "(tensor<4x4xf16>, tensor<2x4xf16>) -> tensor<4x2xf16>"
+        "(tensor<4x4xf16>, tensor<2x4xf16>) -> tensor<4x2xf32>"
         in mlir
     )
     assert (
-        "(tensor<4x2xf16>, tensor<f32>) -> tensor<4x2xf32>"
+        "(tensor<4x2xf32>, tensor<f32>) -> tensor<4x2xf32>"
         in mlir
     )
     _intent_opt(mlir)  # real C++ parser/verifier; no lowering claim here
@@ -550,7 +438,7 @@ def test_flat_emitter_preserves_float_ssa_dtypes_and_predicates() -> None:
                     "result": "C",
                     "operands": ["A", "B"],
                     "attrs": {"subscripts": "mk,nk->mn"},
-                    "layer_b": {"accumulator_dtype": "f32"},
+                    "type": {"dtype": "f32"},
                 },
                 {
                     "op": "map_unary",
@@ -622,10 +510,7 @@ def test_flat_emitter_preserves_float_ssa_dtypes_and_predicates() -> None:
     _intent_opt(mlir)
 
 
-@pytest.mark.parametrize("accumulator", [None, "not_a_dtype"])
-def test_contraction_without_valid_accumulator_keeps_operand_dtype(
-    accumulator: str | None,
-) -> None:
+def test_contraction_without_explicit_result_type_keeps_operand_dtype() -> None:
     from intentir.frontend import emit_module
 
     contraction = {
@@ -634,8 +519,6 @@ def test_contraction_without_valid_accumulator_keeps_operand_dtype(
         "operands": ["A", "B"],
         "attrs": {"subscripts": "mk,nk->mn"},
     }
-    if accumulator is not None:
-        contraction["layer_b"] = {"accumulator_dtype": accumulator}
     fn = IntentFunction.from_json({
         "intent_function": {
             "name": "same_type_dot",
@@ -653,6 +536,30 @@ def test_contraction_without_valid_accumulator_keeps_operand_dtype(
         "(tensor<2x4xf16>, tensor<3x4xf16>) -> tensor<2x3xf16>"
         in mlir
     )
+
+
+def test_contraction_rejects_invalid_explicit_result_dtype() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "invalid_dot_type",
+            "inputs": [
+                {"name": "A", "dtype": "f16", "shape": [2, 4]},
+                {"name": "B", "dtype": "f16", "shape": [3, 4]},
+            ],
+            "outputs": [{"name": "C", "dtype": "f16", "shape": [2, 3]}],
+            "body": [{
+                "op": "contraction",
+                "result": "C",
+                "operands": ["A", "B"],
+                "attrs": {"subscripts": "mk,nk->mn"},
+                "type": {"dtype": "not_a_dtype"},
+            }],
+        }
+    })
+    with pytest.raises(ValueError, match="invalid dtype"):
+        emit_module(fn, {})
 
 
 @pytest.mark.skipif(not _LIVE_JSON.exists(), reason="live P1 artifact unavailable")
@@ -928,7 +835,9 @@ def test_emitted_body_executes_vs_interpret(tmp_path) -> None:
     fn = _fn_with_f32_accumulators()
     Sq, Sk, D, BK = _DIMS["Sq"], _DIMS["Sk"], _DIMS["D"], _DIMS["BK"]
     body_path = tmp_path / "flash_body_fwd.mlir"
-    body_path.write_text(emit_body_function(fn, _DIMS))
+    body_path.write_text(
+        emit_body_function(fn, _DIMS, schedule_tile=BK)
+    )
     nt = Sk // BK
 
     for seed, scale in [(0, 1.0), (1, 0.25), (2, 0.5)]:

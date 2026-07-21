@@ -39,9 +39,6 @@
         ],
         "attrs": {
           "fn": "div"
-        },
-        "layer_b": {
-          "precondition": "B is elementwise nonzero"
         }
       }
     ]

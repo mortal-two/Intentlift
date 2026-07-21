@@ -439,8 +439,6 @@ def _run_body(
                 env[name] = val
         elif op.result is not None:
             env[op.result] = out  # non-loop result is always a str
-        if op.out is not None:
-            env[op.out] = out
     return env
 
 
@@ -449,11 +447,10 @@ def _eval_loop(
 ) -> dict[str, Any]:
     """Structured loop with carry (online-softmax recurrence).
 
-    Iterates the trip axis in tiles, slicing each ``scan`` source for the tile,
-    running the body with carries + sliced inputs, then advancing carries from
-    ``yield``. The tile size comes from ``params[trip.tile_hint]``; absent that,
-    the whole axis runs as one iteration (mathematically the naive form). Online
-    softmax is exact (up to fp) for any tiling, so tile size is a Layer-C choice.
+    Iterates the complete semantic trip axis as one logical step, slicing each
+    ``scan`` source, running the body with carries + sliced inputs, then
+    advancing carries from ``yield``. Source tiling is deliberately unavailable
+    here: it belongs to C/pi, not to the Layer-A loop.
     """
     carries = {c["name"]: _carry_init(c) for c in op.carry}
 
@@ -462,11 +459,7 @@ def _eval_loop(
     src0 = op.scan[0]
     extent = env[src0["from"]].shape[src0["axis"]]
 
-    tile = None
-    if op.trip is not None:
-        tile = params.get(op.trip.get("tile_hint"))
-    if tile is None:
-        tile = extent  # single iteration
+    tile = extent
 
     j = 0
     while j < extent:
@@ -495,11 +488,11 @@ def interpret(
 ) -> dict[str, np.ndarray]:
     """Execute an IntentFunction, returning {output_name: ndarray}.
 
-    ``params`` supplies concrete values for symbolic loop tile hints (e.g.
-    {"BK": 32}); omit to run loops as a single full-extent iteration.
+    ``params`` supplies concrete symbolic tensor extents. Loop tile choices are
+    intentionally not accepted by the Layer-A interpreter.
     """
     # Resolve symbolic shape dims (e.g. a `rand`/`const` shape ["M","N"]) from the
-    # concrete input arrays, merged with any caller-supplied tile hints.
+    # concrete input arrays, merged with any caller-supplied semantic extents.
     dims: dict[str, int] = dict(params or {})
     for t in fn.inputs:
         arr = inputs.get(t.name)

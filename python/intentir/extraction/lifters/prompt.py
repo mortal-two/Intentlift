@@ -8,7 +8,7 @@ answer to softmax / layernorm / attention / etc.
 
 from __future__ import annotations
 
-# --- op vocabulary, kept 1:1 with the archived interpreter and intent dialect ---
+# --- provisional semantic vocabulary; every executor still fails closed ---
 SCHEMA = """\
 IntentIR J is a tensor-level, atomic semantic representation.
 You LIFT a kernel into the math it computes over whole tensors -- never threads,
@@ -17,8 +17,8 @@ back into a single tensor op or a structured loop.
 
 Layers:
   A (algorithmic intent): the actual math -- the ops below.
-  B (portable correctness, per-op "layer_b"): bounds / masks / reduction
-    associativity that must hold for any backend (optional but encouraged).
+  B (portable correctness): the single typed top-level J boundary supplied by
+    the enclosing Lift schema. Never create per-op layer_b/out dictionaries.
   C is a separate non-semantic scheduling object and never appears inside J.
 
 Top-level JSON:
@@ -26,12 +26,13 @@ Top-level JSON:
     "name": <str>,
     "inputs":  [ {"name","dtype","shape":[dims...]}, ... ],
     "outputs": [ {"name","dtype","shape":[dims...]}, ... ],
+    "returns": [ {"output":<declared output>,"value":<SSA/input value>}, ... ],
     "body": [ <op>, ... ]
 }}
 - dtype in {f16,bf16,f32,f64,i1,i8,i16,i32,i64}. Scalars have shape [].
 - shape entries are ints or symbolic dim names (e.g. "M","N","D"); reuse the
-  same name for the same extent. An output is produced by an op whose "out" or
-  "result" equals the output name.
+  same name for the same extent. An output is produced by an op result with the
+  output name, or by an explicit function-level `returns` binding.
 
 Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
@@ -202,6 +203,9 @@ Hard rules:
     complex_mul       -> (re1*re2 - im1*im2, re1*im2 + im1*re2)
 - Numerical-stability shifts (subtract row-max before exp) ARE part of the
   algorithm -- keep them.
+- Per-op `layer_b`, destination `out`, and loop `trip.tile_hint` are forbidden.
+  Correctness boundaries live only in the enclosing canonical J boundary;
+  tile/block/stage choices live only in C.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\
 """
 
@@ -226,7 +230,7 @@ FEWSHOT_JSON = """\
     {"op": "reduce", "result": "s", "operands": ["X"],
      "attrs": {"fn": "sum", "axes": [1], "assoc": "float_nondeterministic"}},
     {"op": "map_binary", "result": "Y", "operands": ["X", "s"],
-     "attrs": {"fn": "div"}, "out": "Y"}
+     "attrs": {"fn": "div"}}
   ]
 }}\
 """

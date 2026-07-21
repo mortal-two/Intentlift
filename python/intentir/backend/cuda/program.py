@@ -89,6 +89,14 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
     else:
         consumed.extend(f"storage:{item.storage_id}" for item in j.storage)
 
+    op_names = {op.op for op in _walk_ops(j.intent.body)}
+    if "scatter" in op_names or "masked_scatter" in op_names:
+        unsupported.append(
+            "logical_update_missing_duplicate_conflict_order_result_relation"
+        )
+    if "loop" in op_names:
+        unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")
+
     nodes = _nodes(j)
     for item in j.boundary.reductions:
         op = nodes.get(item.node_ref)

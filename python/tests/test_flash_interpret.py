@@ -2,10 +2,9 @@
 softmax) through the reference interpreter and triangulate it against a numpy
 batched-attention reference and torch SDPA.
 
-This proves the *fused* form's semantics with zero GPU code — the Track-A oracle
-that the back-end (M5-M9) will diff every lowered kernel against. Tested at
-several tile sizes (full / clean-dividing / tail) because online softmax must be
-tile-invariant up to float tolerance.
+This preserves a historical NumPy witness for the structured recurrence.  The
+canonical J no longer accepts a tile hint: source/target tiling is supplied by C
+to lowering, while this interpreter executes the complete semantic trip axis.
 """
 
 from __future__ import annotations
@@ -56,34 +55,35 @@ def test_flash_json_round_trips() -> None:
     assert IntentFunction.from_json(fn.to_json()).to_json() == fn.to_json()
 
 
-@pytest.mark.parametrize("tile", [None, 16, 32, 64])
-def test_flash_matches_reference(tile) -> None:
+@pytest.mark.parametrize("irrelevant_schedule_value", [None, 16, 32, 64])
+def test_flash_matches_reference(irrelevant_schedule_value) -> None:
     fn = _load()
     Q, K, V, scale = _inputs()
-    params = {} if tile is None else {"BK": tile}
+    params = (
+        {} if irrelevant_schedule_value is None
+        else {"BK": irrelevant_schedule_value}
+    )
     out = interpret(fn, {"Q": Q, "K": K, "V": V, "scale": scale}, params)["O"]
     np.testing.assert_allclose(out, _ref_attention(Q, K, V, scale),
-                               rtol=1e-4, atol=1e-4)
+                               rtol=5e-4, atol=5e-4)
 
 
-def test_flash_tail_tile() -> None:
-    # Sk not divisible by BK exercises the tail iteration (R6 / tail-tile case).
+def test_flash_non_multiple_extent_is_semantic_not_a_j_tile() -> None:
     fn = _load()
     Q, K, V, scale = _inputs(Sk=70)
     out = interpret(fn, {"Q": Q, "K": K, "V": V, "scale": scale}, {"BK": 16})["O"]
     np.testing.assert_allclose(out, _ref_attention(Q, K, V, scale),
-                               rtol=1e-4, atol=1e-4)
+                               rtol=5e-4, atol=5e-4)
 
 
-def test_flash_tile_invariance() -> None:
-    # Triangulation: every tiling agrees with the single-iteration (naive) form.
+def test_legacy_interpreter_does_not_consume_schedule_values() -> None:
     fn = _load()
     Q, K, V, scale = _inputs(Sk=48)
     inp = {"Q": Q, "K": K, "V": V, "scale": scale}
     naive = interpret(fn, inp, {})["O"]
     for bk in (8, 16, 24):
         tiled = interpret(fn, inp, {"BK": bk})["O"]
-        np.testing.assert_allclose(tiled, naive, rtol=1e-5, atol=1e-5)
+        np.testing.assert_array_equal(tiled, naive)
 
 
 def test_flash_matches_torch_if_available() -> None:

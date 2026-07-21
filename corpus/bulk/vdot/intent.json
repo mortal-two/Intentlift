@@ -34,9 +34,6 @@
         ],
         "attrs": {
           "subscripts": "k,k->"
-        },
-        "layer_b": {
-          "assoc": "float_nondeterministic"
         }
       }
     ]

@@ -27,246 +27,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import ast
-import json
 import operator
 import re
 
 from intentir.ir.model import IntentFunction, IntentOp
 
 _INVALID_MLIR_SYMBOL_CHAR = re.compile(r"[^A-Za-z0-9_]")
-
-
-def _mlir_string(value: str) -> str:
-    """Encode UTF-8 text as one MLIR string literal without lossy escaping."""
-
-    encoded = value.encode("utf-8")
-    chunks: list[str] = []
-    for byte in encoded:
-        if 0x20 <= byte <= 0x7E and byte not in (0x22, 0x5C):
-            chunks.append(chr(byte))
-        else:
-            chunks.append(f"\\{byte:02X}")
-    return '"' + "".join(chunks) + '"'
-
-
-def _validated_scalar_equalities(fn: IntentFunction) -> list[dict[str, object]]:
-    """Return machine-derived integer scalar equalities carried by Layer B.
-
-    Only assumptions emitted inside a validated closed-interval bounds proof
-    are eligible. Free-text contracts and ordinary observed-value notes are not
-    specialization facts. ``emit_p4`` strips unbound proof objects before this
-    function runs, so diagnostic/unbound JSON cannot create the typed attr.
-    """
-
-    inputs = {
-        tensor.name: (index, tensor)
-        for index, tensor in enumerate(fn.inputs)
-    }
-    equalities: dict[str, int] = {}
-    for op in fn.body:
-        proof = op.layer_b.get("index_bounds_proof")
-        if not isinstance(proof, dict):
-            continue
-        assumptions = proof.get("assumptions")
-        if not isinstance(assumptions, list):
-            continue
-        for assumption in assumptions:
-            if (
-                not isinstance(assumption, dict)
-                or assumption.get("kind")
-                != "validated_layer_b_integer_equality"
-            ):
-                continue
-            name = assumption.get("input")
-            value = assumption.get("equals")
-            if (
-                not isinstance(name, str)
-                or isinstance(value, bool)
-                or not isinstance(value, int)
-                or name not in inputs
-            ):
-                continue
-            _index, tensor = inputs[name]
-            if tensor.dtype not in {"i8", "i16", "i32", "i64"} or tuple(
-                tensor.shape
-            ) != ():
-                continue
-            previous = equalities.get(name)
-            if previous is not None and previous != value:
-                raise ValueError(
-                    f"conflicting validated scalar equality for {name}: "
-                    f"{previous} versus {value}"
-                )
-            equalities[name] = value
-    return [
-        {
-            "input": name,
-            "argument_index": inputs[name][0],
-            "dtype": inputs[name][1].dtype,
-            "equals": equalities[name],
-        }
-        for name in sorted(equalities, key=lambda item: inputs[item][0])
-    ]
-
-
-def _semantic_contract_attributes(fn: IntentFunction) -> str:
-    """Persist operation-local Layer-B annotations as MLIR attributes.
-
-    Intent operations already encode the executable Layer-A graph.  These
-    C is a separate lowering input and is never embedded in IntentFunction.
-    """
-
-    layer_b = [
-        {
-            "index": index,
-            "op": op.op,
-            "result": op.result,
-            "layer_b": op.layer_b,
-        }
-        for index, op in enumerate(fn.body)
-        if op.layer_b
-    ]
-    b_json = json.dumps(
-        layer_b, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
-    attrs = ["intent_layer_b_json = " + _mlir_string(b_json)]
-    scalar_equalities = _validated_scalar_equalities(fn)
-    if scalar_equalities:
-        flattened = [
-            str(value)
-            for item in scalar_equalities
-            for value in (item["argument_index"], item["equals"])
-        ]
-        attrs.append(
-            "intent.scalar_equalities = array<i64: "
-            + ", ".join(flattened)
-            + ">"
-        )
-
-    # A validated conditional writeback is an explicit destination alias, not
-    # a fresh mathematical output.  Materialize the existing ``intent.inplace``
-    # ABI contract only when the Layer-B record is unambiguous: the result is a
-    # declared output, the mutation is single-writer/non-atomic, and exactly one
-    # select operand is a shape/dtype-compatible function input.  The C++ row
-    # lowering can then preserve the source's conditional store instead of
-    # writing an identity copy of an entire row.
-    input_index = {tensor.name: index for index, tensor in enumerate(fn.inputs)}
-    output_index = {tensor.name: index for index, tensor in enumerate(fn.outputs)}
-    input_type = {
-        tensor.name: (tensor.dtype, tuple(tensor.shape)) for tensor in fn.inputs
-    }
-    output_type = {
-        tensor.name: (tensor.dtype, tuple(tensor.shape)) for tensor in fn.outputs
-    }
-    inplace = [-1] * len(fn.outputs)
-    for op in fn.body:
-        if (
-            op.op != "select"
-            or not isinstance(op.result, str)
-            or op.result not in output_index
-        ):
-            continue
-        mutation = op.layer_b.get("mutation")
-        aliases = op.layer_b.get("aliasing")
-        conflict = op.layer_b.get("conflict_contract")
-        if (
-            not isinstance(mutation, dict)
-            or mutation.get("kind")
-            not in {"conditional_writeback", "in_place_conditional_writeback"}
-            or not isinstance(aliases, dict)
-            or aliases.get("no_cross_argument_aliases") is not True
-            or not isinstance(conflict, dict)
-            or conflict.get("atomics_required") is not False
-            or conflict.get("single_writer_per_element") is not True
-        ):
-            continue
-        compatible_inputs = [
-            operand
-            for operand in op.operands
-            if operand in input_index
-            and input_type[operand] == output_type[op.result]
-        ]
-        if len(compatible_inputs) == 1:
-            inplace[output_index[op.result]] = input_index[compatible_inputs[0]]
-
-    # Direct source mutation is also an ABI alias when Layer B names the exact
-    # input and output.  This covers kernels such as xFormers RMSNormAdd, where
-    # ``x_ptr`` is overwritten with ``X + Y`` and returned as ``X_out``.  Keep
-    # the rule deliberately typed and fail closed: vague storage prose, an
-    # undeclared input/output, a mismatched result, or an incompatible tensor
-    # type cannot create an alias.
-    direct_inplace_kinds = {
-        "in_place_overwrite",
-        "inplace_overwrite",
-        "overwrite_in_place",
-    }
-    partial_inplace_kinds = {"partial_writeback"}
-    for op in fn.body:
-        mutation = op.layer_b.get("mutation")
-        if not isinstance(mutation, dict):
-            continue
-        kind = mutation.get("kind")
-        if kind in direct_inplace_kinds:
-            input_name = mutation.get("input")
-            output_name = mutation.get("output")
-        elif kind in partial_inplace_kinds:
-            input_name = mutation.get("preserve_unwritten_from")
-            output_name = op.result
-        else:
-            continue
-        if (
-            not isinstance(op.result, str)
-            or not isinstance(input_name, str)
-            or not isinstance(output_name, str)
-            or output_name != op.result
-            or input_name not in input_index
-            or output_name not in output_index
-            or input_type[input_name] != output_type[output_name]
-        ):
-            continue
-        result_index = output_index[output_name]
-        alias_index = input_index[input_name]
-        previous = inplace[result_index]
-        if previous >= 0 and previous != alias_index:
-            raise ValueError(
-                f"conflicting inplace contract for output {output_name}: "
-                f"input {previous} versus {alias_index}"
-            )
-        inplace[result_index] = alias_index
-    if any(index >= 0 for index in inplace):
-        attrs.append(
-            "intent.inplace = array<i64: "
-            + ", ".join(str(index) for index in inplace)
-            + ">"
-        )
-
-    # Materialize correctness-relevant Layer-B facts as typed attributes only
-    # when the validated JSON states them explicitly.  The C++ selector can
-    # then use the fact without parsing prose or guessing from a symbol name.
-    # A missing/vague relationship deliberately produces no fast-path attr.
-    for op in fn.body:
-        if op.op != "scan":
-            continue
-        relationships = op.layer_b.get("input_relationships")
-        if not isinstance(relationships, dict):
-            continue
-        sorted_x = relationships.get("SortedX")
-        if not isinstance(sorted_x, dict) or sorted_x.get("descending") is not True:
-            continue
-        attrs.append("intent_sorted_descending = true")
-        matches = sorted_x.get("matches_host_sort_of")
-        if isinstance(matches, str) and matches:
-            attrs.append(
-                "intent_sorted_matches_host_sort_of = " + _mlir_string(matches)
-            )
-        timed = sorted_x.get("host_preprocessing_in_kernel_timing")
-        if isinstance(timed, bool):
-            attrs.append(
-                "intent_host_preprocessing_in_kernel_timing = "
-                + ("true" if timed else "false")
-            )
-        break
-    return " attributes {" + ", ".join(attrs) + "}"
 
 
 def _sanitize_mlir_symbol(name: str) -> str:
@@ -685,8 +451,6 @@ def _infer_op(
             keepdims[ax] = 1
         collapsed = [dim for index, dim in enumerate(shp) if index not in axes]
         declared = env.get(op.result)
-        if declared is None and op.out is not None:
-            declared = env.get(op.out)
         explicit_keepdims = op.attrs.get("keepdims")
         if explicit_keepdims is not None:
             if not isinstance(explicit_keepdims, bool):
@@ -972,28 +736,6 @@ def _merge_operand_dtypes(
     return result
 
 
-def _layer_b(op: IntentOp) -> dict[str, object]:
-    """Return Layer-B obligations, accepting one legacy nested representation."""
-
-    merged: dict[str, object] = {}
-    nested = op.attrs.get("layer_b")
-    if isinstance(nested, dict):
-        merged.update(nested)
-    merged.update(op.layer_b)
-    return merged
-
-
-def _gather_bounds_proven(op: IntentOp) -> bool:
-    """Return only machine-readable, validated Layer-B bounds claims."""
-
-    layer_b = _layer_b(op)
-    # Contract identifiers are descriptive LLM text, not proof objects.  In
-    # particular, an arbitrary ``*_gather_indices_in_bounds`` suffix must not
-    # become an unsafe-load authorization.  P2 may expose a structured fact
-    # only after its validator has established it.
-    return layer_b.get("index_in_bounds") is True
-
-
 def _declared_op_dtype(op: IntentOp) -> str | None:
     if not isinstance(op.type, dict) or "dtype" not in op.type:
         return None
@@ -1025,21 +767,10 @@ def _infer_op_dtypes(op: IntentOp, dtypes: dict[str, str]) -> dict[str, str]:
     if op.op == "cast":
         inferred = [_cast_target_dtype(a)]
     elif op.op == "contraction":
-        layer_b = _layer_b(op)
-        accumulator = layer_b.get(
-            "accumulator_dtype", layer_b.get("accumulation_dtype")
-        )
-        # A valid Layer-B accumulator contract wins. For legacy Gate artifacts,
-        # the function output ABI may be the only typed declaration that an
-        # f16/bf16 contraction produces f32. `_flat_dtypes` seeds declared
-        # outputs before inference, so use that result type as the compatibility
-        # fallback; intermediate contractions still use the operands' common
-        # type and therefore require an explicit cast/contract when widened.
-        dtype = (
-            accumulator
-            if isinstance(accumulator, str) and accumulator in _FLOAT_DTYPES
-            else dtypes.get(names[0])
-        )
+        # Accumulator/result precision is value semantics, not Layer B.  An
+        # explicit op.type wins; an externally declared result type is the next
+        # source of truth, otherwise operands determine the type.
+        dtype = _declared_op_dtype(op) or dtypes.get(names[0])
         inferred = [dtype or _merge_operand_dtypes(op, dtypes)]
     elif op.op == "reduce":
         inferred = [
@@ -1122,12 +853,6 @@ def _infer_body_dtypes(
     for op in body:
         for name, dtype in _infer_op_dtypes(op, dtypes).items():
             changed |= _record_dtype(dtypes, name, dtype, op.op)
-        if op.out is not None and isinstance(op.result, str):
-            result_dtype = dtypes.get(op.result)
-            if result_dtype is not None:
-                changed |= _record_dtype(
-                    dtypes, op.out, result_dtype, f"{op.op} destination"
-                )
     return changed
 
 
@@ -1608,11 +1333,10 @@ class _Printer:
             td, ti = (self._ttn(o, env) for o in op.operands)
             axis = int(a["axis"]) - fold
             mode = a.get("mode", "along_axis")
-            bounds_attr = (
-                ", intent.index_bounds_proven = true"
-                if _gather_bounds_proven(op)
-                else ""
-            )
+            # A bare IntentFunction has no Layer-B proof channel.  The generic
+            # lowering therefore stays conservative and never invents the
+            # target-specific `intent.index_bounds_proven` authorization.
+            bounds_attr = ""
             data_rank = len(env[op.operands[0]])
             index_rank = len(env[op.operands[1]])
             if axis < 0:
@@ -1797,22 +1521,28 @@ class _Printer:
             raise NotImplementedError(f"emit_mlir: unhandled op {op.op!r}")
 
 
-def _tile(loop: IntentOp, extents: dict[str, int]) -> int:
-    th = loop.trip.get("tile_hint") if loop.trip else None
-    if isinstance(th, str):
-        return int(extents[th])
-    if th is not None:
-        return int(th)
-    # New SCRC J keeps only the semantic trip axis in J.  When this standalone
-    # emitter is used without the artifact's C.schedule, one full-axis tile is
-    # the deterministic, semantics-preserving fallback.  Gate pipelines may
-    # still inject an explicit C tile through the legacy compatibility field.
+def _tile(
+    loop: IntentOp, extents: dict[str, int], schedule_tile: int | None
+) -> int:
+    if schedule_tile is not None:
+        if isinstance(schedule_tile, bool) or not isinstance(schedule_tile, int):
+            raise TypeError("loop schedule tile must be an integer")
+        if schedule_tile <= 0:
+            raise ValueError("loop schedule tile must be positive")
+        return schedule_tile
+    # Without C, use one full semantic-axis iteration.  This is a deterministic
+    # semantics-preserving fallback, not a reconstruction of source tiling.
     if loop.trip is not None and loop.trip.axis in extents:
         return int(extents[loop.trip.axis])
     return 1
 
 
-def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
+def _setup(
+    fn: IntentFunction,
+    dims: dict[str, int],
+    fold: int,
+    schedule_tile: int | None = None,
+):
     """Shape inference shared by both emitters.
 
     Returns (loop, env, carries, yields, scan_specs, tile) where scan_specs is a
@@ -1830,7 +1560,7 @@ def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
                 f"emit_mlir: cannot fold {fold} leading dims of {t.name} "
                 f"(shape {full}); folded dims must be size 1")
         env[t.name] = full[fold:]
-    tile = _tile(loop, extents)
+    tile = _tile(loop, extents, schedule_tile)
     scan_specs = []
     for s in loop.scan:
         ax = int(s["axis"]) - fold
@@ -1866,11 +1596,19 @@ def _setup(fn: IntentFunction, dims: dict[str, int], fold: int):
     return loop, env, carries, yields, scan_specs, tile
 
 
-def emit_body_function(fn: IntentFunction, dims: dict[str, int], fold: int = 2,
-                       func_name: str = "flash_body_fwd") -> str:
+def emit_body_function(
+    fn: IntentFunction,
+    dims: dict[str, int],
+    fold: int = 2,
+    func_name: str = "flash_body_fwd",
+    *,
+    schedule_tile: int | None = None,
+) -> str:
     """The loop body as an executable ``func.func`` (scan tiles + carries in,
     next carries out). This is what the host-driven trip loop launches."""
-    loop, env, carries, yields, scan_specs, _ = _setup(fn, dims, fold)
+    loop, env, carries, yields, scan_specs, _ = _setup(
+        fn, dims, fold, schedule_tile
+    )
     dtypes = _loop_dtypes(fn, loop)
     p = _Printer(dtypes)
 
@@ -1905,11 +1643,19 @@ def emit_body_function(fn: IntentFunction, dims: dict[str, int], fold: int = 2,
     return head + "\n" + "\n".join(p.lines) + "\n" + tail
 
 
-def emit_loop_module(fn: IntentFunction, dims: dict[str, int], fold: int = 2,
-                     func_name: str = "flash_fwd") -> str:
+def emit_loop_module(
+    fn: IntentFunction,
+    dims: dict[str, int],
+    fold: int = 2,
+    func_name: str = "flash_fwd",
+    *,
+    schedule_tile: int | None = None,
+) -> str:
     """The whole function with the structured ``intent.loop``. Representability +
     lowers to ``scf.for`` via ``-convert-intent-to-linalg``."""
-    loop, env, carries, yields, scan_specs, tile = _setup(fn, dims, fold)
+    loop, env, carries, yields, scan_specs, tile = _setup(
+        fn, dims, fold, schedule_tile
+    )
     dtypes = _loop_dtypes(fn, loop)
     p = _Printer(dtypes)
 
@@ -2004,9 +1750,6 @@ def emit_module(
     args = [f"{p.arg(t.name)}: {p._ttn(t.name, env)}" for t in fn.inputs]
     for op in fn.body:
         p.emit_op(op, env, fold, extents=extents)
-        if op.out is not None:                 # destination-passing alias
-            p.ssa[op.out] = p.ssa[op.result]
-            env[op.out] = env[op.result]
 
     return_values = {item.output: item.value for item in fn.returns}
     if len(return_values) != len(fn.returns):
@@ -2041,12 +1784,10 @@ def emit_module(
     otys = ", ".join(p._ttn(output, env) for output, _value in outs)
     name = _sanitize_mlir_symbol(fn.name if func_name is None else func_name)
 
-    contract_attrs = _semantic_contract_attributes(fn)
     head = (f"// Generated by intentir.frontend.emit_mlir from {fn.name} "
             f"(flat graph, fold={fold}).\n"
             f"module {{\n"
-            f"  func.func @{name}({', '.join(args)}) -> ({otys})"
-            f"{contract_attrs} {{")
+            f"  func.func @{name}({', '.join(args)}) -> ({otys}) {{")
     tail = f"    return {ovals} : {otys}\n  }}\n}}\n"
     return head + "\n" + "\n".join(p.lines) + "\n" + tail
 

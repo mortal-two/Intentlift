@@ -110,8 +110,7 @@
           }
         ],
         "trip": {
-          "axis": "Sk",
-          "tile_hint": "BK"
+          "axis": "Sk"
         },
         "scan": [
           {
@@ -136,10 +135,8 @@
             "attrs": {
               "subscripts": "bhqd,bhkd->bhqk"
             },
-            "layer_b": {
-              "bounds": [
-                "k < Sk"
-              ]
+            "type": {
+              "dtype": "f32"
             }
           },
           {
@@ -285,6 +282,9 @@
             ],
             "attrs": {
               "subscripts": "bhqk,bhkd->bhqd"
+            },
+            "type": {
+              "dtype": "f32"
             }
           },
           {
@@ -328,7 +328,7 @@
       },
       {
         "op": "map_binary",
-        "result": "O",
+        "result": "O_f32",
         "operands": [
           "Oacc",
           "l"
@@ -337,7 +337,19 @@
           "fn": "div",
           "broadcast": "row"
         },
-        "out": "O"
+        "type": {
+          "dtype": "f32"
+        }
+      },
+      {
+        "op": "cast",
+        "result": "O",
+        "operands": [
+          "O_f32"
+        ],
+        "attrs": {
+          "to_dtype": "f16"
+        }
       }
     ]
   }

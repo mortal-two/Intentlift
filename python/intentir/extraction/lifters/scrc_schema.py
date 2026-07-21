@@ -123,8 +123,6 @@ def _intent_op_schema() -> dict[str, Any]:
             "operands": _STRING_ARRAY,
             "attrs": {"type": "object"},
             "type": _nullable({"type": "object"}),
-            "layer_b": {"type": "object"},
-            "out": _nullable(_STRING),
             "scope_id": _nullable(_STRING),
             "carry": _array(state_binding),
             "trip": _nullable(trip),
@@ -137,11 +135,20 @@ def _intent_op_schema() -> dict[str, Any]:
 
 
 def _intent_schema() -> dict[str, Any]:
+    logical_return = _closed_object(
+        {"output": _STRING, "value": _STRING},
+        ("output", "value"),
+        description=(
+            "Layer-A value-to-result binding. Destination aliasing and partial "
+            "write behavior belong only to the canonical J boundary."
+        ),
+    )
     function = _closed_object(
         {
             "name": _STRING,
             "inputs": _array(_tensor_schema()),
             "outputs": _array(_tensor_schema()),
+            "returns": _array(logical_return),
             "body": _array({"$ref": "#/$defs/intent_op"}),
         },
         ("name", "inputs", "outputs", "body"),
@@ -157,7 +164,7 @@ def _boundary_schema() -> dict[str, Any]:
             "access_id": _STRING,
             "kind": {
                 "type": "string",
-                "enum": ["load", "store", "atomic", "synchronize"],
+                "enum": ["load", "store", "update"],
             },
             "tensor": _STRING,
             "predicate": _nullable(_PORTABLE_PREDICATE_STRING),
@@ -195,8 +202,7 @@ def _boundary_schema() -> dict[str, Any]:
                     "read",
                     "write",
                     "read_write",
-                    "atomic",
-                    "synchronize",
+                    "update",
                 ],
             },
             "target": _STRING,
@@ -536,8 +542,9 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
     return {
         "type": "json_schema",
         "name": "scrc_lift_core",
-        # IntentIR keeps op-specific attrs and Layer B JSON open. C and pi use
-        # closed, separate top-level schemas.
+        # Operation-specific semantic attrs remain open during the IntentOp
+        # robustness audit. B is the one closed top-level boundary; C and pi
+        # are separate closed objects.
         "strict": False,
         "schema": scrc_lift_core_json_schema(),
     }

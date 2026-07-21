@@ -32,6 +32,28 @@ from .runtime import execute_isolated
 
 CPU_COMPUTE_SYMBOL = "intentir_cpu_compute_v1"
 
+# This is an executor conformance boundary, not a generation rule catalog.  It
+# mirrors the operations actually eliminated by ConvertIntentToLinalg plus
+# constants emitted directly as arith.constant.  Anything else is rejected
+# before an external compiler can accidentally turn "unsupported" into an
+# opaque tool failure.
+CPU_LOWERABLE_OPS = frozenset(
+    {
+        "cast",
+        "concat",
+        "const",
+        "contraction",
+        "gather",
+        "iota",
+        "map_binary",
+        "map_unary",
+        "pad",
+        "reduce",
+        "select",
+        "transpose",
+    }
+)
+
 
 @dataclass(frozen=True)
 class CPUExecutionResult:
@@ -39,6 +61,34 @@ class CPUExecutionResult:
 
     outputs: Mapping[str, np.ndarray]
     metadata: Mapping[str, Any]
+
+
+def _walk_ops(body):
+    for op in body:
+        yield op
+        yield from _walk_ops(op.body)
+
+
+def validate_cpu_capability(fn: IntentFunction) -> None:
+    """Fail closed when ``E_J`` has no complete scalar lowering."""
+
+    operations = tuple(_walk_ops(fn.body))
+    if any(op.op == "loop" for op in operations):
+        raise CPUBackendUnsupportedError(
+            "scalar CPU execution does not yet lower structured IntentIR loops "
+            "for semantic recurrence"
+        )
+    unsupported = sorted({op.op for op in operations} - CPU_LOWERABLE_OPS)
+    if unsupported:
+        if "scatter" in unsupported:
+            raise CPUBackendUnsupportedError(
+                "scalar CPU execution rejects logical update until duplicate, "
+                "conflict, order, and result relations are typed in J"
+            )
+        raise CPUBackendUnsupportedError(
+            "scalar CPU execution has no complete lowering for IntentOp(s): "
+            + ", ".join(unsupported)
+        )
 
 
 def _tensor_type(shape: Sequence[int], element_type: str) -> str:
@@ -95,9 +145,6 @@ def _infer_contracts(
         }
     )
     _infer_body(fn.body, env, 0, extents, broadcast_axes)
-    for op in fn.body:
-        if op.out is not None:
-            env[op.out] = env.get(op.result, env.get(op.out))
     output_shapes = [tuple(env[tensor.name]) for tensor in fn.outputs]
     output_element_types = [
         mlir_element_type(tensor.dtype) for tensor in fn.outputs
@@ -200,10 +247,7 @@ def emit_cpu_module(
 
     if not fn.outputs:
         raise ValueError("CPU execution requires at least one logical output")
-    if any(op.op == "loop" for op in fn.body):
-        raise CPUBackendUnsupportedError(
-            "scalar CPU execution does not yet lower structured IntentIR loops"
-        )
+    validate_cpu_capability(fn)
     checked_dims = _checked_dims(dims)
     (
         input_shapes,
@@ -244,6 +288,7 @@ def execute_on_cpu_outputs(
         raise CPUABIValidationError(
             "CPU execution requires at least one logical output"
         )
+    validate_cpu_capability(fn)
     checked_dims = _checked_dims(dims)
     (
         input_shapes,
@@ -336,10 +381,12 @@ def run_on_cpu(
 
 
 __all__ = [
+    "CPU_LOWERABLE_OPS",
     "CPU_COMPUTE_SYMBOL",
     "CPUExecutionResult",
     "emit_cpu_module",
     "execute_on_cpu_outputs",
     "run_on_cpu",
     "run_on_cpu_outputs",
+    "validate_cpu_capability",
 ]

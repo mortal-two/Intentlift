@@ -23,7 +23,6 @@ def test_iota_accepts_symbolic_runtime_extent() -> None:
                         "op": "iota",
                         "result": "Y",
                         "attrs": {"n": "N", "dtype": "i32"},
-                        "out": "Y",
                     }
                 ],
             }
@@ -70,7 +69,6 @@ def test_symbolic_iota_arange_executes_through_cpu_lowering() -> None:
                         "result": "Y",
                         "operands": ["scaled", "start"],
                         "attrs": {"fn": "add"},
-                        "out": "Y",
                     },
                 ],
             }

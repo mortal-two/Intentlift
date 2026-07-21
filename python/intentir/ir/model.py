@@ -1,8 +1,10 @@
-"""IntentIR in-memory model.
+"""Canonical in-memory model for the Layer-A value graph in ``J``.
 
-1:1 with the IntentIR JSON spec (.trellis/spec/ir/op-signatures.md) and with the
-``intent`` MLIR dialect. Round-trips JSON so the LLM-produced artifact can be
-inspected, validated, and lowered to the dialect.
+The persisted contract is intentionally smaller than the downstream
+``intent`` MLIR dialect.  Layer B lives only in the enclosing canonical-J
+boundary, while scheduling and source realization live in C and pi.  This
+module therefore rejects legacy per-op correctness and scheduling fields
+instead of silently preserving them.
 """
 
 from __future__ import annotations
@@ -10,6 +12,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def _closed_keys(value: dict[str, Any], allowed: set[str], path: str) -> None:
+    if not isinstance(value, dict):
+        raise TypeError(f"{path} must be an object")
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{path} has forbidden fields: {unknown}")
 
 
 @dataclass
@@ -140,24 +150,17 @@ class LoopStateBinding:
 
 @dataclass
 class LoopTrip:
-    """Semantic loop trip description.
-
-    ``tile_hint`` is accepted only as a legacy non-SCRC compatibility field.
-    New SCRC J stores the semantic axis here and keeps tile choices in C.
-    """
+    """Semantic loop trip description; tiling is supplied separately by C."""
 
     axis: str
-    tile_hint: int | str | None = None
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> "LoopTrip":
-        return cls(axis=d["axis"], tile_hint=d.get("tile_hint"))
+        _closed_keys(d, {"axis"}, "LoopTrip")
+        return cls(axis=d["axis"])
 
     def to_json(self) -> dict[str, Any]:
-        result: dict[str, Any] = {"axis": self.axis}
-        if self.tile_hint is not None:
-            result["tile_hint"] = self.tile_hint
-        return result
+        return {"axis": self.axis}
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -187,15 +190,13 @@ class LoopScanInput:
 
 @dataclass
 class IntentOp:
-    """One IntentIR op. Generic enough for all atomic ops plus ``loop``."""
+    """One Layer-A semantic node, including the structured ``loop`` node."""
 
     op: str
     result: Any = None  # str | list[str]
     operands: list[str] = field(default_factory=list)
     attrs: dict[str, Any] = field(default_factory=dict)
     type: dict[str, Any] | None = None
-    layer_b: dict[str, Any] = field(default_factory=dict)  # portable constraints
-    out: str | None = None  # destination-passing target
     scope_id: str | None = None  # portable semantic scope; never a source span
     # structured-loop fields (op == "loop"); see spec/ir/structured-loop.md
     carry: list[LoopStateBinding] = field(default_factory=list)
@@ -207,6 +208,14 @@ class IntentOp:
 
     @classmethod
     def from_json(cls, d: dict) -> "IntentOp":
+        _closed_keys(
+            d,
+            {
+                "id", "op", "result", "operands", "attrs", "type",
+                "scope_id", "carry", "trip", "scan", "body", "yield",
+            },
+            "IntentOp",
+        )
         result = d.get("result")
         result_names = list(result) if isinstance(result, list) else []
         yields = list(d.get("yield", []))
@@ -217,8 +226,6 @@ class IntentOp:
             operands=list(d.get("operands", [])),
             attrs=dict(d.get("attrs", {})),
             type=d.get("type"),
-            layer_b=dict(d.get("layer_b", {})),
-            out=d.get("out"),
             scope_id=d.get("scope_id"),
             carry=[
                 LoopStateBinding.from_json(
@@ -247,10 +254,6 @@ class IntentOp:
             d["attrs"] = self.attrs
         if self.type is not None:
             d["type"] = self.type
-        if self.layer_b:
-            d["layer_b"] = self.layer_b
-        if self.out is not None:
-            d["out"] = self.out
         if self.scope_id is not None:
             d["scope_id"] = self.scope_id
         if self.carry:
