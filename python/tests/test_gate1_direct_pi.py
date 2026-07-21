@@ -16,7 +16,11 @@ from intentir.extraction.lifters.scrc import (
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 from intentir.verify.gate1.model import Gate1Artifact, ScheduleSlot, SchemaError
-from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
+from intentir.verify.gate1.pi import (
+    RealizationWitness,
+    RealizationWitnessError,
+    render_realization_witness_wire_grammar,
+)
 from intentir.verify.gate1.prompt import (
     assert_source_isolated_payload,
     build_normal_rewriter_prompt,
@@ -59,13 +63,88 @@ def test_pi_rejects_unknown_semantic_reference_and_cycles() -> None:
     artifact = make_reduce_artifact()
     payload = artifact.to_json()
     payload["pi"]["instances"][0]["semantic_ref"] = "n99"
-    with pytest.raises(SchemaError, match="unknown J/C"):
+    with pytest.raises(SchemaError, match="undeclared J/C/interface"):
         Gate1Artifact.from_json(payload)
 
     pi = artifact.pi.to_json()
     pi["order"].append({"before": "i3", "after": "i0"})
     with pytest.raises(RealizationWitnessError, match="acyclic"):
         RealizationWitness.from_json(pi)
+
+
+@pytest.mark.parametrize(
+    ("relation", "field", "bad_ref", "expected_path"),
+    [
+        ("routes", "source", "p0", r"pi\.routes\[0\]\.source"),
+        ("routes", "target", "c0", r"pi\.routes\[0\]\.target"),
+        ("order", "before", "n0", r"pi\.order\[0\]\.before"),
+        ("order", "after", "p0", r"pi\.order\[0\]\.after"),
+        ("sharing", "source", "c0", r"pi\.sharing\[0\]\.source"),
+    ],
+)
+def test_pi_graph_endpoints_reject_raw_anchor_namespaces(
+    relation: str,
+    field: str,
+    bad_ref: str,
+    expected_path: str,
+) -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    payload[relation][0][field] = bad_ref
+    with pytest.raises(
+        RealizationWitnessError,
+        match=expected_path + r" must reference a declared pi instance id i\*",
+    ):
+        RealizationWitness.from_json(payload)
+
+
+def test_pi_sharing_consumer_rejects_raw_anchor_namespace() -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    payload["sharing"][0]["consumers"][0] = "p0"
+    with pytest.raises(
+        RealizationWitnessError,
+        match=(
+            r"pi\.sharing\[0\]\.consumers\[0\] must reference a declared "
+            r"pi instance id i\*"
+        ),
+    ):
+        RealizationWitness.from_json(payload)
+
+
+@pytest.mark.parametrize(
+    ("relation", "field", "expected_path"),
+    [
+        ("routes", "source", r"pi\.routes\[0\]\.source"),
+        ("routes", "target", r"pi\.routes\[0\]\.target"),
+        ("order", "before", r"pi\.order\[0\]\.before"),
+        ("order", "after", r"pi\.order\[0\]\.after"),
+        ("sharing", "source", r"pi\.sharing\[0\]\.source"),
+    ],
+)
+def test_pi_graph_endpoints_reject_undeclared_instance_ids(
+    relation: str,
+    field: str,
+    expected_path: str,
+) -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    payload[relation][0][field] = "i99"
+    with pytest.raises(
+        RealizationWitnessError,
+        match=expected_path + r" references undeclared pi instance 'i99'",
+    ):
+        RealizationWitness.from_json(payload)
+
+
+def test_pi_sharing_consumer_rejects_undeclared_instance_id() -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    payload["sharing"][0]["consumers"][0] = "i99"
+    with pytest.raises(
+        RealizationWitnessError,
+        match=(
+            r"pi\.sharing\[0\]\.consumers\[0\] references undeclared "
+            r"pi instance 'i99'"
+        ),
+    ):
+        RealizationWitness.from_json(payload)
 
 
 @pytest.mark.parametrize("semantic_ref", ["v0", "x0", "c0", "p0"])
@@ -230,6 +309,22 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
     interface = schema["properties"]["interface"]
     assert interface["properties"]["function_name"]["enum"] == ["scrc_k0"]
     assert interface["properties"]["compiler_slots"]["items"]["pattern"] == "^c[0-9]+$"
+
+
+def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
+    grammar = render_realization_witness_wire_grammar()
+    schema = scrc_lift_core_json_schema()
+    pi_schema = schema["properties"]["pi"]
+    lift_instructions = scrc.build_scrc_lift_instructions()
+    replay_instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
+
+    assert grammar in pi_schema["description"]
+    assert grammar in lift_instructions
+    assert grammar in replay_instructions
+    assert "routing p0 to i1 is invalid" in grammar
+    assert pi_schema["properties"]["routes"]["items"]["properties"][
+        "source"
+    ]["pattern"] == "^i[0-9]+$"
 
 
 def test_c_role_rejects_semantic_or_realization_payload() -> None:

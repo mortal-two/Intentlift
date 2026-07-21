@@ -3069,17 +3069,13 @@ class Gate1Artifact(StrictJSONMixin):
         collect_opaque_handles(self.j.to_json())
         collect_opaque_handles(self.interface.to_json())
         collect_opaque_handles(self.schedule.to_json())
-        unknown_pi_refs = sorted(
-            {
-                str(item["semantic_ref"])
-                for item in self.pi.instances
-                if item["semantic_ref"] not in semantic_refs
-            }
-        )
-        if unknown_pi_refs:
-            raise SchemaError(
-                "pi references unknown J/C handle(s): " + ", ".join(unknown_pi_refs)
-            )
+        for index, item in enumerate(self.pi.instances):
+            anchor = str(item["semantic_ref"])
+            if anchor not in semantic_refs:
+                raise SchemaError(
+                    f"pi.instances[{index}].semantic_ref references undeclared "
+                    f"J/C/interface handle {anchor!r}"
+                )
 
         location_nodes = {
             ref for entry in self.location_map.entries for ref in entry.node_refs

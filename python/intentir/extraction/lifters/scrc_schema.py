@@ -13,6 +13,7 @@ import copy
 from typing import Any
 
 from intentir.ir.intent_op_contract import intent_op_json_schema
+from intentir.verify.gate1.pi import render_realization_witness_wire_grammar
 
 
 def _closed_object(
@@ -392,8 +393,22 @@ def _pi_schema() -> dict[str, Any]:
     )
     instance = _closed_object(
         {
-            "id": {"type": "string", "pattern": "^i[0-9]+$"},
-            "semantic_ref": opaque_ref,
+            "id": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Declaration-order pi graph-node ID. This is the only ID "
+                    "namespace allowed at route/order/sharing endpoints."
+                ),
+            },
+            "semantic_ref": {
+                **opaque_ref,
+                "description": (
+                    "Anchor into a declared anonymous J/C/interface handle. "
+                    "It is not a pi graph-node ID and never appears directly "
+                    "at route/order/sharing endpoints."
+                ),
+            },
             "region": {"type": "string", "pattern": "^r[0-9]+$"},
             "mechanism": {
                 "type": "string",
@@ -407,8 +422,16 @@ def _pi_schema() -> dict[str, Any]:
     )
     route = _closed_object(
         {
-            "source": {"type": "string", "pattern": "^i[0-9]+$"},
-            "target": {"type": "string", "pattern": "^i[0-9]+$"},
+            "source": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": "A previously declared pi instance ID, never a raw anchor handle.",
+            },
+            "target": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": "A previously declared pi instance ID, never a raw anchor handle.",
+            },
             "slots": {
                 "type": "array",
                 "items": {"type": "integer", "minimum": 0},
@@ -419,17 +442,33 @@ def _pi_schema() -> dict[str, Any]:
     )
     order = _closed_object(
         {
-            "before": {"type": "string", "pattern": "^i[0-9]+$"},
-            "after": {"type": "string", "pattern": "^i[0-9]+$"},
+            "before": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": "A declared pi instance ID.",
+            },
+            "after": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": "A declared pi instance ID.",
+            },
         },
         ("before", "after"),
     )
     sharing = _closed_object(
         {
-            "source": {"type": "string", "pattern": "^i[0-9]+$"},
+            "source": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": "The declared pi instance reused by all consumers.",
+            },
             "consumers": {
                 "type": "array",
-                "items": {"type": "string", "pattern": "^i[0-9]+$"},
+                "items": {
+                    "type": "string",
+                    "pattern": "^i[0-9]+$",
+                    "description": "A declared pi consumer instance ID.",
+                },
                 "minItems": 1,
                 "uniqueItems": True,
             },
@@ -446,11 +485,9 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("regions", "instances", "routes", "order", "sharing"),
         description=(
-            "Anonymous source-realization event topology only. Multiple "
-            "instances may anchor the same declared handle when the source has "
-            "multiple compiler-visible stages. Preserve route/order/share/region "
-            "multiplicity. No operator, value, predicate, dtype, frontend API, "
-            "rule identity or source text."
+            render_realization_witness_wire_grammar()
+            + " Preserve route/order/share/region multiplicity. No operator, "
+            "value, predicate, dtype, frontend API, rule identity or source text."
         ),
     )
 def _portable_scope_schema() -> dict[str, Any]:

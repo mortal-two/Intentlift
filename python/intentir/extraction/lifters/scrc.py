@@ -23,6 +23,7 @@ from intentir.verify.gate1.model import (
     ProvenanceRole,
     ScheduleSlotKind,
 )
+from intentir.verify.gate1.pi import render_realization_witness_wire_grammar
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
 from .scrc_schema import (
@@ -591,11 +592,15 @@ order, sharing, placement, and the closed source-neutral mechanism tags in the
 schema. Never put an operator, combiner, predicate, value, dtype, shape,
 frontend API, source identifier, source fragment, prose, or rule identity in pi.
 
+Pi graph reference contract:
+{render_realization_witness_wire_grammar()}
+
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
 handle has multiple observable realization stages. Every anonymous Interface
 or C handle materially used by address, transfer, synchronization, placement,
-or sharing realization must occur in pi and route to the affected instances.
+or sharing realization must anchor an instance; dependencies then route only
+between the declared i* instance IDs.
 Preserve source event multiplicity, def-use routes, partial order, regions, and
 one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,

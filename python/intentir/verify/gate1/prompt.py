@@ -8,6 +8,7 @@ import json
 from typing import Any, Mapping
 
 from .model import Gate1Artifact, SchemaError
+from .pi import render_realization_witness_wire_grammar
 
 
 REPLAY_PACKET_SCHEMA = "intentir.gate1.replay-packet.v1"
@@ -148,7 +149,10 @@ def _instructions(*, masked: bool) -> str:
         "or invent an undocumented stage. Obtain all logical operators, predicates, "
         "fills, constants, index relations and effects only from J. Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "
-        "frontend APIs and the positional opaque signature in harness. "
+        "frontend APIs and the positional opaque signature in harness. Pi graph "
+        "reference contract: "
+        + render_realization_witness_wire_grammar()
+        + " "
         + masked_clause
         + "Return Python source only."
     )

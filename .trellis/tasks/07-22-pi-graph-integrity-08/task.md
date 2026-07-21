@@ -106,5 +106,15 @@ raw J/C/interface handle 只作为 `semantic_ref` anchor，所有 graph endpoint
 v4 除 9 个 invalid route sources 外还有 1 个 invalid sharing source；这仍是可生成合同歧义，
 不是 π capacity 证据。
 
-下一步进入阶段 1：从一个共享 grammar renderer 同时投影 schema、Lift prompt 与 Replay prompt，
-补齐 path-specific parser diagnostics 和双向 conformance；继续保持 0 次 LLM。
+阶段 1 也已完成：
+
+- `render_realization_witness_wire_grammar()` 成为 schema description、Lift instructions 与 Replay
+  instructions 的唯一 graph-reference 文本来源；
+- instance ID、anchor、route/order/sharing endpoint 均有 role-specific schema description；
+- parser 现在区分 raw anchor namespace 与合法但 dangling 的 `i*`，错误精确到数组下标和字段；
+- unknown `semantic_ref` 同样精确指向对应 instance，不 repair、不猜 anchor-to-instance mapping；
+- raw `p*/c*/n*`、dangling `i99`、sharing consumer 与共享 grammar 投影测试全部通过；定向回归
+  `120 passed`，在线 LLM 调用新增为 0。
+
+下一步进入阶段 2：补真实 v4 frozen response、runner invalid-Lift 状态机和完整关系 mutation
+conformance，然后运行全量回归；在这些证据闭合前不得冻结 v5。

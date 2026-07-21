@@ -43,22 +43,71 @@ def _name(value: Any, path: str) -> str:
     return value
 
 
-def _names(value: Any, path: str) -> list[str]:
-    if not isinstance(value, list):
-        raise RealizationWitnessError(f"{path} must be an array")
-    result = [_name(item, f"{path}[{index}]") for index, item in enumerate(value)]
-    if len(result) != len(set(result)):
-        raise RealizationWitnessError(f"{path} must not contain duplicates")
-    return result
-
-
-def _opaque_semantic_ref(value: Any, path: str) -> str:
+def _opaque_anchor_ref(value: Any, path: str) -> str:
     result = _name(value, path)
     if re.fullmatch(r"(?:t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+", result) is None:
         raise RealizationWitnessError(
             f"{path} must be an anonymous declaration-order handle"
         )
     return result
+
+
+def _declared_instance_ref(
+    value: Any,
+    *,
+    path: str,
+    known_instances: set[str],
+) -> str:
+    result = _name(value, path)
+    if re.fullmatch(r"i[0-9]+", result) is None:
+        raise RealizationWitnessError(
+            f"{path} must reference a declared pi instance id i*; got {result!r}"
+        )
+    if result not in known_instances:
+        raise RealizationWitnessError(
+            f"{path} references undeclared pi instance {result!r}"
+        )
+    return result
+
+
+def _declared_instance_refs(
+    value: Any,
+    *,
+    path: str,
+    known_instances: set[str],
+) -> list[str]:
+    if not isinstance(value, list):
+        raise RealizationWitnessError(f"{path} must be an array")
+    result = [
+        _declared_instance_ref(
+            item,
+            path=f"{path}[{index}]",
+            known_instances=known_instances,
+        )
+        for index, item in enumerate(value)
+    ]
+    if len(result) != len(set(result)):
+        raise RealizationWitnessError(f"{path} must not contain duplicates")
+    return result
+
+
+def render_realization_witness_wire_grammar() -> str:
+    """Return the single model-visible grammar for pi graph references."""
+
+    return (
+        "Pi has exactly two reference roles. instances[k].semantic_ref is an "
+        "anchor into a declared anonymous J/C/interface handle; it is not a pi "
+        "graph node. instances[k].id declares the only pi graph-node namespace "
+        "i0,i1,... in declaration order. Every routes source/target, order "
+        "before/after, and sharing source/consumer must equal one already "
+        "declared instance id i*. Edges never use raw t*/n*/a*/d*/e*/q*/b*/"
+        "s*/v*/p*/c*/x* handles and never declare instances implicitly. To "
+        "represent a p0 dependency on access a0, declare i0 anchored by p0 and "
+        "i1 anchored by a0, then route i0 to i1; routing p0 to i1 is invalid. "
+        "Multiple instances may share one semantic_ref when the source has "
+        "multiple compiler-visible stages. Route slots are distinct, "
+        "non-negative, target-local opaque input ordinals."
+    )
 
 
 def _require_acyclic(
@@ -159,7 +208,7 @@ class RealizationWitness:
                 raise RealizationWitnessError(
                     "pi instance ids must be declaration-order handles i0, i1, ..."
                 )
-            semantic_ref = _opaque_semantic_ref(
+            semantic_ref = _opaque_anchor_ref(
                 item["semantic_ref"], f"pi.instances[{index}].semantic_ref"
             )
             region = _name(item["region"], f"pi.instances[{index}].region")
@@ -190,10 +239,16 @@ class RealizationWitness:
                 path=f"pi.routes[{index}]",
                 required=frozenset({"source", "target", "slots"}),
             )
-            source = _name(item["source"], f"pi.routes[{index}].source")
-            target = _name(item["target"], f"pi.routes[{index}].target")
-            if source not in known_instances or target not in known_instances:
-                raise RealizationWitnessError("pi route instance is unknown")
+            source = _declared_instance_ref(
+                item["source"],
+                path=f"pi.routes[{index}].source",
+                known_instances=known_instances,
+            )
+            target = _declared_instance_ref(
+                item["target"],
+                path=f"pi.routes[{index}].target",
+                known_instances=known_instances,
+            )
             slots = item["slots"]
             if not isinstance(slots, list):
                 raise RealizationWitnessError("pi route slots must be an array")
@@ -221,10 +276,16 @@ class RealizationWitness:
                 path=f"pi.order[{index}]",
                 required=frozenset({"before", "after"}),
             )
-            before = _name(item["before"], f"pi.order[{index}].before")
-            after = _name(item["after"], f"pi.order[{index}].after")
-            if before not in known_instances or after not in known_instances:
-                raise RealizationWitnessError("pi order instance is unknown")
+            before = _declared_instance_ref(
+                item["before"],
+                path=f"pi.order[{index}].before",
+                known_instances=known_instances,
+            )
+            after = _declared_instance_ref(
+                item["after"],
+                path=f"pi.order[{index}].after",
+                known_instances=known_instances,
+            )
             if before == after:
                 raise RealizationWitnessError("pi order cannot contain a self edge")
             checked_order.append({"before": before, "after": after})
@@ -240,12 +301,18 @@ class RealizationWitness:
                 path=f"pi.sharing[{index}]",
                 required=frozenset({"source", "consumers"}),
             )
-            source = _name(item["source"], f"pi.sharing[{index}].source")
-            consumers = _names(item["consumers"], f"pi.sharing[{index}].consumers")
+            source = _declared_instance_ref(
+                item["source"],
+                path=f"pi.sharing[{index}].source",
+                known_instances=known_instances,
+            )
+            consumers = _declared_instance_refs(
+                item["consumers"],
+                path=f"pi.sharing[{index}].consumers",
+                known_instances=known_instances,
+            )
             if not consumers:
                 raise RealizationWitnessError("pi sharing consumers must not be empty")
-            if source not in known_instances or not set(consumers) <= known_instances:
-                raise RealizationWitnessError("pi sharing instance is unknown")
             checked_sharing.append({"source": source, "consumers": consumers})
         sharing_sources = [item["source"] for item in checked_sharing]
         if len(sharing_sources) != len(set(sharing_sources)):
@@ -279,4 +346,8 @@ class RealizationWitness:
         }
 
 
-__all__ = ["RealizationWitness", "RealizationWitnessError"]
+__all__ = [
+    "RealizationWitness",
+    "RealizationWitnessError",
+    "render_realization_witness_wire_grammar",
+]
