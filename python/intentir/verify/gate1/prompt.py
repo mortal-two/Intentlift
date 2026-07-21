@@ -102,12 +102,12 @@ possible from the remaining packet.
 _PLAN_ABLATION_NOTES = {
     "j_only": """
 PI ABLATION RUN (J-only): the complete pi was deliberately removed after the
-original artifact passed strict-plan validation. No rule-selection instance or
-RuleCard mechanism metadata is supplied. Use only J/B, interface and symbolic C
-slots without source access. Do not assume an omitted source implementation
-choice. The interface itself is not ablated: reproduce the declared function
-signature exactly, including every constexpr parameter even when the generated
-body does not otherwise use it.
+original artifact passed strict-plan validation. The full frontend rule-card
+library is supplied only for this diagnostic. Reconstruct from J/B, interface
+and symbolic C slots without source access. Do not assume an omitted source
+implementation choice. The interface itself is not ablated: reproduce the
+declared function signature exactly, including every constexpr parameter even
+when the generated body does not otherwise use it.
 """,
     "plan_step_dropout": """
 PI ABLATION RUN (step dropout): one validated pi rule instance was deliberately
@@ -179,6 +179,12 @@ def build_rewriter_payload(
         frontend=artifact.interface.frontend,
         artifact=None if masked or plan_override is not None else artifact,
     )
+    if ablation_kind == "j_only":
+        retrieval["cards"] = [
+            card.to_json()
+            for card in registry.cards
+            if card.frontend is artifact.interface.frontend
+        ]
     if masked:
         view["plan"] = retrieval["plan"]
         view["rule_selection"] = retrieval["selection"]

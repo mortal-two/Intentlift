@@ -18,7 +18,6 @@ from intentir.verify.gate1 import (
     Gate1SpecializationFamily,
     Gate1SpecializationProfile,
     Gate1Status,
-    PiAblationKind,
     PiAblationStatus,
     KernelInterface,
     KernelParameter,
@@ -246,7 +245,6 @@ class _Writer:
             "test",
             f"generation:{self.calls}",
             hashlib.sha256(code.encode()).hexdigest(),
-            ablation_kind=kwargs.get("ablation_kind"),
         )
 
 
@@ -869,7 +867,7 @@ def test_family_rejects_c_drift_and_static_shape_drift_before_generation() -> No
     assert writer.calls == 0
 
 
-def test_pi_necessity_reaches_fresh_writer_compile_and_hard_compare() -> None:
+def test_pi_dropout_is_rejected_before_writer_and_strategy_change_recomposes() -> None:
     artifact = _artifact()
     profile = _profile("n65", 65)
     interface = {
@@ -898,54 +896,18 @@ def test_pi_necessity_reaches_fresh_writer_compile_and_hard_compare() -> None:
     )
 
     assert [item.status for item in records] == [
-        PiAblationStatus.UNEXPECTED_CLOSURE,
-        PiAblationStatus.UNEXPECTED_CLOSURE,
+        PiAblationStatus.CANONICALITY_REJECTED,
+        PiAblationStatus.SEMANTICS_PRESERVED,
     ]
-    assert all(item.attempts == 1 for item in records)
-    assert all(item.generation is not None for item in records)
-    assert all(item.compile is not None for item in records)
-    assert all(item.comparison is not None for item in records)
-    assert not any(item.supports_pi_necessity for item in records)
-    assert writer.calls == 2
-    assert writer.kwargs[0]["ablation_kind"] == "j_only"
-    assert writer.kwargs[0]["plan_override"] == ReplayPlan([])
-    assert writer.kwargs[1]["ablation_kind"] == "plan_step_dropout"
-    assert writer.kwargs[1]["plan_override"] == records[1].spec.plan
-
-    killed = run_pi_ablations(
-        artifact,
-        source_fp,
-        profile.case,
-        default_triton_rule_registry(),
-        _Writer(),
-        compiler=_AllDriftCompiler(),
-        limit=1,
-    )
-    assert [item.status for item in killed] == [PiAblationStatus.DEGRADED]
-    assert killed[0].supports_pi_necessity
-    assert killed[0].comparison is not None
-    assert not killed[0].comparison.hard_pass
-
-    strategy_writer = _Writer()
-    strategy_records = run_pi_ablations(
-        artifact,
-        source_fp,
-        profile.case,
-        default_triton_rule_registry(),
-        strategy_writer,
-        compiler=_Compiler(),
-        limit=1,
-        kinds=(PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,),
-    )
-    assert [item.status for item in strategy_records] == [
-        PiAblationStatus.SEMANTICS_PRESERVED
-    ]
-    strategy_spec = strategy_records[0].spec
+    assert records[0].attempts == 0
+    assert records[0].generation is None
+    assert writer.calls == 1
+    strategy_spec = records[1].spec
     assert strategy_spec.artifact is not None
     assert strategy_spec.artifact.j == artifact.j
     assert strategy_spec.strategy_before != strategy_spec.strategy_after
     assert strategy_spec.artifact.plan != artifact.plan
-    assert strategy_writer.kwargs == [
+    assert writer.kwargs == [
         {
             "masked": False,
             "plan_override": None,

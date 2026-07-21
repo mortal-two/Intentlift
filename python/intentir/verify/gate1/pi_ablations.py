@@ -1,9 +1,8 @@
-"""Executable π-necessity probes and C.strategy causal interventions.
+"""Canonical pi negative tests and C.strategy causal interventions.
 
-Canonical π equality remains an admission invariant. Necessity probes are
-deliberate post-admission counterfactuals: an incomplete plan reaches a fresh
-source-blind writer, compilation, and the same score-free hard comparator.
-Writer-front canonicality rejection is never counted as causal evidence.
+Direct pi deletion/addition/substitution is rejected by deterministic compose
+equality before any writer call.  A legal implementation-mechanism change is
+expressed only through C.strategy, followed by a fresh deterministic compose.
 """
 
 from __future__ import annotations
@@ -13,7 +12,11 @@ from enum import Enum
 from typing import Any
 
 from .compare import TTIRComparator, TTIRComparison
-from .composer import assert_replay_plan_matches, materialize_replay_plan
+from .composer import (
+    ComposeMismatchError,
+    assert_replay_plan_matches,
+    materialize_replay_plan,
+)
 from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
 from .model import (
     Gate1Artifact,
@@ -24,7 +27,7 @@ from .model import (
     StrategySpec,
 )
 from .replay import ReplayGeneration, ReplayWriter
-from .rules import RuleAblationRole, RuleRegistry, RuleSelectionMode
+from .rules import RuleRegistry, RuleSelectionMode
 from .ttir import TTIRFingerprint, fingerprint_ttir
 
 
@@ -46,22 +49,6 @@ class PiAblationStatus(str, Enum):
 
 
 @dataclass(frozen=True)
-class PiStepClassification:
-    step_index: int
-    rule: str
-    target: str | None
-    role: RuleAblationRole
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "step_index": self.step_index,
-            "rule": self.rule,
-            "target": self.target,
-            "role": self.role.value,
-        }
-
-
-@dataclass(frozen=True)
 class PiAblationSpec:
     ablation_id: str
     kind: PiAblationKind
@@ -73,7 +60,6 @@ class PiAblationSpec:
     artifact: Gate1Artifact | None = None
     strategy_before: dict[str, Any] | None = None
     strategy_after: dict[str, Any] | None = None
-    dropped_rule_instances_remaining: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -86,9 +72,6 @@ class PiAblationSpec:
             "replacement_rule": self.replacement_rule,
             "strategy_before": self.strategy_before,
             "strategy_after": self.strategy_after,
-            "dropped_rule_instances_remaining": (
-                self.dropped_rule_instances_remaining
-            ),
         }
 
 
@@ -104,18 +87,9 @@ class PiAblationRecord:
 
     @property
     def supports_pi_necessity(self) -> bool:
-        return self.status is PiAblationStatus.DEGRADED
-
-    @property
-    def necessity_evidence_complete(self) -> bool:
-        if self.spec.kind not in {
-            PiAblationKind.J_ONLY,
-            PiAblationKind.PLAN_STEP_DROPOUT,
-        }:
-            return True
         return self.status in {
             PiAblationStatus.DEGRADED,
-            PiAblationStatus.UNEXPECTED_CLOSURE,
+            PiAblationStatus.CANONICALITY_REJECTED,
         }
 
     def to_json(self) -> dict[str, Any]:
@@ -123,7 +97,6 @@ class PiAblationRecord:
             "spec": self.spec.to_json(),
             "status": self.status.value,
             "supports_pi_necessity": self.supports_pi_necessity,
-            "necessity_evidence_complete": self.necessity_evidence_complete,
             "generation": None
             if self.generation is None
             else {
@@ -151,6 +124,33 @@ class PiAblationRecord:
         }
 
 
+_COMPUTE_RULES = {
+    "realize_elementwise",
+    "realize_const",
+    "realize_iota",
+    "realize_reduce",
+    "realize_flattened_reduce",
+    "realize_multi_tile_reduce",
+    "realize_broadcast",
+    "realize_k_tiled_dot",
+    "realize_outer_product",
+    "realize_indexed_access",
+    "realize_transpose",
+    "realize_concat",
+    "realize_cast",
+    "realize_select",
+    "realize_loop_carry",
+}
+
+_MEMORY_RULES = {
+    "materialize_index_tile",
+    "materialize_pointer_tile",
+    "materialize_mask_tile",
+    "realize_masked_access",
+    "realize_unmasked_access",
+    "realize_output_mapping",
+}
+
 _MECHANISM_SUBSTITUTIONS = {
     "materialize_index_tile": "materialize_pointer_tile",
     "materialize_pointer_tile": "materialize_index_tile",
@@ -162,12 +162,29 @@ _MECHANISM_SUBSTITUTIONS = {
 }
 
 
-def classify_pi_steps(
+def build_pi_ablations(
     artifact: Gate1Artifact,
     registry: RuleRegistry,
-) -> tuple[PiStepClassification, ...]:
-    """Classify every canonical π step using reviewed RuleCard metadata."""
+    *,
+    limit: int = 2,
+    kinds: tuple[PiAblationKind, ...] | None = None,
+) -> tuple[PiAblationSpec, ...]:
+    """Build deterministic J-only and one-step-dropout diagnostics."""
 
+    if limit < 0:
+        raise ValueError("pi ablation limit must be non-negative")
+    if limit == 0:
+        return ()
+    requested = tuple(
+        kinds
+        if kinds is not None
+        else (
+            PiAblationKind.PLAN_STEP_DROPOUT,
+            PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
+        )
+    )
+    if len(set(requested)) != len(requested):
+        raise ValueError("pi ablation kinds must be unique")
     if not isinstance(artifact, Gate1Artifact):
         artifact = Gate1Artifact.from_json(artifact)
     registry.validate_strict_plan(
@@ -176,58 +193,9 @@ def classify_pi_steps(
         artifact=artifact,
     )
     assert_replay_plan_matches(artifact, registry)
-    return tuple(
-        PiStepClassification(
-            step_index=index,
-            rule=step.rule,
-            target=step.target_ref,
-            role=registry.get(
-                step.rule, frontend=artifact.interface.frontend
-            ).ablation_role,
-        )
-        for index, step in enumerate(artifact.plan.steps)
-    )
-
-
-def build_pi_ablations(
-    artifact: Gate1Artifact,
-    registry: RuleRegistry,
-    *,
-    limit: int | None = None,
-    kinds: tuple[PiAblationKind, ...] | None = None,
-) -> tuple[PiAblationSpec, ...]:
-    """Build J-only and exhaustive causal-step counterfactuals.
-
-    The limit exists only for explicitly bounded diagnostics. A formal Gate1
-    call leaves it unset so every RuleCard-classified causal step is tested.
-    Administrative steps remain visible through classify_pi_steps but are not
-    misrepresented as semantic necessity probes.
-    """
-
-    if limit is not None and limit < 0:
-        raise ValueError("pi ablation limit must be non-negative")
-    if limit == 0:
-        return ()
-    requested = tuple(
-        kinds
-        if kinds is not None
-        else (
-            PiAblationKind.J_ONLY,
-            PiAblationKind.PLAN_STEP_DROPOUT,
-        )
-    )
-    if len(set(requested)) != len(requested):
-        raise ValueError("pi ablation kinds must be unique")
-    if not isinstance(artifact, Gate1Artifact):
-        artifact = Gate1Artifact.from_json(artifact)
-    classifications = classify_pi_steps(artifact, registry)
 
     specs: list[PiAblationSpec] = []
-
-    def has_capacity() -> bool:
-        return limit is None or len(specs) < limit
-
-    if PiAblationKind.J_ONLY in requested and has_capacity():
+    if PiAblationKind.J_ONLY in requested:
         specs.append(
             PiAblationSpec(
                 "j_only",
@@ -235,40 +203,46 @@ def build_pi_ablations(
                 ReplayPlan([]),
             )
         )
+    if len(specs) >= limit or not artifact.plan.steps:
+        return tuple(specs[:limit])
+
+    def priority(index: int) -> tuple[int, int]:
+        step = artifact.plan.steps[index]
+        card = registry.get(step.rule, frontend=artifact.interface.frontend)
+        if card.selection_mode is RuleSelectionMode.OVERRIDE:
+            return (0, index)
+        if step.rule in _COMPUTE_RULES:
+            return (1, index)
+        if step.rule in _MEMORY_RULES:
+            return (2, index)
+        return (3, index)
 
     if PiAblationKind.PLAN_STEP_DROPOUT in requested:
-        for classification in classifications:
-            if not has_capacity():
-                break
-            if classification.role is RuleAblationRole.ADMINISTRATIVE:
-                continue
-            dropped_index = classification.step_index
-            dropped = artifact.plan.steps[dropped_index]
-            remaining_steps = [
+        dropped_index = min(range(len(artifact.plan.steps)), key=priority)
+        dropped = artifact.plan.steps[dropped_index]
+        remaining = ReplayPlan(
+            [
                 step
                 for index, step in enumerate(artifact.plan.steps)
                 if index != dropped_index
             ]
-            specs.append(
-                PiAblationSpec(
-                    (
-                        f"drop_step:{dropped_index}:{dropped.rule}:"
-                        f"{dropped.target_ref}"
-                    ),
-                    PiAblationKind.PLAN_STEP_DROPOUT,
-                    ReplayPlan(remaining_steps),
-                    dropped_step_index=dropped_index,
-                    dropped_rule=dropped.rule,
-                    dropped_target=dropped.target_ref,
-                    dropped_rule_instances_remaining=sum(
-                        step.rule == dropped.rule for step in remaining_steps
-                    ),
-                )
+        )
+        specs.append(
+            PiAblationSpec(
+                (
+                    f"drop_step:{dropped_index}:{dropped.rule}:"
+                    f"{dropped.target_ref}"
+                ),
+                PiAblationKind.PLAN_STEP_DROPOUT,
+                remaining,
+                dropped_step_index=dropped_index,
+                dropped_rule=dropped.rule,
+                dropped_target=dropped.target_ref,
             )
-
+        )
     if (
-        PiAblationKind.PLAN_MECHANISM_SUBSTITUTION in requested
-        and has_capacity()
+        len(specs) < limit
+        and PiAblationKind.PLAN_MECHANISM_SUBSTITUTION in requested
     ):
         candidates = [
             index
@@ -318,57 +292,43 @@ def build_pi_ablations(
                 )
             else:
                 reverse_family = {
-                    "bind_wide_program_domain": (
-                        StrategyFamily.PROGRAM_COORDINATE_WIDTH
-                    ),
-                    "materialize_pointer_tile": (
-                        StrategyFamily.ADDRESS_ASSOCIATION
-                    ),
-                    "realize_flattened_reduce": (
-                        StrategyFamily.REDUCTION_CALL_SHAPE
-                    ),
-                    "realize_multi_tile_reduce": (
-                        StrategyFamily.REDUCTION_TILING
-                    ),
+                    "bind_wide_program_domain": StrategyFamily.PROGRAM_COORDINATE_WIDTH,
+                    "materialize_pointer_tile": StrategyFamily.ADDRESS_ASSOCIATION,
+                    "realize_flattened_reduce": StrategyFamily.REDUCTION_CALL_SHAPE,
+                    "realize_multi_tile_reduce": StrategyFamily.REDUCTION_TILING,
                 }.get(original.rule)
-                if reverse_family is not None:
-                    bindings = [
-                        binding
-                        for binding in bindings
-                        if not (
-                            binding.target_ref == original.target_ref
-                            and binding.family is reverse_family
-                        )
-                    ]
-                else:
-                    candidates = []
-            if candidates:
-                changed, _ = materialize_replay_plan(
-                    replace(
-                        artifact,
-                        strategy=StrategySpec(bindings),
-                    ),
-                    registry,
-                )
-                specs.append(
-                    PiAblationSpec(
-                        (
-                            f"substitute_step:{substitution_index}:"
-                            f"{original.rule}:{replacement}:"
-                            f"{original.target_ref}"
-                        ),
-                        PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
-                        changed.plan,
-                        dropped_step_index=substitution_index,
-                        dropped_rule=original.rule,
-                        dropped_target=original.target_ref,
-                        replacement_rule=replacement,
-                        artifact=changed,
-                        strategy_before=artifact.strategy.to_json(),
-                        strategy_after=changed.strategy.to_json(),
+                if reverse_family is None:
+                    return tuple(specs[:limit])
+                bindings = [
+                    binding
+                    for binding in bindings
+                    if not (
+                        binding.target_ref == original.target_ref
+                        and binding.family is reverse_family
                     )
+                ]
+            changed, _ = materialize_replay_plan(
+                replace(artifact, strategy=StrategySpec(bindings)), registry
+            )
+            specs.append(
+                PiAblationSpec(
+                    (
+                        f"substitute_step:{substitution_index}:{original.rule}:"
+                        f"{replacement}:{original.target_ref}"
+                    ),
+                    PiAblationKind.PLAN_MECHANISM_SUBSTITUTION,
+                    changed.plan,
+                    dropped_step_index=substitution_index,
+                    dropped_rule=original.rule,
+                    dropped_target=original.target_ref,
+                    replacement_rule=replacement,
+                    artifact=changed,
+                    strategy_before=artifact.strategy.to_json(),
+                    strategy_after=changed.strategy.to_json(),
                 )
-    return tuple(specs)
+            )
+    return tuple(specs[:limit])
+
 
 def _interface_for_fingerprint(
     result: CompileResult,
@@ -414,42 +374,61 @@ def run_pi_ablations(
     *,
     compiler: TritonCompiler | None = None,
     comparator: TTIRComparator | None = None,
-    limit: int | None = None,
+    limit: int = 2,
     kinds: tuple[PiAblationKind, ...] | None = None,
-    seen_generation_ids: set[str] | None = None,
 ) -> tuple[PiAblationRecord, ...]:
-    """Execute π counterfactuals through writer, compiler, and hard compare."""
+    """Generate, compile and compare diagnostic incomplete-pi replays."""
 
     compiler = compiler or TritonCompiler()
     comparator = comparator or TTIRComparator()
     compile_case = _case_with_artifact_schedule(compile_case, artifact)
-    seen_ids = seen_generation_ids if seen_generation_ids is not None else set()
     records: list[PiAblationRecord] = []
     for spec in build_pi_ablations(
         artifact, registry, limit=limit, kinds=kinds
     ):
-        necessity_probe = spec.kind in {
+        if spec.kind in {
             PiAblationKind.J_ONLY,
             PiAblationKind.PLAN_STEP_DROPOUT,
-        }
-        intervention_artifact = spec.artifact or artifact
-        if not necessity_probe:
-            assert_replay_plan_matches(intervention_artifact, registry)
+        }:
+            try:
+                assert_replay_plan_matches(
+                    artifact, registry, plan=spec.plan
+                )
+            except ComposeMismatchError as exc:
+                records.append(
+                    PiAblationRecord(
+                        spec,
+                        PiAblationStatus.CANONICALITY_REJECTED,
+                        diagnostic=str(exc),
+                        attempts=0,
+                    )
+                )
+            else:
+                records.append(
+                    PiAblationRecord(
+                        spec,
+                        PiAblationStatus.UNEXPECTED_CLOSURE,
+                        diagnostic="tampered pi unexpectedly passed exact compose equality",
+                        attempts=0,
+                    )
+                )
+            continue
 
+        intervention_artifact = spec.artifact or artifact
+        # A mechanism substitution is not a direct pi mutation.  It changes
+        # C.strategy, deterministically composes a new canonical pi, and then
+        # invokes the writer through the ordinary replay path.  Keeping an old
+        # plan-ablation flag here would incorrectly couple the legal C path to
+        # the legacy plan_override diagnostic interface.
+        assert_replay_plan_matches(intervention_artifact, registry)
         try:
             generation = writer.generate(
                 intervention_artifact,
                 registry,
                 masked=False,
-                plan_override=spec.plan if necessity_probe else None,
-                ablation_kind=spec.kind.value if necessity_probe else None,
+                plan_override=None,
+                ablation_kind=None,
             )
-            if generation.generation_id in seen_ids:
-                raise RuntimeError(
-                    "pi ablation writer reused generation_id; every "
-                    "counterfactual requires a fresh source-blind invocation"
-                )
-            seen_ids.add(generation.generation_id)
         except Exception as exc:
             records.append(
                 PiAblationRecord(
@@ -474,32 +453,22 @@ def run_pi_ablations(
             records.append(
                 PiAblationRecord(
                     spec,
-                    PiAblationStatus.EVALUATION_FAILED,
+                    PiAblationStatus.COMPILE_FAILED,
                     generation=generation,
                     diagnostic=f"{type(exc).__name__}: {exc}",
                     attempts=1,
                 )
             )
             continue
-
         if not compiled.ok or not compiled.ttir:
-            status = (
-                PiAblationStatus.DEGRADED
-                if necessity_probe
-                else PiAblationStatus.COMPILE_FAILED
-            )
             records.append(
                 PiAblationRecord(
-                    spec,
-                    status,
-                    generation=generation,
-                    compile=compiled,
-                    diagnostic=(
-                        "fresh ablated replay did not compile"
-                        if necessity_probe
-                        else compiled.diagnostic
-                    ),
-                    attempts=1,
+                spec,
+                PiAblationStatus.COMPILE_FAILED,
+                generation=generation,
+                compile=compiled,
+                diagnostic=compiled.diagnostic,
+                attempts=1,
                 )
             )
             continue
@@ -508,11 +477,32 @@ def run_pi_ablations(
             fingerprint = fingerprint_ttir(
                 compiled.ttir,
                 python_interface=_interface_for_fingerprint(
-                    compiled, compile_case, intervention_artifact
+                    compiled, compile_case, artifact
                 ),
                 schedule=compile_case.schedule,
             )
             comparison = comparator.compare(source_fingerprint, fingerprint)
+            status = (
+                PiAblationStatus.SEMANTICS_PRESERVED
+                if comparison.hard_pass
+                else PiAblationStatus.OFF_TARGET_DRIFT
+            )
+            diagnostic = (
+                "C.strategy intervention preserved all J semantic hard components"
+                if comparison.hard_pass
+                else "C.strategy intervention changed J semantic hard components"
+            )
+            records.append(
+                PiAblationRecord(
+                    spec,
+                    status,
+                    generation=generation,
+                    compile=compiled,
+                    comparison=comparison,
+                    diagnostic=diagnostic,
+                    attempts=1,
+                )
+            )
         except Exception as exc:
             records.append(
                 PiAblationRecord(
@@ -524,43 +514,7 @@ def run_pi_ablations(
                     attempts=1,
                 )
             )
-            continue
-
-        if necessity_probe:
-            status = (
-                PiAblationStatus.UNEXPECTED_CLOSURE
-                if comparison.hard_pass
-                else PiAblationStatus.DEGRADED
-            )
-            diagnostic = (
-                "ablated π unexpectedly retained score-free hard closure"
-                if comparison.hard_pass
-                else "ablated π produced a score-free hard mismatch"
-            )
-        else:
-            status = (
-                PiAblationStatus.SEMANTICS_PRESERVED
-                if comparison.hard_pass
-                else PiAblationStatus.OFF_TARGET_DRIFT
-            )
-            diagnostic = (
-                "C.strategy intervention preserved all J semantic hard components"
-                if comparison.hard_pass
-                else "C.strategy intervention changed J semantic hard components"
-            )
-        records.append(
-            PiAblationRecord(
-                spec,
-                status,
-                generation=generation,
-                compile=compiled,
-                comparison=comparison,
-                diagnostic=diagnostic,
-                attempts=1,
-            )
-        )
     return tuple(records)
-
 
 
 __all__ = [
@@ -568,8 +522,6 @@ __all__ = [
     "PiAblationRecord",
     "PiAblationSpec",
     "PiAblationStatus",
-    "PiStepClassification",
     "build_pi_ablations",
-    "classify_pi_steps",
     "run_pi_ablations",
 ]
