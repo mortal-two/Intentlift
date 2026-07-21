@@ -227,14 +227,7 @@ def build_pi_ablations(
     def has_capacity() -> bool:
         return limit is None or len(specs) < limit
 
-    has_causal_steps = any(
-        item.role is RuleAblationRole.CAUSAL for item in classifications
-    )
-    if (
-        PiAblationKind.J_ONLY in requested
-        and has_causal_steps
-        and has_capacity()
-    ):
+    if PiAblationKind.J_ONLY in requested and has_capacity():
         specs.append(
             PiAblationSpec(
                 "j_only",

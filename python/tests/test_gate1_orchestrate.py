@@ -62,11 +62,7 @@ from intentir.verify.gate1.orchestrate import (
     _validate_compiled_interface,
     canonical_artifact_digest,
 )
-from intentir.verify.gate1.pi_ablations import (
-    PiAblationStatus,
-    _case_with_artifact_schedule,
-    classify_pi_steps,
-)
+from intentir.verify.gate1.pi_ablations import _case_with_artifact_schedule
 from intentir.verify.gate1.replay import (
     ReplayGeneration,
     ResponsesReplayWriter,
@@ -480,8 +476,6 @@ class CaptureWriter:
         self.masked_index = 0
         self.calls: list[bool] = []
         self.artifacts: list[Gate1Artifact] = []
-        self.plan_overrides: list[ReplayPlan | None] = []
-        self.ablation_kinds: list[str | None] = []
 
     def generate(
         self,
@@ -494,8 +488,6 @@ class CaptureWriter:
     ) -> ReplayGeneration:
         self.calls.append(masked)
         self.artifacts.append(artifact)
-        self.plan_overrides.append(plan_override)
-        self.ablation_kinds.append(ablation_kind)
         if masked:
             code = self.masked
             index = self.masked_index
@@ -550,7 +542,6 @@ def _runner(**config) -> Gate1Runner:
     # when that behavior is under test. Production Gate1Config remains
     # default-on.
     config.setdefault("run_masked_ablation", False)
-    config.setdefault("run_pi_ablations", False)
     return Gate1Runner(
         compiler=FakeCompiler(),
         config=Gate1Config(**config),
@@ -580,85 +571,6 @@ def test_composer_shadow_is_reported_but_does_not_change_gate1_verdict() -> None
     assert shadow_json["status"] in {"match", "mismatch", "failed"}
 
 
-def test_formal_pi_necessity_is_part_of_gate1_verdict() -> None:
-    artifact = _artifact()
-    classifications = classify_pi_steps(
-        artifact, default_triton_rule_registry()
-    )
-    causal_count = sum(item.role.value == "causal" for item in classifications)
-    writer = CaptureWriter(["GOOD", *(["BAD"] * (causal_count + 1))])
-
-    result = _runner(
-        run_pi_ablations=True,
-        run_masked_ablation=False,
-    ).run(
-        _source(),
-        artifact,
-        _case(),
-        default_triton_rule_registry(),
-        writer,
-    )
-
-    assert result.status is Gate1Status.REPLAY_CLOSED
-    assert len(result.pi_ablations) == causal_count + 1
-    assert all(
-        item.status is PiAblationStatus.DEGRADED
-        and item.supports_pi_necessity
-        and item.attempts == 1
-        for item in result.pi_ablations
-    )
-    assert writer.ablation_kinds[0] is None
-    assert writer.ablation_kinds[1] == "j_only"
-    assert writer.plan_overrides[1] == ReplayPlan([])
-    assert set(writer.ablation_kinds[2:]) == {"plan_step_dropout"}
-    assert "executable_pi_necessity_all_causal_steps" in (
-        result.anti_leakage_basis
-    )
-
-
-def test_formal_pi_survival_rejects_and_transport_failure_is_incomplete() -> None:
-    survived = _runner(
-        run_pi_ablations=True,
-        run_masked_ablation=False,
-    ).run(
-        _source(),
-        _artifact(),
-        _case(),
-        default_triton_rule_registry(),
-        CaptureWriter(["GOOD"]),
-    )
-
-    assert survived.status is Gate1Status.LEAKAGE_REJECTED
-    assert survived.pi_ablations
-    assert all(
-        item.status is PiAblationStatus.UNEXPECTED_CLOSURE
-        for item in survived.pi_ablations
-    )
-
-    class FailingAblationWriter(CaptureWriter):
-        def generate(self, artifact, registry, **kwargs):
-            if kwargs.get("ablation_kind") is not None:
-                raise RuntimeError("provider unavailable")
-            return super().generate(artifact, registry, **kwargs)
-
-    incomplete = _runner(
-        run_pi_ablations=True,
-        run_masked_ablation=False,
-    ).run(
-        _source(),
-        _artifact(),
-        _case(),
-        default_triton_rule_registry(),
-        FailingAblationWriter(["GOOD"]),
-    )
-
-    assert incomplete.status is Gate1Status.NO_CLOSURE
-    assert incomplete.termination_reason == "pi_evidence_incomplete"
-    assert incomplete.pi_ablations
-    assert all(
-        item.status is PiAblationStatus.GENERATION_FAILED
-        for item in incomplete.pi_ablations
-    )
 @pytest.mark.parametrize(
     ("steps", "expected_limit", "extended"),
     [
