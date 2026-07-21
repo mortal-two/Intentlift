@@ -1,8 +1,10 @@
 # Semantic/Realization Residual 07：修复 J/C 分区并补齐匿名实现证据
 
-> 状态：进行中
+> 状态：已结束（J/C/π 所有权与 v4 离线合同已闭合；唯一 canary 暴露 π 图外键可生成性缺口）
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
+> 归档原因：Task07 的所有权回收与 residual contract 工作已完成，v4 唯一调用已耗尽并完整留证；
+> `semantic_ref`/`instance.id` 命名空间歧义转入 Task08，不在冻结 epoch 内重试或 repair
 
 ## 为什么这是独立任务
 
@@ -123,8 +125,61 @@ masked-J 必须不能继续闭合。
 7. 历史 evidence 不修改，新 epoch 在调用前冻结且 28/28 ready；
 8. 唯一 canary 调用链 provenance 完整，结束时提交、归档并创建下一任务。
 
-## 当前第一步
+## 阶段 0--3 完成记录（2026-07-22，0 次 LLM）
 
-只做阶段 0，不改 schema，不写实现，不调用 LLM。以 v3 Swiglu evidence 为权威，先证明
-每项差异的 J/C/pi/harness 所有权；只有排除 J/C 分区错误后，才允许把剩余缺口命名为
-pi realization residual。
+- 冻结并重审 v3 TTIR/receipt 后，纠正“只缺 π stride 字段”的错误单因归因：v3 同时存在
+  `n_cols` 被误归 C、logical rank 被扁平化以及 π 未记录 p3 realization dependency 三个问题；
+  operator/predicate/fill/value DAG 始终归 J，不能靠 π 修复。
+- `SCRCCompilerView` 新增中性的 `bound_constexpr_values`：它只是匿名 frozen invocation binding，
+  不建立 LogicalABI。Lift 依据源码后果把逻辑 extent/value/predicate 写入 J，把纯表示后果引用到
+  π；只有 schedule/compiler option 进入 C。Replay 从同一次 frozen source invocation 按位置复制
+  non-C constexpr，不能从 C 获取。
+- 对全部 28 个 frozen source constexpr 逐一按源码 use 分类，manifest-v4 用唯一有序 parameter
+  list 表达 source ABI 顺序，避免 runtime/constexpr 两张表产生交错顺序漂移。
+- 不扩 π JSON capacity，而是冻结现有 `region + instance + route + order + sharing` 的唯一解释；
+  离线 fixtures 已区分 row-stride/flat、重复 anchor、多级 chain、producer sharing，并证明
+  LayerNorm pre/post mask 的差异仍由 J 唯一拥有。
+- Lift/Replay 共用同一个 source-neutral residual contract；没有 composer、RuleCard/Registry、
+  kernel-name branch、deterministic source-to-π extractor 或 response repair。
+- targeted conformance 通过 `46 passed`；冻结 v4 前全量回归为 `744 passed, 4 skipped`。历史
+  v1/v2/v3 evidence 未修改。
+
+## 阶段 4A v4 冻结记录（2026-07-22，0 次 LLM）
+
+- 冻结 `test/real_llm_batch_28_v4.json`，manifest digest
+  `0da031b95049acf5884e1adb60126253ab5441d6f7de142a0373e2659ab98b18`；Swiglu logical tensors
+  为 `[128,1024]`，`n_cols` 为 non-C binding，`BLOCK_SIZE` 为 pure-C schedule。
+- formal runner 只接受精确的 v3 `gate1_failed` predecessor，并校验其一次 Lift、一次 normal
+  Replay、0 masked-J、strict `no_closure` 与冻结 SHA，不能把旧 attempt 当 fresh evidence。
+- 新增 0-LLM formal preflight CLI，冻结
+  `artifacts/real_llm_batch_28_v4/preflight.json`，SHA
+  `74862a1402776d68988f3e704b2ceb22d61e89a5849e6a8c1da6c278e585fa30`；26/26 Triton、
+  2/2 CuTe、28/28 source observer/replay arm ready，`online_llm_calls=0`。
+
+## 阶段 4B 唯一 canary 结果（2026-07-22）
+
+- Swiglu 只消耗一次 v4 Lift：input `9555`、output `14152`、total `23707` tokens，provider
+  attempts `1`；随后本地 parser 返回
+  `SchemaError: pi route instance is unknown`，receipt 状态为 `lift_failed`。
+- 正确 fail closed 后 normal Replay、masked-J、Gate1 均为 0；没有重试、没有手工修 artifact、
+  没有扩散其余 27 case。
+- 返回对象已正确保留二维 J、non-C `p4`、pure-C `c0/c1`，也尝试让 `p3` 参与三个 row-base
+  realization；失败不是 v3 所有权问题复发。
+- 精确错误是 30 条 routes 中有 9 条把 raw `p*/c*` 当 source。冻结合同要求所有 graph edge
+  endpoint 都是已声明的 `i*`，J/C/interface handle 只能作为 instance 的 anchor。当前 prompt 的
+  “handle 必须出现并 route”以及研究文档的 `p* -> access` 简写没有显式区分这两个命名空间。
+- 这只证明 π wire 的 referential-integrity 合同对 LLM 仍有歧义；尚未得到合法 artifact，故不能
+  据此增加 `address_base/address_lane`，也不能把结果写成 Gate1 no-closure。
+- 完整 request/raw response/receipt 在
+  `artifacts/real_llm_batch_28_v4/recovery/liger_swiglu_forward/`；逐项审计见
+  `research/v4-canary-lift-rejection.md`。
+
+## 结束判定
+
+Task07 已完成 J/C/π 所有权回收、non-C constexpr 分区、现有 residual graph 的离线定义与 v4
+冻结实验。系统级“normal Gate1 闭合且 masked-J 不闭合”验收没有达成，因为唯一 canary 在进入
+Replay 前暴露了一个更窄、可独立处理的 graph foreign-key 可生成性问题。
+
+继续在 Task07/v4 内修改 prompt 或重试会改写冻结实验。后续 Task08 只闭合 π 图节点命名空间、
+schema/prompt/parser 可生成合同与 path-specific fail-closed 诊断，再以新 epoch 绑定本次
+`lift_failed` receipt 运行一次 fresh canary；在合法 π 仍无法闭合 Gate1 之前，不扩 π capacity。
