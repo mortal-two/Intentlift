@@ -618,7 +618,11 @@ def _json_object(text: str) -> dict[str, Any]:
     match = _FENCE.search(text)
     if match:
         text = match.group(1)
-    parsed = json.loads(text)
+
+    def reject_nonfinite(token: str) -> None:
+        raise ValueError(f"Lift response contains non-JSON number {token}")
+
+    parsed = json.loads(text, parse_constant=reject_nonfinite)
     if not isinstance(parsed, dict):
         raise TypeError("Lift response must be a JSON object")
     return parsed

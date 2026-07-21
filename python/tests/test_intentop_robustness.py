@@ -37,8 +37,9 @@ def _function_properties() -> dict:
     )
 
 
-def _op_properties() -> dict:
-    return scrc_lift_core_json_schema()["$defs"]["intent_op"]["properties"]
+def _op_variants() -> tuple[dict, dict]:
+    non_loop, loop = scrc_lift_core_json_schema()["$defs"]["intent_op"]["anyOf"]
+    return non_loop, loop
 
 
 @pytest.mark.parametrize(
@@ -68,11 +69,12 @@ def test_direct_intent_model_rejects_legacy_per_op_channels(field, value) -> Non
 
 
 def test_lift_schema_has_one_b_channel_and_no_schedule_in_j() -> None:
-    properties = _op_properties()
-    assert "layer_b" not in properties
-    assert "out" not in properties
+    non_loop, loop = _op_variants()
+    for variant in (non_loop, loop):
+        assert "layer_b" not in variant["properties"]
+        assert "out" not in variant["properties"]
     assert "returns" in _function_properties()
-    trip = properties["trip"]["anyOf"][0]
+    trip = loop["properties"]["trip"]
     assert set(trip["properties"]) == {"axis"}
     assert trip["additionalProperties"] is False
 

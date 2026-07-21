@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _canonical_dimension(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _closed_keys(value: dict[str, Any], allowed: set[str], path: str) -> None:
     if not isinstance(value, dict):
         raise TypeError(f"{path} must be an object")
@@ -30,7 +36,11 @@ class Tensor:
 
     @classmethod
     def from_json(cls, d: dict) -> "Tensor":
-        return cls(name=d["name"], dtype=d["dtype"], shape=list(d["shape"]))
+        return cls(
+            name=d["name"],
+            dtype=d["dtype"],
+            shape=[_canonical_dimension(item) for item in d["shape"]],
+        )
 
     def to_json(self) -> dict:
         return {"name": self.name, "dtype": self.dtype, "shape": list(self.shape)}
@@ -70,7 +80,10 @@ class LoopValueType:
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> "LoopValueType":
-        return cls(dtype=d["dtype"], shape=list(d.get("shape", [])))
+        return cls(
+            dtype=d["dtype"],
+            shape=[_canonical_dimension(item) for item in d.get("shape", [])],
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {"dtype": self.dtype, "shape": list(self.shape)}
@@ -179,7 +192,7 @@ class LoopScanInput:
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> "LoopScanInput":
-        return cls(name=d["name"], source=d["from"], axis=d["axis"])
+        return cls(name=d["name"], source=d["from"], axis=int(d["axis"]))
 
     def to_json(self) -> dict[str, Any]:
         return {"name": self.name, "from": self.source, "axis": self.axis}

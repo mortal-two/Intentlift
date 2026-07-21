@@ -67,6 +67,21 @@ def _string_array(
     return result
 
 
+def _nonnegative_integer(value: Any, path: str) -> int:
+    # JSON Schema defines 1 and 1.0 as the same mathematical integer.  Mirror
+    # that wire semantics, then let the typed model canonicalize it back to int.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _fail(path, "must be a non-negative integer")
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
+        _fail(path, "must be a non-negative integer")
+    result = int(value)
+    if result < 0:
+        _fail(path, "must be a non-negative integer")
+    return result
+
+
 def _json_value(value: Any, path: str) -> None:
     if value is None or isinstance(value, (str, bool, int)):
         return
@@ -107,12 +122,10 @@ def _shape(value: Any, path: str) -> None:
         _fail(path, "must be an array")
     for index, dimension in enumerate(value):
         item_path = f"{path}[{index}]"
-        if isinstance(dimension, bool) or not isinstance(dimension, (int, str)):
-            _fail(item_path, "must be a non-negative integer or non-empty string")
-        if isinstance(dimension, int) and dimension < 0:
-            _fail(item_path, "must be non-negative")
-        if isinstance(dimension, str) and not dimension:
-            _fail(item_path, "must be non-empty")
+        if isinstance(dimension, str):
+            _nonempty_string(dimension, item_path)
+        else:
+            _nonnegative_integer(dimension, item_path)
 
 
 def _result(value: Any, path: str, *, loop: bool) -> None:
@@ -177,9 +190,7 @@ def _scan(value: Any, path: str) -> None:
     )
     _nonempty_string(item["name"], f"{path}.name")
     _nonempty_string(item["from"], f"{path}.from")
-    axis = item["axis"]
-    if isinstance(axis, bool) or not isinstance(axis, int) or axis < 0:
-        _fail(f"{path}.axis", "must be a non-negative integer")
+    _nonnegative_integer(item["axis"], f"{path}.axis")
 
 
 def validate_intent_op_structure(

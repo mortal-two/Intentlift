@@ -114,3 +114,19 @@ parser 的所有分歧。此阶段禁止修改 response、禁止放宽 parser、
 
 下一步进入阶段 2：对真实 canonical fixtures 与确定性 mutation 建立双向接受域 conformance，
 然后运行全量回归；在这些离线证据闭合前不冻结 v3、不调用 LLM。
+
+## 阶段 2 完成记录（2026-07-22）
+
+- 对全体 IntentOp 字段的 presence 子集、`loop`/任意 non-loop/null discriminator 做确定性
+  穷举，逐项断言 Responses schema 与共享结构 validator 接受域一致；没有 kernel/opcode 特例。
+- 覆盖真实 copy/reduce typed artifact、三层 nested loop、canonical node id、required/forbidden、
+  unknown key、null/absent、数组唯一性、递归 body、bool/integer、非整值与非有限数 mutation。
+- conformance 发现并消除了第二个真实漂移：JSON Schema 按规范接受数学整数 `1.0`，旧 Python
+  parser 只接受 `int`。现在有限整值在 wire/parser 两侧一致接受并规范化为 canonical `int`；
+  bool、`1.5`、NaN/Inf 仍拒绝，Lift JSON parser 也显式拒绝非 RFC-8259 常量。
+- typed `parse -> to_json -> parse` 双轮幂等，新 schema 在完整 parser 前拒绝冻结 v2 反例；
+  v1/v2 manifest、receipt、raw response 与 digest 均未修改。
+- 阶段 2 定向回归 `128 passed`；全量回归 `715 passed, 4 skipped`；在线 LLM 调用新增为 0。
+
+下一步进入阶段 3：先冻结自包含 protocol-v3 manifest 与 28/28 preflight，再绑定 v2 failed
+receipt 执行唯一一次 Swiglu recovery canary。冻结前仍不得调用 LLM。

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,8 @@ from intentir.ir.intent_op_contract import (
     validate_intent_op_structure,
 )
 from intentir.verify.gate1.model import Gate1Artifact, SchemaError, _strict_intent
+
+from direct_fixtures import make_copy_artifact, make_reduce_artifact
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -36,17 +40,31 @@ def _evidence() -> tuple[dict, dict]:
     return request, response
 
 
+_OP_SCHEMA = {
+    "$defs": {"intent_op": intent_op_json_schema()},
+    "$ref": "#/$defs/intent_op",
+}
+Draft7Validator.check_schema(_OP_SCHEMA)
+_OP_VALIDATOR = Draft7Validator(_OP_SCHEMA)
+
+
 def _op_validator() -> Draft7Validator:
-    schema = {
-        "$defs": {"intent_op": intent_op_json_schema()},
-        "$ref": "#/$defs/intent_op",
-    }
-    Draft7Validator.check_schema(schema)
-    return Draft7Validator(schema)
+    return _OP_VALIDATOR
 
 
 def _schema_accepts(value: dict) -> bool:
     return not list(_op_validator().iter_errors(value))
+
+
+def _wire_accepts(value: dict) -> bool:
+    """Model the actual RFC-8259 wire before applying its JSON Schema."""
+
+    try:
+        encoded = json.dumps(value, allow_nan=False)
+        decoded = json.loads(encoded)
+    except (TypeError, ValueError):
+        return False
+    return _schema_accepts(decoded)
 
 
 def _contract_accepts(value: dict) -> bool:
@@ -106,6 +124,14 @@ def _intent_with(operation: dict) -> dict:
             "body": [operation],
         }
     }
+
+
+def _walk_operations(operations: list[dict]):
+    for operation in operations:
+        yield operation
+        body = operation.get("body")
+        if isinstance(body, list):
+            yield from _walk_operations(body)
 
 
 def test_v2_fixture_exposes_every_nonloop_scope_mismatch() -> None:
@@ -235,12 +261,20 @@ def test_loop_null_and_empty_shapes_are_rejected_equally(field: str, value) -> N
 
 
 def test_nested_loop_and_canonical_ids_are_schema_parser_complete() -> None:
+    deepest = _valid_loop(
+        scope="q3",
+        init="v_inner_iter",
+        body_argument="v_deep_iter",
+        next_value="v_deep_next",
+        result_value="v_inner_next",
+    )
     inner = _valid_loop(
         scope="q2",
         init="v_iter",
         body_argument="v_inner_iter",
         next_value="v_inner_next",
         result_value="v_next",
+        body=[deepest],
     )
     outer = _valid_loop(body=[inner])
     outer["id"] = "n0"
@@ -261,3 +295,126 @@ def test_new_wire_schema_rejects_the_frozen_v2_response_before_full_parser() -> 
     assert errors
     for operation in response["j"]["intent"]["intent_function"]["body"]:
         assert not _schema_accepts(operation)
+
+
+@pytest.mark.parametrize(
+    "artifact_factory", [make_copy_artifact, make_reduce_artifact]
+)
+def test_canonical_typed_fixture_ops_are_wire_complete_and_round_trip(
+    artifact_factory,
+) -> None:
+    canonical = artifact_factory().j.intent.to_json()
+    parsed = _strict_intent(canonical)
+    assert parsed.to_json() == canonical
+    assert _strict_intent(parsed.to_json()).to_json() == canonical
+    operations = canonical["intent_function"]["body"]
+    assert operations
+    for operation in _walk_operations(operations):
+        assert _wire_accepts(operation)
+        assert _contract_accepts(operation)
+
+
+def test_field_presence_projection_is_exhaustively_isomorphic() -> None:
+    values = {
+        "id": "n0",
+        "op": "future_atomic_fusion",
+        "result": "v0",
+        "operands": ["t0"],
+        "attrs": {"future": {"nested": [1, True, None]}},
+        "type": {"dtype": "f32", "shape": ["N"]},
+        "scope_id": "q1",
+        "carry": [
+            {
+                "state_id": "s0",
+                "init_value": 0.0,
+                "body_argument": "v_iter",
+                "next_value": "v_next",
+                "result_value": "v_out",
+                "type": {"dtype": "f32", "shape": []},
+            }
+        ],
+        "trip": {"axis": "N"},
+        "scan": [],
+        "body": [{"op": "const", "result": "v_next"}],
+        "yield": ["v_next"],
+    }
+    fields = tuple(values)
+    for discriminator in (None, "future_atomic_fusion", "loop"):
+        for present in itertools.chain.from_iterable(
+            itertools.combinations(fields, count)
+            for count in range(len(fields) + 1)
+        ):
+            operation = {field: copy.deepcopy(values[field]) for field in present}
+            if "op" in operation:
+                operation["op"] = discriminator
+            if operation.get("op") == "loop" and "result" in operation:
+                operation["result"] = ["v_out"]
+            assert _schema_accepts(operation) == _contract_accepts(operation), (
+                discriminator,
+                present,
+            )
+
+
+@pytest.mark.parametrize(
+    ("path", "invalid"),
+    [
+        (("op",), ""),
+        (("id",), None),
+        (("result",), ["v_out", "v_out"]),
+        (("operands",), [""]),
+        (("attrs",), []),
+        (("type",), []),
+        (("scope_id",), None),
+        (("carry",), []),
+        (("carry", 0, "state_id"), ""),
+        (("carry", 0, "init_value"), {}),
+        (("carry", 0, "type", "shape"), [True]),
+        (("trip", "axis"), ""),
+        (("scan",), [{}]),
+        (("scan",), [{"name": "s", "from": "t0", "axis": True}]),
+        (("scan",), [{"name": "s", "from": "t0", "axis": 1.5}]),
+        (("body",), []),
+        (("body", 0, "scope_id"), "q9"),
+        (("yield",), []),
+    ],
+)
+def test_type_and_nested_mutations_are_rejected_isomorphically(
+    path: tuple[str | int, ...], invalid,
+) -> None:
+    operation = _valid_loop()
+    cursor = operation
+    for component in path[:-1]:
+        cursor = cursor[component]
+    cursor[path[-1]] = invalid
+    assert not _schema_accepts(operation)
+    assert not _contract_accepts(operation)
+
+
+@pytest.mark.parametrize("invalid", [math.nan, math.inf, -math.inf])
+def test_nonfinite_values_are_rejected_at_the_actual_json_wire(invalid: float) -> None:
+    operation = {"op": "const", "attrs": {"value": invalid}}
+    assert not _wire_accepts(operation)
+    assert not _contract_accepts(operation)
+
+
+def test_json_schema_integral_float_is_accepted_and_canonicalized() -> None:
+    operation = _valid_loop()
+    operation["scan"] = [{"name": "v_scan", "from": "t0", "axis": 0.0}]
+    operation["carry"][0]["type"]["shape"] = [1.0]
+    operation["body"][0]["type"] = {"dtype": "f32", "shape": [1.0]}
+    assert _schema_accepts(operation)
+    assert _contract_accepts(operation)
+    parsed = _strict_intent(_intent_with(operation))
+    canonical = parsed.to_json()["intent_function"]["body"][0]
+    assert canonical["scan"][0]["axis"] == 0
+    assert canonical["carry"][0]["type"]["shape"] == [1]
+
+
+def test_unknown_fields_are_rejected_at_every_recursive_op_level() -> None:
+    for operation in (
+        {"op": "future_op", "unknown": 1},
+        {**_valid_loop(), "unknown": 1},
+        _valid_loop(body=[{"op": "future_op", "unknown": 1}]),
+    ):
+        assert not _schema_accepts(operation)
+        assert not _contract_accepts(operation)

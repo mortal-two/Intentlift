@@ -104,11 +104,16 @@ def _boolean(value: Any, path: str) -> bool:
 
 
 def _integer(value: Any, path: str, *, minimum: int | None = None) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SchemaError(f"{path} must be an integer")
-    if minimum is not None and value < minimum:
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
+        raise SchemaError(f"{path} must be an integer")
+    result = int(value)
+    if minimum is not None and result < minimum:
         raise SchemaError(f"{path} must be >= {minimum}")
-    return value
+    return result
 
 
 def _number(value: Any, path: str, *, minimum: float | None = None) -> float:
@@ -229,10 +234,10 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         if not isinstance(shape, list):
             raise SchemaError(f"{tensor_path}.shape must be an array")
         for index, dim in enumerate(shape):
-            if isinstance(dim, bool) or not isinstance(dim, (int, str)):
-                raise SchemaError(f"{tensor_path}.shape[{index}] must be an integer or string")
-            if isinstance(dim, int) and dim < 0:
-                raise SchemaError(f"{tensor_path}.shape[{index}] must be non-negative")
+            if isinstance(dim, str):
+                _string(dim, f"{tensor_path}.shape[{index}]")
+            else:
+                _integer(dim, f"{tensor_path}.shape[{index}]", minimum=0)
 
     tensor_contracts: dict[str, tuple[str, list[int | str]]] = {}
     for collection in ("inputs", "outputs"):
@@ -297,13 +302,12 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
             raise SchemaError(f"{type_path}.shape must be an array")
         normalized_shape: list[int | str] = []
         for index, dim in enumerate(shape):
-            if isinstance(dim, bool) or not isinstance(dim, (int, str)):
-                raise SchemaError(
-                    f"{type_path}.shape[{index}] must be an integer or string"
+            if isinstance(dim, str):
+                normalized_shape.append(_string(dim, f"{type_path}.shape[{index}]"))
+            else:
+                normalized_shape.append(
+                    _integer(dim, f"{type_path}.shape[{index}]", minimum=0)
                 )
-            if isinstance(dim, int) and dim < 0:
-                raise SchemaError(f"{type_path}.shape[{index}] must be non-negative")
-            normalized_shape.append(dim)
         return dtype, normalized_shape
 
     def validate_sequence(
