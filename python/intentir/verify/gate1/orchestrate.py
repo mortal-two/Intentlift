@@ -3022,7 +3022,7 @@ class Gate1Runner:
             artifact_digest: str | None = None
             try:
                 # Gate1Artifact remains mutable for legacy construction APIs.
-                # Re-parse the exact current value at every admission round so
+                # Re-parse the exact current value at every artifact round so
                 # post-construction mutation cannot bypass the strict J/B
                 # schema and later be reported as replay_closed.
                 Gate1Artifact.from_json(current.to_json())
