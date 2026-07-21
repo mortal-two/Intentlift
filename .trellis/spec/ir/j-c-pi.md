@@ -29,6 +29,17 @@ instance、region、route、operand slot、order、sharing、placement，以及�
 必需的 source-neutral mechanism tag（如 async/direct transfer 或 atomic/privatized
 realization）。mechanism tag 不得携带逻辑 operator、combiner、predicate 或数值。
 
+一个 instance 表示一个 compiler-observable realization event，不是一份新语义值。同一
+`semantic_ref` 可以有多个 instance，以表达同一匿名 handle 的多级 realization；route 是
+instance 间匿名 def-use，order 是必要偏序，sharing 表示一个实际 producer 被多个 consumer
+复用。源码中参与 address/transfer/synchronization/placement/share 的 interface/C handle
+必须在 pi 中出现并连接到受影响的 event。Replay 必须保留 event 数量、链、fanout、region
+和 sharing，不能把它们压平。
+
+这些结构不能当作无定义的 covert code。instance 的意义只来自上述全局合同和它锚定的
+J/C/interface handle；缺少 operator/formula 时，Replay LLM 负责从完整 J/C/interface 推理出
+前端写法，最终由 Gate1 strict observer 验证，而不是由固定 composer 解码。
+
 π 不允许声明：
 
 - operator/function；

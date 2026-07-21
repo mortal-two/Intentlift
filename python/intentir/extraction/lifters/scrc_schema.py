@@ -446,8 +446,11 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("regions", "instances", "routes", "order", "sharing"),
         description=(
-            "Anonymous source-realization topology only. No operator, value, "
-            "predicate, dtype, frontend API, rule identity or source text."
+            "Anonymous source-realization event topology only. Multiple "
+            "instances may anchor the same declared handle when the source has "
+            "multiple compiler-visible stages. Preserve route/order/share/region "
+            "multiplicity. No operator, value, predicate, dtype, frontend API, "
+            "rule identity or source text."
         ),
     )
 def _portable_scope_schema() -> dict[str, Any]:

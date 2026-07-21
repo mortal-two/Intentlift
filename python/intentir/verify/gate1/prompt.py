@@ -141,9 +141,14 @@ def _instructions(*, masked: bool) -> str:
         "You are the source-blind Replay LLM. Generate one complete, self-contained "
         "Python module containing the requested public-frontend kernel. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
-        "not semantic authority. Do not output analysis, patches, placeholders, helper "
-        "prose or markdown. Use only public frontend APIs and the positional opaque "
-        "signature in harness. "
+        "not semantic authority. Treat every pi instance, route, order edge, sharing "
+        "relation and region placement as required realization topology. Multiple "
+        "instances anchored to one handle are distinct source stages: do not collapse "
+        "their chain, discard Interface/C dependencies, duplicate a shared producer, "
+        "or invent an undocumented stage. Obtain all logical operators, predicates, "
+        "fills, constants, index relations and effects only from J. Do not output "
+        "analysis, patches, placeholders, helper prose or markdown. Use only public "
+        "frontend APIs and the positional opaque signature in harness. "
         + masked_clause
         + "Return Python source only."
     )

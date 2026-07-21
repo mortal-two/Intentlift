@@ -232,6 +232,13 @@ index map、output mapping、conflict combiner、具体前端 API 或源码自�
 
 确定性代码只检查 ID 唯一、引用存在和 schema 合法，不推导、不重排、不展开规则。
 
+这里的 instance 是 compiler-observable realization event。源码若让同一匿名参数/access 经历
+多级实现，可以用多个 instance 锚定同一 handle；route 保存匿名 def-use，sharing 保存单一
+producer 的 fanout。所有实际参与 address/transfer/synchronization/placement/share 的匿名
+interface/C handle 都必须进入 pi。Replay 不得丢弃这些依赖、压平多级 chain 或复制共享
+producer。pi 仍不声明这些 stage 的逻辑 operator/formula；LLM 根据 J/C/interface 写前端，
+Gate1 用最终 compiler topology 判断是否真的消费正确。
+
 ## 7. C：纯调度
 
 C 只包含替换后不改变 J 的调度与性能提示，例如 tile extent、vector width、线程映射、

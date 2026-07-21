@@ -591,6 +591,16 @@ order, sharing, placement, and the closed source-neutral mechanism tags in the
 schema. Never put an operator, combiner, predicate, value, dtype, shape,
 frontend API, source identifier, source fragment, prose, or rule identity in pi.
 
+Pi preserves every compiler-visible source realization event not denoted by J
+or pure C. Emit multiple instances with the same semantic_ref when one declared
+handle has multiple observable realization stages. Every anonymous Interface
+or C handle materially used by address, transfer, synchronization, placement,
+or sharing realization must occur in pi and route to the affected instances.
+Preserve source event multiplicity, def-use routes, partial order, regions, and
+one-producer sharing exactly; do not use duplicate instances as an undocumented
+code. Logical operators, predicates, fills, constants, index formulas, shapes,
+and effects remain exclusively in J.
+
 The source is already alpha-renamed. Do not invent or recover original names.
 Output JSON only.
 

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from direct_fixtures import make_reduce_artifact
+from intentir.ir.model import IntentFunction
 from intentir.extraction.lifters import scrc
 from intentir.extraction.lifters.scrc import (
     SCRCCompilerArgument,
@@ -18,6 +19,7 @@ from intentir.verify.gate1.model import Gate1Artifact, ScheduleSlot, SchemaError
 from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
 from intentir.verify.gate1.prompt import (
     assert_source_isolated_payload,
+    build_normal_rewriter_prompt,
     build_masked_rewriter_view,
     build_normal_rewriter_view,
 )
@@ -73,6 +75,113 @@ def test_pi_may_reference_any_declared_anonymous_j_c_or_harness_handle(
     payload = make_reduce_artifact().to_json()
     payload["pi"]["instances"][0]["semantic_ref"] = semantic_ref
     assert Gate1Artifact.from_json(payload).pi.instances[0]["semantic_ref"] == semantic_ref
+
+
+def _row_stride_pi() -> RealizationWitness:
+    return RealizationWitness.from_json(
+        {
+            "regions": [
+                {"id": "r0", "parent": None, "placement": "root"},
+                {"id": "r1", "parent": "r0", "placement": "program"},
+            ],
+            "instances": [
+                {"id": "i0", "semantic_ref": "p2", "region": "r1", "mechanism": "realize"},
+                {"id": "i1", "semantic_ref": "p2", "region": "r1", "mechanism": "realize"},
+                {"id": "i2", "semantic_ref": "p2", "region": "r1", "mechanism": "realize"},
+                {"id": "i3", "semantic_ref": "a0", "region": "r1", "mechanism": "realize"},
+                {"id": "i4", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
+                {"id": "i5", "semantic_ref": "a1", "region": "r1", "mechanism": "realize"},
+                {"id": "i6", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"},
+            ],
+            "routes": [
+                {"source": "i0", "target": "i1", "slots": [0]},
+                {"source": "i1", "target": "i2", "slots": [0]},
+                {"source": "i2", "target": "i3", "slots": [0]},
+                {"source": "i3", "target": "i4", "slots": [0]},
+                {"source": "i2", "target": "i5", "slots": [0]},
+                {"source": "i5", "target": "i6", "slots": [0]},
+            ],
+            "order": [],
+            "sharing": [{"source": "i2", "consumers": ["i3", "i5"]}],
+        }
+    )
+
+
+def _flat_pi() -> RealizationWitness:
+    return RealizationWitness.from_json(
+        {
+            "regions": [
+                {"id": "r0", "parent": None, "placement": "root"},
+                {"id": "r1", "parent": "r0", "placement": "program"},
+            ],
+            "instances": [
+                {"id": "i0", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
+                {"id": "i1", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"},
+            ],
+            "routes": [],
+            "order": [],
+            "sharing": [],
+        }
+    )
+
+
+def test_existing_pi_distinguishes_runtime_row_base_from_flat_access() -> None:
+    row = _row_stride_pi()
+    flat = _flat_pi()
+    assert row.to_json() != flat.to_json()
+    assert [
+        item["semantic_ref"] for item in row.instances
+    ].count("p2") == 3
+    assert all(item["semantic_ref"] != "p2" for item in flat.instances)
+    assert row.sharing == [{"source": "i2", "consumers": ["i3", "i5"]}]
+
+
+def test_pi_repeated_anchor_and_runtime_routes_survive_replay_packet() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi = _row_stride_pi()
+    view = build_normal_rewriter_view(artifact)
+    assert view["pi"] == artifact.pi.to_json()
+    assert view["pi"]["routes"][2] == {
+        "source": "i2", "target": "i3", "slots": [0]
+    }
+    instructions, _user = build_normal_rewriter_prompt(artifact)
+    assert "do not collapse their chain" in instructions
+    assert "discard Interface/C dependencies" in instructions
+
+
+def test_layernorm_mask_motion_changes_j_not_pi_semantics() -> None:
+    common = {
+        "name": "scrc_j0",
+        "inputs": [
+            {"name": "t0", "dtype": "f32", "shape": [8]},
+            {"name": "t1", "dtype": "i1", "shape": [8]},
+        ],
+        "outputs": [{"name": "t2", "dtype": "f32", "shape": []}],
+    }
+    pre = IntentFunction.from_json(
+        {
+            **common,
+            "body": [
+                {"id": "n0", "op": "select", "operands": ["t1", "t0", "ZERO"], "result": "v0"},
+                {"id": "n1", "op": "map_binary", "operands": ["v0", "v0"], "attrs": {"fn": "mul"}, "result": "v1"},
+                {"id": "n2", "op": "reduce", "operands": ["v1"], "attrs": {"fn": "sum", "axes": [0]}, "result": "t2"},
+            ],
+        }
+    )
+    post = IntentFunction.from_json(
+        {
+            **common,
+            "body": [
+                {"id": "n0", "op": "map_binary", "operands": ["t0", "t0"], "attrs": {"fn": "mul"}, "result": "v0"},
+                {"id": "n1", "op": "select", "operands": ["t1", "v0", "ZERO"], "result": "v1"},
+                {"id": "n2", "op": "reduce", "operands": ["v1"], "attrs": {"fn": "sum", "axes": [0]}, "result": "t2"},
+            ],
+        }
+    )
+    shared_pi = _flat_pi().to_json()
+    assert pre.to_json() != post.to_json()
+    assert shared_pi == _flat_pi().to_json()
+    assert "select" not in json.dumps(shared_pi, sort_keys=True)
 
 
 def test_masked_j_changes_only_j() -> None:
