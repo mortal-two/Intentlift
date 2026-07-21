@@ -37,6 +37,7 @@ _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
+_PREFLIGHT_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
 _RECOVERY_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "recovery"
 _PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
@@ -405,6 +406,28 @@ def test_retired_protocol_v3_still_rejects_v2_attempt_class() -> None:
             "protocol_v2_recovery",
             _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json",
         )
+
+
+def test_protocol_v4_rejects_wrong_attempt_before_provider_or_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def provider_must_not_run(*args, **kwargs):
+        raise AssertionError("provider resolution happened before lineage validation")
+
+    monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    output = tmp_path / "formal"
+    with pytest.raises(FormalRunError, match="explicit attempt classification"):
+        formal_runner.run_formal_gate1_case(
+            _MANIFEST_V4,
+            "liger_swiglu_forward",
+            output_root=output,
+            preflight_path=_PREFLIGHT_V4,
+            attempt_class="protocol_v3_recovery",
+            predecessor_receipt=(
+                _RECOVERY_V3 / "liger_swiglu_forward" / "receipt.json"
+            ),
+        )
+    assert not output.exists()
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:
