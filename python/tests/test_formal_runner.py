@@ -24,6 +24,7 @@ from intentir.verify.gate1.prompt import (
     build_rewriter_prompt,
     replay_packet_digest,
 )
+from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.replay import ReplayGeneration
 
 from direct_fixtures import make_copy_artifact
@@ -38,6 +39,8 @@ _PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
 _RECOVERY_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "recovery"
 _PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
+_RECOVERY_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "recovery"
+_PROGRESS_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "progress.json"
 
 
 class _Response:
@@ -401,5 +404,102 @@ def test_committed_protocol_v2_recovery_failure_is_complete_and_stopped() -> Non
         "normal_replay": 0,
         "masked_j": 0,
     }
+    assert progress["batch_stopped"] is True
+    assert progress["unattempted_cases"] == 27
+
+
+def test_committed_protocol_v3_canary_closes_lift_then_fails_strict_gate1() -> None:
+    case_dir = _RECOVERY_V3 / "liger_swiglu_forward"
+    receipt_bytes = (case_dir / "receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert hashlib.sha256(receipt_bytes).hexdigest() == (
+        "ae69d449cc70d7e812dbd4de4382aa164e837b6bcd8b1246211fc982de8df7c1"
+    )
+    assert receipt["schema"] == "intentir.formal-real-llm-case.v3"
+    assert receipt["status"] == "gate1_failed"
+    assert receipt["lineage"]["attempt_class"] == "protocol_v3_recovery"
+    assert receipt["lineage"]["predecessor"]["receipt_sha256"] == (
+        "82029abd631873847de48babdb1c9ebfad3b3006585fd95d8053f19d4d6e0901"
+    )
+    assert [(call["kind"], call["status"], call["attempts"]) for call in receipt["calls"]] == [
+        ("lift", "completed", 1),
+        ("normal_replay", "completed", 1),
+    ]
+    assert [call["usage"] for call in receipt["calls"]] == [
+        {"input_tokens": 9250, "output_tokens": 9793, "total_tokens": 19043},
+        {"input_tokens": 2331, "output_tokens": 1635, "total_tokens": 3966},
+    ]
+    for call in receipt["calls"]:
+        request = (case_dir / call["request_path"]).read_text()
+        assert "_swiglu_forward_kernel" not in request
+        assert "src/liger_kernel/ops/swiglu.py" not in request
+    for call in receipt["calls"]:
+        for path_key, digest_key in (
+            ("request_path", "request_sha256"),
+            ("response_path", "response_sha256"),
+            ("raw_response_path", "raw_response_sha256"),
+        ):
+            payload = (case_dir / call[path_key]).read_bytes()
+            assert hashlib.sha256(payload).hexdigest() == call[digest_key]
+    lift_raw = json.loads(
+        (case_dir / receipt["calls"][0]["raw_response_path"]).read_text()
+    )
+    replay_raw = json.loads(
+        (case_dir / receipt["calls"][1]["raw_response_path"]).read_text()
+    )
+    assert lift_raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 8061
+    assert replay_raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 1447
+
+    artifact = Gate1Artifact.from_json(
+        json.loads((case_dir / "lift" / "artifact.json").read_text())
+    )
+    assert artifact.j.intent.name == "scrc_j0"
+    assert artifact.pi.instances
+    assert receipt["gate1"] == {
+        "artifact_sha256": "d7d4de8720edcfe6d8c75475c8bcccb55134c5309af8a65520b29216524188f6",
+        "masked_j_calls": 0,
+        "normal_calls": 1,
+        "passed": False,
+        "protocol": "llm_direct_pi_gate1_level2_v1",
+        "receipt_path": "gate1/receipt.json",
+        "receipt_sha256": "4f48345f32e2da27b5cd806a7d25b8d8344bc7005f1df9b64daa487c393bc135",
+        "status": "no_closure",
+    }
+    assert not (case_dir / "calls" / "03_masked_j").exists()
+
+    gate1 = json.loads((case_dir / "gate1" / "receipt.json").read_text())
+    components = {
+        item["category"]: item for item in gate1["normal"]["comparison"]["components"]
+    }
+    assert gate1["normal"]["comparison"]["score"] == pytest.approx(
+        0.42689393939393944
+    )
+    assert components["interface"]["passed"] is True
+    assert components["schedule-only"]["passed"] is True
+    assert components["dataflow"]["passed"] is False
+    assert len(components["dataflow"]["differences"]) == 81
+    assert len(components["predicate_effect"]["differences"]) == 6
+    assert {
+        (item["item"], item["expected_count"], item["actual_count"])
+        for item in components["op_multiset"]["differences"]
+    } == {
+        ("arith.addi", 0, 1),
+        ("arith.constant", 4, 5),
+        ("arith.extsi", 2, 0),
+        ("tt.addptr", 6, 3),
+        ("tt.splat", 3, 4),
+    }
+
+    progress = json.loads(_PROGRESS_V3.read_text())
+    assert progress["online_http_attempts"] == 2
+    assert progress["calls"] == {
+        "lift": 1,
+        "normal_replay": 1,
+        "masked_j": 0,
+    }
+    assert progress["usage"]["reasoning_tokens"] == 9508
+    assert progress["cases"][0]["failure_class"] == (
+        "pi_realization_topology_incomplete"
+    )
     assert progress["batch_stopped"] is True
     assert progress["unattempted_cases"] == 27

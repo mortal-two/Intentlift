@@ -1,4 +1,4 @@
-# Protocol-v2 Swiglu Wire / Parser 差异审计
+# Protocol-v2 Swiglu Wire / Parser 差异审计（冻结证据）
 
 ## 证据边界
 

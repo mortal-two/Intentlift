@@ -5,10 +5,11 @@ Trellis CLI、自动 session 或 workflow phase。
 
 当前活动工作项：
 
-- [Lift Wire / Parser Isomorphism 06：消除结构接受域漂移后再开 v3 Canary](07-22-lift-wire-parser-isomorphism-06/task.md)
+- [Pi Realization Topology 07：补齐 source-blind Replay 的匿名实现证据](07-22-pi-realization-topology-07/task.md)
 
 最近完成：
 
+- [Lift Wire / Parser Isomorphism 06：wire/parser 闭合，v3 暴露 pi topology 缺口](archive/2026-07/07-22-lift-wire-parser-isomorphism-06/task.md)
 - [Formal Batch V2 05：protocol-v2 recovery canary 失败并完整留证](archive/2026-07/07-22-formal-batch-v2-05/task.md)
 - [28 Real Kernels 04：protocol-v1 首次真实 Lift 失败并完整留证](archive/2026-07/07-22-28-kernel-llm-batch-04/task.md)
 - [Typed Relations 03：闭合 logical bounds、update 与 allowed-result relation](archive/2026-07/07-22-typed-relations-03/task.md)

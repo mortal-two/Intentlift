@@ -1,6 +1,7 @@
 # Lift Wire / Parser Isomorphism 06：消除结构接受域漂移后再开 v3 Canary
 
-> 状态：进行中
+> 状态：已结束（wire/parser 已闭合；v3 canary 暴露下一层 pi 信息缺口）
+> 归档原因：Task06 的结构合同目标已完成，唯一 v3 canary 已耗尽并完整留证；Gate1 缺口转入 Task07
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
 
@@ -156,3 +157,38 @@ receipt 执行唯一一次 Swiglu recovery canary。冻结前仍不得调用 LLM
 
 下一步先完成冻结后的全量离线回归并提交 3A；只有该提交存在且 worktree 干净后，才执行唯一
 一次 `protocol_v3_recovery` Swiglu canary。
+
+## 阶段 3B 唯一 canary 结果（2026-07-22）
+
+- `liger_swiglu_forward` 只消耗一次 v3 Lift：输入 9250、输出 9793（reasoning 8061）、
+  总计 19043 tokens，elapsed 178585.940 ms。response 被完整 schema/parser 接受，canonical
+  J/C/pi/interface 与 privileged binding 均成功落盘；Task06 的原 wire/parser failure 已关闭。
+- 随后只消耗一次 source-blind normal Replay：输入 2331、输出 1635（reasoning 1447）、
+  总计 3966 tokens，elapsed 31009.234 ms；Replay 代码通过 validator 并真实编译。
+- strict Gate1 返回 `no_closure`，score `0.42689393939393944`。interface、schedule-only、
+  reduction 通过；op multiset、dataflow、predicate/effect 不通过。由于 normal 未闭合，masked-J
+  调用为 0，符合状态机与预算。
+- 根因不是 J 数值语义或 parser：source 保留 `program_id/stride` 的两次 `extsi`、runtime
+  row-base、三次 scalar pointer add 再加三次 vector add；Replay 把 specialization 扁平化为
+  `program_id*1024 + arange`，完全不使用 `p3`。精确 op delta 是 Replay 多 1 `addi`、1
+  `constant`、1 `splat`，少 2 `extsi`、3 `tt.addptr`，并产生 81 个 dataflow 与 6 个
+  predicate/effect 差异。
+- 当前 J、C、interface 都正确；现有 pi 只有 region/J-instance/routes/order/sharing，没有
+  `p3 -> row base -> pointer`、scalar/vector address decomposition、cast width 或 predicate
+  placement。因此同一 artifact 同时允许 source 与 Replay 两种 TTIR，source-blind writer 无法
+  唯一恢复。严格 Gate1 不应把它们归一成相同。
+- exact request/response/raw、artifact、Replay、compiler cache 与 Gate1 receipt 保存在
+  `artifacts/real_llm_batch_28_v3/recovery/liger_swiglu_forward/`；聚合统计在 v3
+  `progress.json`，审计在 `research/v3-gate1-no-closure-audit.md`。post-canary evidence 回归
+  `87 passed`，未重试、未 repair、其余 27 项未调用。
+
+## 结束判定
+
+Task06 的目标——让 IntentOp wire 与 parser 结构接受域同构，并以新 epoch 验证——已经完成；
+v3 Lift 的真实成功解析是直接证据。更广的 28-case 目标尚未完成，但当前阻塞已不属于 Task06：
+pi 对 source-realization topology 的信息容量不足。继续运行剩余 27 项只会扩散已知缺口，因此
+本 epoch 在 canary 后停止，不降低 Gate1、不向 Replay 泄露 source/compiler fingerprint，也不
+通过 prompt 猜测或 kernel rule 补洞。
+
+后续 Task07 将只处理最小、匿名、LLM-direct 的 pi realization topology：使 Lift 能表达地址/
+predicate/placement 拓扑，Replay 能消费，同时用 masked-J 证明 pi 仍不足以承载完整语义。
