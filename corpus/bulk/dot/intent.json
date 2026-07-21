@@ -24,12 +24,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "tile": {
-        "K": "BLOCK_SIZE"
-      },
-      "reduction_strategy": "single_or_two_stage"
-    },
     "body": [
       {
         "op": "contraction",

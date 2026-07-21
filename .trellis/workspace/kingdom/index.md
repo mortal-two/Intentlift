@@ -1,4 +1,6 @@
-# Workspace Index - kingdom
+# Workspace Archive - kingdom
+
+> 2026-07-21 起不再使用 Trellis session/workflow；以下内容仅作历史记录。
 
 > Journal tracking for AI development sessions.
 

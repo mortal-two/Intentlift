@@ -21,11 +21,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "N": "TILE_N"
-      }
-    },
     "body": [
       {
         "op": "reduce",

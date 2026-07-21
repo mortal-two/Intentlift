@@ -1,0 +1,69 @@
+{
+  "intent_function": {
+    "name": "addr",
+    "inputs": [
+      {
+        "name": "C",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      {
+        "name": "a",
+        "dtype": "f32",
+        "shape": [
+          "M"
+        ]
+      },
+      {
+        "name": "b",
+        "dtype": "f32",
+        "shape": [
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "M": 32,
+        "N": 32
+      }
+    },
+    "body": [
+      {
+        "op": "contraction",
+        "result": "outer_ab",
+        "operands": [
+          "a",
+          "b"
+        ],
+        "attrs": {
+          "subscripts": "i,j->ij"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "C",
+          "outer_ab"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      }
+    ]
+  }
+}

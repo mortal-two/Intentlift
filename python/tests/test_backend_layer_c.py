@@ -5,55 +5,41 @@ import pytest
 from intentir.ir.layer_c import LayerCResolutionError, resolve_layer_c_scalar
 
 
+def _pure_c(value: int = 4):
+    return {
+        "slots": [
+            {
+                "name": "c0",
+                "kind": "compiler",
+                "role": "num_warps",
+                "value_type": "int",
+                "required": True,
+            }
+        ],
+        "values": {"c0": value},
+    }
+
+
+def test_resolve_layer_c_scalar_uses_canonical_role() -> None:
+    resolved = resolve_layer_c_scalar(_pure_c(), "num_warps")
+    assert resolved.slot == "c0"
+    assert resolved.value == 4
+    assert resolved.path == "$.values.c0"
+
+
 @pytest.mark.parametrize(
-    "layer_c",
+    "legacy",
     [
         {"launch": {"num_warps": 4}},
-        {"launch_parameters": {"num_warps": 4}},
-        {"num_warps": {"hint_id": "hint.num_warps", "value": 4}},
-        {
-            "schedule_hints": [
-                {
-                    "parameter": "num_warps",
-                    "value": 4,
-                    "anchor_ids": ["anchor.schedule"],
-                }
-            ]
-        },
+        {"num_warps": 4},
+        {"schedule_hints": [{"parameter": "num_warps", "value": 4}]},
     ],
 )
-def test_resolve_layer_c_scalar_accepts_equivalent_layouts(layer_c) -> None:
-    resolved = resolve_layer_c_scalar(layer_c, "num_warps")
-
-    assert resolved.value == 4
-    assert resolved.paths
+def test_resolver_rejects_multiple_legacy_presentations(legacy) -> None:
+    with pytest.raises(LayerCResolutionError, match="canonical"):
+        resolve_layer_c_scalar(legacy, "num_warps")
 
 
-def test_resolve_layer_c_scalar_deduplicates_consistent_restatements() -> None:
-    resolved = resolve_layer_c_scalar(
-        {
-            "launch": {"num_warps": 8},
-            "schedule_hints": [{"parameter": "num_warps", "value": 8}],
-        },
-        "num_warps",
-    )
-
-    assert resolved.value == 8
-    assert len(resolved.paths) == 2
-
-
-def test_resolve_layer_c_scalar_rejects_conflicts() -> None:
-    with pytest.raises(LayerCResolutionError, match="conflicts"):
-        resolve_layer_c_scalar(
-            {
-                "launch": {"num_warps": 4},
-                "schedule_hints": [{"parameter": "num_warps", "value": 8}],
-            },
-            "num_warps",
-        )
-
-
-def test_resolve_layer_c_scalar_rejects_missing_parameter() -> None:
-    with pytest.raises(LayerCResolutionError, match="is absent"):
-        resolve_layer_c_scalar({"launch": {"num_stages": 3}}, "num_warps")
-
+def test_resolver_rejects_missing_role() -> None:
+    with pytest.raises(LayerCResolutionError, match="absent"):
+        resolve_layer_c_scalar(_pure_c(), "num_stages")

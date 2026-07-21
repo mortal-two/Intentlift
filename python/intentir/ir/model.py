@@ -33,7 +33,7 @@ class IntentReturn:
     ``value`` is an SSA value produced by the semantic graph.  ``output`` is
     the logical function result it defines.  Caller-owned destinations and
     alias/writeback behavior deliberately do not live here; those are Layer-B
-    contracts on :class:`intentir.ir.program.IntentProgram`.
+    contracts in the canonical J boundary object.
     """
 
     output: str
@@ -52,7 +52,7 @@ class LoopValueType:
     """Portable type carried across a semantic loop iteration.
 
     This is deliberately a tensor/value type, not a frontend storage decision:
-    register/shared/global placement belongs to C.strategy and the rule set.
+    register/shared/global placement belongs outside J in realization/lowering.
     """
 
     dtype: str
@@ -271,19 +271,21 @@ class IntentFunction:
     name: str
     inputs: list[Tensor] = field(default_factory=list)
     outputs: list[Tensor] = field(default_factory=list)
-    layer_c: dict[str, Any] = field(default_factory=dict)  # non-binding schedule
     body: list[IntentOp] = field(default_factory=list)
     returns: list[IntentReturn] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, d: dict) -> "IntentFunction":
         fn = d.get("intent_function", d)
+        if "layer_c" in fn:
+            raise ValueError(
+                "IntentFunction no longer embeds C; pass pure C separately"
+            )
         return cls(
             name=fn["name"],
             inputs=[Tensor.from_json(t) for t in fn.get("inputs", [])],
             outputs=[Tensor.from_json(t) for t in fn.get("outputs", [])],
             returns=[IntentReturn.from_json(item) for item in fn.get("returns", [])],
-            layer_c=dict(fn.get("layer_c", {})),
             body=[IntentOp.from_json(o) for o in fn.get("body", [])],
         )
 
@@ -296,7 +298,6 @@ class IntentFunction:
             "name": self.name,
             "inputs": [t.to_json() for t in self.inputs],
             "outputs": [t.to_json() for t in self.outputs],
-            "layer_c": self.layer_c,
             "body": [o.to_json() for o in self.body],
         }
         if self.returns:

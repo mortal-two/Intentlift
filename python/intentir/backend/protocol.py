@@ -1,23 +1,19 @@
-"""Verification-neutral protocol shared by target backends.
-
-This module describes a lowering request and its conformance receipt.  It does
-not authorize lowering from Gate status: callers supply an ``IntentProgram``;
-the backend reports which typed Layer-B obligations it consumed or checked.
-"""
+"""Gate-neutral backend request accepting canonical J and separate pure C."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
-from intentir.ir.contracts import ObligationLedger, ObligationStatus
-from intentir.ir.program import IntentProgram, ScheduleHint
+from intentir.verify.gate1.model import ScheduleSpec, SemanticArchive
 
 
 class BackendProtocolError(ValueError):
-    """Raised when a lowering request or conformance receipt is inconsistent."""
+    pass
 
 
 def _identifier(value: Any, context: str) -> str:
@@ -26,10 +22,10 @@ def _identifier(value: Any, context: str) -> str:
     return value
 
 
-def _digest(value: Any, context: str) -> str:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
-        raise BackendProtocolError(f"{context} must be a SHA-256 hex digest")
-    return value
+def _sha(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -56,32 +52,27 @@ class BackendTarget:
 
 @dataclass(frozen=True)
 class LoweringRequest:
-    program: IntentProgram
+    j: SemanticArchive
     target: BackendTarget
     variant: str
-    retuned_schedule: ScheduleHint | None = None
+    c: ScheduleSpec | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.program, IntentProgram):
-            raise BackendProtocolError("lowering request requires IntentProgram")
+        if not isinstance(self.j, SemanticArchive):
+            raise BackendProtocolError("lowering request requires canonical J")
         if not isinstance(self.target, BackendTarget):
             raise BackendProtocolError("lowering request requires BackendTarget")
         object.__setattr__(self, "variant", _identifier(self.variant, "lowering variant"))
-        if self.retuned_schedule is not None and not isinstance(self.retuned_schedule, ScheduleHint):
-            raise BackendProtocolError("retuned_schedule must be ScheduleHint")
-        effective = self.effective_program
-        if effective.j_digest != self.program.j_digest:
-            raise BackendProtocolError("retuning Layer C changed J")
-        if effective.contract_digest != self.program.contract_digest:
-            raise BackendProtocolError("retuning Layer C changed the logical ABI")
+        if self.c is not None and not isinstance(self.c, ScheduleSpec):
+            raise BackendProtocolError("C must use the canonical pure schedule schema")
 
     @property
-    def effective_program(self) -> IntentProgram:
-        return (
-            self.program
-            if self.retuned_schedule is None
-            else self.program.with_schedule_hint(self.retuned_schedule)
-        )
+    def j_digest(self) -> str:
+        return _sha(self.j.to_json())
+
+    @property
+    def c_digest(self) -> str | None:
+        return _sha(self.c.to_json()) if self.c is not None else None
 
 
 class ComparisonKind(str, Enum):
@@ -98,14 +89,12 @@ class ComparisonEvidence:
     evidence_digest: str
 
     def __post_init__(self) -> None:
-        try:
-            kind = self.kind if isinstance(self.kind, ComparisonKind) else ComparisonKind(self.kind)
-        except (TypeError, ValueError) as exc:
-            raise BackendProtocolError(f"unknown comparison kind {self.kind!r}") from exc
-        object.__setattr__(self, "kind", kind)
+        if not isinstance(self.kind, ComparisonKind):
+            object.__setattr__(self, "kind", ComparisonKind(self.kind))
         if not isinstance(self.passed, bool):
             raise BackendProtocolError("comparison passed must be boolean")
-        object.__setattr__(self, "evidence_digest", _digest(self.evidence_digest, "comparison evidence digest"))
+        if re.fullmatch(r"[0-9a-f]{64}", self.evidence_digest) is None:
+            raise BackendProtocolError("comparison evidence requires SHA-256")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,69 +107,35 @@ class ComparisonEvidence:
 @dataclass(frozen=True)
 class BackendConformanceRecord:
     j_digest: str
-    contract_digest: str
-    program_digest: str
+    c_digest: str | None
     target: BackendTarget
     variant: str
-    obligations: ObligationLedger
+    boundary_consumption: Mapping[str, Any]
     test_domain: Mapping[str, Any]
-    comparisons: tuple[ComparisonEvidence, ...] = ()
+    comparisons: tuple[ComparisonEvidence, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "j_digest", _digest(self.j_digest, "conformance J digest"))
-        object.__setattr__(self, "contract_digest", _digest(self.contract_digest, "conformance contract digest"))
-        object.__setattr__(self, "program_digest", _digest(self.program_digest, "conformance program digest"))
-        if not isinstance(self.target, BackendTarget):
-            raise BackendProtocolError("conformance target must be BackendTarget")
-        object.__setattr__(self, "variant", _identifier(self.variant, "conformance variant"))
-        if not isinstance(self.obligations, ObligationLedger):
-            raise BackendProtocolError("conformance obligations must be ObligationLedger")
-        if self.obligations.contract_digest != self.contract_digest:
-            raise BackendProtocolError("obligation ledger is bound to another contract")
-        if not isinstance(self.test_domain, Mapping) or not all(
-            isinstance(key, str) for key in self.test_domain
-        ):
-            raise BackendProtocolError("test_domain must be a JSON object")
-        comparisons = tuple(
-            item if isinstance(item, ComparisonEvidence) else ComparisonEvidence(**item)
-            for item in self.comparisons
-        )
-        if not comparisons:
-            raise BackendProtocolError(
-                "backend conformance requires source, replay, intent, or "
-                "oracle comparison evidence"
-            )
-        object.__setattr__(self, "comparisons", comparisons)
-
-    @property
-    def consumed_obligations(self) -> tuple[str, ...]:
-        return tuple(
-            item.obligation_id for item in self.obligations.results
-            if item.status in {ObligationStatus.CONSUMED, ObligationStatus.CHECKED}
-        )
-
-    @property
-    def unsupported_obligations(self) -> tuple[str, ...]:
-        return self.obligations.unsupported
+        if re.fullmatch(r"[0-9a-f]{64}", self.j_digest) is None:
+            raise BackendProtocolError("conformance J digest is invalid")
+        if self.c_digest is not None and re.fullmatch(r"[0-9a-f]{64}", self.c_digest) is None:
+            raise BackendProtocolError("conformance C digest is invalid")
+        if not self.comparisons:
+            raise BackendProtocolError("backend conformance requires comparison evidence")
+        if not bool(self.boundary_consumption.get("supported", False)):
+            raise BackendProtocolError("backend did not consume complete Layer B")
 
     def assert_conformant(self) -> None:
-        self.obligations.assert_supported()
         failed = [item.kind.value for item in self.comparisons if not item.passed]
         if failed:
-            raise BackendProtocolError(
-                "backend comparison evidence failed: " + ", ".join(failed)
-            )
+            raise BackendProtocolError("backend comparison failed: " + ", ".join(failed))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "j_digest": self.j_digest,
-            "contract_digest": self.contract_digest,
-            "program_digest": self.program_digest,
+            "c_digest": self.c_digest,
             "target": self.target.to_dict(),
             "variant": self.variant,
-            "consumed_obligations": list(self.consumed_obligations),
-            "unsupported_obligations": list(self.unsupported_obligations),
-            "obligations": self.obligations.to_dict(),
+            "boundary_consumption": dict(self.boundary_consumption),
             "test_domain": dict(self.test_domain),
             "comparisons": [item.to_dict() for item in self.comparisons],
         }

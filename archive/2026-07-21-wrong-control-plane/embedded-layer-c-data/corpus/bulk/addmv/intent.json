@@ -1,0 +1,68 @@
+{
+  "intent_function": {
+    "name": "addmv",
+    "inputs": [
+      {
+        "name": "c",
+        "dtype": "f32",
+        "shape": [
+          "M"
+        ]
+      },
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "K"
+        ]
+      },
+      {
+        "name": "v",
+        "dtype": "f32",
+        "shape": [
+          "K"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "dtype": "f32",
+        "shape": [
+          "M"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "M": "BLOCK_N",
+        "K": "BLOCK_M"
+      }
+    },
+    "body": [
+      {
+        "op": "contraction",
+        "result": "Av",
+        "operands": [
+          "A",
+          "v"
+        ],
+        "attrs": {
+          "subscripts": "mk,k->m"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "out",
+        "operands": [
+          "c",
+          "Av"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      }
+    ]
+  }
+}

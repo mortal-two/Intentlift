@@ -35,12 +35,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": 32,
-        "N": 32
-      }
-    },
     "body": [
       {
         "op": "contraction",

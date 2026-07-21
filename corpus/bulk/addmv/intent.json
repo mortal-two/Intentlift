@@ -34,12 +34,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_N",
-        "K": "BLOCK_M"
-      }
-    },
     "body": [
       {
         "op": "contraction",

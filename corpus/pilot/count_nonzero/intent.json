@@ -18,11 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "tile": {
-        "flattened_numel": "BLOCK_SIZE"
-      }
-    },
     "body": [
       {
         "op": "cast",

@@ -151,7 +151,7 @@ def _observed_block_threads(layer_c: Mapping[str, Any]) -> tuple[int, str]:
     block_threads = num_warps * 32
     if block_threads not in _BLOCK_THREADS:
         raise ValueError(f"unsupported Layer-C num_warps={num_warps}")
-    return block_threads, "|".join(resolved.paths)
+    return block_threads, resolved.path
 
 
 def resolve_row_schedule(

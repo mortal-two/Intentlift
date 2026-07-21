@@ -2,7 +2,7 @@
 
 Compilation and measured tuning are offline inputs to this module.  A
 ``PreparedVariant`` already owns a loaded launch callable, its variant-specific
-prelaunch work, and its logical-to-device ABI binder.  Runtime dispatch only
+prelaunch work, and its invocation-to-device binder.  Runtime dispatch only
 evaluates the closed performance-contract language, chooses a pre-tuned
 variant, and falls back conservatively on every contract miss.
 """
@@ -22,7 +22,7 @@ from intentir.backend.cuda.variant_manifest import (
 
 
 class CudaDispatchError(ValueError):
-    """Raised when a prepared bundle or logical launch is inconsistent."""
+    """Raised when a prepared bundle or invocation is inconsistent."""
 
 
 DispatchMode = str
@@ -35,8 +35,8 @@ ArgumentBinder = Callable[
 LaunchCallable = Callable[[tuple[Any, ...], DeviceLaunchStep], Any]
 
 
-def _no_prelaunch(logical_arguments: Mapping[str, Any]) -> Mapping[str, Any]:
-    del logical_arguments
+def _no_prelaunch(invocation_arguments: Mapping[str, Any]) -> Mapping[str, Any]:
+    del invocation_arguments
     return {}
 
 
@@ -106,7 +106,7 @@ class DispatchExecution:
 
 @dataclass(frozen=True)
 class PreparedDispatchCall:
-    """One selection/binding result reusable for a stable logical launch.
+    """One selection/binding result reusable for a stable invocation.
 
     Preparing a call evaluates contracts and performs the variant-specific
     prelaunch/binding once.  Repeated ``run`` calls only enqueue the already
@@ -170,7 +170,9 @@ class CudaVariantDispatcher:
                 )
         self.manifest = manifest
         self._prepared = prepared
-        self._logical_names = tuple(argument.name for argument in manifest.logical_abi)
+        self._slot_names = tuple(
+            item.name for item in manifest.invocation_slots
+        )
 
     def _specialized_order(self, mode: DispatchMode) -> tuple[str, ...]:
         if mode == "default":
@@ -234,34 +236,36 @@ class CudaVariantDispatcher:
             selection_time_ms=elapsed_ms,
         )
 
-    def _check_logical_arguments(self, logical_arguments: Mapping[str, Any]) -> None:
-        if not isinstance(logical_arguments, Mapping):
-            raise CudaDispatchError("logical arguments must be a mapping")
-        expected = set(self._logical_names)
-        actual = set(logical_arguments)
+    def _check_invocation_arguments(
+        self, invocation_arguments: Mapping[str, Any]
+    ) -> None:
+        if not isinstance(invocation_arguments, Mapping):
+            raise CudaDispatchError("invocation arguments must be a mapping")
+        expected = set(self._slot_names)
+        actual = set(invocation_arguments)
         if actual != expected:
             missing = sorted(expected - actual)
             unknown = sorted(actual - expected)
             raise CudaDispatchError(
-                f"logical ABI mismatch; missing={missing}, unknown={unknown}"
+                f"invocation binding mismatch; missing={missing}, unknown={unknown}"
             )
 
     def prepare(
         self,
-        logical_arguments: Mapping[str, Any],
+        invocation_arguments: Mapping[str, Any],
         facts: RuntimeLaunchFacts,
         *,
         mode: DispatchMode = "default",
     ) -> PreparedDispatchCall:
-        """Select and bind one stable logical call without launching it."""
+        """Select and bind one stable invocation without launching it."""
 
-        self._check_logical_arguments(logical_arguments)
+        self._check_invocation_arguments(invocation_arguments)
         selection = self.select(facts, mode=mode)
         record: VariantRecord = self.manifest.variant(selection.selected_variant_id)
         prepared = self._prepared[record.variant_id]
 
         prelaunch_started = time.perf_counter_ns()
-        produced = prepared.prelaunch(logical_arguments)
+        produced = prepared.prelaunch(invocation_arguments)
         prelaunch_ms = (time.perf_counter_ns() - prelaunch_started) / 1_000_000.0
         if produced is None:
             produced = {}
@@ -272,7 +276,7 @@ class CudaVariantDispatcher:
 
         binding_started = time.perf_counter_ns()
         raw_bindings = prepared.bind_device_arguments(
-            logical_arguments, produced
+            invocation_arguments, produced
         )
         if not isinstance(raw_bindings, Mapping):
             raise CudaDispatchError(
@@ -315,14 +319,14 @@ class CudaVariantDispatcher:
 
     def run(
         self,
-        logical_arguments: Mapping[str, Any],
+        invocation_arguments: Mapping[str, Any],
         facts: RuntimeLaunchFacts,
         *,
         mode: DispatchMode = "default",
     ) -> DispatchExecution:
         """Prepare and enqueue one call; use ``prepare`` for repeated launches."""
 
-        return self.prepare(logical_arguments, facts, mode=mode).run()
+        return self.prepare(invocation_arguments, facts, mode=mode).run()
 
 
 __all__ = [

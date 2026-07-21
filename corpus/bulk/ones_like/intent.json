@@ -21,9 +21,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "block_size": 1024
-    },
     "body": [
       {
         "op": "const",

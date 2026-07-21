@@ -15,19 +15,15 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Mapping
+from typing import Any, Literal, Mapping
 
 from .codegen import extract_python_module, validate_triton_module
-
-if TYPE_CHECKING:
-    from .rules import RuleRegistry
 
 __all__ = [
     "CompileCase",
@@ -61,8 +57,6 @@ class KernelSource:
     path: str | os.PathLike[str] | None = None
     code: str | None = None
     trusted: bool = False
-    allowed_libdevice_calls: tuple[str, ...] | None = None
-    rule_registry_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in {"module_file", "code"}:
@@ -75,22 +69,6 @@ class KernelSource:
             object.__setattr__(self, "path", str(Path(self.path).expanduser()))
         elif not isinstance(self.code, str) or self.path is not None:
             raise ValueError("code source requires a Python string and forbids path")
-        if (self.allowed_libdevice_calls is None) != (
-            self.rule_registry_digest is None
-        ):
-            raise ValueError(
-                "replay validation policy requires both allowed calls and registry digest"
-            )
-        if self.allowed_libdevice_calls is not None:
-            if self.trusted:
-                raise ValueError("trusted source must not carry a replay registry policy")
-            calls = tuple(sorted(set(self.allowed_libdevice_calls)))
-            if any(not name.isidentifier() or "__" in name for name in calls):
-                raise ValueError("invalid libdevice call in replay registry policy")
-            object.__setattr__(self, "allowed_libdevice_calls", calls)
-            assert self.rule_registry_digest is not None
-            if not re.fullmatch(r"[0-9a-f]{64}", self.rule_registry_digest):
-                raise ValueError("rule_registry_digest must be a SHA-256 hex digest")
 
     @classmethod
     def from_file(
@@ -113,37 +91,23 @@ class KernelSource:
         cls,
         code: str,
         function: str,
-        registry: RuleRegistry,
     ) -> "KernelSource":
-        """Bind untrusted replay code to one frozen RuleRegistry policy."""
+        """Bind untrusted replay code to the fixed global frontend policy."""
 
-        calls = tuple(
-            sorted(registry.namespace_calls("libdevice", frontend="triton"))
-        )
-        return cls(
-            "code",
-            function,
-            code=code,
-            trusted=False,
-            allowed_libdevice_calls=calls,
-            rule_registry_digest=registry.digest,
-        )
+        validate_triton_module(code, required_function=function)
+        return cls("code", function, code=code, trusted=False)
 
     @classmethod
     def from_model_response(
         cls,
         response: str,
         function: str,
-        registry: RuleRegistry | None = None,
     ) -> "KernelSource":
         code = extract_python_module(
             response,
             required_function=function,
-            registry=registry,
         )
-        if registry is not None:
-            return cls.from_replay(code, function, registry)
-        return cls.from_code(code, function, trusted=False)
+        return cls.from_replay(code, function)
 
     @property
     def function_name(self) -> str:
@@ -445,7 +409,6 @@ class TritonCompiler:
             validate_triton_module(
                 code,
                 required_function=source.function,
-                allowed_libdevice_calls=source.allowed_libdevice_calls,
             )
 
         request = {

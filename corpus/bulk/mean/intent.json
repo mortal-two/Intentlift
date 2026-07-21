@@ -18,12 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "reduction_tiling": {
-        "block_size": "next_power_of_2(ceil(sqrt(M*N)))",
-        "two_stage": true
-      }
-    },
     "body": [
       {
         "op": "reduce",

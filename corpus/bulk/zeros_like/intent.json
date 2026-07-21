@@ -21,11 +21,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "numel": "BLOCK_SIZE_1024"
-      }
-    },
     "body": [
       {
         "op": "const",

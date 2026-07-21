@@ -18,11 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_SIZE"
-      }
-    },
     "body": [
       {
         "op": "const",

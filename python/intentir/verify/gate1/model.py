@@ -1,7 +1,8 @@
 """Strict, JSON-serializable data model for the SCRC Gate1 pipeline.
 
 Gate1 deliberately separates the information owned by the semantic archive
-(``J``), replay plan (``pi``), schedule (``C``), and source-only diagnostics.
+(``J``), realization witness (``pi``), pure schedule (``C``), and harness-only
+diagnostics.
 The classes in this module are intentionally dependency-free dataclasses.  A
 strict parser is used at every persisted boundary: unknown keys, malformed
 types, non-finite JSON numbers, and duplicate identifiers are rejected rather
@@ -16,9 +17,10 @@ import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from intentir.ir.model import IntentFunction
+from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
 
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -130,11 +132,6 @@ def _dtype_key(value: str) -> str:
     return aliases.get(key, key)
 
 
-_REDUCTION_ACCUMULATOR_DTYPES = frozenset(
-    {"f16", "bf16", "f32", "f64", "i1", "i8", "i16", "i32", "i64"}
-)
-
-
 def _json_value(value: Any, path: str) -> JsonValue:
     """Validate and defensively copy a proper RFC-8259 JSON value."""
 
@@ -199,7 +196,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
     fn = _strict_object(
         fn,
         path=f"{path}.intent_function",
-        allowed={"name", "inputs", "outputs", "returns", "layer_c", "body"},
+        allowed={"name", "inputs", "outputs", "returns", "body"},
         required={"name"},
     )
     _string(fn["name"], f"{path}.intent_function.name")
@@ -575,8 +572,6 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                 )
         return produced
 
-    if "layer_c" in fn:
-        _json_value(fn["layer_c"], f"{path}.intent_function.layer_c")
     body = fn.get("body", [])
     visible_after, _definitions = validate_sequence(
         body,
@@ -644,57 +639,6 @@ class ParameterMode(str, Enum):
 class ScheduleSlotKind(str, Enum):
     CONSTEXPR = "constexpr"
     COMPILER = "compiler"
-
-
-class StrategyFamily(str, Enum):
-    """Closed source-realization strategy families currently owned by C."""
-
-    PROGRAM_COORDINATE_WIDTH = "program_coordinate_width"
-    ADDRESS_ASSOCIATION = "address_association"
-    MASK_MATERIALIZATION = "mask_materialization"
-    REDUCTION_CALL_SHAPE = "reduction_call_shape"
-    REDUCTION_TILING = "reduction_tiling"
-    REDUCTION_PREHEADER_STAGING = "reduction_preheader_staging"
-    REDUCTION_TILE_FUSION = "reduction_tile_fusion"
-    REDUCTION_MASK_PLACEMENT = "reduction_mask_placement"
-
-
-class StrategyChoice(str, Enum):
-    """Non-canonical choices for the first reviewed strategy families.
-
-    A missing binding means that the canonical RuleCard applies.  C.strategy
-    therefore stores only source-specific alternatives and does not duplicate
-    native/direct/explicit-axis defaults.
-    """
-
-    WIDE = "wide"
-    POINTER_STAGED = "pointer_staged"
-    STAGED_REUSE = "staged_reuse"
-    FLATTENED = "flattened"
-    MULTI_TILE_ACCUMULATE = "multi_tile_accumulate"
-    STAGE_INVARIANT_ACCESS_SCAFFOLDING = (
-        "stage_invariant_access_scaffolding"
-    )
-    SHARED_PRODUCER_OUTPUTS = "shared_producer_outputs"
-    PRE_PRODUCER_STAGED_REUSE = "pre_producer_staged_reuse"
-
-
-_STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
-    StrategyFamily.PROGRAM_COORDINATE_WIDTH: StrategyChoice.WIDE,
-    StrategyFamily.ADDRESS_ASSOCIATION: StrategyChoice.POINTER_STAGED,
-    StrategyFamily.MASK_MATERIALIZATION: StrategyChoice.STAGED_REUSE,
-    StrategyFamily.REDUCTION_CALL_SHAPE: StrategyChoice.FLATTENED,
-    StrategyFamily.REDUCTION_TILING: StrategyChoice.MULTI_TILE_ACCUMULATE,
-    StrategyFamily.REDUCTION_PREHEADER_STAGING: (
-        StrategyChoice.STAGE_INVARIANT_ACCESS_SCAFFOLDING
-    ),
-    StrategyFamily.REDUCTION_TILE_FUSION: (
-        StrategyChoice.SHARED_PRODUCER_OUTPUTS
-    ),
-    StrategyFamily.REDUCTION_MASK_PLACEMENT: (
-        StrategyChoice.PRE_PRODUCER_STAGED_REUSE
-    ),
-}
 
 
 class AccessKind(str, Enum):
@@ -2213,12 +2157,35 @@ class KernelInterface(StrictJSONMixin):
 class ScheduleSlot(StrictJSONMixin):
     name: str
     kind: ScheduleSlotKind
+    role: str
     value_type: str = "int"
     required: bool = True
 
     def __post_init__(self) -> None:
         self.name = _string(self.name, "ScheduleSlot.name")
         self.kind = _enum(ScheduleSlotKind, self.kind, "ScheduleSlot.kind")
+        self.role = _string(self.role, "ScheduleSlot.role")
+        if re.fullmatch(r"[a-z][a-z0-9_]*", self.role) is None:
+            raise SchemaError("ScheduleSlot.role must use lower_snake_case")
+        forbidden_role_terms = {
+            "api",
+            "combiner",
+            "conflict",
+            "family",
+            "fill",
+            "identity",
+            "index_map",
+            "mask",
+            "operator",
+            "predicate",
+            "realization",
+            "rule",
+            "semantic",
+            "source",
+            "strategy",
+        }
+        if any(term in self.role for term in forbidden_role_terms):
+            raise SchemaError("ScheduleSlot.role must remain pure scheduling metadata")
         self.value_type = _string(self.value_type, "ScheduleSlot.value_type")
         self.required = _boolean(self.required, "ScheduleSlot.required")
 
@@ -2227,12 +2194,13 @@ class ScheduleSlot(StrictJSONMixin):
         data = _strict_object(
             value,
             path="ScheduleSlot",
-            allowed={"name", "kind", "value_type", "required"},
-            required={"name", "kind"},
+            allowed={"name", "kind", "role", "value_type", "required"},
+            required={"name", "kind", "role"},
         )
         return cls(
             name=data["name"],
             kind=data["kind"],
+            role=data["role"],
             value_type=data.get("value_type", "int"),
             required=data.get("required", True),
         )
@@ -2241,6 +2209,7 @@ class ScheduleSlot(StrictJSONMixin):
         return {
             "name": self.name,
             "kind": self.kind.value,
+            "role": self.role,
             "value_type": self.value_type,
             "required": self.required,
         }
@@ -2300,315 +2269,6 @@ class ScheduleSpec(StrictJSONMixin):
     def missing_required_values(self) -> list[str]:
         return [slot.name for slot in self.slots if slot.required and slot.name not in self.values]
 
-
-@dataclass
-class StrategyBinding(StrictJSONMixin):
-    """One source-specific implementation choice owned by ``C.strategy``."""
-
-    target_ref: str
-    family: StrategyFamily
-    choice: StrategyChoice
-    tile_slot: str | None = None
-    accumulator_dtype: str | None = None
-    predicate_access_ref: str | None = None
-    placement_node_ref: str | None = None
-    placement_operand_slots: list[int] | None = None
-
-    def __post_init__(self) -> None:
-        self.target_ref = _string(self.target_ref, "StrategyBinding.target_ref")
-        self.family = _enum(StrategyFamily, self.family, "StrategyBinding.family")
-        self.choice = _enum(StrategyChoice, self.choice, "StrategyBinding.choice")
-        expected = _STRATEGY_CHOICE_BY_FAMILY[self.family]
-        if self.choice is not expected:
-            raise SchemaError(
-                f"StrategyBinding family {self.family.value!r} requires choice "
-                f"{expected.value!r}, not {self.choice.value!r}"
-            )
-        if self.family is StrategyFamily.REDUCTION_TILING:
-            self.tile_slot = _string(
-                self.tile_slot, "StrategyBinding.tile_slot"
-            )
-            self.accumulator_dtype = _string(
-                self.accumulator_dtype,
-                "StrategyBinding.accumulator_dtype",
-            )
-            if self.accumulator_dtype not in _REDUCTION_ACCUMULATOR_DTYPES:
-                raise SchemaError(
-                    "StrategyBinding.accumulator_dtype must use a canonical "
-                    "IntentIR dtype"
-                )
-        elif self.tile_slot is not None or self.accumulator_dtype is not None:
-            raise SchemaError(
-                "StrategyBinding tile_slot/accumulator_dtype are valid only "
-                "for reduction_tiling"
-            )
-        if self.family is StrategyFamily.REDUCTION_MASK_PLACEMENT:
-            self.predicate_access_ref = _string(
-                self.predicate_access_ref,
-                "StrategyBinding.predicate_access_ref",
-            )
-            self.placement_node_ref = _string(
-                self.placement_node_ref,
-                "StrategyBinding.placement_node_ref",
-            )
-            slots = self.placement_operand_slots
-            if not isinstance(slots, list) or not slots:
-                raise SchemaError(
-                    "StrategyBinding.placement_operand_slots must be a non-empty array"
-                )
-            normalized_slots = [
-                _integer(
-                    slot,
-                    f"StrategyBinding.placement_operand_slots[{index}]",
-                    minimum=0,
-                )
-                for index, slot in enumerate(slots)
-            ]
-            if len(set(normalized_slots)) != len(normalized_slots):
-                raise SchemaError(
-                    "StrategyBinding.placement_operand_slots must not contain duplicates"
-                )
-            self.placement_operand_slots = sorted(normalized_slots)
-        elif (
-            self.predicate_access_ref is not None
-            or self.placement_node_ref is not None
-            or self.placement_operand_slots is not None
-        ):
-            raise SchemaError(
-                "StrategyBinding predicate_access_ref/placement_node_ref/"
-                "placement_operand_slots are valid only for "
-                "reduction_mask_placement"
-            )
-
-    @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "StrategyBinding":
-        data = _strict_object(
-            value,
-            path="StrategyBinding",
-            allowed={
-                "target_ref",
-                "family",
-                "choice",
-                "tile_slot",
-                "accumulator_dtype",
-                "predicate_access_ref",
-                "placement_node_ref",
-                "placement_operand_slots",
-            },
-            required={"target_ref", "family", "choice"},
-        )
-        return cls(
-            target_ref=data["target_ref"],
-            family=data["family"],
-            choice=data["choice"],
-            tile_slot=data.get("tile_slot"),
-            accumulator_dtype=data.get("accumulator_dtype"),
-            predicate_access_ref=data.get("predicate_access_ref"),
-            placement_node_ref=data.get("placement_node_ref"),
-            placement_operand_slots=data.get("placement_operand_slots"),
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        result = {
-            "target_ref": self.target_ref,
-            "family": self.family.value,
-            "choice": self.choice.value,
-        }
-        if self.tile_slot is not None:
-            result["tile_slot"] = self.tile_slot
-        if self.accumulator_dtype is not None:
-            result["accumulator_dtype"] = self.accumulator_dtype
-        if self.predicate_access_ref is not None:
-            result["predicate_access_ref"] = self.predicate_access_ref
-        if self.placement_node_ref is not None:
-            result["placement_node_ref"] = self.placement_node_ref
-        if self.placement_operand_slots is not None:
-            result["placement_operand_slots"] = list(
-                self.placement_operand_slots
-            )
-        return result
-
-
-@dataclass
-class StrategySpec(StrictJSONMixin):
-    """Finite C.strategy bindings; absence of a binding selects canonical rules."""
-
-    bindings: list[StrategyBinding] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        self.bindings = [
-            item if isinstance(item, StrategyBinding) else StrategyBinding.from_json(item)
-            for item in self.bindings
-        ]
-        seen: set[tuple[str, StrategyFamily]] = set()
-        for binding in self.bindings:
-            key = (binding.target_ref, binding.family)
-            if key in seen:
-                raise SchemaError(
-                    "StrategySpec contains duplicate binding for target "
-                    f"{binding.target_ref!r} and family {binding.family.value!r}"
-                )
-            seen.add(key)
-        reduction_families = {
-            StrategyFamily.REDUCTION_CALL_SHAPE,
-            StrategyFamily.REDUCTION_TILING,
-        }
-        reduction_targets: dict[str, set[StrategyFamily]] = {}
-        for binding in self.bindings:
-            if binding.family in reduction_families:
-                reduction_targets.setdefault(binding.target_ref, set()).add(
-                    binding.family
-                )
-        conflicts = {
-            target: families
-            for target, families in reduction_targets.items()
-            if len(families) > 1
-        }
-        if conflicts:
-            target = sorted(conflicts)[0]
-            raise SchemaError(
-                "StrategySpec cannot combine reduction_call_shape and "
-                f"reduction_tiling for target {target!r}"
-            )
-        tiled_targets = {
-            binding.target_ref
-            for binding in self.bindings
-            if binding.family is StrategyFamily.REDUCTION_TILING
-        }
-        preheader_targets = {
-            binding.target_ref
-            for binding in self.bindings
-            if binding.family is StrategyFamily.REDUCTION_PREHEADER_STAGING
-        }
-        fused_output_targets = {
-            binding.target_ref
-            for binding in self.bindings
-            if binding.family is StrategyFamily.REDUCTION_TILE_FUSION
-        }
-        missing_preheader_tiling = sorted(preheader_targets - tiled_targets)
-        if missing_preheader_tiling:
-            raise SchemaError(
-                "reduction_preheader_staging requires reduction_tiling for "
-                "the same target(s): " + ", ".join(missing_preheader_tiling)
-            )
-        missing_fusion_tiling = sorted(fused_output_targets - tiled_targets)
-        if missing_fusion_tiling:
-            raise SchemaError(
-                "reduction_tile_fusion requires reduction_tiling for the same "
-                "target(s): " + ", ".join(missing_fusion_tiling)
-            )
-        mask_placement_targets = {
-            binding.target_ref
-            for binding in self.bindings
-            if binding.family is StrategyFamily.REDUCTION_MASK_PLACEMENT
-        }
-        unsupported_tiled_mask_placement = sorted(
-            mask_placement_targets & tiled_targets
-        )
-        if unsupported_tiled_mask_placement:
-            raise SchemaError(
-                "reduction_mask_placement cannot yet combine with "
-                "reduction_tiling for the same target(s): "
-                + ", ".join(unsupported_tiled_mask_placement)
-            )
-
-    @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "StrategySpec":
-        data = _strict_object(
-            value,
-            path="StrategySpec",
-            allowed={"bindings"},
-            required={"bindings"},
-        )
-        if not isinstance(data["bindings"], list):
-            raise SchemaError("StrategySpec.bindings must be an array")
-        return cls(
-            bindings=[StrategyBinding.from_json(item) for item in data["bindings"]]
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        return {"bindings": [binding.to_json() for binding in self.bindings]}
-
-
-@dataclass
-class ReplayStep(StrictJSONMixin):
-    """One ordered rule instance in the complete strict replay plan.
-
-    ``node_ref`` is the preferred target.  The first ``refs`` entry is the
-    target when ``node_ref`` is absent; remaining refs are ordered context
-    bindings.  The instance selects a mechanism card, while semantic values
-    remain owned by and referenced from J/B/C or the interface.
-    """
-
-    rule: str
-    node_ref: str | None = None
-    refs: list[str] = field(default_factory=list)
-
-    _KEYS: ClassVar[set[str]] = {"rule", "node_ref", "refs"}
-
-    def __post_init__(self) -> None:
-        self.rule = _string(self.rule, "ReplayStep.rule")
-        if self.node_ref is not None:
-            self.node_ref = _string(self.node_ref, "ReplayStep.node_ref")
-        self.refs = _string_list(self.refs, "ReplayStep.refs", unique=True)
-
-    @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "ReplayStep":
-        data = _strict_object(
-            value,
-            path="ReplayStep",
-            allowed=cls._KEYS,
-            required={"rule"},
-        )
-        return cls(
-            rule=data["rule"],
-            node_ref=data.get("node_ref"),
-            refs=_string_list(data.get("refs", []), "ReplayStep.refs", unique=True),
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        result: dict[str, Any] = {"rule": self.rule}
-        if self.node_ref is not None:
-            result["node_ref"] = self.node_ref
-        if self.refs:
-            result["refs"] = list(self.refs)
-        return result
-
-    @property
-    def target_ref(self) -> str | None:
-        return self.node_ref or (self.refs[0] if self.refs else None)
-
-
-@dataclass
-class ReplayPlan(StrictJSONMixin):
-    """Complete ordered replay-rule instances for one source implementation.
-
-    The order is part of pi's construction contract.  Semantic values remain
-    owned by J/B/C and are referenced by each step rather than copied here.
-    """
-
-    steps: list[ReplayStep] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        parsed = [
-            item if isinstance(item, ReplayStep) else ReplayStep.from_json(item)
-            for item in self.steps
-        ]
-        # A strict replay plan is ordered.  Keep the Lift-produced construction
-        # order exactly; individual refs are ordered typed/context bindings too.
-        self.steps = parsed
-
-    @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "ReplayPlan":
-        data = _strict_object(
-            value, path="ReplayPlan", allowed={"steps"}, required={"steps"},
-        )
-        if not isinstance(data["steps"], list):
-            raise SchemaError("ReplayPlan.steps must be an array")
-        return cls([ReplayStep.from_json(item) for item in data["steps"]])
-
-    def to_json(self) -> dict[str, Any]:
-        return {"steps": [item.to_json() for item in self.steps]}
 
 
 @dataclass
@@ -2849,24 +2509,26 @@ class ProvenanceRecord(StrictJSONMixin):
         return result
 
 
+
 @dataclass
 class Gate1Artifact(StrictJSONMixin):
-    """Complete privileged Gate1 artifact.
+    """Privileged Lift result for the LLM-direct Gate1 epoch.
 
-    ``source`` and ``location_map`` are intentionally retained for lifter-side
-    diagnostics, but :meth:`rewriter_view` is the only supported hand-off to a
-    replay agent and excludes both, concrete schedule values, and provenance.
+    Only ``J`` and pure ``C`` form Intent.  ``pi`` is a source-realization
+    witness outside Intent; interface/source/location/provenance belong to the
+    harness.  Persisted documents from earlier epochs are rejected rather than
+    upgraded through a compatibility path.
     """
+
+    SCHEMA: ClassVar[str] = "intentir.gate1.llm-direct.v1"
 
     j: SemanticArchive
     interface: KernelInterface
     schedule: ScheduleSpec
-    plan: ReplayPlan
+    pi: RealizationWitness
     location_map: LocationMap
     source: str | None = None
     provenance: list[ProvenanceRecord] = field(default_factory=list)
-    strategy: StrategySpec = field(default_factory=StrategySpec)
-    compose_provenance: dict[str, JsonValue] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
@@ -2875,245 +2537,82 @@ class Gate1Artifact(StrictJSONMixin):
             self.interface = KernelInterface.from_json(self.interface)
         if not isinstance(self.schedule, ScheduleSpec):
             self.schedule = ScheduleSpec.from_json(self.schedule)
-        if not isinstance(self.plan, ReplayPlan):
-            self.plan = ReplayPlan.from_json(self.plan)
+        if not isinstance(self.pi, RealizationWitness):
+            try:
+                self.pi = RealizationWitness.from_json(self.pi)
+            except RealizationWitnessError as exc:
+                raise SchemaError(str(exc)) from exc
         if not isinstance(self.location_map, LocationMap):
             self.location_map = LocationMap.from_json(self.location_map)
-        if not isinstance(self.strategy, StrategySpec):
-            self.strategy = StrategySpec.from_json(self.strategy)
-        if self.compose_provenance is not None:
-            if not isinstance(self.compose_provenance, dict):
-                raise SchemaError("Gate1Artifact.compose_provenance must be an object")
-            self.compose_provenance = _json_value(
-                self.compose_provenance,
-                "Gate1Artifact.compose_provenance",
-            )
         if self.source is not None:
             self.source = _string(self.source, "Gate1Artifact.source", nonempty=False)
         self.provenance = [
-            item if isinstance(item, ProvenanceRecord) else ProvenanceRecord.from_json(item)
+            item if isinstance(item, ProvenanceRecord)
+            else ProvenanceRecord.from_json(item)
             for item in self.provenance
         ]
         if self.j.kernel_id != self.interface.kernel_id:
-            raise SchemaError("Gate1Artifact J and interface kernel_id values must match")
+            raise SchemaError("Gate1Artifact J and interface kernel ids must match")
 
         tensors = {
             tensor.name: tensor
             for tensor in [*self.j.intent.inputs, *self.j.intent.outputs]
         }
-        tensor_names = set(tensors)
         bad_tensor_refs = sorted(
-            parameter.tensor_ref for parameter in self.interface.parameters
-            if parameter.tensor_ref is not None and parameter.tensor_ref not in tensor_names
+            parameter.tensor_ref
+            for parameter in self.interface.parameters
+            if parameter.tensor_ref is not None and parameter.tensor_ref not in tensors
         )
         if bad_tensor_refs:
             raise SchemaError(
-                "KernelParameter.tensor_ref references unknown J tensor(s): "
+                "interface parameters reference unknown J tensors: "
                 + ", ".join(bad_tensor_refs)
             )
-        input_tensors = {tensor.name: tensor for tensor in self.j.intent.inputs}
-        for parameter in self.interface.parameters:
-            if (
-                parameter.kind is not ParameterKind.SCALAR
-                or parameter.tensor_ref is None
-            ):
-                continue
-            tensor = input_tensors.get(parameter.tensor_ref)
-            if tensor is None:
-                raise SchemaError(
-                    f"scalar parameter {parameter.name!r} tensor_ref must "
-                    "reference a J input"
-                )
-            if tensor.shape:
-                raise SchemaError(
-                    f"scalar parameter {parameter.name!r} tensor_ref must "
-                    "have shape=[]"
-                )
-        for parameter in self.interface.parameters:
-            if parameter.tensor_ref is None or parameter.dtype is None:
-                continue
-            tensor = tensors[parameter.tensor_ref]
-            if _dtype_key(parameter.dtype) != _dtype_key(tensor.dtype):
-                raise SchemaError(
-                    f"parameter {parameter.name!r} tensor_ref dtype must "
-                    "match the J tensor"
-                )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
-        boundary_node_refs = [
+        boundary_node_refs = {
             *(item.node_ref for item in self.j.boundary.accesses if item.node_ref is not None),
             *(item.node_ref for item in self.j.boundary.broadcasts),
             *(item.node_ref for item in self.j.boundary.effects if item.node_ref is not None),
             *(item.node_ref for item in self.j.boundary.output_mappings if item.node_ref is not None),
             *(item.node_ref for item in self.j.boundary.reductions),
-        ]
-        unknown_boundary_nodes = sorted(set(boundary_node_refs) - node_refs)
+        }
+        unknown_boundary_nodes = sorted(boundary_node_refs - node_refs)
         if unknown_boundary_nodes:
             raise SchemaError(
-                "Boundary references unknown J node(s): " + ", ".join(unknown_boundary_nodes)
+                "Layer B references unknown J nodes: "
+                + ", ".join(unknown_boundary_nodes)
             )
 
-        access_by_id = {
-            access.access_id: access for access in self.j.boundary.accesses
-        }
-        node_id_by_path = {
-            path: node_id for node_id, path in self.j.node_ids.items()
-        }
-        intent_operation_by_ref: dict[str, Any] = {}
-        for node_id, path in self.j.node_ids.items():
-            operations = self.j.intent.body
-            operation = None
-            for index in (
-                int(value) for value in re.findall(r"body\[(\d+)\]", path)
-            ):
-                operation = operations[index]
-                operations = operation.body
-            assert operation is not None
-            intent_operation_by_ref[node_id] = operation
-            intent_operation_by_ref[path] = operation
-        reduction_targets = {
-            node_id_by_path.get(reduction.node_ref, reduction.node_ref)
-            for reduction in self.j.boundary.reductions
-        }
-        reduction_by_target = {
-            node_id_by_path.get(reduction.node_ref, reduction.node_ref): reduction
-            for reduction in self.j.boundary.reductions
-        }
-        strategy_targets: dict[StrategyFamily, set[str]] = {
-            StrategyFamily.PROGRAM_COORDINATE_WIDTH: set(self.j.boundary.domains),
-            StrategyFamily.ADDRESS_ASSOCIATION: set(access_by_id),
-            StrategyFamily.MASK_MATERIALIZATION: {
-                access_id
-                for access_id, access in access_by_id.items()
-                if access.predicate is not None
-            },
-            StrategyFamily.REDUCTION_CALL_SHAPE: reduction_targets,
-            StrategyFamily.REDUCTION_TILING: reduction_targets,
-            StrategyFamily.REDUCTION_PREHEADER_STAGING: reduction_targets,
-            StrategyFamily.REDUCTION_TILE_FUSION: reduction_targets,
-            StrategyFamily.REDUCTION_MASK_PLACEMENT: reduction_targets,
-        }
-        schedule_slots = {slot.name: slot for slot in self.schedule.slots}
-        for binding in self.strategy.bindings:
-            if binding.target_ref not in strategy_targets[binding.family]:
-                raise SchemaError(
-                    f"StrategyBinding target {binding.target_ref!r} is not valid "
-                    f"for family {binding.family.value!r}"
-                )
-            if binding.family is StrategyFamily.REDUCTION_TILING:
-                assert binding.tile_slot is not None
-                slot = schedule_slots.get(binding.tile_slot)
-                if slot is None:
-                    raise SchemaError(
-                        f"reduction_tiling tile_slot {binding.tile_slot!r} "
-                        "is not declared in C.schedule"
-                    )
-                if slot.kind is not ScheduleSlotKind.CONSTEXPR:
-                    raise SchemaError(
-                        "reduction_tiling tile_slot must name a constexpr "
-                        "kernel schedule slot"
-                    )
-            if binding.family is StrategyFamily.REDUCTION_MASK_PLACEMENT:
-                assert binding.predicate_access_ref is not None
-                assert binding.placement_node_ref is not None
-                assert binding.placement_operand_slots is not None
-                predicate_access = access_by_id.get(
-                    binding.predicate_access_ref
-                )
-                if predicate_access is None or predicate_access.predicate is None:
-                    raise SchemaError(
-                        "reduction_mask_placement predicate_access_ref must "
-                        "name a boundary access with a predicate"
-                    )
-                placement = intent_operation_by_ref.get(
-                    binding.placement_node_ref
-                )
-                if placement is None:
-                    raise SchemaError(
-                        "reduction_mask_placement placement_node_ref must "
-                        "name a J node"
-                    )
-                reduction = intent_operation_by_ref[binding.target_ref]
-                boundary_reduction = reduction_by_target[binding.target_ref]
-                if reduction.op != "reduce":
-                    raise SchemaError(
-                        "reduction_mask_placement target_ref must name a reduce node"
-                    )
-                if not isinstance(placement.result, str) or (
-                    placement.result not in reduction.operands
-                ):
-                    raise SchemaError(
-                        "reduction_mask_placement placement node must directly "
-                        "produce the target reduction operand"
-                    )
-                if any(
-                    index >= len(placement.operands)
-                    for index in binding.placement_operand_slots
-                ):
-                    raise SchemaError(
-                        "reduction_mask_placement placement_operand_slots "
-                        "exceed the placement node operand count"
-                    )
-                selected_operands = {
-                    placement.operands[index]
-                    for index in binding.placement_operand_slots
-                }
-                if len(selected_operands) != 1:
-                    raise SchemaError(
-                        "reduction_mask_placement selected operand slots must "
-                        "reuse one shared J value"
-                    )
-                if (
-                    placement.op != "map_binary"
-                    or placement.attrs.get("fn") != "mul"
-                    or binding.placement_operand_slots
-                    != list(range(len(placement.operands)))
-                    or len(placement.operands) != 2
-                    or len(set(placement.operands)) != 1
-                ):
-                    raise SchemaError(
-                        "pre_producer_staged_reuse currently requires a "
-                        "map_binary mul of one shared value in both operand slots"
-                    )
-                contribution = boundary_reduction.masked_contribution
-                if (
-                    isinstance(contribution, bool)
-                    or not isinstance(contribution, (int, float))
-                    or contribution != 0
-                ):
-                    raise SchemaError(
-                        "pre_producer_staged_reuse currently requires a numeric "
-                        "zero masked_contribution"
-                    )
+        semantic_refs: set[str] = set()
 
-        valid_plan_refs = (
-            node_refs
-            | tensor_names
-            | set(self.j.boundary.domains)
-            | {item.access_id for item in self.j.boundary.accesses}
-            | {scope.scope_id for scope in self.j.scopes}
-            | {storage.storage_id for storage in self.j.storage}
-            | {
-                state.state_id
-                for top in self.j.intent.body
-                for op in _walk_intent_ops(top)
-                for state in op.carry
+        def collect_opaque_handles(value: Any) -> None:
+            if isinstance(value, str):
+                if re.fullmatch(r"(?:t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+", value):
+                    semantic_refs.add(value)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    collect_opaque_handles(key)
+                    collect_opaque_handles(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect_opaque_handles(item)
+
+        collect_opaque_handles(self.j.to_json())
+        collect_opaque_handles(self.interface.to_json())
+        collect_opaque_handles(self.schedule.to_json())
+        unknown_pi_refs = sorted(
+            {
+                str(item["semantic_ref"])
+                for item in self.pi.instances
+                if item["semantic_ref"] not in semantic_refs
             }
-            | {parameter.name for parameter in self.interface.parameters}
-            | {slot.name for slot in self.schedule.slots}
         )
-        plan_refs = [
-            *(step.node_ref for step in self.plan.steps if step.node_ref is not None),
-            *(ref for step in self.plan.steps for ref in step.refs),
-        ]
-        unknown_plan_refs = sorted(set(plan_refs) - valid_plan_refs)
-        if unknown_plan_refs:
+        if unknown_pi_refs:
             raise SchemaError(
-                "ReplayPlan references unknown J identifier(s): "
-                + ", ".join(unknown_plan_refs)
+                "pi references unknown J/C handle(s): " + ", ".join(unknown_pi_refs)
             )
 
-        access_ids = {item.access_id for item in self.j.boundary.accesses}
         location_nodes = {
             ref for entry in self.location_map.entries for ref in entry.node_refs
         }
@@ -3122,65 +2621,33 @@ class Gate1Artifact(StrictJSONMixin):
         }
         if location_nodes - node_refs:
             raise SchemaError("LocationMap references unknown J nodes")
+        access_ids = {item.access_id for item in self.j.boundary.accesses}
         if location_accesses - access_ids:
-            raise SchemaError("LocationMap references unknown boundary accesses")
+            raise SchemaError("LocationMap references unknown Layer-B accesses")
 
         schedule_by_name = {slot.name: slot for slot in self.schedule.slots}
-        interface_constexprs = {
+        constexprs = {
             parameter.name
             for parameter in self.interface.parameters
             if parameter.kind is ParameterKind.CONSTEXPR
         }
-        missing_constexpr_slots = sorted(
-            name
-            for name in interface_constexprs
-            if name not in schedule_by_name
-            or schedule_by_name[name].kind is not ScheduleSlotKind.CONSTEXPR
-        )
-        if missing_constexpr_slots:
-            raise SchemaError(
-                "KernelInterface constexpr parameters are not declared "
-                "constexpr schedule slots: "
-                + ", ".join(missing_constexpr_slots)
-            )
-        orphan_constexpr_slots = sorted(
-            name
-            for name, slot in schedule_by_name.items()
+        declared_constexprs = {
+            name for name, slot in schedule_by_name.items()
             if slot.kind is ScheduleSlotKind.CONSTEXPR
-            and name not in interface_constexprs
-        )
-        if orphan_constexpr_slots:
-            raise SchemaError(
-                "Schedule constexpr slots are absent from KernelInterface: "
-                + ", ".join(orphan_constexpr_slots)
-            )
-        leaked_reduction_slots = sorted(
-            {
-                item.tile_axis
-                for item in self.j.boundary.reductions
-                if isinstance(item.tile_axis, str)
-                and item.tile_axis in schedule_by_name
-            }
-        )
-        if leaked_reduction_slots:
-            raise SchemaError(
-                "ReductionBoundary.tile_axis must not reference C schedule "
-                "slot(s): " + ", ".join(leaked_reduction_slots)
-            )
-        missing_compiler_slots = sorted(
-            name for name in self.interface.compiler_slots
-            if name not in schedule_by_name
-            or schedule_by_name[name].kind is not ScheduleSlotKind.COMPILER
-        )
-        if missing_compiler_slots:
-            raise SchemaError(
-                "KernelInterface.compiler_slots are not declared compiler schedule slots: "
-                + ", ".join(missing_compiler_slots)
-            )
+        }
+        if constexprs != declared_constexprs:
+            raise SchemaError("interface constexpr parameters and C slots differ")
+        compiler_slots = set(self.interface.compiler_slots)
+        declared_compiler = {
+            name for name, slot in schedule_by_name.items()
+            if slot.kind is ScheduleSlotKind.COMPILER
+        }
+        if not compiler_slots <= declared_compiler:
+            raise SchemaError("interface compiler slots are absent from pure C")
         missing_values = self.schedule.missing_required_values()
         if missing_values:
             raise SchemaError(
-                "Gate1Artifact is missing required schedule value(s): "
+                "Gate1Artifact is missing required C value(s): "
                 + ", ".join(missing_values)
             )
 
@@ -3190,40 +2657,42 @@ class Gate1Artifact(StrictJSONMixin):
             value,
             path="Gate1Artifact",
             allowed={
-                "j", "interface", "schedule", "strategy", "plan",
-                "location_map", "source", "provenance", "compose_provenance",
+                "schema", "j", "interface", "schedule", "pi",
+                "location_map", "source", "provenance",
             },
-            required={"j", "interface", "schedule", "plan", "location_map"},
+            required={
+                "schema", "j", "interface", "schedule", "pi", "location_map",
+            },
         )
+        if data["schema"] != cls.SCHEMA:
+            raise SchemaError(
+                f"unsupported Gate1 artifact schema {data['schema']!r}; "
+                f"expected {cls.SCHEMA!r}"
+            )
         provenance = data.get("provenance", [])
         if not isinstance(provenance, list):
             raise SchemaError("Gate1Artifact.provenance must be an array")
+        try:
+            pi = RealizationWitness.from_json(data["pi"])
+        except RealizationWitnessError as exc:
+            raise SchemaError(str(exc)) from exc
         return cls(
             j=SemanticArchive.from_json(data["j"]),
             interface=KernelInterface.from_json(data["interface"]),
             schedule=ScheduleSpec.from_json(data["schedule"]),
-            plan=ReplayPlan.from_json(data["plan"]),
+            pi=pi,
             location_map=LocationMap.from_json(data["location_map"]),
             source=data.get("source"),
             provenance=[ProvenanceRecord.from_json(item) for item in provenance],
-            strategy=StrategySpec.from_json(
-                data.get("strategy", {"bindings": []})
-            ),
-            compose_provenance=data.get("compose_provenance"),
         )
 
     def to_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {
+            "schema": self.SCHEMA,
             "j": self.j.to_json(),
             "interface": self.interface.to_json(),
             "schedule": self.schedule.to_json(),
-            "strategy": self.strategy.to_json(),
-            "plan": self.plan.to_json(),
-            **(
-                {"compose_provenance": copy.deepcopy(self.compose_provenance)}
-                if self.compose_provenance is not None
-                else {}
-            ),
+            "pi": self.pi.to_json(),
             "location_map": self.location_map.to_json(),
             "provenance": [item.to_json() for item in self.provenance],
         }
@@ -3232,70 +2701,25 @@ class Gate1Artifact(StrictJSONMixin):
         return result
 
     def rewriter_view(self, *, masked: bool = False) -> dict[str, Any]:
-        """Return the source-isolated hand-off payload for the replay agent."""
-
         if masked:
             return _masked_rewriter_view(self)
         return _opaque_normal_rewriter_view(self)
-
-    def opaque_plan_view(self, plan: ReplayPlan | None = None) -> dict[str, Any]:
-        """Render a replay plan with deterministic, source-neutral references."""
-
-        aliases, _, _ = _opaque_reference_data(self)
-        selected = self.plan if plan is None else plan
-        return _opaque_plan_json(selected, aliases)
-
-    def opaque_selection_view(
-        self, selection: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Alpha-rename rule-selection trace references like the plan view."""
-
-        aliases, _, _ = _opaque_reference_data(self)
-        return _opaque_selection_json(selection, aliases)
 
 
 def opaque_replay_abi(
     artifact: Gate1Artifact,
 ) -> tuple[str, dict[str, str], dict[str, str]]:
-    """Return deterministic, collision-free aliases for a masked replay ABI.
+    """Return declaration-order aliases used by both replay packets."""
 
-    The masked-J experiment must not expose semantic hints carried by source
-    identifiers such as ``row_sum_kernel`` or ``BLOCK_N``.  The aliases are
-    intentionally derived only from declaration order.  They are never added
-    to the serialized artifact; the replay adapter independently recomputes
-    the same mapping when it restores the generated module before compilation.
-    """
-
-    occupied = {
-        artifact.interface.kernel_id,
-        artifact.interface.function_name,
-        *(parameter.name for parameter in artifact.interface.parameters),
-        *(slot.name for slot in artifact.schedule.slots),
-    }
-
-    def allocate(stem: str) -> str:
-        candidate = stem
-        suffix = 0
-        while candidate in occupied:
-            suffix += 1
-            candidate = f"{stem}_{suffix}"
-        occupied.add(candidate)
-        return candidate
-
-    function_name = allocate("scrc_k0")
+    aliases, _bindings, _order = _opaque_reference_data(artifact)
     parameter_names = {
-        parameter.name: allocate(f"scrc_p{index}")
-        for index, parameter in enumerate(artifact.interface.parameters)
+        parameter.name: aliases[parameter.name]
+        for parameter in artifact.interface.parameters
     }
-    schedule_names: dict[str, str] = {}
-    compiler_index = 0
-    for slot in artifact.schedule.slots:
-        if slot.name in parameter_names:
-            schedule_names[slot.name] = parameter_names[slot.name]
-            continue
-        schedule_names[slot.name] = allocate(f"scrc_c{compiler_index}")
-        compiler_index += 1
-    return function_name, parameter_names, schedule_names
+    schedule_names = {
+        slot.name: aliases[slot.name] for slot in artifact.schedule.slots
+    }
+    return "scrc_k0", parameter_names, schedule_names
 
 
 _OPAQUE_EXPRESSION_RESERVED = frozenset(
@@ -3553,10 +2977,18 @@ def _opaque_reference_data(
             f"j.storage[{index}]",
         )
 
+    runtime_index = 0
+    constexpr_index = 0
     for index, parameter in enumerate(artifact.interface.parameters):
+        if parameter.kind is ParameterKind.CONSTEXPR:
+            stem = f"c{constexpr_index}"
+            constexpr_index += 1
+        else:
+            stem = f"p{runtime_index}"
+            runtime_index += 1
         allocate(
             parameter.name,
-            f"p{index}",
+            stem,
             "interface_parameter",
             f"interface.parameters[{index}]",
         )
@@ -3575,10 +3007,12 @@ def _opaque_reference_data(
                 f"j.intent.tensor_shapes[{tensor_index}][{shape_index}]",
             )
             dimension_index += 1
-    compiler_index = 0
+    compiler_index = constexpr_index
     for index, slot in enumerate(artifact.schedule.slots):
-        stem = f"c{compiler_index}"
-        if slot.name not in aliases:
+        if slot.name in aliases:
+            stem = aliases[slot.name]
+        else:
+            stem = f"c{compiler_index}"
             compiler_index += 1
         allocate(
             slot.name,
@@ -3654,79 +3088,6 @@ def _opaque_intent_op(
     return result
 
 
-def _opaque_plan_json(
-    plan: ReplayPlan, aliases: dict[str, str]
-) -> dict[str, Any]:
-    return {
-        "steps": [
-            {
-                "rule": step.rule,
-                **(
-                    {"node_ref": _opaque_reference(step.node_ref, aliases)}
-                    if step.node_ref is not None
-                    else {}
-                ),
-                **(
-                    {
-                        "refs": [
-                            _opaque_reference(ref, aliases) for ref in step.refs
-                        ]
-                    }
-                    if step.refs
-                    else {}
-                ),
-            }
-            for step in plan.steps
-        ]
-    }
-
-
-def _strategy_rewriter_json(
-    strategy: StrategySpec,
-    opaque_reference: Callable[[str], str],
-) -> dict[str, Any]:
-    """Expose source decisions while alpha-renaming every referenced handle."""
-
-    bindings: list[dict[str, Any]] = []
-    for binding in strategy.bindings:
-        item = {
-            "target_ref": opaque_reference(binding.target_ref),
-            "family": binding.family.value,
-            "choice": binding.choice.value,
-        }
-        if binding.tile_slot is not None:
-            item["tile_slot"] = opaque_reference(binding.tile_slot)
-        if binding.accumulator_dtype is not None:
-            item["accumulator_dtype"] = binding.accumulator_dtype
-        if binding.predicate_access_ref is not None:
-            item["predicate_access_ref"] = opaque_reference(
-                binding.predicate_access_ref
-            )
-        if binding.placement_node_ref is not None:
-            item["placement_node_ref"] = opaque_reference(
-                binding.placement_node_ref
-            )
-        if binding.placement_operand_slots is not None:
-            item["placement_operand_slots"] = list(
-                binding.placement_operand_slots
-            )
-        bindings.append(item)
-    return {
-        "bindings": sorted(
-            bindings,
-            key=lambda item: (
-                item["target_ref"],
-                item["family"],
-                item["choice"],
-                item.get("tile_slot", ""),
-                item.get("accumulator_dtype", ""),
-                item.get("predicate_access_ref", ""),
-                item.get("placement_node_ref", ""),
-                tuple(item.get("placement_operand_slots", ())),
-            ),
-        )
-    }
-
 
 def _opaque_scope_json(
     scope: PortableScope, aliases: dict[str, str]
@@ -3770,27 +3131,57 @@ def _opaque_storage_json(
     }
 
 
-def _opaque_selection_json(
-    selection: list[dict[str, Any]], aliases: dict[str, str]
-) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for item in selection:
-        opaque = copy.deepcopy(item)
-        for key in ("target_ref", "node_ref"):
-            if key in opaque:
-                opaque[key] = _opaque_reference(opaque[key], aliases)
-        if "refs" in opaque:
-            opaque["refs"] = [
-                _opaque_reference(ref, aliases) for ref in opaque["refs"]
-            ]
-        result.append(opaque)
+def _opaque_pi_json(
+    witness: RealizationWitness, aliases: dict[str, str]
+) -> dict[str, Any]:
+    """Alpha-rename only pi's opaque J/C references; topology is unchanged."""
+
+    result = witness.to_json()
+    for instance in result["instances"]:
+        instance["semantic_ref"] = _opaque_reference(
+            instance["semantic_ref"], aliases
+        )
     return result
+
+
+def _opaque_harness_view(
+    artifact: Gate1Artifact, aliases: dict[str, str]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Expose positional invocation shape without source spellings or C values."""
+
+    interface = artifact.interface.rewriter_view()
+    interface["kernel_id"] = "scrc_k0"
+    interface["function_name"] = "scrc_k0"
+    for parameter in interface["parameters"]:
+        original = parameter["name"]
+        parameter["name"] = _opaque_reference(original, aliases)
+        if parameter.get("tensor_ref") is not None:
+            parameter["tensor_ref"] = _opaque_reference(
+                parameter["tensor_ref"], aliases
+            )
+        if parameter.get("alias_of") is not None:
+            parameter["alias_of"] = _opaque_reference(
+                parameter["alias_of"], aliases
+            )
+    interface["grid"] = [
+        _rename_identifier_tokens(expression, aliases)
+        for expression in interface["grid"]
+    ]
+    interface["compiler_slots"] = [
+        _opaque_reference(name, aliases)
+        for name in interface["compiler_slots"]
+    ]
+
+    schedule = artifact.schedule.rewriter_view()
+    for slot in schedule["slots"]:
+        slot["name"] = _opaque_reference(slot["name"], aliases)
+    return interface, schedule
 
 
 def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     """Preserve J/B semantics while removing source-derived identifier hints."""
 
-    aliases, bindings, _ = _opaque_reference_data(artifact)
+    aliases, _bindings, _ = _opaque_reference_data(artifact)
     intent = artifact.j.intent.to_json()["intent_function"]
     opaque_intent = {
         "intent_function": {
@@ -3817,7 +3208,6 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for tensor in artifact.j.intent.outputs
             ],
-            "layer_c": {},
             "body": [
                 _opaque_intent_op(op, aliases) for op in intent.get("body", [])
             ],
@@ -3935,12 +3325,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         ],
     }
 
-    interface = artifact.interface.rewriter_view()
-    for parameter in interface["parameters"]:
-        if parameter.get("tensor_ref") is not None:
-            parameter["tensor_ref"] = _opaque_reference(
-                parameter["tensor_ref"], aliases
-            )
+    interface, schedule = _opaque_harness_view(artifact, aliases)
 
     return {
         "j": {
@@ -3961,14 +3346,8 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             ],
         },
         "interface": interface,
-        "schedule": artifact.schedule.rewriter_view(),
-        "strategy": _strategy_rewriter_json(
-            artifact.strategy,
-            lambda ref: _opaque_reference(ref, aliases),
-        ),
-        "plan": _opaque_plan_json(artifact.plan, aliases),
-        "reference_naming": "opaque_replay_refs_v1",
-        "reference_bindings": bindings,
+        "schedule": schedule,
+        "pi": _opaque_pi_json(artifact.pi, aliases),
     }
 
 
@@ -4082,7 +3461,6 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for tensor in artifact.j.intent.outputs
             ],
-            "layer_c": {},
             "body": mask_ops(artifact.j.intent.body, "body"),
         }
     }
@@ -4164,40 +3542,12 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         ],
     }
 
-    masked_parameters = []
-    for parameter in artifact.interface.parameters:
-        item = parameter.to_json()
-        item["name"] = parameter_map[parameter.name]
-        if parameter.tensor_ref is not None:
-            item["tensor_ref"] = opaque_reference(parameter.tensor_ref)
-        if parameter.alias_of is not None:
-            item["alias_of"] = parameter_map[parameter.alias_of]
-        masked_parameters.append(item)
-
-    # ABI/C declaration *structure* remains visible, while all source spellings
-    # are alpha-renamed.  The replay adapter restores the names deterministically
-    # before compiling with the exact same CompileCase.
-    masked_schedule = artifact.schedule.rewriter_view()
-    for slot in masked_schedule["slots"]:
-        slot["name"] = schedule_map[slot["name"]]
-    masked_plan = {
-        "steps": [
-            {
-                "rule": step.rule,
-                **(
-                    {"node_ref": opaque_reference(step.node_ref)}
-                    if step.node_ref is not None
-                    else {}
-                ),
-                **(
-                    {"refs": [opaque_reference(ref) for ref in step.refs]}
-                    if step.refs
-                    else {}
-                ),
-            }
-            for step in artifact.plan.steps
-        ]
-    }
+    # The anti-leakage arm masks J only.  Its pi, C declaration and public
+    # frontend/harness context are byte-identical to the normal replay packet.
+    normal_aliases, _bindings, _order = _opaque_reference_data(artifact)
+    opaque_interface, opaque_schedule = _opaque_harness_view(
+        artifact, normal_aliases
+    )
     return {
         "j": {
             "kernel_id": opaque_function,
@@ -4244,25 +3594,9 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 for item in artifact.j.storage
             ],
         },
-        "interface": {
-            "kernel_id": opaque_function,
-            "function_name": opaque_function,
-            "frontend": artifact.interface.frontend.value,
-            "parameters": masked_parameters,
-            "grid": [
-                _rename_identifier_tokens(expression, abi_map)
-                for expression in artifact.interface.grid
-            ],
-            "compiler_slots": [
-                schedule_map[name] for name in artifact.interface.compiler_slots
-            ],
-        },
-        "schedule": masked_schedule,
-        "strategy": _strategy_rewriter_json(
-            artifact.strategy,
-            opaque_reference,
-        ),
-        "plan": masked_plan,
+        "interface": opaque_interface,
+        "schedule": opaque_schedule,
+        "pi": _opaque_pi_json(artifact.pi, normal_aliases),
     }
 
 
@@ -4273,10 +3607,9 @@ __all__ = [
     "KernelParameter", "LocationEntry", "LocationMap", "OutputMapping",
     "opaque_replay_abi",
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
-    "PortableScope", "ReductionBoundary", "ReplayPlan", "ReplayStep",
+    "PortableScope", "RealizationWitness", "ReductionBoundary",
     "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec",
     "SchemaError", "ScopeKind", "SemanticArchive", "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
-    "StrategyBinding", "StrategyChoice", "StrategyFamily", "StrategySpec",
     "StrictJSONMixin",
 ]

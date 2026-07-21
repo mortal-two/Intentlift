@@ -18,12 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "reduction_tiling": {
-        "flattened_tile": "BLOCK_SIZE",
-        "partial_reduction": "MID_SIZE"
-      }
-    },
     "body": [
       {
         "op": "map_binary",

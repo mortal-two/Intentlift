@@ -33,11 +33,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "N": "BLOCK_SIZE"
-      }
-    },
     "body": [
       {
         "op": "map_binary",

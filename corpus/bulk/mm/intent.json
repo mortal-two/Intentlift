@@ -29,17 +29,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_M",
-        "N": "BLOCK_N",
-        "K": "BLOCK_K"
-      },
-      "grouping": {
-        "M": "GROUP_M"
-      },
-      "accumulator_dtype": "f32"
-    },
     "body": [
       {
         "op": "contraction",

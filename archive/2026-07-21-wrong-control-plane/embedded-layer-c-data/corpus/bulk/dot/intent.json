@@ -1,0 +1,47 @@
+{
+  "intent_function": {
+    "name": "dot",
+    "inputs": [
+      {
+        "name": "a",
+        "dtype": "f32",
+        "shape": [
+          "K"
+        ]
+      },
+      {
+        "name": "b",
+        "dtype": "f32",
+        "shape": [
+          "K"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "K": "BLOCK_SIZE"
+      },
+      "reduction_strategy": "single_or_two_stage"
+    },
+    "body": [
+      {
+        "op": "contraction",
+        "result": "out",
+        "operands": [
+          "a",
+          "b"
+        ],
+        "attrs": {
+          "subscripts": "k,k->"
+        }
+      }
+    ]
+  }
+}

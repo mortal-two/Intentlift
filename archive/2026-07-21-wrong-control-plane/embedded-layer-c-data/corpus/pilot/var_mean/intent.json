@@ -1,0 +1,158 @@
+{
+  "intent_function": {
+    "name": "var_mean",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Var",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "N": "BLOCK_N"
+      }
+    },
+    "body": [
+      {
+        "op": "reduce",
+        "result": "mean",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "diff",
+        "operands": [
+          "X",
+          "mean"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "sq",
+        "operands": [
+          "diff",
+          "diff"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "sum_sq",
+        "operands": [
+          "sq"
+        ],
+        "attrs": {
+          "fn": "sum",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "const",
+        "result": "zero",
+        "attrs": {
+          "value": 0.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "const",
+        "result": "one",
+        "attrs": {
+          "value": 1.0,
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "zeros_like_X",
+        "operands": [
+          "X",
+          "zero"
+        ],
+        "attrs": {
+          "fn": "mul"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "ones_like_X",
+        "operands": [
+          "zeros_like_X",
+          "one"
+        ],
+        "attrs": {
+          "fn": "add"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "count",
+        "operands": [
+          "ones_like_X"
+        ],
+        "attrs": {
+          "fn": "sum",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "associative"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "denom",
+        "operands": [
+          "count",
+          "one"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Var",
+        "operands": [
+          "sum_sq",
+          "denom"
+        ],
+        "attrs": {
+          "fn": "div"
+        }
+      }
+    ]
+  }
+}

@@ -12,12 +12,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "rows": 32,
-        "cols": 32
-      }
-    },
     "body": [
       {
         "op": "const",

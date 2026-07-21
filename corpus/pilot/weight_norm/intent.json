@@ -37,12 +37,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_ROW_SIZE",
-        "N": "BLOCK_COL_SIZE"
-      }
-    },
     "body": [
       {
         "op": "const",

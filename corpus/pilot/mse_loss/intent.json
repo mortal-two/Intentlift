@@ -26,12 +26,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "tile": {
-        "num_elements": "BLOCK_SIZE"
-      },
-      "two_stage_reduction": true
-    },
     "body": [
       {
         "op": "map_binary",

@@ -1,0 +1,103 @@
+{
+  "intent_function": {
+    "name": "log_softmax",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Y",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "M": "BLOCK_M",
+        "N": "BLOCK_N"
+      }
+    },
+    "body": [
+      {
+        "op": "reduce",
+        "result": "m",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "max",
+          "axes": [
+            1
+          ],
+          "assoc": "associative"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "X_shift",
+        "operands": [
+          "X",
+          "m"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "E",
+        "operands": [
+          "X_shift"
+        ],
+        "attrs": {
+          "fn": "exp"
+        }
+      },
+      {
+        "op": "reduce",
+        "result": "z",
+        "operands": [
+          "E"
+        ],
+        "attrs": {
+          "fn": "sum",
+          "axes": [
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      },
+      {
+        "op": "map_unary",
+        "result": "log_z",
+        "operands": [
+          "z"
+        ],
+        "attrs": {
+          "fn": "log"
+        }
+      },
+      {
+        "op": "map_binary",
+        "result": "Y",
+        "operands": [
+          "X_shift",
+          "log_z"
+        ],
+        "attrs": {
+          "fn": "sub"
+        }
+      }
+    ]
+  }
+}

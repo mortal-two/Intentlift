@@ -11,12 +11,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "N": "BLOCK_SIZE"
-      },
-      "BLOCK_SIZE": 128
-    },
     "body": [
       {
         "op": "const",

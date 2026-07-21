@@ -18,9 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "reduction_strategy": "two_stage_block_reduction"
-    },
     "body": [
       {
         "op": "reduce",

@@ -1,0 +1,56 @@
+{
+  "intent_function": {
+    "name": "matmul",
+    "inputs": [
+      {
+        "name": "A",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "K"
+        ]
+      },
+      {
+        "name": "B",
+        "dtype": "f32",
+        "shape": [
+          "K",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "C",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "layer_c": {
+      "tile": {
+        "M": "BLOCK_M",
+        "N": "BLOCK_N",
+        "K": "BLOCK_K"
+      },
+      "group": {
+        "M": "GROUP_M"
+      }
+    },
+    "body": [
+      {
+        "op": "contraction",
+        "result": "C",
+        "operands": [
+          "A",
+          "B"
+        ],
+        "attrs": {
+          "subscripts": "mk,kn->mn"
+        }
+      }
+    ]
+  }
+}

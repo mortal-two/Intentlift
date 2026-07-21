@@ -1,12 +1,10 @@
-"""Responses JSON Schema for the source-visible SCRC lift artifact.
+"""Responses schema for the LLM-direct ``J + pure C + pi`` Lift result.
 
 The local :class:`Gate1Artifact` parser remains authoritative.  This schema is
 the wire contract given to the model so closed Gate1 objects do not drift into
-invented field names.  IntentIR operation payloads retain extensible
-``attrs``/``layer_b`` vocabularies, while semantic loop state is closed because
-it crosses region boundaries.  ``J.intent.layer_c`` is forced empty because
-SCRC stores concrete C only outside J.  The Responses format is non-strict and
-the project parser performs the final cross-field validation.
+invented field names.  The model, rather than a construction engine, produces
+the complete realization witness.  The project parser performs final
+cross-field and opaque-reference validation.
 """
 
 from __future__ import annotations
@@ -53,12 +51,6 @@ _PORTABLE_PREDICATE_STRING = {
 }
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
-_REDUCTION_ACCUMULATOR_DTYPE = {
-    "type": "string",
-    "enum": [
-        "f16", "bf16", "f32", "f64", "i1", "i8", "i16", "i32", "i64",
-    ],
-}
 _LOOP_INIT_VALUE = {
     "anyOf": [
         _STRING,
@@ -150,7 +142,6 @@ def _intent_schema() -> dict[str, Any]:
             "name": _STRING,
             "inputs": _array(_tensor_schema()),
             "outputs": _array(_tensor_schema()),
-            "layer_c": {"type": "object", "maxProperties": 0},
             "body": _array({"$ref": "#/$defs/intent_op"}),
         },
         ("name", "inputs", "outputs", "body"),
@@ -317,10 +308,14 @@ def _schedule_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": ["constexpr", "compiler"],
             },
+            "role": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+            },
             "value_type": _STRING,
             "required": {"type": "boolean"},
         },
-        ("name", "kind"),
+        ("name", "kind", "role"),
     )
     return _closed_object(
         {
@@ -331,97 +326,81 @@ def _schedule_schema() -> dict[str, Any]:
     )
 
 
-def _strategy_schema() -> dict[str, Any]:
-    simple_bindings = [
-        ("program_coordinate_width", "wide"),
-        ("address_association", "pointer_staged"),
-        ("mask_materialization", "staged_reuse"),
-        ("reduction_call_shape", "flattened"),
-        (
-            "reduction_preheader_staging",
-            "stage_invariant_access_scaffolding",
-        ),
-        ("reduction_tile_fusion", "shared_producer_outputs"),
-    ]
-    variants = [
-        _closed_object(
-            {
-                "target_ref": _STRING,
-                "family": {"type": "string", "enum": [family]},
-                "choice": {"type": "string", "enum": [choice]},
-            },
-            ("target_ref", "family", "choice"),
-        )
-        for family, choice in simple_bindings
-    ]
-    variants.append(
-        _closed_object(
-            {
-                "target_ref": _STRING,
-                "family": {
-                    "type": "string",
-                    "enum": ["reduction_tiling"],
-                },
-                "choice": {
-                    "type": "string",
-                    "enum": ["multi_tile_accumulate"],
-                },
-                "tile_slot": _STRING,
-                "accumulator_dtype": _REDUCTION_ACCUMULATOR_DTYPE,
-            },
-            (
-                "target_ref",
-                "family",
-                "choice",
-                "tile_slot",
-                "accumulator_dtype",
-            ),
-        )
-    )
-    variants.append(
-        _closed_object(
-            {
-                "target_ref": _STRING,
-                "family": {
-                    "type": "string",
-                    "enum": ["reduction_mask_placement"],
-                },
-                "choice": {
-                    "type": "string",
-                    "enum": ["pre_producer_staged_reuse"],
-                },
-                "predicate_access_ref": _STRING,
-                "placement_node_ref": _STRING,
-                "placement_operand_slots": {
-                    "type": "array",
-                    "items": {"type": "integer", "minimum": 0},
-                    "minItems": 1,
-                    "uniqueItems": True,
-                },
-            },
-            (
-                "target_ref",
-                "family",
-                "choice",
-                "predicate_access_ref",
-                "placement_node_ref",
-                "placement_operand_slots",
-            ),
-        )
-    )
-    binding = {
-        "oneOf": variants
+def _pi_schema() -> dict[str, Any]:
+    opaque_ref = {
+        "type": "string",
+        "pattern": "^(t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+$",
     }
+    region = _closed_object(
+        {
+            "id": {"type": "string", "pattern": "^r[0-9]+$"},
+            "parent": _nullable({"type": "string", "pattern": "^r[0-9]+$"}),
+            "placement": {
+                "type": "string", "enum": ["root", "program", "loop", "branch"],
+            },
+        },
+        ("id", "parent", "placement"),
+    )
+    instance = _closed_object(
+        {
+            "id": {"type": "string", "pattern": "^i[0-9]+$"},
+            "semantic_ref": opaque_ref,
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "mechanism": {
+                "type": "string",
+                "enum": [
+                    "realize", "transfer_direct", "transfer_async",
+                    "update_atomic", "update_privatized", "synchronize",
+                ],
+            },
+        },
+        ("id", "semantic_ref", "region", "mechanism"),
+    )
+    route = _closed_object(
+        {
+            "source": {"type": "string", "pattern": "^i[0-9]+$"},
+            "target": {"type": "string", "pattern": "^i[0-9]+$"},
+            "slots": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 0},
+                "uniqueItems": True,
+            },
+        },
+        ("source", "target", "slots"),
+    )
+    order = _closed_object(
+        {
+            "before": {"type": "string", "pattern": "^i[0-9]+$"},
+            "after": {"type": "string", "pattern": "^i[0-9]+$"},
+        },
+        ("before", "after"),
+    )
+    sharing = _closed_object(
+        {
+            "source": {"type": "string", "pattern": "^i[0-9]+$"},
+            "consumers": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^i[0-9]+$"},
+                "minItems": 1,
+                "uniqueItems": True,
+            },
+        },
+        ("source", "consumers"),
+    )
     return _closed_object(
-        {"bindings": _array(binding)},
-        ("bindings",),
+        {
+            "regions": _array(region),
+            "instances": _array(instance),
+            "routes": _array(route),
+            "order": _array(order),
+            "sharing": _array(sharing),
+        },
+        ("regions", "instances", "routes", "order", "sharing"),
         description=(
-            "Source-specific non-canonical C strategy choices. Absence of a "
-            "target/family binding selects the canonical RuleCard."
+            "Anonymous source-realization topology only. No operator, value, "
+            "predicate, dtype, frontend API, rule identity or source text."
         ),
     )
-
-
 def _portable_scope_schema() -> dict[str, Any]:
     return _closed_object(
         {
@@ -513,12 +492,7 @@ def _location_map_schema() -> dict[str, Any]:
 
 
 def scrc_lift_core_json_schema() -> dict[str, Any]:
-    """Return the source-aware LLM subresponse schema inside Lift.
-
-    This is deliberately not the schema of the completed Lift artifact.  The
-    enclosing Lift operation deterministically materializes pi and compose
-    provenance before returning ``SCRCExtraction.artifact`` to Gate1.
-    """
+    """Return the complete source-aware LLM response schema."""
 
     semantic_archive = _closed_object(
         {
@@ -540,13 +514,17 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
     )
     schema = _closed_object(
         {
+            "schema": {
+                "type": "string",
+                "enum": ["intentir.gate1.llm-direct.v1"],
+            },
             "j": semantic_archive,
             "interface": _interface_schema(),
             "schedule": _schedule_schema(),
-            "strategy": _strategy_schema(),
+            "pi": _pi_schema(),
             "location_map": _location_map_schema(),
         },
-        ("j", "interface", "schedule", "strategy", "location_map"),
+        ("schema", "j", "interface", "schedule", "pi", "location_map"),
     )
     schema["$defs"] = {"intent_op": _intent_op_schema()}
     return copy.deepcopy(schema)
@@ -558,8 +536,8 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
     return {
         "type": "json_schema",
         "name": "scrc_lift_core",
-        # IntentIR keeps op-specific attrs and Layer B JSON open. J.layer_c is
-        # empty; concrete C is carried by the separate schedule object.
+        # IntentIR keeps op-specific attrs and Layer B JSON open. C and pi use
+        # closed, separate top-level schemas.
         "strict": False,
         "schema": scrc_lift_core_json_schema(),
     }

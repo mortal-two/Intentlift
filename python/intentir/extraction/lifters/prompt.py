@@ -10,7 +10,7 @@ from __future__ import annotations
 
 # --- op vocabulary, kept 1:1 with the archived interpreter and intent dialect ---
 SCHEMA = """\
-IntentIR is a three-layer, tensor-level, atomic intermediate representation.
+IntentIR J is a tensor-level, atomic semantic representation.
 You LIFT a kernel into the math it computes over whole tensors -- never threads,
 tiles, pointers, masks, or strides. Re-roll any hand-unrolled / strip-mined loop
 back into a single tensor op or a structured loop.
@@ -19,15 +19,13 @@ Layers:
   A (algorithmic intent): the actual math -- the ops below.
   B (portable correctness, per-op "layer_b"): bounds / masks / reduction
     associativity that must hold for any backend (optional but encouraged).
-  C (non-binding schedule hints, function-level "layer_c"): tile sizes, vector
-    width. Advisory only; never changes semantics.
+  C is a separate non-semantic scheduling object and never appears inside J.
 
 Top-level JSON:
 { "intent_function": {
     "name": <str>,
     "inputs":  [ {"name","dtype","shape":[dims...]}, ... ],
     "outputs": [ {"name","dtype","shape":[dims...]}, ... ],
-    "layer_c": { ... optional ... },
     "body": [ <op>, ... ]
 }}
 - dtype in {f16,bf16,f32,f64,i1,i8,i16,i32,i64}. Scalars have shape [].
@@ -224,7 +222,6 @@ FEWSHOT_JSON = """\
   "name": "l1_normalize",
   "inputs":  [{"name": "X", "dtype": "f32", "shape": ["M", "N"]}],
   "outputs": [{"name": "Y", "dtype": "f32", "shape": ["M", "N"]}],
-  "layer_c": {"tile": {"N": "BLOCK"}},
   "body": [
     {"op": "reduce", "result": "s", "operands": ["X"],
      "attrs": {"fn": "sum", "axes": [1], "assoc": "float_nondeterministic"}},

@@ -8,10 +8,10 @@ Python subset before replay code is handed to the isolated compiler process.
 
 The accepted subset is sufficient for ordinary, self-contained Triton kernels:
 
-* imports are limited to ``triton``, ``triton.language as tl`` and the pure
-  Triton ``libdevice`` namespace when the active RuleRegistry declares calls;
+* imports are limited to ``triton``, ``triton.language as tl`` and a fixed
+  global pure ``libdevice`` namespace policy;
 * every top-level definition is decorated only with ``@triton.jit``;
-* function calls are limited to public ``tl`` functions, RuleRegistry-declared
+* function calls are limited to public ``tl`` functions, globally approved
   pure ``libdevice`` functions, ``range`` and simple scalar constructors (plus
   Triton's tensor ``.to`` conversion);
 * Python facilities that can perform host I/O, reflection, dynamic execution,
@@ -26,10 +26,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Collection, NoReturn
-
-if TYPE_CHECKING:
-    from .rules import RuleRegistry
+from typing import NoReturn
 
 __all__ = [
     "CodeExtractionError",
@@ -76,6 +73,12 @@ _FORBIDDEN_TL_CALLS = {
     "inline_asm_elementwise",
     "extern_elementwise",
 }
+
+# Security policy is global and kernel-independent.  It is deliberately not
+# selected from J, pi, a dataset identity, or a per-operation catalog.
+GLOBAL_LIBDEVICE_CALLS = frozenset(
+    {"cos", "erf", "exp", "log", "pow", "rsqrt", "sin", "sqrt", "tanh"}
+)
 
 # A conservative statement/expression allowlist.  Context and operator marker
 # nodes are included because ``ast.walk`` yields them independently.
@@ -186,7 +189,6 @@ def extract_python_module(
     response: str,
     *,
     required_function: str | None = None,
-    registry: RuleRegistry | None = None,
 ) -> str:
     """Extract and validate a model-generated Triton module."""
 
@@ -194,36 +196,8 @@ def extract_python_module(
     validate_triton_module(
         code,
         required_function=required_function,
-        registry=registry,
     )
     return code
-
-
-def _resolve_libdevice_calls(
-    *,
-    registry: RuleRegistry | None,
-    allowed_libdevice_calls: Collection[str] | None,
-) -> frozenset[str]:
-    if registry is not None and allowed_libdevice_calls is not None:
-        raise ValueError(
-            "pass either registry or allowed_libdevice_calls, not both"
-        )
-    if allowed_libdevice_calls is None:
-        if registry is None:
-            from .rules import default_triton_rule_registry
-
-            registry = default_triton_rule_registry()
-        allowed_libdevice_calls = registry.namespace_calls(
-            "libdevice", frontend="triton"
-        )
-    result: set[str] = set()
-    for name in allowed_libdevice_calls:
-        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z_]\w*", name) is None:
-            raise ValueError(
-                "allowed_libdevice_calls must contain Python identifiers"
-            )
-        result.add(name)
-    return frozenset(result)
 
 
 def _is_name(node: ast.AST, name: str) -> bool:
@@ -496,8 +470,6 @@ def validate_triton_module(
     code: str,
     *,
     required_function: str | None = None,
-    registry: RuleRegistry | None = None,
-    allowed_libdevice_calls: Collection[str] | None = None,
 ) -> ModuleValidation:
     """Validate ``code`` against Gate1's strict Triton replay policy.
 
@@ -506,10 +478,7 @@ def validate_triton_module(
     second parse when they need function metadata.
     """
 
-    reviewed_libdevice_calls = _resolve_libdevice_calls(
-        registry=registry,
-        allowed_libdevice_calls=allowed_libdevice_calls,
-    )
+    reviewed_libdevice_calls = GLOBAL_LIBDEVICE_CALLS
     if not isinstance(code, str) or not code.strip():
         raise UnsafeReplayCodeError("replay module is empty")
     try:

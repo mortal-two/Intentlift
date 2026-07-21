@@ -21,12 +21,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "N": "blockDim.x"
-      },
-      "mapping": "one_block_per_row"
-    },
     "body": [
       {
         "op": "reduce",

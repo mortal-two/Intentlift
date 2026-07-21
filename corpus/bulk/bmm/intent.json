@@ -32,14 +32,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "TILE_M",
-        "N": "TILE_N",
-        "K": "TILE_K"
-      },
-      "group_m": "GROUP_M"
-    },
     "body": [
       {
         "op": "contraction",

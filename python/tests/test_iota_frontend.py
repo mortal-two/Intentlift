@@ -18,7 +18,6 @@ def test_iota_accepts_symbolic_runtime_extent() -> None:
                 "name": "symbolic_iota",
                 "inputs": [],
                 "outputs": [{"name": "Y", "dtype": "i32", "shape": ["N"]}],
-                "layer_c": {},
                 "body": [
                     {
                         "op": "iota",
@@ -48,7 +47,6 @@ def test_symbolic_iota_arange_executes_through_cpu_lowering() -> None:
                     {"name": "step", "dtype": "f32", "shape": []},
                 ],
                 "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
-                "layer_c": {},
                 "body": [
                     {
                         "op": "iota",

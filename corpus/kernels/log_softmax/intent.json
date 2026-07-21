@@ -21,12 +21,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_M",
-        "N": "BLOCK_N"
-      }
-    },
     "body": [
       {
         "op": "reduce",

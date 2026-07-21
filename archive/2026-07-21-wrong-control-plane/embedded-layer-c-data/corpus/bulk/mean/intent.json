@@ -1,0 +1,45 @@
+{
+  "intent_function": {
+    "name": "mean",
+    "inputs": [
+      {
+        "name": "X",
+        "dtype": "f32",
+        "shape": [
+          "M",
+          "N"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "dtype": "f32",
+        "shape": []
+      }
+    ],
+    "layer_c": {
+      "reduction_tiling": {
+        "block_size": "next_power_of_2(ceil(sqrt(M*N)))",
+        "two_stage": true
+      }
+    },
+    "body": [
+      {
+        "op": "reduce",
+        "result": "out",
+        "operands": [
+          "X"
+        ],
+        "attrs": {
+          "fn": "mean",
+          "axes": [
+            0,
+            1
+          ],
+          "assoc": "float_nondeterministic"
+        }
+      }
+    ]
+  }
+}

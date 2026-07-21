@@ -29,13 +29,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "M": "BLOCK_M",
-        "K": "BLOCK_N"
-      },
-      "source_layout_note": "A and B are the first and second halves of input X along the last axis; X has shape [M, N] with N=2*K."
-    },
     "body": [
       {
         "op": "const",

@@ -18,13 +18,6 @@
         "shape": []
       }
     ],
-    "layer_c": {
-      "reduction_strategy": "two_stage_tiled",
-      "tile": {
-        "elements": "BLOCK_SIZE",
-        "mid": "BLOCK_MID"
-      }
-    },
     "body": [
       {
         "op": "const",

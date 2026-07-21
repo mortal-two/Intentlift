@@ -1,91 +1,68 @@
-"""Schema-tolerant queries over accepted Layer-C lowering metadata.
-
-Layer C intentionally permits frontends and the LLM to organize schedule facts
-as a launch object, a named parameter group, or a list of anchored hints.  A
-backend must therefore query a parameter by meaning instead of depending on one
-JSON presentation.  Conflicting values fail closed.
-"""
+"""Strict queries over the one canonical pure-C JSON presentation."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 
 class LayerCResolutionError(ValueError):
-    """Raised when a Layer-C parameter is absent or has conflicting values."""
+    pass
 
 
 @dataclass(frozen=True)
 class ResolvedLayerCScalar:
-    parameter: str
+    role: str
+    slot: str
     value: bool | int | float | str
-    paths: tuple[str, ...]
-
-
-def _is_scalar(value: object) -> bool:
-    return isinstance(value, (bool, int, float, str))
+    path: str
 
 
 def resolve_layer_c_scalar(
-    layer_c: Mapping[str, Any], parameter: str
+    layer_c: Mapping[str, Any], role: str
 ) -> ResolvedLayerCScalar:
-    """Resolve one scalar schedule parameter across equivalent Layer-C layouts."""
+    """Resolve a schedule role from ``{slots, values}``; reject all aliases."""
 
-    if not isinstance(layer_c, Mapping):
-        raise LayerCResolutionError("Layer C must be a JSON object")
-    if not isinstance(parameter, str) or not parameter:
-        raise LayerCResolutionError("Layer-C parameter name must be non-empty")
-    candidates: list[tuple[str, bool | int | float | str]] = []
-
-    def visit(value: object, path: str) -> None:
-        if isinstance(value, Mapping):
-            named_parameter = value.get("parameter")
-            named_value = value.get("value")
-            if named_parameter == parameter and _is_scalar(named_value):
-                candidates.append((f"{path}.value", named_value))
-            for key, child in value.items():
-                child_path = f"{path}.{key}"
-                if key == parameter:
-                    if _is_scalar(child):
-                        candidates.append((child_path, child))
-                    elif isinstance(child, Mapping) and _is_scalar(
-                        child.get("value")
-                    ):
-                        candidates.append((f"{child_path}.value", child["value"]))
-                visit(child, child_path)
-        elif isinstance(value, Sequence) and not isinstance(
-            value, (str, bytes, bytearray)
-        ):
-            for index, child in enumerate(value):
-                visit(child, f"{path}[{index}]")
-
-    visit(layer_c, "$.declared_layer_c")
-    if not candidates:
+    if not isinstance(layer_c, Mapping) or set(layer_c) != {"slots", "values"}:
         raise LayerCResolutionError(
-            f"Layer-C parameter {parameter!r} is absent"
+            "Layer C must be the canonical {slots, values} object"
         )
-    values: dict[str, bool | int | float | str] = {}
-    for _path, value in candidates:
-        values.setdefault(
-            json.dumps(value, sort_keys=True, ensure_ascii=False), value
-        )
-    if len(values) != 1:
-        details = ", ".join(f"{path}={value!r}" for path, value in candidates)
-        raise LayerCResolutionError(
-            f"Layer-C parameter {parameter!r} conflicts: {details}"
-        )
-    return ResolvedLayerCScalar(
-        parameter=parameter,
-        value=next(iter(values.values())),
-        paths=tuple(sorted({path for path, _value in candidates})),
-    )
+    slots = layer_c["slots"]
+    values = layer_c["values"]
+    if not isinstance(slots, list) or not isinstance(values, Mapping):
+        raise LayerCResolutionError("Layer C slots/values have invalid types")
+    if not isinstance(role, str) or not role:
+        raise LayerCResolutionError("Layer-C role must be non-empty")
+    matches: list[str] = []
+    declared: set[str] = set()
+    for index, item in enumerate(slots):
+        if not isinstance(item, Mapping):
+            raise LayerCResolutionError(f"Layer C slot {index} must be an object")
+        if set(item) != {"name", "kind", "role", "value_type", "required"}:
+            raise LayerCResolutionError("Layer C slot uses a non-canonical schema")
+        name = item["name"]
+        if not isinstance(name, str) or not name:
+            raise LayerCResolutionError("Layer C slot name must be non-empty")
+        if name in declared:
+            raise LayerCResolutionError("Layer C slot names must be unique")
+        declared.add(name)
+        if item["role"] == role:
+            matches.append(name)
+    if set(values) - declared:
+        raise LayerCResolutionError("Layer C values contain undeclared slots")
+    if not matches:
+        raise LayerCResolutionError(f"Layer-C role {role!r} is absent")
+    if len(matches) != 1:
+        raise LayerCResolutionError(f"Layer-C role {role!r} is ambiguous")
+    slot = matches[0]
+    if slot not in values:
+        raise LayerCResolutionError(f"Layer-C role {role!r} has no value")
+    value = values[slot]
+    if not isinstance(value, (bool, int, float, str)):
+        raise LayerCResolutionError("Layer-C scalar value is not a JSON scalar")
+    return ResolvedLayerCScalar(role, slot, value, f"$.values.{slot}")
 
 
 __all__ = [
-    "LayerCResolutionError",
-    "ResolvedLayerCScalar",
-    "resolve_layer_c_scalar",
+    "LayerCResolutionError", "ResolvedLayerCScalar", "resolve_layer_c_scalar",
 ]
-

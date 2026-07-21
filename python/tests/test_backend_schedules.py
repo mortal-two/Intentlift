@@ -53,10 +53,22 @@ module {
 """
 
 
+def _pure_c(num_warps: int = 4):
+    return {
+        "slots": [
+            {
+                "name": "c0", "kind": "compiler", "role": "num_warps",
+                "value_type": "int", "required": True,
+            }
+        ],
+        "values": {"c0": num_warps},
+    }
+
+
 def test_small_rmsnorm_preserves_the_measured_preload_policy() -> None:
     decision = resolve_row_schedule(
         _RMSNORM,
-        {"launch": {"num_warps": 4}},
+        _pure_c(),
     )
 
     assert isinstance(decision.schedule, RowSchedule)
@@ -80,7 +92,7 @@ def test_explicit_row_candidate_retains_all_ablation_axes() -> None:
 
     decision = resolve_row_schedule(
         _RMSNORM,
-        {"launch_parameters": {"num_warps": 4}},
+        _pure_c(),
         schedule_override=override,
     )
 
@@ -95,7 +107,7 @@ def test_explicit_row_candidate_retains_all_ablation_axes() -> None:
 def test_large_equal_shape_elementwise_graph_selects_flat_vec4() -> None:
     decision = resolve_elementwise_schedule(
         _FLAT_ELEMENTWISE,
-        {"launch": {"num_warps": 4}},
+        _pure_c(),
     )
 
     assert decision.schedule == ElementwiseSchedule(128, True, 4)
@@ -106,7 +118,7 @@ def test_large_equal_shape_elementwise_graph_selects_flat_vec4() -> None:
 def test_broadcast_elementwise_graph_remains_on_the_row_path() -> None:
     decision = resolve_elementwise_schedule(
         _BROADCAST_ELEMENTWISE,
-        {"launch": {"num_warps": 4}},
+        _pure_c(),
     )
 
     assert decision.schedule == ElementwiseSchedule(128, False, 1)
@@ -117,7 +129,7 @@ def test_flat_override_must_be_structurally_eligible() -> None:
     with pytest.raises(ValueError, match="structurally eligible"):
         resolve_elementwise_schedule(
             _BROADCAST_ELEMENTWISE,
-            {"launch": {"num_warps": 4}},
+            _pure_c(),
             schedule_override=ElementwiseSchedule(256, True, 2),
         )
 

@@ -19,7 +19,6 @@ def _loop_archive() -> dict:
                 "name": "semantic_scan",
                 "inputs": [{"name": "x", "dtype": "f32", "shape": ["N"]}],
                 "outputs": [{"name": "y", "dtype": "f32", "shape": []}],
-                "layer_c": {},
                 "body": [
                     {
                         "op": "loop",
@@ -353,6 +352,7 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
     archive = SemanticArchive.from_json(_loop_archive_with_store_effect())
     artifact = Gate1Artifact.from_json(
         {
+            "schema": Gate1Artifact.SCHEMA,
             "j": archive.to_json(),
             "interface": {
                 "kernel_id": "semantic_scan",
@@ -380,11 +380,29 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                 "compiler_slots": [],
             },
             "schedule": {"slots": [], "values": {}},
-            "plan": {
-                "steps": [
-                    {"rule": "realize_loop_carry", "node_ref": "n0"},
-                    {"rule": "realize_elementwise", "node_ref": "n1"},
-                ]
+            "pi": {
+                "regions": [
+                    {"id": "r0", "parent": None, "placement": "root"}
+                ],
+                "instances": [
+                    {
+                        "id": "i0",
+                        "semantic_ref": "n0",
+                        "region": "r0",
+                        "mechanism": "realize",
+                    },
+                    {
+                        "id": "i1",
+                        "semantic_ref": "n1",
+                        "region": "r0",
+                        "mechanism": "realize",
+                    },
+                ],
+                "routes": [
+                    {"source": "i0", "target": "i1", "slots": [0]}
+                ],
+                "order": [{"before": "i0", "after": "i1"}],
+                "sharing": [],
             },
             "location_map": {
                 "source_name": "private.py",
@@ -418,7 +436,6 @@ def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
                 "name": "aliased_destination",
                 "inputs": [{"name": "x", "dtype": "f32", "shape": ["N"]}],
                 "outputs": [{"name": "y", "dtype": "f32", "shape": ["N"]}],
-                "layer_c": {},
                 "body": [
                     {
                         "op": "cast",

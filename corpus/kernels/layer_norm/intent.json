@@ -56,11 +56,6 @@
         ]
       }
     ],
-    "layer_c": {
-      "tile": {
-        "N": "BLOCK_SIZE"
-      }
-    },
     "body": [
       {
         "op": "reduce",

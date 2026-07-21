@@ -1,8 +1,8 @@
 """Manifest for one kernel's conservative and specialized CUDA variants.
 
 The manifest is the boundary between offline materialization/tuning and the
-production host dispatcher.  Every variant keeps the same logical ABI and
-binding A/B program, while schedule choices, device ABI mapping, prelaunch
+production host dispatcher.  Every variant keeps the same positional harness
+binding and J, while schedule choices, device ABI mapping, prelaunch
 steps, and compiled artifacts may differ.  Exactly one conservative fallback
 is mandatory in the same bundle.
 """
@@ -13,8 +13,6 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
-
-from intentir.ir.abi import LogicalArgument
 
 from .runtime_contract import RuntimeContract
 
@@ -74,6 +72,26 @@ def _schedule(value: Mapping[str, Any]) -> dict[str, bool | int | float | str]:
             )
         result[name] = item
     return result
+
+
+@dataclass(frozen=True)
+class InvocationSlot:
+    """Thin opaque harness name in positional order; carries no semantics."""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "name", _identifier(self.name, field_name="invocation slot")
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {"name": self.name}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "InvocationSlot":
+        _strict_keys(value, required={"name"}, context="invocation slot")
+        return cls(value["name"])
 
 
 @dataclass(frozen=True)
@@ -374,26 +392,35 @@ class VariantRecord:
 class VariantManifest:
     kernel_id: str
     case_id: str
-    binding_program_id: str
-    logical_abi: tuple[LogicalArgument, ...]
+    harness_binding_id: str
+    invocation_slots: tuple[InvocationSlot, ...]
     variants: tuple[VariantRecord, ...]
     pre_tuned_order: tuple[str, ...]
     seed_variant_id: str
-    schema_version: str = "intentir.backend.variant-manifest.v1"
+    schema_version: str = "intentir.backend.variant-manifest.v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "intentir.backend.variant-manifest.v1":
+        if self.schema_version != "intentir.backend.variant-manifest.v2":
             raise VariantManifestError(
                 f"unsupported variant manifest schema {self.schema_version!r}"
             )
         object.__setattr__(self, "kernel_id", _identifier(self.kernel_id, field_name="kernel_id"))
         object.__setattr__(self, "case_id", _identifier(self.case_id, field_name="case_id"))
-        object.__setattr__(self, "binding_program_id", _identifier(self.binding_program_id, field_name="binding_program_id"))
-        if not self.logical_abi:
-            raise VariantManifestError("logical_abi must not be empty")
-        argument_names = [argument.name for argument in self.logical_abi]
+        object.__setattr__(
+            self,
+            "harness_binding_id",
+            _identifier(self.harness_binding_id, field_name="harness_binding_id"),
+        )
+        slots = tuple(
+            item if isinstance(item, InvocationSlot) else InvocationSlot.from_dict(item)
+            for item in self.invocation_slots
+        )
+        object.__setattr__(self, "invocation_slots", slots)
+        if not slots:
+            raise VariantManifestError("invocation_slots must not be empty")
+        argument_names = [argument.name for argument in slots]
         if len(set(argument_names)) != len(argument_names):
-            raise VariantManifestError("logical ABI argument names must be unique")
+            raise VariantManifestError("invocation slot names must be unique")
         if len(self.variants) < 2:
             raise VariantManifestError(
                 "variant bundle requires fallback plus specialized variant"
@@ -463,8 +490,8 @@ class VariantManifest:
             "schema_version": self.schema_version,
             "kernel_id": self.kernel_id,
             "case_id": self.case_id,
-            "binding_program_id": self.binding_program_id,
-            "logical_abi": [argument.to_dict() for argument in self.logical_abi],
+            "harness_binding_id": self.harness_binding_id,
+            "invocation_slots": [item.to_dict() for item in self.invocation_slots],
             "variants": [variant.to_dict() for variant in self.variants],
             "pre_tuned_order": list(self.pre_tuned_order),
             "seed_variant_id": self.seed_variant_id,
@@ -483,8 +510,8 @@ class VariantManifest:
                 "schema_version",
                 "kernel_id",
                 "case_id",
-                "binding_program_id",
-                "logical_abi",
+                "harness_binding_id",
+                "invocation_slots",
                 "variants",
                 "pre_tuned_order",
                 "seed_variant_id",
@@ -495,8 +522,10 @@ class VariantManifest:
             schema_version=value["schema_version"],
             kernel_id=value["kernel_id"],
             case_id=value["case_id"],
-            binding_program_id=value["binding_program_id"],
-            logical_abi=tuple(LogicalArgument.from_dict(item) for item in value["logical_abi"]),
+            harness_binding_id=value["harness_binding_id"],
+            invocation_slots=tuple(
+                InvocationSlot.from_dict(item) for item in value["invocation_slots"]
+            ),
             variants=tuple(VariantRecord.from_dict(item) for item in value["variants"]),
             pre_tuned_order=tuple(value["pre_tuned_order"]),
             seed_variant_id=value["seed_variant_id"],
@@ -517,6 +546,7 @@ __all__ = [
     "ArtifactProvenance",
     "DeviceLaunchStep",
     "ExecutableLaunchPlan",
+    "InvocationSlot",
     "VariantManifest",
     "VariantManifestError",
     "VariantRecord",

@@ -1,15 +1,9 @@
-"""Typed ``IntentProgram`` lowering boundary for the CUDA backend.
-
-This module is intentionally Gate-agnostic.  It consumes only canonical
-Layer-A values, typed Layer-B obligations, the logical ABI and replaceable
-Layer-C hints carried by :class:`~intentir.ir.program.IntentProgram`.
-Unsupported correctness obligations stop the request before MLIR emission or
-CUDA compilation.
-"""
+"""Fail-closed canonical-J lowering boundary for the CUDA backend."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -20,30 +14,15 @@ from intentir.backend.protocol import (
     LoweringRequest,
 )
 from intentir.frontend import emit_module
-from intentir.ir.contracts import (
-    AccessContract,
-    AccessMode,
-    AliasRelation,
-    ConflictKind,
-    DestinationBinding,
-    EffectMode,
-    IndexRole,
-    ObligationLedger,
-    ObligationResult,
-    ObligationStatus,
-    ScopeKind,
-    StorageMutability,
-    WriteCoverage,
-)
 from intentir.ir.model import IntentOp
-from intentir.ir.program import IntentProgram
+from intentir.verify.gate1.model import SemanticArchive
 
 from .pipeline import LoweredProgram, lower_to_cuda
 from .selection import LoweringTarget
 
 
-class CudaProgramLoweringError(ValueError):
-    """A typed program cannot be consumed losslessly by the CUDA backend."""
+class CudaJLoweringError(ValueError):
+    pass
 
 
 def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
@@ -54,366 +33,178 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
-def _result_names(op: IntentOp) -> tuple[str, ...]:
-    if isinstance(op.result, str):
-        return (op.result,)
-    if isinstance(op.result, list) and all(isinstance(item, str) for item in op.result):
-        return tuple(op.result)
-    return ()
+def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
+    by_path: dict[str, IntentOp] = {}
+
+    def visit(body: Sequence[IntentOp], prefix: str = "body") -> None:
+        for index, op in enumerate(body):
+            path = f"{prefix}[{index}]"
+            by_path[path] = op
+            visit(op.body, f"{path}.body")
+
+    visit(j.intent.body)
+    result = dict(by_path)
+    for node_id, path in j.node_ids.items():
+        if path in by_path:
+            result[node_id] = by_path[path]
+    return result
 
 
-def _unsupported_results(program: IntentProgram) -> dict[str, ObligationResult]:
-    return {
-        item.obligation_id: ObligationResult(
-            item.obligation_id,
-            ObligationStatus.UNSUPPORTED,
-            f"CUDA has no reviewed consumer for {item.capability}",
-        )
-        for item in program.obligations
-    }
-
-
-def _set_result(
-    results: dict[str, ObligationResult],
-    obligation_id: str,
-    status: ObligationStatus,
-    detail: str,
-) -> None:
-    if obligation_id not in results:
-        raise CudaProgramLoweringError(
-            f"CUDA analyzer produced an undeclared obligation {obligation_id!r}"
-        )
-    results[obligation_id] = ObligationResult(obligation_id, status, detail)
-
-
-def _unique_writer_proof(
-    program: IntentProgram,
-    destination: DestinationBinding,
-    *,
-    accesses: Mapping[str, AccessContract],
-    ops: Sequence[IntentOp],
-) -> bool:
-    """Prove a conservative functional unique-writer realization.
-
-    ``unknown`` is never treated as a default no-conflict declaration.  A
-    future implementation may prove injective writes from a typed logical
-    index map, but the current contract does not expose enough information to
-    do so.  Keep this helper deliberately conservative until that proof exists.
-    """
-
-    del program, destination, accesses, ops
-    return False
-
-
-def analyze_program_for_cuda(program: IntentProgram) -> ObligationLedger:
-    """Return a complete, fail-closed CUDA disposition for every B obligation."""
-
-    if not isinstance(program, IntentProgram):
-        raise CudaProgramLoweringError("CUDA analysis requires IntentProgram")
-    results = _unsupported_results(program)
-    function = program.function
-    ops = _walk_ops(function.body)
-    flat = len(ops) == len(function.body) and all(op.op != "loop" for op in ops)
-    node_by_id = {
-        op.node_id: op for op in ops if op.node_id is not None
-    }
-    values = {item.name for item in [*function.inputs, *function.outputs]}
-    for op in ops:
-        values.update(_result_names(op))
-    tensor_names = {item.name for item in [*function.inputs, *function.outputs]}
-    access_by_id = {
-        item.contract_id: item for item in program.boundary.accesses
-    }
-
-    for item in program.boundary.accesses:
-        supported = (
-            flat
-            and item.mode in {AccessMode.READ, AccessMode.WRITE}
-            and item.index_role is IndexRole.REALIZATION_ONLY
-            and item.tensor in tensor_names
-            and (item.node_ref is None or item.node_ref in node_by_id)
-        )
-        if supported:
-            _set_result(
-                results,
-                f"{item.contract_id}:access",
-                ObligationStatus.CHECKED,
-                "functional tensor lowering realizes the declared logical read/write",
-            )
-            _set_result(
-                results,
-                f"{item.contract_id}:index_role",
-                ObligationStatus.CHECKED,
-                "source address arithmetic is realization-only and is replaced by bounded tensor indexing",
-            )
-
-    for item in program.boundary.broadcasts:
-        op = node_by_id.get(item.node_ref)
-        if (
-            flat
-            and op is not None
-            and isinstance(op.result, str)
-            and item.operand in op.operands
-            and all(isinstance(axis, int) for axis in item.inserted_semantic_axes)
-        ):
-            _set_result(
-                results,
-                f"{item.contract_id}:projection",
-                ObligationStatus.CONSUMED,
-                "translated to the emitter's explicit operand-to-result broadcast projection",
-            )
-
-    logical_arguments = {item.name: item for item in program.interface.arguments}
-    return_values = {item.output: item.value for item in function.returns}
-    destinations_by_output: dict[str, int] = {}
-    for item in program.boundary.destinations:
-        destinations_by_output[item.output] = destinations_by_output.get(item.output, 0) + 1
-        access = access_by_id.get(item.access_ref)
-        argument = logical_arguments.get(item.destination)
-        binding_ok = (
-            flat
-            and destinations_by_output[item.output] == 1
-            and return_values.get(item.output) == item.value
-            and argument is not None
-            and argument.role in {"output", "inout"}
-            and argument.tensor_ref == item.output
-            and access is not None
-            and access.mode is AccessMode.WRITE
-            and access.tensor == item.output
-        )
-        if binding_ok:
-            _set_result(
-                results,
-                f"{item.contract_id}:binding",
-                ObligationStatus.CONSUMED,
-                "logical return is bound to the declared caller destination",
-            )
-            coverage_ok = item.coverage is WriteCoverage.FULL
-            if coverage_ok:
-                _set_result(
-                    results,
-                    f"{item.contract_id}:coverage",
-                    ObligationStatus.CHECKED,
-                    "bounded tensor result covers every logical output element exactly once",
-                )
-            conflict_ok = item.conflict is ConflictKind.UNIQUE_WRITER
-            conflict_detail = "explicit unique-writer contract"
-            if item.conflict is ConflictKind.UNKNOWN:
-                conflict_ok = _unique_writer_proof(
-                    program, item, accesses=access_by_id, ops=ops
-                )
-                conflict_detail = "proved injective write map and alias safety"
-            if conflict_ok:
-                _set_result(
-                    results,
-                    f"{item.contract_id}:conflict",
-                    ObligationStatus.CHECKED,
-                    conflict_detail,
-                )
-
-    for item in program.boundary.aliases:
-        if item.relation is AliasRelation.NO_ALIAS and flat:
-            _set_result(
-                results,
-                f"{item.contract_id}:relation",
-                ObligationStatus.CHECKED,
-                "functional result allocation preserves the declared no-alias relation",
-            )
-
-    access_effect_modes = {
-        AccessMode.READ: EffectMode.READ,
-        AccessMode.WRITE: EffectMode.WRITE,
-    }
-    for item in program.boundary.effects:
-        access = access_by_id.get(item.access_ref)
-        if (
-            flat
-            and access is not None
-            and access_effect_modes.get(access.mode) is item.mode
-            and access.tensor == item.target
-            and item.node_ref == access.node_ref
-        ):
-            _set_result(
-                results,
-                f"{item.contract_id}:effect",
-                ObligationStatus.CHECKED,
-                "functional tensor use agrees with the declared read/write effect",
-            )
-    effect_ids = {item.contract_id for item in program.boundary.effects}
-    expected_definitions = {
-        item.name for item in function.inputs
-    } | {
-        name for op in ops for name in _result_names(op)
-    }
-    scope_by_id = {item.contract_id: item for item in program.boundary.scopes}
-    for item in program.boundary.scopes:
-        if (
-            flat
-            and item.kind is ScopeKind.FUNCTION
-            and item.parent is None
-            and not item.captures
-            and set(item.definitions) == expected_definitions
-            and set(item.effects) == effect_ids
-        ):
-            _set_result(
-                results,
-                f"{item.contract_id}:scope",
-                ObligationStatus.CHECKED,
-                "single functional scope has closed definitions and effects",
-            )
-
-    for item in program.boundary.storage:
-        scope = scope_by_id.get(item.scope_ref)
-        lifetime_ok = (
-            flat
-            and scope is not None
-            and scope.kind is ScopeKind.FUNCTION
-            and set(item.members) <= values
-            and not item.crosses_iteration
-            and item.init_event == f"scope_entry:{item.scope_ref}"
-            and item.last_use_event == f"scope_exit:{item.scope_ref}"
-        )
-        if lifetime_ok:
-            _set_result(
-                results,
-                f"{item.contract_id}:lifetime",
-                ObligationStatus.CHECKED,
-                "storage lifetime is exactly the emitted functional invocation",
-            )
-            if item.mutability in {
-                StorageMutability.IMMUTABLE,
-                StorageMutability.WRITE_ONCE,
-            }:
-                _set_result(
-                    results,
-                    f"{item.contract_id}:mutability",
-                    ObligationStatus.CHECKED,
-                    "SSA tensor realization preserves immutable/write-once storage",
-                )
-
-    ordered = tuple(results[item.obligation_id] for item in program.obligations)
-    return ObligationLedger(program.contract_digest, program.obligations, ordered)
-
-
-def _broadcast_axes(program: IntentProgram) -> dict[str, dict[str, tuple[int, ...]]]:
-    nodes = {
-        op.node_id: op for op in _walk_ops(program.function.body)
-        if op.node_id is not None
-    }
-    projections: dict[str, dict[str, tuple[int, ...]]] = {}
-    for item in program.boundary.broadcasts:
+def _broadcast_axes(j: SemanticArchive) -> dict[str, dict[str, tuple[int, ...]]]:
+    nodes = _nodes(j)
+    result: dict[str, dict[str, tuple[int, ...]]] = {}
+    for item in j.boundary.broadcasts:
         op = nodes.get(item.node_ref)
         if op is None or not isinstance(op.result, str):
-            raise CudaProgramLoweringError(
-                f"broadcast {item.contract_id!r} has no single-result Layer-A node"
-            )
-        if not all(isinstance(axis, int) for axis in item.inserted_semantic_axes):
-            raise CudaProgramLoweringError(
-                f"broadcast {item.contract_id!r} uses symbolic axes unsupported by CUDA emitter"
-            )
-        axes = tuple(int(axis) for axis in item.inserted_semantic_axes)
-        operands = projections.setdefault(op.result, {})
-        previous = operands.get(item.operand)
+            raise CudaJLoweringError("broadcast relation requires one result consumer")
+        if item.operand not in op.operands:
+            raise CudaJLoweringError("broadcast relation names a non-consumed operand")
+        if any(isinstance(axis, bool) or not isinstance(axis, int) for axis in item.axes):
+            raise CudaJLoweringError("CUDA emitter does not support symbolic broadcast axes")
+        axes = tuple(int(axis) for axis in item.axes)
+        previous = result.setdefault(op.result, {}).get(item.operand)
         if previous is not None and previous != axes:
-            raise CudaProgramLoweringError(
-                f"broadcast {item.contract_id!r} conflicts with another projection"
-            )
-        operands[item.operand] = axes
-    return projections
+            raise CudaJLoweringError("conflicting broadcast relations")
+        result[op.result][item.operand] = axes
+    return result
 
 
-def _assert_supported(ledger: ObligationLedger) -> None:
-    if not ledger.unsupported:
-        return
-    by_id = {item.obligation_id: item for item in ledger.required}
-    results = {item.obligation_id: item for item in ledger.results}
-    details = [
-        f"{item_id} ({by_id[item_id].capability}): {results[item_id].detail}"
-        for item_id in ledger.unsupported
-    ]
-    raise CudaProgramLoweringError(
-        "CUDA cannot consume required Layer-B obligations before codegen: "
-        + "; ".join(details)
-    )
+def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
+    """Check or consume every active Layer-B collection before emission."""
+
+    if not isinstance(j, SemanticArchive):
+        raise CudaJLoweringError("CUDA analysis requires canonical J")
+    unsupported: list[str] = []
+    consumed: list[str] = []
+    if j.boundary.domains:
+        unsupported.append("explicit_domain_relation")
+    if j.boundary.accesses:
+        unsupported.append("explicit_access_relation")
+    if j.boundary.effects:
+        unsupported.append("explicit_effect_relation")
+    if j.boundary.aliases:
+        unsupported.append("alias_relation")
+    if any(item.mutability.value == "mutable" for item in j.storage):
+        unsupported.append("general_mutable_storage")
+    else:
+        consumed.extend(f"storage:{item.storage_id}" for item in j.storage)
+
+    nodes = _nodes(j)
+    for item in j.boundary.reductions:
+        op = nodes.get(item.node_ref)
+        if op is None or op.op != "reduce":
+            unsupported.append(f"invalid_reduction:{item.node_ref}")
+            continue
+        fn = op.attrs.get("fn")
+        declared = item.identity if item.identity is not None else item.masked_contribution
+        neutral = {
+            "sum": {0, "ZERO"},
+            "mean": {0, "ZERO"},
+            "prod": {1, "ONE"},
+            "any": {False, "false"},
+            "all": {True, "true"},
+            "max": {"NEG_INF"},
+            "min": {"POS_INF"},
+        }.get(fn)
+        if neutral is None or declared not in neutral:
+            unsupported.append(f"non_neutral_reduction_boundary:{item.node_ref}")
+        else:
+            consumed.append(f"reduction:{item.node_ref}")
+
+    returns = {item.output: item.value for item in j.intent.returns}
+    mappings = {item.output: item.value for item in j.boundary.output_mappings}
+    if mappings and mappings != returns:
+        unsupported.append("output_destination_relation")
+    else:
+        consumed.extend(f"output:{name}" for name in mappings)
+    try:
+        _broadcast_axes(j)
+    except CudaJLoweringError as exc:
+        unsupported.append(f"broadcast:{exc}")
+    else:
+        consumed.extend(
+            f"broadcast:{item.node_ref}:{item.operand}"
+            for item in j.boundary.broadcasts
+        )
+    consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
+    return {
+        "supported": not unsupported,
+        "consumed": sorted(consumed),
+        "unsupported": sorted(set(unsupported)),
+        "boundary_sha256": hashlib.sha256(
+            json.dumps(
+                j.boundary.to_json(), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
+    }
 
 
 @dataclass(frozen=True)
-class CudaProgramLowering:
-    """Compiled CUDA artifact plus its exact typed hand-off evidence."""
-
+class CudaJLowering:
     request: LoweringRequest
-    obligations: ObligationLedger
+    boundary_consumption: Mapping[str, Any]
     intent_mlir: str
     artifact: LoweredProgram
 
     def __post_init__(self) -> None:
-        program = self.request.effective_program
-        if self.obligations.contract_digest != program.contract_digest:
-            raise CudaProgramLoweringError("CUDA obligation ledger is bound to another contract")
-        _assert_supported(self.obligations)
-        mlir_digest = hashlib.sha256(self.intent_mlir.encode("utf-8")).hexdigest()
-        if self.artifact.source_mlir_sha256 != mlir_digest:
-            raise CudaProgramLoweringError("compiled CUDA artifact differs from emitted Intent MLIR")
+        if not self.boundary_consumption.get("supported", False):
+            raise CudaJLoweringError("CUDA lowering left Layer-B relations unsupported")
+        digest = hashlib.sha256(self.intent_mlir.encode()).hexdigest()
+        if self.artifact.source_mlir_sha256 != digest:
+            raise CudaJLoweringError("compiled CUDA artifact differs from emitted MLIR")
 
     @property
     def mlir_sha256(self) -> str:
-        return hashlib.sha256(self.intent_mlir.encode("utf-8")).hexdigest()
+        return hashlib.sha256(self.intent_mlir.encode()).hexdigest()
 
     def conformance_record(
         self,
         *,
         test_domain: Mapping[str, Any],
-        comparisons: Sequence[ComparisonEvidence] = (),
+        comparisons: Sequence[ComparisonEvidence],
     ) -> BackendConformanceRecord:
-        program = self.request.effective_program
         return BackendConformanceRecord(
-            j_digest=program.j_digest,
-            contract_digest=program.contract_digest,
-            program_digest=program.program_digest,
+            j_digest=self.request.j_digest,
+            c_digest=self.request.c_digest,
             target=self.request.target,
             variant=self.request.variant,
-            obligations=self.obligations,
+            boundary_consumption=dict(self.boundary_consumption),
             test_domain=dict(test_domain),
             comparisons=tuple(comparisons),
         )
 
     def to_record(self) -> dict[str, Any]:
-        program = self.request.effective_program
         return {
-            "j_digest": program.j_digest,
-            "contract_digest": program.contract_digest,
-            "program_digest": program.program_digest,
+            "j_digest": self.request.j_digest,
+            "c_digest": self.request.c_digest,
             "target": self.request.target.to_dict(),
             "variant": self.request.variant,
             "mlir_sha256": self.mlir_sha256,
-            "obligations": self.obligations.to_dict(),
+            "boundary_consumption": dict(self.boundary_consumption),
             "cuda": self.artifact.to_record(),
         }
 
 
-def lower_program_to_cuda(
+def lower_j_to_cuda(
     request: LoweringRequest,
     concrete_extents: Mapping[str, int],
-) -> CudaProgramLowering:
-    """Validate every B obligation, emit exact A/B projection, then compile."""
-
+) -> CudaJLowering:
     if not isinstance(request, LoweringRequest):
-        raise CudaProgramLoweringError("CUDA lowering requires LoweringRequest")
+        raise CudaJLoweringError("CUDA lowering requires LoweringRequest")
     if request.target.family != "cuda":
-        raise CudaProgramLoweringError(
-            f"CUDA backend cannot lower target family {request.target.family!r}"
-        )
+        raise CudaJLoweringError("CUDA backend requires a CUDA target")
     if request.variant not in {"generic", "auto"}:
-        raise CudaProgramLoweringError(
-            "typed CUDA lowering currently accepts only generic or auto variants"
+        raise CudaJLoweringError("CUDA lowering accepts generic or auto variant")
+    consumption = analyze_j_for_cuda(request.j)
+    if not consumption["supported"]:
+        raise CudaJLoweringError(
+            "CUDA cannot consume complete Layer B: "
+            + ", ".join(consumption["unsupported"])
         )
-    program = request.effective_program
-    ledger = analyze_program_for_cuda(program)
-    _assert_supported(ledger)
     mlir = emit_module(
-        program.function,
+        request.j.intent,
         dict(concrete_extents),
-        broadcast_axes=_broadcast_axes(program),
+        broadcast_axes=_broadcast_axes(request.j),
     )
     target = LoweringTarget(
         backend="cuda",
@@ -425,20 +216,14 @@ def lower_program_to_cuda(
         target=target,
         allow_specialized=request.variant == "auto",
     )
-    return CudaProgramLowering(request, ledger, mlir, artifact)
+    return CudaJLowering(request, consumption, mlir, artifact)
 
 
-def cuda_target(
-    architecture: str,
-    *,
-    features: Sequence[str] = (),
-) -> BackendTarget:
-    """Construct the target-neutral protocol spelling for this backend."""
-
+def cuda_target(architecture: str, *, features: Sequence[str] = ()) -> BackendTarget:
     return BackendTarget("cuda", architecture, tuple(features))
 
 
 __all__ = [
-    "CudaProgramLowering", "CudaProgramLoweringError", "analyze_program_for_cuda",
-    "cuda_target", "lower_program_to_cuda",
+    "CudaJLowering", "CudaJLoweringError", "analyze_j_for_cuda",
+    "cuda_target", "lower_j_to_cuda",
 ]

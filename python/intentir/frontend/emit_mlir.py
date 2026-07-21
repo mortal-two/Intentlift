@@ -110,12 +110,10 @@ def _validated_scalar_equalities(fn: IntentFunction) -> list[dict[str, object]]:
 
 
 def _semantic_contract_attributes(fn: IntentFunction) -> str:
-    """Persist Layer-B obligations and Layer-C hints as real MLIR attrs.
+    """Persist operation-local Layer-B annotations as MLIR attributes.
 
     Intent operations already encode the executable Layer-A graph.  These
-    canonical JSON string attributes keep the remaining two layers attached to
-    the same verified function so selector/audit code can consume them without
-    consulting prose or reconstructing hints from a kernel name.
+    C is a separate lowering input and is never embedded in IntentFunction.
     """
 
     layer_b = [
@@ -131,13 +129,7 @@ def _semantic_contract_attributes(fn: IntentFunction) -> str:
     b_json = json.dumps(
         layer_b, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     )
-    c_json = json.dumps(
-        fn.layer_c, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
-    attrs = [
-        "intent_layer_b_json = " + _mlir_string(b_json),
-        "intent_layer_c_json = " + _mlir_string(c_json),
-    ]
+    attrs = ["intent_layer_b_json = " + _mlir_string(b_json)]
     scalar_equalities = _validated_scalar_equalities(fn)
     if scalar_equalities:
         flattened = [
