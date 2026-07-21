@@ -1,0 +1,49 @@
+{
+  "schema": "intentir.task07.ownership-counterexamples.v1",
+  "runtime_stride_vs_flat": {
+    "shared_envelope": {
+      "logical_shape": [128, 1024],
+      "representation_precondition": "p3 == 1024",
+      "pure_c": {
+        "tile_extent": 1024,
+        "num_warps": 4
+      }
+    },
+    "shared_j": {
+      "domain": "0 <= row < 128 and 0 <= col < 1024",
+      "access": "element(row, col)",
+      "value_relation": "t2[row,col] = swiglu(t0[row,col],t1[row,col])"
+    },
+    "realizations": {
+      "runtime_stride": [
+        "program-index",
+        "signed-index-widen",
+        "runtime-p3-row-base",
+        "scalar-pointer-advance",
+        "lane-range",
+        "vector-pointer-advance"
+      ],
+      "flat": [
+        "program-index",
+        "constant-tile-scale",
+        "lane-range",
+        "flat-vector-index",
+        "vector-pointer-advance"
+      ]
+    },
+    "required_conclusion": "same J/C under the frozen precondition, distinct pi residual and Level-2 topology"
+  },
+  "layernorm_mask_boundary": {
+    "j_owned_pair": {
+      "source_value_dag": ["centered", "select-valid-fill-zero", "square", "reduce"],
+      "invalid_lift_value_dag": ["centered", "square", "reduce-with-late-mask"],
+      "required_conclusion": "operator, predicate, fill and value edges are J-owned and must differ"
+    },
+    "pi_owned_pair": {
+      "shared_j_value_dag": ["centered", "select-valid-fill-zero", "square", "reduce"],
+      "realization_a": "materialize selected value once and share it into square operand slots 0 and 1",
+      "realization_b": "duplicate equivalent selected-value materializations at the two operand slots",
+      "required_conclusion": "same J, distinct materialization/sharing pi and potentially distinct Level-2 topology"
+    }
+  }
+}
