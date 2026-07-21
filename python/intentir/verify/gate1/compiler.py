@@ -34,7 +34,7 @@ __all__ = [
     "TritonCompiler",
 ]
 
-_CACHE_SCHEMA_VERSION = 1
+_CACHE_SCHEMA_VERSION = 2
 _WORKER = Path(__file__).with_name("_triton_worker.py")
 
 

@@ -9,7 +9,9 @@ the long-lived orchestration process.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -21,6 +23,90 @@ import traceback
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Mapping
+
+
+_TRITON_DOT_COMPAT_PROTOCOL = "triton_static_dot_transpose_v1"
+_REQUEST_SCHEMA = 2
+
+
+def _normalize_deprecated_triton_dot(code: str) -> tuple[str, dict[str, Any]]:
+    """Normalize removed static ``trans_a/trans_b`` keywords to ``tl.trans``."""
+
+    tree = ast.parse(code)
+    language_aliases: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "triton.language" and alias.asname:
+                    language_aliases.add(alias.asname)
+        elif isinstance(node, ast.ImportFrom) and node.module == "triton":
+            for alias in node.names:
+                if alias.name == "language":
+                    language_aliases.add(alias.asname or alias.name)
+
+    class Normalizer(ast.NodeTransformer):
+        def __init__(self) -> None:
+            self.count = 0
+
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            node = self.generic_visit(node)
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "dot"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in language_aliases
+            ):
+                return node
+            transpose: dict[str, bool] = {}
+            retained: list[ast.keyword] = []
+            for keyword in node.keywords:
+                if keyword.arg not in {"trans_a", "trans_b"}:
+                    retained.append(keyword)
+                    continue
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(
+                    keyword.value.value, bool
+                ):
+                    raise ValueError(
+                        "deprecated Triton dot transpose must be a static boolean"
+                    )
+                transpose[keyword.arg] = keyword.value.value
+            if not transpose:
+                return node
+            if len(node.args) < 2:
+                raise ValueError("deprecated Triton dot call lacks two operands")
+            alias = node.func.value.id
+
+            def transposed(value: ast.expr) -> ast.Call:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id=alias, ctx=ast.Load()),
+                        attr="trans",
+                        ctx=ast.Load(),
+                    ),
+                    args=[value],
+                    keywords=[],
+                )
+
+            if transpose.get("trans_a", False):
+                node.args[0] = transposed(node.args[0])
+            if transpose.get("trans_b", False):
+                node.args[1] = transposed(node.args[1])
+            node.keywords = retained
+            self.count += 1
+            return node
+
+    normalizer = Normalizer()
+    normalized_tree = normalizer.visit(tree)
+    if normalizer.count:
+        ast.fix_missing_locations(normalized_tree)
+        normalized = ast.unparse(normalized_tree) + "\n"
+    else:
+        normalized = code
+    return normalized, {
+        "protocol": _TRITON_DOT_COMPAT_PROTOCOL,
+        "rewrite_count": normalizer.count,
+        "normalized_sha256": hashlib.sha256(normalized.encode()).hexdigest(),
+    }
 
 
 def _jsonable(value: Any) -> Any:
@@ -41,11 +127,82 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-def _load_module(code: str, directory: Path) -> ModuleType:
+def _package_coordinates(path: Path) -> tuple[list[tuple[str, Path]], Path] | None:
+    """Recover Python package coordinates without executing package code."""
+
+    packages: list[tuple[str, Path]] = []
+    current = path.parent
+    while (current / "__init__.py").is_file():
+        packages.append((current.name, current))
+        current = current.parent
+    if not packages:
+        return None
+    packages.reverse()
+    return packages, current
+
+
+def _namespace_package_chain(packages: list[tuple[str, Path]]) -> str:
+    """Install package shells after an optional native extension import fails."""
+
+    top = packages[0][0]
+    for name in list(sys.modules):
+        if name == top or name.startswith(top + "."):
+            sys.modules.pop(name, None)
+    components: list[str] = []
+    for component, directory in packages:
+        components.append(component)
+        qualified = ".".join(components)
+        module = ModuleType(qualified)
+        module.__file__ = str(directory / "__init__.py")
+        module.__package__ = qualified
+        module.__path__ = [str(directory)]  # type: ignore[attr-defined]
+        spec = importlib.util.spec_from_loader(
+            qualified, loader=None, is_package=True
+        )
+        if spec is not None:
+            spec.submodule_search_locations = [str(directory)]
+        module.__spec__ = spec
+        sys.modules[qualified] = module
+    return ".".join(components)
+
+
+def _load_module(
+    code: str,
+    directory: Path,
+    *,
+    filename: str | None = None,
+    trusted_source: bool = False,
+    source_identity_code: str | None = None,
+) -> ModuleType:
     digest = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
-    path = directory / f"gate1_kernel_{digest}.py"
-    path.write_text(code, encoding="utf-8")
-    module_name = f"_intentir_gate1_kernel_{digest}_{os.getpid()}"
+    path: Path
+    package_name: str | None = None
+    if trusted_source and filename and filename != "<gate1-replay>":
+        candidate = Path(filename).resolve()
+        identity = source_identity_code if source_identity_code is not None else code
+        if candidate.is_file() and candidate.read_text(encoding="utf-8") == identity:
+            path = candidate
+            coordinates = _package_coordinates(path)
+            if coordinates is not None:
+                packages, package_root = coordinates
+                if str(package_root) not in sys.path:
+                    sys.path.insert(0, str(package_root))
+                root_name = packages[0][0]
+                try:
+                    importlib.import_module(root_name)
+                    package_name = ".".join(item[0] for item in packages)
+                except Exception:
+                    package_name = _namespace_package_chain(packages)
+        else:
+            raise ValueError("trusted source filename no longer matches request bytes")
+    else:
+        path = directory / f"gate1_kernel_{digest}.py"
+        path.write_text(code, encoding="utf-8")
+    if source_identity_code is not None and source_identity_code != code:
+        path = directory / f"gate1_kernel_{digest}.py"
+        path.write_text(code, encoding="utf-8")
+    leaf = f"{path.stem}_gate1_{digest}_{os.getpid()}"
+    module_name = f"{package_name}.{leaf}" if package_name else f"_{leaf}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot create import specification for replay module")
@@ -222,6 +379,10 @@ def _compiler_metadata(torch: Any, triton: Any) -> dict[str, Any]:
         "torch": str(torch.__version__),
         "torch_cuda": str(torch.version.cuda),
         "triton": str(triton.__version__),
+        "gate1_worker_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
+        "frontend_compat_protocol": _TRITON_DOT_COMPAT_PROTOCOL,
         "environment": {
             name: os.environ.get(name)
             for name in (
@@ -243,13 +404,24 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
     source = request["source"]
     case = request["case"]
     device = str(case.get("device", "cuda"))
-    code = str(source["code"])
+    source_code = str(source["code"])
+    code, frontend_compat = _normalize_deprecated_triton_dot(source_code)
     function_name = str(source["function"])
 
     with torch.cuda.device(device), tempfile.TemporaryDirectory(
         prefix="intentir-gate1-module-"
     ) as temporary:
-        module = _load_module(code, Path(temporary))
+        module = _load_module(
+            code,
+            Path(temporary),
+            filename=(
+                str(source.get("filename"))
+                if source.get("filename") is not None
+                else None
+            ),
+            trusted_source=source.get("trust_role") == "trusted_source",
+            source_identity_code=source_code,
+        )
         kernel = getattr(module, function_name, None)
         if kernel is None:
             raise AttributeError(f"Triton function {function_name!r} is missing")
@@ -276,7 +448,11 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
 
         # JITFunction.warmup invokes the complete frontend/compiler pipeline but
         # its run() path returns before grid canonicalization and kernel launch.
-        warmup_result = kernel.warmup(grid=grid, **values)
+        # A library symbol may be wrapped in tuning/dispatch layers.  Gate1 C is
+        # already frozen, so compile the metadata-owning JITFunction directly;
+        # invoking an outer autotuner would both run policy and conflict with C.
+        compilable = _jit_metadata_owner(kernel)
+        warmup_result = compilable.warmup(grid=grid, **values)
         if warmup_result is None:
             raise RuntimeError("Triton warmup returned no compiled kernel")
         compiled = _compiled_kernel(warmup_result)
@@ -293,12 +469,14 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
         metadata_target = getattr(getattr(compiled, "metadata", None), "target", None)
         if metadata_target is not None:
             target["compiled"] = _jsonable(metadata_target)
+        compiler_metadata = _compiler_metadata(torch, triton)
+        compiler_metadata["frontend_compat"] = frontend_compat
         return {
             "ok": True,
             "ttir": ttir,
             "ttgir": ttgir,
             "python_interface": interface,
-            "compiler": _compiler_metadata(torch, triton),
+            "compiler": compiler_metadata,
             "target": target,
             "diagnostic": "",
             "asm_keys": asm_keys,
@@ -316,7 +494,7 @@ def main() -> int:
     request: Mapping[str, Any] = {}
     try:
         request = json.loads(args.request.read_text(encoding="utf-8"))
-        if request.get("schema") != 1:
+        if request.get("schema") != _REQUEST_SCHEMA:
             raise ValueError(f"unsupported request schema {request.get('schema')!r}")
         result = _compile(request)
     except BaseException as exc:  # worker must report compiler diagnostics verbatim
