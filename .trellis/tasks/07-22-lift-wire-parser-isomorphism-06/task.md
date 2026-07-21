@@ -128,5 +128,11 @@ parser 的所有分歧。此阶段禁止修改 response、禁止放宽 parser、
   v1/v2 manifest、receipt、raw response 与 digest 均未修改。
 - 阶段 2 定向回归 `128 passed`；全量回归 `715 passed, 4 skipped`；在线 LLM 调用新增为 0。
 
+阶段 0 同时暴露的 scope/storage semantic rejection 也在冻结 v3 前用一个全局、kernel 无关的
+archive grammar 关闭了“合同不可见”问题：scope definitions/captures/effects 必须从 J 精确推导，
+逻辑 output 不能凭声明多列；普通 SSA 不创建 StorageObject，storage 可以为空，只有 alias、
+destination identity 或 loop state 等真实语义身份才创建。该 grammar 由 schema description 与
+prompt 共用，不修改 parser、不做 response repair，也没有 Swiglu/opcode 分支；定向回归 `88 passed`。
+
 下一步进入阶段 3：先冻结自包含 protocol-v3 manifest 与 28/28 preflight，再绑定 v2 failed
 receipt 执行唯一一次 Swiglu recovery canary。冻结前仍不得调用 LLM。

@@ -25,7 +25,10 @@ from intentir.verify.gate1.model import (
 )
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
-from .scrc_schema import scrc_lift_core_text_format
+from .scrc_schema import (
+    render_semantic_archive_wire_grammar,
+    scrc_lift_core_text_format,
+)
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_source_aware_relift_v1"
@@ -534,6 +537,9 @@ Output JSON only.
 
 IntentOp structural contract:
 {render_intent_op_wire_grammar()}
+
+Semantic archive cross-reference contract:
+{render_semantic_archive_wire_grammar()}
 
 Layer-A operation grammar:
 {INTENTIR_SCHEMA}

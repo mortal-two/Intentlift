@@ -57,6 +57,29 @@ _PORTABLE_PREDICATE_STRING = {
 }
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
+
+
+def render_semantic_archive_wire_grammar() -> str:
+    """Render global archive invariants already enforced by the strict parser."""
+
+    return (
+        "J scopes are an exact derived dominance archive, not a copy of pi "
+        "regions. Straight-line J uses one parentless function scope. Its "
+        "definitions are exactly J input handles plus results actually produced "
+        "by operations in that scope; a declared logical output is not a "
+        "definition unless an operation really produces that same handle. "
+        "captures and effects are likewise exact, with no convenience extras. "
+        "Every semantic loop has exactly one corresponding loop_region scope. "
+        "The storage array may be empty: ordinary SSA temporaries do not have "
+        "semantic storage or lifetime objects. Add StorageObject only when J "
+        "semantics requires storage identity, such as an alias/destination or "
+        "loop-carried state. write_once requires exactly one matching boundary "
+        "write event; producing an SSA value is not such an event. Every loop "
+        "state requires one storage object binding its state, body, next and "
+        "result values plus a non-literal init value, if any, across iterations."
+    )
+
+
 def _tensor_schema() -> dict[str, Any]:
     return _closed_object(
         {
@@ -444,8 +467,9 @@ def _portable_scope_schema() -> dict[str, Any]:
             "effects",
         ),
         description=(
-            "Portable dominance/capture/effect scope. Contains no source AST, "
-            "line information, helper names, or frontend API spellings."
+            "Exact portable dominance/capture/effect scope derived from J. "
+            "definitions/captures/effects must contain neither missing nor extra "
+            "handles. Contains no source AST, helper name or frontend spelling."
         ),
     )
 
@@ -483,8 +507,9 @@ def _storage_schema() -> dict[str, Any]:
             "last_use_event", "escapes", "crosses_iteration",
         ),
         description=(
-            "Semantic storage identity/lifetime only. Physical allocation, "
-            "register/shared/global placement and double buffering belong to C."
+            "Optional semantic storage identity/lifetime only; ordinary SSA "
+            "temporaries require no entry. Physical allocation, register/shared/"
+            "global placement and double buffering belong to C."
         ),
     )
 
@@ -546,6 +571,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             "storage": _array(_storage_schema()),
         },
         ("kernel_id", "intent", "node_ids", "boundary", "scopes", "storage"),
+        description=render_semantic_archive_wire_grammar(),
     )
     schema = _closed_object(
         {
@@ -580,6 +606,7 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
 
 
 __all__ = [
+    "render_semantic_archive_wire_grammar",
     "scrc_lift_core_json_schema",
     "scrc_lift_core_text_format",
 ]

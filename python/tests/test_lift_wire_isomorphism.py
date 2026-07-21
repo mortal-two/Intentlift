@@ -10,7 +10,10 @@ import pytest
 from jsonschema import Draft7Validator
 
 from intentir.extraction.lifters.scrc import build_scrc_lift_instructions
-from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
+from intentir.extraction.lifters.scrc_schema import (
+    render_semantic_archive_wire_grammar,
+    scrc_lift_core_json_schema,
+)
 from intentir.ir.intent_op_contract import (
     IntentOpContractError,
     LOOP_ONLY_FIELDS,
@@ -201,6 +204,16 @@ def test_shared_contract_projects_schema_and_prompt_from_one_declaration() -> No
     assert "op is exactly 'loop'" in grammar
     assert ", ".join(sorted(LOOP_ONLY_FIELDS)) in grammar
     assert grammar in build_scrc_lift_instructions()
+
+
+def test_global_scope_storage_grammar_is_shared_without_kernel_rules() -> None:
+    grammar = render_semantic_archive_wire_grammar()
+    schema = scrc_lift_core_json_schema()
+    assert schema["properties"]["j"]["description"] == grammar
+    assert grammar in build_scrc_lift_instructions()
+    assert "ordinary SSA temporaries" in grammar
+    assert "storage array may be empty" in grammar
+    assert "Swiglu" not in grammar
 
 
 @pytest.mark.parametrize("field", sorted(LOOP_ONLY_FIELDS))
