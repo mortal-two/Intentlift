@@ -62,6 +62,10 @@ def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
             "stage_invariant_access_scaffolding",
         ),
         ("reduction_tile_fusion", "shared_producer_outputs"),
+        (
+            "reduction_mask_placement",
+            "pre_producer_staged_reuse",
+        ),
     }
     assert all(variant["additionalProperties"] is False for variant in variants)
     tiled = next(
@@ -87,6 +91,26 @@ def test_scrc_strategy_wire_uses_closed_override_only_pairs() -> None:
         "i32",
         "i64",
     ]
+    mask_placement = next(
+        variant
+        for variant in variants
+        if variant["properties"]["family"]["enum"]
+        == ["reduction_mask_placement"]
+    )
+    assert set(mask_placement["required"]) == {
+        "target_ref",
+        "family",
+        "choice",
+        "predicate_access_ref",
+        "placement_node_ref",
+        "placement_operand_slots",
+    }
+    assert mask_placement["properties"]["placement_operand_slots"] == {
+        "type": "array",
+        "items": {"type": "integer", "minimum": 0},
+        "minItems": 1,
+        "uniqueItems": True,
+    }
 
 
 def test_scrc_wire_schema_preserves_open_intent_payloads() -> None:

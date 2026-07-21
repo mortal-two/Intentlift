@@ -59,6 +59,13 @@ Hard constraints:
    before the loop or a second side-output loop. Only the associative reduction
    carry crosses iterations; realize consumers of the final reduced value after
    the loop.
+   If pi selects reduction_mask_placement=pre_producer_staged_reuse, resolve
+   predicate_access_ref and placement_node_ref through the packet, materialize
+   exactly one tl.where before that placement node using the target reduction's
+   masked_contribution, and reuse it at exactly placement_operand_slots. Leave
+   every unselected edge and every other consumer unchanged. Feed the placement
+   result directly to the reduction; never add the canonical reduction-input
+   mask a second time.
 7. boundary.broadcasts.axes are global semantic axes, never local Triton axis
    numbers. A semantic broadcast may be implicit on a local tile; do not emit an
    explicit rank change unless the selected rule's global-to-local projection
@@ -331,6 +338,12 @@ def assert_source_isolated_payload(payload: dict[str, Any]) -> None:
                     binding["tile_slot"],
                     f"strategy.bindings[{index}].tile_slot",
                 )
+            for key in ("predicate_access_ref", "placement_node_ref"):
+                if key in binding:
+                    check_reference(
+                        binding[key],
+                        f"strategy.bindings[{index}].{key}",
+                    )
 
 
 def build_rewriter_prompt(

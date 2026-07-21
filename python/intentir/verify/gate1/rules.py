@@ -807,6 +807,18 @@ _TRITON_EXECUTABLE_METADATA: dict[str, dict[str, Any]] = {
         "construction_phase": 60,
         "required_fields": ["attrs.n", "attrs.dtype"],
     },
+    "realize_reduction_mask_placement": {
+        "strategy_family": "reduction_mask_placement",
+        "strategy_choice": "pre_producer_staged_reuse",
+        "target_kinds": ["intent_op:reduce"],
+        "construction_phase": 58,
+        "required_fields": [
+            "attrs.fn",
+            "predicate_access_ref",
+            "placement_node_ref",
+            "placement_operand_slots",
+        ],
+    },
     "realize_reduce": {
         "target_kinds": ["intent_op:reduce"],
         "construction_phase": 60,
@@ -1167,9 +1179,42 @@ def default_triton_rule_registry() -> RuleRegistry:
             ],
         ),
         _default_triton_card(
+            "realize_reduction_mask_placement",
+            Frontend.TRITON,
+            version="1",
+            selection_mode=RuleSelectionMode.OVERRIDE,
+            override_family="reduction_mask_placement",
+            applies_to=["reduce", "boundary.reductions"],
+            reads=[
+                "predicate_access_ref",
+                "placement_node_ref",
+                "placement_operand_slots",
+                "the placement node operands",
+                "masked_contribution",
+            ],
+            api_mapping={
+                "staged_masked_operand": "tl.where",
+                "reuse_selected_operand_edges": "one shared SSA value",
+            },
+            example=(
+                "Before the declared zero-preserving producer, materialize one "
+                "masked operand from the referenced access predicate and the "
+                "target reduction's masked_contribution; reuse it at exactly "
+                "the declared operand slots."
+            ),
+            pitfalls=[
+                "Do not replace other uses of the original operand or other "
+                "consumers of the placement node.",
+                "Do not materialize another mask at the reduction input after "
+                "this strategy step has fulfilled the boundary contribution.",
+                "Resolve every handle through J/B/C; never infer the predicate "
+                "or placement from a source variable name.",
+            ],
+        ),
+        _default_triton_card(
             "realize_reduce",
             Frontend.TRITON,
-            version="4",
+            version="5",
             applies_to=["reduce", "boundary.reductions"],
             reads=[
                 "fn", "global axes", "tile_axis", "identity",
@@ -1195,6 +1240,10 @@ def default_triton_rule_registry() -> RuleRegistry:
                 "For mean, divide by the logical J-axis extent, never a C tile size.",
                 "For prod, emit the multiply combiner in the replay module; do not "
                 "replace the reduction with a Python loop.",
+                "By default materialize masked_contribution at the reduction "
+                "input. If pi contains realize_reduction_mask_placement for "
+                "this target, consume the already masked producer directly and "
+                "do not emit a second tl.where.",
             ],
         ),
         _default_triton_card(

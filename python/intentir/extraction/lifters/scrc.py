@@ -453,10 +453,11 @@ In addition, return exactly these top-level fields:
 - interface: {{kernel_id, frontend, function_name, parameters, grid,
   compiler_slots}}
 - schedule: {{slots, values}}; values are the source implementation's C values
-- strategy: {{bindings:[{{target_ref,family,choice, optional tile_slot,
-  accumulator_dtype}}]}}; emit only reviewed non-canonical source implementation
-  choices, never semantic facts or steps. The two optional fields are required
-  only for reduction_tiling=multi_tile_accumulate and forbidden otherwise
+- strategy: {{bindings:[{{target_ref,family,choice, family-specific fields}}]}};
+  emit only reviewed non-canonical source implementation choices, never semantic
+  facts or steps. reduction_tiling requires tile_slot+accumulator_dtype;
+  reduction_mask_placement requires predicate_access_ref+placement_node_ref+
+  placement_operand_slots. Family-specific fields are forbidden elsewhere
 - location_map: {{source_name, entries:[{{span:{{start_line,end_line}},
   node_refs,access_refs}}]}}
 
@@ -644,6 +645,14 @@ Cross-field rules:
   and reuses them for compound access masks, add
   mask_materialization=staged_reuse for the affected access. Do not replace
   that staging by repeated two-dimensional comparisons;
+- if SOURCE first stages one `where(predicate, value, masked_contribution)`,
+  reuses that single value in selected operand edges of an immediate
+  zero-preserving producer, and then reduces the producer result directly, add
+  reduction_mask_placement=pre_producer_staged_reuse for the reduction. Copy
+  predicate_access_ref, placement_node_ref and the exact zero-based
+  placement_operand_slots. The reviewed v1 shape is `mul(value,value)` with
+  slots [0,1] and numeric zero masked_contribution. Omit this binding when the
+  mask is materialized directly at the reduction input;
 - compiler_slots contains only launch/compiler options absent from the kernel
   signature, never constexpr parameters;
 - interface runtime parameters copy the trusted compiler-view argument order.
@@ -667,10 +676,13 @@ Cross-field rules:
   family: program_coordinate_width targets a domain id; address_association
   and mask_materialization target an access_id; reduction_call_shape targets a
   reduction node id; reduction_tiling, reduction_preheader_staging and
-  reduction_tile_fusion target a reduction node id. reduction_tiling must
+  reduction_tile_fusion and reduction_mask_placement target a reduction node
+  id. reduction_tiling must
   additionally name a declared constexpr tile_slot plus accumulator_dtype;
   preheader staging and tile fusion are valid only alongside reduction_tiling
-  for the same target.
+  for the same target. reduction_mask_placement names an existing predicate
+  access, an immediate producer node and exact producer operand slots, and
+  cannot currently combine with reduction_tiling for the same target.
 
 C.strategy rules (closed, override-only vocabulary):
 - absence of a target/family binding always means the canonical RuleCard;
@@ -679,17 +691,20 @@ C.strategy rules (closed, override-only vocabulary):
   reduction_call_shape=flattened, and
   reduction_tiling=multi_tile_accumulate, and
   reduction_preheader_staging=stage_invariant_access_scaffolding, and
-  reduction_tile_fusion=shared_producer_outputs;
+  reduction_tile_fusion=shared_producer_outputs, and
+  reduction_mask_placement=pre_producer_staged_reuse;
 - at most one binding exists for each target/family pair;
 - reduction_call_shape and reduction_tiling cannot be combined for the same
   reduction target in the current reviewed composer. If source evidence needs
   both flattened local calls and serial tile accumulation, fail closed instead
   of emitting two bindings or silently dropping either mechanism;
-- strategy contains no algorithm semantics, expressions, constants, operands,
-  predicates, fills, frontend API names, rule ids, construction order or refs
-  beyond target_ref. The only additional fields are reduction_tiling.tile_slot
-  and reduction_tiling.accumulator_dtype, both copied from source/compiler
-  evidence rather than invented; accumulator_dtype must be one of
+- strategy contains no algorithm semantics, expressions, constants, predicate
+  text, fills, frontend API names, rule ids or free-form construction steps.
+  The only extra references are the closed reduction_mask_placement access/node
+  refs and integer operand slots; its fill remains owned by B
+  masked_contribution. reduction_tiling.tile_slot and accumulator_dtype are
+  copied from source/compiler evidence rather than invented; accumulator_dtype
+  must be one of
   f16/bf16/f32/f64/i1/i8/i16/i32/i64. Never emit plan/pi in LiftCore, even as an
   empty object;
   the enclosing Lift finalizer adds canonical pi to the completed LiftArtifact;
@@ -801,6 +816,22 @@ def _validate_opaque_lift_references(artifact: Gate1Artifact) -> None:
             raise ValueError(
                 f"strategy.bindings[{index}].target_ref is not an opaque "
                 "Lift-owned id or trusted ABI/C name"
+            )
+        if (
+            binding.predicate_access_ref is not None
+            and binding.predicate_access_ref not in access_ids
+        ):
+            raise ValueError(
+                f"strategy.bindings[{index}].predicate_access_ref must be an "
+                "opaque boundary access id"
+            )
+        if (
+            binding.placement_node_ref is not None
+            and binding.placement_node_ref not in node_ids
+        ):
+            raise ValueError(
+                f"strategy.bindings[{index}].placement_node_ref must be an "
+                "opaque J node id"
             )
 
 
@@ -928,6 +959,12 @@ Apply this decision order before editing:
     Preserve J and Boundary semantics; this choice only prevents replay from
     duplicating the shared tile path outside the loop. Do not select it for an
     output computed outside or in a separate loop.
+2b. If J/B already has the correct reduction and masked contribution but SOURCE
+    stages one masked value before an immediate `mul(value,value)` producer,
+    use reduction_mask_placement=pre_producer_staged_reuse with the exact
+    predicate access, placement node and operand slots [0,1]. Keep J/B
+    unchanged. Do not select it for a reduction-input `where`, an unrelated
+    producer, a non-zero-preserving operation, or based on a kernel name.
 3. Use only an already reviewed C.strategy family when it exactly describes
    the source mechanism. Never invent a new family, choice or RuleCard here.
 4. If the existing vocabulary cannot express an implementation association,

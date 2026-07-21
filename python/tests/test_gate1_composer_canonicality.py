@@ -23,6 +23,7 @@ from intentir.verify.gate1 import (
     OutputMapping,
     ParameterKind,
     ParameterMode,
+    ReductionBoundary,
     ReplayPlan,
     ReplayStep,
     RuleCard,
@@ -147,6 +148,110 @@ def _artifact() -> Gate1Artifact:
         location_map=LocationMap("private.py", []),
         source="SOURCE_CANARY_91F7",
     )
+
+
+def _reduction_mask_placement_artifact() -> Gate1Artifact:
+    intent = IntentFunction.from_json(
+        {
+            "name": "masked_square_sum",
+            "inputs": [{"name": "x", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "out", "dtype": "f32", "shape": []}],
+            "body": [
+                {
+                    "op": "map_binary",
+                    "result": "squared",
+                    "operands": ["x", "x"],
+                    "attrs": {"fn": "mul"},
+                },
+                {
+                    "op": "reduce",
+                    "result": "out",
+                    "operands": ["squared"],
+                    "attrs": {"fn": "sum", "axes": [0]},
+                },
+            ],
+        }
+    )
+    artifact = Gate1Artifact(
+        j=SemanticArchive(
+            kernel_id="masked_square_sum",
+            intent=intent,
+            node_ids={"square_node": "body[0]", "reduce_node": "body[1]"},
+            boundary=Boundary(
+                domains={"lane_domain": "lane < N"},
+                accesses=[
+                    BoundaryAccess(
+                        access_id="load_x",
+                        kind=AccessKind.LOAD,
+                        tensor="x",
+                        predicate="lane < N",
+                        fill_value=0.0,
+                        node_ref="square_node",
+                        index_expression="lane",
+                    ),
+                    BoundaryAccess(
+                        access_id="store_out",
+                        kind=AccessKind.STORE,
+                        tensor="out",
+                        node_ref="reduce_node",
+                        index_expression="0",
+                    ),
+                ],
+                reductions=[
+                    ReductionBoundary("reduce_node", 0, 0.0, 0.0)
+                ],
+            ),
+        ),
+        interface=KernelInterface(
+            kernel_id="masked_square_sum",
+            function_name="masked_square_sum",
+            frontend=Frontend.TRITON,
+            parameters=[
+                KernelParameter(
+                    "x",
+                    ParameterKind.POINTER,
+                    ParameterMode.INPUT,
+                    "f32",
+                    1,
+                    tensor_ref="x",
+                ),
+                KernelParameter(
+                    "out",
+                    ParameterKind.POINTER,
+                    ParameterMode.OUTPUT,
+                    "f32",
+                    0,
+                    tensor_ref="out",
+                ),
+                KernelParameter(
+                    "N", ParameterKind.SCALAR, ParameterMode.VALUE, "i32"
+                ),
+                KernelParameter("BLOCK", ParameterKind.CONSTEXPR),
+            ],
+            grid=["ceil_div(N, BLOCK)"],
+            do_not_specialize=["N"],
+        ),
+        schedule=ScheduleSpec(
+            slots=[ScheduleSlot("BLOCK", ScheduleSlotKind.CONSTEXPR)],
+            values={"BLOCK": 64},
+        ),
+        strategy=StrategySpec(
+            [
+                StrategyBinding(
+                    "reduce_node",
+                    StrategyFamily.REDUCTION_MASK_PLACEMENT,
+                    StrategyChoice.PRE_PRODUCER_STAGED_REUSE,
+                    predicate_access_ref="load_x",
+                    placement_node_ref="square_node",
+                    placement_operand_slots=[0, 1],
+                )
+            ]
+        ),
+        plan=ReplayPlan(),
+        location_map=LocationMap("private.py", []),
+        source="SOURCE_CANARY_MASK_PLACEMENT",
+    )
+    return artifact
 
 
 def _independent_node_artifact(*, reversed_declarations: bool) -> Gate1Artifact:
@@ -765,7 +870,7 @@ def test_materialized_artifact_persists_exact_compose_provenance() -> None:
 
 def test_iota_has_one_canonical_rule_and_complete_pi_provenance() -> None:
     registry = default_triton_rule_registry()
-    assert len(registry.cards) == 28
+    assert len(registry.cards) == 29
     assert "realize_synchronize" in registry
     artifact, result = materialize_replay_plan(_iota_artifact(), registry)
     iota_steps = [
@@ -975,6 +1080,48 @@ def test_override_only_strategy_selects_reviewed_alternative_cards() -> None:
     mask_card = registry.get("materialize_mask_tile", frontend=Frontend.TRITON)
     assert mask_card.version == "2"
     assert any("same constructed mask value" in item for item in mask_card.pitfalls)
+
+
+def test_reduction_mask_placement_precedes_producer_and_keeps_base_reduce() -> None:
+    registry = default_triton_rule_registry()
+    artifact, result = materialize_replay_plan(
+        _reduction_mask_placement_artifact(), registry
+    )
+    rules = [step.rule for step in artifact.plan.steps]
+
+    assert rules.count("realize_reduction_mask_placement") == 1
+    assert rules.count("realize_elementwise") == 1
+    assert rules.count("realize_reduce") == 1
+    assert rules.index("realize_masked_access") < rules.index(
+        "realize_reduction_mask_placement"
+    )
+    assert rules.index("realize_reduction_mask_placement") < rules.index(
+        "realize_elementwise"
+    )
+    assert rules.index("realize_elementwise") < rules.index("realize_reduce")
+    placement_step = next(
+        step
+        for step in artifact.plan.steps
+        if step.rule == "realize_reduction_mask_placement"
+    )
+    assert placement_step.target_ref == "reduce_node"
+    assert result.provenance.coverage == 1.0
+    assert result.provenance.orphan_leaf_count == 0
+    registry.validate_strict_plan(
+        artifact.plan,
+        frontend=artifact.interface.frontend,
+        artifact=artifact,
+    )
+
+    default_artifact = replace(artifact, strategy=StrategySpec(), plan=ReplayPlan())
+    default_plan = compose_replay_plan(default_artifact, registry).plan
+    assert all(
+        step.rule != "realize_reduction_mask_placement"
+        for step in default_plan.steps
+    )
+    reduce_card = registry.get("realize_reduce", frontend=Frontend.TRITON)
+    assert reduce_card.version == "5"
+    assert any("do not emit a second tl.where" in item for item in reduce_card.pitfalls)
 
 
 def test_explicit_metadata_drives_renamed_cards_without_registry_priority() -> None:

@@ -65,6 +65,12 @@ predicate expression、legacy `op.layer_b`、destination 语义上的 `op.out`�
 - `schedule_hint` 是可替换 Layer C；grid、tile、compiler value 与 source strategy 只提供
   hint，backend 可用 retuned C 替换。
 
+只为 Gate1 严格复现前端 SSA presentation 的 C choice 不进入 `IntentProgram`。例如
+`reduction_mask_placement=pre_producer_staged_reuse` 只决定 replay 中 tail mask 位于
+zero-preserving producer 前还是 reduction input；target-neutral program 仅保留 B 的
+predicate 与 `masked_contribution`，backend 可自行证明并选择 placement。adapter 丢弃该
+choice 不得改变 function、boundary、interface、`j_digest` 或 `contract_digest`。
+
 实现提供三个不同摘要，禁止混称：
 
 - `j_digest = SHA256(canonical(function + boundary))`；

@@ -1085,6 +1085,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "program_coordinate_width",
             "reduction_preheader_staging",
             "reduction_tile_fusion",
+            "reduction_mask_placement",
         ),
         "semantic_question": (
             "Does J preserve semantic producer/consumer dependencies, loop "
@@ -1103,6 +1104,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "reduction_tiling",
             "reduction_preheader_staging",
             "reduction_tile_fusion",
+            "reduction_mask_placement",
         ),
         "semantic_question": (
             "Check reducer semantics, axis, identity/fill, carried state and "
@@ -1121,6 +1123,7 @@ _RELIFT_CATEGORY_TARGETS: dict[str, dict[str, Any]] = {
             "mask_materialization",
             "address_association",
             "reduction_tile_fusion",
+            "reduction_mask_placement",
         ),
         "semantic_question": (
             "Check observable read/write/atomic effects, masks, fill values, "

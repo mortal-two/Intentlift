@@ -183,6 +183,9 @@ def test_scrc_lift_core_prompt_keeps_pi_inside_lift_finalization() -> None:
         in prompt
     )
     assert "reduction_tile_fusion=shared_producer_outputs" in prompt
+    assert "reduction_mask_placement=pre_producer_staged_reuse" in prompt
+    assert "predicate_access_ref+placement_node_ref" in prompt
+    assert "slots [0,1]" in prompt
     assert "shared per-tile producer" in prompt
     assert "shared lane/range basis before the runtime loop" in prompt
     assert "Tile-start-plus-lane offsets" in prompt
@@ -983,6 +986,12 @@ def test_real_relifter_sees_source_evidence_but_never_replay_source(
         captured["instructions"]
     )
     assert "required to preserve semantics for arbitrary runtime extents" in (
+        captured["instructions"]
+    )
+    assert "reduction_mask_placement=pre_producer_staged_reuse" in (
+        captured["instructions"]
+    )
+    assert "Do not select it for a reduction-input `where`" in (
         captured["instructions"]
     )
     assert "bounded scoped-SSA witness" in captured["instructions"]

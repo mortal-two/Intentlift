@@ -378,6 +378,37 @@ def _strategy_schema() -> dict[str, Any]:
             ),
         )
     )
+    variants.append(
+        _closed_object(
+            {
+                "target_ref": _STRING,
+                "family": {
+                    "type": "string",
+                    "enum": ["reduction_mask_placement"],
+                },
+                "choice": {
+                    "type": "string",
+                    "enum": ["pre_producer_staged_reuse"],
+                },
+                "predicate_access_ref": _STRING,
+                "placement_node_ref": _STRING,
+                "placement_operand_slots": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0},
+                    "minItems": 1,
+                    "uniqueItems": True,
+                },
+            },
+            (
+                "target_ref",
+                "family",
+                "choice",
+                "predicate_access_ref",
+                "placement_node_ref",
+                "placement_operand_slots",
+            ),
+        )
+    )
     binding = {
         "oneOf": variants
     }

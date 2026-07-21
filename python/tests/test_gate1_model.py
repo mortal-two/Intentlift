@@ -170,6 +170,45 @@ def _artifact() -> Gate1Artifact:
     )
 
 
+def _mask_placement_artifact() -> Gate1Artifact:
+    payload = _artifact().to_json()
+    payload["j"]["intent"]["intent_function"]["body"] = [
+        {
+            "op": "map_binary",
+            "result": "squared_value",
+            "operands": ["input_tensor", "input_tensor"],
+            "attrs": {"fn": "mul"},
+        },
+        {
+            "op": "reduce",
+            "result": "row_sum_value",
+            "operands": ["squared_value"],
+            "attrs": {"fn": "sum", "axes": [1]},
+        },
+    ]
+    payload["j"]["node_ids"] = {
+        "square_node": "body[0]",
+        "reduce_sum_node": "body[1]",
+    }
+    payload["j"]["boundary"]["accesses"][0]["node_ref"] = "square_node"
+    artifact = Gate1Artifact.from_json(payload)
+    return replace(
+        artifact,
+        strategy=StrategySpec(
+            [
+                StrategyBinding(
+                    "reduce_sum_node",
+                    StrategyFamily.REDUCTION_MASK_PLACEMENT,
+                    StrategyChoice.PRE_PRODUCER_STAGED_REUSE,
+                    predicate_access_ref="input_masked_load",
+                    placement_node_ref="square_node",
+                    placement_operand_slots=[1, 0],
+                )
+            ]
+        ),
+    )
+
+
 def _registry() -> RuleRegistry:
     return default_triton_rule_registry()
 
@@ -177,6 +216,7 @@ def _registry() -> RuleRegistry:
 def test_artifact_strict_json_roundtrip() -> None:
     artifact = _artifact()
     assert Gate1Artifact.from_json(artifact.to_json()) == artifact
+
     assert Gate1Artifact.from_json_str(artifact.to_json_str()) == artifact
 
     case = CompileCase(
@@ -340,6 +380,81 @@ def test_strategy_is_closed_override_only_c_and_legacy_defaults_empty() -> None:
                 ]
             ),
         )
+
+
+def test_reduction_mask_placement_is_typed_optional_c_strategy() -> None:
+    artifact = _mask_placement_artifact()
+    binding = artifact.strategy.bindings[0]
+
+    assert binding.placement_operand_slots == [0, 1]
+    assert binding.to_json() == {
+        "target_ref": "reduce_sum_node",
+        "family": "reduction_mask_placement",
+        "choice": "pre_producer_staged_reuse",
+        "predicate_access_ref": "input_masked_load",
+        "placement_node_ref": "square_node",
+        "placement_operand_slots": [0, 1],
+    }
+    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
+
+    registry = default_triton_rule_registry()
+    materialized, _ = materialize_replay_plan(artifact, registry)
+    replay_view = build_normal_rewriter_view(materialized, registry)
+    replay_binding = replay_view["strategy"]["bindings"][0]
+    declared_refs = {
+        item["ref"] for item in replay_view["reference_bindings"]
+    }
+    assert replay_binding["target_ref"] in declared_refs
+    assert replay_binding["predicate_access_ref"] in declared_refs
+    assert replay_binding["placement_node_ref"] in declared_refs
+    assert replay_binding["placement_operand_slots"] == [0, 1]
+    build_normal_rewriter_prompt(materialized, registry)
+
+    without_override = replace(artifact, strategy=StrategySpec())
+    assert without_override.strategy.bindings == []
+
+    with pytest.raises(SchemaError, match="placement_operand_slots"):
+        StrategyBinding(
+            "reduce_sum_node",
+            StrategyFamily.REDUCTION_MASK_PLACEMENT,
+            StrategyChoice.PRE_PRODUCER_STAGED_REUSE,
+            predicate_access_ref="input_masked_load",
+            placement_node_ref="square_node",
+        )
+    with pytest.raises(SchemaError, match="valid only for reduction_mask_placement"):
+        StrategyBinding(
+            "input_masked_load",
+            StrategyFamily.MASK_MATERIALIZATION,
+            StrategyChoice.STAGED_REUSE,
+            predicate_access_ref="input_masked_load",
+            placement_node_ref="square_node",
+            placement_operand_slots=[0, 1],
+        )
+
+
+def test_reduction_mask_placement_rejects_unproved_or_dangling_edges() -> None:
+    artifact = _mask_placement_artifact()
+    binding = artifact.strategy.bindings[0]
+
+    with pytest.raises(SchemaError, match="boundary access with a predicate"):
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [replace(binding, predicate_access_ref="missing_access")]
+            ),
+        )
+    with pytest.raises(SchemaError, match="both operand slots"):
+        replace(
+            artifact,
+            strategy=StrategySpec(
+                [replace(binding, placement_operand_slots=[0])]
+            ),
+        )
+
+    payload = artifact.to_json()
+    payload["j"]["boundary"]["reductions"][0]["masked_contribution"] = 1
+    with pytest.raises(SchemaError, match="numeric zero masked_contribution"):
+        Gate1Artifact.from_json(payload)
 
 
 def test_reduction_boundary_rejects_c_slot_as_tile_axis() -> None:
@@ -700,6 +815,10 @@ def test_rule_cards_serialize_executable_composer_metadata_compatibly() -> None:
         "fuse_reduction_tile_outputs": (
             "reduction_tile_fusion",
             "shared_producer_outputs",
+        ),
+        "realize_reduction_mask_placement": (
+            "reduction_mask_placement",
+            "pre_producer_staged_reuse",
         ),
     }
     cards = {card.id: card for card in registry.cards}

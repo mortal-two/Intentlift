@@ -656,6 +656,7 @@ class StrategyFamily(str, Enum):
     REDUCTION_TILING = "reduction_tiling"
     REDUCTION_PREHEADER_STAGING = "reduction_preheader_staging"
     REDUCTION_TILE_FUSION = "reduction_tile_fusion"
+    REDUCTION_MASK_PLACEMENT = "reduction_mask_placement"
 
 
 class StrategyChoice(str, Enum):
@@ -675,6 +676,7 @@ class StrategyChoice(str, Enum):
         "stage_invariant_access_scaffolding"
     )
     SHARED_PRODUCER_OUTPUTS = "shared_producer_outputs"
+    PRE_PRODUCER_STAGED_REUSE = "pre_producer_staged_reuse"
 
 
 _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
@@ -688,6 +690,9 @@ _STRATEGY_CHOICE_BY_FAMILY: dict[StrategyFamily, StrategyChoice] = {
     ),
     StrategyFamily.REDUCTION_TILE_FUSION: (
         StrategyChoice.SHARED_PRODUCER_OUTPUTS
+    ),
+    StrategyFamily.REDUCTION_MASK_PLACEMENT: (
+        StrategyChoice.PRE_PRODUCER_STAGED_REUSE
     ),
 }
 
@@ -2305,6 +2310,9 @@ class StrategyBinding(StrictJSONMixin):
     choice: StrategyChoice
     tile_slot: str | None = None
     accumulator_dtype: str | None = None
+    predicate_access_ref: str | None = None
+    placement_node_ref: str | None = None
+    placement_operand_slots: list[int] | None = None
 
     def __post_init__(self) -> None:
         self.target_ref = _string(self.target_ref, "StrategyBinding.target_ref")
@@ -2334,6 +2342,43 @@ class StrategyBinding(StrictJSONMixin):
                 "StrategyBinding tile_slot/accumulator_dtype are valid only "
                 "for reduction_tiling"
             )
+        if self.family is StrategyFamily.REDUCTION_MASK_PLACEMENT:
+            self.predicate_access_ref = _string(
+                self.predicate_access_ref,
+                "StrategyBinding.predicate_access_ref",
+            )
+            self.placement_node_ref = _string(
+                self.placement_node_ref,
+                "StrategyBinding.placement_node_ref",
+            )
+            slots = self.placement_operand_slots
+            if not isinstance(slots, list) or not slots:
+                raise SchemaError(
+                    "StrategyBinding.placement_operand_slots must be a non-empty array"
+                )
+            normalized_slots = [
+                _integer(
+                    slot,
+                    f"StrategyBinding.placement_operand_slots[{index}]",
+                    minimum=0,
+                )
+                for index, slot in enumerate(slots)
+            ]
+            if len(set(normalized_slots)) != len(normalized_slots):
+                raise SchemaError(
+                    "StrategyBinding.placement_operand_slots must not contain duplicates"
+                )
+            self.placement_operand_slots = sorted(normalized_slots)
+        elif (
+            self.predicate_access_ref is not None
+            or self.placement_node_ref is not None
+            or self.placement_operand_slots is not None
+        ):
+            raise SchemaError(
+                "StrategyBinding predicate_access_ref/placement_node_ref/"
+                "placement_operand_slots are valid only for "
+                "reduction_mask_placement"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "StrategyBinding":
@@ -2346,6 +2391,9 @@ class StrategyBinding(StrictJSONMixin):
                 "choice",
                 "tile_slot",
                 "accumulator_dtype",
+                "predicate_access_ref",
+                "placement_node_ref",
+                "placement_operand_slots",
             },
             required={"target_ref", "family", "choice"},
         )
@@ -2355,9 +2403,12 @@ class StrategyBinding(StrictJSONMixin):
             choice=data["choice"],
             tile_slot=data.get("tile_slot"),
             accumulator_dtype=data.get("accumulator_dtype"),
+            predicate_access_ref=data.get("predicate_access_ref"),
+            placement_node_ref=data.get("placement_node_ref"),
+            placement_operand_slots=data.get("placement_operand_slots"),
         )
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, Any]:
         result = {
             "target_ref": self.target_ref,
             "family": self.family.value,
@@ -2367,6 +2418,14 @@ class StrategyBinding(StrictJSONMixin):
             result["tile_slot"] = self.tile_slot
         if self.accumulator_dtype is not None:
             result["accumulator_dtype"] = self.accumulator_dtype
+        if self.predicate_access_ref is not None:
+            result["predicate_access_ref"] = self.predicate_access_ref
+        if self.placement_node_ref is not None:
+            result["placement_node_ref"] = self.placement_node_ref
+        if self.placement_operand_slots is not None:
+            result["placement_operand_slots"] = list(
+                self.placement_operand_slots
+            )
         return result
 
 
@@ -2437,6 +2496,20 @@ class StrategySpec(StrictJSONMixin):
             raise SchemaError(
                 "reduction_tile_fusion requires reduction_tiling for the same "
                 "target(s): " + ", ".join(missing_fusion_tiling)
+            )
+        mask_placement_targets = {
+            binding.target_ref
+            for binding in self.bindings
+            if binding.family is StrategyFamily.REDUCTION_MASK_PLACEMENT
+        }
+        unsupported_tiled_mask_placement = sorted(
+            mask_placement_targets & tiled_targets
+        )
+        if unsupported_tiled_mask_placement:
+            raise SchemaError(
+                "reduction_mask_placement cannot yet combine with "
+                "reduction_tiling for the same target(s): "
+                + ", ".join(unsupported_tiled_mask_placement)
             )
 
     @classmethod
@@ -2886,8 +2959,24 @@ class Gate1Artifact(StrictJSONMixin):
         node_id_by_path = {
             path: node_id for node_id, path in self.j.node_ids.items()
         }
+        intent_operation_by_ref: dict[str, Any] = {}
+        for node_id, path in self.j.node_ids.items():
+            operations = self.j.intent.body
+            operation = None
+            for index in (
+                int(value) for value in re.findall(r"body\[(\d+)\]", path)
+            ):
+                operation = operations[index]
+                operations = operation.body
+            assert operation is not None
+            intent_operation_by_ref[node_id] = operation
+            intent_operation_by_ref[path] = operation
         reduction_targets = {
             node_id_by_path.get(reduction.node_ref, reduction.node_ref)
+            for reduction in self.j.boundary.reductions
+        }
+        reduction_by_target = {
+            node_id_by_path.get(reduction.node_ref, reduction.node_ref): reduction
             for reduction in self.j.boundary.reductions
         }
         strategy_targets: dict[StrategyFamily, set[str]] = {
@@ -2902,6 +2991,7 @@ class Gate1Artifact(StrictJSONMixin):
             StrategyFamily.REDUCTION_TILING: reduction_targets,
             StrategyFamily.REDUCTION_PREHEADER_STAGING: reduction_targets,
             StrategyFamily.REDUCTION_TILE_FUSION: reduction_targets,
+            StrategyFamily.REDUCTION_MASK_PLACEMENT: reduction_targets,
         }
         schedule_slots = {slot.name: slot for slot in self.schedule.slots}
         for binding in self.strategy.bindings:
@@ -2922,6 +3012,78 @@ class Gate1Artifact(StrictJSONMixin):
                     raise SchemaError(
                         "reduction_tiling tile_slot must name a constexpr "
                         "kernel schedule slot"
+                    )
+            if binding.family is StrategyFamily.REDUCTION_MASK_PLACEMENT:
+                assert binding.predicate_access_ref is not None
+                assert binding.placement_node_ref is not None
+                assert binding.placement_operand_slots is not None
+                predicate_access = access_by_id.get(
+                    binding.predicate_access_ref
+                )
+                if predicate_access is None or predicate_access.predicate is None:
+                    raise SchemaError(
+                        "reduction_mask_placement predicate_access_ref must "
+                        "name a boundary access with a predicate"
+                    )
+                placement = intent_operation_by_ref.get(
+                    binding.placement_node_ref
+                )
+                if placement is None:
+                    raise SchemaError(
+                        "reduction_mask_placement placement_node_ref must "
+                        "name a J node"
+                    )
+                reduction = intent_operation_by_ref[binding.target_ref]
+                boundary_reduction = reduction_by_target[binding.target_ref]
+                if reduction.op != "reduce":
+                    raise SchemaError(
+                        "reduction_mask_placement target_ref must name a reduce node"
+                    )
+                if not isinstance(placement.result, str) or (
+                    placement.result not in reduction.operands
+                ):
+                    raise SchemaError(
+                        "reduction_mask_placement placement node must directly "
+                        "produce the target reduction operand"
+                    )
+                if any(
+                    index >= len(placement.operands)
+                    for index in binding.placement_operand_slots
+                ):
+                    raise SchemaError(
+                        "reduction_mask_placement placement_operand_slots "
+                        "exceed the placement node operand count"
+                    )
+                selected_operands = {
+                    placement.operands[index]
+                    for index in binding.placement_operand_slots
+                }
+                if len(selected_operands) != 1:
+                    raise SchemaError(
+                        "reduction_mask_placement selected operand slots must "
+                        "reuse one shared J value"
+                    )
+                if (
+                    placement.op != "map_binary"
+                    or placement.attrs.get("fn") != "mul"
+                    or binding.placement_operand_slots
+                    != list(range(len(placement.operands)))
+                    or len(placement.operands) != 2
+                    or len(set(placement.operands)) != 1
+                ):
+                    raise SchemaError(
+                        "pre_producer_staged_reuse currently requires a "
+                        "map_binary mul of one shared value in both operand slots"
+                    )
+                contribution = boundary_reduction.masked_contribution
+                if (
+                    isinstance(contribution, bool)
+                    or not isinstance(contribution, (int, float))
+                    or contribution != 0
+                ):
+                    raise SchemaError(
+                        "pre_producer_staged_reuse currently requires a numeric "
+                        "zero masked_contribution"
                     )
 
         valid_plan_refs = (
@@ -3525,7 +3687,7 @@ def _strategy_rewriter_json(
 ) -> dict[str, Any]:
     """Expose source decisions while alpha-renaming every referenced handle."""
 
-    bindings: list[dict[str, str]] = []
+    bindings: list[dict[str, Any]] = []
     for binding in strategy.bindings:
         item = {
             "target_ref": opaque_reference(binding.target_ref),
@@ -3536,6 +3698,18 @@ def _strategy_rewriter_json(
             item["tile_slot"] = opaque_reference(binding.tile_slot)
         if binding.accumulator_dtype is not None:
             item["accumulator_dtype"] = binding.accumulator_dtype
+        if binding.predicate_access_ref is not None:
+            item["predicate_access_ref"] = opaque_reference(
+                binding.predicate_access_ref
+            )
+        if binding.placement_node_ref is not None:
+            item["placement_node_ref"] = opaque_reference(
+                binding.placement_node_ref
+            )
+        if binding.placement_operand_slots is not None:
+            item["placement_operand_slots"] = list(
+                binding.placement_operand_slots
+            )
         bindings.append(item)
     return {
         "bindings": sorted(
@@ -3546,6 +3720,9 @@ def _strategy_rewriter_json(
                 item["choice"],
                 item.get("tile_slot", ""),
                 item.get("accumulator_dtype", ""),
+                item.get("predicate_access_ref", ""),
+                item.get("placement_node_ref", ""),
+                tuple(item.get("placement_operand_slots", ())),
             ),
         )
     }

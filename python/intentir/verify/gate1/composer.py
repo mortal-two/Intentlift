@@ -32,7 +32,7 @@ from .model import (
 from .rules import RuleCard, RuleRegistry, RuleSelectionMode
 
 
-COMPOSER_VERSION = "deterministic_composer_v5"
+COMPOSER_VERSION = "deterministic_composer_v6"
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -241,6 +241,9 @@ class _StrategyBindingView:
     choice: str
     tile_slot: str | None = None
     accumulator_dtype: str | None = None
+    predicate_access_ref: str | None = None
+    placement_node_ref: str | None = None
+    placement_operand_slots: tuple[int, ...] | None = None
 
     @property
     def pointer(self) -> str:
@@ -281,6 +284,7 @@ _LEGACY_TARGET_KINDS: dict[str, tuple[str, ...]] = {
     "realize_multi_tile_reduce": ("intent_op:reduce",),
     "stage_reduction_preheader": ("intent_op:reduce",),
     "fuse_reduction_tile_outputs": ("intent_op:reduce",),
+    "realize_reduction_mask_placement": ("intent_op:reduce",),
     "realize_broadcast": ("boundary.broadcast",),
     "realize_k_tiled_dot": ("intent_op:contraction",),
     "realize_outer_product": ("intent_op:contraction",),
@@ -312,6 +316,10 @@ _LEGACY_STRATEGY: dict[str, tuple[str, str]] = {
         "reduction_tile_fusion",
         "shared_producer_outputs",
     ),
+    "realize_reduction_mask_placement": (
+        "reduction_mask_placement",
+        "pre_producer_staged_reuse",
+    ),
 }
 
 _SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset(
@@ -319,6 +327,7 @@ _SUPPLEMENTAL_STRATEGY_FAMILIES = frozenset(
         "mask_materialization",
         "reduction_preheader_staging",
         "reduction_tile_fusion",
+        "reduction_mask_placement",
     }
 )
 
@@ -342,6 +351,7 @@ _LEGACY_PHASE: dict[str, int] = {
     "realize_multi_tile_reduce": 60,
     "stage_reduction_preheader": 55,
     "fuse_reduction_tile_outputs": 56,
+    "realize_reduction_mask_placement": 58,
     "realize_k_tiled_dot": 60,
     "realize_outer_product": 60,
     "realize_indexed_access": 60,
@@ -519,7 +529,7 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
     if bindings is None:
         bindings = []
     result: list[_StrategyBindingView] = []
-    json_bindings: list[dict[str, str]] = []
+    json_bindings: list[dict[str, Any]] = []
     for index, binding in enumerate(bindings):
         if isinstance(binding, Mapping):
             target_ref = binding.get("target_ref")
@@ -527,12 +537,24 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
             choice = binding.get("choice")
             tile_slot = binding.get("tile_slot")
             accumulator_dtype = binding.get("accumulator_dtype")
+            predicate_access_ref = binding.get("predicate_access_ref")
+            placement_node_ref = binding.get("placement_node_ref")
+            placement_operand_slots = binding.get("placement_operand_slots")
         else:
             target_ref = getattr(binding, "target_ref", None)
             family = getattr(binding, "family", None)
             choice = getattr(binding, "choice", None)
             tile_slot = getattr(binding, "tile_slot", None)
             accumulator_dtype = getattr(binding, "accumulator_dtype", None)
+            predicate_access_ref = getattr(
+                binding, "predicate_access_ref", None
+            )
+            placement_node_ref = getattr(
+                binding, "placement_node_ref", None
+            )
+            placement_operand_slots = getattr(
+                binding, "placement_operand_slots", None
+            )
         family = _enum_value(family)
         choice = _enum_value(choice)
         if not all(isinstance(value, str) and value for value in (target_ref, family, choice)):
@@ -553,6 +575,37 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
                 f"strategy binding {index} carries reduction-only parameters "
                 f"for family {family!r}"
             )
+        if family == "reduction_mask_placement":
+            if not all(
+                isinstance(value, str) and value
+                for value in (predicate_access_ref, placement_node_ref)
+            ) or not (
+                isinstance(placement_operand_slots, (list, tuple))
+                and placement_operand_slots
+                and all(
+                    isinstance(slot, int)
+                    and not isinstance(slot, bool)
+                    and slot >= 0
+                    for slot in placement_operand_slots
+                )
+            ):
+                raise ComposeError(
+                    f"strategy binding {index} reduction_mask_placement "
+                    "requires closed predicate/access placement references"
+                )
+            placement_operand_slots = tuple(placement_operand_slots)
+        elif any(
+            value is not None
+            for value in (
+                predicate_access_ref,
+                placement_node_ref,
+                placement_operand_slots,
+            )
+        ):
+            raise ComposeError(
+                f"strategy binding {index} carries mask-placement parameters "
+                f"for family {family!r}"
+            )
         result.append(
             _StrategyBindingView(
                 index,
@@ -561,6 +614,9 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
                 choice,
                 tile_slot,
                 accumulator_dtype,
+                predicate_access_ref,
+                placement_node_ref,
+                placement_operand_slots,
             )
         )
         json_binding = {
@@ -572,6 +628,14 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
             json_binding["tile_slot"] = tile_slot
         if accumulator_dtype is not None:
             json_binding["accumulator_dtype"] = accumulator_dtype
+        if predicate_access_ref is not None:
+            json_binding["predicate_access_ref"] = predicate_access_ref
+        if placement_node_ref is not None:
+            json_binding["placement_node_ref"] = placement_node_ref
+        if placement_operand_slots is not None:
+            json_binding["placement_operand_slots"] = list(
+                placement_operand_slots
+            )
         json_bindings.append(json_binding)
     return result, {
         "bindings": sorted(
@@ -582,6 +646,9 @@ def _strategy_views(artifact: Gate1Artifact) -> tuple[list[_StrategyBindingView]
                 value["choice"],
                 value.get("tile_slot", ""),
                 value.get("accumulator_dtype", ""),
+                value.get("predicate_access_ref", ""),
+                value.get("placement_node_ref", ""),
+                tuple(value.get("placement_operand_slots", ())),
             ),
         )
     }
@@ -1220,6 +1287,8 @@ def _add_supplemental_strategy_items(
     for binding in bindings:
         if binding.family not in _SUPPLEMENTAL_STRATEGY_FAMILIES:
             continue
+        placement: _WorkItem | None = None
+        predicate_effect: _WorkItem | None = None
         if binding.family == "mask_materialization":
             targets = [
                 item
@@ -1232,6 +1301,7 @@ def _add_supplemental_strategy_items(
         elif binding.family in {
             "reduction_preheader_staging",
             "reduction_tile_fusion",
+            "reduction_mask_placement",
         }:
             targets = [
                 item
@@ -1241,6 +1311,54 @@ def _add_supplemental_strategy_items(
                 and _binding_matches_item(binding, item)
             ]
             target_description = "semantic reductions"
+            if binding.family == "reduction_mask_placement":
+                assert binding.placement_node_ref is not None
+                assert binding.predicate_access_ref is not None
+                placements = [
+                    item
+                    for item in items
+                    if item.role == "intent"
+                    and (
+                        item.target_ref == binding.placement_node_ref
+                        or binding.placement_node_ref in item.aliases
+                    )
+                ]
+                predicates = [
+                    item
+                    for item in items
+                    if item.kind == "boundary.access.effect"
+                    and item.role == "effect"
+                    and (
+                        item.target_ref == binding.predicate_access_ref
+                        or binding.predicate_access_ref in item.aliases
+                    )
+                ]
+                if len(placements) != 1:
+                    error = (
+                        ZeroRuleMatchError
+                        if not placements
+                        else AmbiguousRuleMatchError
+                    )
+                    raise error(
+                        "reduction_mask_placement resolves placement_node_ref "
+                        f"{binding.placement_node_ref!r} to {len(placements)} "
+                        "semantic nodes",
+                        work_item=f"strategy:{binding.index}",
+                    )
+                if len(predicates) != 1:
+                    error = (
+                        ZeroRuleMatchError
+                        if not predicates
+                        else AmbiguousRuleMatchError
+                    )
+                    raise error(
+                        "reduction_mask_placement resolves predicate_access_ref "
+                        f"{binding.predicate_access_ref!r} to {len(predicates)} "
+                        "access effects",
+                        work_item=f"strategy:{binding.index}",
+                    )
+                placement = placements[0]
+                predicate_effect = predicates[0]
         else:  # pragma: no cover - closed family set above
             raise ComposeError(
                 f"unsupported supplemental strategy family {binding.family!r}"
@@ -1255,19 +1373,62 @@ def _add_supplemental_strategy_items(
             )
         target = targets[0]
         key = f"strategy:{binding.index}:{binding.family}:{target.target_ref}"
+        facts = copy.deepcopy(target.facts)
+        dependencies = set(target.dependencies)
+        source_pointers = target.source_pointers
+        semantic_key = (
+            f"{target.semantic_key}:strategy:{binding.family}:{binding.choice}"
+        )
+        if binding.family == "reduction_mask_placement":
+            assert placement is not None
+            assert predicate_effect is not None
+            assert binding.predicate_access_ref is not None
+            assert binding.placement_node_ref is not None
+            assert binding.placement_operand_slots is not None
+            if placement.key not in target.dependencies:
+                raise ComposeDependencyError(
+                    "reduction_mask_placement placement node is not the direct "
+                    "reduction producer",
+                    work_item=f"strategy:{binding.index}",
+                )
+            facts.update(
+                {
+                    "predicate_access_ref": binding.predicate_access_ref,
+                    "placement_node_ref": binding.placement_node_ref,
+                    "placement_operand_slots": list(
+                        binding.placement_operand_slots
+                    ),
+                }
+            )
+            dependencies = set(placement.dependencies)
+            dependencies.add(predicate_effect.key)
+            source_pointers = tuple(
+                sorted(
+                    set(target.source_pointers)
+                    | set(placement.source_pointers)
+                    | set(predicate_effect.source_pointers)
+                )
+            )
+            semantic_key = _semantic_key(
+                "strategy:reduction_mask_placement", facts
+            )
         addition = _WorkItem(
             key=key,
             kind=target.kind,
             role=f"strategy:{binding.family}",
             target_ref=target.target_ref,
             target_pointer=target.target_pointer,
-            facts=copy.deepcopy(target.facts),
-            semantic_key=f"{target.semantic_key}:strategy:{binding.family}:{binding.choice}",
+            facts=facts,
+            semantic_key=semantic_key,
             aliases=target.aliases,
-            source_pointers=target.source_pointers,
-            dependencies=set(target.dependencies),
+            source_pointers=source_pointers,
+            dependencies=dependencies,
         )
-        target.dependencies = {key}
+        if binding.family == "reduction_mask_placement":
+            assert placement is not None
+            placement.dependencies = {key}
+        else:
+            target.dependencies = {key}
         additions.append(addition)
     items.extend(additions)
 

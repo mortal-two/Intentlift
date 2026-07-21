@@ -57,11 +57,25 @@ C 保存不改变 J 的 realization／性能选择，例如：
 - vector width、unroll、pipeline stages；
 - shared-memory staging、prefetch、double buffer、warp specialization；
 - source-local rank insertion、address association、mask materialization；
+- 已证明不改变 B contribution 的 source-local mask SSA placement；
 - target-local physical layout 与已审计的实现 variant。
 
 C 是 non-binding schedule／strategy。Backend 可以不用某个提示，但不能借“重调 C”
 改变 A 或违反 B。若某种 fast math 会改变可观察数值，允许范围必须先由 A/B 定义；
 C 只能在该范围内选择 realization。
+
+例如 B 已规定 reduction inactive lane 的 `masked_contribution=0`，且 producer 是
+`square(x)=x*x` 时，source 的两种写法
+
+```text
+square(where(p, x, 0)) -> reduce
+where(p, square(x), 0) -> reduce
+```
+
+满足同一 A+B，但具有不同的 Gate1 dataflow fingerprint。`p` 与 contribution 仍属于 B；
+前置 `where` 的 node/operand-edge placement 只能作为闭合、已审计的 C/source-validation
+choice，不能塞进 A DAG 或 portable `ReductionBoundary`。只有规则能证明
+`producer(fill)=masked_contribution` 时才允许该 choice；否则 fail closed。
 
 ## 5. 三类 index 必须分离
 

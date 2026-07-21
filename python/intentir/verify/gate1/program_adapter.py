@@ -286,6 +286,12 @@ def _logical_interface(artifact: Gate1Artifact, function: IntentFunction) -> Log
 def _schedule_hint(artifact: Gate1Artifact) -> ScheduleHint:
     strategies: list[StrategyHint] = []
     for binding in artifact.strategy.bindings:
+        # This family exists solely to reproduce source-front-end SSA topology
+        # in Gate1.  A target backend is free to place an already-declared B
+        # masked contribution anywhere it proves legal, so the target-neutral
+        # IntentProgram deliberately does not carry these source edge handles.
+        if binding.family.value == "reduction_mask_placement":
+            continue
         parameters: list[tuple[str, Any]] = []
         if binding.tile_slot is not None:
             parameters.append(("tile_slot", binding.tile_slot))

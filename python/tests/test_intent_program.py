@@ -312,6 +312,55 @@ def test_gate_adapter_drops_privileged_fields_and_keeps_typed_ab_abi() -> None:
         assert forbidden not in serialized
 
 
+def test_gate_adapter_drops_source_only_reduction_mask_placement() -> None:
+    payload = _gate_artifact().to_json()
+    payload["j"]["intent"]["intent_function"]["body"] = [
+        {
+            "op": "map_binary",
+            "result": "squared",
+            "operands": ["x", "x"],
+            "attrs": {"fn": "mul"},
+        },
+        {
+            "op": "reduce",
+            "result": "y",
+            "operands": ["squared"],
+            "attrs": {"fn": "sum", "axes": [1]},
+        },
+    ]
+    payload["j"]["node_ids"] = {"n0": "body[0]", "n1": "body[1]"}
+    payload["j"]["boundary"]["accesses"][0]["node_ref"] = "n0"
+    payload["j"]["boundary"]["accesses"][1]["node_ref"] = "n1"
+    payload["j"]["boundary"]["output_mappings"][0]["node_ref"] = "n1"
+    payload["j"]["boundary"]["reductions"][0]["node_ref"] = "n1"
+    payload["strategy"] = {
+        "bindings": [
+            {
+                "target_ref": "n1",
+                "family": "reduction_mask_placement",
+                "choice": "pre_producer_staged_reuse",
+                "predicate_access_ref": "a0",
+                "placement_node_ref": "n0",
+                "placement_operand_slots": [0, 1],
+            }
+        ]
+    }
+    artifact = Gate1Artifact.from_json(payload)
+    with_strategy = intent_program_from_gate1(artifact)
+
+    payload["strategy"] = {"bindings": []}
+    without_strategy = intent_program_from_gate1(
+        Gate1Artifact.from_json(payload)
+    )
+
+    assert with_strategy.function == without_strategy.function
+    assert with_strategy.boundary == without_strategy.boundary
+    assert with_strategy.interface == without_strategy.interface
+    assert with_strategy.schedule_hint == without_strategy.schedule_hint
+    assert with_strategy.schedule_hint is not None
+    assert with_strategy.schedule_hint.strategies == ()
+
+
 def test_gate_adapter_preserves_inactive_pointer_in_static_input_abi() -> None:
     payload = _gate_artifact().to_json()
     payload["j"]["intent"]["intent_function"]["inputs"].append(

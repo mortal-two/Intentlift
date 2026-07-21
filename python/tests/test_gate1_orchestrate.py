@@ -2030,6 +2030,7 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "realize_multi_tile_reduce",
         "stage_reduction_preheader",
         "fuse_reduction_tile_outputs",
+        "realize_reduction_mask_placement",
         "realize_k_tiled_dot",
         "realize_outer_product",
     } <= {card.id for card in first.cards}
@@ -2042,9 +2043,10 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
         "materialize_mask_tile",
         "realize_flattened_reduce",
         "realize_multi_tile_reduce",
-        "stage_reduction_preheader",
-        "fuse_reduction_tile_outputs",
-    }
+            "stage_reduction_preheader",
+            "fuse_reduction_tile_outputs",
+            "realize_reduction_mask_placement",
+        }
     assert all(
         card.override_family is not None
         for card in first.cards
@@ -2070,7 +2072,11 @@ def test_rule_registry_is_versioned_and_has_a_stable_digest() -> None:
     assert cards["realize_synchronize"].api_mapping["program_barrier"] == (
         "tl.debug_barrier"
     )
-    assert cards["realize_reduce"].version == "4"
+    assert cards["realize_reduce"].version == "5"
+    assert cards["realize_reduction_mask_placement"].version == "1"
+    assert cards["realize_reduction_mask_placement"].override_family == (
+        "reduction_mask_placement"
+    )
     assert "tile_axis" in cards["realize_reduce"].reads
     assert "semantic_extent" in cards["realize_reduce"].api_mapping["mean"]
     assert "tl.reduce" in cards["realize_reduce"].api_mapping["prod"]

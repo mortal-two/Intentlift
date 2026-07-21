@@ -114,11 +114,14 @@ reduction_call_shape     = flattened
 reduction_tiling         = multi_tile_accumulate
 reduction_preheader_staging = stage_invariant_access_scaffolding
 reduction_tile_fusion    = shared_producer_outputs
+reduction_mask_placement = pre_producer_staged_reuse
 ```
 
 absence 表示 canonical choice。同一 target/family 最多一个 binding；target kind 必须
 匹配 family。strategy 禁止源码文本、表达式、常量、算法语义、API、rule id 和施工
-顺序。
+顺序。除 `reduction_tiling` 的 typed slot/dtype 外，只有
+`reduction_mask_placement` 可以携带既有 access/node ref 与整数 operand slot；它不得复制
+predicate 文本或 fill，后两者仍由 J.B 唯一拥有。
 
 `reduction_tiling=multi_tile_accumulate` 只绑定到一个 J reduce node，并额外携带
 `tile_slot` 与 `accumulator_dtype`。它表示源码以 runtime `scf.for`/Triton range 遍历
@@ -149,6 +152,23 @@ loop 用共享 per-tile producer 同时计算 non-reduced output 和 reduction p
 同处一轮，final reduced-output consumer 留在 loop 后。两者都不改变 J DAG、Boundary
 access/effect/output mapping，也不是通用 LICM/fusion；source 使用分离 loop、side output
 不共享 producer 或存在额外 semantic carry 时必须省略/fail closed。
+
+`reduction_mask_placement=pre_producer_staged_reuse` 只记录 source replay 的非默认
+mask SSA placement。缺省仍是在 reduction input 用 B 的 `masked_contribution` 实现 tail
+mask。该 binding 绑定 reduce target，并携带 `predicate_access_ref`、
+`placement_node_ref` 与非空、无重复的 `placement_operand_slots`：composer 先依赖已有
+predicate access 与原 operand 定义，生成一次 staged masked value，再把它只接到指定
+producer input edge；producer 的其他 consumer 不得被全局改写，reduce 也不得再生成第二
+个 mask。v1 只审计 `map_binary mul(value,value)` 的 `[0,1]` 两条边且
+`masked_contribution=0`，因此 `mul(0,0)=0` 可由规则证明；`exp`、非零 contribution、
+无关 producer 或任意 mask motion 均不猜测、不回退。当前该 family 不与
+`reduction_tiling` 组合。
+
+这项 choice 不改变 A 的 whole-tensor DAG 或 B 的 predicate/contribution，只改变严格
+source fingerprint 中 `where` 的位置与共享边，因而不进入 target-neutral
+`IntentProgram`。字段是可选 override，旧 artifact 与直接 reduction-input mask 不新增
+任何准入条件；声明了非法引用或未经审计的 producer 时，普通 Lift finalization/
+deterministic compose fail closed，不产生 Gate0、Gate1.5 或新的 verdict。
 
 `address_association=pointer_staged` 的共享规则语义是确定的：J domain coordinate
 视为原子，只把 access `index_expression` 的顶层加法项按从左到右顺序逐项加到

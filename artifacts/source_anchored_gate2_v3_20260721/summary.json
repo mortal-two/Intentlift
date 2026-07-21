@@ -7,7 +7,7 @@
   "semantic_interventions": 0,
   "pi_ablations": false,
   "selected": 1,
-  "fresh_full_pipeline_passed": 1,
+  "fresh_full_pipeline_passed": 0,
   "performance_measured": 0,
   "non_regression_2pct_passed": 0,
   "extension_3pct_passed": 0,
@@ -18,17 +18,25 @@
   "paper_suite_target_pass": null,
   "rows": [
     {
-      "kernel_id": "high_performance:liger_kl_div",
-      "status": "complete",
-      "fresh_full_pipeline": true,
-      "report": "artifacts/source_anchored_gate2_v3_20260721/high_performance_liger_kl_div.json",
+      "kernel_id": "high_performance:liger_layer_norm",
+      "status": "failed",
+      "fresh_full_pipeline": false,
+      "report": "/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/artifacts/source_anchored_gate2_v3_20260721/high_performance_liger_layer_norm.json",
       "resumed": false,
-      "failures": [],
+      "failures": [
+        "gate1_not_closed",
+        "gate2_not_passed",
+        "missing_source_execution_evidence",
+        "missing_replay_execution_evidence",
+        "missing_source_replay_comparison_evidence",
+        "missing_source_scalar_comparison_evidence",
+        "missing_gate2_scalar_binding"
+      ],
       "measured": false,
       "speedup_source_over_generated": null,
       "non_regression_2pct_pass": false,
       "extension_3pct_speedup_pass": false,
-      "exit_code": 0
+      "exit_code": 3
     }
   ]
 }
