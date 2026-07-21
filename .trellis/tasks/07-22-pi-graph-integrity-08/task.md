@@ -142,3 +142,11 @@ conformance，然后运行全量回归；在这些证据闭合前不得冻结 v5
 
 下一步运行切换 v5 后的完整全量回归。只有全绿并提交后，才生成 0-LLM v5 preflight；任何
 preflight identity 覆盖的代码若再改变，必须废弃并重新生成，不能直接开始 canary。
+
+v5 epoch 切换后的全量回归已通过：`782 passed, 4 skipped`，60 个既有 warning，耗时
+354.15 秒。此前两个“v4 仍为 current”的失败已由显式 historical-v4/current-v5 断言关闭，
+没有刷新或重写任何 v4 evidence。
+
+下一步只生成并复验 v5 formal preflight；该命令必须保持 `online_llm_calls=0`，并证明 26/26
+Triton、2/2 CuTe、28/28 source observer/replay arm ready。preflight 提交后冻结受保护代码，
+才允许唯一一次 Swiglu v5 canary。
