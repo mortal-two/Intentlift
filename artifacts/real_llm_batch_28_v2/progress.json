@@ -1,0 +1,37 @@
+{
+  "schema": "intentir.formal-real-llm-progress.v2",
+  "batch_id": "tianchenir-formal-real-kernels-protocol-v2-2026-07-22",
+  "manifest_digest": "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e",
+  "manifest_file_sha256": "27b9a81e8230ce75105848625b85f44e9002264c91d166e57983c617e09e83b3",
+  "online_http_attempts": 1,
+  "calls": {
+    "lift": 1,
+    "normal_replay": 0,
+    "masked_j": 0
+  },
+  "usage": {
+    "input_tokens": 8713,
+    "output_tokens": 10437,
+    "reasoning_tokens": 8286,
+    "total_tokens": 19150,
+    "elapsed_ms": 191267.59310811758
+  },
+  "cases": [
+    {
+      "case_id": "liger_swiglu_forward",
+      "attempt_class": "protocol_v2_recovery",
+      "status": "lift_failed",
+      "failure_class": "lift_wire_parser_contract_mismatch",
+      "diagnostic": "SchemaError: non-loop operation 'body[0]' must not declare scope_id",
+      "receipt_path": "recovery/liger_swiglu_forward/receipt.json",
+      "receipt_sha256": "82029abd631873847de48babdb1c9ebfad3b3006585fd95d8053f19d4d6e0901",
+      "predecessor_receipt_sha256": "0f88c7b84c6f502383effd5e304a7ee27ef8747704421b4744a2254f98435c69",
+      "http_attempts": 1,
+      "normal_replay_calls": 0,
+      "masked_j_calls": 0
+    }
+  ],
+  "unattempted_cases": 27,
+  "batch_stopped": true,
+  "stop_reason": "Protocol-v2 wire schema admits scope_id on non-loop IntentOps while the authoritative parser rejects it; the frozen canary is exhausted and expansion is forbidden."
+}

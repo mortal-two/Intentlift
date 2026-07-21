@@ -1,6 +1,7 @@
 # Formal Batch V2 05：闭合统一前端后再完成 28 Kernel 证据链
 
-> 状态：进行中
+> 状态：已结束（protocol-v2 canary 失败，证据完整）
+> 归档原因：frozen recovery canary 已耗尽，已知全局 wire/parser mismatch 禁止继续扩散
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
 
@@ -139,3 +140,28 @@ CuTe compiler/validator/fingerprint 接到 source-blind Replay。此阶段在线
 
 下一步进入阶段 2：只运行 `liger_swiglu_forward` protocol-v2 recovery canary。若 Lift wire
 仍失败，立即停止；只有 Lift 合法且 normal Gate1 闭合，才允许该 case 的一次 masked-J。
+
+## 阶段 2 canary 结果（2026-07-22）
+
+- `liger_swiglu_forward` 已消耗且只消耗一次真实 xhigh protocol-v2 recovery Lift：输入
+  8713、输出 10437（reasoning 8286）、总计 19150 tokens，elapsed 191267.593 ms。
+- provider response 状态为 `completed`，但权威 parser 拒绝：
+  `non-loop operation 'body[0]' must not declare scope_id`。receipt、exact request、response
+  text、raw envelope、provider id/model/usage 与逐文件 SHA 全部保存在
+  `artifacts/real_llm_batch_28_v2/recovery/liger_swiglu_forward/`。
+- 这不是 kernel-specific 表示缺口：protocol-v2 实际 Responses JSON Schema 对任意 IntentOp
+  都允许 nullable `scope_id`，而 parser 只允许 `op == "loop"` 声明它。模型响应符合 wire
+  可接受域，却落在 parser 拒绝域，属于全局 wire/parser contract mismatch。
+- 没有 normal Replay、没有 masked-J、没有 Gate1 编译；请求中不存在真实 source symbol，
+  request/raw evidence 不含 provider secret。聚合调用/token/停止状态已写入
+  `artifacts/real_llm_batch_28_v2/progress.json`，其余 27 项保持未调用。
+
+## 结束判定
+
+Task05 没有通过 28/28 最终验收。protocol-v2 的唯一 Swiglu recovery canary 已失败，而该
+epoch 仍冻结 `recovery_per_case=0`；继续运行其余 27 项既不能补回该 case，也会把已知的
+全局 schema 缺陷扩散到批次。因此本任务以**协议失败但 provenance 完整**结束并归档，
+不重试、不手改 response、不降低 parser 或 Gate。
+
+后续 Task06 只处理一件事：让 wire JSON Schema 与权威 parser 的结构接受域同构，并用
+全局正/负 conformance 测试证明；在新 protocol/manifest/preflight 提交前不再调用 LLM。

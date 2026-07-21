@@ -34,6 +34,8 @@ _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
+_RECOVERY_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "recovery"
+_PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
 
 
 class _Response:
@@ -251,3 +253,50 @@ def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> N
     request = (case_dir / call["request_path"]).read_text()
     assert "_swiglu_forward_kernel" not in request
     assert '"kind":"normal_replay"' not in request
+
+
+def test_committed_protocol_v2_recovery_failure_is_complete_and_stopped() -> None:
+    case_dir = _RECOVERY_V2 / "liger_swiglu_forward"
+    receipt_bytes = (case_dir / "receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert hashlib.sha256(receipt_bytes).hexdigest() == (
+        "82029abd631873847de48babdb1c9ebfad3b3006585fd95d8053f19d4d6e0901"
+    )
+    assert receipt["schema"] == "intentir.formal-real-llm-case.v2"
+    assert receipt["status"] == "lift_failed"
+    assert receipt["lineage"]["attempt_class"] == "protocol_v2_recovery"
+    assert len(receipt["calls"]) == 1
+    call = receipt["calls"][0]
+    assert call["kind"] == "lift"
+    assert call["status"] == "failed"
+    assert call["attempts"] == 1
+    assert call["usage"] == {
+        "input_tokens": 8713,
+        "output_tokens": 10437,
+        "total_tokens": 19150,
+    }
+    assert "non-loop operation 'body[0]'" in call["diagnostic"]
+    for path_key, digest_key in (
+        ("request_path", "request_sha256"),
+        ("response_path", "response_sha256"),
+        ("raw_response_path", "raw_response_sha256"),
+    ):
+        payload = (case_dir / call[path_key]).read_bytes()
+        assert hashlib.sha256(payload).hexdigest() == call[digest_key]
+    raw = json.loads((case_dir / call["raw_response_path"]).read_text())
+    assert raw["status"] == "completed"
+    assert raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 8286
+    request = (case_dir / call["request_path"]).read_text()
+    assert "_swiglu_forward_kernel" not in request
+    assert not (case_dir / "calls" / "02_normal_replay").exists()
+    assert not (case_dir / "calls" / "02_masked_j").exists()
+
+    progress = json.loads(_PROGRESS_V2.read_text())
+    assert progress["online_http_attempts"] == 1
+    assert progress["calls"] == {
+        "lift": 1,
+        "normal_replay": 0,
+        "masked_j": 0,
+    }
+    assert progress["batch_stopped"] is True
+    assert progress["unattempted_cases"] == 27

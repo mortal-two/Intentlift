@@ -5,10 +5,11 @@ Trellis CLI、自动 session 或 workflow phase。
 
 当前活动工作项：
 
-- [Formal Batch V2 05：闭合统一前端后再完成 28 Kernel 证据链](07-22-formal-batch-v2-05/task.md)
+- [Lift Wire / Parser Isomorphism 06：消除结构接受域漂移后再开 v3 Canary](07-22-lift-wire-parser-isomorphism-06/task.md)
 
 最近完成：
 
+- [Formal Batch V2 05：protocol-v2 recovery canary 失败并完整留证](archive/2026-07/07-22-formal-batch-v2-05/task.md)
 - [28 Real Kernels 04：protocol-v1 首次真实 Lift 失败并完整留证](archive/2026-07/07-22-28-kernel-llm-batch-04/task.md)
 - [Typed Relations 03：闭合 logical bounds、update 与 allowed-result relation](archive/2026-07/07-22-typed-relations-03/task.md)
 - [IntentOp Robustness 02：真实机制审计与错误能力回收](archive/2026-07/07-21-intentop-robustness-02/task.md)
