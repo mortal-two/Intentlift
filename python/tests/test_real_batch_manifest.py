@@ -29,9 +29,13 @@ from intentir.evaluation.formal_preflight import (
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
+_MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V2 = (
     _ROOT / "artifacts" / "real_llm_batch_28_v2" / "preflight.json"
+)
+_PREFLIGHT_V3 = (
+    _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 )
 
 
@@ -41,6 +45,10 @@ def _raw() -> dict:
 
 def _raw_v2() -> dict:
     return json.loads(_MANIFEST_V2.read_text())
+
+
+def _raw_v3() -> dict:
+    return json.loads(_MANIFEST_V3.read_text())
 
 
 def test_formal_manifest_has_28_verified_source_symbols() -> None:
@@ -93,14 +101,23 @@ def test_protocol_v2_preflight_remains_complete_historical_evidence() -> None:
         "triton_compiled": 26,
         "triton_total": 26,
     }
-    # Gate1's frozen compiler-path identity happens to remain current: the
-    # epoch was retired by Lift wire drift, not by a compiler-path change.
-    assert receipt["gate1_code"] == current_gate1_code_identity()
+    # The v3 identity now also binds the strict parser and shared IntentOp
+    # contract that the historical v2 preflight omitted.
+    assert receipt["gate1_code"] != current_gate1_code_identity()
     cute_cases = [item for item in receipt["cases"] if item["frontend"] == "cute"]
     assert [item["async_copy_opcode"] for item in cute_cases] == [
         "cp.async.bulk.shared",
         "cp.async.bulk.tensor.1d.shared",
     ]
+
+
+def test_current_gate1_identity_binds_parser_and_shared_contract() -> None:
+    paths = {item["path"] for item in current_gate1_code_identity()}
+    assert {
+        "python/intentir/ir/intent_op_contract.py",
+        "python/intentir/ir/model.py",
+        "python/intentir/verify/gate1/model.py",
+    } <= paths
 
 
 def test_protocol_v2_preflight_cannot_be_reused_after_wire_epoch_drift() -> None:
@@ -125,6 +142,68 @@ def test_protocol_v2_rejects_open_or_drifted_wire_metadata() -> None:
     expected["prompt_sha256"] = "0" * 64
     with pytest.raises(LiftWireError, match="differs"):
         verify_lift_wire_lock(expected)
+
+
+def test_protocol_v3_is_self_contained_current_and_preserves_the_cases() -> None:
+    v2 = load_batch_manifest(_MANIFEST_V2)
+    v3 = load_batch_manifest(_MANIFEST_V3)
+    assert v3.digest == "5f0b1ee853e2821a299753165145023562df548810468c0110bdbc6895823222"
+    assert v3.digest != v2.digest
+    assert v3.data["cases"] == v2.data["cases"]
+    assert "base_manifest" not in v3.data
+    assert len(v3.cases) == 28
+    assert verify_lift_wire_lock(v3.data["lift_wire"]) == (
+        current_lift_wire_identity()
+    )
+    assert [item["path"] for item in v3.data["lift_wire"]["client_files"]][
+        -1
+    ] == "python/intentir/ir/intent_op_contract.py"
+
+
+def test_protocol_v3_rejects_epoch_and_wire_tampering() -> None:
+    raw = _raw_v3()
+    raw["protocols"]["lift"] = "llm_direct_pi_source_aware_lift_v2"
+    with pytest.raises(ManifestError, match="protocols"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+    raw = _raw_v3()
+    raw["lift_wire"]["version"] = "intentir.lift-wire.v2"
+    with pytest.raises(ManifestError, match="version"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+    raw = _raw_v3()
+    raw["lift_wire"]["client_files"].pop()
+    with pytest.raises(ManifestError, match="every request-path"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+
+def test_protocol_v3_preflight_is_current_and_28_of_28() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V3)
+    receipt = json.loads(_PREFLIGHT_V3.read_text(encoding="utf-8"))
+    verify_formal_preflight(receipt, manifest, _MANIFEST_V3)
+    assert hashlib.sha256(_PREFLIGHT_V3.read_bytes()).hexdigest() == (
+        "815d43b31635892e67aa3fddcd8f7843fffafa65d3064467b99c9afa5d3744f4"
+    )
+    assert receipt["schema"] == "intentir.real-llm-batch-preflight.v3"
+    assert receipt["online_llm_calls"] == 0
+    assert receipt["summary"] == {
+        "blocking_capability": None,
+        "cute_compiled": 2,
+        "cute_total": 2,
+        "overall_ready": True,
+        "replay_arm_ready": 28,
+        "source_observer_ready": 28,
+        "source_pins_verified": 28,
+        "symbol_pins_verified": 28,
+        "triton_compiled": 26,
+        "triton_total": 26,
+    }
+
+def test_protocol_v2_preflight_cannot_authorize_protocol_v3() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V3)
+    receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="active epoch"):
+        verify_formal_preflight(receipt, manifest, _MANIFEST_V3)
 
 
 def test_preflight_receipt_is_bound_to_manifest_and_current_worker() -> None:

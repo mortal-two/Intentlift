@@ -48,6 +48,12 @@ from intentir.verify.gate1.replay import (
 
 from .real_batch import (
     BatchManifest,
+    SCHEMA_V1,
+    SCHEMA_V2,
+    SCHEMA_V3,
+    V2_BATCH_ID,
+    V2_MANIFEST_DIGEST,
+    V2_MANIFEST_FILE_SHA256,
     compiler_pythonpath,
     cute_compile_case,
     cute_entry_symbol,
@@ -61,9 +67,22 @@ from .formal_preflight import verify_formal_preflight
 
 RUN_SCHEMA = "intentir.formal-real-llm-case.v1"
 RUN_SCHEMA_V2 = "intentir.formal-real-llm-case.v2"
+RUN_SCHEMA_V3 = "intentir.formal-real-llm-case.v3"
 _V2_ATTEMPT_CLASSES = frozenset(
     {"protocol_v2_first_attempt", "protocol_v2_recovery"}
 )
+_V3_ATTEMPT_CLASSES = frozenset(
+    {"protocol_v3_first_attempt", "protocol_v3_recovery"}
+)
+_ATTEMPT_CLASSES_BY_SCHEMA = {
+    SCHEMA_V2: _V2_ATTEMPT_CLASSES,
+    SCHEMA_V3: _V3_ATTEMPT_CLASSES,
+}
+_RUN_SCHEMA_BY_MANIFEST = {
+    SCHEMA_V1: RUN_SCHEMA,
+    SCHEMA_V2: RUN_SCHEMA_V2,
+    SCHEMA_V3: RUN_SCHEMA_V3,
+}
 
 
 class FormalRunError(RuntimeError):
@@ -371,7 +390,7 @@ def _initial_receipt(
 ) -> dict[str, Any]:
     pin = case["source"]
     receipt: dict[str, Any] = {
-        "schema": RUN_SCHEMA_V2 if "lift_wire" in manifest.data else RUN_SCHEMA,
+        "schema": _RUN_SCHEMA_BY_MANIFEST[str(manifest.data["schema"])],
         "batch_id": manifest.data["batch_id"],
         "case_id": case["case_id"],
         "manifest_digest": manifest.digest,
@@ -427,24 +446,30 @@ def _validate_preflight(
     return preflight
 
 
-def _v2_lineage(
+def _lineage(
     manifest: BatchManifest,
     case_id: str,
     attempt_class: str | None,
     predecessor_receipt: str | os.PathLike[str] | None,
 ) -> Mapping[str, Any] | None:
-    if "lift_wire" not in manifest.data:
+    manifest_schema = str(manifest.data["schema"])
+    if manifest_schema == SCHEMA_V1:
         if attempt_class is not None or predecessor_receipt is not None:
-            raise FormalRunError("v1 formal runs do not accept v2 lineage metadata")
+            raise FormalRunError("v1 formal runs do not accept lineage metadata")
         return None
-    if attempt_class not in _V2_ATTEMPT_CLASSES:
-        raise FormalRunError("protocol-v2 requires an explicit attempt classification")
-    if attempt_class == "protocol_v2_first_attempt":
+    allowed = _ATTEMPT_CLASSES_BY_SCHEMA.get(manifest_schema)
+    if allowed is None or attempt_class not in allowed:
+        raise FormalRunError(
+            f"{manifest_schema} requires its explicit attempt classification"
+        )
+    first_attempt, recovery = sorted(allowed)
+    if attempt_class == first_attempt:
         if predecessor_receipt is not None:
-            raise FormalRunError("a protocol-v2 first attempt may not name a predecessor")
+            raise FormalRunError("a first attempt may not name a predecessor")
         return {"attempt_class": attempt_class}
+    assert attempt_class == recovery
     if predecessor_receipt is None:
-        raise FormalRunError("protocol-v2 recovery requires its predecessor receipt")
+        raise FormalRunError("protocol recovery requires its predecessor receipt")
     path = Path(predecessor_receipt).resolve()
     try:
         payload = path.read_bytes()
@@ -458,17 +483,71 @@ def _v2_lineage(
     ):
         raise FormalRunError("recovery predecessor is not the prior failed case epoch")
     calls = predecessor.get("calls")
-    if not isinstance(calls, list) or len(calls) != 1:
+    if (
+        not isinstance(calls, list)
+        or len(calls) != 1
+        or calls[0].get("kind") != "lift"
+        or calls[0].get("status") != "failed"
+        or calls[0].get("attempts") != 1
+        or predecessor.get("gate1") is not None
+    ):
         raise FormalRunError("recovery predecessor lacks one auditable failed call")
+    case = manifest.case(case_id)
+    source = predecessor.get("source")
+    expected_source = case["source"]
+    if not isinstance(source, dict) or any(
+        source.get(key) != expected_source[key]
+        for key in (
+            "repository", "path", "symbol", "frontend", "file_sha256",
+            "symbol_sha256",
+        )
+    ):
+        raise FormalRunError("recovery predecessor source identity differs")
+    if predecessor.get("provider") != manifest.data["provider"]:
+        raise FormalRunError("recovery predecessor provider identity differs")
+    if manifest_schema == SCHEMA_V3:
+        predecessor_lineage = predecessor.get("lineage")
+        if (
+            predecessor.get("schema") != RUN_SCHEMA_V2
+            or predecessor.get("batch_id") != V2_BATCH_ID
+            or predecessor.get("manifest_digest") != V2_MANIFEST_DIGEST
+            or predecessor.get("manifest_file_sha256")
+            != V2_MANIFEST_FILE_SHA256
+            or not isinstance(predecessor_lineage, dict)
+            or predecessor_lineage.get("attempt_class")
+            != "protocol_v2_recovery"
+        ):
+            raise FormalRunError(
+                "protocol-v3 recovery requires the frozen protocol-v2 recovery"
+            )
     return {
         "attempt_class": attempt_class,
         "predecessor": {
+            "schema": predecessor.get("schema"),
             "batch_id": predecessor.get("batch_id"),
             "case_id": predecessor["case_id"],
             "status": predecessor["status"],
+            "attempt_class": (
+                predecessor.get("lineage", {}).get("attempt_class")
+                if isinstance(predecessor.get("lineage"), dict)
+                else None
+            ),
+            "manifest_digest": predecessor.get("manifest_digest"),
+            "manifest_file_sha256": predecessor.get("manifest_file_sha256"),
             "receipt_sha256": _sha256(payload),
         },
     }
+
+
+def _v2_lineage(
+    manifest: BatchManifest,
+    case_id: str,
+    attempt_class: str | None,
+    predecessor_receipt: str | os.PathLike[str] | None,
+) -> Mapping[str, Any] | None:
+    """Compatibility entry point for frozen v2 tests and callers."""
+
+    return _lineage(manifest, case_id, attempt_class, predecessor_receipt)
 
 
 def run_formal_gate1_case(
@@ -504,7 +583,7 @@ def run_formal_gate1_case(
         raise FormalRunError(
             "an incomplete formal ledger already exists; automatic retry is forbidden"
         )
-    lineage = _v2_lineage(
+    lineage = _lineage(
         manifest, case_id, attempt_class, predecessor_receipt
     )
     case_dir.mkdir(parents=True, exist_ok=False)
@@ -708,7 +787,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--preflight", type=Path, required=True)
     parser.add_argument("--compiler-timeout", type=float, default=300.0)
-    parser.add_argument("--attempt-class", choices=sorted(_V2_ATTEMPT_CLASSES))
+    parser.add_argument(
+        "--attempt-class",
+        choices=sorted(_V2_ATTEMPT_CLASSES | _V3_ATTEMPT_CLASSES),
+    )
     parser.add_argument("--predecessor-receipt", type=Path)
     args = parser.parse_args(argv)
     receipt = run_formal_gate1_case(
@@ -733,5 +815,6 @@ __all__ = [
     "LedgerReplayWriter",
     "RUN_SCHEMA",
     "RUN_SCHEMA_V2",
+    "RUN_SCHEMA_V3",
     "run_formal_gate1_case",
 ]

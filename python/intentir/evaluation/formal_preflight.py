@@ -17,12 +17,16 @@ from .real_batch import (
 )
 
 
-PREFLIGHT_SCHEMA = "intentir.real-llm-batch-preflight.v2"
+PREFLIGHT_SCHEMA_V2 = "intentir.real-llm-batch-preflight.v2"
+PREFLIGHT_SCHEMA = "intentir.real-llm-batch-preflight.v3"
 _CODE_PATHS = (
     "python/intentir/evaluation/lift_wire.py",
     "python/intentir/evaluation/real_batch.py",
     "python/intentir/evaluation/formal_preflight.py",
     "python/intentir/evaluation/formal_runner.py",
+    "python/intentir/ir/intent_op_contract.py",
+    "python/intentir/ir/model.py",
+    "python/intentir/verify/gate1/model.py",
     "python/intentir/verify/gate1/_triton_worker.py",
     "python/intentir/verify/gate1/compiler.py",
     "python/intentir/verify/gate1/ttir.py",
@@ -36,6 +40,14 @@ _CODE_PATHS = (
     "python/intentir/verify/gate1/replay.py",
     "python/intentir/verify/gate1/prompt.py",
 )
+
+
+def _schema_for_manifest(manifest_schema: str) -> str:
+    if manifest_schema == "intentir.real-llm-batch-28.v2":
+        return PREFLIGHT_SCHEMA_V2
+    if manifest_schema == "intentir.real-llm-batch-28.v3":
+        return PREFLIGHT_SCHEMA
+    raise ValueError("formal preflight requires a versioned Lift-wire manifest")
 
 
 def _sha256(payload: bytes) -> str:
@@ -135,7 +147,7 @@ def build_formal_preflight(
         verify_repositories=True,
     )
     if "lift_wire" not in manifest.data:
-        raise ValueError("formal preflight v2 requires a protocol-v2 manifest")
+        raise ValueError("formal preflight requires a versioned Lift-wire manifest")
     wire = verify_lift_wire_lock(manifest.data["lift_wire"])
     triton_probe = probe_triton_compilation(
         manifest, timeout=timeout, cache_dir=cache_dir
@@ -153,7 +165,7 @@ def build_formal_preflight(
         and environment["ready"]
     )
     return {
-        "schema": PREFLIGHT_SCHEMA,
+        "schema": _schema_for_manifest(str(manifest.data["schema"])),
         "batch_id": manifest.data["batch_id"],
         "manifest_schema": manifest.data["schema"],
         "manifest_digest": manifest.digest,
@@ -185,11 +197,11 @@ def verify_formal_preflight(
     manifest: BatchManifest,
     manifest_path: str | Path,
 ) -> None:
-    """Fail closed when a stored v2 receipt no longer binds current code/data."""
+    """Fail closed when a stored receipt no longer binds current code/data."""
 
     path = Path(manifest_path).resolve()
     expected_scalars = {
-        "schema": PREFLIGHT_SCHEMA,
+        "schema": _schema_for_manifest(str(manifest.data["schema"])),
         "batch_id": manifest.data["batch_id"],
         "manifest_schema": manifest.data["schema"],
         "manifest_digest": manifest.digest,
@@ -234,6 +246,7 @@ def verify_formal_preflight(
 
 __all__ = [
     "PREFLIGHT_SCHEMA",
+    "PREFLIGHT_SCHEMA_V2",
     "build_formal_preflight",
     "current_gate1_code_identity",
     "verify_formal_preflight",

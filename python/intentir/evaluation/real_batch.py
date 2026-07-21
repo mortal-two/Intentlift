@@ -22,14 +22,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .lift_wire import LIFT_CLIENT_FILES, LIFT_PROTOCOL, LIFT_WIRE_VERSION
+from .lift_wire import (
+    LIFT_CLIENT_FILES,
+    LIFT_CLIENT_FILES_V2,
+    LIFT_PROTOCOL,
+    LIFT_PROTOCOL_V2,
+    LIFT_WIRE_VERSION,
+    LIFT_WIRE_VERSION_V2,
+)
 
 
 SCHEMA_V1 = "intentir.real-llm-batch-28.v1"
 SCHEMA_V2 = "intentir.real-llm-batch-28.v2"
+SCHEMA_V3 = "intentir.real-llm-batch-28.v3"
 # Historical public name retained for archived Task04 callers.
 SCHEMA = SCHEMA_V1
 V2_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v2-2026-07-22"
+V3_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v3-2026-07-22"
+V2_MANIFEST_DIGEST = (
+    "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e"
+)
+V2_MANIFEST_FILE_SHA256 = (
+    "27b9a81e8230ce75105848625b85f44e9002264c91d166e57983c617e09e83b3"
+)
 CASE_COUNT = 28
 STRATA = (
     "expression_fusion_reduction",
@@ -60,6 +75,7 @@ _TOP_KEYS_V1 = frozenset(
     }
 )
 _TOP_KEYS_V2 = _TOP_KEYS_V1 | {"lift_wire"}
+_TOP_KEYS_V3 = _TOP_KEYS_V2
 _CASE_KEYS = frozenset(
     {
         "case_id",
@@ -474,6 +490,8 @@ def _validate_protocols(data: Mapping[str, Any]) -> None:
         "performance": PERFORMANCE_PROTOCOL,
     }
     if data["schema"] == SCHEMA_V2:
+        expected["lift"] = LIFT_PROTOCOL_V2
+    elif data["schema"] == SCHEMA_V3:
         expected["lift"] = LIFT_PROTOCOL
     if protocols != expected:
         raise ManifestError("formal batch protocols differ from the frozen epoch")
@@ -497,12 +515,20 @@ def _validate_lift_wire(data: Mapping[str, Any]) -> None:
         frozenset({"version", "schema_sha256", "prompt_sha256", "client_files"}),
         "lift_wire",
     )
-    if wire["version"] != LIFT_WIRE_VERSION:
-        raise ManifestError("lift_wire.version differs from protocol-v2")
+    if data["schema"] == SCHEMA_V2:
+        expected_version = LIFT_WIRE_VERSION_V2
+        expected_files = LIFT_CLIENT_FILES_V2
+    elif data["schema"] == SCHEMA_V3:
+        expected_version = LIFT_WIRE_VERSION
+        expected_files = LIFT_CLIENT_FILES
+    else:  # pragma: no cover - guarded by validate_batch_manifest
+        raise ManifestError("lift_wire is unsupported for this manifest epoch")
+    if wire["version"] != expected_version:
+        raise ManifestError("lift_wire.version differs from the manifest epoch")
     _digest(wire["schema_sha256"], "lift_wire.schema_sha256")
     _digest(wire["prompt_sha256"], "lift_wire.prompt_sha256")
     files = _array(wire["client_files"], "lift_wire.client_files")
-    if len(files) != len(LIFT_CLIENT_FILES):
+    if len(files) != len(expected_files):
         raise ManifestError("lift_wire must bind every request-path client file")
     paths: list[str] = []
     for index, raw in enumerate(files):
@@ -514,8 +540,8 @@ def _validate_lift_wire(data: Mapping[str, Any]) -> None:
         path = _relative_path(item["path"], f"lift_wire.client_files[{index}].path")
         paths.append(path.as_posix())
         _digest(item["sha256"], f"lift_wire.client_files[{index}].sha256")
-    if tuple(paths) != LIFT_CLIENT_FILES:
-        raise ManifestError("lift_wire client file set/order differs from protocol-v2")
+    if tuple(paths) != expected_files:
+        raise ManifestError("lift_wire client file set/order differs from manifest epoch")
 
 
 def _tree_digest(root: Path) -> str:
@@ -579,12 +605,16 @@ def validate_batch_manifest(
         data = _closed(raw, _TOP_KEYS_V1, "manifest")
     elif schema == SCHEMA_V2:
         data = _closed(raw, _TOP_KEYS_V2, "manifest")
+    elif schema == SCHEMA_V3:
+        data = _closed(raw, _TOP_KEYS_V3, "manifest")
     else:
         raise ManifestError(f"unsupported batch schema {schema!r}")
     if not isinstance(data["batch_id"], str) or not data["batch_id"]:
         raise ManifestError("batch_id must be non-empty")
     if schema == SCHEMA_V2 and data["batch_id"] != V2_BATCH_ID:
         raise ManifestError("protocol-v2 batch_id differs from the frozen epoch")
+    if schema == SCHEMA_V3 and data["batch_id"] != V3_BATCH_ID:
+        raise ManifestError("protocol-v3 batch_id differs from the frozen epoch")
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(data["frozen_date"])) is None:
         raise ManifestError("frozen_date must use YYYY-MM-DD")
     for path, key in _walk_keys(data):

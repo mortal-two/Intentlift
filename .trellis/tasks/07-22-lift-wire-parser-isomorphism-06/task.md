@@ -136,3 +136,23 @@ prompt 共用，不修改 parser、不做 response repair，也没有 Swiglu/opc
 
 下一步进入阶段 3：先冻结自包含 protocol-v3 manifest 与 28/28 preflight，再绑定 v2 failed
 receipt 执行唯一一次 Swiglu recovery canary。冻结前仍不得调用 LLM。
+
+## 阶段 3A 冻结记录（2026-07-22，调用前）
+
+- 新建完整自包含 `test/real_llm_batch_28_v3.json`，28 个 case 与 v2 完全相同，没有
+  `base_manifest` 引用；manifest digest 为
+  `5f0b1ee853e2821a299753165145023562df548810468c0110bdbc6895823222`。
+- v3 Lift wire 为 `intentir.lift-wire.v3`，同时绑定 provider client、SCRC prompt/parser、schema
+  与共享 `intent_op_contract.py`；v1/v2 仍可审计，但 current lock 只接受 v3。
+- Gate1 preflight identity 新增 strict parser、typed Intent model 与共享 contract，修复 v2 receipt
+  未覆盖权威 parser 的证据缺口；v2 preflight 不能授权 v3。
+- v3 recovery lineage 只接受精确的 v2 recovery `lift_failed` receipt：校验 receipt SHA、v2
+  manifest digest/file SHA、case/source/provider、attempt class，以及唯一一次失败 Lift、零 Replay。
+- 冻结 `artifacts/real_llm_batch_28_v3/preflight.json`，SHA
+  `815d43b31635892e67aa3fddcd8f7843fffafa65d3064467b99c9afa5d3744f4`；26/26 Triton、
+  2/2 CuTe、28/28 source observer/replay arm ready，`online_llm_calls=0`。
+- v3 manifest/preflight/lineage 定向回归 `99 passed`；冻结后全量回归
+  `727 passed, 4 skipped`；尚未进行 v3 canary。
+
+下一步先完成冻结后的全量离线回归并提交 3A；只有该提交存在且 worktree 干净后，才执行唯一
+一次 `protocol_v3_recovery` Swiglu canary。

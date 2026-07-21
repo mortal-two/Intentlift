@@ -32,7 +32,9 @@ from direct_fixtures import make_copy_artifact
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
+_MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
+_PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
 _RECOVERY_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "recovery"
 _PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
@@ -215,9 +217,13 @@ def test_protocol_v2_recovery_lineage_binds_the_failed_v1_receipt() -> None:
     assert lineage is not None
     assert lineage["attempt_class"] == "protocol_v2_recovery"
     assert lineage["predecessor"] == {
+        "schema": "intentir.formal-real-llm-case.v1",
         "batch_id": "tianchenir-formal-real-kernels-2026-07-22",
         "case_id": "liger_swiglu_forward",
         "status": "lift_failed",
+        "attempt_class": None,
+        "manifest_digest": "12e2507433f23d6405cfa1dd0f1ff1169671a664822c07b0f5ecfbdc93570154",
+        "manifest_file_sha256": "a84ea446df84f393bab0aa25eebfd183bbf4b7d9144d0bc8c4c86eeaa7fe09f9",
         "receipt_sha256": hashlib.sha256(predecessor.read_bytes()).hexdigest(),
     }
     with pytest.raises(FormalRunError, match="requires its predecessor"):
@@ -227,6 +233,103 @@ def test_protocol_v2_recovery_lineage_binds_the_failed_v1_receipt() -> None:
             "protocol_v2_recovery",
             None,
         )
+
+
+def test_protocol_v3_recovery_binds_exact_frozen_v2_failure() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V3)
+    predecessor = _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json"
+    lineage = formal_runner._lineage(
+        manifest,
+        "liger_swiglu_forward",
+        "protocol_v3_recovery",
+        predecessor,
+    )
+    assert lineage is not None
+    assert lineage["attempt_class"] == "protocol_v3_recovery"
+    assert lineage["predecessor"] == {
+        "schema": "intentir.formal-real-llm-case.v2",
+        "batch_id": "tianchenir-formal-real-kernels-protocol-v2-2026-07-22",
+        "case_id": "liger_swiglu_forward",
+        "status": "lift_failed",
+        "attempt_class": "protocol_v2_recovery",
+        "manifest_digest": "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e",
+        "manifest_file_sha256": "27b9a81e8230ce75105848625b85f44e9002264c91d166e57983c617e09e83b3",
+        "receipt_sha256": hashlib.sha256(predecessor.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(FormalRunError, match="requires its predecessor"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v3_recovery",
+            None,
+        )
+    with pytest.raises(FormalRunError, match="explicit attempt classification"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v2_recovery",
+            predecessor,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda receipt: receipt.update({"status": "gate1_failed"}), "prior failed"),
+        (
+            lambda receipt: receipt["calls"].append(
+                {"kind": "normal_replay", "status": "failed", "attempts": 1}
+            ),
+            "one auditable failed call",
+        ),
+        (
+            lambda receipt: receipt.update({"manifest_digest": "0" * 64}),
+            "frozen protocol-v2 recovery",
+        ),
+        (
+            lambda receipt: receipt["source"].update({"symbol_sha256": "0" * 64}),
+            "source identity differs",
+        ),
+    ],
+)
+def test_protocol_v3_recovery_rejects_tampered_predecessor(
+    tmp_path: Path, mutation, message: str
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V3)
+    original = _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    mutation(receipt)
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(FormalRunError, match=message):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v3_recovery",
+            predecessor,
+        )
+
+
+def test_protocol_v3_rejects_v2_attempt_class_before_provider_or_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def provider_must_not_run(*args, **kwargs):
+        raise AssertionError("provider resolution happened before lineage validation")
+
+    monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    output = tmp_path / "formal"
+    with pytest.raises(FormalRunError, match="explicit attempt classification"):
+        formal_runner.run_formal_gate1_case(
+            _MANIFEST_V3,
+            "liger_swiglu_forward",
+            output_root=output,
+            preflight_path=_PREFLIGHT_V3,
+            attempt_class="protocol_v2_recovery",
+            predecessor_receipt=(
+                _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json"
+            ),
+        )
+    assert not output.exists()
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:
