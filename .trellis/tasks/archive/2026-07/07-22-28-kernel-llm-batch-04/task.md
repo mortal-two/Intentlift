@@ -1,6 +1,6 @@
 # 28 Real Kernels 04：正式 LLM Lift/Replay/Lowering/Performance 批次
 
-> 状态：进行中
+> 状态：已结束（protocol-v1 实验失败，未达到验收标准）
 > 优先级：P0，Typed Relations 03 后的首个正式系统批次
 > 流程：普通 Markdown 工作项；不运行 Trellis workflow
 
@@ -189,3 +189,13 @@ source digest、可导入/可编译性、observer 支持、运行输入和基线
 - 失败还暴露了全局 wire grammar 的健壮性问题（不仅是 domain）：模型同时偏离了
   `scrc_j0`、node path map、constexpr `c*` 与 public compiler role。后续只允许加强统一
   schema/prompt，再用于尚未运行的 case；不得据此修补或重试本 case。
+
+## 结束判定
+
+Task04 没有通过原定验收：`liger_swiglu_forward` 的唯一 primary Lift 已失败，而冻结
+manifest 明确规定 `recovery_per_case=0`，所以“28/28 完整闭合”从此不可达。继续消耗另外
+27 个 primary 调用不能使 Task04 达标，只会在已知 wire grammar 缺陷下浪费时间与预算。
+
+因此本任务以**实验失败但证据完整**结束并归档：不删除 receipt、不修改 response、不把
+全局 schema 修复伪装成原 first-attempt 成功。后续 Task05 使用新的 protocol/manifest digest
+启动独立 recovery epoch；论文统计必须同时报告 Task04 的 first-attempt failure。
