@@ -87,3 +87,18 @@ JSON Schema 无法表达的跨节点引用、scope ownership、storage lifetime 
 
 只做阶段 0：以 Task05 原始 response 为 fixture，审计 wire schema、IntentOp 结构预检和完整
 parser 的所有分歧。此阶段禁止修改 response、禁止放宽 parser、禁止调用 LLM。
+
+## 阶段 0 完成记录（2026-07-22）
+
+- 已冻结 request/response/raw/receipt 四个 SHA，并在
+  `research/v2-wire-parser-audit.md` 记录可复核的分层审计；历史 evidence 未修改。
+- 实际 response 的 structural mismatch 完整集合是五个 non-loop `scope_id` 路径；v2 wire
+  接受，完整 parser 的 scope ownership 合同拒绝。
+- 已明确分离后续 semantic rejection：`q0.definitions` 多出逻辑 output handle `t2`，以及
+  `b3..b6` 把普通 SSA 临时值误声明为缺少 semantic write event 的 write-once storage。
+- 同时审计出 v2 的 latent variant drift：non-loop loop-fields、incomplete loop、nullable/empty
+  loop contract、`id` completeness 与 non-loop body，不再只修 canary 撞到的一项。
+- 新增不可修改真实反例测试；阶段 0 定向回归 `10 passed`，在线 LLM 调用新增为 0。
+
+下一步进入阶段 1：建立一个纯声明、只识别 `op == "loop"` 的全局 IntentOp 结构合同，并让
+parser、wire schema 和 grammar 共同消费；不得创建 operation catalog 或 response repair。
