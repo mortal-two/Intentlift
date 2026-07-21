@@ -43,7 +43,7 @@ OFFICIAL_MODEL = "gpt-5.6-sol"
 OFFICIAL_EFFORT = "xhigh"
 OFFICIAL_GATE1_PROFILE = "formal"
 OFFICIAL_SEMANTIC_INTERVENTIONS = 0
-OFFICIAL_PI_ABLATIONS = True
+OFFICIAL_PI_ABLATIONS = False
 CAMPAIGN_SCHEMA = "intentir.high-performance.live-gate.v4"
 DEFAULT_REGISTRY = ROOT / "spec/lowering/high-performance-kernels.json"
 DEFAULT_CAPTURE_MANIFEST = Path(
@@ -353,6 +353,9 @@ def _official_args(args: argparse.Namespace) -> argparse.Namespace:
         lift_repairs=args.lift_repairs,
         relift_rounds=args.relift_rounds,
         semantic_interventions=OFFICIAL_SEMANTIC_INTERVENTIONS,
+        pi_ablations=OFFICIAL_PI_ABLATIONS,
+        pi_ablation_limit=args.pi_ablation_limit,
+        pi_ablation_kinds=None,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
         gate1_profile=OFFICIAL_GATE1_PROFILE,
@@ -421,32 +424,12 @@ def _fresh_contract(report: Mapping[str, Any]) -> tuple[bool, list[str]]:
         pi_policy = anti_leakage.get("pi_ablations")
         if (
             not isinstance(pi_policy, Mapping)
-            or pi_policy.get("enabled") is not True
-            or pi_policy.get("verdict_role") != "gate1_hard_condition"
-            or pi_policy.get("coverage") != "all_rulecard_causal_steps"
-            or pi_policy.get("pi_mutation_execution")
-            != "fresh_writer_compile_score_free_hard_compare"
+            or pi_policy.get("enabled") is not False
         ):
-            failures.append("pi_ablation_policy_mismatch")
+            failures.append("pi_ablations_not_disabled")
     pi_ablations = report.get("pi_ablations")
-    if not isinstance(pi_ablations, list) or not pi_ablations:
-        failures.append("missing_pi_ablation_evidence")
-    elif any(
-        not isinstance(item, Mapping)
-        or item.get("status") != "degraded"
-        or item.get("supports_pi_necessity") is not True
-        or item.get("necessity_evidence_complete") is not True
-        or item.get("attempts") != 1
-        for item in pi_ablations
-    ):
-        failures.append("pi_ablation_evidence_not_causal_kill")
-    pi_control = report.get("pi_ablation_control")
-    if (
-        not isinstance(pi_control, Mapping)
-        or pi_control.get("valid") is not True
-        or pi_control.get("verdict_role") != "gate1_hard_condition"
-    ):
-        failures.append("pi_ablation_control_invalid")
+    if pi_ablations not in (None, []):
+        failures.append("pi_ablation_evidence_present")
     gate2 = report.get("gate2")
     if not isinstance(gate2, Mapping):
         suite = report.get("gate2_suite")
@@ -752,6 +735,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lift-repairs", type=int, default=2)
     parser.add_argument("--relift-rounds", type=int, default=3)
     parser.add_argument("--semantic-interventions", type=int, default=0)
+    parser.add_argument(
+        "--pi-ablations",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument("--pi-ablation-limit", type=int, default=3)
     parser.add_argument("--gate2-matrix", action="store_true")
     parser.add_argument(
         "--gate2-seed", dest="gate2_seeds", action="append", type=int

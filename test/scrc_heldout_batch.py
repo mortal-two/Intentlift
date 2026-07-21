@@ -41,6 +41,7 @@ from intentir.verify.gate1.orchestrate import (
 from intentir.verify.gate1.interventions import (
     PAIRED_INTERVENTION_FAMILY_POLICY,
 )
+from intentir.verify.gate1.pi_ablations import PiAblationKind
 from intentir.verify.gate1.specialization import (
     GATE1_FAMILY_RELIFT_GUIDANCE_POLICY,
 )
@@ -1309,6 +1310,9 @@ def _case_args(args: argparse.Namespace) -> argparse.Namespace:
         lift_repairs=args.lift_repairs,
         relift_rounds=args.relift_rounds,
         semantic_interventions=args.semantic_interventions,
+        pi_ablations=args.pi_ablations,
+        pi_ablation_limit=args.pi_ablation_limit,
+        pi_ablation_kinds=args.pi_ablation_kinds,
         gate2_matrix=args.gate2_matrix,
         gate2_seeds=args.gate2_seeds,
         rule_release=getattr(args, "rule_release", None),
@@ -1375,9 +1379,9 @@ def _batch_identity(
             if case.gate1_specialization_profiles
             else "primary_profile"
         ),
-        "pi_ablations": True,
-        "pi_ablation_coverage": "all_rulecard_causal_steps",
-        "pi_ablation_verdict_role": "gate1_hard_condition",
+        "pi_ablations": bool(args.pi_ablations),
+        "pi_ablation_limit": args.pi_ablation_limit,
+        "pi_ablation_kinds": list(args.pi_ablation_kinds or ()),
         "pi_ablation_requires_closed_control": True,
         "pi_ablation_opaque_reference_discipline": (
             "resolve_handles_never_emit_v1"
@@ -1713,6 +1717,18 @@ def _parser() -> argparse.ArgumentParser:
         "--semantic-interventions",
         type=_positive_int,
         default=3,
+    )
+    parser.add_argument(
+        "--pi-ablations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--pi-ablation-limit", type=_positive_int, default=3)
+    parser.add_argument(
+        "--pi-ablation-kind",
+        dest="pi_ablation_kinds",
+        action="append",
+        choices=tuple(kind.value for kind in PiAblationKind),
     )
     parser.add_argument(
         "--relift-rounds",
