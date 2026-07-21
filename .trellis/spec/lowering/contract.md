@@ -23,6 +23,10 @@ verdict、provider、source path、dataset identity 或 π 来补语义。
 relation，必须在 codegen 前列出 unsupported relation 并失败；记录 digest 但不实际检查或
 实现不算 consumption。
 
+typed `IndexBoundsSpec` 只有在 node/data/indices/axis 与实际 indexed op 完全一致时，才可
+投影为 `intent.index_bounds_proven`。`LogicalUpdateSpec` 的 combiner/duplicate/order 是
+语义输入；atomic/store/privatized realization 是 backend 选择，不得回写 J。
+
 C 只采用 canonical `{slots, values}` schema。slot 名是匿名 handle，`role` 是开放但
 source-neutral 的纯调度名；frontend/backend 可用固定的 role→公共编译选项映射消费它，
 不得用 kernel/source pattern 选择映射。

@@ -32,6 +32,8 @@ import re
 
 from intentir.ir.model import IntentFunction, IntentOp
 
+IndexBoundsProjection = frozenset[str]
+
 _INVALID_MLIR_SYMBOL_CHAR = re.compile(r"[^A-Za-z0-9_]")
 
 
@@ -1025,12 +1027,14 @@ class _Printer:
         self,
         dtypes: dict[str, str],
         broadcast_axes: BroadcastAxes | None = None,
+        proven_index_bounds: IndexBoundsProjection | None = None,
     ) -> None:
         self.lines: list[str] = []
         self._n = 0
         self.ssa: dict[str, str] = {}   # JSON name -> SSA name
         self.dtypes = dtypes
         self.broadcast_axes = broadcast_axes or {}
+        self.proven_index_bounds = proven_index_bounds or frozenset()
 
     def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
         """Tensor type for one JSON value from the inferred dtype environment."""
@@ -1118,7 +1122,8 @@ class _Printer:
 
     def emit_op(self, op: IntentOp, env: dict[str, list[int]], fold: int,
                 indent: str = "    ",
-                extents: dict[str, int] | None = None) -> None:
+                extents: dict[str, int] | None = None,
+                node_ref: str | None = None) -> None:
         a = op.attrs
         if op.op == "cast":
             to = _cast_target_dtype(a)
@@ -1333,10 +1338,15 @@ class _Printer:
             td, ti = (self._ttn(o, env) for o in op.operands)
             axis = int(a["axis"]) - fold
             mode = a.get("mode", "along_axis")
-            # A bare IntentFunction has no Layer-B proof channel.  The generic
-            # lowering therefore stays conservative and never invents the
-            # target-specific `intent.index_bounds_proven` authorization.
-            bounds_attr = ""
+            # A bare IntentFunction has no Layer-B proof channel.  The caller
+            # may pass only the exact projection derived from canonical J;
+            # otherwise the target-specific authorization is never invented.
+            candidate_refs = {ref for ref in (node_ref, op.node_id) if ref is not None}
+            bounds_attr = (
+                ", intent.index_bounds_proven = true"
+                if candidate_refs & self.proven_index_bounds
+                else ""
+            )
             data_rank = len(env[op.operands[0]])
             index_rank = len(env[op.operands[1]])
             if axis < 0:
@@ -1724,6 +1734,7 @@ def emit_module(
     fold: int = 0,
     func_name: str | None = None,
     broadcast_axes: BroadcastAxes | None = None,
+    proven_index_bounds: IndexBoundsProjection | None = None,
 ) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
@@ -1746,10 +1757,16 @@ def emit_module(
     _infer_body(fn.body, env, fold, extents, broadcast_axes)
 
     dtypes = _flat_dtypes(fn)
-    p = _Printer(dtypes, broadcast_axes)
+    p = _Printer(dtypes, broadcast_axes, proven_index_bounds)
     args = [f"{p.arg(t.name)}: {p._ttn(t.name, env)}" for t in fn.inputs]
-    for op in fn.body:
-        p.emit_op(op, env, fold, extents=extents)
+    for index, op in enumerate(fn.body):
+        p.emit_op(
+            op,
+            env,
+            fold,
+            extents=extents,
+            node_ref=f"body[{index}]",
+        )
 
     return_values = {item.output: item.value for item in fn.returns}
     if len(return_values) != len(fn.returns):

@@ -15,19 +15,9 @@ class Gate2Status(str, Enum):
     REPLAY_DIVERGED = "replay_diverged"
     SCALAR_DIVERGED = "scalar_diverged"
     REPLAY_AND_SCALAR_DIVERGED = "replay_and_scalar_diverged"
+    RESULT_RELATION_DIVERGED = "result_relation_diverged"
     SCALAR_UNSUPPORTED = "scalar_unsupported"
     EXECUTION_FAILED = "execution_failed"
-
-
-@dataclass(frozen=True)
-class Tolerance:
-    rtol: float = 1.0e-5
-    atol: float = 1.0e-6
-    equal_nan: bool = True
-
-    def __post_init__(self) -> None:
-        if self.rtol < 0 or self.atol < 0:
-            raise ValueError("Gate2 tolerances must be non-negative")
 
 
 @dataclass
@@ -46,6 +36,8 @@ class OutputAgreement:
     passed: bool
     max_abs_error: float | None
     detail: str = ""
+    relation_kind: str = "exact"
+    equality_required: bool = True
 
 
 @dataclass(frozen=True)
@@ -109,5 +101,4 @@ __all__ = [
     "Gate2SuiteResult",
     "OutputAgreement",
     "PairwiseAgreement",
-    "Tolerance",
 ]

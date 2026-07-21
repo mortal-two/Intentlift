@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -11,9 +12,10 @@ from typing import Any, Mapping
 import numpy as np
 
 from intentir.verify.gate1.compiler import KernelSource
+from intentir.verify.gate1.model import ResultRelationKind, SemanticArchive
 
-from .compare import compare_outputs
-from .model import Gate2Result, Gate2Status, Gate2SuiteResult, Tolerance
+from .compare import compare_outputs, validate_j_inputs
+from .model import ExecutionResult, Gate2Result, Gate2Status, Gate2SuiteResult
 from .scalar import (
     ScalarLoweringRequest,
     ScalarLoweringRunner,
@@ -23,7 +25,7 @@ from .scalar import (
 from .triton import TritonExecutionSpec, TritonRunner
 
 
-GATE2_EXECUTION_PROTOCOL = "source_replay_scalar_differential_v3"
+GATE2_EXECUTION_PROTOCOL = "source_replay_j_relation_v4"
 
 
 def _input_digest(values: Mapping[str, Any]) -> str:
@@ -52,20 +54,34 @@ def _input_digest(values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
+def _clone_values(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Give every Gate2 leg an isolated view of the committed pre-state."""
+
+    result: dict[str, Any] = {}
+    for name, value in values.items():
+        if isinstance(value, np.ndarray):
+            result[name] = value.copy()
+        else:
+            result[name] = copy.deepcopy(value)
+    return result
+
+
 @dataclass(frozen=True)
 class Gate2Case:
     case_id: str
+    j: SemanticArchive
     values: Mapping[str, Any]
     triton: TritonExecutionSpec
     scalar: ScalarLoweringRequest
     replay_artifact_digest: str
     output_keys: tuple[str, ...]
-    tolerances: Mapping[str, Tolerance] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id:
             raise ValueError("Gate2 case_id must not be empty")
+        if not isinstance(self.j, SemanticArchive):
+            raise ValueError("Gate2 case requires the canonical J object")
         if not self.output_keys:
             raise ValueError("Gate2 requires at least one output key")
         if (
@@ -78,6 +94,10 @@ class Gate2Case:
                 "Gate2 replay is not bound to the scalar spec's final artifact"
             )
         if isinstance(self.scalar, ScalarLoweringSpec):
+            if self.scalar.j is not self.j:
+                raise ValueError(
+                    "Gate2 scalar and comparator must receive the same J object"
+                )
             scalar_outputs = set(self.scalar.output_binding_map.values())
             if set(self.output_keys) != scalar_outputs:
                 raise ValueError(
@@ -85,10 +105,20 @@ class Gate2Case:
                 )
         if len(self.output_keys) != len(set(self.output_keys)):
             raise ValueError("Gate2 output keys must be unique")
-        unknown_tolerances = sorted(set(self.tolerances) - set(self.output_keys))
-        if unknown_tolerances:
+        if isinstance(self.scalar, ScalarLoweringUnavailable) and (
+            self.scalar.j_digest
+            != hashlib.sha256(
+                json.dumps(
+                    self.j.to_json(),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode()
+            ).hexdigest()
+        ):
             raise ValueError(
-                f"Gate2 tolerances name unknown outputs: {unknown_tolerances}"
+                "unavailable scalar request is not bound to Gate2 canonical J"
             )
 
 
@@ -125,16 +155,40 @@ class Gate2Runner:
         replay: KernelSource,
         case: Gate2Case,
     ) -> Gate2Result:
+        input_digest = _input_digest(case.values)
+        if isinstance(case.scalar, ScalarLoweringSpec):
+            try:
+                validate_j_inputs(
+                    case.j,
+                    case.scalar.input_binding_map,
+                    case.values,
+                )
+            except (NotImplementedError, ValueError) as exc:
+                error = f"J input precondition failed: {type(exc).__name__}: {exc}"
+                metadata = {
+                    "protocol": GATE2_EXECUTION_PROTOCOL,
+                    "failure_class": "j_input_precondition",
+                }
+                return Gate2Result(
+                    case.case_id,
+                    Gate2Status.EXECUTION_FAILED,
+                    ExecutionResult("source", False, error=error, metadata=metadata),
+                    ExecutionResult("replay", False, error=error, metadata=metadata),
+                    ExecutionResult("scalar", False, error=error, metadata=metadata),
+                    input_digest=input_digest,
+                    metadata=dict(case.metadata),
+                )
+
         source_result = self.source_runner.run(
-            "source", source, case.triton, case.values
+            "source", source, case.triton, _clone_values(case.values)
         )
         replay_result = self.replay_runner.run(
-            "replay", replay, case.triton, case.values
+            "replay", replay, case.triton, _clone_values(case.values)
         )
         scalar_result = (
             case.scalar.execution_result()
             if isinstance(case.scalar, ScalarLoweringUnavailable)
-            else self.scalar_runner.run(case.scalar, case.values)
+            else self.scalar_runner.run(case.scalar, _clone_values(case.values))
         )
         source_replay = (
             compare_outputs(
@@ -142,10 +196,14 @@ class Gate2Runner:
                 source_result.outputs,
                 "replay",
                 replay_result.outputs,
-                case.output_keys,
-                case.tolerances,
+                j=case.j,
+                input_bindings=case.scalar.input_binding_map,
+                output_bindings=case.scalar.output_binding_map,
+                inputs=case.values,
             )
-            if source_result.ok and replay_result.ok
+            if source_result.ok
+            and replay_result.ok
+            and isinstance(case.scalar, ScalarLoweringSpec)
             else None
         )
         source_scalar = (
@@ -154,10 +212,14 @@ class Gate2Runner:
                 source_result.outputs,
                 "scalar",
                 scalar_result.outputs,
-                case.output_keys,
-                case.tolerances,
+                j=case.j,
+                input_bindings=case.scalar.input_binding_map,
+                output_bindings=case.scalar.output_binding_map,
+                inputs=case.values,
             )
-            if source_result.ok and scalar_result.ok
+            if source_result.ok
+            and scalar_result.ok
+            and isinstance(case.scalar, ScalarLoweringSpec)
             else None
         )
 
@@ -171,6 +233,14 @@ class Gate2Runner:
             assert source_replay is not None and source_scalar is not None
             if source_replay.passed and source_scalar.passed:
                 status = Gate2Status.PASS
+            elif any(
+                item.kind is ResultRelationKind.ONE_OF_UPDATES
+                for item in case.j.boundary.result_relations
+            ):
+                # Pair failure may mean source, replay, scalar, or multiple legs
+                # fell outside R_J.  Preserve per-leg details without falsely
+                # attributing a set-valued failure to pairwise inequality.
+                status = Gate2Status.RESULT_RELATION_DIVERGED
             elif not source_replay.passed and not source_scalar.passed:
                 status = Gate2Status.REPLAY_AND_SCALAR_DIVERGED
             elif not source_replay.passed:
@@ -185,7 +255,7 @@ class Gate2Runner:
             scalar_result,
             source_replay,
             source_scalar,
-            _input_digest(case.values),
+            input_digest,
             dict(case.metadata),
         )
 

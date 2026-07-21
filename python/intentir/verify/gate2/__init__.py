@@ -1,6 +1,6 @@
 """SCRC Gate2: source-anchored replay and scalar differential verification."""
 
-from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs
+from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs, validate_j_inputs
 from .inputs import (
     BoundaryExtent,
     GeneratedInputCase,
@@ -19,7 +19,6 @@ from .model import (
     Gate2SuiteResult,
     OutputAgreement,
     PairwiseAgreement,
-    Tolerance,
 )
 from .orchestrate import (
     GATE2_EXECUTION_PROTOCOL,
@@ -65,7 +64,6 @@ __all__ = [
     "ScalarLoweringSpec",
     "ScalarLoweringUnavailable",
     "TensorInputSpec",
-    "Tolerance",
     "TritonArgument",
     "TritonExecutionSpec",
     "TritonRunner",
@@ -76,4 +74,5 @@ __all__ = [
     "generate_tensor_input",
     "summarize_gate1_gate2",
     "scalar_broadcast_axes",
+    "validate_j_inputs",
 ]

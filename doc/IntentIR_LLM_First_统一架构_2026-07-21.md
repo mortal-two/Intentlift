@@ -117,16 +117,15 @@ LLM 的开放世界职责包括：
 
 ## 5. J：小型、可组合、健壮的语义核心（待下一阶段冻结）
 
-本节是 IntentOp robustness 的候选研究假设，不是已经冻结或已经实现的最终 op schema。
-下一阶段的目标不是继续增加按 Kernel 命名的 op，而是用真实样本验证以下小型构造能否
-组合覆盖 fusion、copy/reverse、atomic、pipeline 背后的逻辑关系；验证完成前不得据此
-宣称相应 Kernel family 已受支持。
+本节的小型构造仍是开放研究基座，但 2026-07-22 已冻结首版 typed indexed bounds、
+logical update 与 allowed-result relation。schema 可表达不等于 executor 或 Kernel family
+已经受支持；能力结论仍必须来自真实 consumer、Gate1/Gate2 和 backend conformance。
 
 2026-07-21 的第一轮真实源码审计已经完成，详见
 [IntentOp_健壮性审计_2026-07-21.md](IntentOp_健壮性审计_2026-07-21.md)。审计冻结的是
-结构禁令与 fail-closed 能力边界，不是尚未完成的 logical-map/update/result-relation
-schema。特别地，per-op `layer_b`、`out`、J 内 `trip.tile_hint` 以及 J 中的
-`atomic/synchronize` spelling 已从活动系统删除。
+结构禁令与 fail-closed 能力边界。后续 Typed Relations 03 又把 bounds、update 和
+result relation 放入唯一 canonical B；per-op `layer_b`、`out`、J 内 `trip.tile_hint`
+以及 J 中的 `atomic/synchronize` spelling 仍被硬拒绝。
 
 ### 5.1 Elementwise expression
 
@@ -279,15 +278,18 @@ O_rep = Exec(R_f, x)
 O_J   = Exec(E_J, x)
 ```
 
-`E_J` 是只读取 J 的简单、无优化、backend-neutral 标量语义执行路径。正式裁决边只有：
+`E_J` 是只读取 J 的简单、无优化、backend-neutral 标量语义执行路径。令 `R_J(x)` 为 J
+声明的 exact、tolerance 或 one-of-updates 允许结果关系，正式裁决推广为：
 
 ```text
-O_src ≈τ O_rep
-O_src ≈τ O_J
+O_src ∈ R_J(x)
+O_rep ∈ R_J(x)
+O_J   ∈ R_J(x)
 ```
 
-`O_rep ≈τ O_J` 是派生诊断，不得替代 source anchor。唯一 PASS 模式是三者在合同下
-一致；其他模式只能机械缩小问题范围，不能武断归咎某一个组件。
+exact/tolerance 下仍是原来的两条 source-anchored comparison；one-of-updates 下 source
+与 replay 可选择不同 contender，但必须分别通过同一个 J membership checker。容差不再由
+Gate2 case/harness 注入。
 
 Gate2 直接验证 `S≈J`，并且完全不读取 π。因此即使 π 泄漏部分语义，也无法修复一个
 错误 J 的 Source–J-only 比较。
@@ -297,21 +299,22 @@ Gate2 直接验证 `S≈J`，并且完全不读取 π。因此即使 π 泄漏�
 对冻结测试 envelope `T`，定义：
 
 ```text
-S ≈SCRC^(f,k,T,τ) J
+S ≈SCRC^(f,k,T,R_J) J
 ```
 
 当且仅当存在 `π,C,R_f`，使 Gate1 observer 闭合，并且对所有 `x∈T`：
 
 ```text
-Obs(S,x) ≈τ Obs(R_f,x)
-Obs(S,x) ≈τ Obs(E_J,x)
+Obs(S,x) ∈ R_J(x)
+Obs(R_f,x) ∈ R_J(x)
+Obs(E_J,x) ∈ R_J(x)
 ```
 
 若最终 artifact 在随机 challenge 前冻结，输入独立采样自声明分布 `D`，而一个错误 J
 的错误质量满足：
 
 ```text
-d_D,τ(S,J) > ε
+d_D,R_J(S,J) > ε
 ```
 
 则通过 m 个隐藏 Source–J challenge 的概率至多为：
@@ -407,6 +410,10 @@ Architecture Reset 01 已完成：活动主链已切换到 LLM-direct `J+C+π`�
 semantic wire 已迁出 importable tree；新 epoch 对旧 artifact/cache 硬失败。实现证据见
 [归档任务](../.trellis/tasks/archive/2026-07/07-21-architecture-reset-01-direct-pi/task.md)。
 
-下一研究阶段是 IntentOp 健壮性：用最小五类语义构造系统审计
-copy/reverse、fusion、atomic/logical update、pipeline、dynamic indexing 和 semantic
-recurrence 的代表样本，而不是再按源码 pattern 添加规则。
+IntentOp Robustness 02 与 Typed Relations 03 也已完成：错误的第二 B/C/atomic 通道已回收，
+typed bounds/update/result relation 和 J-owned Gate2 comparator 已闭合；CPU scatter 与一般
+recurrence 仍按真实 executor 能力 fail closed。
+
+下一阶段是 28 个真实高性能 Kernel 的正式 LLM Lift/Replay/Gate1/Gate2/backend
+conformance/performance 批次。批次必须先冻结 source/symbol/digest 和调用预算；不得用
+hand-written J、Replay 或 MLIR 替代失败样本，也不得为了凑 28/28 绕过 executor 缺口。

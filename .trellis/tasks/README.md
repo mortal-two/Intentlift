@@ -7,6 +7,7 @@ Trellis CLI、自动 session 或 workflow phase。
 
 最近完成：
 
+- [Typed Relations 03：闭合 logical bounds、update 与 allowed-result relation](archive/2026-07/07-22-typed-relations-03/task.md)
 - [IntentOp Robustness 02：真实机制审计与错误能力回收](archive/2026-07/07-21-intentop-robustness-02/task.md)
 - [Architecture Reset 01：清除旧控制面并切换到 LLM-direct π](archive/2026-07/07-21-architecture-reset-01-direct-pi/task.md)
 

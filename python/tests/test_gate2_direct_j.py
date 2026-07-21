@@ -66,6 +66,7 @@ def test_gate2_keeps_both_source_anchored_edges(monkeypatch) -> None:
     )
     case = Gate2Case(
         "case0",
+        artifact.j,
         {"input": x},
         triton_spec,
         spec,

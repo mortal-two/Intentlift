@@ -228,6 +228,64 @@ def _boundary_schema() -> dict[str, Any]:
         },
         ("node_ref", "tile_axis"),
     )
+    index_bounds = _closed_object(
+        {
+            "node_ref": _STRING,
+            "data": _STRING,
+            "indices": _STRING,
+            "axis": {"type": "integer", "minimum": 0},
+        },
+        ("node_ref", "data", "indices", "axis"),
+        description=(
+            "Typed precondition 0 <= indices < dim(data, axis), exactly bound "
+            "to one gather/scatter node. Never use a proof string or proven flag."
+        ),
+    )
+    update = _closed_object(
+        {
+            "node_ref": _STRING,
+            "base": _STRING,
+            "indices": _STRING,
+            "values": _STRING,
+            "axis": {"type": "integer", "minimum": 0},
+            "combiner": {
+                "type": "string", "enum": ["overwrite", "add"],
+            },
+            "duplicate_policy": {
+                "type": "string", "enum": ["forbid", "combine", "one_of"],
+            },
+            "order": {
+                "type": "string", "enum": ["input_order", "unordered"],
+            },
+        },
+        (
+            "node_ref", "base", "indices", "values", "axis", "combiner",
+            "duplicate_policy", "order",
+        ),
+        description=(
+            "Logical update only. Atomic/CAS/thread ownership are realization "
+            "choices and must not appear here."
+        ),
+    )
+    result_relation = _closed_object(
+        {
+            "output": _STRING,
+            "kind": {
+                "type": "string",
+                "enum": ["exact", "tolerance", "one_of_updates"],
+            },
+            "rtol": {"type": "number", "minimum": 0},
+            "atol": {"type": "number", "minimum": 0},
+            "equal_nan": {"type": "boolean"},
+            "update_node_ref": _STRING,
+        },
+        ("output", "kind"),
+        description=(
+            "Allowed-result relation owned by J. tolerance requires rtol/atol/"
+            "equal_nan; one_of_updates requires update_node_ref; exact carries "
+            "neither. The strict project parser enforces the tagged union."
+        ),
+    )
     return _closed_object(
         {
             "domains": {
@@ -240,6 +298,9 @@ def _boundary_schema() -> dict[str, Any]:
             "effects": _array(effect),
             "output_mappings": _array(output_mapping),
             "reductions": _array(reduction),
+            "index_bounds": _array(index_bounds),
+            "updates": _array(update),
+            "result_relations": _array(result_relation),
         },
         (
             "domains",
@@ -249,6 +310,9 @@ def _boundary_schema() -> dict[str, Any]:
             "effects",
             "output_mappings",
             "reductions",
+            "index_bounds",
+            "updates",
+            "result_relations",
         ),
     )
 
@@ -522,7 +586,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
         {
             "schema": {
                 "type": "string",
-                "enum": ["intentir.gate1.llm-direct.v1"],
+                "enum": ["intentir.gate1.llm-direct.v2"],
             },
             "j": semantic_archive,
             "interface": _interface_schema(),

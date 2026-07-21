@@ -87,6 +87,9 @@ def _loop_archive() -> dict:
             ],
             "output_mappings": [],
             "reductions": [],
+            "index_bounds": [],
+            "updates": [],
+            "result_relations": [],
         },
         "scopes": [
             {
@@ -461,6 +464,9 @@ def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
             ],
             "output_mappings": [],
             "reductions": [],
+            "index_bounds": [],
+            "updates": [],
+            "result_relations": [],
         },
         "scopes": [
             {

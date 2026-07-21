@@ -15,7 +15,13 @@ from intentir.backend.protocol import (
 )
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentOp
-from intentir.verify.gate1.model import SemanticArchive
+from intentir.verify.gate1.model import (
+    DuplicatePolicy,
+    ResultRelationKind,
+    SemanticArchive,
+    UpdateCombiner,
+    UpdateOrder,
+)
 
 from .pipeline import LoweredProgram, lower_to_cuda
 from .selection import LoweringTarget
@@ -69,6 +75,13 @@ def _broadcast_axes(j: SemanticArchive) -> dict[str, dict[str, tuple[int, ...]]]
     return result
 
 
+def _index_bounds(j: SemanticArchive) -> frozenset[str]:
+    return frozenset(
+        j.node_ids.get(item.node_ref, item.node_ref)
+        for item in j.boundary.index_bounds
+    )
+
+
 def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
     """Check or consume every active Layer-B collection before emission."""
 
@@ -89,15 +102,79 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
     else:
         consumed.extend(f"storage:{item.storage_id}" for item in j.storage)
 
-    op_names = {op.op for op in _walk_ops(j.intent.body)}
-    if "scatter" in op_names or "masked_scatter" in op_names:
-        unsupported.append(
-            "logical_update_missing_duplicate_conflict_order_result_relation"
+    operations = _walk_ops(j.intent.body)
+    op_names = {op.op for op in operations}
+    if "masked_scatter" in op_names:
+        unsupported.append("masked_scatter_logical_index_relation")
+
+    nodes = _nodes(j)
+    tensor_by_name = {
+        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+    }
+    return_values = {item.output: item.value for item in j.intent.returns}
+    observable_values = {
+        item.name: return_values.get(item.name, item.name)
+        for item in j.intent.outputs
+    }
+    relation_by_output = {
+        item.output: item for item in j.boundary.result_relations
+    }
+    for item in j.boundary.index_bounds:
+        consumed.append(f"index_bounds:{item.node_ref}")
+    for item in j.boundary.result_relations:
+        consumed.append(f"result_relation:{item.output}:{item.kind.value}")
+
+    for item in j.boundary.updates:
+        op = nodes[item.node_ref]
+        base = tensor_by_name.get(item.base)
+        indices = tensor_by_name.get(item.indices)
+        values = tensor_by_name.get(item.values)
+        if base is None or indices is None or values is None:
+            unsupported.append(f"update_internal_operand:{item.node_ref}")
+            continue
+        if not all(len(tensor.shape) == 2 for tensor in (base, indices, values)):
+            unsupported.append(f"update_rank_not_2:{item.node_ref}")
+            continue
+        outputs = [
+            output
+            for output, value in observable_values.items()
+            if value == op.result
+        ]
+        if len(outputs) != 1:
+            unsupported.append(f"update_not_direct_output:{item.node_ref}")
+            continue
+        relation = relation_by_output[outputs[0]]
+        if item.duplicate_policy is DuplicatePolicy.ONE_OF:
+            unsupported.append(
+                f"racing_overwrite_not_cuda_defined:{item.node_ref}"
+            )
+            continue
+        if item.combiner is UpdateCombiner.ADD:
+            if base.dtype.removeprefix("torch.").lower() not in {"f32", "float32"}:
+                unsupported.append(f"atomic_add_dtype:{item.node_ref}")
+                continue
+            if (
+                item.duplicate_policy is DuplicatePolicy.COMBINE
+                and item.order is not UpdateOrder.UNORDERED
+            ):
+                unsupported.append(f"ordered_duplicate_add:{item.node_ref}")
+                continue
+            if (
+                item.duplicate_policy is DuplicatePolicy.COMBINE
+                and relation.kind is not ResultRelationKind.TOLERANCE
+            ):
+                unsupported.append(
+                    f"floating_duplicate_add_requires_tolerance:{item.node_ref}"
+                )
+                continue
+        consumed.append(
+            "update:"
+            f"{item.node_ref}:{item.combiner.value}:"
+            f"{item.duplicate_policy.value}:{item.order.value}"
         )
     if "loop" in op_names:
         unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")
 
-    nodes = _nodes(j)
     for item in j.boundary.reductions:
         op = nodes.get(item.node_ref)
         if op is None or op.op != "reduce":
@@ -213,6 +290,7 @@ def lower_j_to_cuda(
         request.j.intent,
         dict(concrete_extents),
         broadcast_axes=_broadcast_axes(request.j),
+        proven_index_bounds=_index_bounds(request.j),
     )
     target = LoweringTarget(
         backend="cuda",

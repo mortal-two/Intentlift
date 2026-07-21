@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.intentop-source-inventory.v1",
+  "schema": "intentir.intentop-source-inventory.v2",
   "source_root_hint": "/home/kingdom/phdworks",
   "cases": [
     {
@@ -65,6 +65,14 @@
       "symbols": ["_layer_norm_fwd_1pass_kernel"],
       "mechanisms": ["masked_center", "square", "reduction_fusion", "strict_topology_sensitive"],
       "correction": "the source explicitly realizes where(mask, centered, 0) before square and reduction"
+    },
+    {
+      "case_id": "triton_racing_overwrite",
+      "path": "TianchenIR-frontend-backend-op-opt/test/sources/racing_overwrite.py",
+      "sha256": "1090d32649f732160b9940c8e1092f37d24751679f2782e4b92c44ad05db9663",
+      "symbols": ["racing_overwrite_kernel"],
+      "mechanisms": ["duplicate_overwrite", "unordered_writers", "one_of_updates_relation"],
+      "correction": "different legal executions may select different active contenders; Gate2 checks membership in the same J relation instead of pairwise equality"
     }
   ]
 }

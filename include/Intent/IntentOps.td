@@ -197,7 +197,7 @@ def Intent_GatherOp : Intent_Op<"gather"> {
 }
 
 def Intent_ScatterOp : Intent_Op<"scatter"> {
-  let summary = "Data-dependent scatter/scatter-add along one axis (Layer A).";
+  let summary = "Data-dependent logical update along one axis (Layer A).";
   let description = [{
     Write `src` elements into a copy of `data` at runtime positions read from an
     integer `index` tensor along `axis` (torch.scatter / scatter_add_ /
@@ -205,9 +205,14 @@ def Intent_ScatterOp : Intent_Op<"scatter"> {
     shape, and for each element `out[i.. with i[axis]=index[i..]] (op)= src[i..]`
     where the combine `op` is selected by `reduce`:
 
-    * `"none"` — overwrite (torch.scatter, nondeterministic for duplicate
-      indices, matching torch's contract);
-    * `"add"`  — accumulate (torch.scatter_add_, order-independent).
+    * `"none"` — overwrite;
+    * `"add"`  — accumulate every logical contribution.
+
+    This Layer-A op does not by itself complete duplicate/conflict semantics.
+    Canonical J binds it to typed Layer-B bounds, duplicate/order policy and an
+    exact/tolerance/one-of-updates result relation. In particular floating add
+    is not declared bitwise order-independent, and overwrite races are not
+    assigned an arbitrary deterministic winner here.
 
     The result has `data`'s shape and element type. The GPU lowering treats it as
     an in-place update of the (caller-cloned) `data` buffer: a data-dependent

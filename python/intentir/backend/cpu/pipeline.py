@@ -16,7 +16,7 @@ from typing import Any
 
 import numpy as np
 
-from ...frontend.emit_mlir import emit_module
+from ...frontend.emit_mlir import IndexBoundsProjection, emit_module
 from ...ir.model import IntentFunction
 from .abi import (
     CPU_ENTRY_SYMBOL,
@@ -242,6 +242,7 @@ def emit_cpu_module(
     dims: Mapping[str, int],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+    proven_index_bounds: IndexBoundsProjection | None = None,
 ) -> str:
     """Emit the input-value-independent scalar module with one public entry."""
 
@@ -260,6 +261,7 @@ def emit_cpu_module(
         checked_dims,
         func_name=CPU_COMPUTE_SYMBOL,
         broadcast_axes=broadcast_axes,
+        proven_index_bounds=proven_index_bounds,
     )
     return _append_cpu_entry(
         kernel,
@@ -276,6 +278,7 @@ def execute_on_cpu_outputs(
     inputs: Sequence[np.ndarray],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+    proven_index_bounds: IndexBoundsProjection | None = None,
 ) -> CPUExecutionResult:
     """Compile once and execute all logical outputs with one native call."""
 
@@ -324,7 +327,10 @@ def execute_on_cpu_outputs(
         )
 
     module = emit_cpu_module(
-        fn, checked_dims, broadcast_axes=broadcast_axes
+        fn,
+        checked_dims,
+        broadcast_axes=broadcast_axes,
+        proven_index_bounds=proven_index_bounds,
     )
     compiled = compile_cpu_module(module)
     runtime = execute_isolated(compiled, checked_inputs, output_storage)

@@ -107,6 +107,17 @@ def _integer(value: Any, path: str, *, minimum: int | None = None) -> int:
     return value
 
 
+def _number(value: Any, path: str, *, minimum: float | None = None) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SchemaError(f"{path} must be a number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise SchemaError(f"{path} must be finite")
+    if minimum is not None and result < minimum:
+        raise SchemaError(f"{path} must be >= {minimum}")
+    return result
+
+
 def _string_list(value: Any, path: str, *, unique: bool = False) -> list[str]:
     if not isinstance(value, list):
         raise SchemaError(f"{path} must be an array")
@@ -652,6 +663,28 @@ class EffectKind(str, Enum):
     UPDATE = "update"
 
 
+class UpdateCombiner(str, Enum):
+    OVERWRITE = "overwrite"
+    ADD = "add"
+
+
+class DuplicatePolicy(str, Enum):
+    FORBID = "forbid"
+    COMBINE = "combine"
+    ONE_OF = "one_of"
+
+
+class UpdateOrder(str, Enum):
+    INPUT_ORDER = "input_order"
+    UNORDERED = "unordered"
+
+
+class ResultRelationKind(str, Enum):
+    EXACT = "exact"
+    TOLERANCE = "tolerance"
+    ONE_OF_UPDATES = "one_of_updates"
+
+
 class AliasKind(str, Enum):
     MUST_ALIAS = "must_alias"
     MAY_ALIAS = "may_alias"
@@ -948,6 +981,221 @@ class ReductionBoundary(StrictJSONMixin):
 
 
 @dataclass
+class IndexBoundsSpec(StrictJSONMixin):
+    """Typed precondition for one data-dependent index operation.
+
+    Its fixed meaning is ``0 <= indices < dim(data, axis)`` for every active
+    index.  There is deliberately no boolean ``proven`` flag or proof text.
+    """
+
+    node_ref: str
+    data: str
+    indices: str
+    axis: int
+
+    def __post_init__(self) -> None:
+        self.node_ref = _string(self.node_ref, "IndexBoundsSpec.node_ref")
+        self.data = _string(self.data, "IndexBoundsSpec.data")
+        self.indices = _string(self.indices, "IndexBoundsSpec.indices")
+        self.axis = _integer(self.axis, "IndexBoundsSpec.axis", minimum=0)
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "IndexBoundsSpec":
+        data = _strict_object(
+            value,
+            path="IndexBoundsSpec",
+            allowed={"node_ref", "data", "indices", "axis"},
+            required={"node_ref", "data", "indices", "axis"},
+        )
+        return cls(data["node_ref"], data["data"], data["indices"], data["axis"])
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "node_ref": self.node_ref,
+            "data": self.data,
+            "indices": self.indices,
+            "axis": self.axis,
+        }
+
+
+@dataclass
+class LogicalUpdateSpec(StrictJSONMixin):
+    """Source-neutral logical update; atomic realization belongs to pi/backend."""
+
+    node_ref: str
+    base: str
+    indices: str
+    values: str
+    axis: int
+    combiner: UpdateCombiner
+    duplicate_policy: DuplicatePolicy
+    order: UpdateOrder
+
+    def __post_init__(self) -> None:
+        self.node_ref = _string(self.node_ref, "LogicalUpdateSpec.node_ref")
+        self.base = _string(self.base, "LogicalUpdateSpec.base")
+        self.indices = _string(self.indices, "LogicalUpdateSpec.indices")
+        self.values = _string(self.values, "LogicalUpdateSpec.values")
+        self.axis = _integer(self.axis, "LogicalUpdateSpec.axis", minimum=0)
+        self.combiner = _enum(
+            UpdateCombiner, self.combiner, "LogicalUpdateSpec.combiner"
+        )
+        self.duplicate_policy = _enum(
+            DuplicatePolicy,
+            self.duplicate_policy,
+            "LogicalUpdateSpec.duplicate_policy",
+        )
+        self.order = _enum(UpdateOrder, self.order, "LogicalUpdateSpec.order")
+        if (
+            self.combiner is UpdateCombiner.OVERWRITE
+            and self.duplicate_policy is DuplicatePolicy.COMBINE
+        ):
+            raise SchemaError(
+                "overwrite update cannot use duplicate_policy='combine'"
+            )
+        if (
+            self.combiner is UpdateCombiner.ADD
+            and self.duplicate_policy is DuplicatePolicy.ONE_OF
+        ):
+            raise SchemaError("add update cannot use duplicate_policy='one_of'")
+        if (
+            self.duplicate_policy is DuplicatePolicy.ONE_OF
+            and self.order is not UpdateOrder.UNORDERED
+        ):
+            raise SchemaError("one_of update requires order='unordered'")
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "LogicalUpdateSpec":
+        data = _strict_object(
+            value,
+            path="LogicalUpdateSpec",
+            allowed={
+                "node_ref", "base", "indices", "values", "axis",
+                "combiner", "duplicate_policy", "order",
+            },
+            required={
+                "node_ref", "base", "indices", "values", "axis",
+                "combiner", "duplicate_policy", "order",
+            },
+        )
+        return cls(
+            node_ref=data["node_ref"],
+            base=data["base"],
+            indices=data["indices"],
+            values=data["values"],
+            axis=data["axis"],
+            combiner=data["combiner"],
+            duplicate_policy=data["duplicate_policy"],
+            order=data["order"],
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "node_ref": self.node_ref,
+            "base": self.base,
+            "indices": self.indices,
+            "values": self.values,
+            "axis": self.axis,
+            "combiner": self.combiner.value,
+            "duplicate_policy": self.duplicate_policy.value,
+            "order": self.order.value,
+        }
+        return result
+
+
+@dataclass
+class ResultRelationSpec(StrictJSONMixin):
+    """Allowed-result relation for one declared logical output."""
+
+    output: str
+    kind: ResultRelationKind
+    rtol: float | None = None
+    atol: float | None = None
+    equal_nan: bool | None = None
+    update_node_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        self.output = _string(self.output, "ResultRelationSpec.output")
+        self.kind = _enum(
+            ResultRelationKind, self.kind, "ResultRelationSpec.kind"
+        )
+        if self.kind is ResultRelationKind.TOLERANCE:
+            if self.rtol is None or self.atol is None or self.equal_nan is None:
+                raise SchemaError(
+                    "tolerance result relation requires rtol, atol, and equal_nan"
+                )
+            self.rtol = _number(
+                self.rtol, "ResultRelationSpec.rtol", minimum=0.0
+            )
+            self.atol = _number(
+                self.atol, "ResultRelationSpec.atol", minimum=0.0
+            )
+            self.equal_nan = _boolean(
+                self.equal_nan, "ResultRelationSpec.equal_nan"
+            )
+            if self.update_node_ref is not None:
+                raise SchemaError(
+                    "tolerance result relation cannot reference an update"
+                )
+        elif self.kind is ResultRelationKind.ONE_OF_UPDATES:
+            if self.update_node_ref is None:
+                raise SchemaError(
+                    "one_of_updates result relation requires update_node_ref"
+                )
+            self.update_node_ref = _string(
+                self.update_node_ref, "ResultRelationSpec.update_node_ref"
+            )
+            if any(
+                value is not None
+                for value in (self.rtol, self.atol, self.equal_nan)
+            ):
+                raise SchemaError(
+                    "one_of_updates result relation cannot carry tolerance fields"
+                )
+        else:
+            if self.update_node_ref is not None or any(
+                value is not None
+                for value in (self.rtol, self.atol, self.equal_nan)
+            ):
+                raise SchemaError(
+                    "exact result relation cannot carry tolerance or update fields"
+                )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "ResultRelationSpec":
+        data = _strict_object(
+            value,
+            path="ResultRelationSpec",
+            allowed={
+                "output", "kind", "rtol", "atol", "equal_nan",
+                "update_node_ref",
+            },
+            required={"output", "kind"},
+        )
+        return cls(
+            output=data["output"],
+            kind=data["kind"],
+            rtol=data.get("rtol"),
+            atol=data.get("atol"),
+            equal_nan=data.get("equal_nan"),
+            update_node_ref=data.get("update_node_ref"),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "output": self.output,
+            "kind": self.kind.value,
+        }
+        if self.kind is ResultRelationKind.TOLERANCE:
+            result.update(
+                rtol=self.rtol, atol=self.atol, equal_nan=self.equal_nan
+            )
+        elif self.kind is ResultRelationKind.ONE_OF_UPDATES:
+            result["update_node_ref"] = self.update_node_ref
+        return result
+
+
+@dataclass
 class Boundary(StrictJSONMixin):
     """Closed Layer-B schema owned by ``J``."""
 
@@ -958,10 +1206,13 @@ class Boundary(StrictJSONMixin):
     effects: list[EffectSpec] = field(default_factory=list)
     output_mappings: list[OutputMapping] = field(default_factory=list)
     reductions: list[ReductionBoundary] = field(default_factory=list)
+    index_bounds: list[IndexBoundsSpec] = field(default_factory=list)
+    updates: list[LogicalUpdateSpec] = field(default_factory=list)
+    result_relations: list[ResultRelationSpec] = field(default_factory=list)
 
     _KEYS: ClassVar[set[str]] = {
         "domains", "accesses", "broadcasts", "aliases", "effects", "output_mappings",
-        "reductions",
+        "reductions", "index_bounds", "updates", "result_relations",
     }
 
     def __post_init__(self) -> None:
@@ -1010,6 +1261,18 @@ class Boundary(StrictJSONMixin):
             item if isinstance(item, ReductionBoundary) else ReductionBoundary.from_json(item)
             for item in self.reductions
         ]
+        self.index_bounds = [
+            item if isinstance(item, IndexBoundsSpec) else IndexBoundsSpec.from_json(item)
+            for item in self.index_bounds
+        ]
+        self.updates = [
+            item if isinstance(item, LogicalUpdateSpec) else LogicalUpdateSpec.from_json(item)
+            for item in self.updates
+        ]
+        self.result_relations = [
+            item if isinstance(item, ResultRelationSpec) else ResultRelationSpec.from_json(item)
+            for item in self.result_relations
+        ]
         _unique(self.accesses, "access_id", "Boundary.accesses")
         _unique(self.effects, "effect_id", "Boundary.effects")
         access_ids = {item.access_id for item in self.accesses}
@@ -1028,10 +1291,15 @@ class Boundary(StrictJSONMixin):
         ]
         if len(effect_access_refs) != len(set(effect_access_refs)):
             raise SchemaError("Boundary.effects access_ref values must be unique")
+        _unique(self.index_bounds, "node_ref", "Boundary.index_bounds")
+        _unique(self.updates, "node_ref", "Boundary.updates")
+        _unique(self.result_relations, "output", "Boundary.result_relations")
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "Boundary":
-        data = _strict_object(value, path="Boundary", allowed=cls._KEYS)
+        data = _strict_object(
+            value, path="Boundary", allowed=cls._KEYS, required=cls._KEYS
+        )
         for key in cls._KEYS - {"domains"}:
             if key in data and not isinstance(data[key], list):
                 raise SchemaError(f"Boundary.{key} must be an array")
@@ -1046,6 +1314,9 @@ class Boundary(StrictJSONMixin):
             effects=[EffectSpec.from_json(item) for item in data.get("effects", [])],
             output_mappings=[OutputMapping.from_json(item) for item in data.get("output_mappings", [])],
             reductions=[ReductionBoundary.from_json(item) for item in data.get("reductions", [])],
+            index_bounds=[IndexBoundsSpec.from_json(item) for item in data.get("index_bounds", [])],
+            updates=[LogicalUpdateSpec.from_json(item) for item in data.get("updates", [])],
+            result_relations=[ResultRelationSpec.from_json(item) for item in data.get("result_relations", [])],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -1057,6 +1328,9 @@ class Boundary(StrictJSONMixin):
             "effects": [item.to_json() for item in self.effects],
             "output_mappings": [item.to_json() for item in self.output_mappings],
             "reductions": [item.to_json() for item in self.reductions],
+            "index_bounds": [item.to_json() for item in self.index_bounds],
+            "updates": [item.to_json() for item in self.updates],
+            "result_relations": [item.to_json() for item in self.result_relations],
         }
 
 
@@ -1235,6 +1509,234 @@ class StorageObject(StrictJSONMixin):
             "escapes": self.escapes,
             "crosses_iteration": self.crosses_iteration,
         }
+
+
+def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
+    """Bind every typed bounds/update/result relation to this exact J graph."""
+
+    by_path: dict[str, Any] = {}
+
+    def visit(ops: list[Any], prefix: str = "body") -> None:
+        for index, op in enumerate(ops):
+            path = f"{prefix}[{index}]"
+            by_path[path] = op
+            visit(op.body, f"{path}.body")
+
+    visit(archive.intent.body)
+    nodes = dict(by_path)
+    for node_id, path in archive.node_ids.items():
+        if path in by_path:
+            nodes[node_id] = by_path[path]
+
+    tensors = {
+        item.name: item
+        for item in [*archive.intent.inputs, *archive.intent.outputs]
+    }
+
+    bounds_by_node: dict[str, IndexBoundsSpec] = {}
+    bounded_operations: set[int] = set()
+    for item in archive.boundary.index_bounds:
+        op = nodes.get(item.node_ref)
+        if op is None:
+            raise SchemaError(
+                f"IndexBoundsSpec references unknown node {item.node_ref!r}"
+            )
+        if op.op not in {"gather", "scatter"}:
+            raise SchemaError(
+                "IndexBoundsSpec must target a gather or scatter node"
+            )
+        if len(op.operands) < 2:
+            raise SchemaError("indexed node does not have data and indices operands")
+        if item.data != op.operands[0] or item.indices != op.operands[1]:
+            raise SchemaError(
+                "IndexBoundsSpec data/indices do not match the target node"
+            )
+        op_axis = op.attrs.get("axis")
+        if isinstance(op_axis, bool) or not isinstance(op_axis, int):
+            raise SchemaError("indexed node axis must be a canonical integer")
+        if item.axis != op_axis:
+            raise SchemaError("IndexBoundsSpec axis does not match the target node")
+        tensor = tensors.get(item.data)
+        if tensor is not None and item.axis >= len(tensor.shape):
+            raise SchemaError("IndexBoundsSpec axis is outside the data rank")
+        if id(op) in bounded_operations:
+            raise SchemaError(
+                "Boundary.index_bounds contains multiple aliases for one node"
+            )
+        bounded_operations.add(id(op))
+        bounds_by_node[item.node_ref] = item
+
+    gather_operations = {
+        id(op) for op in by_path.values() if op.op == "gather"
+    }
+    if gather_operations - bounded_operations:
+        raise SchemaError(
+            "canonical J gather requires a typed IndexBoundsSpec"
+        )
+
+    updates_by_node: dict[str, LogicalUpdateSpec] = {}
+    updated_operations: set[int] = set()
+    scatter_refs: set[str] = set()
+    for node_ref, op in nodes.items():
+        if op.op == "scatter":
+            scatter_refs.add(node_ref)
+    # A node can be named by both path and opaque id; canonicalize through the
+    # relation refs rather than treating those aliases as duplicate nodes.
+    scatter_ops = {id(nodes[ref]): nodes[ref] for ref in scatter_refs}
+
+    for item in archive.boundary.updates:
+        op = nodes.get(item.node_ref)
+        if op is None:
+            raise SchemaError(
+                f"LogicalUpdateSpec references unknown node {item.node_ref!r}"
+            )
+        if op.op != "scatter":
+            raise SchemaError("LogicalUpdateSpec must target a scatter node")
+        if op.attrs.get("mode") != "along_axis":
+            raise SchemaError(
+                "LogicalUpdateSpec currently requires scatter mode='along_axis'"
+            )
+        if len(op.operands) != 3:
+            raise SchemaError("scatter update requires base, indices, and values")
+        if [item.base, item.indices, item.values] != list(op.operands):
+            raise SchemaError(
+                "LogicalUpdateSpec operands do not match the target scatter"
+            )
+        op_axis = op.attrs.get("axis")
+        if isinstance(op_axis, bool) or not isinstance(op_axis, int):
+            raise SchemaError("scatter axis must be a canonical integer")
+        if item.axis != op_axis:
+            raise SchemaError("LogicalUpdateSpec axis does not match scatter")
+        expected_combiner = {
+            "none": UpdateCombiner.OVERWRITE,
+            "add": UpdateCombiner.ADD,
+        }.get(op.attrs.get("reduce"))
+        if expected_combiner is None or item.combiner is not expected_combiner:
+            raise SchemaError(
+                "LogicalUpdateSpec combiner does not match scatter reduce"
+            )
+        if id(op) in updated_operations:
+            raise SchemaError(
+                "Boundary.updates contains multiple aliases for one node"
+            )
+        updated_operations.add(id(op))
+        bound = bounds_by_node.get(item.node_ref)
+        if bound is None:
+            # Accept a path/id alias for the same operation, but never infer a
+            # bound from an unrelated indexed node.
+            matching = [
+                candidate
+                for ref, candidate in bounds_by_node.items()
+                if nodes.get(ref) is op
+            ]
+            if len(matching) != 1:
+                raise SchemaError(
+                    "LogicalUpdateSpec requires one matching IndexBoundsSpec"
+                )
+        updates_by_node[item.node_ref] = item
+
+    covered_scatter_ops = {
+        id(nodes[item.node_ref]) for item in archive.boundary.updates
+    }
+    missing_scatter = [
+        op for key, op in scatter_ops.items() if key not in covered_scatter_ops
+    ]
+    if missing_scatter:
+        raise SchemaError(
+            "canonical J scatter requires a typed LogicalUpdateSpec"
+        )
+
+    outputs = {item.name for item in archive.intent.outputs}
+    return_values = {item.output: item.value for item in archive.intent.returns}
+    if len(return_values) != len(archive.intent.returns):
+        raise SchemaError("IntentFunction returns contain duplicate outputs")
+    unknown_return_outputs = sorted(set(return_values) - outputs)
+    if unknown_return_outputs:
+        raise SchemaError(
+            "IntentFunction returns reference unknown outputs: "
+            + ", ".join(unknown_return_outputs)
+        )
+    observable_values = {
+        output: return_values.get(output, output) for output in outputs
+    }
+    relation_by_output = {
+        item.output: item for item in archive.boundary.result_relations
+    }
+    for item in archive.boundary.result_relations:
+        if item.output not in outputs:
+            raise SchemaError(
+                f"ResultRelationSpec references unknown output {item.output!r}"
+            )
+        if item.kind is not ResultRelationKind.ONE_OF_UPDATES:
+            continue
+        update = updates_by_node.get(item.update_node_ref or "")
+        update_op = nodes.get(item.update_node_ref or "")
+        if update is None:
+            # Resolve the alternate path/id spelling for the same update node.
+            referenced = nodes.get(item.update_node_ref or "")
+            matches = [
+                candidate
+                for ref, candidate in updates_by_node.items()
+                if nodes.get(ref) is referenced
+            ]
+            if len(matches) == 1:
+                update = matches[0]
+                update_op = referenced
+        if update is None or update_op is None:
+            raise SchemaError(
+                "one_of_updates relation references an unknown logical update"
+            )
+        if not (
+            update.combiner is UpdateCombiner.OVERWRITE
+            and update.duplicate_policy is DuplicatePolicy.ONE_OF
+        ):
+            raise SchemaError(
+                "one_of_updates relation requires overwrite + one_of update"
+            )
+        if not isinstance(update_op.result, str) or (
+            observable_values[item.output] != update_op.result
+        ):
+            raise SchemaError(
+                "one_of_updates currently requires the update result to be "
+                "returned directly"
+            )
+
+    if archive.boundary.updates:
+        missing_relations = sorted(outputs - set(relation_by_output))
+        if missing_relations:
+            raise SchemaError(
+                "canonical J with logical updates requires an explicit result "
+                "relation for every output: " + ", ".join(missing_relations)
+            )
+        for item in archive.boundary.updates:
+            op = nodes[item.node_ref]
+            direct_outputs = {
+                output
+                for output, value in observable_values.items()
+                if value == op.result
+            }
+            if item.duplicate_policy is DuplicatePolicy.ONE_OF:
+                matching = [
+                    relation_by_output[output]
+                    for output in direct_outputs
+                    if relation_by_output[output].kind
+                    is ResultRelationKind.ONE_OF_UPDATES
+                    and nodes.get(relation_by_output[output].update_node_ref or "")
+                    is op
+                ]
+                if len(matching) != 1:
+                    raise SchemaError(
+                        "one_of logical update requires exactly one matching "
+                        "one_of_updates output relation"
+                    )
+            elif any(
+                relation.kind is ResultRelationKind.ONE_OF_UPDATES
+                and nodes.get(relation.update_node_ref or "") is op
+                for relation in archive.boundary.result_relations
+            ):
+                raise SchemaError(
+                    "deterministic/combine update cannot use one_of_updates relation"
+                )
 
 
 def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
@@ -1921,6 +2423,7 @@ class SemanticArchive(StrictJSONMixin):
             item if isinstance(item, StorageObject) else StorageObject.from_json(item)
             for item in self.storage
         ]
+        _validate_typed_boundary_relations(self)
         _validate_semantic_scopes_and_storage(self)
 
     @classmethod
@@ -2487,7 +2990,7 @@ class Gate1Artifact(StrictJSONMixin):
     upgraded through a compatibility path.
     """
 
-    SCHEMA: ClassVar[str] = "intentir.gate1.llm-direct.v1"
+    SCHEMA: ClassVar[str] = "intentir.gate1.llm-direct.v2"
 
     j: SemanticArchive
     interface: KernelInterface
@@ -2543,6 +3046,13 @@ class Gate1Artifact(StrictJSONMixin):
             *(item.node_ref for item in self.j.boundary.effects if item.node_ref is not None),
             *(item.node_ref for item in self.j.boundary.output_mappings if item.node_ref is not None),
             *(item.node_ref for item in self.j.boundary.reductions),
+            *(item.node_ref for item in self.j.boundary.index_bounds),
+            *(item.node_ref for item in self.j.boundary.updates),
+            *(
+                item.update_node_ref
+                for item in self.j.boundary.result_relations
+                if item.update_node_ref is not None
+            ),
         }
         unknown_boundary_nodes = sorted(boundary_node_refs - node_refs)
         if unknown_boundary_nodes:
@@ -3290,6 +3800,53 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in boundary.reductions
         ],
+        "index_bounds": [
+            {
+                "node_ref": _opaque_reference(item.node_ref, aliases),
+                "data": _opaque_reference(item.data, aliases),
+                "indices": _opaque_reference(item.indices, aliases),
+                "axis": item.axis,
+            }
+            for item in boundary.index_bounds
+        ],
+        "updates": [
+            {
+                "node_ref": _opaque_reference(item.node_ref, aliases),
+                "base": _opaque_reference(item.base, aliases),
+                "indices": _opaque_reference(item.indices, aliases),
+                "values": _opaque_reference(item.values, aliases),
+                "axis": item.axis,
+                "combiner": item.combiner.value,
+                "duplicate_policy": item.duplicate_policy.value,
+                "order": item.order.value,
+            }
+            for item in boundary.updates
+        ],
+        "result_relations": [
+            {
+                "output": _opaque_reference(item.output, aliases),
+                "kind": item.kind.value,
+                **(
+                    {
+                        "rtol": item.rtol,
+                        "atol": item.atol,
+                        "equal_nan": item.equal_nan,
+                    }
+                    if item.kind is ResultRelationKind.TOLERANCE
+                    else {}
+                ),
+                **(
+                    {
+                        "update_node_ref": _opaque_reference(
+                            item.update_node_ref, aliases
+                        )
+                    }
+                    if item.update_node_ref is not None
+                    else {}
+                ),
+            }
+            for item in boundary.result_relations
+        ],
     }
 
     interface, schedule = _opaque_harness_view(artifact, aliases)
@@ -3507,6 +4064,53 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in artifact.j.boundary.reductions
         ],
+        "index_bounds": [
+            {
+                "node_ref": opaque_reference(item.node_ref),
+                "data": opaque_reference(item.data),
+                "indices": opaque_reference(item.indices),
+                "axis": "<masked>",
+            }
+            for item in artifact.j.boundary.index_bounds
+        ],
+        "updates": [
+            {
+                "node_ref": opaque_reference(item.node_ref),
+                "base": opaque_reference(item.base),
+                "indices": opaque_reference(item.indices),
+                "values": opaque_reference(item.values),
+                "axis": "<masked>",
+                "combiner": "<masked>",
+                "duplicate_policy": "<masked>",
+                "order": "<masked>",
+            }
+            for item in artifact.j.boundary.updates
+        ],
+        "result_relations": [
+            {
+                "output": opaque_reference(item.output),
+                "kind": "<masked>",
+                **(
+                    {
+                        "rtol": "<masked>",
+                        "atol": "<masked>",
+                        "equal_nan": "<masked>",
+                    }
+                    if item.kind is ResultRelationKind.TOLERANCE
+                    else {}
+                ),
+                **(
+                    {
+                        "update_node_ref": opaque_reference(
+                            item.update_node_ref
+                        )
+                    }
+                    if item.update_node_ref is not None
+                    else {}
+                ),
+            }
+            for item in artifact.j.boundary.result_relations
+        ],
     }
 
     # The anti-leakage arm masks J only.  Its pi, C declaration and public
@@ -3569,14 +4173,17 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 
 __all__ = [
     "AccessKind", "AliasKind", "AliasSpec", "Boundary", "BoundaryAccess",
-    "BroadcastSpec", "CompileCase", "EffectKind", "EffectSpec", "Frontend",
+    "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
+    "EffectSpec", "Frontend",
     "Gate1Artifact", "Gate1Status", "JsonValue", "KernelInterface",
-    "KernelParameter", "LocationEntry", "LocationMap", "OutputMapping",
+    "IndexBoundsSpec", "KernelParameter", "LocationEntry", "LocationMap",
+    "LogicalUpdateSpec", "OutputMapping",
     "opaque_replay_abi",
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
     "PortableScope", "RealizationWitness", "ReductionBoundary",
+    "ResultRelationKind", "ResultRelationSpec",
     "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec",
     "SchemaError", "ScopeKind", "SemanticArchive", "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
-    "StrictJSONMixin",
+    "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",
 ]

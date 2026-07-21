@@ -264,7 +264,7 @@ def test_cpu_e_j_fails_closed_for_unlowered_or_relation_valued_constructs(op) ->
         emit_cpu_module(fn, {})
 
 
-def test_cuda_direct_j_rejects_scatter_without_update_relation() -> None:
+def test_canonical_j_rejects_scatter_without_update_relation() -> None:
     fn = IntentFunction.from_json(
         {
             "name": "update_without_relation",
@@ -285,22 +285,20 @@ def test_cuda_direct_j_rejects_scatter_without_update_relation() -> None:
             ],
         }
     )
-    j = SemanticArchive(
-        "update_without_relation",
-        fn,
-        {"n0": "body[0]"},
-        Boundary(),
-    )
-    analysis = analyze_j_for_cuda(j)
-    assert not analysis["supported"]
-    assert any("logical_update_missing" in item for item in analysis["unsupported"])
+    with pytest.raises(SchemaError, match="requires a typed LogicalUpdateSpec"):
+        SemanticArchive(
+            "update_without_relation",
+            fn,
+            {"n0": "body[0]"},
+            Boundary(),
+        )
 
 
 def test_real_source_inventory_is_unique_and_digest_pinned() -> None:
     inventory = json.loads(_INVENTORY.read_text(encoding="utf-8"))
-    assert inventory["schema"] == "intentir.intentop-source-inventory.v1"
+    assert inventory["schema"] == "intentir.intentop-source-inventory.v2"
     cases = inventory["cases"]
-    assert len(cases) == 8
+    assert len(cases) == 9
     assert len({item["case_id"] for item in cases}) == len(cases)
     assert len({item["path"] for item in cases}) == len(cases)
     source_root = Path(inventory["source_root_hint"])

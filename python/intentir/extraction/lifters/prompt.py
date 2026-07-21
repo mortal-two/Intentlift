@@ -76,7 +76,10 @@ Atomic ops (each is one JSON object in a "body" list):
      {"op":"gather","result":R,"operands":[DATA,INDEX],"attrs":{"axis":i,"mode":"along_axis"|"take"}}
   scatter    : data-dependent write into a COPY of data. `index`/`src` share a
                shape; mode "along_axis" (torch.scatter/scatter_add_); reduce
-               "none" overwrites, "add" accumulates (scatter_add).
+               "none" overwrites, "add" accumulates (scatter_add). Every
+               canonical scatter must also have one matching top-level
+               boundary.index_bounds and boundary.updates record, plus an
+               explicit result relation for every observable output.
      {"op":"scatter","result":R,"operands":[DATA,INDEX,SRC],"attrs":{"axis":i,"mode":"along_axis","reduce":"none"|"add"}}
   concat     : variadic structural placement along `axis` (numpy concatenate /
                torch.cat; hstack/vstack = axis 1/0; stack = concat after an
@@ -206,6 +209,12 @@ Hard rules:
 - Per-op `layer_b`, destination `out`, and loop `trip.tile_hint` are forbidden.
   Correctness boundaries live only in the enclosing canonical J boundary;
   tile/block/stage choices live only in C.
+- `boundary.index_bounds` exactly binds node/data/indices/axis and always means
+  `0 <= indices < dim(data, axis)`; never emit proof prose or `proven=true`.
+- `boundary.updates` records only logical base/indices/values/axis, combiner,
+  duplicate policy and observable order. Atomic/CAS/thread ownership belongs to
+  pi/backend realization. Result tolerance or one-of winners belong only to
+  `boundary.result_relations`, never to the runtime harness.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\
 """
 
