@@ -1,0 +1,5757 @@
+{
+  "schema": "intentir.real-llm-batch-28.v4",
+  "batch_id": "tianchenir-formal-real-kernels-protocol-v4-2026-07-22",
+  "frozen_date": "2026-07-22",
+  "source_root": "/home/kingdom",
+  "provider": {
+    "name": "gpt-5.6-sol",
+    "model": "gpt-5.6-sol",
+    "wire_api": "responses",
+    "reasoning_effort": "xhigh"
+  },
+  "call_budget": {
+    "lift_per_case": 1,
+    "normal_replay_per_case": 1,
+    "masked_j_per_closed_case": 1,
+    "recovery_per_case": 0,
+    "maximum_total_calls": 84
+  },
+  "repositories": {
+    "liger_kernel": {
+      "root": "phdworks/Dataset/Liger-Kernel",
+      "revision": {
+        "kind": "tree_sha256",
+        "value": "4b90ecfd601a2a3e1f86e34f1e68f6d88afedce291a51c4c4721c18b32fef851"
+      },
+      "version": "0.7.0",
+      "license": "Apache-2.0"
+    },
+    "xformers": {
+      "root": "phdworks/Dataset/xformers",
+      "revision": {
+        "kind": "tree_sha256",
+        "value": "98733658a6cec578f3db627f242c281814c1f65a2e0b8477efd75d3aeb40a1e4"
+      },
+      "version": "unversioned-content-snapshot",
+      "license": "BSD-3-Clause"
+    },
+    "flash_attention": {
+      "root": "phdworks/Dataset/flash-attention",
+      "revision": {
+        "kind": "tree_sha256",
+        "value": "927fdf54df43ae26cd0f1d4d6379362d97b1b89e54bbe4b29b239a0d990bafe2"
+      },
+      "version": "2.8.4",
+      "license": "BSD-3-Clause"
+    },
+    "flag_gems": {
+      "root": ".local/lib/python3.10/site-packages/flag_gems",
+      "revision": {
+        "kind": "package_version",
+        "value": "4.2.0"
+      },
+      "version": "4.2.0",
+      "license": "Apache-2.0"
+    },
+    "intentir_fixture": {
+      "root": "phdworks/TianchenIR-frontend-backend-op-opt",
+      "revision": {
+        "kind": "fixture_epoch",
+        "value": "typed-relations-racing-overwrite-v1"
+      },
+      "version": "gate2-relation-v4",
+      "license": "project-test-fixture"
+    }
+  },
+  "protocols": {
+    "gate1": "llm_direct_pi_gate1_level2_v1",
+    "gate1_observer": "normalized_compiler_topology_level2",
+    "gate2": "source_replay_j_relation_v4",
+    "scalar": "canonical_j_scalar_cpu_mlir_v2",
+    "cuda_target": "sm_120a",
+    "performance": "cuda_event_interleaved_v1",
+    "lift": "llm_direct_pi_source_aware_lift_v4"
+  },
+  "lift_wire": {
+    "version": "intentir.lift-wire.v4",
+    "schema_sha256": "c803befd01ed181364d0ec0720b6b0d394458b91e874de82ff804a4c0b9c69dd",
+    "prompt_sha256": "13052264a08c6cf7e480a2d33285e9d82014929c9a804197f1469da5490d9571",
+    "client_files": [
+      {
+        "path": "python/intentir/extraction/providers/client.py",
+        "sha256": "9a27bf2ec175096ae665ae89200b16c80adab5961e5889cafe8b71998dd4543b"
+      },
+      {
+        "path": "python/intentir/extraction/lifters/scrc.py",
+        "sha256": "788fe4cef7146524ef15bb233e04a30489f2d34e335f2d32e01f0720a7649186"
+      },
+      {
+        "path": "python/intentir/extraction/lifters/scrc_schema.py",
+        "sha256": "840cb78b4dab5547297aa87d5741d8988cc9af648e50f245e255e99319cffe6c"
+      },
+      {
+        "path": "python/intentir/ir/intent_op_contract.py",
+        "sha256": "fdfed4378533612a16cd7948c81775a8d9b219081621057502b9f9dde20bc97f"
+      }
+    ]
+  },
+  "required_anchors": [
+    "flash_layer_norm_forward",
+    "xformers_index_select_forward",
+    "xformers_scaled_index_add_forward",
+    "liger_embedding_backward",
+    "flash_attention_forward",
+    "cute_async_bulk_copy",
+    "cute_async_tma_copy",
+    "triton_racing_overwrite"
+  ],
+  "cases": [
+    {
+      "case_id": "liger_swiglu_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "fused_activation",
+        "elementwise_product",
+        "masked_tail"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/swiglu.py",
+        "symbol": "_swiglu_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "b43271c472a07e6be8cfb1abfc7dfe89d6f7230f595e97e59e47fc2b368a496a",
+        "symbol_sha256": "82f326387a1114e456174254de5042ad6d5be3666caeffce1c166b902a6c2337"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "a_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "b_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "c_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_cols",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1024
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "a_ptr",
+          "b_ptr"
+        ],
+        "outputs": [
+          "c_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "cols": [
+            256,
+            8192
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.002,
+          "rtol": 0.002
+        }
+      },
+      "required_capabilities": [
+        "map_unary",
+        "map_binary",
+        "select",
+        "fused_elementwise_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_geglu_tanh_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "fused_activation",
+        "tanh_polynomial",
+        "elementwise_product"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/geglu.py",
+        "symbol": "_geglu_tanh_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "fabb8c0020ec147d58b006a4e811af67492d2c622b044eb2185d1d03247cd945",
+        "symbol_sha256": "687c62f2fbd6c63b4eb07b7448b343e23038ec0fb510714b8f6697eb6b4237d6"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "a",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              131072
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "b",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              131072
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "c",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              131072
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_cols",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1024
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "a",
+          "b"
+        ],
+        "outputs": [
+          "c"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "cols": [
+            256,
+            8192
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.003,
+          "rtol": 0.003
+        }
+      },
+      "required_capabilities": [
+        "map_unary",
+        "map_binary",
+        "select",
+        "fused_elementwise_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_rms_norm_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "row_reduction",
+        "rms_normalization",
+        "affine_fusion"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/rms_norm.py",
+        "symbol": "_rms_norm_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "1759600f3a4a7f164c233f3d0a83d7eaaadb45f9d168b0caa2824029507311e1",
+        "symbol_sha256": "a8ac1c9f06a10cf43b261134805e932d54632aa483a2da41479f8799439bc68d"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "Y_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "X_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "X_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "W_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "W_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "RSTD_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "RSTD_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "eps",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 1e-06,
+            "binding": "runtime"
+          },
+          {
+            "name": "offset",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "casting_mode",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": -1
+          },
+          {
+            "name": "elementwise_affine",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": true
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 8
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "X_ptr",
+          "W_ptr"
+        ],
+        "outputs": [
+          "Y_ptr",
+          "RSTD_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "cols": [
+            256,
+            8192
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.003,
+          "rtol": 0.003
+        }
+      },
+      "required_capabilities": [
+        "reduce",
+        "map_binary",
+        "broadcast",
+        "row_reduction_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_softmax_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "row_max",
+        "row_sum",
+        "stable_softmax"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/softmax.py",
+        "symbol": "_softmax_single_block_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+        "symbol_sha256": "26e4283c9b01559e0bfd293767d8638aed687fb1f32ce3259c5608fab06a06ef"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "Y_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "X_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "X_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 8
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "X_ptr"
+        ],
+        "outputs": [
+          "Y_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "cols": [
+            256,
+            8192
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.003,
+          "rtol": 0.003
+        }
+      },
+      "required_capabilities": [
+        "reduce",
+        "map_unary",
+        "map_binary",
+        "row_reduction_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flash_layer_norm_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "masked_center",
+        "square_after_mask",
+        "variance_reduction"
+      ],
+      "source": {
+        "repository": "flash_attention",
+        "path": "flash_attn/ops/triton/layer_norm.py",
+        "symbol": "_layer_norm_fwd_1pass_kernel",
+        "frontend": "triton",
+        "file_sha256": "53e13d970888ee0354afe44933eeb07e4687ad594a691187fdafb18c891ec8ba",
+        "symbol_sha256": "bbd9c65196e068cb4239465644656abf0d5ea5a17db2329db19e602a55eabac9"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "X",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "W",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "B",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "RESIDUAL",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "X1",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "W1",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "B1",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y1",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "RESIDUAL_OUT",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "ROWSCALE",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "SEEDS",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "DROPOUT_MASK",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "DROPOUT_MASK1",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Mean",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Rstd",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_x_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_y_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_res_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_res_out_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_x1_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_y1_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "M",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "eps",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 1e-05,
+            "binding": "runtime"
+          },
+          {
+            "name": "dropout_p",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "zero_centered_weight",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "IS_RMS_NORM",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "BLOCK_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          },
+          {
+            "name": "HAS_RESIDUAL",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "STORE_RESIDUAL_OUT",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_BIAS",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_DROPOUT",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "STORE_DROPOUT_MASK",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_ROWSCALE",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_X1",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_W1",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "HAS_B1",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 8
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "X",
+          "W"
+        ],
+        "outputs": [
+          "Y",
+          "Mean",
+          "Rstd"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "cols": [
+            256,
+            8192
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.003,
+          "rtol": 0.003
+        }
+      },
+      "required_capabilities": [
+        "reduce",
+        "select",
+        "masked_intermediate",
+        "row_reduction_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_sparsemax_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "prefix_scan",
+        "support_selection",
+        "row_reduction"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/sparsemax.py",
+        "symbol": "_sparsemax_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "01e59ed718241c91442964e3dafbbfd218fb2f3b46be3a97029b3e413a426345",
+        "symbol_sha256": "288649138879d4ce7bf4d2129ecbe20ca9ac691afe33db36260bc90e34663ed4"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "x_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "x_stride_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "sorted_x_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "sorted_x_stride_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "o_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "o_stride_row",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          },
+          {
+            "name": "num_warps",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 8
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {}
+      },
+      "logical_contract": {
+        "inputs": [
+          "x_ptr",
+          "sorted_x_ptr"
+        ],
+        "outputs": [
+          "o_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            2048
+          ],
+          "cols": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      "required_capabilities": [
+        "scan",
+        "reduce",
+        "select",
+        "row_scan_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_jsd_forward",
+      "stratum": "expression_fusion_reduction",
+      "mechanisms": [
+        "branch_specialization",
+        "logspace_fusion",
+        "multi_output"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/jsd.py",
+        "symbol": "_jsd_kernel",
+        "frontend": "triton",
+        "file_sha256": "a271e9e53dcc6ef25a573e55ba9ed6c3a110a7f1d369979ac938c993a16040c6",
+        "symbol_sha256": "7fcf0a9391749cf8bda22e568a7b85c8daf2ff04363bbab8b33581bc6a891cb8"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "X_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "X_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "loss_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "loss_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "dX_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "dX_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "label_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "beta",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 0.5
+          },
+          {
+            "name": "n_non_ignore",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "ignore_index",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": -100
+          },
+          {
+            "name": "n_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          },
+          {
+            "name": "HAS_LABEL",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 8
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "X_ptr",
+          "Y_ptr",
+          "label_ptr"
+        ],
+        "outputs": [
+          "loss_ptr",
+          "dX_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            2048
+          ],
+          "cols": [
+            256,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "map_unary",
+        "map_binary",
+        "reduce",
+        "multi_output_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "xformers_index_select_forward",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "data_dependent_gather",
+        "two_dimensional_tile",
+        "masked_partial_write"
+      ],
+      "source": {
+        "repository": "xformers",
+        "path": "xformers/ops/_triton/k_index_select_cat.py",
+        "symbol": "index_select_cat_fwd_kernel",
+        "frontend": "triton",
+        "file_sha256": "fe0140bae51b29dfc21f403091cfecb29c44d2599de18fa02e774bbb71b76eb0",
+        "symbol_sha256": "774c0f64be6ba1af8dc24e03471fe774e7ed8e03d965e135ad1a06161bff9c63"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "output_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "source_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              512,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "index_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_indices",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride0",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride1",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE_INDEX",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1
+          },
+          {
+            "name": "BLOCK_SIZE_COL",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 512
+          }
+        ],
+        "grid": [
+          128,
+          1
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "source_ptr",
+          "index_ptr"
+        ],
+        "outputs": [
+          "output_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "source_rows": [
+            256,
+            4096
+          ],
+          "selected_rows": [
+            64,
+            1024
+          ],
+          "cols": [
+            64,
+            2048
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "gather",
+        "index_bounds",
+        "masked_load",
+        "gather_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_embedding_forward",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "embedding_gather",
+        "two_dimensional_tile",
+        "index_bounds"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/experimental/embedding.py",
+        "symbol": "embedding_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "b68963ded22d933a526f7d335aa0cddbfc97e1e72d7e5690f073322b214841cf",
+        "symbol_sha256": "3290d2052a0b0c4a869e044cbd3ba28c3158782cfbae2e377089d3a069b52746"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "embeddings_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              4096,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "indices_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "output_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              1024,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_elements",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "embedding_dim",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 256
+          },
+          {
+            "name": "BLOCK_SIZE_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          },
+          {
+            "name": "BLOCK_SIZE_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          }
+        ],
+        "grid": [
+          8,
+          2
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "embeddings_ptr",
+          "indices_ptr"
+        ],
+        "outputs": [
+          "output_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "vocab": [
+            4096,
+            131072
+          ],
+          "tokens": [
+            1024,
+            65536
+          ],
+          "dim": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "gather",
+        "index_bounds",
+        "masked_load",
+        "gather_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_llama4_rope",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "strided_layout",
+        "complex_pair_rotation",
+        "in_place_transform"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/llama4_rope.py",
+        "symbol": "_llama4_rope_kernel",
+        "frontend": "triton",
+        "file_sha256": "54c56359428e671a98af04c48b6b31f619a118df94c56b4cffc045c22be59e4f",
+        "symbol_sha256": "d3c856f491da6af0df21d345885432ae438c186f71cdd485aa6bd9cc9b78c61d"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "q_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float16",
+            "shape": [
+              2,
+              512,
+              16,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float16",
+            "shape": [
+              2,
+              512,
+              8,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "freqs_complex_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              512,
+              32,
+              2
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_head_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_head_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "freqs_row_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "seq_len",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "batch_size",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 2,
+            "binding": "runtime"
+          },
+          {
+            "name": "imag_sign",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "head_dim_half",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 32
+          },
+          {
+            "name": "n_q_heads",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "n_k_heads",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 8
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 32
+          }
+        ],
+        "grid": [
+          1024,
+          16
+        ],
+        "compiler_options": {
+          "num_warps": 2,
+          "num_stages": 2
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "freqs_complex_ptr"
+        ],
+        "outputs": [],
+        "inout": [
+          "q_ptr",
+          "k_ptr"
+        ],
+        "shape_envelope": {
+          "batch": [
+            1,
+            16
+          ],
+          "sequence": [
+            128,
+            8192
+          ],
+          "heads": [
+            8,
+            128
+          ],
+          "head_dim": [
+            64,
+            256
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.002,
+          "rtol": 0.002
+        }
+      },
+      "required_capabilities": [
+        "strided_access",
+        "map_binary",
+        "inout_effect",
+        "layout_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_multi_token_mask_forward",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "triangular_indexing",
+        "masked_load_fill",
+        "tiled_copy"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/multi_token_attention.py",
+        "symbol": "_mask_fwd_kernel",
+        "frontend": "triton",
+        "file_sha256": "3b3fd15c3a7e3924bf47f1ee1a66844c774027b4e875affbd0e7c4ed35cc5256",
+        "symbol_sha256": "cb9ee2c542d652169c7c4bc07ae4f38a7ce1a0b4f8f410d966310b7e667cdbb0"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "scores_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              4,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "out_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              4,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_b",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 16384,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_m",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_n",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "L",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "mask_val",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": -1000000000
+          },
+          {
+            "name": "BLOCK",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          },
+          {
+            "name": "num_warps",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 8
+          }
+        ],
+        "grid": [
+          1,
+          1,
+          4
+        ],
+        "compiler_options": {}
+      },
+      "logical_contract": {
+        "inputs": [
+          "scores_ptr"
+        ],
+        "outputs": [
+          "out_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "batch": [
+            1,
+            64
+          ],
+          "sequence": [
+            64,
+            2048
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "iota",
+        "select",
+        "masked_load",
+        "layout_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_cat_copy",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "four_way_concat",
+        "index_remap",
+        "multi_program_copy"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/cat.py",
+        "symbol": "cat_copy_func_kernel_4",
+        "frontend": "triton",
+        "file_sha256": "0b6129f11bbe92b03645d3e27da029744ac75bacc3bcfce44d69900ff3c64d4c",
+        "symbol_sha256": "8dd1563cf51f35cab94027d8e62e3171628ad07766b7ca90b9f5e2ce5d1253d2"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "out_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "in_ptr_a",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "in_ptr_b",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "in_ptr_c",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "in_ptr_d",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_size_in_a",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_size_in_b",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_size_in_c",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_size_in_d",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_size_out",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_prod_post",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_offset_a",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_offset_b",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_offset_c",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "dim_offset_d",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 768,
+            "binding": "runtime"
+          },
+          {
+            "name": "total_elements_a",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "total_elements_b",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "total_elements_c",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "total_elements_d",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_X",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          32,
+          4
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "in_ptr_a",
+          "in_ptr_b",
+          "in_ptr_c",
+          "in_ptr_d"
+        ],
+        "outputs": [
+          "out_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "part_cols": [
+            64,
+            2048
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "concat",
+        "index_remap",
+        "multi_input",
+        "concat_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "cute_async_bulk_copy",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "identity_copy",
+        "async_bulk_transfer",
+        "producer_consumer_pipeline"
+      ],
+      "source": {
+        "repository": "flash_attention",
+        "path": "AI/racecheck_repro_1d_bulk.py",
+        "symbol": "kernel",
+        "frontend": "cute",
+        "file_sha256": "e2f8ae6d8fc37ce2bfee35b3eebe656bb988af753bd6b1336aad54c926371cb6",
+        "symbol_sha256": "4b28c4f4fa212b17f62457330dfb9725fa4877c40807ff6af43f4b4af9e6d99d"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "g_src",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              512
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "g_dst",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              512
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          }
+        ],
+        "grid": [
+          1,
+          1,
+          1
+        ],
+        "compiler_options": {
+          "block_threads": 64,
+          "pipeline_stages": 2,
+          "smem_bytes": 4096
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "g_src"
+        ],
+        "outputs": [
+          "g_dst"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "elements": [
+            512,
+            1048576
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "copy",
+        "async_transfer",
+        "pipeline_order",
+        "cute_observer"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "cute_async_tma_copy",
+      "stratum": "copy_layout_gather_indexing",
+      "mechanisms": [
+        "identity_copy",
+        "tma_transfer",
+        "producer_consumer_pipeline"
+      ],
+      "source": {
+        "repository": "flash_attention",
+        "path": "AI/racecheck_repro_1d_tensor.py",
+        "symbol": "kernel",
+        "frontend": "cute",
+        "file_sha256": "8292817455447c19ad749224f2f8996cf296796c8926eb2364eb6836bf25ef25",
+        "symbol_sha256": "be6698ede4c5a7a99a27a7e837d01116f667066e1b43b4734d5d11e42456f3a9"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "g_dst",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              512
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "tma_atom",
+            "kind": "opaque",
+            "role": "value",
+            "dtype": "cute.CopyAtom",
+            "shape": null,
+            "strides": null,
+            "value": "f32_tma_tile_128",
+            "binding": "runtime"
+          },
+          {
+            "name": "tma_tensor",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              512
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          }
+        ],
+        "grid": [
+          1,
+          1,
+          1
+        ],
+        "compiler_options": {
+          "block_threads": 64,
+          "pipeline_stages": 2,
+          "smem_bytes": 4096
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "tma_tensor"
+        ],
+        "outputs": [
+          "g_dst"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "elements": [
+            512,
+            1048576
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "copy",
+        "tma_descriptor",
+        "pipeline_order",
+        "cute_observer"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_matmul",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "matrix_contraction",
+        "tiled_k_loop",
+        "grouped_program_order"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/mm.py",
+        "symbol": "mm_kernel_general",
+        "frontend": "triton",
+        "file_sha256": "910354b5e5c78026f82b567f47393d677b1b5e31099f7153dcd96e53614a2ebf",
+        "symbol_sha256": "fd321a8d7a4d10a7b47ecad9399acebee349dcc7da3c4b5b37283b0f227531d0"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "A",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              256,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "B",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              256,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "C",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              256,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "M",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "K",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_am",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_ak",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_bk",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_bn",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_cm",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_cn",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "BLOCK_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "BLOCK_K",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 32
+          },
+          {
+            "name": "GROUP_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 8
+          }
+        ],
+        "grid": [
+          16
+        ],
+        "compiler_options": {
+          "num_warps": 4,
+          "num_stages": 3
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "A",
+          "B"
+        ],
+        "outputs": [
+          "C"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "m": [
+            128,
+            4096
+          ],
+          "n": [
+            128,
+            4096
+          ],
+          "k": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.02,
+          "rtol": 0.02
+        }
+      },
+      "required_capabilities": [
+        "contraction",
+        "semantic_k_reduction",
+        "tiled_contraction_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 100,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_bmm",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "batched_contraction",
+        "tiled_k_loop",
+        "three_dimensional_grid"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/bmm.py",
+        "symbol": "bmm_kernel",
+        "frontend": "triton",
+        "file_sha256": "a0a13e32806255328f867029e1a3590104486b232324c299d637ccf27473531d",
+        "symbol_sha256": "8b82b6756ca6c5e274b36aec681d7da8ab84926c06b8a3420522d73db0c1ad11"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "A",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              4,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "B",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              4,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "O",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              4,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "M",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "K",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "TILE_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "TILE_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "TILE_K",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 32
+          },
+          {
+            "name": "GROUP_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 8
+          },
+          {
+            "name": "DIVISIBLE_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          },
+          {
+            "name": "DIVISIBLE_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          },
+          {
+            "name": "DIVISIBLE_K",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          }
+        ],
+        "grid": [
+          2,
+          2,
+          4
+        ],
+        "compiler_options": {
+          "num_warps": 4,
+          "num_stages": 3
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "A",
+          "B"
+        ],
+        "outputs": [
+          "O"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "batch": [
+            2,
+            64
+          ],
+          "m": [
+            128,
+            2048
+          ],
+          "n": [
+            128,
+            2048
+          ],
+          "k": [
+            128,
+            2048
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.02,
+          "rtol": 0.02
+        }
+      },
+      "required_capabilities": [
+        "contraction",
+        "batch_axes",
+        "tiled_contraction_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 100,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flash_attention_forward",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "online_softmax_recurrence",
+        "contraction_reduction_fusion",
+        "scratch_store_load"
+      ],
+      "source": {
+        "repository": "flash_attention",
+        "path": "flash_attn/flash_attn_triton.py",
+        "symbol": "_fwd_kernel",
+        "frontend": "triton",
+        "file_sha256": "0eef35cdb87c2ecef413112c9b4d28a73886be31857dc642a190d43b6ceeb7d4",
+        "symbol_sha256": "fcacf3684ee7f7c97e21231d6c0dad3c2f0ef04daf9e12bfcbe995efd7daa2ca"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "Q",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1,
+              128,
+              4,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "K",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1,
+              128,
+              4,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "V",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1,
+              128,
+              4,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Bias",
+            "kind": "none",
+            "role": "value",
+            "dtype": "none",
+            "shape": null,
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Out",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              1,
+              128,
+              4,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Lse",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              4,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "TMP",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              4,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "softmax_scale",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 0.125,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_qb",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_qh",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_qm",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_kb",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_kh",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_kn",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_vb",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_vh",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_vn",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_bb",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_bh",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_bm",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_ob",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_oh",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride_om",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "nheads",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 4,
+            "binding": "runtime"
+          },
+          {
+            "name": "seqlen_q",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "seqlen_k",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "seqlen_q_rounded",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "headdim",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "CACHE_KEY_SEQLEN_Q",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 4,
+            "binding": "runtime"
+          },
+          {
+            "name": "CACHE_KEY_SEQLEN_K",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 4,
+            "binding": "runtime"
+          },
+          {
+            "name": "BIAS_TYPE",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": "none"
+          },
+          {
+            "name": "IS_CAUSAL",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": false
+          },
+          {
+            "name": "BLOCK_HEADDIM",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "EVEN_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          },
+          {
+            "name": "EVEN_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          },
+          {
+            "name": "EVEN_HEADDIM",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": true
+          },
+          {
+            "name": "BLOCK_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          },
+          {
+            "name": "BLOCK_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          }
+        ],
+        "grid": [
+          1,
+          4
+        ],
+        "compiler_options": {
+          "num_warps": 4,
+          "num_stages": 1
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "Q",
+          "K",
+          "V"
+        ],
+        "outputs": [
+          "Out",
+          "Lse",
+          "TMP"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "batch": [
+            1,
+            16
+          ],
+          "sequence": [
+            128,
+            8192
+          ],
+          "heads": [
+            4,
+            64
+          ],
+          "head_dim": [
+            32,
+            128
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.02,
+          "rtol": 0.02
+        }
+      },
+      "required_capabilities": [
+        "semantic_loop",
+        "contraction",
+        "reduce",
+        "attention_loop_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 100,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_normalized_cumsum",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "prefix_scan",
+        "row_reduction",
+        "normalization"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/cumsum.py",
+        "symbol": "normed_cumsum_kernel",
+        "frontend": "triton",
+        "file_sha256": "84cef7e5c350f9cc2ab73a8ab05cf3419684f3dced0f7c60b307da33f4960300",
+        "symbol_sha256": "c5dca2a1c9a920773b2a51f0bc2e80e3c020e11d64c734ea57a70e028ce2a63b"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "inp",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "out",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "K",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1024
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 8
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "inp"
+        ],
+        "outputs": [
+          "out"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            2048
+          ],
+          "cols": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "scan",
+        "reduce",
+        "map_binary",
+        "row_scan_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_mhc_sinkhorn_forward",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "ordered_static_recurrence",
+        "row_column_reduction",
+        "history_materialization"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/mhc.py",
+        "symbol": "_mhc_split_sinkhorn_fwd_kernel",
+        "frontend": "triton",
+        "file_sha256": "98b34464fd83b6bffc159040644acee333aa6a9230c2cc2c64c03cf32a3972cf",
+        "symbol_sha256": "ad7ead0a2b4802820b14f4d5767870ba2a50b4085514e51296945f46f4a5b33b"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "mix_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              24
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "b_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              24
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "hpre_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "hpost_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "hres_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "hist_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4,
+              4,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 128
+          },
+          {
+            "name": "HC",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "M",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 24
+          },
+          {
+            "name": "stride_mn",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 24
+          },
+          {
+            "name": "stride_mm",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_hp_n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_hp_h",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_hq_n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_hq_h",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_hr_n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "stride_hr_i",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_hr_j",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_hn",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 64
+          },
+          {
+            "name": "stride_ht",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "stride_hi",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_hj",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "alpha_pre_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "alpha_post_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "alpha_res_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "pre_eps",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1e-06
+          },
+          {
+            "name": "sinkhorn_eps",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1e-06
+          },
+          {
+            "name": "post_mult",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "TMAX",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "STORE_HIST",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": true
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 1
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "mix_ptr",
+          "b_ptr",
+          "alpha_pre_ptr",
+          "alpha_post_ptr",
+          "alpha_res_ptr"
+        ],
+        "outputs": [
+          "hpre_ptr",
+          "hpost_ptr",
+          "hres_ptr",
+          "hist_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "channels": [
+            4,
+            16
+          ],
+          "iterations": [
+            2,
+            8
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "semantic_loop",
+        "reduce",
+        "multi_output",
+        "recurrence_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_mhc_sinkhorn_history_backward",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "reverse_static_recurrence",
+        "history_consumption",
+        "row_column_reduction"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/mhc.py",
+        "symbol": "_mhc_sinkhorn_bwd_hist_kernel",
+        "frontend": "triton",
+        "file_sha256": "98b34464fd83b6bffc159040644acee333aa6a9230c2cc2c64c03cf32a3972cf",
+        "symbol_sha256": "e39449ce634283138d07d4fc082e65aac5dbcacef64fc5ec0ded64fcb18f39ec"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "mix_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              24
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "b_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              24
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "hist_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4,
+              4,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "grad_out_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "grad_logits_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              128,
+              4,
+              4
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 128
+          },
+          {
+            "name": "HC",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_mn",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 24
+          },
+          {
+            "name": "stride_mm",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_hn",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 64
+          },
+          {
+            "name": "stride_ht",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "stride_hi",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_hj",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_go_n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "stride_go_i",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_go_j",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "stride_gl_n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 16
+          },
+          {
+            "name": "stride_gl_i",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          },
+          {
+            "name": "stride_gl_j",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "alpha_res_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "sinkhorn_eps",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1e-06
+          },
+          {
+            "name": "TMAX",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 4
+          }
+        ],
+        "grid": [
+          128
+        ],
+        "compiler_options": {
+          "num_warps": 1
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "mix_ptr",
+          "b_ptr",
+          "hist_ptr",
+          "grad_out_ptr",
+          "alpha_res_ptr"
+        ],
+        "outputs": [
+          "grad_logits_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "channels": [
+            4,
+            16
+          ],
+          "iterations": [
+            2,
+            8
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "semantic_loop",
+        "reduce",
+        "history_tensor",
+        "recurrence_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_neighborhood_attention_qk",
+      "stratum": "contraction_attention_recurrence",
+      "mechanisms": [
+        "tiled_contraction",
+        "neighborhood_mask",
+        "score_scaling"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/fused_neighborhood_attention.py",
+        "symbol": "_fused_neighborhood_attention_qk_kernel",
+        "frontend": "triton",
+        "file_sha256": "bcf8b9c5b9e1eb0c7265e85aaa8e93ba296aa367cde5218388e3639cd9882aab",
+        "symbol_sha256": "510fd4e4dc8d91f20521c8e1daa43b9bc67dba8ebbe2f79c0acca2ab81e1a512"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "Q_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              2,
+              8,
+              128,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "K_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              2,
+              8,
+              128,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "QK_ptr",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float16",
+            "shape": [
+              2,
+              8,
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "mask_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_batch_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 65536,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_head_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 8192,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_seq_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "q_dim_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_batch_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 65536,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_head_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 8192,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_seq_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_dim_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "qk_batch_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 131072,
+            "binding": "runtime"
+          },
+          {
+            "name": "qk_head_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 16384,
+            "binding": "runtime"
+          },
+          {
+            "name": "qk_seq_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "qk_seq2_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "batch_size",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 2
+          },
+          {
+            "name": "num_heads",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 8
+          },
+          {
+            "name": "seq_len",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 128
+          },
+          {
+            "name": "head_dim",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 64
+          },
+          {
+            "name": "scale",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 0.125
+          },
+          {
+            "name": "kernel_size",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 7
+          },
+          {
+            "name": "dilation",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 1
+          },
+          {
+            "name": "BLOCK_SIZE_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "BLOCK_SIZE_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "BLOCK_SIZE_K",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 64
+          },
+          {
+            "name": "num_stages",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 2
+          },
+          {
+            "name": "num_warps",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 4
+          }
+        ],
+        "grid": [
+          16,
+          2,
+          2
+        ],
+        "compiler_options": {}
+      },
+      "logical_contract": {
+        "inputs": [
+          "Q_ptr",
+          "K_ptr",
+          "mask_ptr"
+        ],
+        "outputs": [
+          "QK_ptr"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "batch": [
+            1,
+            16
+          ],
+          "sequence": [
+            128,
+            2048
+          ],
+          "heads": [
+            4,
+            64
+          ],
+          "head_dim": [
+            32,
+            128
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.02,
+          "rtol": 0.02
+        }
+      },
+      "required_capabilities": [
+        "contraction",
+        "select",
+        "mask_relation",
+        "attention_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 100,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "xformers_scaled_index_add_forward",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "data_dependent_update",
+        "unique_index_precondition",
+        "in_place_write"
+      ],
+      "source": {
+        "repository": "xformers",
+        "path": "xformers/ops/_triton/k_scaled_index_add.py",
+        "symbol": "scaled_index_add_fwd_kernel",
+        "frontend": "triton",
+        "file_sha256": "2821202bef6cfc0d6374456f067f381a5038a72ed906b412bb15b261a246fe37",
+        "symbol_sha256": "6187d291eba4f42131332199f9e9e5ede16212cb6c4e3116e197dd61753509ea"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "input_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float32",
+            "shape": [
+              512,
+              8,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "index_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              128
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "source_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              8,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "scaling_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "alpha",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 0.5,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_inp_indices",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_src_indices",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 128,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_rows",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 8,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_cols",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride0",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 2048,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride1",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "stride2",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE_INDEX",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1
+          },
+          {
+            "name": "BLOCK_SIZE_ROW",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1
+          },
+          {
+            "name": "BLOCK_SIZE_COL",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 512
+          },
+          {
+            "name": "HAS_SCALING",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": true
+          }
+        ],
+        "grid": [
+          128,
+          8,
+          1
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "index_ptr",
+          "source_ptr",
+          "scaling_ptr"
+        ],
+        "outputs": [],
+        "inout": [
+          "input_ptr"
+        ],
+        "shape_envelope": {
+          "destination_rows": [
+            256,
+            4096
+          ],
+          "updates": [
+            64,
+            1024
+          ],
+          "inner_rows": [
+            1,
+            64
+          ],
+          "cols": [
+            64,
+            2048
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "scatter",
+        "unique_update",
+        "index_bounds",
+        "scatter_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "liger_embedding_backward",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "duplicate_add_update",
+        "atomic_add_realization",
+        "embedding_gradient"
+      ],
+      "source": {
+        "repository": "liger_kernel",
+        "path": "src/liger_kernel/ops/experimental/embedding.py",
+        "symbol": "embedding_backward_kernel",
+        "frontend": "triton",
+        "file_sha256": "b68963ded22d933a526f7d335aa0cddbfc97e1e72d7e5690f073322b214841cf",
+        "symbol_sha256": "79a34955a66a66b77eeef097e8832bad70a53b2538896898fcdf90a9355504d2"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "grad_output_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1024,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "grad_weight_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float32",
+            "shape": [
+              4096,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "indices_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_elements",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1024,
+            "binding": "runtime"
+          },
+          {
+            "name": "embedding_dim",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 256
+          },
+          {
+            "name": "BLOCK_SIZE_M",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          },
+          {
+            "name": "BLOCK_SIZE_N",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          }
+        ],
+        "grid": [
+          8,
+          2
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "grad_output_ptr",
+          "indices_ptr"
+        ],
+        "outputs": [],
+        "inout": [
+          "grad_weight_ptr"
+        ],
+        "shape_envelope": {
+          "vocab": [
+            4096,
+            131072
+          ],
+          "tokens": [
+            1024,
+            65536
+          ],
+          "dim": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "scatter",
+        "duplicate_add",
+        "atomic_realization",
+        "scatter_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "triton_racing_overwrite",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "duplicate_overwrite",
+        "unordered_writers",
+        "one_of_updates_relation"
+      ],
+      "source": {
+        "repository": "intentir_fixture",
+        "path": "test/sources/racing_overwrite.py",
+        "symbol": "racing_overwrite_kernel",
+        "frontend": "triton",
+        "file_sha256": "1090d32649f732160b9940c8e1092f37d24751679f2782e4b92c44ad05db9663",
+        "symbol_sha256": "a596315f3b8dc98eba7b5b2651c23554bd4b2899d545cdf142bdce5174478dca"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "base",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float32",
+            "shape": [
+              16
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "indices",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "values",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 64
+          }
+        ],
+        "grid": [
+          64
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "indices",
+          "values"
+        ],
+        "outputs": [],
+        "inout": [
+          "base"
+        ],
+        "shape_envelope": {
+          "destinations": [
+            16,
+            1024
+          ],
+          "updates": [
+            64,
+            65536
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "one_of_updates",
+          "untouched": true
+        }
+      },
+      "required_capabilities": [
+        "scatter",
+        "duplicate_overwrite",
+        "one_of_updates",
+        "relation_conformance"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_scatter_add",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "duplicate_add_update",
+        "atomic_add_realization",
+        "rowwise_indexing"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/scatter_add_.py",
+        "symbol": "scatter_add_kernel_1",
+        "frontend": "triton",
+        "file_sha256": "5715ea5c2515e22816717f46f8a63f198f1d0492cb2fe1f373b16b624bdb93ed",
+        "symbol_sha256": "f4b70eaaf314b4d04f7c2ecff0a909fec132cf9d668b28b73bfe19b254d20a16"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "index_dim_n",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 256,
+            "binding": "runtime"
+          },
+          {
+            "name": "inp_dim_n",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "out_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float32",
+            "shape": [
+              128,
+              512
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "index_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "src_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              128,
+              256
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "n_elements",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 32768,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 128
+          },
+          {
+            "name": "LOOP",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 1
+          }
+        ],
+        "grid": [
+          256
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "index_ptr",
+          "src_ptr"
+        ],
+        "outputs": [],
+        "inout": [
+          "out_ptr"
+        ],
+        "shape_envelope": {
+          "rows": [
+            128,
+            4096
+          ],
+          "source_cols": [
+            64,
+            2048
+          ],
+          "destination_cols": [
+            128,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "tolerance",
+          "atol": 0.0001,
+          "rtol": 0.0001
+        }
+      },
+      "required_capabilities": [
+        "scatter",
+        "duplicate_add",
+        "index_bounds",
+        "scatter_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_masked_scatter",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "mask_prefix_scan",
+        "conditional_update",
+        "dynamic_source_index"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/masked_scatter.py",
+        "symbol": "masked_scatter_single_pass_kernel",
+        "frontend": "triton",
+        "file_sha256": "54541770e95eed4321986d3fabe40bc855d10daa48bfaf110a5b967ecc9c4055",
+        "symbol_sha256": "c26fca26b332669d4f97e8113f975cf5b701ee92dc347610d574f72b32f1d40a"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "inp_ptr",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float32",
+            "shape": [
+              4096
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "mask_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "bool",
+            "shape": [
+              4096
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "src_ptr",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              4096
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 4096,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK_SIZE",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 4096
+          }
+        ],
+        "grid": [
+          1
+        ],
+        "compiler_options": {
+          "num_warps": 16
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "mask_ptr",
+          "src_ptr"
+        ],
+        "outputs": [],
+        "inout": [
+          "inp_ptr"
+        ],
+        "shape_envelope": {
+          "elements": [
+            512,
+            4096
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "masked_scatter",
+        "scan",
+        "logical_update",
+        "compact_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_reshape_and_cache",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "kv_cache_update",
+        "slot_mapping",
+        "layout_transform"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "fused/reshape_and_cache.py",
+        "symbol": "reshape_and_cache_kernel",
+        "frontend": "triton",
+        "file_sha256": "8f4a57762e0e8500287515dab3ab8126a26c128146ae8ee2274f5fe8d18bc14b",
+        "symbol_sha256": "80373bd82346ea148bf1ef651b3d7aa7902bca6258ccfc336a8f2a992d19020d"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "key",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1024,
+              8,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "value",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float16",
+            "shape": [
+              1024,
+              8,
+              64
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "key_cache",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float16",
+            "shape": [
+              128,
+              8,
+              8,
+              16,
+              8
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "value_cache",
+            "kind": "tensor",
+            "role": "inout",
+            "dtype": "float16",
+            "shape": [
+              128,
+              8,
+              64,
+              16
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "slot_mapping",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "int64",
+            "shape": [
+              1024
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "key_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "value_stride",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 512,
+            "binding": "runtime"
+          },
+          {
+            "name": "num_heads",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 8,
+            "binding": "runtime"
+          },
+          {
+            "name": "head_size",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 64,
+            "binding": "runtime"
+          },
+          {
+            "name": "block_size",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 16,
+            "binding": "runtime"
+          },
+          {
+            "name": "x",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 8,
+            "binding": "runtime"
+          },
+          {
+            "name": "k_scale",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "v_scale",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 1,
+            "binding": "runtime"
+          },
+          {
+            "name": "n",
+            "binding": "constexpr",
+            "class": "binding",
+            "value": 512
+          }
+        ],
+        "grid": [
+          1024
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "key",
+          "value",
+          "slot_mapping"
+        ],
+        "outputs": [],
+        "inout": [
+          "key_cache",
+          "value_cache"
+        ],
+        "shape_envelope": {
+          "tokens": [
+            128,
+            8192
+          ],
+          "blocks": [
+            128,
+            8192
+          ],
+          "heads": [
+            8,
+            64
+          ],
+          "head_dim": [
+            64,
+            256
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "scatter",
+        "layout_transform",
+        "index_bounds",
+        "kv_cache_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    },
+    {
+      "case_id": "flaggems_dropout_forward",
+      "stratum": "update_atomic_dynamic_state",
+      "mechanisms": [
+        "counter_based_rng",
+        "observable_mask",
+        "multi_output"
+      ],
+      "source": {
+        "repository": "flag_gems",
+        "path": "ops/dropout.py",
+        "symbol": "dropout_forward_kernel",
+        "frontend": "triton",
+        "file_sha256": "5ebf27667f677c9bf701436184357d5bf13af689bad3205e6e0b1d09a41409b4",
+        "symbol_sha256": "9480cf7d1d9028df2e472bcb17ed94d55d55e6a6c0daebb6c9553533ac93e809"
+      },
+      "specialization": {
+        "parameters": [
+          {
+            "name": "X",
+            "kind": "tensor",
+            "role": "input",
+            "dtype": "float32",
+            "shape": [
+              1048576
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "Y",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "float32",
+            "shape": [
+              1048576
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "dropout_mask",
+            "kind": "tensor",
+            "role": "output",
+            "dtype": "bool",
+            "shape": [
+              1048576
+            ],
+            "strides": null,
+            "value": null,
+            "binding": "runtime"
+          },
+          {
+            "name": "N",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int32",
+            "shape": null,
+            "strides": null,
+            "value": 1048576,
+            "binding": "runtime"
+          },
+          {
+            "name": "p",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "float32",
+            "shape": null,
+            "strides": null,
+            "value": 0.1,
+            "binding": "runtime"
+          },
+          {
+            "name": "philox_seed",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int64",
+            "shape": null,
+            "strides": null,
+            "value": 1234,
+            "binding": "runtime"
+          },
+          {
+            "name": "philox_offset",
+            "kind": "scalar",
+            "role": "value",
+            "dtype": "int64",
+            "shape": null,
+            "strides": null,
+            "value": 0,
+            "binding": "runtime"
+          },
+          {
+            "name": "BLOCK",
+            "binding": "constexpr",
+            "class": "schedule",
+            "value": 256
+          }
+        ],
+        "grid": [
+          1024
+        ],
+        "compiler_options": {
+          "num_warps": 4
+        }
+      },
+      "logical_contract": {
+        "inputs": [
+          "X"
+        ],
+        "outputs": [
+          "Y",
+          "dropout_mask"
+        ],
+        "inout": [],
+        "shape_envelope": {
+          "elements": [
+            65536,
+            16777216
+          ]
+        },
+        "dtype_envelope": [
+          "float16",
+          "bfloat16",
+          "float32"
+        ],
+        "result_relation": {
+          "kind": "exact"
+        }
+      },
+      "required_capabilities": [
+        "rand",
+        "select",
+        "multi_output",
+        "rng_cuda"
+      ],
+      "benchmark": {
+        "baseline": "frozen_upstream_symbol",
+        "warmup": 25,
+        "repetitions": 200,
+        "timer": "cuda_event_interleaved_v1",
+        "threshold": {
+          "metric": "target_over_source_median",
+          "maximum": 1.1
+        }
+      }
+    }
+  ]
+}

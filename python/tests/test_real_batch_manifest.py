@@ -30,6 +30,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
+_MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V2 = (
     _ROOT / "artifacts" / "real_llm_batch_28_v2" / "preflight.json"
@@ -49,6 +50,10 @@ def _raw_v2() -> dict:
 
 def _raw_v3() -> dict:
     return json.loads(_MANIFEST_V3.read_text())
+
+
+def _raw_v4() -> dict:
+    return json.loads(_MANIFEST_V4.read_text())
 
 
 def test_formal_manifest_has_28_verified_source_symbols() -> None:
@@ -144,7 +149,7 @@ def test_protocol_v2_rejects_open_or_drifted_wire_metadata() -> None:
         verify_lift_wire_lock(expected)
 
 
-def test_protocol_v3_is_self_contained_current_and_preserves_the_cases() -> None:
+def test_protocol_v3_is_self_contained_retired_evidence() -> None:
     v2 = load_batch_manifest(_MANIFEST_V2)
     v3 = load_batch_manifest(_MANIFEST_V3)
     assert v3.digest == "5f0b1ee853e2821a299753165145023562df548810468c0110bdbc6895823222"
@@ -152,9 +157,9 @@ def test_protocol_v3_is_self_contained_current_and_preserves_the_cases() -> None
     assert v3.data["cases"] == v2.data["cases"]
     assert "base_manifest" not in v3.data
     assert len(v3.cases) == 28
-    assert verify_lift_wire_lock(v3.data["lift_wire"]) == (
-        current_lift_wire_identity()
-    )
+    assert v3.data["lift_wire"] != current_lift_wire_identity()
+    with pytest.raises(LiftWireError, match="differs"):
+        verify_lift_wire_lock(v3.data["lift_wire"])
     assert [item["path"] for item in v3.data["lift_wire"]["client_files"]][
         -1
     ] == "python/intentir/ir/intent_op_contract.py"
@@ -177,10 +182,13 @@ def test_protocol_v3_rejects_epoch_and_wire_tampering() -> None:
         validate_batch_manifest(raw, verify_sources=False)
 
 
-def test_protocol_v3_preflight_is_current_and_28_of_28() -> None:
+def test_protocol_v3_preflight_remains_complete_historical_evidence() -> None:
     manifest = load_batch_manifest(_MANIFEST_V3)
     receipt = json.loads(_PREFLIGHT_V3.read_text(encoding="utf-8"))
-    verify_formal_preflight(receipt, manifest, _MANIFEST_V3)
+    assert receipt["manifest_digest"] == manifest.digest
+    assert receipt["manifest_file_sha256"] == hashlib.sha256(
+        _MANIFEST_V3.read_bytes()
+    ).hexdigest()
     assert hashlib.sha256(_PREFLIGHT_V3.read_bytes()).hexdigest() == (
         "815d43b31635892e67aa3fddcd8f7843fffafa65d3064467b99c9afa5d3744f4"
     )
@@ -198,6 +206,53 @@ def test_protocol_v3_preflight_is_current_and_28_of_28() -> None:
         "triton_compiled": 26,
         "triton_total": 26,
     }
+
+
+def test_protocol_v4_is_current_ordered_and_non_c_safe() -> None:
+    v3 = load_batch_manifest(_MANIFEST_V3)
+    v4 = load_batch_manifest(_MANIFEST_V4)
+    assert v4.digest == (
+        "0da031b95049acf5884e1adb60126253ab5441d6f7de142a0373e2659ab98b18"
+    )
+    assert v4.digest != v3.digest
+    assert len(v4.cases) == 28
+    assert verify_lift_wire_lock(v4.data["lift_wire"]) == (
+        current_lift_wire_identity()
+    )
+    case = v4.case("liger_swiglu_forward")
+    parameters = case["specialization"]["parameters"]
+    assert [item["name"] for item in parameters] == [
+        "a_ptr", "b_ptr", "c_ptr", "stride", "n_cols", "BLOCK_SIZE"
+    ]
+    assert parameters[4] == {
+        "name": "n_cols",
+        "binding": "constexpr",
+        "class": "binding",
+        "value": 1024,
+    }
+    assert parameters[5] == {
+        "name": "BLOCK_SIZE",
+        "binding": "constexpr",
+        "class": "schedule",
+        "value": 1024,
+    }
+    assert [item["shape"] for item in parameters[:3]] == [
+        [128, 1024], [128, 1024], [128, 1024]
+    ]
+
+
+def test_protocol_v4_rejects_open_or_reordered_parameter_classification() -> None:
+    raw = _raw_v4()
+    raw["cases"][0]["specialization"]["parameters"][4]["class"] = "semantic"
+    with pytest.raises(ManifestError, match="binding or schedule"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+    raw = _raw_v4()
+    parameters = raw["cases"][0]["specialization"]["parameters"]
+    parameters[4], parameters[5] = parameters[5], parameters[4]
+    with pytest.raises(ManifestError, match="order differs"):
+        validate_batch_manifest(raw, verify_sources=True)
+
 
 def test_protocol_v2_preflight_cannot_authorize_protocol_v3() -> None:
     manifest = load_batch_manifest(_MANIFEST_V3)
@@ -343,6 +398,26 @@ def test_manifest_specialization_projects_to_source_aware_lift_view() -> None:
     assert view.compiler_slots == ("num_warps",)
     assert view.grid == (128,)
     assert view.grid_contract == ("128",)
+
+
+def test_v4_specialization_separates_bound_constexpr_from_pure_c() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V4)
+    case = manifest.case("liger_swiglu_forward")
+    view = scrc_compiler_view(case)
+    assert view.parameter_order == (
+        "a_ptr", "b_ptr", "c_ptr", "stride", "n_cols", "BLOCK_SIZE"
+    )
+    assert view.bound_constexpr_values == {"n_cols": 1024}
+    assert view.schedule_values == {"BLOCK_SIZE": 1024, "num_warps": 4}
+    assert [item.shape for item in view.arguments[:3]] == [
+        (128, 1024), (128, 1024), (128, 1024)
+    ]
+    projected = triton_compile_case(case)
+    assert projected.schedule == {
+        "n_cols": 1024,
+        "BLOCK_SIZE": 1024,
+        "num_warps": 4,
+    }
 
 
 def test_required_anchor_must_resolve_to_case() -> None:

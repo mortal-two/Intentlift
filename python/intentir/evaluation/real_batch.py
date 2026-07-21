@@ -25,25 +25,36 @@ from typing import Any, Mapping, Sequence
 from .lift_wire import (
     LIFT_CLIENT_FILES,
     LIFT_CLIENT_FILES_V2,
+    LIFT_CLIENT_FILES_V3,
     LIFT_PROTOCOL,
     LIFT_PROTOCOL_V2,
+    LIFT_PROTOCOL_V3,
     LIFT_WIRE_VERSION,
     LIFT_WIRE_VERSION_V2,
+    LIFT_WIRE_VERSION_V3,
 )
 
 
 SCHEMA_V1 = "intentir.real-llm-batch-28.v1"
 SCHEMA_V2 = "intentir.real-llm-batch-28.v2"
 SCHEMA_V3 = "intentir.real-llm-batch-28.v3"
+SCHEMA_V4 = "intentir.real-llm-batch-28.v4"
 # Historical public name retained for archived Task04 callers.
 SCHEMA = SCHEMA_V1
 V2_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v2-2026-07-22"
 V3_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v3-2026-07-22"
+V4_BATCH_ID = "tianchenir-formal-real-kernels-protocol-v4-2026-07-22"
 V2_MANIFEST_DIGEST = (
     "486f18ce748f63afc4b7684fe2a7e5d1107da04c72a6282b7683851eb086f31e"
 )
 V2_MANIFEST_FILE_SHA256 = (
     "27b9a81e8230ce75105848625b85f44e9002264c91d166e57983c617e09e83b3"
+)
+V3_MANIFEST_DIGEST = (
+    "5f0b1ee853e2821a299753165145023562df548810468c0110bdbc6895823222"
+)
+V3_MANIFEST_FILE_SHA256 = (
+    "2528ae016445afd63f9c0083213ab2594b97756bcd7b1950edb28e1273212205"
 )
 CASE_COUNT = 28
 STRATA = (
@@ -76,6 +87,7 @@ _TOP_KEYS_V1 = frozenset(
 )
 _TOP_KEYS_V2 = _TOP_KEYS_V1 | {"lift_wire"}
 _TOP_KEYS_V3 = _TOP_KEYS_V2
+_TOP_KEYS_V4 = _TOP_KEYS_V3
 _CASE_KEYS = frozenset(
     {
         "case_id",
@@ -101,8 +113,15 @@ _SOURCE_KEYS = frozenset(
 _SPECIALIZATION_KEYS = frozenset(
     {"arguments", "grid", "schedule", "compiler_options"}
 )
+_SPECIALIZATION_KEYS_V4 = frozenset(
+    {"parameters", "grid", "compiler_options"}
+)
 _ARGUMENT_KEYS = frozenset(
     {"name", "kind", "role", "dtype", "shape", "strides", "value"}
+)
+_RUNTIME_PARAMETER_KEYS_V4 = _ARGUMENT_KEYS | {"binding"}
+_CONSTEXPR_PARAMETER_KEYS_V4 = frozenset(
+    {"name", "binding", "class", "value"}
 )
 _CONTRACT_KEYS = frozenset(
     {
@@ -361,6 +380,62 @@ def _validate_argument(value: Any, path: str) -> dict[str, Any]:
     return item
 
 
+def _validate_v4_parameter(value: Any, path: str) -> dict[str, Any]:
+    raw = _object(value, path)
+    binding = raw.get("binding")
+    if binding == "runtime":
+        item = _closed(raw, _RUNTIME_PARAMETER_KEYS_V4, path)
+        projected = {key: item[key] for key in _ARGUMENT_KEYS}
+        _validate_argument(projected, path)
+        return item
+    if binding == "constexpr":
+        item = _closed(raw, _CONSTEXPR_PARAMETER_KEYS_V4, path)
+        _name(item["name"], f"{path}.name")
+        if item["class"] not in {"binding", "schedule"}:
+            raise ManifestError(
+                f"{path}.class must be binding or schedule"
+            )
+        if not isinstance(item["value"], (bool, int, float, str)):
+            raise ManifestError(f"{path}.value must be a JSON scalar")
+        return item
+    raise ManifestError(f"{path}.binding must be runtime or constexpr")
+
+
+def _runtime_parameters(case: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    specialization = case["specialization"]
+    if "parameters" in specialization:
+        return [
+            item
+            for item in specialization["parameters"]
+            if item["binding"] == "runtime"
+        ]
+    return list(specialization["arguments"])
+
+
+def _constexpr_parameters(case: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    specialization = case["specialization"]
+    if "parameters" in specialization:
+        return [
+            item
+            for item in specialization["parameters"]
+            if item["binding"] == "constexpr"
+        ]
+    return [
+        {"name": name, "value": value, "class": "schedule"}
+        for name, value in specialization["schedule"].items()
+    ]
+
+
+def _callable_parameter_order(case: Mapping[str, Any]) -> list[str]:
+    specialization = case["specialization"]
+    if "parameters" in specialization:
+        return [item["name"] for item in specialization["parameters"]]
+    return [
+        *(item["name"] for item in specialization["arguments"]),
+        *specialization["schedule"],
+    ]
+
+
 def _validate_specialization(
     case: Mapping[str, Any],
     function_arguments: Sequence[str],
@@ -368,7 +443,66 @@ def _validate_specialization(
 ) -> None:
     case_id = case["case_id"]
     path = f"cases.{case_id}.specialization"
-    spec = _closed(case["specialization"], _SPECIALIZATION_KEYS, path)
+    raw_spec = _object(case["specialization"], path)
+    if "parameters" in raw_spec:
+        spec = _closed(raw_spec, _SPECIALIZATION_KEYS_V4, path)
+        parameters = [
+            _validate_v4_parameter(item, f"{path}.parameters[{index}]")
+            for index, item in enumerate(
+                _array(spec["parameters"], f"{path}.parameters")
+            )
+        ]
+        names = [item["name"] for item in parameters]
+        if len(names) != len(set(names)):
+            raise ManifestError(f"case {case_id} has duplicate parameters")
+        if names != list(function_arguments):
+            raise ManifestError(
+                f"case {case_id} parameter order differs from source ABI"
+            )
+        actual_constexprs = {
+            item["name"]
+            for item in parameters
+            if item["binding"] == "constexpr"
+        }
+        if actual_constexprs != constexprs:
+            raise ManifestError(
+                f"case {case_id} constexpr classification differs from source ABI"
+            )
+        if any(
+            item["name"] in constexprs
+            for item in parameters
+            if item["binding"] == "runtime"
+        ):
+            raise ManifestError(
+                f"case {case_id} labels a constexpr parameter as runtime"
+            )
+        grid = _array(spec["grid"], f"{path}.grid")
+        if not 1 <= len(grid) <= 3 or any(
+            isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0
+            for dim in grid
+        ):
+            raise ManifestError(
+                f"case {case_id} grid must have 1-3 positive extents"
+            )
+        compiler = _object(
+            spec["compiler_options"], f"{path}.compiler_options"
+        )
+        for name, value in compiler.items():
+            _name(name, f"{path}.compiler_options key", _CASE_ID)
+            if not isinstance(value, (bool, int, float, str)):
+                raise ManifestError(
+                    f"case {case_id} compiler option is not scalar"
+                )
+        parameter_names = set(names)
+        overlap = parameter_names & set(compiler)
+        if overlap:
+            raise ManifestError(
+                f"case {case_id} repeats callable/compiler parameter(s): "
+                f"{sorted(overlap)}"
+            )
+        return
+
+    spec = _closed(raw_spec, _SPECIALIZATION_KEYS, path)
     arguments = [
         _validate_argument(item, f"{path}.arguments[{index}]")
         for index, item in enumerate(_array(spec["arguments"], f"{path}.arguments"))
@@ -421,7 +555,7 @@ def _validate_contract(case: Mapping[str, Any]) -> None:
     all_logical = [*groups["inputs"], *groups["outputs"], *groups["inout"]]
     if len(all_logical) != len(set(all_logical)):
         raise ManifestError(f"case {case_id} logical roles overlap")
-    arguments = {item["name"]: item for item in case["specialization"]["arguments"]}
+    arguments = {item["name"]: item for item in _runtime_parameters(case)}
     role_group = {"input": "inputs", "output": "outputs", "inout": "inout"}
     for name, item in arguments.items():
         if item["role"] == "value":
@@ -492,6 +626,8 @@ def _validate_protocols(data: Mapping[str, Any]) -> None:
     if data["schema"] == SCHEMA_V2:
         expected["lift"] = LIFT_PROTOCOL_V2
     elif data["schema"] == SCHEMA_V3:
+        expected["lift"] = LIFT_PROTOCOL_V3
+    elif data["schema"] == SCHEMA_V4:
         expected["lift"] = LIFT_PROTOCOL
     if protocols != expected:
         raise ManifestError("formal batch protocols differ from the frozen epoch")
@@ -519,6 +655,9 @@ def _validate_lift_wire(data: Mapping[str, Any]) -> None:
         expected_version = LIFT_WIRE_VERSION_V2
         expected_files = LIFT_CLIENT_FILES_V2
     elif data["schema"] == SCHEMA_V3:
+        expected_version = LIFT_WIRE_VERSION_V3
+        expected_files = LIFT_CLIENT_FILES_V3
+    elif data["schema"] == SCHEMA_V4:
         expected_version = LIFT_WIRE_VERSION
         expected_files = LIFT_CLIENT_FILES
     else:  # pragma: no cover - guarded by validate_batch_manifest
@@ -607,6 +746,8 @@ def validate_batch_manifest(
         data = _closed(raw, _TOP_KEYS_V2, "manifest")
     elif schema == SCHEMA_V3:
         data = _closed(raw, _TOP_KEYS_V3, "manifest")
+    elif schema == SCHEMA_V4:
+        data = _closed(raw, _TOP_KEYS_V4, "manifest")
     else:
         raise ManifestError(f"unsupported batch schema {schema!r}")
     if not isinstance(data["batch_id"], str) or not data["batch_id"]:
@@ -615,6 +756,8 @@ def validate_batch_manifest(
         raise ManifestError("protocol-v2 batch_id differs from the frozen epoch")
     if schema == SCHEMA_V3 and data["batch_id"] != V3_BATCH_ID:
         raise ManifestError("protocol-v3 batch_id differs from the frozen epoch")
+    if schema == SCHEMA_V4 and data["batch_id"] != V4_BATCH_ID:
+        raise ManifestError("protocol-v4 batch_id differs from the frozen epoch")
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(data["frozen_date"])) is None:
         raise ManifestError("frozen_date must use YYYY-MM-DD")
     for path, key in _walk_keys(data):
@@ -668,6 +811,43 @@ def validate_batch_manifest(
         source_coordinates.append((pin["repository"], pin["path"], pin["symbol"]))
         if verify_sources:
             _verify_source_pin(case, repositories, resolved_root)
+        else:
+            specialization = _object(
+                case["specialization"], f"cases.{case_id}.specialization"
+            )
+            if "parameters" in specialization:
+                parameter_names = [
+                    str(item.get("name"))
+                    for item in _array(
+                        specialization.get("parameters"),
+                        f"cases.{case_id}.specialization.parameters",
+                    )
+                    if isinstance(item, dict)
+                ]
+                constexpr_names = {
+                    str(item.get("name"))
+                    for item in specialization["parameters"]
+                    if isinstance(item, dict)
+                    and item.get("binding") == "constexpr"
+                }
+            else:
+                runtime = _array(
+                    specialization.get("arguments"),
+                    f"cases.{case_id}.specialization.arguments",
+                )
+                schedule = _object(
+                    specialization.get("schedule"),
+                    f"cases.{case_id}.specialization.schedule",
+                )
+                parameter_names = [
+                    str(item.get("name"))
+                    for item in runtime
+                    if isinstance(item, dict)
+                ] + list(schedule)
+                constexpr_names = set(schedule)
+            _validate_specialization(
+                case, parameter_names, constexpr_names
+            )
         _validate_contract(case)
         _validate_benchmark(case)
     if len(ids) != len(set(ids)):
@@ -723,7 +903,7 @@ def scrc_compiler_view(case: Mapping[str, Any]):
 
     specialization = case["specialization"]
     runtime_arguments = []
-    for item in specialization["arguments"]:
+    for item in _runtime_parameters(case):
         runtime_arguments.append(
             SCRCCompilerArgument(
                 item["name"],
@@ -733,7 +913,17 @@ def scrc_compiler_view(case: Mapping[str, Any]):
                 item["value"] if item["kind"] == "scalar" else None,
             )
         )
-    schedule = dict(specialization["schedule"])
+    constexprs = _constexpr_parameters(case)
+    schedule = {
+        item["name"]: item["value"]
+        for item in constexprs
+        if item["class"] == "schedule"
+    }
+    bound_constexprs = {
+        item["name"]: item["value"]
+        for item in constexprs
+        if item["class"] == "binding"
+    }
     compiler_options = dict(specialization["compiler_options"])
     overlap = set(schedule) & set(compiler_options)
     if overlap:
@@ -741,17 +931,16 @@ def scrc_compiler_view(case: Mapping[str, Any]):
             f"case {case['case_id']} repeats C names across schedule/compiler: "
             f"{sorted(overlap)}"
         )
-    parameter_order = [
-        item["name"] for item in specialization["arguments"]
-    ] + list(schedule)
+    parameter_order = _callable_parameter_order(case)
     return SCRCCompilerView(
         schedule_values={**schedule, **compiler_options},
+        bound_constexpr_values=bound_constexprs,
         compiler_slots=tuple(compiler_options),
         arguments=tuple(runtime_arguments),
         grid=tuple(specialization["grid"]),
         grid_contract=tuple(str(value) for value in specialization["grid"]),
         parameter_order=tuple(parameter_order),
-        constexpr_parameters=tuple(schedule),
+        constexpr_parameters=tuple(item["name"] for item in constexprs),
     )
 
 
@@ -761,7 +950,7 @@ def triton_compile_case(case: Mapping[str, Any]):
     from intentir.verify.gate1.compiler import CompileCase, RuntimeArgument
 
     arguments: dict[str, RuntimeArgument] = {}
-    for item in case["specialization"]["arguments"]:
+    for item in _runtime_parameters(case):
         if item["kind"] == "tensor":
             arguments[item["name"]] = RuntimeArgument.tensor(
                 tuple(item["shape"]),
@@ -783,11 +972,14 @@ def triton_compile_case(case: Mapping[str, Any]):
                 f"case {case['case_id']} has no Triton binding for "
                 f"{item['kind']!r}"
             )
+    constexpr_values = {
+        item["name"]: item["value"] for item in _constexpr_parameters(case)
+    }
     schedule = {
-        **case["specialization"]["schedule"],
+        **constexpr_values,
         **case["specialization"]["compiler_options"],
     }
-    overlap = set(case["specialization"]["schedule"]) & set(
+    overlap = set(constexpr_values) & set(
         case["specialization"]["compiler_options"]
     )
     if overlap:
@@ -825,7 +1017,7 @@ def cute_compile_case(case: Mapping[str, Any]):
     from intentir.verify.gate1.cute_compiler import CuteCompileCase
 
     specialization = case["specialization"]
-    by_name = {item["name"]: item for item in specialization["arguments"]}
+    by_name = {item["name"]: item for item in _runtime_parameters(case)}
     contract = case["logical_contract"]
     entry_names = [
         *contract["inputs"],
@@ -864,7 +1056,13 @@ def cute_compile_case(case: Mapping[str, Any]):
         raise ManifestError(
             f"case {case['case_id']} lacks frozen CuTe block/smem C"
         ) from exc
-    schedule = {**specialization["schedule"], **options}
+    schedule = {
+        **{
+            item["name"]: item["value"]
+            for item in _constexpr_parameters(case)
+        },
+        **options,
+    }
     return CuteCompileCase(
         arguments,
         tuple(specialization["grid"]),

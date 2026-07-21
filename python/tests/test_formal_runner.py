@@ -34,6 +34,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _MANIFEST_V2 = _ROOT / "test" / "real_llm_batch_28_v2.json"
 _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
+_MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 _PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
@@ -184,6 +185,30 @@ def test_formal_cute_case_has_generic_lift_and_compile_bindings() -> None:
     assert cute_entry_symbol(source, case["source"]["symbol"]) == "go"
 
 
+def test_v4_swiglu_lift_view_preserves_non_c_and_row_topology_inputs() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V4)
+    case = manifest.case("liger_swiglu_forward")
+    source = resolve_source_path(manifest, case).read_text(encoding="utf-8")
+    request = prepare_scrc_lift(
+        source,
+        compiler_view=scrc_compiler_view(case),
+        source_symbol=case["source"]["symbol"],
+    )
+    lift_input = json.loads(request.user_input)
+    view = lift_input["harness_compiler_view"]
+    assert "def scrc_k0(p0, p1, p2, p3, p4: tl.constexpr, c0: tl.constexpr)" in (
+        lift_input["anonymous_source"]
+    )
+    assert view["bound_constexpr_values"] == {"p4": 1024}
+    assert view["schedule_values"] == {"c0": 1024, "c1": 4}
+    assert [item.get("shape") for item in view["arguments"][:3]] == [
+        [128, 1024], [128, 1024], [128, 1024]
+    ]
+    assert view["parameter_order"] == [
+        "p0", "p1", "p2", "p3", "p4", "c0"
+    ]
+
+
 def test_formal_v2_rejects_wire_drift_before_provider_or_ledger(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -275,6 +300,64 @@ def test_protocol_v3_recovery_binds_exact_frozen_v2_failure() -> None:
         )
 
 
+def test_protocol_v4_recovery_binds_exact_v3_gate1_failure() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V4)
+    predecessor = _RECOVERY_V3 / "liger_swiglu_forward" / "receipt.json"
+    lineage = formal_runner._lineage(
+        manifest,
+        "liger_swiglu_forward",
+        "protocol_v4_recovery",
+        predecessor,
+    )
+    assert lineage == {
+        "attempt_class": "protocol_v4_recovery",
+        "predecessor": {
+            "schema": "intentir.formal-real-llm-case.v3",
+            "batch_id": "tianchenir-formal-real-kernels-protocol-v3-2026-07-22",
+            "case_id": "liger_swiglu_forward",
+            "status": "gate1_failed",
+            "attempt_class": "protocol_v3_recovery",
+            "manifest_digest": "5f0b1ee853e2821a299753165145023562df548810468c0110bdbc6895823222",
+            "manifest_file_sha256": "2528ae016445afd63f9c0083213ab2594b97756bcd7b1950edb28e1273212205",
+            "receipt_sha256": hashlib.sha256(predecessor.read_bytes()).hexdigest(),
+        },
+    }
+    with pytest.raises(FormalRunError, match="requires its predecessor"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v4_recovery",
+            None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda receipt: receipt.update({"status": "lift_failed"}), "frozen protocol-v3"),
+        (lambda receipt: receipt["calls"].pop(), "one Lift and one normal Replay"),
+        (lambda receipt: receipt["gate1"].update({"masked_j_calls": 1}), "strict Gate1"),
+        (lambda receipt: receipt.update({"manifest_digest": "0" * 64}), "frozen protocol-v3"),
+    ],
+)
+def test_protocol_v4_recovery_rejects_tampered_v3_predecessor(
+    tmp_path: Path, mutation, message: str
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V4)
+    original = _RECOVERY_V3 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    mutation(receipt)
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(FormalRunError, match=message):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v4_recovery",
+            predecessor,
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -313,26 +396,15 @@ def test_protocol_v3_recovery_rejects_tampered_predecessor(
         )
 
 
-def test_protocol_v3_rejects_v2_attempt_class_before_provider_or_ledger(
-    tmp_path: Path, monkeypatch
-) -> None:
-    def provider_must_not_run(*args, **kwargs):
-        raise AssertionError("provider resolution happened before lineage validation")
-
-    monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
-    output = tmp_path / "formal"
+def test_retired_protocol_v3_still_rejects_v2_attempt_class() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V3)
     with pytest.raises(FormalRunError, match="explicit attempt classification"):
-        formal_runner.run_formal_gate1_case(
-            _MANIFEST_V3,
+        formal_runner._lineage(
+            manifest,
             "liger_swiglu_forward",
-            output_root=output,
-            preflight_path=_PREFLIGHT_V3,
-            attempt_class="protocol_v2_recovery",
-            predecessor_receipt=(
-                _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json"
-            ),
+            "protocol_v2_recovery",
+            _RECOVERY_V2 / "liger_swiglu_forward" / "receipt.json",
         )
-    assert not output.exists()
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:

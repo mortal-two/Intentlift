@@ -18,17 +18,20 @@ from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 
 LIFT_PROTOCOL_V2 = "llm_direct_pi_source_aware_lift_v2"
 LIFT_WIRE_VERSION_V2 = "intentir.lift-wire.v2"
-LIFT_PROTOCOL = "llm_direct_pi_source_aware_lift_v3"
-LIFT_WIRE_VERSION = "intentir.lift-wire.v3"
+LIFT_PROTOCOL_V3 = "llm_direct_pi_source_aware_lift_v3"
+LIFT_WIRE_VERSION_V3 = "intentir.lift-wire.v3"
+LIFT_PROTOCOL = "llm_direct_pi_source_aware_lift_v4"
+LIFT_WIRE_VERSION = "intentir.lift-wire.v4"
 LIFT_CLIENT_FILES_V2 = (
     "python/intentir/extraction/providers/client.py",
     "python/intentir/extraction/lifters/scrc.py",
     "python/intentir/extraction/lifters/scrc_schema.py",
 )
-LIFT_CLIENT_FILES = (
+LIFT_CLIENT_FILES_V3 = (
     *LIFT_CLIENT_FILES_V2,
     "python/intentir/ir/intent_op_contract.py",
 )
+LIFT_CLIENT_FILES = LIFT_CLIENT_FILES_V3
 
 
 class LiftWireError(ValueError):
@@ -96,10 +99,13 @@ def verify_lift_wire_lock(
 __all__ = [
     "LIFT_CLIENT_FILES",
     "LIFT_CLIENT_FILES_V2",
+    "LIFT_CLIENT_FILES_V3",
     "LIFT_PROTOCOL",
     "LIFT_PROTOCOL_V2",
+    "LIFT_PROTOCOL_V3",
     "LIFT_WIRE_VERSION",
     "LIFT_WIRE_VERSION_V2",
+    "LIFT_WIRE_VERSION_V3",
     "LiftWireError",
     "canonical_schema_bytes",
     "current_lift_wire_identity",
