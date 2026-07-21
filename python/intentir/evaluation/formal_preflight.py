@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from .lift_wire import verify_lift_wire_lock
 from .real_batch import (
@@ -245,6 +247,35 @@ def verify_formal_preflight(
         for item in cases
     ):
         raise ValueError("formal preflight contains an unready frontend arm")
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--timeout", type=float, default=300.0)
+    parser.add_argument("--observed-date")
+    args = parser.parse_args(argv)
+    receipt = build_formal_preflight(
+        args.manifest,
+        source_root=args.source_root,
+        cache_dir=args.cache_dir,
+        timeout=args.timeout,
+        observed_date=args.observed_date,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(receipt["summary"], indent=2, sort_keys=True))
+    return 0 if receipt["summary"]["overall_ready"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
 
 
 __all__ = [
