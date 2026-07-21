@@ -147,6 +147,34 @@ def test_pi_sharing_consumer_rejects_undeclared_instance_id() -> None:
         RealizationWitness.from_json(payload)
 
 
+def test_pi_rejects_graph_instance_id_in_anchor_field() -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    payload["instances"][0]["semantic_ref"] = "i0"
+    with pytest.raises(
+        RealizationWitnessError,
+        match=r"pi\.instances\[0\]\.semantic_ref must be an anonymous",
+    ):
+        RealizationWitness.from_json(payload)
+
+
+def test_pi_rejects_duplicate_instance_and_sharing_consumer_ids() -> None:
+    duplicate_instance = make_reduce_artifact().pi.to_json()
+    duplicate_instance["instances"][1]["id"] = "i0"
+    with pytest.raises(
+        RealizationWitnessError,
+        match="declaration-order handles",
+    ):
+        RealizationWitness.from_json(duplicate_instance)
+
+    duplicate_consumer = make_reduce_artifact().pi.to_json()
+    duplicate_consumer["sharing"][0]["consumers"] = ["i1", "i1"]
+    with pytest.raises(
+        RealizationWitnessError,
+        match=r"pi\.sharing\[0\]\.consumers must not contain duplicates",
+    ):
+        RealizationWitness.from_json(duplicate_consumer)
+
+
 @pytest.mark.parametrize("semantic_ref", ["v0", "x0", "c0", "p0"])
 def test_pi_may_reference_any_declared_anonymous_j_c_or_harness_handle(
     semantic_ref: str,

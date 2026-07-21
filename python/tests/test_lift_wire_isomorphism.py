@@ -311,6 +311,59 @@ def test_new_wire_schema_rejects_the_frozen_v2_response_before_full_parser() -> 
 
 
 @pytest.mark.parametrize(
+    ("relation", "field", "bad_ref"),
+    [
+        ("routes", "source", "p0"),
+        ("routes", "target", "c0"),
+        ("order", "before", "n0"),
+        ("order", "after", "p0"),
+        ("sharing", "source", "c0"),
+    ],
+)
+def test_pi_raw_anchor_endpoint_is_rejected_by_schema_and_parser(
+    relation: str,
+    field: str,
+    bad_ref: str,
+) -> None:
+    payload = make_reduce_artifact().to_json()
+    payload.pop("source")
+    payload.pop("provenance")
+    payload["pi"][relation][0][field] = bad_ref
+    frozen = copy.deepcopy(payload)
+
+    schema = scrc_lift_core_json_schema()
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors
+    with pytest.raises(SchemaError, match="declared pi instance id"):
+        Gate1Artifact.from_json(payload)
+    assert payload == frozen
+
+
+def test_pi_graph_instance_is_rejected_from_anchor_by_schema_and_parser() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload.pop("source")
+    payload.pop("provenance")
+    payload["pi"]["instances"][0]["semantic_ref"] = "i0"
+
+    schema = scrc_lift_core_json_schema()
+    assert list(Draft7Validator(schema).iter_errors(payload))
+    with pytest.raises(SchemaError, match="anonymous declaration-order handle"):
+        Gate1Artifact.from_json(payload)
+
+
+def test_pi_dangling_i_endpoint_passes_shape_but_fails_local_closure() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload.pop("source")
+    payload.pop("provenance")
+    payload["pi"]["routes"][0]["source"] = "i99"
+
+    pi_schema = scrc_lift_core_json_schema()["properties"]["pi"]
+    assert not list(Draft7Validator(pi_schema).iter_errors(payload["pi"]))
+    with pytest.raises(SchemaError, match="references undeclared pi instance 'i99'"):
+        Gate1Artifact.from_json(payload)
+
+
+@pytest.mark.parametrize(
     "artifact_factory", [make_copy_artifact, make_reduce_artifact]
 )
 def test_canonical_typed_fixture_ops_are_wire_complete_and_round_trip(

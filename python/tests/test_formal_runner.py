@@ -18,13 +18,14 @@ from intentir.evaluation.real_batch import (
     scrc_compiler_view,
 )
 from intentir.extraction.lifters.scrc import prepare_scrc_lift
+from intentir.extraction.lifters.scrc import SCRCLiftAttempt, SCRCLiftError
 from intentir.extraction.providers import client
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.prompt import (
     build_rewriter_prompt,
     replay_packet_digest,
 )
-from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.model import Gate1Artifact, SchemaError
 from intentir.verify.gate1.replay import ReplayGeneration
 
 from direct_fixtures import make_copy_artifact
@@ -43,6 +44,7 @@ _RECOVERY_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "recovery"
 _PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
 _RECOVERY_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "recovery"
 _PROGRESS_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "progress.json"
+_RECOVERY_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "recovery"
 
 
 class _Response:
@@ -415,6 +417,12 @@ def test_protocol_v4_rejects_wrong_attempt_before_provider_or_ledger(
         raise AssertionError("provider resolution happened before lineage validation")
 
     monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    monkeypatch.setattr(formal_runner, "verify_lift_wire_lock", lambda _lock: None)
+    monkeypatch.setattr(
+        formal_runner,
+        "_validate_preflight",
+        lambda *_args, **_kwargs: {"schema": "offline-test"},
+    )
     output = tmp_path / "formal"
     with pytest.raises(FormalRunError, match="explicit attempt classification"):
         formal_runner.run_formal_gate1_case(
@@ -428,6 +436,85 @@ def test_protocol_v4_rejects_wrong_attempt_before_provider_or_ledger(
             ),
         )
     assert not output.exists()
+
+
+def test_invalid_lift_writes_one_failed_call_and_runs_no_downstream_arm(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V4)
+    provider_spec = manifest.data["provider"]
+    provider = ProviderConfig(
+        provider_spec["name"],
+        "https://provider.invalid/v1",
+        "SECRET",
+        provider_spec["model"],
+        reasoning_effort=provider_spec["reasoning_effort"],
+    )
+    preflight = tmp_path / "preflight.json"
+    preflight.write_text("{}", encoding="utf-8")
+    invalid_response = (
+        _RECOVERY_V4
+        / "liger_swiglu_forward"
+        / "calls"
+        / "01_lift"
+        / "response.txt"
+    ).read_text(encoding="utf-8")
+
+    monkeypatch.setattr(formal_runner, "verify_lift_wire_lock", lambda _lock: None)
+    monkeypatch.setattr(
+        formal_runner,
+        "_validate_preflight",
+        lambda *_args, **_kwargs: {"schema": "offline-test"},
+    )
+    monkeypatch.setattr(formal_runner, "get_provider", lambda _name: provider)
+
+    def reject_lift(*_args, **_kwargs):
+        raise SCRCLiftError(
+            SCRCLiftAttempt(
+                model=provider.model,
+                diagnostic=(
+                    "SchemaError: pi.routes[0].source must reference a declared "
+                    "pi instance id i*; got 'c1'"
+                ),
+                response_text=invalid_response,
+                response_id="resp-offline-invalid",
+                response_model=provider.model,
+                usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                response_sha256=hashlib.sha256(
+                    invalid_response.encode()
+                ).hexdigest(),
+                raw_response=b"{}",
+                raw_response_sha256=hashlib.sha256(b"{}").hexdigest(),
+                attempts=1,
+                elapsed_ms=1.0,
+            )
+        )
+
+    monkeypatch.setattr(formal_runner, "extract_scrc_artifact", reject_lift)
+    output = tmp_path / "formal"
+    with pytest.raises(SCRCLiftError, match=r"pi\.routes\[0\]\.source"):
+        formal_runner.run_formal_gate1_case(
+            _MANIFEST_V4,
+            "liger_swiglu_forward",
+            output_root=output,
+            preflight_path=preflight,
+            attempt_class="protocol_v4_recovery",
+            predecessor_receipt=(
+                _RECOVERY_V3 / "liger_swiglu_forward" / "receipt.json"
+            ),
+        )
+
+    case_dir = output / "liger_swiglu_forward"
+    receipt = json.loads((case_dir / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["status"] == "lift_failed"
+    assert [
+        (item["kind"], item["status"], item["attempts"])
+        for item in receipt["calls"]
+    ] == [("lift", "failed", 1)]
+    assert receipt["artifacts"] == {}
+    assert "gate1" not in receipt
+    assert not (case_dir / "calls" / "02_normal_replay").exists()
+    assert not (case_dir / "calls" / "02_masked_j").exists()
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:
@@ -598,3 +685,59 @@ def test_committed_protocol_v3_canary_closes_lift_then_fails_strict_gate1() -> N
     )
     assert progress["batch_stopped"] is True
     assert progress["unattempted_cases"] == 27
+
+
+def test_committed_protocol_v4_canary_rejects_pi_endpoint_and_stops() -> None:
+    case_dir = _RECOVERY_V4 / "liger_swiglu_forward"
+    receipt_bytes = (case_dir / "receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert hashlib.sha256(receipt_bytes).hexdigest() == (
+        "98a3efbc9b9027e2480e68347e053ea62ce7014b6f34db95b707fd39364573d2"
+    )
+    assert receipt["schema"] == "intentir.formal-real-llm-case.v4"
+    assert receipt["status"] == "lift_failed"
+    assert receipt["lineage"]["attempt_class"] == "protocol_v4_recovery"
+    assert receipt["lineage"]["predecessor"]["receipt_sha256"] == (
+        "ae69d449cc70d7e812dbd4de4382aa164e837b6bcd8b1246211fc982de8df7c1"
+    )
+    assert [
+        (item["kind"], item["status"], item["attempts"])
+        for item in receipt["calls"]
+    ] == [("lift", "failed", 1)]
+    call = receipt["calls"][0]
+    assert call["usage"] == {
+        "input_tokens": 9555,
+        "output_tokens": 14152,
+        "total_tokens": 23707,
+    }
+    assert call["response_sha256"] == (
+        "289aa3b37fb04c198941f31f76e31a4d05b118049dcf149e4593e8bde8e7db0a"
+    )
+    response = json.loads((case_dir / call["response_path"]).read_text())
+    instance_ids = {item["id"] for item in response["pi"]["instances"]}
+    invalid_route_sources = [
+        item["source"]
+        for item in response["pi"]["routes"]
+        if item["source"] not in instance_ids
+    ]
+    invalid_sharing_sources = [
+        item["source"]
+        for item in response["pi"]["sharing"]
+        if item["source"] not in instance_ids
+    ]
+    assert invalid_route_sources == [
+        "c1", "p0", "p3", "p1", "p3", "p2", "p3", "c0", "p4"
+    ]
+    assert invalid_sharing_sources == ["p3"]
+    with pytest.raises(
+        SchemaError,
+        match=(
+            r"pi\.routes\[0\]\.source must reference a declared pi instance "
+            r"id i\*; got 'c1'"
+        ),
+    ):
+        Gate1Artifact.from_json(response)
+    assert receipt["artifacts"] == {}
+    assert "gate1" not in receipt
+    assert not (case_dir / "calls" / "02_normal_replay").exists()
+    assert not (case_dir / "calls" / "02_masked_j").exists()
