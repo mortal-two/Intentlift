@@ -279,6 +279,18 @@ def _gate_artifact() -> Gate1Artifact:
     )
 
 
+def test_untyped_gate1_predicate_fails_only_at_typed_handoff() -> None:
+    invalid = "row = grid_axis(0), row < M"
+    payload = _gate_artifact().to_json()
+    payload["j"]["boundary"]["domains"]["d0"] = invalid
+
+    artifact = Gate1Artifact.from_json(payload)
+
+    assert artifact.j.boundary.domains["d0"] == invalid
+    with pytest.raises(ContractError):
+        intent_program_from_gate1(artifact)
+
+
 def test_gate_adapter_drops_privileged_fields_and_keeps_typed_ab_abi() -> None:
     program = intent_program_from_gate1(_gate_artifact())
     payload = program.to_dict()
