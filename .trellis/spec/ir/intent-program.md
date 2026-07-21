@@ -84,11 +84,11 @@ boolean：算术操作数为 scalar，comparison 的操作数为 scalar，`and/o
 boolean。没有 symbol type evidence 时 bare symbol 按 scalar 处理，不能靠 truthiness
 成为 predicate；未来 typed boolean symbol 必须由显式 symbol table 证明。
 
-Gate1 LiftCore 的历史字符串 wire 只有能无损解析成上述 AST 时才可迁移，且在进入
-source/replay closure 前完成 admission。assignment、binder/prose 或 source-coordinate
-call 失败后只能由 source-aware LLM 重发完整 artifact；不得由 deterministic code
-抽取 suffix、替换常量、删除 predicate 或增加 legacy fallback。Gate1 每轮还必须重验
-当前 artifact 值，不能让 dataclass 构造后的原地 mutation 绕过 admission。
+Gate1 artifact 的字符串 wire 在 Gate1 `REPLAY_CLOSED` 后、构造 typed
+`IntentProgram` 时无损解析成上述 AST。assignment、binder/prose 或 source-coordinate
+call 失败时不得由 deterministic code 抽取 suffix、替换常量、删除 predicate 或增加
+legacy fallback。该失败是 Gate2 scalar handoff unavailable：它不能阻止同一 case 的
+source/replay 执行，也不能倒退形成 Gate1 前后的 semantic admission。
 
 每个 access 只记录 index ownership：
 
@@ -121,4 +121,4 @@ backend.*    -> intentir.ir
 禁止 `intentir.ir -> verify` 或 `backend.* -> verify.gate1/gate2`。Gate1 单向 adapter
 只迁移 J、logical ABI 与 optional C；`kernel_id/node_ids` 的 archive 外壳、source、
 location map、plan/replay、provenance/provider/Gate status 全部丢弃。无法无损迁移的
-legacy correctness fact直接拒绝 hand-off。
+legacy correctness fact 使 scalar handoff unavailable，但不改写 Gate1 verdict。

@@ -34,8 +34,8 @@ lower 到标准 dialect 是把"原子 IR 往硬件下降",**不做语义分解**
 → CUDA Driver-API launch`。**朴素(unfused)attention 与 fused FlashAttention
 (online-softmax,单 kernel)都在 5090 D 上真实执行**。历史 bring-up 曾与现已
 归档的 NumPy 解释器对照到 rel ~1e-7。2026-07-20 起，正式
-[SCRC Gate2](../verification/scrc-gate2.md) 只比较 final-J replay 与 backend-neutral
-scalar MLIR reference；CUDA/ROCm/RISC-V 等 production target lowering 正确性由独立
+[SCRC Gate2](../verification/scrc-gate2.md) 分别比较 source↔final-J replay 与
+source↔backend-neutral scalar MLIR reference；CUDA/ROCm/RISC-V 等 production target lowering 正确性由独立
 backend conformance／regression／benchmark 维护，不进入 Gate2 verdict。
 
 CUDA 实现只存在于 `python/intentir/backend/cuda/`；旧的 flat module 已删除，
@@ -107,8 +107,8 @@ ranked-memref C ABI **在隔离 CPU worker 中真实执行**。活动 module 不
 payload，同一 dtype/shape specialization 可对不同输入复用 content-addressed 编译结果；
 一个 public entry 一次调用写回全部逻辑输出。历史测试已覆盖 add / silu / softmax /
 rms_norm / gelu_tanh / matmul；当前 Gate2 只通过
-`ScalarLoweringSpec` 复用这条链的 backend-neutral scalar/reference 子集，与 final-J
-replay 做差分。该用途不授予 CPU production conformance，也不允许 target selection
+`ScalarLoweringSpec` 复用这条链的 backend-neutral scalar/reference 子集，并与 source
+做 Gate2 的第二份差分。该用途不授予 CPU production conformance，也不允许 target selection
 或 GPU fallback。CPU 作为 production backend 的完整正确性仍由独立回归维护。
 `python/tests/test_cpu_backend.py`(确定性,无 GPU)。
 
