@@ -39,6 +39,10 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 _STRING = {"type": "string", "minLength": 1}
+_TENSOR_HANDLE = {"type": "string", "pattern": "^t[0-9]+$"}
+_NODE_HANDLE = {"type": "string", "pattern": "^n[0-9]+$"}
+_C_HANDLE = {"type": "string", "pattern": "^c[0-9]+$"}
+_PARAMETER_HANDLE = {"type": "string", "pattern": "^(p|c)[0-9]+$"}
 _PORTABLE_PREDICATE_STRING = {
     "type": "string",
     "minLength": 1,
@@ -64,7 +68,7 @@ _LOOP_INIT_VALUE = {
 def _tensor_schema() -> dict[str, Any]:
     return _closed_object(
         {
-            "name": _STRING,
+            "name": _TENSOR_HANDLE,
             "dtype": _STRING,
             "shape": _array(_INT_OR_STRING),
         },
@@ -145,7 +149,7 @@ def _intent_schema() -> dict[str, Any]:
     )
     function = _closed_object(
         {
-            "name": _STRING,
+            "name": {"type": "string", "enum": ["scrc_j0"]},
             "inputs": _array(_tensor_schema()),
             "outputs": _array(_tensor_schema()),
             "returns": _array(logical_return),
@@ -290,7 +294,12 @@ def _boundary_schema() -> dict[str, Any]:
         {
             "domains": {
                 "type": "object",
+                "propertyNames": {"pattern": "^d[0-9]+$"},
                 "additionalProperties": _PORTABLE_PREDICATE_STRING,
+                "description": (
+                    "Map each d* handle directly to one ContractExpr string. "
+                    "Never emit an axes/members/domain object here."
+                ),
             },
             "accesses": _array(access),
             "broadcasts": _array(broadcast),
@@ -320,7 +329,7 @@ def _boundary_schema() -> dict[str, Any]:
 def _interface_schema() -> dict[str, Any]:
     parameter = _closed_object(
         {
-            "name": _STRING,
+            "name": _PARAMETER_HANDLE,
             "kind": {
                 "type": "string",
                 "enum": ["tensor", "pointer", "scalar", "constexpr"],
@@ -348,15 +357,15 @@ def _interface_schema() -> dict[str, Any]:
     )
     return _closed_object(
         {
-            "kernel_id": _STRING,
+            "kernel_id": {"type": "string", "enum": ["scrc_k0"]},
             "frontend": {
                 "type": "string",
-                "enum": ["triton", "tilelang", "cuda", "other"],
+                "enum": ["triton", "cute", "tilelang", "cuda", "other"],
             },
-            "function_name": _STRING,
+            "function_name": {"type": "string", "enum": ["scrc_k0"]},
             "parameters": _array(parameter),
             "grid": _STRING_ARRAY,
-            "compiler_slots": _STRING_ARRAY,
+            "compiler_slots": _array(_C_HANDLE),
             "do_not_specialize": _STRING_ARRAY,
         },
         (
@@ -373,7 +382,7 @@ def _interface_schema() -> dict[str, Any]:
 def _schedule_schema() -> dict[str, Any]:
     slot = _closed_object(
         {
-            "name": _STRING,
+            "name": _C_HANDLE,
             "kind": {
                 "type": "string",
                 "enum": ["constexpr", "compiler"],
@@ -390,7 +399,18 @@ def _schedule_schema() -> dict[str, Any]:
     return _closed_object(
         {
             "slots": _array(slot),
-            "values": {"type": "object"},
+            "values": {
+                "type": "object",
+                "propertyNames": {"pattern": "^c[0-9]+$"},
+                "additionalProperties": {
+                    "anyOf": [
+                        {"type": "boolean"},
+                        {"type": "integer"},
+                        {"type": "number"},
+                        {"type": "string"},
+                    ]
+                },
+            },
         },
         ("slots", "values"),
     )
@@ -556,7 +576,12 @@ def _location_map_schema() -> dict[str, Any]:
         ("span", "node_refs", "access_refs"),
     )
     return _closed_object(
-        {"source_name": _STRING, "entries": _array(entry)},
+        {
+            "source_name": {
+                "type": "string", "enum": ["anonymous_source"]
+            },
+            "entries": _array(entry),
+        },
         ("source_name", "entries"),
     )
 
@@ -566,11 +591,19 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
 
     semantic_archive = _closed_object(
         {
-            "kernel_id": _STRING,
+            "kernel_id": {"type": "string", "enum": ["scrc_k0"]},
             "intent": _intent_schema(),
             "node_ids": {
                 "type": "object",
-                "additionalProperties": {"type": "string"},
+                "propertyNames": {"pattern": "^n[0-9]+$"},
+                "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^(intent_function\\.)?body\\[[0-9]+\\](\\.body\\[[0-9]+\\])*$",
+                },
+                "description": (
+                    "Map n0,n1,... to structural body paths such as body[0], "
+                    "not to SSA/result handles such as v0."
+                ),
             },
             "boundary": _boundary_schema(),
             "scopes": {

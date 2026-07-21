@@ -108,6 +108,21 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
     assert "layer_c" not in function_properties
 
 
+def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
+    schema = scrc_lift_core_json_schema()
+    j = schema["properties"]["j"]
+    function = j["properties"]["intent"]["properties"]["intent_function"]
+    assert function["properties"]["name"]["enum"] == ["scrc_j0"]
+    assert j["properties"]["kernel_id"]["enum"] == ["scrc_k0"]
+    assert j["properties"]["node_ids"]["propertyNames"]["pattern"] == "^n[0-9]+$"
+    domains = j["properties"]["boundary"]["properties"]["domains"]
+    assert domains["propertyNames"]["pattern"] == "^d[0-9]+$"
+    assert domains["additionalProperties"]["type"] == "string"
+    interface = schema["properties"]["interface"]
+    assert interface["properties"]["function_name"]["enum"] == ["scrc_k0"]
+    assert interface["properties"]["compiler_slots"]["items"]["pattern"] == "^c[0-9]+$"
+
+
 def test_c_role_rejects_semantic_or_realization_payload() -> None:
     with pytest.raises(SchemaError, match="pure scheduling"):
         ScheduleSlot.from_json(

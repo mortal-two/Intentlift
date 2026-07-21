@@ -503,6 +503,18 @@ values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
 effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
 c0,...; pi regions r0,... and instances i0,..., all by declaration order.
 
+The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
+node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
+body[i].body[j], never to v* results. boundary.domains maps each d* key directly
+to one portable boolean expression string; it is never an axes/members object.
+
+The trusted harness_compiler_view is byte-authoritative plumbing. Interface
+parameters must use its parameter_order exactly, including c* names at
+constexpr positions. Schedule values and compiler_slots must be identical to
+the supplied anonymous values. For each compiler slot, use exactly the public
+role in compiler_roles. Do not rename c* slots to p* and do not turn compiler
+roles into inferred strategy names.
+
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
 
