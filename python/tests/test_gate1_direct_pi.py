@@ -138,6 +138,40 @@ def layer_norm_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     assert dict(binding.source_to_opaque)["BLOCK_SIZE"] == "c0"
 
 
+def test_exact_source_symbol_is_selected_before_anonymization() -> None:
+    source = """import triton
+import triton.language as tl
+
+def helper(first):
+    return first
+
+@triton.jit
+def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
+    offsets = tl.arange(0, BLOCK_SIZE)
+    mask = offsets < N
+    value = tl.load(X + offsets, mask=mask, other=0.0)
+    tl.store(Y + offsets, value, mask=mask)
+"""
+    anonymous, binding, mapping = anonymize_source(
+        source, source_symbol="selected_kernel"
+    )
+    assert binding.source_function == "selected_kernel"
+    assert mapping["selected_kernel"] == "scrc_k0"
+    assert mapping["helper"] == "scrc_k1"
+    assert mapping["X"] == "p0"
+    assert mapping["Y"] == "p1"
+    assert mapping["N"] == "p2"
+    assert mapping["BLOCK_SIZE"] == "c0"
+    assert "def scrc_k0(p0, p1, p2, c0: tl.constexpr)" in anonymous
+    assert "selected_kernel" not in anonymous
+
+
+def test_source_symbol_selection_fails_closed() -> None:
+    source = "def present(x):\n    return x\n"
+    with pytest.raises(ValueError, match="must resolve exactly once"):
+        anonymize_source(source, source_symbol="missing")
+
+
 def test_lift_llm_directly_returns_complete_pi_in_one_call(monkeypatch) -> None:
     artifact = make_reduce_artifact()
     response = artifact.to_json()

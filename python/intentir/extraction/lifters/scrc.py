@@ -268,8 +268,19 @@ def _annotation_is_constexpr(annotation: ast.expr | None) -> bool:
     return ast.unparse(annotation).endswith("constexpr")
 
 
-def anonymize_source(source: str) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
-    """Alpha-rename source identifiers before the Lift provider sees them."""
+def anonymize_source(
+    source: str,
+    *,
+    source_symbol: str | None = None,
+) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
+    """Alpha-rename source identifiers before the Lift provider sees them.
+
+    ``source_symbol`` is a privileged source-selection coordinate.  It chooses
+    the callable whose positional interface becomes ``scrc_k0`` but is never
+    placed in J, C, pi, or the provider prompt.  This is required for real
+    library modules that contain helpers and several kernels; declaration order
+    in a Python file is not a semantic kernel identity.
+    """
 
     tree = ast.parse(source)
     functions = sorted(
@@ -278,13 +289,32 @@ def anonymize_source(source: str) -> tuple[str, SCRCHarnessBinding, dict[str, st
     )
     if not functions:
         raise ValueError("Lift source contains no function")
+    if source_symbol is not None:
+        if not isinstance(source_symbol, str) or not source_symbol.isidentifier():
+            raise ValueError("Lift source_symbol must be a Python identifier")
+        selected = [
+            function for function in functions if function.name == source_symbol
+        ]
+        if len(selected) != 1:
+            raise ValueError(
+                f"Lift source_symbol {source_symbol!r} must resolve exactly once; "
+                f"found {len(selected)} definitions"
+            )
+        primary = selected[0]
+        ordered_functions = [
+            primary, *(item for item in functions if item is not primary)
+        ]
+    else:
+        primary = functions[0]
+        ordered_functions = functions
+    primary_source_name = primary.name
     mapping: dict[str, str] = {}
-    for index, function in enumerate(functions):
+    for index, function in enumerate(ordered_functions):
         mapping.setdefault(function.name, f"scrc_k{index}")
 
     runtime_index = 0
     constexpr_index = 0
-    for argument in functions[0].args.args:
+    for argument in primary.args.args:
         if _annotation_is_constexpr(argument.annotation):
             opaque = f"c{constexpr_index}"
             constexpr_index += 1
@@ -363,7 +393,7 @@ def anonymize_source(source: str) -> tuple[str, SCRCHarnessBinding, dict[str, st
     anonymous = ast.unparse(anonymous_tree) + "\n"
     binding = SCRCHarnessBinding(
         source_to_opaque=tuple(mapping.items()),
-        source_function=functions[0].name,
+        source_function=primary_source_name,
     )
     return anonymous, binding, mapping
 
@@ -466,8 +496,11 @@ def _prompt_material(
     source: str,
     compiler_view: SCRCCompilerView | None,
     relift_context: SCRCReliftContext | None,
+    source_symbol: str | None = None,
 ) -> tuple[str, str, SCRCHarnessBinding, dict[str, Any] | None]:
-    anonymous_source, binding, mapping = anonymize_source(source)
+    anonymous_source, binding, mapping = anonymize_source(
+        source, source_symbol=source_symbol
+    )
     anonymous_view = _anonymous_compiler_view(compiler_view, mapping)
     instructions = build_scrc_lift_instructions()
     user = _build_user_input(anonymous_source, anonymous_view, relift_context)
@@ -479,10 +512,11 @@ def scrc_lift_prompt_sha256(
     name_hint: str | None = None,
     *,
     compiler_view: SCRCCompilerView | None = None,
+    source_symbol: str | None = None,
 ) -> str:
     del name_hint
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, None
+        source, compiler_view, None, source_symbol
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -492,9 +526,10 @@ def scrc_relift_prompt_sha256(
     context: SCRCReliftContext,
     *,
     compiler_view: SCRCCompilerView | None = None,
+    source_symbol: str | None = None,
 ) -> str:
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, context
+        source, compiler_view, context, source_symbol
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -658,12 +693,13 @@ def extract_scrc_artifact(
     compiler_view: SCRCCompilerView | None = None,
     effort: str | None = None,
     relift_context: SCRCReliftContext | None = None,
+    source_symbol: str | None = None,
 ) -> SCRCExtraction:
     """Perform exactly one source-aware provider call for one Lift attempt."""
 
     del name_hint
     instructions, user, binding, anonymous_view = _prompt_material(
-        source, compiler_view, relift_context
+        source, compiler_view, relift_context, source_symbol
     )
     prompt_sha = hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
     reply = call_responses(
@@ -718,6 +754,7 @@ class ResponsesSCRCRelifter:
     provider: ProviderConfig | None = None
     compiler_view: SCRCCompilerView | None = None
     effort: str | None = None
+    source_symbol: str | None = None
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -736,6 +773,7 @@ class ResponsesSCRCRelifter:
                 compiler_view=self.compiler_view,
                 effort=self.effort,
                 relift_context=context,
+                source_symbol=self.source_symbol,
             )
         except Exception as exc:
             self._records.append(
