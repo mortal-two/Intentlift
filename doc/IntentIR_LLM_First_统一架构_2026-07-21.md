@@ -239,6 +239,12 @@ interface/C handle 都必须进入 pi。Replay 不得丢弃这些依赖、压平
 producer。pi 仍不声明这些 stage 的逻辑 operator/formula；LLM 根据 J/C/interface 写前端，
 Gate1 用最终 compiler topology 判断是否真的消费正确。
 
+“handle 进入 pi”只有一种合法写法：raw J/C/interface handle 只能出现在 instance 的
+`semantic_ref` anchor 中；route/order/sharing 的所有 graph endpoint 必须是已声明的 `i*`
+instance ID。edge 不隐式声明 instance，也不能直接写 `p0 -> i1`。若 p0 参与一个 access，
+应声明锚定 p0 的 i0 与锚定 access 的 i1，再写 `i0 -> i1`。确定性 validator 只检查这一
+foreign-key closure，不按 anchor 猜测或补写 graph。
+
 ## 7. C：纯调度
 
 C 只包含替换后不改变 J 的调度与性能提示，例如 tile extent、vector width、线程映射、

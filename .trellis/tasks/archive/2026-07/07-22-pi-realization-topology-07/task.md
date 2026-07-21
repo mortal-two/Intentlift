@@ -165,8 +165,9 @@ masked-J 必须不能继续闭合。
   没有扩散其余 27 case。
 - 返回对象已正确保留二维 J、non-C `p4`、pure-C `c0/c1`，也尝试让 `p3` 参与三个 row-base
   realization；失败不是 v3 所有权问题复发。
-- 精确错误是 30 条 routes 中有 9 条把 raw `p*/c*` 当 source。冻结合同要求所有 graph edge
-  endpoint 都是已声明的 `i*`，J/C/interface handle 只能作为 instance 的 anchor。当前 prompt 的
+- 精确错误是 30 条 routes 中有 9 条把 raw `p*/c*` 当 source；后续完整审计还发现 4 条
+  sharing 中有 1 条同样以 raw `p3` 为 source。冻结合同要求所有 graph edge endpoint 都是已声明
+  的 `i*`，J/C/interface handle 只能作为 instance 的 anchor。当前 prompt 的
   “handle 必须出现并 route”以及研究文档的 `p* -> access` 简写没有显式区分这两个命名空间。
 - 这只证明 π wire 的 referential-integrity 合同对 LLM 仍有歧义；尚未得到合法 artifact，故不能
   据此增加 `address_base/address_lane`，也不能把结果写成 Gate1 no-closure。

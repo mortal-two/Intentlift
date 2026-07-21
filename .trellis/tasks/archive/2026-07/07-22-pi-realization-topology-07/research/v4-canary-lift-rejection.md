@@ -73,6 +73,11 @@ c0, c1, p0, p1, p2, p3, p4
 realization instance，再用这个 instance 的 `i*` ID 作为 route source。`semantic_ref`
 是跨层 anchor；`i*` 才是 π 内图节点。二者不能混用。
 
+Task08 的完整 endpoint 审计还发现一条同类错误：4 条 sharing 中
+`{"source":"p3","consumers":["i1","i2","i3"]}` 也把 raw handle 当作 graph source。
+parser 已在第一条 invalid route 停止，所以 receipt 只报告 route；这一补充不改变 v4 的
+`lift_failed` 分类，也不构成 π capacity 缺口。
+
 ## 根因分类
 
 1. validator 没有错误：它保持了外键闭合，也没有做拓扑猜测；

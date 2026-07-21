@@ -101,6 +101,10 @@ source-blind Replay 原样消费：
 
 ## 当前第一步
 
-只做阶段 0，不改实现、不调用 LLM。先从 v4 frozen response 精确枚举所有 endpoint namespace，
-再把 schema、prompt、parser 和文档压缩成一份唯一 graph grammar；在这份语法通过正反例审计前，
-不得冻结 v5，也不得讨论新增 address mechanism。
+阶段 0 已完成，详见 `research/stage0-graph-namespace-audit.md`。审计确认保留现有 JSON shape：
+raw J/C/interface handle 只作为 `semantic_ref` anchor，所有 graph endpoint 只接受 declared `i*`。
+v4 除 9 个 invalid route sources 外还有 1 个 invalid sharing source；这仍是可生成合同歧义，
+不是 π capacity 证据。
+
+下一步进入阶段 1：从一个共享 grammar renderer 同时投影 schema、Lift prompt 与 Replay prompt，
+补齐 path-specific parser diagnostics 和双向 conformance；继续保持 0 次 LLM。

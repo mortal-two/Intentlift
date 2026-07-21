@@ -36,6 +36,13 @@ instance 间匿名 def-use，order 是必要偏序，sharing 表示一个实际 
 必须在 pi 中出现并连接到受影响的 event。Replay 必须保留 event 数量、链、fanout、region
 和 sharing，不能把它们压平。
 
+这里严格区分两种引用角色：J/C/interface 的 raw `t*/n*/a*/p*/c*` handle 只能出现在
+`instances[*].semantic_ref`，用来锚定一个 realization event；π 图内 route/order/sharing 的
+所有端点只能引用已经声明的 `instances[*].id`，即 `i*`。edge 不会隐式声明 instance。
+例如 p0 参与 a0 realization 时，应先声明一个锚定 p0 的 i0 和一个锚定 a0 的 i1，再写
+`i0 -> i1`，不能直接写 `p0 -> i1`。固定代码不得把 raw handle 自动映射成某个 instance，
+因为多个 instance 可以合法地锚定同一 handle。
+
 这些结构不能当作无定义的 covert code。instance 的意义只来自上述全局合同和它锚定的
 J/C/interface handle；缺少 operator/formula 时，Replay LLM 负责从完整 J/C/interface 推理出
 前端写法，最终由 Gate1 strict observer 验证，而不是由固定 composer 解码。

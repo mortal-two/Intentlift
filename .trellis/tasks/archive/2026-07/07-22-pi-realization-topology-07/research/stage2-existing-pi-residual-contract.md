@@ -61,7 +61,8 @@ operator、predicate、fill 和 value edges 由 J 唯一拥有，故 J 必须不
 
 1. 同一 `p*` 的多 event anchor；
 2. runtime row-base graph 与 flat graph 不同；
-3. `p* -> access` routes 和 sharing 原样进入 source-blind Replay packet；
+3. `p*`-anchored instance 到 access-anchored instance 的 routes 和 sharing 原样进入
+   source-blind Replay packet；raw `p*` 本身不是 graph endpoint；
 4. Replay system contract 明确禁止 chain collapse/dependency drop；
 5. LayerNorm pre/post mask 产生不同 J，pi 不含 `select` 等语义 atom；
 6. 既有 closed schema 继续拒绝 operator/predicate/value/API/text。
