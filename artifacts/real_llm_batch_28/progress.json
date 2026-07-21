@@ -1,0 +1,18 @@
+{
+  "schema": "intentir.formal-real-llm-batch-progress.v1",
+  "manifest_digest": "12e2507433f23d6405cfa1dd0f1ff1169671a664822c07b0f5ecfbdc93570154",
+  "updated_date": "2026-07-22",
+  "online_http_attempts": 1,
+  "cases_started": 1,
+  "cases": [
+    {
+      "case_id": "liger_swiglu_forward",
+      "status": "lift_failed",
+      "lift_attempts": 1,
+      "normal_replay_attempts": 0,
+      "masked_j_attempts": 0,
+      "first_failure": "SchemaError: Boundary.domains.d0 must be a string",
+      "receipt": "primary/liger_swiglu_forward/receipt.json"
+    }
+  ]
+}

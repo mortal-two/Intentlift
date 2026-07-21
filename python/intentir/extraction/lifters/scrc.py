@@ -274,6 +274,8 @@ class SCRCLiftAttempt:
     diagnostic: str
     response_text: str = field(repr=False)
     response_id: str | None = None
+    response_model: str | None = None
+    usage: Mapping[str, int] = field(default_factory=dict)
     request_sha256: str = ""
     response_sha256: str = ""
     raw_response_sha256: str = ""
@@ -799,6 +801,12 @@ def extract_scrc_artifact(
             diagnostic=f"{type(exc).__name__}: {exc}",
             response_text=reply.text,
             response_id=reply.raw.get("id"),
+            response_model=(
+                reply.raw.get("model")
+                if isinstance(reply.raw.get("model"), str)
+                else None
+            ),
+            usage=_response_usage(reply.raw),
             request_sha256=reply.request_sha256,
             response_sha256=(
                 reply.response_sha256

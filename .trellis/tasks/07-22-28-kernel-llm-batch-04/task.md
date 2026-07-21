@@ -175,3 +175,17 @@ source digest、可导入/可编译性、observer 支持、运行输入和基线
 - 正式在线调用仍为 0；下一步提交本基础设施后，用 `liger_swiglu_forward` 消耗第一组
   primary Lift/Replay 预算并保存真实 receipt。CuTe Replay arm 未接线前，runner 会在调用前
   fail closed，不会消耗两个 CuTe case 的预算。
+
+## 首个 primary 结果（2026-07-22）
+
+- `liger_swiglu_forward` 已消耗且只消耗 1 次真实 xhigh Lift HTTP attempt：输入 8434、
+  输出 14235（其中 reasoning 11991）、总计 22669 tokens，ledger wall time 259017.279 ms。
+- provider 正常完成，但返回对象未通过本地权威 parser：`Boundary.domains.d0` 是对象，规范
+  要求 portable predicate string。因此 case 状态为 `lift_failed`，没有调用 normal Replay，
+  更没有调用 masked-J；该 first-attempt 不重试、不覆盖、不手改为成功。
+- exact request、response text、provider raw envelope、各自 SHA-256、response id/model/usage
+  均保存在 `artifacts/real_llm_batch_28/primary/liger_swiglu_forward/`；累计在线 HTTP
+  attempts 记录在 `artifacts/real_llm_batch_28/progress.json`。
+- 失败还暴露了全局 wire grammar 的健壮性问题（不仅是 domain）：模型同时偏离了
+  `scrc_j0`、node path map、constexpr `c*` 与 public compiler role。后续只允许加强统一
+  schema/prompt，再用于尚未运行的 case；不得据此修补或重试本 case。

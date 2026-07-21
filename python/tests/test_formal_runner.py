@@ -25,6 +25,7 @@ from direct_fixtures import make_copy_artifact
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test" / "real_llm_batch_28.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
+_PRIMARY = _ROOT / "artifacts" / "real_llm_batch_28" / "primary"
 
 
 class _Response:
@@ -150,3 +151,29 @@ def test_formal_runner_refuses_unwired_cute_before_spending_call_budget(
             preflight_path=_PREFLIGHT,
         )
     assert list(tmp_path.iterdir()) == []
+
+
+def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:
+    case_dir = _PRIMARY / "liger_swiglu_forward"
+    receipt = json.loads((case_dir / "receipt.json").read_text())
+    assert receipt["status"] == "lift_failed"
+    assert len(receipt["calls"]) == 1
+    call = receipt["calls"][0]
+    assert call["kind"] == "lift"
+    assert call["status"] == "failed"
+    assert call["attempts"] == 1
+    assert call["usage"] == {
+        "input_tokens": 8434,
+        "output_tokens": 14235,
+        "total_tokens": 22669,
+    }
+    for path_key, digest_key in (
+        ("request_path", "request_sha256"),
+        ("response_path", "response_sha256"),
+        ("raw_response_path", "raw_response_sha256"),
+    ):
+        payload = (case_dir / call[path_key]).read_bytes()
+        assert hashlib.sha256(payload).hexdigest() == call[digest_key]
+    request = (case_dir / call["request_path"]).read_text()
+    assert "_swiglu_forward_kernel" not in request
+    assert '"kind":"normal_replay"' not in request

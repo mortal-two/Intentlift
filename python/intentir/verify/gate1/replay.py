@@ -35,6 +35,28 @@ class ReplayGeneration:
     elapsed_ms: float = 0.0
 
 
+@dataclass(frozen=True)
+class ReplayAttempt:
+    model: str
+    diagnostic: str
+    response_text: str = field(repr=False)
+    response_id: str | None = None
+    response_model: str | None = None
+    usage: Mapping[str, int] = field(default_factory=dict)
+    request_sha256: str = ""
+    response_sha256: str = ""
+    raw_response_sha256: str = ""
+    raw_response: bytes = field(default=b"", repr=False)
+    attempts: int = 1
+    elapsed_ms: float = 0.0
+
+
+class ReplayGenerationError(RuntimeError):
+    def __init__(self, attempt: ReplayAttempt) -> None:
+        self.attempt = attempt
+        super().__init__(f"Replay response rejected: {attempt.diagnostic}")
+
+
 class ReplayWriter(Protocol):
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
@@ -98,13 +120,42 @@ class ResponsesReplayWriter:
             provider=self.provider,
             effort=self.effort,
         )
-        code = extract_python_module(
-            reply.text,
-            required_function=function_name,
-        )
         prompt_digest = hashlib.sha256(
             (instructions + "\0" + user).encode()
         ).hexdigest()
+        try:
+            code = extract_python_module(
+                reply.text,
+                required_function=function_name,
+            )
+        except Exception as exc:
+            raise ReplayGenerationError(
+                ReplayAttempt(
+                    model=reply.model,
+                    diagnostic=f"{type(exc).__name__}: {exc}",
+                    response_text=reply.text,
+                    response_id=(
+                        reply.raw.get("id")
+                        if isinstance(reply.raw.get("id"), str)
+                        else None
+                    ),
+                    response_model=(
+                        reply.raw.get("model")
+                        if isinstance(reply.raw.get("model"), str)
+                        else None
+                    ),
+                    usage=_usage(reply.raw),
+                    request_sha256=reply.request_sha256,
+                    response_sha256=(
+                        reply.response_sha256
+                        or hashlib.sha256(reply.text.encode()).hexdigest()
+                    ),
+                    raw_response_sha256=reply.raw_response_sha256,
+                    raw_response=reply.raw_response,
+                    attempts=reply.attempts,
+                    elapsed_ms=reply.elapsed_ms,
+                )
+            ) from exc
         return ReplayGeneration(
             code=code,
             function_name=function_name,
@@ -174,6 +225,6 @@ class StaticReplayWriter:
 
 
 __all__ = [
-    "ReplayGeneration", "ReplayWriter", "ResponsesReplayWriter",
-    "StaticReplayWriter",
+    "ReplayAttempt", "ReplayGeneration", "ReplayGenerationError",
+    "ReplayWriter", "ResponsesReplayWriter", "StaticReplayWriter",
 ]

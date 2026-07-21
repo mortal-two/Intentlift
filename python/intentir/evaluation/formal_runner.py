@@ -38,6 +38,7 @@ from intentir.verify.gate1.prompt import (
 )
 from intentir.verify.gate1.replay import (
     ReplayGeneration,
+    ReplayGenerationError,
     ReplayWriter,
     ResponsesReplayWriter,
 )
@@ -199,6 +200,13 @@ def _fail_call(
     *,
     response_text: str = "",
     raw_response: bytes = b"",
+    response_sha256: str = "",
+    raw_response_sha256: str = "",
+    response_id: str | None = None,
+    response_model: str | None = None,
+    usage: Mapping[str, int] | None = None,
+    attempts: int | None = None,
+    elapsed_ms: float | None = None,
 ) -> None:
     call_dir = case_dir / Path(record["request_path"]).parent
     if response_text:
@@ -212,6 +220,31 @@ def _fail_call(
             "diagnostic": f"{type(error).__name__}: {error}",
         }
     )
+    if response_text:
+        record.update(
+            {
+                "response_path": _relative(case_dir, call_dir / "response.txt"),
+                "response_sha256": response_sha256
+                or _sha256(response_text.encode()),
+                "response_id": response_id,
+                "response_model": response_model,
+                "usage": dict(usage or {}),
+            }
+        )
+    if raw_response:
+        record.update(
+            {
+                "raw_response_path": _relative(
+                    case_dir, call_dir / "response.raw.json"
+                ),
+                "raw_response_sha256": raw_response_sha256
+                or _sha256(raw_response),
+            }
+        )
+    if attempts is not None:
+        record["attempts"] = attempts
+    if elapsed_ms is not None:
+        record["elapsed_ms"] = elapsed_ms
     if isinstance(error, ProviderError):
         record.update(
             {
@@ -292,6 +325,24 @@ class LedgerReplayWriter(ReplayWriter):
             record["packet_sha256"] = generation.packet_digest
             _persist_receipt(self.case_dir, self.receipt)
             return generation
+        except ReplayGenerationError as exc:
+            attempt = exc.attempt
+            _fail_call(
+                self.case_dir,
+                self.receipt,
+                record,
+                exc,
+                response_text=attempt.response_text,
+                raw_response=attempt.raw_response,
+                response_sha256=attempt.response_sha256,
+                raw_response_sha256=attempt.raw_response_sha256,
+                response_id=attempt.response_id,
+                response_model=attempt.response_model or attempt.model,
+                usage=attempt.usage,
+                attempts=attempt.attempts,
+                elapsed_ms=attempt.elapsed_ms,
+            )
+            raise
         except BaseException as exc:
             _fail_call(self.case_dir, self.receipt, record, exc)
             raise
@@ -450,6 +501,13 @@ def run_formal_gate1_case(
             exc,
             response_text=attempt.response_text,
             raw_response=attempt.raw_response,
+            response_sha256=attempt.response_sha256,
+            raw_response_sha256=attempt.raw_response_sha256,
+            response_id=attempt.response_id,
+            response_model=attempt.response_model or attempt.model,
+            usage=attempt.usage,
+            attempts=attempt.attempts,
+            elapsed_ms=attempt.elapsed_ms,
         )
         raise
     except BaseException as exc:
