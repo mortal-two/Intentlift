@@ -60,6 +60,10 @@ from .formal_preflight import verify_formal_preflight
 
 
 RUN_SCHEMA = "intentir.formal-real-llm-case.v1"
+RUN_SCHEMA_V2 = "intentir.formal-real-llm-case.v2"
+_V2_ATTEMPT_CLASSES = frozenset(
+    {"protocol_v2_first_attempt", "protocol_v2_recovery"}
+)
 
 
 class FormalRunError(RuntimeError):
@@ -361,14 +365,21 @@ def _initial_receipt(
     manifest_path: Path,
     case: Mapping[str, Any],
     source_path: Path,
+    preflight_path: Path,
+    preflight: Mapping[str, Any],
+    lineage: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     pin = case["source"]
     receipt: dict[str, Any] = {
-        "schema": RUN_SCHEMA,
+        "schema": RUN_SCHEMA_V2 if "lift_wire" in manifest.data else RUN_SCHEMA,
         "batch_id": manifest.data["batch_id"],
         "case_id": case["case_id"],
         "manifest_digest": manifest.digest,
         "manifest_file_sha256": _sha256(manifest_path.read_bytes()),
+        "preflight": {
+            "schema": preflight.get("schema"),
+            "sha256": _sha256(preflight_path.read_bytes()),
+        },
         "source": {
             "repository": pin["repository"],
             "path": pin["path"],
@@ -388,13 +399,15 @@ def _initial_receipt(
         "artifacts": {},
         "history": [],
     }
+    if lineage is not None:
+        receipt["lineage"] = dict(lineage)
     _record_history(receipt, "prepared")
     return receipt
 
 
 def _validate_preflight(
     manifest: BatchManifest, preflight_path: Path, manifest_path: Path
-) -> None:
+) -> Mapping[str, Any]:
     try:
         preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -411,6 +424,51 @@ def _validate_preflight(
             raise FormalRunError("preflight already reports online calls")
         if preflight.get("summary", {}).get("overall_ready") is not True:
             raise FormalRunError("formal preflight is not 28/28 ready")
+    return preflight
+
+
+def _v2_lineage(
+    manifest: BatchManifest,
+    case_id: str,
+    attempt_class: str | None,
+    predecessor_receipt: str | os.PathLike[str] | None,
+) -> Mapping[str, Any] | None:
+    if "lift_wire" not in manifest.data:
+        if attempt_class is not None or predecessor_receipt is not None:
+            raise FormalRunError("v1 formal runs do not accept v2 lineage metadata")
+        return None
+    if attempt_class not in _V2_ATTEMPT_CLASSES:
+        raise FormalRunError("protocol-v2 requires an explicit attempt classification")
+    if attempt_class == "protocol_v2_first_attempt":
+        if predecessor_receipt is not None:
+            raise FormalRunError("a protocol-v2 first attempt may not name a predecessor")
+        return {"attempt_class": attempt_class}
+    if predecessor_receipt is None:
+        raise FormalRunError("protocol-v2 recovery requires its predecessor receipt")
+    path = Path(predecessor_receipt).resolve()
+    try:
+        payload = path.read_bytes()
+        predecessor = json.loads(payload)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FormalRunError(f"cannot read recovery predecessor: {exc}") from exc
+    if (
+        predecessor.get("case_id") != case_id
+        or predecessor.get("status") != "lift_failed"
+        or predecessor.get("batch_id") == manifest.data["batch_id"]
+    ):
+        raise FormalRunError("recovery predecessor is not the prior failed case epoch")
+    calls = predecessor.get("calls")
+    if not isinstance(calls, list) or len(calls) != 1:
+        raise FormalRunError("recovery predecessor lacks one auditable failed call")
+    return {
+        "attempt_class": attempt_class,
+        "predecessor": {
+            "batch_id": predecessor.get("batch_id"),
+            "case_id": predecessor["case_id"],
+            "status": predecessor["status"],
+            "receipt_sha256": _sha256(payload),
+        },
+    }
 
 
 def run_formal_gate1_case(
@@ -420,6 +478,8 @@ def run_formal_gate1_case(
     output_root: str | os.PathLike[str],
     preflight_path: str | os.PathLike[str],
     compiler_timeout: float = 300.0,
+    attempt_class: str | None = None,
+    predecessor_receipt: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Spend one Lift/Replay budget for one frozen case and run strict Gate1."""
 
@@ -432,9 +492,8 @@ def run_formal_gate1_case(
             verify_lift_wire_lock(manifest.data["lift_wire"])
         except LiftWireError as exc:
             raise FormalRunError(str(exc)) from exc
-    _validate_preflight(
-        manifest, Path(preflight_path).resolve(), manifest_path
-    )
+    resolved_preflight = Path(preflight_path).resolve()
+    preflight = _validate_preflight(manifest, resolved_preflight, manifest_path)
     case = manifest.case(case_id)
     case_dir = Path(output_root).resolve() / case_id
     receipt_path = case_dir / "receipt.json"
@@ -445,10 +504,21 @@ def run_formal_gate1_case(
         raise FormalRunError(
             "an incomplete formal ledger already exists; automatic retry is forbidden"
         )
+    lineage = _v2_lineage(
+        manifest, case_id, attempt_class, predecessor_receipt
+    )
     case_dir.mkdir(parents=True, exist_ok=False)
     source_path = resolve_source_path(manifest, case)
     source = source_path.read_text(encoding="utf-8")
-    receipt = _initial_receipt(manifest, manifest_path, case, source_path)
+    receipt = _initial_receipt(
+        manifest,
+        manifest_path,
+        case,
+        source_path,
+        resolved_preflight,
+        preflight,
+        lineage,
+    )
     _persist_receipt(case_dir, receipt)
 
     provider_spec = manifest.data["provider"]
@@ -638,6 +708,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--preflight", type=Path, required=True)
     parser.add_argument("--compiler-timeout", type=float, default=300.0)
+    parser.add_argument("--attempt-class", choices=sorted(_V2_ATTEMPT_CLASSES))
+    parser.add_argument("--predecessor-receipt", type=Path)
     args = parser.parse_args(argv)
     receipt = run_formal_gate1_case(
         args.manifest,
@@ -645,6 +717,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
         output_root=args.output_root,
         preflight_path=args.preflight,
         compiler_timeout=args.compiler_timeout,
+        attempt_class=args.attempt_class,
+        predecessor_receipt=args.predecessor_receipt,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt.get("status") == "gate1_closed" else 1
@@ -658,5 +732,6 @@ __all__ = [
     "FormalRunError",
     "LedgerReplayWriter",
     "RUN_SCHEMA",
+    "RUN_SCHEMA_V2",
     "run_formal_gate1_case",
 ]

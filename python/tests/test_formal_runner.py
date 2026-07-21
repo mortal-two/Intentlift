@@ -201,6 +201,32 @@ def test_formal_v2_rejects_wire_drift_before_provider_or_ledger(
     assert not output.exists()
 
 
+def test_protocol_v2_recovery_lineage_binds_the_failed_v1_receipt() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V2)
+    predecessor = _PRIMARY / "liger_swiglu_forward" / "receipt.json"
+    lineage = formal_runner._v2_lineage(
+        manifest,
+        "liger_swiglu_forward",
+        "protocol_v2_recovery",
+        predecessor,
+    )
+    assert lineage is not None
+    assert lineage["attempt_class"] == "protocol_v2_recovery"
+    assert lineage["predecessor"] == {
+        "batch_id": "tianchenir-formal-real-kernels-2026-07-22",
+        "case_id": "liger_swiglu_forward",
+        "status": "lift_failed",
+        "receipt_sha256": hashlib.sha256(predecessor.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(FormalRunError, match="requires its predecessor"):
+        formal_runner._v2_lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v2_recovery",
+            None,
+        )
+
+
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:
     case_dir = _PRIMARY / "liger_swiglu_forward"
     receipt = json.loads((case_dir / "receipt.json").read_text())

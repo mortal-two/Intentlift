@@ -132,6 +132,9 @@ CuTe compiler/validator/fingerprint 接到 source-blind Replay。此阶段在线
   replay arm 28/28，`overall_ready=true`，`online_llm_calls=0`。
 - preflight 同时绑定当前环境、Lift wire、formal runner、两个 compiler worker、validator、
   normalizer/fingerprint 与两个 orchestrator 的逐文件 SHA；正式运行前会重新核验。
+- protocol-v2 case receipt 在创建 ledger 前必须显式声明 `protocol_v2_first_attempt` 或
+  `protocol_v2_recovery`；recovery 还会绑定 prior failed receipt 的 SHA。每个 receipt 同时
+  保存实际 preflight 文件 SHA，不能把 Task04 失败悄悄改写成 v2 首次成功。
 - 阶段 0/1 定向回归当前为 `48 passed`；Task04 manifest、preflight 与失败 receipt 均未修改。
 
 下一步进入阶段 2：只运行 `liger_swiglu_forward` protocol-v2 recovery canary。若 Lift wire
