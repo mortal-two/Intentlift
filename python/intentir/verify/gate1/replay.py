@@ -25,6 +25,14 @@ class ReplayGeneration:
     prompt_digest: str
     context_receipt: Mapping[str, Any] = field(default_factory=dict)
     usage: Mapping[str, int] = field(default_factory=dict)
+    response_model: str | None = None
+    request_sha256: str = ""
+    response_sha256: str = ""
+    raw_response_sha256: str = ""
+    response_text: str = field(default="", repr=False)
+    raw_response: bytes = field(default=b"", repr=False)
+    attempts: int = 1
+    elapsed_ms: float = 0.0
 
 
 class ReplayWriter(Protocol):
@@ -111,6 +119,21 @@ class ResponsesReplayWriter:
                 reply.raw, packet.get("frontend_context", {})
             ),
             usage=_usage(reply.raw),
+            response_model=(
+                reply.raw.get("model")
+                if isinstance(reply.raw.get("model"), str)
+                else None
+            ),
+            request_sha256=reply.request_sha256,
+            response_sha256=(
+                reply.response_sha256
+                or hashlib.sha256(reply.text.encode()).hexdigest()
+            ),
+            raw_response_sha256=reply.raw_response_sha256,
+            response_text=reply.text,
+            raw_response=reply.raw_response,
+            attempts=reply.attempts,
+            elapsed_ms=reply.elapsed_ms,
         )
 
 

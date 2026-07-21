@@ -7,6 +7,7 @@ an exception message — only ``Authorization`` header bytes that urllib sends.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -24,7 +25,20 @@ XHIGH_RESPONSES_TIMEOUT_SECONDS = 3600.0
 
 
 class ProviderError(RuntimeError):
-    """Raised when the provider call fails after retries. Never carries the key."""
+    """Provider failure with secret-free request accounting evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_sha256: str,
+        attempts: int,
+        elapsed_ms: float,
+    ) -> None:
+        super().__init__(message)
+        self.request_sha256 = request_sha256
+        self.attempts = attempts
+        self.elapsed_ms = elapsed_ms
 
 
 @dataclass
@@ -32,6 +46,12 @@ class LLMReply:
     text: str
     model: str
     raw: dict
+    request_sha256: str = ""
+    response_sha256: str = ""
+    raw_response_sha256: str = ""
+    raw_response: bytes = b""
+    attempts: int = 1
+    elapsed_ms: float = 0.0
 
 
 def _extract_output_text(data: dict) -> str:
@@ -65,6 +85,42 @@ def _responses_payload(
     if text_format is not None:
         payload["text"] = {"format": dict(text_format)}
     return payload
+
+
+def responses_request_body(
+    instructions: str,
+    user_input: str,
+    *,
+    provider: ProviderConfig,
+    effort: str | None = None,
+    text_format: Mapping[str, Any] | None = None,
+) -> bytes:
+    """Return the exact secret-free JSON bytes sent to ``/responses``."""
+
+    return json.dumps(
+        _responses_payload(
+            instructions, user_input, provider, effort, text_format
+        )
+    ).encode()
+
+
+def responses_request_sha256(
+    instructions: str,
+    user_input: str,
+    *,
+    provider: ProviderConfig,
+    effort: str | None = None,
+    text_format: Mapping[str, Any] | None = None,
+) -> str:
+    return hashlib.sha256(
+        responses_request_body(
+            instructions,
+            user_input,
+            provider=provider,
+            effort=effort,
+            text_format=text_format,
+        )
+    ).hexdigest()
 
 
 def _resolve_responses_request_policy(
@@ -119,25 +175,43 @@ def call_responses(
         p, effort, max_retries, timeout
     )
     url = p.base_url.rstrip("/") + "/responses"
-    payload = _responses_payload(
-        instructions, user_input, p, effort, text_format
+    body = responses_request_body(
+        instructions,
+        user_input,
+        provider=p,
+        effort=effort,
+        text_format=text_format,
     )
-    body = json.dumps(payload).encode()
+    request_sha256 = hashlib.sha256(body).hexdigest()
     headers = {
         "Authorization": f"Bearer {p.api_key}",
         "Content-Type": "application/json",
     }
     last = ""
+    started = time.monotonic()
+    attempts_made = 0
     for attempt in range(max_retries):
+        attempts_made = attempt + 1
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.loads(r.read())
+                raw_response = r.read()
+                data = json.loads(raw_response)
             text = _extract_output_text(data)
             if not text.strip():
                 last = "empty completion"
             else:
-                return LLMReply(text=text, model=p.model, raw=data)
+                return LLMReply(
+                    text=text,
+                    model=p.model,
+                    raw=data,
+                    request_sha256=request_sha256,
+                    response_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                    raw_response_sha256=hashlib.sha256(raw_response).hexdigest(),
+                    raw_response=raw_response,
+                    attempts=attempts_made,
+                    elapsed_ms=(time.monotonic() - started) * 1000.0,
+                )
         except urllib.error.HTTPError as e:
             # Read the body for the message but scrub nothing of ours leaks here.
             try:
@@ -151,4 +225,9 @@ def call_responses(
             last = f"{type(e).__name__}: {str(e)[:120]}"
         if attempt < max_retries - 1:
             time.sleep(2.0 * (attempt + 1))
-    raise ProviderError(f"provider call failed after {max_retries} tries: {last}")
+    raise ProviderError(
+        f"provider call failed after {attempts_made} tries: {last}",
+        request_sha256=request_sha256,
+        attempts=attempts_made,
+        elapsed_ms=(time.monotonic() - started) * 1000.0,
+    )

@@ -159,3 +159,19 @@ source digest、可导入/可编译性、observer 支持、运行输入和基线
 
 下一步建立唯一、可恢复但不可绕过 provenance 的正式单-case runner，先以一个冻结 case
 闭合 `source -> Lift -> source-blind Replay -> Gate1 receipt`，再进入首个 7-case 分层。
+
+## 里程碑 1 基础设施进展（2026-07-22）
+
+- `intentir.evaluation.formal_runner` 已建立唯一的单-case `Lift -> Replay -> Gate1`
+  顺序执行入口；它只编排现有正式 API，不解释 J，也不选择 rule/lowering。
+- 每次在线调用在发出前原子写入 exact secret-free request bytes/hash；成功和 parse failure
+  都保留 response text、provider raw envelope/hash、request id、实际 model、usage、HTTP
+  attempt count 与 elapsed time。`requested` 状态不确定时禁止自动重试。
+- manifest specialization 可机械投影为 `SCRCCompilerView`；source 参数、constexpr 与 compiler
+  C slot 在 Lift 前匿名化，修复了调用关键字保留 `BLOCK_SIZE` 以及 compiler slot 误落到
+  `v*` 的问题。
+- Replay ledger 在调用前验证并保存 source-blind packet；Gate1 的 source/replay 编译均复用
+  preflight 的 frozen Python import roots。完整回归为 `650 passed, 4 skipped`。
+- 正式在线调用仍为 0；下一步提交本基础设施后，用 `liger_swiglu_forward` 消耗第一组
+  primary Lift/Replay 预算并保存真实 receipt。CuTe Replay arm 未接线前，runner 会在调用前
+  fail closed，不会消耗两个 CuTe case 的预算。

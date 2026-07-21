@@ -637,6 +637,53 @@ def resolve_source_path(
     ).resolve()
 
 
+def scrc_compiler_view(case: Mapping[str, Any]):
+    """Mechanically project one frozen invocation into the Lift harness view."""
+
+    from intentir.extraction.lifters.scrc import (
+        SCRCCompilerArgument,
+        SCRCCompilerView,
+    )
+
+    specialization = case["specialization"]
+    runtime_arguments = []
+    for item in specialization["arguments"]:
+        if item["kind"] == "opaque":
+            raise ManifestError(
+                f"case {case['case_id']} requires an opaque frontend binding "
+                "that SCRCCompilerView does not yet support"
+            )
+        runtime_arguments.append(
+            SCRCCompilerArgument(
+                item["name"],
+                item["kind"],
+                item["dtype"] or item["kind"],
+                tuple(item["shape"] or ()),
+                item["value"],
+            )
+        )
+    schedule = dict(specialization["schedule"])
+    compiler_options = dict(specialization["compiler_options"])
+    overlap = set(schedule) & set(compiler_options)
+    if overlap:
+        raise ManifestError(
+            f"case {case['case_id']} repeats C names across schedule/compiler: "
+            f"{sorted(overlap)}"
+        )
+    parameter_order = [
+        item["name"] for item in specialization["arguments"]
+    ] + list(schedule)
+    return SCRCCompilerView(
+        schedule_values={**schedule, **compiler_options},
+        compiler_slots=tuple(compiler_options),
+        arguments=tuple(runtime_arguments),
+        grid=tuple(specialization["grid"]),
+        grid_contract=tuple(str(value) for value in specialization["grid"]),
+        parameter_order=tuple(parameter_order),
+        constexpr_parameters=tuple(schedule),
+    )
+
+
 def triton_compile_case(case: Mapping[str, Any]):
     """Project one frozen specialization into the existing Gate1 boundary."""
 
@@ -682,6 +729,22 @@ def triton_compile_case(case: Mapping[str, Any]):
         tuple(case["specialization"]["grid"]),
         schedule,
     )
+
+
+def compiler_pythonpath(manifest: BatchManifest) -> str:
+    """Frozen source import roots shared by preflight and formal Gate1."""
+
+    python_paths = [str(Path(__file__).resolve().parents[2])]
+    for repository in manifest.data["repositories"].values():
+        root = (manifest.source_root / repository["root"]).resolve()
+        python_paths.append(str(root))
+        source_package = root / "src"
+        if source_package.is_dir():
+            python_paths.append(str(source_package))
+    inherited = os.environ.get("PYTHONPATH")
+    if inherited:
+        python_paths.append(inherited)
+    return os.pathsep.join(dict.fromkeys(python_paths))
 
 
 def cute_compile_case(case: Mapping[str, Any]):
@@ -777,20 +840,10 @@ def probe_triton_compilation(
 
     from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 
-    python_paths = [str(Path(__file__).resolve().parents[2])]
-    for repository in manifest.data["repositories"].values():
-        root = (manifest.source_root / repository["root"]).resolve()
-        python_paths.append(str(root))
-        source_package = root / "src"
-        if source_package.is_dir():
-            python_paths.append(str(source_package))
-    inherited = os.environ.get("PYTHONPATH")
-    if inherited:
-        python_paths.append(inherited)
     compiler = TritonCompiler(
         timeout=timeout,
         cache_dir=cache_dir,
-        env={"PYTHONPATH": os.pathsep.join(dict.fromkeys(python_paths))},
+        env={"PYTHONPATH": compiler_pythonpath(manifest)},
     )
     results: list[dict[str, Any]] = []
     for case in manifest.cases:

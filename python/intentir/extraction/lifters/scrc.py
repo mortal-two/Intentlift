@@ -71,6 +71,13 @@ class SCRCProvenance:
     response_id: str | None = None
     response_model: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
+    request_sha256: str = ""
+    response_sha256: str = ""
+    raw_response_sha256: str = ""
+    response_text: str = field(default="", repr=False)
+    raw_response: bytes = field(default=b"", repr=False)
+    attempts: int = 1
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +85,19 @@ class SCRCExtraction:
     artifact: Gate1Artifact
     provenance: SCRCProvenance
     harness_binding: SCRCHarnessBinding
+
+
+@dataclass(frozen=True)
+class SCRCLiftRequest:
+    """Exact source-anonymized prompt material before the single provider call."""
+
+    instructions: str = field(repr=False)
+    user_input: str = field(repr=False)
+    prompt_sha256: str
+    harness_binding: SCRCHarnessBinding
+    anonymous_compiler_view: Mapping[str, Any] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass(frozen=True)
@@ -254,6 +274,12 @@ class SCRCLiftAttempt:
     diagnostic: str
     response_text: str = field(repr=False)
     response_id: str | None = None
+    request_sha256: str = ""
+    response_sha256: str = ""
+    raw_response_sha256: str = ""
+    raw_response: bytes = field(default=b"", repr=False)
+    attempts: int = 1
+    elapsed_ms: float = 0.0
 
 
 class SCRCLiftError(RuntimeError):
@@ -308,6 +334,14 @@ def anonymize_source(
         primary = functions[0]
         ordered_functions = functions
     primary_source_name = primary.name
+    primary_parameter_names = {
+        argument.arg
+        for argument in [
+            *primary.args.posonlyargs,
+            *primary.args.args,
+            *primary.args.kwonlyargs,
+        ]
+    }
     mapping: dict[str, str] = {}
     for index, function in enumerate(ordered_functions):
         mapping.setdefault(function.name, f"scrc_k{index}")
@@ -370,6 +404,11 @@ def anonymize_source(
             node.id = mapping.get(node.id, node.id)
             return node
 
+        def visit_keyword(self, node: ast.keyword) -> ast.AST:
+            if node.arg in primary_parameter_names:
+                node.arg = mapping.get(node.arg, node.arg)
+            return self.generic_visit(node)
+
         def visit_Global(self, node: ast.Global) -> ast.AST:
             node.names = [mapping.get(name, name) for name in node.names]
             return node
@@ -414,7 +453,7 @@ def _anonymous_compiler_view(
     next_c = 0
     used = set(mapping.values())
     for name in [*view.schedule_values, *view.compiler_slots]:
-        if name in mapping:
+        if name in mapping and mapping[name].startswith("c"):
             continue
         while f"c{next_c}" in used:
             next_c += 1
@@ -505,6 +544,25 @@ def _prompt_material(
     instructions = build_scrc_lift_instructions()
     user = _build_user_input(anonymous_source, anonymous_view, relift_context)
     return instructions, user, binding, anonymous_view
+
+
+def prepare_scrc_lift(
+    source: str,
+    *,
+    compiler_view: SCRCCompilerView | None = None,
+    relift_context: SCRCReliftContext | None = None,
+    source_symbol: str | None = None,
+) -> SCRCLiftRequest:
+    instructions, user, binding, anonymous_view = _prompt_material(
+        source, compiler_view, relift_context, source_symbol
+    )
+    return SCRCLiftRequest(
+        instructions,
+        user,
+        hashlib.sha256((instructions + "\0" + user).encode()).hexdigest(),
+        binding,
+        anonymous_view,
+    )
 
 
 def scrc_lift_prompt_sha256(
@@ -698,10 +756,17 @@ def extract_scrc_artifact(
     """Perform exactly one source-aware provider call for one Lift attempt."""
 
     del name_hint
-    instructions, user, binding, anonymous_view = _prompt_material(
-        source, compiler_view, relift_context, source_symbol
+    request = prepare_scrc_lift(
+        source,
+        compiler_view=compiler_view,
+        relift_context=relift_context,
+        source_symbol=source_symbol,
     )
-    prompt_sha = hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
+    instructions = request.instructions
+    user = request.user_input
+    binding = request.harness_binding
+    anonymous_view = request.anonymous_compiler_view
+    prompt_sha = request.prompt_sha256
     reply = call_responses(
         instructions,
         user,
@@ -734,6 +799,15 @@ def extract_scrc_artifact(
             diagnostic=f"{type(exc).__name__}: {exc}",
             response_text=reply.text,
             response_id=reply.raw.get("id"),
+            request_sha256=reply.request_sha256,
+            response_sha256=(
+                reply.response_sha256
+                or hashlib.sha256(reply.text.encode()).hexdigest()
+            ),
+            raw_response_sha256=reply.raw_response_sha256,
+            raw_response=reply.raw_response,
+            attempts=reply.attempts,
+            elapsed_ms=reply.elapsed_ms,
         )
         raise SCRCLiftError(attempt) from exc
     provenance = SCRCProvenance(
@@ -745,6 +819,16 @@ def extract_scrc_artifact(
             if isinstance(reply.raw.get("model"), str) else None
         ),
         usage=_response_usage(reply.raw),
+        request_sha256=reply.request_sha256,
+        response_sha256=(
+            reply.response_sha256
+            or hashlib.sha256(reply.text.encode()).hexdigest()
+        ),
+        raw_response_sha256=reply.raw_response_sha256,
+        response_text=reply.text,
+        raw_response=reply.raw_response,
+        attempts=reply.attempts,
+        elapsed_ms=reply.elapsed_ms,
     )
     return SCRCExtraction(artifact, provenance, binding)
 
@@ -790,8 +874,8 @@ class ResponsesSCRCRelifter:
 __all__ = [
     "ResponsesSCRCRelifter", "SCRC_RELIFT_PROTOCOL", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
-    "SCRCLiftAttempt", "SCRCLiftError", "SCRCProvenance", "SCRCReliftContext",
+    "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
     "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
-    "extract_scrc_artifact", "scrc_lift_prompt_sha256",
+    "extract_scrc_artifact", "prepare_scrc_lift", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
 ]

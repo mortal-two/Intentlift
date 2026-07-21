@@ -76,9 +76,15 @@ class Gate1ExecutionResult:
                 "generation": (
                     {
                         "model": value.generation.model,
+                        "response_model": value.generation.response_model,
                         "response_id": value.generation.response_id,
                         "packet_digest": value.generation.packet_digest,
                         "prompt_digest": value.generation.prompt_digest,
+                        "request_sha256": value.generation.request_sha256,
+                        "response_sha256": value.generation.response_sha256,
+                        "raw_response_sha256": value.generation.raw_response_sha256,
+                        "attempts": value.generation.attempts,
+                        "elapsed_ms": value.generation.elapsed_ms,
                         "context_receipt": dict(value.generation.context_receipt),
                         "usage": dict(value.generation.usage),
                     }

@@ -11,6 +11,7 @@ from intentir.evaluation.real_batch import (
     ManifestError,
     load_batch_manifest,
     probe_environment,
+    scrc_compiler_view,
     triton_compile_case,
     validate_batch_manifest,
 )
@@ -144,6 +145,34 @@ def test_manifest_specialization_projects_to_gate1_compile_case() -> None:
         "BLOCK_SIZE_COL": 512,
         "num_warps": 4,
     }
+
+
+def test_manifest_specialization_projects_to_source_aware_lift_view() -> None:
+    manifest = load_batch_manifest(_MANIFEST)
+    case = manifest.case("liger_swiglu_forward")
+    view = scrc_compiler_view(case)
+    assert view.parameter_order == (
+        "a_ptr",
+        "b_ptr",
+        "c_ptr",
+        "stride",
+        "n_cols",
+        "BLOCK_SIZE",
+    )
+    assert [item.name for item in view.arguments] == [
+        "a_ptr",
+        "b_ptr",
+        "c_ptr",
+        "stride",
+    ]
+    assert view.schedule_values == {
+        "n_cols": 1024,
+        "BLOCK_SIZE": 1024,
+        "num_warps": 4,
+    }
+    assert view.compiler_slots == ("num_warps",)
+    assert view.grid == (128,)
+    assert view.grid_contract == ("128",)
 
 
 def test_required_anchor_must_resolve_to_case() -> None:
