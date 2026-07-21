@@ -1723,7 +1723,6 @@ def run_case(
             writer,
             relifter=relifter,
             specialization_family=specialization_family,
-            trusted_compiler_view=compiler_view,
         )
     finally:
         _record_stage_ms(stage_ms, "gate1_loop", gate1_started)
