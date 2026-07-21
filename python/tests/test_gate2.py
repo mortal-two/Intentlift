@@ -282,6 +282,25 @@ def test_gate2_scalar_unsupported_is_fail_closed() -> None:
     assert not result.passed
 
 
+def test_scalar_unsupported_does_not_hide_source_replay_execution_failure() -> None:
+    output = np.asarray([3.0], dtype=np.float32)
+    runner = Gate2Runner(
+        source_runner=_FakeTritonRunner({"Y": output}),
+        replay_runner=_FakeTritonRunner(
+            {}, ok=False, error="synthetic replay failure"
+        ),
+        scalar_runner=_FakeScalarRunner(
+            {}, ok=False, unsupported=True, error="unsupported op"
+        ),
+    )
+
+    result = runner.run(_dummy_kernel(), _dummy_kernel(), _case())
+
+    assert result.status is Gate2Status.EXECUTION_FAILED
+    assert result.source_replay is None
+    assert result.source_scalar is None
+
+
 def test_gate2_handoff_failure_does_not_suppress_source_replay() -> None:
     output = np.asarray([3.0], dtype=np.float32)
     scalar_runner = _FakeScalarRunner({"Y": output})

@@ -161,9 +161,11 @@ class Gate2Runner:
             else None
         )
 
-        if scalar_result.unsupported:
+        if not source_result.ok or not replay_result.ok:
+            status = Gate2Status.EXECUTION_FAILED
+        elif scalar_result.unsupported:
             status = Gate2Status.SCALAR_UNSUPPORTED
-        elif not source_result.ok or not replay_result.ok or not scalar_result.ok:
+        elif not scalar_result.ok:
             status = Gate2Status.EXECUTION_FAILED
         else:
             assert source_replay is not None and source_scalar is not None
