@@ -358,6 +358,41 @@ def test_protocol_v4_preflight_cannot_authorize_protocol_v5() -> None:
         verify_formal_preflight(receipt, manifest, _MANIFEST_V5)
 
 
+def test_protocol_v5_preflight_is_current_zero_llm_and_28_of_28() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V5)
+    receipt = json.loads(_PREFLIGHT_V5.read_text(encoding="utf-8"))
+    verify_formal_preflight(receipt, manifest, _MANIFEST_V5)
+    assert hashlib.sha256(_PREFLIGHT_V5.read_bytes()).hexdigest() == (
+        "f0c93e6230914a9f750173ef6853315b9a1df9c212c4592e0a258a6f48222b6e"
+    )
+    assert receipt["schema"] == "intentir.real-llm-batch-preflight.v5"
+    assert receipt["online_llm_calls"] == 0
+    assert receipt["lift_wire"] == current_lift_wire_identity()
+    assert receipt["gate1_code"] == current_gate1_code_identity()
+    assert receipt["summary"] == {
+        "blocking_capability": None,
+        "cute_compiled": 2,
+        "cute_total": 2,
+        "overall_ready": True,
+        "replay_arm_ready": 28,
+        "source_observer_ready": 28,
+        "source_pins_verified": 28,
+        "symbol_pins_verified": 28,
+        "triton_compiled": 26,
+        "triton_total": 26,
+    }
+    swiglu = next(
+        item for item in receipt["cases"]
+        if item["case_id"] == "liger_swiglu_forward"
+    )
+    assert swiglu["ttir_sha256"] == (
+        "92e14ee61cbc4adce23bc6bf6813853d3983ff167732d40b1e2a934ce514f5fb"
+    )
+    assert swiglu["ttgir_sha256"] == (
+        "75bc6af49a8d8d5b9e219d0036e60a29304029227f2d867b74aa156a516f4a16"
+    )
+
+
 def test_protocol_v2_preflight_cannot_authorize_protocol_v3() -> None:
     manifest = load_batch_manifest(_MANIFEST_V3)
     receipt = json.loads(_PREFLIGHT_V2.read_text(encoding="utf-8"))

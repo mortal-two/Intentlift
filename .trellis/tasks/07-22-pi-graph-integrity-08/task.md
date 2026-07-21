@@ -150,3 +150,11 @@ v5 epoch 切换后的全量回归已通过：`782 passed, 4 skipped`，60 个既
 下一步只生成并复验 v5 formal preflight；该命令必须保持 `online_llm_calls=0`，并证明 26/26
 Triton、2/2 CuTe、28/28 source observer/replay arm ready。preflight 提交后冻结受保护代码，
 才允许唯一一次 Swiglu v5 canary。
+
+v5 formal preflight 已生成并复验通过：26/26 Triton、2/2 CuTe、28/28 source pins、symbol pins、
+source observer 与 Replay arm 全部 ready，`online_llm_calls=0`，overall ready。receipt SHA 为
+`f0c93e6230914a9f750173ef6853315b9a1df9c212c4592e0a258a6f48222b6e`，详细身份见
+`research/v5-preflight.md`。
+
+下一步提交 preflight evidence，确认 worktree clean 与 v5 output absent，然后只运行一次绑定
+v4 `lift_failed` receipt 的 Swiglu `protocol_v5_recovery` canary。
