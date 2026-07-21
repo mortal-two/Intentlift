@@ -98,3 +98,21 @@ Task04 的失败必须作为 `protocol_v1_first_attempt` 单列；Task05 的 Swi
 
 先完成阶段 0/1：建立 protocol-v2 manifest，并把已经实现但尚未接入正式 orchestrator 的
 CuTe compiler/validator/fingerprint 接到 source-blind Replay。此阶段在线调用必须保持 0。
+
+## 阶段 1 完成记录（2026-07-22）
+
+- `ResponsesReplayWriter` 已按公共 `Frontend` 在同一入口选择 Triton/CuTe validator；CuTe
+  输出固定为 `@cute.kernel scrc_k0` 与 `@cute.jit scrc_entry`，不按 case 名分派。
+- 正式 runner 已接入 `CuteGate1Runner`：source/replay 共用 CuTe 4.4.1 MLIR+PTX observer，
+  对 device/entry positional interface 作 alpha normalization，并执行同一 normal/masked-J
+  状态机。
+- `opaque` 只表达匿名 positional slot 与公共 DSL dtype；它禁止 rank、tensor_ref、alias、
+  读写 mode 与 manifest symbolic value，因而不能成为 J 的隐藏语义输入。
+- 修复 CuTe DSL 对 replay `@cute.jit` 使用 `inspect` 时需要真实临时文件的问题；物化发生在
+  已验证代码的隔离编译临时目录中，不改变历史 Task04 worker 字节或 preflight receipt。
+- 两个冻结 CuTe source 均以仅 alpha-renaming 的 untrusted replay 真实编译并严格闭合；bulk
+  与 TMA 交叉比较保留 `cp.async.bulk.shared` / `cp.async.bulk.tensor.1d.shared` 差异并拒绝闭合。
+- 定向回归 `42 passed`，全量回归 `655 passed, 4 skipped`；本阶段在线 LLM 调用为 0。
+
+下一步只做阶段 0：冻结自包含 protocol-v2 manifest、wire SHA 与新的 28/28 preflight；在
+这些 evidence 提交前不得启动 recovery canary。

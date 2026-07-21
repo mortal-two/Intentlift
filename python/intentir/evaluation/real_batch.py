@@ -648,18 +648,13 @@ def scrc_compiler_view(case: Mapping[str, Any]):
     specialization = case["specialization"]
     runtime_arguments = []
     for item in specialization["arguments"]:
-        if item["kind"] == "opaque":
-            raise ManifestError(
-                f"case {case['case_id']} requires an opaque frontend binding "
-                "that SCRCCompilerView does not yet support"
-            )
         runtime_arguments.append(
             SCRCCompilerArgument(
                 item["name"],
                 item["kind"],
                 item["dtype"] or item["kind"],
                 tuple(item["shape"] or ()),
-                item["value"],
+                item["value"] if item["kind"] == "scalar" else None,
             )
         )
     schedule = dict(specialization["schedule"])
@@ -803,7 +798,7 @@ def cute_compile_case(case: Mapping[str, Any]):
     )
 
 
-def _cute_entry_symbol(source: str, device_symbol: str) -> str:
+def cute_entry_symbol(source: str, device_symbol: str) -> str:
     """Resolve the unique public ``@cute.jit`` entry that invokes the pin."""
 
     tree = ast.parse(source)
@@ -916,7 +911,7 @@ def probe_cute_compilation(
             continue
         path = resolve_source_path(manifest, case)
         source = path.read_text(encoding="utf-8")
-        entry = _cute_entry_symbol(source, case["source"]["symbol"])
+        entry = cute_entry_symbol(source, case["source"]["symbol"])
         compile_case = cute_compile_case(case)
         result = compiler.compile(
             CuteKernelSource.from_file(

@@ -142,8 +142,10 @@ class SCRCCompilerArgument:
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
             raise ValueError("compiler argument name must be an identifier")
-        if self.kind not in {"tensor", "scalar", "none"}:
-            raise ValueError("compiler argument kind must be tensor/scalar/none")
+        if self.kind not in {"tensor", "scalar", "none", "opaque"}:
+            raise ValueError(
+                "compiler argument kind must be tensor/scalar/none/opaque"
+            )
         if not isinstance(self.dtype, str) or not self.dtype:
             raise ValueError("compiler argument dtype must be non-empty")
         shape = tuple(int(dim) for dim in self.shape)
@@ -155,6 +157,8 @@ class SCRCCompilerArgument:
             raise ValueError("scalar compiler argument requires value only")
         if self.kind == "none" and (shape or self.value is not None):
             raise ValueError("none compiler argument forbids shape/value")
+        if self.kind == "opaque" and (shape or self.value is not None):
+            raise ValueError("opaque compiler argument exposes only its public type")
         object.__setattr__(self, "shape", shape)
 
     def to_json(self) -> dict[str, Any]:
@@ -665,15 +669,16 @@ def _validate_compiler_view(
         parameter = interface.get(argument["name"])
         if parameter is None:
             raise ValueError("Lift omitted a trusted compiler argument")
-        expected_kind = (
-            ParameterKind.POINTER
-            if argument["kind"] == "tensor"
-            else ParameterKind.SCALAR
-        )
-        if argument["kind"] != "none" and parameter.kind not in {
-            expected_kind,
-            ParameterKind.TENSOR if expected_kind is ParameterKind.POINTER else expected_kind,
-        }:
+        expected_kind = {
+            "tensor": ParameterKind.POINTER,
+            "scalar": ParameterKind.SCALAR,
+            "opaque": ParameterKind.OPAQUE,
+            "none": ParameterKind.SCALAR,
+        }[argument["kind"]]
+        allowed_kinds = {expected_kind}
+        if expected_kind is ParameterKind.POINTER:
+            allowed_kinds.add(ParameterKind.TENSOR)
+        if argument["kind"] != "none" and parameter.kind not in allowed_kinds:
             raise ValueError("Lift changed a trusted compiler argument kind")
         if _canonical_dtype(parameter.dtype) != _canonical_dtype(argument["dtype"]):
             raise ValueError("Lift changed a trusted compiler argument dtype")

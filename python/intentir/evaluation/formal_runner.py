@@ -28,6 +28,8 @@ from intentir.extraction.providers.client import (
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
+from intentir.verify.gate1.cute_compiler import CuteCompiler, CuteKernelSource
+from intentir.verify.gate1.cute_orchestrate import CuteGate1Runner
 from intentir.verify.gate1.orchestrate import (
     Gate1Config,
     Gate1Runner,
@@ -46,6 +48,8 @@ from intentir.verify.gate1.replay import (
 from .real_batch import (
     BatchManifest,
     compiler_pythonpath,
+    cute_compile_case,
+    cute_entry_symbol,
     load_batch_manifest,
     resolve_source_path,
     scrc_compiler_view,
@@ -323,6 +327,8 @@ class LedgerReplayWriter(ReplayWriter):
             record["replay_code_path"] = _relative(self.case_dir, code_path)
             record["replay_code_sha256"] = _sha256(generation.code.encode())
             record["packet_sha256"] = generation.packet_digest
+            record["replay_function"] = generation.function_name
+            record["replay_entry_function"] = generation.entry_function_name
             _persist_receipt(self.case_dir, self.receipt)
             return generation
         except ReplayGenerationError as exc:
@@ -405,7 +411,7 @@ def run_formal_gate1_case(
     preflight_path: str | os.PathLike[str],
     compiler_timeout: float = 300.0,
 ) -> dict[str, Any]:
-    """Spend one Lift/Replay budget for a frozen Triton case and run Gate1."""
+    """Spend one Lift/Replay budget for one frozen case and run strict Gate1."""
 
     manifest_path = Path(manifest_path).resolve()
     manifest = load_batch_manifest(
@@ -413,11 +419,6 @@ def run_formal_gate1_case(
     )
     _validate_preflight(manifest, Path(preflight_path).resolve())
     case = manifest.case(case_id)
-    if case["source"]["frontend"] != "triton":
-        raise FormalRunError(
-            "formal runner currently requires the Triton Gate1 orchestrator; "
-            "CuTe calls remain forbidden until its replay arm is wired"
-        )
     case_dir = Path(output_root).resolve() / case_id
     receipt_path = case_dir / "receipt.json"
     if receipt_path.exists():
@@ -551,25 +552,51 @@ def run_formal_gate1_case(
         case_dir=case_dir,
         receipt=receipt,
     )
-    compiler = TritonCompiler(
-        timeout=compiler_timeout,
-        cache_dir=case_dir / "compiler_cache",
-        env={"PYTHONPATH": compiler_pythonpath(manifest)},
-    )
-    runner = Gate1Runner(
-        compiler=compiler,
-        writer=writer,
-        config=Gate1Config(observer_level=2, run_masked_j=True),
-    )
-    result = runner.run(
-        artifact,
-        source=KernelSource.from_file(
-            source_path,
-            case["source"]["symbol"],
-            trusted=True,
-        ),
-        source_case=triton_compile_case(case),
-    )
+    if case["source"]["frontend"] == "triton":
+        compiler = TritonCompiler(
+            timeout=compiler_timeout,
+            cache_dir=case_dir / "compiler_cache",
+            env={"PYTHONPATH": compiler_pythonpath(manifest)},
+        )
+        runner = Gate1Runner(
+            compiler=compiler,
+            writer=writer,
+            config=Gate1Config(observer_level=2, run_masked_j=True),
+        )
+        result = runner.run(
+            artifact,
+            source=KernelSource.from_file(
+                source_path,
+                case["source"]["symbol"],
+                trusted=True,
+            ),
+            source_case=triton_compile_case(case),
+        )
+    elif case["source"]["frontend"] == "cute":
+        compiler = CuteCompiler(
+            timeout=compiler_timeout,
+            cache_dir=case_dir / "compiler_cache",
+            arch="sm_120a",
+        )
+        runner = CuteGate1Runner(
+            compiler=compiler,
+            writer=writer,
+            config=Gate1Config(observer_level=2, run_masked_j=True),
+        )
+        result = runner.run(
+            artifact,
+            source=CuteKernelSource.from_file(
+                source_path,
+                case["source"]["symbol"],
+                cute_entry_symbol(source, case["source"]["symbol"]),
+                trusted=True,
+            ),
+            source_case=cute_compile_case(case),
+        )
+    else:
+        raise FormalRunError(
+            f"no formal Gate1 runner for frontend {case['source']['frontend']!r}"
+        )
     gate1_path = case_dir / "gate1" / "receipt.json"
     _write_json(gate1_path, result.to_json())
     receipt["gate1"] = {

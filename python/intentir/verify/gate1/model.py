@@ -636,6 +636,7 @@ class ParameterKind(str, Enum):
     TENSOR = "tensor"
     POINTER = "pointer"
     SCALAR = "scalar"
+    OPAQUE = "opaque"
     CONSTEXPR = "constexpr"
 
 
@@ -2487,6 +2488,16 @@ class KernelParameter(StrictJSONMixin):
             self.alias_of = _string(self.alias_of, "KernelParameter.alias_of")
         if self.tensor_ref is not None:
             self.tensor_ref = _string(self.tensor_ref, "KernelParameter.tensor_ref")
+        if self.kind is ParameterKind.OPAQUE and (
+            self.mode is not ParameterMode.VALUE
+            or self.dtype is None
+            or self.rank is not None
+            or self.alias_of is not None
+            or self.tensor_ref is not None
+        ):
+            raise SchemaError(
+                "opaque parameters expose only a positional name and public dtype"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "KernelParameter":

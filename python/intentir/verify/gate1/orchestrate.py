@@ -30,7 +30,7 @@ class Gate1Config:
 
     def __post_init__(self) -> None:
         if self.observer_level != 2:
-            raise ValueError("the active Triton strong path requires observer level 2")
+            raise ValueError("the active strong Gate1 paths require observer level 2")
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,8 @@ class Gate1ExecutionResult:
                 "generation": (
                     {
                         "model": value.generation.model,
+                        "function_name": value.generation.function_name,
+                        "entry_function_name": value.generation.entry_function_name,
                         "response_model": value.generation.response_model,
                         "response_id": value.generation.response_id,
                         "packet_digest": value.generation.packet_digest,

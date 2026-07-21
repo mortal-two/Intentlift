@@ -11,7 +11,8 @@ from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 
 from .codegen import extract_python_module
-from .model import Gate1Artifact
+from .cute_codegen import extract_cute_module
+from .model import Frontend, Gate1Artifact
 from .prompt import build_rewriter_prompt, replay_packet_digest
 
 
@@ -26,6 +27,7 @@ class ReplayGeneration:
     context_receipt: Mapping[str, Any] = field(default_factory=dict)
     usage: Mapping[str, int] = field(default_factory=dict)
     response_model: str | None = None
+    entry_function_name: str | None = None
     request_sha256: str = ""
     response_sha256: str = ""
     raw_response_sha256: str = ""
@@ -61,6 +63,32 @@ class ReplayWriter(Protocol):
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration: ...
+
+
+def _extract_replay_code(
+    response: str,
+    *,
+    frontend: Frontend,
+    function_name: str,
+) -> tuple[str, str | None]:
+    if frontend is Frontend.TRITON:
+        return (
+            extract_python_module(response, required_function=function_name),
+            None,
+        )
+    if frontend is Frontend.CUTE:
+        entry = "scrc_entry"
+        return (
+            extract_cute_module(
+                response,
+                required_kernel=function_name,
+                required_entry=entry,
+            ),
+            entry,
+        )
+    raise ValueError(
+        f"source-blind Replay has no audited validator for {frontend.value!r}"
+    )
 
 
 def _usage(raw: Mapping[str, Any]) -> dict[str, int]:
@@ -114,6 +142,11 @@ class ResponsesReplayWriter:
         )
         packet = json.loads(user)
         function_name = packet["harness"]["function_name"]
+        frontend = Frontend(packet["harness"]["frontend"])
+        if frontend not in {Frontend.TRITON, Frontend.CUTE}:
+            raise ValueError(
+                f"source-blind Replay has no audited validator for {frontend.value!r}"
+            )
         reply = call_responses(
             instructions,
             user,
@@ -124,9 +157,10 @@ class ResponsesReplayWriter:
             (instructions + "\0" + user).encode()
         ).hexdigest()
         try:
-            code = extract_python_module(
+            code, entry_function_name = _extract_replay_code(
                 reply.text,
-                required_function=function_name,
+                frontend=frontend,
+                function_name=function_name,
             )
         except Exception as exc:
             raise ReplayGenerationError(
@@ -175,6 +209,7 @@ class ResponsesReplayWriter:
                 if isinstance(reply.raw.get("model"), str)
                 else None
             ),
+            entry_function_name=entry_function_name,
             request_sha256=reply.request_sha256,
             response_sha256=(
                 reply.response_sha256
@@ -200,13 +235,19 @@ class StaticReplayWriter:
         instructions, user = build_rewriter_prompt(artifact, masked=masked)
         packet = json.loads(user)
         function_name = packet["harness"]["function_name"]
-        code = extract_python_module(self.code, required_function=function_name)
+        frontend = Frontend(packet["harness"]["frontend"])
+        code, entry_function_name = _extract_replay_code(
+            self.code,
+            frontend=frontend,
+            function_name=function_name,
+        )
         self.calls.append(masked)
         return ReplayGeneration(
             code=code,
             function_name=function_name,
             model=self.model,
             response_id=None,
+            entry_function_name=entry_function_name,
             packet_digest=replay_packet_digest(packet),
             prompt_digest=hashlib.sha256(
                 (instructions + "\0" + user).encode()

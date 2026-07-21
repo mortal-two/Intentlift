@@ -332,7 +332,7 @@ def _interface_schema() -> dict[str, Any]:
             "name": _PARAMETER_HANDLE,
             "kind": {
                 "type": "string",
-                "enum": ["tensor", "pointer", "scalar", "constexpr"],
+                "enum": ["tensor", "pointer", "scalar", "opaque", "constexpr"],
             },
             "mode": {
                 "type": "string",
@@ -352,7 +352,9 @@ def _interface_schema() -> dict[str, Any]:
             "specialization, keeps a tensor_ref whose J tensor dtype, rank and "
             "shape exactly match that view. The inactive tensor remains a typed "
             "ABI declaration but has no invented operation, access or effect. "
-            "Do not invent dimension reference fields."
+            "Do not invent dimension reference fields. An opaque parameter is "
+            "representation-only frontend plumbing such as cute.CopyAtom; it "
+            "has dtype but no tensor_ref and contributes no J semantics."
         ),
     )
     return _closed_object(

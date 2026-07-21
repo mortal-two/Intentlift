@@ -9,8 +9,14 @@ import pytest
 from intentir.evaluation.formal_runner import (
     FormalRunError,
     LedgerReplayWriter,
-    run_formal_gate1_case,
 )
+from intentir.evaluation.real_batch import (
+    cute_entry_symbol,
+    load_batch_manifest,
+    resolve_source_path,
+    scrc_compiler_view,
+)
+from intentir.extraction.lifters.scrc import prepare_scrc_lift
 from intentir.extraction.providers import client
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.prompt import (
@@ -140,17 +146,33 @@ def test_replay_ledger_writes_before_call_and_never_contains_source(
         writer.generate(artifact)
 
 
-def test_formal_runner_refuses_unwired_cute_before_spending_call_budget(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(FormalRunError, match="CuTe calls remain forbidden"):
-        run_formal_gate1_case(
-            _MANIFEST,
-            "cute_async_bulk_copy",
-            output_root=tmp_path,
-            preflight_path=_PREFLIGHT,
-        )
-    assert list(tmp_path.iterdir()) == []
+def test_formal_cute_case_has_generic_lift_and_compile_bindings() -> None:
+    manifest = load_batch_manifest(_MANIFEST)
+    case = manifest.case("cute_async_tma_copy")
+    view = scrc_compiler_view(case)
+    assert [item.kind for item in view.arguments] == [
+        "tensor",
+        "opaque",
+        "tensor",
+    ]
+    assert view.arguments[1].dtype == "cute.CopyAtom"
+    assert view.arguments[1].value is None
+    source = resolve_source_path(manifest, case).read_text(encoding="utf-8")
+    lift_input = json.loads(
+        prepare_scrc_lift(
+            source,
+            compiler_view=view,
+            source_symbol=case["source"]["symbol"],
+        ).user_input
+    )
+    opaque_argument = lift_input["harness_compiler_view"]["arguments"][1]
+    assert opaque_argument == {
+        "name": "p1",
+        "kind": "opaque",
+        "dtype": "cute.CopyAtom",
+    }
+    assert "f32_tma_tile_128" not in json.dumps(lift_input)
+    assert cute_entry_symbol(source, case["source"]["symbol"]) == "go"
 
 
 def test_committed_first_attempt_is_complete_and_not_rewritten_as_success() -> None:

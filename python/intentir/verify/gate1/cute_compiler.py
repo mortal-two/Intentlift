@@ -335,7 +335,24 @@ class CuteCompiler:
             work = Path(temporary)
             request_path = work / "request.json"
             result_path = work / "result.json"
-            request_path.write_text(json.dumps(request, sort_keys=True), encoding="utf-8")
+            worker_request = request
+            if source.kind == "code":
+                # CuTe preprocesses @cute.jit functions through inspect, which
+                # requires a real file.  The untrusted bytes were validated
+                # above; materialize exactly those bytes only for the lifetime
+                # of this isolated compile invocation.
+                replay_path = work / "validated_replay.py"
+                replay_path.write_text(code, encoding="utf-8")
+                worker_request = {
+                    **request,
+                    "source": {
+                        **request["source"],
+                        "filename": str(replay_path),
+                    },
+                }
+            request_path.write_text(
+                json.dumps(worker_request, sort_keys=True), encoding="utf-8"
+            )
             environment = dict(os.environ)
             environment.update(self.extra_env)
             environment.update(
