@@ -10,9 +10,9 @@ Lift 直接完成 whole-tensor semantic lifting、J 原子化/组合化、纯 C 
 realization π 提取。固定代码不得禁止 LLM 输出 π 后再由 composer 重建，也不得用
 source-pattern recognizer修复结果。
 
-Lift 必须按 denotation 而不是按 Python/Triton binding kind 分类参数：semantic constexpr
-进入 J + 匿名 interface，schedule constexpr 才进入 C。`tl.constexpr`、模板参数或编译期
-常量均不能被固定代码一律投影成 C；名字匿名化也不能改变该分类。
+Lift 必须按 denotation 而不是按 Python/Triton binding kind 分类参数：semantic consequence
+进入 J，representation-only use 进入 pi，schedule constexpr 才进入 C。`tl.constexpr`、
+模板参数或编译期常量均不能被固定代码一律投影成 C；名字匿名化也不能改变该分类。
 
 J/C/π 在 Lift 边界已经使用 opaque handle。真实源码命名只留在不可见 harness sidecar。
 
@@ -26,8 +26,9 @@ Replay 看不到源码、source span、真实名字、旧候选或 compiler diff
 LLM 动态检索的公共前端文档、仓库示例和工具说明，检索 trace 进入 artifact receipt；
 核心仓库不维护或预选按当前 Kernel/op/pattern 组织的 RuleCard/API mapping。
 
-Replay 的 harness 可以给 semantic constexpr 提供与 source 相同的冻结调用值，但 Replay
-不能从 C 获得该值的语义权威；逻辑 extent/predicate/result 只能来自 J。
+Replay 的 harness 可以给 non-C constexpr 提供与 source 相同的冻结调用值，但 Replay
+不能从 C 获得该值的语义权威；逻辑 extent/predicate/result 只能来自 J，纯表示 use 只能
+来自 pi 的匿名 topology。
 
 ## 失败
 

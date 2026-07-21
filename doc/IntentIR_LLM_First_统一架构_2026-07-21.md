@@ -77,11 +77,12 @@ Intent = J(A+B) + C
 第二份语义真值。Gate1 比较前也按声明位置统一源码与 Replay 的参数 spelling；参数名字
 可以不同，但 arity、kind、rank、dtype、constexpr 位置与 C 值不能不同。
 
-这里的 `constexpr` 只是前端绑定方式，不等于 Layer C。改变 logical extent、predicate、
-shape 或允许结果的 constexpr 是 J-owned semantic specialization parameter；匿名 interface
-保留其位置/类型，冻结值留在 HarnessContext。只有 tile、block、stage、num_warps 等在合法
-变化下不改变 J denotation 的 constexpr 才进入 C。Gate1 将 semantic constexpr 的同一调用
-值按位置交给 source 与 Replay，不建立 `LogicalABI`，也不允许 pi 承担遗漏语义。
+这里的 `constexpr` 只是前端绑定方式，不等于 Layer C。匿名 interface 保留 non-C constexpr
+的位置/类型，冻结值留在 HarnessContext：改变 logical extent、predicate、shape 或允许结果的
+consequence 由 J 拥有；stride/layout 等纯表示 use 可由 pi 匿名引用。只有 tile、block、stage、
+num_warps 等在合法变化下不改变 J denotation 的 constexpr 才进入 C。Gate1 将 non-C
+constexpr 的同一调用值按位置交给 source 与 Replay，不建立 `LogicalABI`，也不允许 pi 承担
+遗漏语义。
 
 ## 4. 系统主流程
 

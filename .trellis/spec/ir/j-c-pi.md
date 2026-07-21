@@ -17,10 +17,10 @@ canonical C 只有 `{slots, values}`；每个 slot 由匿名名、kind、source-
 value type 和 required bit 构成。`role` 可以表达 `tile_extent/num_warps/vector_width`，不能
 表达 mask placement、operator、predicate 或 source family。
 
-`constexpr` 只描述前端绑定时机，不决定所有权。会改变 logical shape/domain/predicate/
-result relation 的 constexpr 是 J 的 semantic specialization parameter：它在匿名 interface
-中使用 `p*` handle，具体冻结值只留在 harness，绝不进入 C。只有不改变 J denotation 的
-tile/block/stage 等 constexpr 才使用 `c*` 并成为 C slot。
+`constexpr` 只描述前端绑定时机，不决定所有权。非 C constexpr 在匿名 interface 中使用
+`p*` handle，具体冻结值只留在 harness：会改变 logical shape/domain/predicate/result
+relation 的 consequence 进入 J；只影响 layout/address realization 的 use 只能由 pi 匿名引用。
+只有不改变 J denotation 的 tile/block/stage 等 constexpr 才使用 `c*` 并成为 C slot。
 
 ## π
 
@@ -49,6 +49,6 @@ realization）。mechanism tag 不得携带逻辑 operator、combiner、predicat
 Gate1 observer 同样按位置 alpha-normalize 源与 Replay 的参数 spelling；arity、kind、rank、
 dtype、constexpr 位置与 C 值仍是硬合同。
 
-Gate1 编译时，semantic constexpr 的具体值按源码声明位置从同一冻结 invocation 复制到
-Replay；这只是调用绑定，不是 C，也不建立 `LogicalABI`。其 logical consequence 必须已经在
-J 中，pi 无权补写。
+Gate1 编译时，non-C constexpr 的具体值按源码声明位置从同一冻结 invocation 复制到
+Replay；这只是调用绑定，不是 C，也不建立 `LogicalABI`。其 semantic consequence 必须已经
+在 J 中；pi 只能引用 representation use，不能补写遗漏语义。

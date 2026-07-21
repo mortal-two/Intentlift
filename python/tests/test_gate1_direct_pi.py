@@ -181,7 +181,7 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     assert "selected_kernel" not in anonymous
 
 
-def test_semantic_constexpr_is_anonymous_p_and_never_pure_c() -> None:
+def test_bound_constexpr_is_anonymous_p_and_never_pure_c() -> None:
     source = """import triton
 import triton.language as tl
 
@@ -194,7 +194,7 @@ def selected_kernel(X, Y, N, VALID: tl.constexpr, BLOCK: tl.constexpr):
 """
     view = SCRCCompilerView(
         schedule_values={"BLOCK": 128, "num_warps": 4},
-        semantic_values={"VALID": 17},
+        bound_constexpr_values={"VALID": 17},
         compiler_slots=("num_warps",),
         arguments=(
             SCRCCompilerArgument("X", "tensor", "f32", (17,)),
@@ -214,23 +214,23 @@ def selected_kernel(X, Y, N, VALID: tl.constexpr, BLOCK: tl.constexpr):
     assert "def scrc_k0(p0, p1, p2, p3: tl.constexpr, c0: tl.constexpr)" in (
         payload["anonymous_source"]
     )
-    assert compiler_view["semantic_values"] == {"p3": 17}
+    assert compiler_view["bound_constexpr_values"] == {"p3": 17}
     assert compiler_view["schedule_values"] == {"c0": 128, "c1": 4}
     assert compiler_view["parameter_order"] == ["p0", "p1", "p2", "p3", "c0"]
     assert compiler_view["constexpr_parameters"] == ["p3", "c0"]
 
 
-def test_compiler_view_rejects_semantic_schedule_overlap() -> None:
+def test_compiler_view_rejects_bound_schedule_overlap() -> None:
     with pytest.raises(ValueError, match="must be disjoint"):
         SCRCCompilerView(
             schedule_values={"N": 8},
-            semantic_values={"N": 8},
+            bound_constexpr_values={"N": 8},
             parameter_order=("N",),
             constexpr_parameters=("N",),
         )
 
 
-def test_lift_keeps_semantic_constexpr_outside_c(monkeypatch) -> None:
+def test_lift_keeps_bound_constexpr_outside_c(monkeypatch) -> None:
     response = make_reduce_artifact().to_json()
     response.pop("source")
     response.pop("provenance")
@@ -250,14 +250,14 @@ def test_lift_keeps_semantic_constexpr_outside_c(monkeypatch) -> None:
     def fake_call(instructions, user, **kwargs):
         del instructions, kwargs
         view = json.loads(user)["harness_compiler_view"]
-        assert view["semantic_values"] == {"p3": 4}
+        assert view["bound_constexpr_values"] == {"p3": 4}
         assert view["schedule_values"] == {"c0": 128}
         return LLMReply(json.dumps(response), "test-model", {"id": "resp-sem"})
 
     monkeypatch.setattr(scrc, "call_responses", fake_call)
     compiler_view = SCRCCompilerView(
         schedule_values={"BLOCK": 128},
-        semantic_values={"VALID": 4},
+        bound_constexpr_values={"VALID": 4},
         arguments=(
             SCRCCompilerArgument("X", "tensor", "f32", (2, 4)),
             SCRCCompilerArgument("Y", "tensor", "f32", (2,)),

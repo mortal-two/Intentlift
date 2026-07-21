@@ -183,7 +183,7 @@ class SCRCCompilerView:
     """Trusted invocation facts supplied to Lift, never a semantic ABI."""
 
     schedule_values: Mapping[str, bool | int | float | str]
-    semantic_values: Mapping[str, bool | int | float | str] = field(
+    bound_constexpr_values: Mapping[str, bool | int | float | str] = field(
         default_factory=dict
     )
     compiler_slots: tuple[str, ...] = ()
@@ -196,10 +196,10 @@ class SCRCCompilerView:
 
     def __post_init__(self) -> None:
         values = dict(self.schedule_values)
-        semantic_values = dict(self.semantic_values)
+        bound_constexpr_values = dict(self.bound_constexpr_values)
         for collection, label in (
             (values, "schedule"),
-            (semantic_values, "semantic"),
+            (bound_constexpr_values, "bound constexpr"),
         ):
             for name, value in collection.items():
                 if not isinstance(name, str) or not name.isidentifier():
@@ -208,8 +208,10 @@ class SCRCCompilerView:
                     raise TypeError(f"{label} values must be JSON scalars")
                 if isinstance(value, float) and not math.isfinite(value):
                     raise ValueError(f"{label} float values must be finite")
-        if set(values) & set(semantic_values):
-            raise ValueError("semantic and schedule parameters must be disjoint")
+        if set(values) & set(bound_constexpr_values):
+            raise ValueError(
+                "bound constexpr and schedule parameters must be disjoint"
+            )
         slots = tuple(self.compiler_slots)
         if len(slots) != len(set(slots)) or any(
             not isinstance(name, str) or not name.isidentifier()
@@ -219,7 +221,9 @@ class SCRCCompilerView:
         if set(slots) - set(values):
             raise ValueError("compiler slots require schedule values")
         object.__setattr__(self, "schedule_values", values)
-        object.__setattr__(self, "semantic_values", semantic_values)
+        object.__setattr__(
+            self, "bound_constexpr_values", bound_constexpr_values
+        )
         object.__setattr__(self, "compiler_slots", slots)
         object.__setattr__(
             self,
@@ -271,17 +275,19 @@ class SCRCCompilerView:
         object.__setattr__(
             self, "constexpr_parameters", constexpr_parameters
         )
-        semantic_names = set(semantic_values)
-        if semantic_names - constexpr_names:
-            raise ValueError("semantic values must bind constexpr parameters")
-        schedule_constexprs = constexpr_names - semantic_names
+        bound_names = set(bound_constexpr_values)
+        if bound_names - constexpr_names:
+            raise ValueError(
+                "bound constexpr values must bind constexpr parameters"
+            )
+        schedule_constexprs = constexpr_names - bound_names
         if schedule_constexprs - set(values):
             raise ValueError("schedule constexpr parameters require C values")
 
     def to_json(self) -> dict[str, Any]:
         return {
             "schedule_values": dict(self.schedule_values),
-            "semantic_values": dict(self.semantic_values),
+            "bound_constexpr_values": dict(self.bound_constexpr_values),
             "compiler_slots": list(self.compiler_slots),
             "aliases": [item.to_json() for item in self.aliases],
             "arguments": [item.to_json() for item in self.arguments],
@@ -324,7 +330,7 @@ def anonymize_source(
     source: str,
     *,
     source_symbol: str | None = None,
-    semantic_constexpr_parameters: tuple[str, ...] = (),
+    bound_constexpr_parameters: tuple[str, ...] = (),
 ) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
     """Alpha-rename source identifiers before the Lift provider sees them.
 
@@ -373,31 +379,31 @@ def anonymize_source(
     for index, function in enumerate(ordered_functions):
         mapping.setdefault(function.name, f"scrc_k{index}")
 
-    semantic_constexprs = set(semantic_constexpr_parameters)
-    if len(semantic_constexprs) != len(semantic_constexpr_parameters) or any(
+    bound_constexprs = set(bound_constexpr_parameters)
+    if len(bound_constexprs) != len(bound_constexpr_parameters) or any(
         not isinstance(name, str) or not name.isidentifier()
-        for name in semantic_constexpr_parameters
+        for name in bound_constexpr_parameters
     ):
         raise ValueError(
-            "semantic constexpr parameters must be unique identifiers"
+            "bound constexpr parameters must be unique identifiers"
         )
     annotated_constexprs = {
         argument.arg
         for argument in primary.args.args
         if _annotation_is_constexpr(argument.annotation)
     }
-    unknown_semantic_constexprs = semantic_constexprs - annotated_constexprs
-    if unknown_semantic_constexprs:
+    unknown_bound_constexprs = bound_constexprs - annotated_constexprs
+    if unknown_bound_constexprs:
         raise ValueError(
-            "semantic constexpr parameters are absent from the selected ABI: "
-            + ", ".join(sorted(unknown_semantic_constexprs))
+            "bound constexpr parameters are absent from the selected ABI: "
+            + ", ".join(sorted(unknown_bound_constexprs))
         )
 
     runtime_index = 0
     constexpr_index = 0
     for argument in primary.args.args:
         if _annotation_is_constexpr(argument.annotation):
-            if argument.arg in semantic_constexprs:
+            if argument.arg in bound_constexprs:
                 opaque = f"p{runtime_index}"
                 runtime_index += 1
             else:
@@ -514,8 +520,9 @@ def _anonymous_compiler_view(
         "schedule_values": {
             mapping[name]: value for name, value in view.schedule_values.items()
         },
-        "semantic_values": {
-            mapping[name]: value for name, value in view.semantic_values.items()
+        "bound_constexpr_values": {
+            mapping[name]: value
+            for name, value in view.bound_constexpr_values.items()
         },
         "compiler_slots": [mapping[name] for name in view.compiler_slots],
         "compiler_roles": {
@@ -567,11 +574,13 @@ the supplied anonymous values. For each compiler slot, use exactly the public
 role in compiler_roles. Do not rename c* slots to p* and do not turn compiler
 roles into inferred strategy names.
 
-semantic_values are frozen semantic constexpr bindings, not C. Their p*
-parameters remain constexpr in interface, while their logical extent/value/
-predicate consequences must be represented only in J. They must never appear
-as schedule slots or values. A non-semantic source constexpr remains a c*
-parameter and must have a matching pure-C constexpr slot.
+bound_constexpr_values are frozen non-C invocation bindings. Their p*
+parameters remain constexpr in interface and never become schedule slots or
+values. Lift must classify their source use: any consequence that changes
+logical extent/value/predicate/result belongs only to J; representation-only
+layout/address realization may be referenced only by pi. A source constexpr
+not listed there is pure scheduling, remains a c* parameter, and must have a
+matching pure-C constexpr slot.
 
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
@@ -618,8 +627,8 @@ def _prompt_material(
     anonymous_source, binding, mapping = anonymize_source(
         source,
         source_symbol=source_symbol,
-        semantic_constexpr_parameters=(
-            tuple(compiler_view.semantic_values)
+        bound_constexpr_parameters=(
+            tuple(compiler_view.bound_constexpr_values)
             if compiler_view is not None
             else ()
         ),
@@ -734,13 +743,13 @@ def _validate_compiler_view(
     }
     if actual_constexprs != expected_constexprs:
         raise ValueError("Lift changed constexpr parameter positions")
-    semantic_constexprs = set(anonymous_view["semantic_values"])
+    bound_constexprs = set(anonymous_view["bound_constexpr_values"])
     slots = {item.name: item for item in artifact.schedule.slots}
     for name in expected_constexprs:
         slot = slots.get(name)
-        if name in semantic_constexprs:
+        if name in bound_constexprs:
             if slot is not None:
-                raise ValueError("Lift moved a semantic constexpr into pure C")
+                raise ValueError("Lift moved a bound constexpr into pure C")
         elif slot is None or slot.kind is not ScheduleSlotKind.CONSTEXPR:
             raise ValueError("Lift omitted a pure-C constexpr slot")
     interface = {item.name: item for item in artifact.interface.parameters}

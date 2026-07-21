@@ -139,7 +139,7 @@ def test_source_schedule_value_must_match_c_before_replay() -> None:
     assert "differs from C" in (result.normal.diagnostic or "")
 
 
-def test_semantic_constexpr_binding_is_copied_from_harness_not_c() -> None:
+def test_bound_constexpr_binding_is_copied_from_harness_not_c() -> None:
     payload = make_reduce_artifact().to_json()
     payload["interface"]["parameters"].insert(
         3,
