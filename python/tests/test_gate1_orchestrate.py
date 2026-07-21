@@ -671,14 +671,12 @@ def test_plan_mismatch_cannot_receive_exact_composer_step_extension() -> None:
         CaptureWriter(["GOOD"]),
     )
 
-    assert result.status is Gate1Status.NO_CLOSURE
-    assert result.termination_reason == "relifter_unavailable"
+    assert result.status is Gate1Status.LIFT_REJECTED
     assert result.leakage_report is None
-    assert result.admissions[-1].failed_category.value == "pi_completeness"
-    assert any("Gate1 artifact admission failed" in item for item in result.diagnostics)
+    assert any("artifact validation failed" in item for item in result.diagnostics)
 
 
-def test_gate1_materializes_canonical_pi_inside_admission() -> None:
+def test_gate1_rejects_incomplete_lift_artifact_instead_of_generating_pi() -> None:
     incomplete = replace(
         _artifact(), plan=ReplayPlan([]), compose_provenance=None
     )
@@ -692,11 +690,8 @@ def test_gate1_materializes_canonical_pi_inside_admission() -> None:
         writer,
     )
 
-    assert result.status is Gate1Status.REPLAY_CLOSED
-    assert writer.calls == [False]
-    assert result.artifact.plan.steps
-    assert result.artifact.compose_provenance is not None
-    assert result.admissions[-1].passed
+    assert result.status is Gate1Status.LIFT_REJECTED
+    assert writer.calls == []
 
 
 def test_gate1_readmission_rejects_mutated_nonportable_layer_b() -> None:
@@ -713,55 +708,13 @@ def test_gate1_readmission_rejects_mutated_nonportable_layer_b() -> None:
         writer,
     )
 
-    assert result.status is Gate1Status.NO_CLOSURE
-    assert result.termination_reason == "relifter_unavailable"
+    assert result.status is Gate1Status.LIFT_REJECTED
     assert writer.calls == []
     assert artifact.j.boundary.domains["lane_domain"] == invalid
     assert any(
         "Boundary.domains.lane_domain must be a portable boolean" in item
         for item in result.diagnostics
     )
-    assert result.admissions[-1].failed_category.value == "layer_b_semantics"
-
-
-def test_gate1_admission_failure_drives_bounded_source_aware_relift() -> None:
-    artifact = _artifact()
-    artifact.j.boundary.domains["lane_domain"] = (
-        "lane = grid_axis(0), lane < n"
-    )
-
-    class FixingRelifter:
-        calls = 0
-
-        def relift(
-            self, candidate, *, source_fingerprint, history, request
-        ):
-            self.calls += 1
-            assert source_fingerprint is None
-            assert history[-1].diagnosis is not None
-            assert request.trigger is ReliftTrigger.ARTIFACT_ADMISSION_FAILED
-            fixed = Gate1Artifact.from_json(candidate.to_json())
-            fixed.j.boundary.domains["lane_domain"] = "lane < n"
-            return fixed
-
-    relifter = FixingRelifter()
-    writer = CaptureWriter(["GOOD"])
-    result = _runner(
-        max_relifts=2,
-        run_masked_ablation=False,
-    ).run(
-        _source(),
-        artifact,
-        _case(),
-        default_triton_rule_registry(),
-        writer,
-        relifter=relifter,
-    )
-
-    assert result.status is Gate1Status.REPLAY_CLOSED
-    assert relifter.calls == 1
-    assert writer.calls == [False]
-    assert [item.passed for item in result.admissions] == [False, True]
 
 
 def _binary_artifact() -> Gate1Artifact:
@@ -2035,8 +1988,7 @@ def test_declared_function_and_alias_contracts_are_rejected_before_writer() -> N
         default_triton_rule_registry(),
         writer,
     )
-    assert function_mismatch.status is Gate1Status.NO_CLOSURE
-    assert function_mismatch.termination_reason == "relifter_unavailable"
+    assert function_mismatch.status is Gate1Status.LIFT_REJECTED
     assert writer.calls == []
 
     artifact = _artifact()
@@ -2055,8 +2007,7 @@ def test_declared_function_and_alias_contracts_are_rejected_before_writer() -> N
     alias_result = _runner().run(
         _source(), aliased, _case(), default_triton_rule_registry(), writer2
     )
-    assert alias_result.status is Gate1Status.NO_CLOSURE
-    assert alias_result.termination_reason == "relifter_unavailable"
+    assert alias_result.status is Gate1Status.LIFT_REJECTED
     assert writer2.calls == []
 
 
