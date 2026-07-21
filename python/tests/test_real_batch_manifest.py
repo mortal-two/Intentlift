@@ -46,7 +46,9 @@ def test_preflight_receipt_is_bound_to_manifest_and_current_worker() -> None:
         item["case_id"] for item in manifest.cases
     ]
     assert receipt["summary"]["triton_compiled"] == 26
-    assert receipt["summary"]["cute_compiled"] == 0
+    assert receipt["summary"]["cute_compiled"] == 2
+    assert receipt["summary"]["overall_ready"] is True
+    assert receipt["summary"]["blocking_capability"] is None
     worker = (
         _ROOT
         / "python"
@@ -58,6 +60,22 @@ def test_preflight_receipt_is_bound_to_manifest_and_current_worker() -> None:
     assert receipt["compiler"]["gate1_worker_sha256"] == hashlib.sha256(
         worker.read_bytes()
     ).hexdigest()
+    cute_worker = (
+        _ROOT
+        / "python"
+        / "intentir"
+        / "verify"
+        / "gate1"
+        / "_cute_worker.py"
+    )
+    assert receipt["compiler"]["cute_worker_sha256"] == hashlib.sha256(
+        cute_worker.read_bytes()
+    ).hexdigest()
+    cute_cases = [item for item in receipt["cases"] if item["frontend"] == "cute"]
+    assert [item["async_copy_opcode"] for item in cute_cases] == [
+        "cp.async.bulk.shared",
+        "cp.async.bulk.tensor.1d.shared",
+    ]
 
 
 def test_manifest_rejects_semantic_artifact_side_channel() -> None:

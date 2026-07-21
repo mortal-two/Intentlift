@@ -18,12 +18,19 @@
     "provider_name": "gpt-5.6-sol",
     "provider_model": "gpt-5.6-sol",
     "provider_configured": true,
-    "cutlass_cute_available": false
+    "cutlass_cute_available": true,
+    "nvidia_cutlass_dsl": "4.4.1",
+    "nvidia_cutlass_dsl_libs_base": "4.4.1",
+    "nvidia_cutlass_dsl_libs_cu13": "4.4.1"
   },
   "compiler": {
     "gate1_cache_schema": 2,
     "gate1_worker_sha256": "595554141a5e4d3616cc2952a6f8a531372e7fd37b1bb5c482b7dd115d2e9a00",
     "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+    "cute_cache_schema": 1,
+    "cute_worker_sha256": "41d87bcdf38d6194efb31b94f661e48e40fa2c1cded12a0a9d53fa5056989a5e",
+    "cute_observer_sha256": "24141e3e25d0823c7e342769a3b0358718435c699439b7c94b87409e6c28d418",
+    "cute_observer_protocol": "cute-4.4-mlir-ptx-topology-v1",
     "observer": "normalized_compiler_topology_level2"
   },
   "summary": {
@@ -32,9 +39,9 @@
     "triton_total": 26,
     "triton_compiled": 26,
     "cute_total": 2,
-    "cute_compiled": 0,
-    "overall_ready": false,
-    "blocking_capability": "cutlass_cute_frontend_and_level2_observer"
+    "cute_compiled": 2,
+    "overall_ready": true,
+    "blocking_capability": null
   },
   "cases": [
     {"case_id": "liger_swiglu_forward", "frontend": "triton", "status": "compiled", "ttir_sha256": "92e14ee61cbc4adce23bc6bf6813853d3983ff167732d40b1e2a934ce514f5fb", "ttgir_sha256": "75bc6af49a8d8d5b9e219d0036e60a29304029227f2d867b74aa156a516f4a16"},
@@ -49,8 +56,8 @@
     {"case_id": "liger_llama4_rope", "frontend": "triton", "status": "compiled", "ttir_sha256": "262a05cfbb8defff6bcc81e589c466d23eee38fe24e476b1416be7fadd275e0b", "ttgir_sha256": "3960824579d904f00beb5165d2cae26696b6b9dc1402e9e045e2985cea290e33"},
     {"case_id": "liger_multi_token_mask_forward", "frontend": "triton", "status": "compiled", "ttir_sha256": "babbf4d2954f2c15faf903d7b98765e6ae05d04033bd36e6e1840120bd0423e1", "ttgir_sha256": "410123b07d0b8c92de304deb2c2faf02fa9bfd8775322b7bf3962578aa5f127b"},
     {"case_id": "flaggems_cat_copy", "frontend": "triton", "status": "compiled", "ttir_sha256": "1a227a4fd01277491e2ba969168ab56933380e9d37d159e51bdcc34154ff6cd5", "ttgir_sha256": "e2f9f022c70adfd540e9b58607dbf8fe65a2fc716a22825bd44629f5696d5389"},
-    {"case_id": "cute_async_bulk_copy", "frontend": "cute", "status": "blocked_missing_frontend", "ttir_sha256": null, "ttgir_sha256": null},
-    {"case_id": "cute_async_tma_copy", "frontend": "cute", "status": "blocked_missing_frontend", "ttir_sha256": null, "ttgir_sha256": null},
+    {"case_id": "cute_async_bulk_copy", "frontend": "cute", "status": "compiled", "entry_symbol": "go", "mlir_sha256": "498055358b081ddb9f3fc9b28bbf9112424d0c7207a9b420f1316999a8540b37", "ptx_sha256": "a3dc724707488f57b14cabaf1803647656c94e38cc0c9e434a48011aaeb436ae", "cubin_sha256": "ade38e395e33040ed02711cc0cffe15ade07fddf15c4081dc95813c24f63060e", "fingerprint_sha256": "1d5413c379cd6669a139074a7faab0bb8baea462b87f2c16cd5d0c4fad7eee25", "normalized_mlir_sha256": "26ddf324cd9383b821b72e24d593f862afeb0437af5a3bbc218b7c9efb98d1d6", "ptx_opcode_sha256": "73650c709e21855f997947688398b5d3a7cf64a547a2978647d93e6e77d3b522", "async_copy_opcode": "cp.async.bulk.shared"},
+    {"case_id": "cute_async_tma_copy", "frontend": "cute", "status": "compiled", "entry_symbol": "go", "mlir_sha256": "c14c5bc8ed126371a2cee895925282eaf12c3c9963101d963626518e45c3e097", "ptx_sha256": "9657b8e7cc067a4578f8a285bb1acfc6ab98209378173b5713773c5f73447261", "cubin_sha256": "38b48aedcbaa834893b78830fd0f20adedecd7e113e2ff0255c525dd722795d9", "fingerprint_sha256": "4a5bb98cb8b3a036245ba585b42c2ac994fb5934c6cde6e0900b8026a2361b99", "normalized_mlir_sha256": "7ab252d41c0e1f9839df8c2e120106693eae49fc5be80d54f78379ae214c77a0", "ptx_opcode_sha256": "ca3e3106d21ebc27e1781a4a9e425e63e40a641de3fb50b89ae7e7558e42c1c8", "async_copy_opcode": "cp.async.bulk.tensor.1d.shared"},
     {"case_id": "flaggems_matmul", "frontend": "triton", "status": "compiled", "ttir_sha256": "77411ac89c32c6899ff38ff37c6b039b9be00b593bc3224d416824638e577633", "ttgir_sha256": "edbc083f064f1b60b8f469ab17d9128ae85141b0a4f7cf5b7e09faf05e5a8b7d"},
     {"case_id": "flaggems_bmm", "frontend": "triton", "status": "compiled", "ttir_sha256": "857b066df7448d1c0746cc544818bf7f10e41feb25d5ab42e26d1e6af8be18e4", "ttgir_sha256": "25d350e61384235f1007986f0a7756b21f0ce77cd2ac4aa999448015b67494bd"},
     {"case_id": "flash_attention_forward", "frontend": "triton", "status": "compiled", "ttir_sha256": "9598c3803cf5842e2b4bd1f970ea8cb31b7e23c810d7267be3f15bb17714d773", "ttgir_sha256": "135dcec9ddcf4ab596d032b7ce5551183063d840e667248e7fa542ef79da6e02"},

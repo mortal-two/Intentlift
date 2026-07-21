@@ -684,6 +684,89 @@ def triton_compile_case(case: Mapping[str, Any]):
     )
 
 
+def cute_compile_case(case: Mapping[str, Any]):
+    """Project semantic entry values and pure C into the CuTe observer."""
+
+    from intentir.verify.gate1.compiler import RuntimeArgument
+    from intentir.verify.gate1.cute_compiler import CuteCompileCase
+
+    specialization = case["specialization"]
+    by_name = {item["name"]: item for item in specialization["arguments"]}
+    contract = case["logical_contract"]
+    entry_names = [
+        *contract["inputs"],
+        *contract["inout"],
+        *contract["outputs"],
+    ]
+    arguments: list[RuntimeArgument] = []
+    for name in entry_names:
+        item = by_name[name]
+        if item["kind"] == "tensor":
+            arguments.append(
+                RuntimeArgument.tensor(
+                    tuple(item["shape"]),
+                    item["dtype"],
+                    strides=(
+                        tuple(item["strides"])
+                        if item["strides"] is not None
+                        else None
+                    ),
+                )
+            )
+        elif item["kind"] == "scalar":
+            arguments.append(RuntimeArgument.scalar(item["value"], item["dtype"]))
+        elif item["kind"] == "none":
+            arguments.append(RuntimeArgument.none())
+        else:
+            raise ManifestError(
+                f"case {case['case_id']} exposes representation-only {name!r} "
+                "through the semantic CuTe entry"
+            )
+    options = dict(specialization["compiler_options"])
+    try:
+        block_threads = int(options.pop("block_threads"))
+        smem_bytes = int(options.pop("smem_bytes"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"case {case['case_id']} lacks frozen CuTe block/smem C"
+        ) from exc
+    schedule = {**specialization["schedule"], **options}
+    return CuteCompileCase(
+        arguments,
+        tuple(specialization["grid"]),
+        (block_threads, 1, 1),
+        smem_bytes,
+        schedule,
+    )
+
+
+def _cute_entry_symbol(source: str, device_symbol: str) -> str:
+    """Resolve the unique public ``@cute.jit`` entry that invokes the pin."""
+
+    tree = ast.parse(source)
+    matches: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        decorators = [ast.unparse(item) for item in node.decorator_list]
+        if "cute.jit" not in decorators:
+            continue
+        invokes_device = any(
+            isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id == device_symbol
+            for item in ast.walk(node)
+        )
+        if invokes_device:
+            matches.append(node.name)
+    if len(matches) != 1:
+        raise ManifestError(
+            f"CuTe symbol {device_symbol!r} must have one @cute.jit compile entry; "
+            f"found {matches!r}"
+        )
+    return matches[0]
+
+
 def probe_triton_compilation(
     manifest: BatchManifest,
     *,
@@ -758,6 +841,89 @@ def probe_triton_compilation(
         "triton_total": len(triton_results),
         "triton_compiled": sum(bool(item["ok"]) for item in triton_results),
         "all_triton_compiled": all(bool(item["ok"]) for item in triton_results),
+        "cases": results,
+    }
+
+
+def probe_cute_compilation(
+    manifest: BatchManifest,
+    *,
+    timeout: float = 300.0,
+    cache_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """Compile every CuTe anchor and apply the strict MLIR/PTX observer."""
+
+    from intentir.verify.gate1.cute import fingerprint_cute
+    from intentir.verify.gate1.cute_compiler import CuteCompiler, CuteKernelSource
+
+    compiler = CuteCompiler(timeout=timeout, cache_dir=cache_dir, arch="sm_120a")
+    results: list[dict[str, Any]] = []
+    for case in manifest.cases:
+        if case["source"]["frontend"] != "cute":
+            continue
+        path = resolve_source_path(manifest, case)
+        source = path.read_text(encoding="utf-8")
+        entry = _cute_entry_symbol(source, case["source"]["symbol"])
+        compile_case = cute_compile_case(case)
+        result = compiler.compile(
+            CuteKernelSource.from_file(
+                path,
+                case["source"]["symbol"],
+                entry,
+                trusted=True,
+            ),
+            compile_case,
+            cache_key=f"real-batch-28:{manifest.digest}:{case['case_id']}",
+        )
+        fingerprint = None
+        diagnostic = result.diagnostic
+        if result.ok and result.mlir is not None and result.ptx is not None:
+            try:
+                fingerprint = fingerprint_cute(
+                    result.mlir,
+                    result.ptx,
+                    python_interface=result.python_interface,
+                    schedule={
+                        **compile_case.schedule,
+                        "grid": compile_case.grid,
+                        "block": compile_case.block,
+                        "smem_bytes": compile_case.smem_bytes,
+                    },
+                )
+            except Exception as exc:
+                diagnostic = f"{type(exc).__name__}: {exc}"
+        ok = bool(result.ok and fingerprint is not None)
+        results.append(
+            {
+                "case_id": case["case_id"],
+                "frontend": "cute",
+                "entry_symbol": entry,
+                "status": "compiled" if ok else "compile_failed",
+                "ok": ok,
+                "elapsed_ms": result.elapsed_ms,
+                "cache_hit": result.cache_hit,
+                "cache_key": result.cache_key,
+                "mlir_sha256": (
+                    hashlib.sha256(result.mlir.encode()).hexdigest()
+                    if result.mlir is not None
+                    else None
+                ),
+                "ptx_sha256": (
+                    hashlib.sha256(result.ptx.encode()).hexdigest()
+                    if result.ptx is not None
+                    else None
+                ),
+                "cubin_sha256": result.cubin_sha256,
+                "fingerprint": fingerprint.to_dict() if fingerprint is not None else None,
+                "diagnostic": diagnostic,
+            }
+        )
+    return {
+        "schema": "intentir.real-llm-batch-cute-compile-probe.v1",
+        "manifest_digest": manifest.digest,
+        "cute_total": len(results),
+        "cute_compiled": sum(bool(item["ok"]) for item in results),
+        "all_cute_compiled": all(bool(item["ok"]) for item in results),
         "cases": results,
     }
 
@@ -853,6 +1019,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--verify-repositories", action="store_true")
     parser.add_argument("--compile-triton", action="store_true")
+    parser.add_argument("--compile-cute", action="store_true")
     parser.add_argument("--compile-cache", type=Path)
     parser.add_argument("--compile-timeout", type=float, default=300.0)
     args = parser.parse_args(argv)
@@ -865,6 +1032,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
     report = {"environment": probe_environment(manifest)}
     if args.compile_triton:
         report["triton_compilation"] = probe_triton_compilation(
+            manifest,
+            timeout=args.compile_timeout,
+            cache_dir=args.compile_cache,
+        )
+    if args.compile_cute:
+        report["cute_compilation"] = probe_cute_compilation(
             manifest,
             timeout=args.compile_timeout,
             cache_dir=args.compile_cache,

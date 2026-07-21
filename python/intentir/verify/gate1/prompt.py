@@ -16,7 +16,18 @@ PUBLIC_FRONTEND_CONTEXT = {
         "context_policy": "public_frontend_context_v1",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
-    }
+    },
+    "cute": {
+        "context_policy": "public_frontend_context_v1",
+        "retrieval_scope": "public NVIDIA CuTe DSL documentation and public examples",
+        "tool_access": ["public_document_lookup"],
+        "compile_entry": "scrc_entry",
+        "compile_entry_contract": (
+            "Define one @cute.jit scrc_entry after the requested @cute.kernel. "
+            "Its positional arguments are J tensor inputs, inouts, then outputs, "
+            "followed by stream; construct representation-only descriptors inside it."
+        ),
+    },
 }
 
 _FORBIDDEN_KEYS = frozenset(

@@ -626,6 +626,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
 
 class Frontend(str, Enum):
     TRITON = "triton"
+    CUTE = "cute"
     TILELANG = "tilelang"
     CUDA = "cuda"
     OTHER = "other"

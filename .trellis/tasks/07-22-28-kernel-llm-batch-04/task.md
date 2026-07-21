@@ -150,8 +150,12 @@ source digest、可导入/可编译性、observer 支持、运行输入和基线
 - RTX 5090 D、Triton 3.6、Intent/MLIR/PTX toolchain 与 provider 配置可用。
 - 新 compiler epoch 对 26/26 Triton source specialization 真实生成 TTIR/TTGIR；原始 digest
   保存在 `artifacts/real_llm_batch_28/preflight.json`。
-- 两个 CuTe async-copy anchor 的源码 pin 已通过，但本机尚无 `cutlass.cute`，且系统尚无
-  CuTe Level-2 observer；因此 overall readiness 是 26/28，正式 LLM 调用仍被 fail-closed。
+- 已安装 manifest 对应的 `nvidia-cutlass-dsl[cu13]==4.4.1`；两个 CuTe async-copy
+  anchor 均真实运行通过，并由隔离 compile-only worker 生成 MLIR、PTX 与 CUBIN。
+- CuTe Level-2 observer 对完整 alpha-normalized MLIR topology 和 PTX opcode topology
+  同时作硬比较；它保留 mbarrier/fence/order，并明确区分 raw `cp.async.bulk.shared`
+  与 descriptor `cp.async.bulk.tensor.1d.shared`，不按 case 名授权。
+- preflight 当前为 28/28 compiler-ready，`overall_ready=true`；正式在线 LLM 调用数仍为 0。
 
-下一步不是删掉 CuTe anchor 或把它冒充普通 copy，而是闭合通用 CuTe frontend/compiler
-observer，再重新生成 28/28 preflight receipt。
+下一步建立唯一、可恢复但不可绕过 provenance 的正式单-case runner，先以一个冻结 case
+闭合 `source -> Lift -> source-blind Replay -> Gate1 receipt`，再进入首个 7-case 分层。
