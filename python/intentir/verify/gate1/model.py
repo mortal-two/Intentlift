@@ -796,8 +796,6 @@ class ProvenanceRole(str, Enum):
 
 
 class Gate1Status(str, Enum):
-    PENDING = "pending"
-    LIFT_REJECTED = "lift_rejected"
     COMPILE_FAILED = "compile_failed"
     NO_CLOSURE = "no_closure"
     REPLAY_CLOSED = "replay_closed"
@@ -1182,13 +1180,15 @@ class LogicalUpdateSpec(StrictJSONMixin):
 
 @dataclass
 class ResultRelationSpec(StrictJSONMixin):
-    """Allowed-result relation for one declared logical output."""
+    """J-owned comparison class for one declared logical output.
+
+    Numeric thresholds are deliberately absent: the external Gate2 policy Q
+    owns them. J may request a trusted tolerance class, but it cannot choose
+    its own passing threshold.
+    """
 
     output: str
     kind: ResultRelationKind
-    rtol: float | None = None
-    atol: float | None = None
-    equal_nan: bool | None = None
     update_node_ref: str | None = None
 
     def __post_init__(self) -> None:
@@ -1196,25 +1196,7 @@ class ResultRelationSpec(StrictJSONMixin):
         self.kind = _enum(
             ResultRelationKind, self.kind, "ResultRelationSpec.kind"
         )
-        if self.kind is ResultRelationKind.TOLERANCE:
-            if self.rtol is None or self.atol is None or self.equal_nan is None:
-                raise SchemaError(
-                    "tolerance result relation requires rtol, atol, and equal_nan"
-                )
-            self.rtol = _number(
-                self.rtol, "ResultRelationSpec.rtol", minimum=0.0
-            )
-            self.atol = _number(
-                self.atol, "ResultRelationSpec.atol", minimum=0.0
-            )
-            self.equal_nan = _boolean(
-                self.equal_nan, "ResultRelationSpec.equal_nan"
-            )
-            if self.update_node_ref is not None:
-                raise SchemaError(
-                    "tolerance result relation cannot reference an update"
-                )
-        elif self.kind is ResultRelationKind.ONE_OF_UPDATES:
+        if self.kind is ResultRelationKind.ONE_OF_UPDATES:
             if self.update_node_ref is None:
                 raise SchemaError(
                     "one_of_updates result relation requires update_node_ref"
@@ -1222,20 +1204,10 @@ class ResultRelationSpec(StrictJSONMixin):
             self.update_node_ref = _string(
                 self.update_node_ref, "ResultRelationSpec.update_node_ref"
             )
-            if any(
-                value is not None
-                for value in (self.rtol, self.atol, self.equal_nan)
-            ):
-                raise SchemaError(
-                    "one_of_updates result relation cannot carry tolerance fields"
-                )
         else:
-            if self.update_node_ref is not None or any(
-                value is not None
-                for value in (self.rtol, self.atol, self.equal_nan)
-            ):
+            if self.update_node_ref is not None:
                 raise SchemaError(
-                    "exact result relation cannot carry tolerance or update fields"
+                    f"{self.kind.value} result relation cannot reference an update"
                 )
 
     @classmethod
@@ -1243,18 +1215,12 @@ class ResultRelationSpec(StrictJSONMixin):
         data = _strict_object(
             value,
             path="ResultRelationSpec",
-            allowed={
-                "output", "kind", "rtol", "atol", "equal_nan",
-                "update_node_ref",
-            },
+            allowed={"output", "kind", "update_node_ref"},
             required={"output", "kind"},
         )
         return cls(
             output=data["output"],
             kind=data["kind"],
-            rtol=data.get("rtol"),
-            atol=data.get("atol"),
-            equal_nan=data.get("equal_nan"),
             update_node_ref=data.get("update_node_ref"),
         )
 
@@ -1263,11 +1229,7 @@ class ResultRelationSpec(StrictJSONMixin):
             "output": self.output,
             "kind": self.kind.value,
         }
-        if self.kind is ResultRelationKind.TOLERANCE:
-            result.update(
-                rtol=self.rtol, atol=self.atol, equal_nan=self.equal_nan
-            )
-        elif self.kind is ResultRelationKind.ONE_OF_UPDATES:
+        if self.kind is ResultRelationKind.ONE_OF_UPDATES:
             result["update_node_ref"] = self.update_node_ref
         return result
 
@@ -3928,15 +3890,6 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "kind": item.kind.value,
                 **(
                     {
-                        "rtol": item.rtol,
-                        "atol": item.atol,
-                        "equal_nan": item.equal_nan,
-                    }
-                    if item.kind is ResultRelationKind.TOLERANCE
-                    else {}
-                ),
-                **(
-                    {
                         "update_node_ref": _opaque_reference(
                             item.update_node_ref, aliases
                         )
@@ -4213,15 +4166,6 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             {
                 "output": opaque_reference(item.output),
                 "kind": "<masked>",
-                **(
-                    {
-                        "rtol": "<masked>",
-                        "atol": "<masked>",
-                        "equal_nan": "<masked>",
-                    }
-                    if item.kind is ResultRelationKind.TOLERANCE
-                    else {}
-                ),
                 **(
                     {
                         "update_node_ref": opaque_reference(

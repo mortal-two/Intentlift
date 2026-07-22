@@ -308,7 +308,7 @@ class ScalarLoweringUnavailable:
 
     def execution_result(self) -> ExecutionResult:
         return ExecutionResult(
-            "scalar",
+            "j",
             False,
             error=self.error,
             unsupported=True,
@@ -332,7 +332,7 @@ class ScalarLoweringRunner:
                 for tensor in spec.j.intent.inputs
             ]
         except KeyError as exc:
-            return ExecutionResult("scalar", False, error=f"missing E_J input {exc.args[0]!r}")
+            return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
             boundary_digest = _validate_complete_boundary(spec.j)
             inputs_by_ref = {
@@ -356,7 +356,7 @@ class ScalarLoweringRunner:
             if set(outputs) != set(output_bindings.values()):
                 raise ValueError("E_J did not produce every observable output")
             return ExecutionResult(
-                "scalar",
+                "j",
                 True,
                 outputs,
                 metadata={
@@ -376,7 +376,7 @@ class ScalarLoweringRunner:
             )
         except (CPUBackendUnsupportedError, NotImplementedError) as exc:
             return ExecutionResult(
-                "scalar",
+                "j",
                 False,
                 error=f"{type(exc).__name__}: {exc}",
                 unsupported=True,
@@ -388,14 +388,14 @@ class ScalarLoweringRunner:
             )
         except CPUABIValidationError as exc:
             return ExecutionResult(
-                "scalar",
+                "j",
                 False,
                 error=f"{type(exc).__name__}: {exc}",
                 metadata={"failure_class": "physical_cpu_abi"},
             )
         except Exception as exc:
             return ExecutionResult(
-                "scalar", False, error=f"{type(exc).__name__}: {exc}"
+                "j", False, error=f"{type(exc).__name__}: {exc}"
             )
 
 

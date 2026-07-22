@@ -1,6 +1,11 @@
 """SCRC Gate2: source-anchored replay and scalar differential verification."""
 
-from .compare import GATE2_COMPARISON_PROTOCOL, compare_outputs, validate_j_inputs
+from .compare import (
+    GATE2_COMPARISON_PROTOCOL,
+    close_q,
+    compare_outputs,
+    validate_j_inputs,
+)
 from .inputs import (
     BoundaryExtent,
     GeneratedInputCase,
@@ -26,6 +31,14 @@ from .orchestrate import (
     Gate2Runner,
     Gate2Suite,
 )
+from .policy import (
+    CloseRule,
+    ComparisonPolicy,
+    ComparisonPolicyError,
+    DEFAULT_GATE2_POLICY,
+    GATE2_POLICY_PROTOCOL,
+    NumericTolerance,
+)
 from .scalar import (
     SCALAR_LOWERING_PROTOCOL,
     ScalarLoweringRequest,
@@ -44,9 +57,14 @@ from .triton import (
 __all__ = [
     "ArgumentRole",
     "BoundaryExtent",
+    "CloseRule",
+    "ComparisonPolicy",
+    "ComparisonPolicyError",
+    "DEFAULT_GATE2_POLICY",
     "ExecutionResult",
     "GATE2_COMPARISON_PROTOCOL",
     "GATE2_EXECUTION_PROTOCOL",
+    "GATE2_POLICY_PROTOCOL",
     "Gate2Case",
     "Gate2Result",
     "Gate2Runner",
@@ -57,6 +75,7 @@ __all__ = [
     "InputCaseTemplate",
     "InputDistribution",
     "OutputAgreement",
+    "NumericTolerance",
     "PairwiseAgreement",
     "SCALAR_LOWERING_PROTOCOL",
     "ScalarLoweringRequest",
@@ -68,6 +87,7 @@ __all__ = [
     "TritonExecutionSpec",
     "TritonRunner",
     "boundary_1d_extents",
+    "close_q",
     "compare_outputs",
     "extract_gate1_gate2_observation",
     "generate_input_matrix",

@@ -13,9 +13,7 @@ from .orchestrate import GATE2_EXECUTION_PROTOCOL
 _COMPLETED_STATUSES = frozenset(
     {
         "gate2_pass",
-        "replay_diverged",
-        "scalar_diverged",
-        "replay_and_scalar_diverged",
+        "pairwise_diverged",
     }
 )
 
@@ -23,9 +21,10 @@ _COMPLETED_STATUSES = frozenset(
 def _has_source_anchored_evidence(case: Mapping[str, Any]) -> bool:
     source = case.get("source")
     replay = case.get("replay")
-    scalar = case.get("scalar")
+    reference = case.get("reference")
     source_replay = case.get("source_replay")
-    source_scalar = case.get("source_scalar")
+    source_j = case.get("source_j")
+    replay_j = case.get("replay_j")
     status = case.get("status")
     input_digest = case.get("input_digest")
     if not (
@@ -33,26 +32,25 @@ def _has_source_anchored_evidence(case: Mapping[str, Any]) -> bool:
         and source.get("ok") is True
         and isinstance(replay, Mapping)
         and replay.get("ok") is True
-        and isinstance(scalar, Mapping)
-        and scalar.get("ok") is True
+        and isinstance(reference, Mapping)
+        and reference.get("ok") is True
         and isinstance(source_replay, Mapping)
         and isinstance(source_replay.get("passed"), bool)
-        and isinstance(source_scalar, Mapping)
-        and isinstance(source_scalar.get("passed"), bool)
+        and isinstance(source_j, Mapping)
+        and isinstance(source_j.get("passed"), bool)
+        and isinstance(replay_j, Mapping)
+        and isinstance(replay_j.get("passed"), bool)
         and isinstance(input_digest, str)
         and re.fullmatch(r"[0-9a-f]{64}", input_digest) is not None
     ):
         return False
-    replay_passed = source_replay["passed"]
-    scalar_passed = source_scalar["passed"]
-    if replay_passed and scalar_passed:
+    pairwise_passed = (
+        source_replay["passed"] and source_j["passed"] and replay_j["passed"]
+    )
+    if pairwise_passed:
         expected = "gate2_pass"
-    elif not replay_passed and scalar_passed:
-        expected = "replay_diverged"
-    elif replay_passed and not scalar_passed:
-        expected = "scalar_diverged"
     else:
-        expected = "replay_and_scalar_diverged"
+        expected = "pairwise_diverged"
     return status == expected
 
 

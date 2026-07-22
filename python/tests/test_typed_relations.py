@@ -58,6 +58,7 @@ def _signature(fn: IntentFunction) -> LogicalSignature:
 from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Runner
+from intentir.verify.gate2.policy import ComparisonPolicy, NumericTolerance
 from intentir.verify.gate2.scalar import (
     ScalarLoweringRunner,
     ScalarLoweringSpec,
@@ -109,7 +110,7 @@ def _update_j(
     )
     if relation == "tolerance":
         result_relation = ResultRelationSpec(
-            "Y", ResultRelationKind.TOLERANCE, 1.0e-4, 1.0e-6, True
+            "Y", ResultRelationKind.TOLERANCE
         )
     elif relation == "one_of_updates":
         result_relation = ResultRelationSpec(
@@ -188,7 +189,7 @@ class _FakeScalarRunner:
 
     def run(self, spec, values):
         del spec, values
-        return ExecutionResult("scalar", True, {"out": self.output.copy()})
+        return ExecutionResult("j", True, {"out": self.output.copy()})
 
 
 def _gate2_case(j: SemanticArchive, values: dict[str, np.ndarray]) -> Gate2Case:
@@ -221,11 +222,13 @@ def _run_fake_gate2(
     source_output: np.ndarray,
     replay_output: np.ndarray,
     scalar_output: np.ndarray,
+    comparison_policy: ComparisonPolicy | None = None,
 ):
     runner = Gate2Runner(
         source_runner=_FakeRunner(source_output),
         replay_runner=_FakeRunner(replay_output),
-        scalar_runner=_FakeScalarRunner(scalar_output),
+        refeval_runner=_FakeScalarRunner(scalar_output),
+        comparison_policy=comparison_policy,
     )
     source = KernelSource.from_code("source", "source", trusted=True)
     replay = KernelSource.from_code("replay", "replay", trusted=True)
@@ -336,9 +339,9 @@ def test_free_form_proof_and_illegal_relation_combinations_are_rejected() -> Non
         LogicalUpdateSpec(
             "n0", "X", "I", "V", 0, "overwrite", "one_of", "input_order"
         )
-    with pytest.raises(SchemaError, match="finite"):
-        ResultRelationSpec(
-            "Y", "tolerance", float("inf"), 0.0, False
+    with pytest.raises(SchemaError, match="unknown key"):
+        ResultRelationSpec.from_json(
+            {"output": "Y", "kind": "tolerance", "rtol": 1.0}
         )
 
 
@@ -448,7 +451,7 @@ def test_cpu_e_j_recognizes_typed_update_then_fails_on_real_capability() -> None
     assert "logical update" in result.error
 
 
-def test_gate2_tolerance_is_owned_only_by_j() -> None:
+def test_gate2_tolerance_threshold_is_owned_only_by_external_q() -> None:
     fn = IntentFunction.from_json(
         {
             "name": "close",
@@ -464,7 +467,7 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
         {},
         Boundary(
             result_relations=[
-                ResultRelationSpec("Y", "tolerance", 0.1, 0.0, False)
+                ResultRelationSpec("Y", "tolerance")
             ]
         ),
         _signature(fn),
@@ -488,22 +491,30 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
         "close", j, {"input": np.asarray([1.0], dtype=np.float32)},
         triton, spec, ("out",)
     )
+    q = ComparisonPolicy.create(
+        "test.gate2.q.v1",
+        (("f32", NumericTolerance(0.0, 0.11)),),
+    )
     result = _run_fake_gate2(
         case,
         np.asarray([1.0], dtype=np.float32),
         np.asarray([1.05], dtype=np.float32),
         np.asarray([0.95], dtype=np.float32),
+        q,
     )
     assert result.status is Gate2Status.PASS
     assert result.source_replay.outputs[0].relation_kind == "tolerance"
+    assert result.replay_j is not None and result.replay_j.passed
+    assert result.source_replay.outputs[0].policy_id == "test.gate2.q.v1"
 
     wrong_dtype = _run_fake_gate2(
         case,
         np.asarray([1.0], dtype=np.float32),
         np.asarray([1.0], dtype=np.float64),
         np.asarray([1.0], dtype=np.float32),
+        q,
     )
-    assert wrong_dtype.status is Gate2Status.REPLAY_DIVERGED
+    assert wrong_dtype.status is Gate2Status.PAIRWISE_DIVERGED
     assert "dtype differs from canonical J" in wrong_dtype.source_replay.outputs[0].detail
 
     exact_j = SemanticArchive("close", fn, {}, Boundary(), _signature(fn))
@@ -523,10 +534,68 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
         np.asarray([1.05], dtype=np.float32),
         np.asarray([1.0], dtype=np.float32),
     )
-    assert exact_result.status is Gate2Status.REPLAY_DIVERGED
+    assert exact_result.status is Gate2Status.PAIRWISE_DIVERGED
 
 
-def test_gate2_one_of_allows_distinct_legal_winners_and_rejects_noncontender() -> None:
+def test_gate2_replay_j_edge_catches_nontransitive_approximation() -> None:
+    fn = IntentFunction.from_json(
+        {
+            "name": "close",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [1]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": [1]}],
+            "returns": [{"output": "Y", "value": "X"}],
+            "body": [],
+        }
+    )
+    j = SemanticArchive(
+        "close",
+        fn,
+        {},
+        Boundary(result_relations=[ResultRelationSpec("Y", "tolerance")]),
+        _signature(fn),
+    )
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={},
+        input_bindings={"X": "input"},
+        output_bindings={"Y": "out"},
+    )
+    triton = TritonExecutionSpec(
+        (
+            TritonArgument("p0", ArgumentRole.INPUT, value_key="input"),
+            TritonArgument(
+                "p1", ArgumentRole.OUTPUT, dtype="f32", shape=(1,),
+                output_key="out",
+            ),
+        ),
+        (1,),
+    )
+    case = Gate2Case(
+        "nontransitive",
+        j,
+        {"input": np.asarray([0.0], dtype=np.float32)},
+        triton,
+        spec,
+        ("out",),
+    )
+    q = ComparisonPolicy.create(
+        "test.nontransitive.q.v1",
+        (("f32", NumericTolerance(0.0, 1.0)),),
+    )
+    result = _run_fake_gate2(
+        case,
+        np.asarray([0.0], dtype=np.float32),
+        np.asarray([0.9], dtype=np.float32),
+        np.asarray([-0.9], dtype=np.float32),
+        q,
+    )
+    assert result.status is Gate2Status.PAIRWISE_DIVERGED
+    assert result.source_replay is not None and result.source_replay.passed
+    assert result.source_j is not None and result.source_j.passed
+    assert result.replay_j is not None and not result.replay_j.passed
+
+
+def test_gate2_main_path_rejects_set_valued_result_relations() -> None:
     j = _update_j(
         duplicate_policy="one_of",
         order="unordered",
@@ -538,25 +607,13 @@ def test_gate2_one_of_allows_distinct_legal_winners_and_rejects_noncontender() -
         "values": np.asarray([3, 7], dtype=np.float32),
     }
     case = _gate2_case(j, values)
-    source = np.asarray([0, 3, 0], dtype=np.float32)
-    replay = np.asarray([0, 7, 0], dtype=np.float32)
-    result = _run_fake_gate2(case, source, replay, source)
-    assert result.status is Gate2Status.PASS
-    agreement = result.source_replay.outputs[0]
-    assert agreement.relation_kind == "one_of_updates"
-    assert not agreement.equality_required
-
-    invalid = _run_fake_gate2(
-        case, source, np.asarray([0, 5, 0], dtype=np.float32), source
-    )
-    assert invalid.status is Gate2Status.RESULT_RELATION_DIVERGED
-    assert "not an active update contender" in invalid.source_replay.outputs[0].detail
-
-    untouched = _run_fake_gate2(
-        case, np.asarray([9, 3, 0], dtype=np.float32), replay, source
-    )
-    assert untouched.status is Gate2Status.RESULT_RELATION_DIVERGED
-    assert "untouched" in untouched.source_replay.outputs[0].detail
+    output = np.asarray([0, 3, 0], dtype=np.float32)
+    result = _run_fake_gate2(case, output, output, output)
+    assert result.status is Gate2Status.COMPARISON_UNSUPPORTED
+    assert "set-valued" in result.source.error
+    assert result.source_replay is None
+    assert result.source_j is None
+    assert result.replay_j is None
 
 
 def test_gate2_rejects_invalid_unique_or_bounds_challenge_before_execution() -> None:
@@ -580,14 +637,10 @@ def test_gate2_rejects_invalid_unique_or_bounds_challenge_before_execution() -> 
 
 
 def test_gate2_legs_receive_isolated_committed_prestate() -> None:
-    j = _update_j(
-        duplicate_policy="one_of",
-        order="unordered",
-        relation="one_of_updates",
-    )
+    j = _update_j()
     values = {
         "base": np.asarray([0, 0, 0], dtype=np.float32),
-        "indices": np.asarray([1, 1], dtype=np.int32),
+        "indices": np.asarray([1, 2], dtype=np.int32),
         "values": np.asarray([3, 7], dtype=np.float32),
     }
     case = _gate2_case(j, values)
@@ -604,7 +657,7 @@ def test_gate2_legs_receive_isolated_committed_prestate() -> None:
             return ExecutionResult(
                 self.leg,
                 True,
-                {"out": np.asarray([0, 3, 0], dtype=np.float32)},
+                {"out": np.asarray([0, 3, 7], dtype=np.float32)},
             )
 
     class MutatingScalar:
@@ -613,15 +666,15 @@ def test_gate2_legs_receive_isolated_committed_prestate() -> None:
             snapshots.append(runtime_values["base"].copy())
             runtime_values["base"][0] = 88
             return ExecutionResult(
-                "scalar",
+                "j",
                 True,
-                {"out": np.asarray([0, 7, 0], dtype=np.float32)},
+                {"out": np.asarray([0, 3, 7], dtype=np.float32)},
             )
 
     runner = Gate2Runner(
         source_runner=MutatingRunner("source"),
         replay_runner=MutatingRunner("replay"),
-        scalar_runner=MutatingScalar(),
+        refeval_runner=MutatingScalar(),
     )
     result = runner.run(
         KernelSource.from_code("source", "source", trusted=True),

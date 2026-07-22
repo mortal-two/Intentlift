@@ -30,7 +30,7 @@ class FakeTritonRunner:
         return ExecutionResult(leg, True, self.outputs)
 
 
-def test_gate2_keeps_both_source_anchored_edges(monkeypatch) -> None:
+def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     artifact = make_reduce_artifact(explicit_accesses=False)
     x = np.arange(8, dtype=np.float32).reshape(2, 4)
     expected = np.sum(x * x, axis=1)
@@ -69,13 +69,13 @@ def test_gate2_keeps_both_source_anchored_edges(monkeypatch) -> None:
         spec,
         ("output",),
     )
-    assert case.scalar.j is case.j
+    assert case.refeval.j is case.j
     assert not hasattr(case, "replay_artifact_digest")
     assert not hasattr(spec, "final_artifact_digest")
     runner = Gate2Runner(
         source_runner=FakeTritonRunner({"output": expected}),
         replay_runner=FakeTritonRunner({"output": expected}),
-        scalar_runner=ScalarLoweringRunner(),
+        refeval_runner=ScalarLoweringRunner(),
     )
     result = runner.run(
         KernelSource.from_code("source", "source", trusted=True),
@@ -84,9 +84,15 @@ def test_gate2_keeps_both_source_anchored_edges(monkeypatch) -> None:
     )
     assert result.status is Gate2Status.PASS
     assert result.source_replay is not None and result.source_replay.passed
-    assert result.source_scalar is not None and result.source_scalar.passed
+    assert result.source_j is not None and result.source_j.passed
+    assert result.replay_j is not None and result.replay_j.passed
     assert spec.j is artifact.j
-    assert result.scalar.metadata["boundary_digest"]
+    assert result.reference.metadata["boundary_digest"]
+    report = result.to_json()
+    assert report["source_replay"]["passed"]
+    assert report["source_j"]["passed"]
+    assert report["replay_j"]["passed"]
+    assert report["metadata"]["comparison_policy"]["policy_id"]
 
 
 def test_extrema_boundary_uses_json_safe_infinity_sentinel() -> None:

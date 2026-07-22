@@ -245,16 +245,13 @@ def _boundary_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": ["exact", "tolerance", "one_of_updates"],
             },
-            "rtol": {"type": "number", "minimum": 0},
-            "atol": {"type": "number", "minimum": 0},
-            "equal_nan": {"type": "boolean"},
             "update_node_ref": _STRING,
         },
         ("output", "kind"),
         description=(
-            "Allowed-result relation owned by J. tolerance requires rtol/atol/"
-            "equal_nan; one_of_updates requires update_node_ref; exact carries "
-            "neither. The strict project parser enforces the tagged union."
+            "Comparison class owned by J. Numeric tolerance values are forbidden "
+            "and come only from external Gate2 policy Q. one_of_updates requires "
+            "update_node_ref; exact/tolerance carry no candidate threshold."
         ),
     )
     authorization = _closed_object(

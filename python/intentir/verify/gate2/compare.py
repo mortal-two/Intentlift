@@ -1,4 +1,4 @@
-"""J-owned exact, tolerance, and allowed-update relations for Gate2."""
+"""Deterministic, symmetric ``Close_Q`` comparisons for Gate2."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ from intentir.verify.gate1.model import (
 )
 
 from .model import OutputAgreement, PairwiseAgreement
+from .policy import ComparisonPolicy, CloseRule, canonical_dtype
 
 
-GATE2_COMPARISON_PROTOCOL = "canonical_j_result_relation_v3"
+GATE2_COMPARISON_PROTOCOL = "external_q_symmetric_pairwise_v4"
 
 _DTYPE_ALIASES = {
     "bool": "i1",
@@ -34,7 +35,7 @@ _DTYPE_ALIASES = {
 
 def _dtype_key(value: str) -> str:
     normalized = value.removeprefix("torch.").lower()
-    return _DTYPE_ALIASES.get(normalized, normalized)
+    return canonical_dtype(_DTYPE_ALIASES.get(normalized, normalized))
 
 
 def _exact_element_domain(left: np.ndarray, right: np.ndarray) -> bool:
@@ -61,26 +62,48 @@ def _max_abs_error(left: np.ndarray, right: np.ndarray) -> float:
     finite = np.isfinite(left) & np.isfinite(right)
     if not bool(np.any(finite)):
         return 0.0
-    return float(np.max(np.abs(left[finite] - right[finite])))
+    lhs = left[finite].astype(np.float64, copy=False)
+    rhs = right[finite].astype(np.float64, copy=False)
+    return float(np.max(np.abs(lhs - rhs)))
 
 
-def _canonical_node_ref(j: SemanticArchive, ref: str) -> str:
-    return j.node_ids.get(ref, ref)
+def close_q(
+    left: np.ndarray,
+    right: np.ndarray,
+    rule: CloseRule,
+) -> bool:
+    """Apply a symmetric tolerance using max(|left|, |right|) as scale."""
 
-
-def _update_for_relation(
-    j: SemanticArchive, relation: ResultRelationSpec
-) -> LogicalUpdateSpec:
-    assert relation.update_node_ref is not None
-    target = _canonical_node_ref(j, relation.update_node_ref)
-    matches = [
-        item
-        for item in j.boundary.updates
-        if _canonical_node_ref(j, item.node_ref) == target
-    ]
-    if len(matches) != 1:
-        raise ValueError("one_of_updates relation has no unique logical update")
-    return matches[0]
+    lhs = np.asarray(left)
+    rhs = np.asarray(right)
+    if lhs.shape != rhs.shape or lhs.dtype != rhs.dtype:
+        return False
+    if rule.exact or _exact_element_domain(lhs, rhs):
+        return bool(np.array_equal(lhs, rhs))
+    assert rule.tolerance is not None
+    lhs_nan = np.isnan(lhs)
+    rhs_nan = np.isnan(rhs)
+    if not bool(np.array_equal(lhs_nan, rhs_nan)):
+        return False
+    if bool(np.any(lhs_nan)) and not rule.tolerance.equal_nan:
+        return False
+    non_nan = ~(lhs_nan | rhs_nan)
+    # Equal infinities of the same sign pass; unequal or finite-vs-infinite do not.
+    lhs_inf = np.isinf(lhs) & non_nan
+    rhs_inf = np.isinf(rhs) & non_nan
+    if not bool(np.array_equal(lhs_inf, rhs_inf)):
+        return False
+    if bool(np.any(lhs_inf)) and not bool(np.array_equal(lhs[lhs_inf], rhs[rhs_inf])):
+        return False
+    finite = np.isfinite(lhs) & np.isfinite(rhs)
+    if not bool(np.any(finite)):
+        return True
+    lhs_finite = lhs[finite].astype(np.float64, copy=False)
+    rhs_finite = rhs[finite].astype(np.float64, copy=False)
+    error = np.abs(lhs_finite - rhs_finite)
+    scale = np.maximum(np.abs(lhs_finite), np.abs(rhs_finite))
+    bound = rule.tolerance.atol + rule.tolerance.rtol * scale
+    return bool(np.all(error <= bound))
 
 
 def _j_inputs(
@@ -212,50 +235,6 @@ def validate_j_inputs(
             )
 
 
-def _scalar_equal(left: Any, right: Any) -> bool:
-    lhs = np.asarray(left)
-    rhs = np.asarray(right)
-    if lhs.dtype.kind == "f" and rhs.dtype.kind == "f":
-        if bool(np.isnan(lhs)) and bool(np.isnan(rhs)):
-            return True
-    return bool(lhs == rhs)
-
-
-def _one_of_membership(
-    candidate: np.ndarray,
-    relation: ResultRelationSpec,
-    j: SemanticArchive,
-    j_inputs: Mapping[str, np.ndarray],
-) -> tuple[bool, str]:
-    update = _update_for_relation(j, relation)
-    if update.duplicate_policy is not DuplicatePolicy.ONE_OF:
-        return False, "one_of_updates relation targets a non-one-of update"
-    try:
-        base, groups = _active_update_groups(
-            update, j_inputs, require_values=True
-        )
-    except (NotImplementedError, ValueError) as exc:
-        return False, f"{type(exc).__name__}: {exc}"
-    candidate = np.asarray(candidate)
-    if candidate.shape != base.shape:
-        return False, f"shape mismatch against update base: {candidate.shape} != {base.shape}"
-    if candidate.dtype != base.dtype:
-        return False, f"dtype mismatch against update base: {candidate.dtype} != {base.dtype}"
-
-    touched = np.zeros(base.shape, dtype=np.bool_)
-    for destination in groups:
-        touched[destination] = True
-    if not bool(np.array_equal(candidate[~touched], base[~touched], equal_nan=True)):
-        return False, "one_of_updates changed an untouched destination"
-    for destination, contenders in groups.items():
-        if not any(
-            _scalar_equal(candidate[destination], contender)
-            for contender in contenders
-        ):
-            return False, f"value at {destination} is not an active update contender"
-    return True, ""
-
-
 def compare_outputs(
     left_name: str,
     left: Mapping[str, np.ndarray],
@@ -266,14 +245,15 @@ def compare_outputs(
     input_bindings: Mapping[str, str],
     output_bindings: Mapping[str, str],
     inputs: Mapping[str, Any],
+    policy: ComparisonPolicy,
 ) -> PairwiseAgreement:
-    """Compare two observations using only result relations owned by ``j``."""
+    """Compare two observations using J's class and external policy Q."""
 
     expected_outputs = {item.name for item in j.intent.outputs}
     if set(output_bindings) != expected_outputs:
         raise ValueError("Gate2 output bindings differ from canonical J outputs")
     explicit = {item.output: item for item in j.boundary.result_relations}
-    j_inputs = _j_inputs(j, input_bindings, inputs)
+    _j_inputs(j, input_bindings, inputs)
     observations: list[OutputAgreement] = []
 
     for output in j.intent.outputs:
@@ -283,6 +263,7 @@ def compare_outputs(
             logical_key,
             ResultRelationSpec(logical_key, ResultRelationKind.EXACT),
         )
+        rule = policy.rule_for(relation.kind, output.dtype)
         missing = []
         if runtime_key not in left:
             missing.append(left_name)
@@ -297,6 +278,19 @@ def compare_outputs(
                     f"output {runtime_key!r} missing from {', '.join(missing)}",
                     relation.kind.value,
                     relation.kind is not ResultRelationKind.ONE_OF_UPDATES,
+                    policy.policy_id,
+                    (
+                        float(rule.tolerance.rtol)
+                        if rule.tolerance is not None else None
+                    ),
+                    (
+                        float(rule.tolerance.atol)
+                        if rule.tolerance is not None else None
+                    ),
+                    (
+                        rule.tolerance.equal_nan
+                        if rule.tolerance is not None else None
+                    ),
                 )
             )
             continue
@@ -315,28 +309,19 @@ def compare_outputs(
                     f"{observed_dtypes} != {(expected_dtype, expected_dtype)}",
                     relation.kind.value,
                     relation.kind is not ResultRelationKind.ONE_OF_UPDATES,
-                )
-            )
-            continue
-        if relation.kind is ResultRelationKind.ONE_OF_UPDATES:
-            lhs_ok, lhs_detail = _one_of_membership(lhs, relation, j, j_inputs)
-            rhs_ok, rhs_detail = _one_of_membership(rhs, relation, j, j_inputs)
-            details = [
-                f"{name}: {detail}"
-                for name, ok, detail in (
-                    (left_name, lhs_ok, lhs_detail),
-                    (right_name, rhs_ok, rhs_detail),
-                )
-                if not ok
-            ]
-            observations.append(
-                OutputAgreement(
-                    runtime_key,
-                    lhs_ok and rhs_ok,
-                    None,
-                    "; ".join(details),
-                    relation.kind.value,
-                    False,
+                    policy.policy_id,
+                    (
+                        float(rule.tolerance.rtol)
+                        if rule.tolerance is not None else None
+                    ),
+                    (
+                        float(rule.tolerance.atol)
+                        if rule.tolerance is not None else None
+                    ),
+                    (
+                        rule.tolerance.equal_nan
+                        if rule.tolerance is not None else None
+                    ),
                 )
             )
             continue
@@ -350,6 +335,7 @@ def compare_outputs(
                     f"shape mismatch: {lhs.shape} != {rhs.shape}",
                     relation.kind.value,
                     True,
+                    policy.policy_id,
                 )
             )
             continue
@@ -362,24 +348,11 @@ def compare_outputs(
                     f"dtype mismatch: {lhs.dtype} != {rhs.dtype}",
                     relation.kind.value,
                     True,
+                    policy.policy_id,
                 )
             )
             continue
-        if relation.kind is ResultRelationKind.EXACT or _exact_element_domain(lhs, rhs):
-            passed = bool(np.array_equal(lhs, rhs))
-        else:
-            assert relation.rtol is not None
-            assert relation.atol is not None
-            assert relation.equal_nan is not None
-            passed = bool(
-                np.allclose(
-                    lhs,
-                    rhs,
-                    rtol=relation.rtol,
-                    atol=relation.atol,
-                    equal_nan=relation.equal_nan,
-                )
-            )
+        passed = close_q(lhs, rhs, rule)
         observations.append(
             OutputAgreement(
                 runtime_key,
@@ -388,6 +361,19 @@ def compare_outputs(
                 "",
                 relation.kind.value,
                 True,
+                policy.policy_id,
+                (
+                    float(rule.tolerance.rtol)
+                    if rule.tolerance is not None else None
+                ),
+                (
+                    float(rule.tolerance.atol)
+                    if rule.tolerance is not None else None
+                ),
+                (
+                    rule.tolerance.equal_nan
+                    if rule.tolerance is not None else None
+                ),
             )
         )
 
@@ -396,11 +382,13 @@ def compare_outputs(
         right_name,
         all(item.passed for item in observations),
         tuple(observations),
+        policy.policy_id,
     )
 
 
 __all__ = [
     "GATE2_COMPARISON_PROTOCOL",
+    "close_q",
     "compare_outputs",
     "validate_j_inputs",
 ]
