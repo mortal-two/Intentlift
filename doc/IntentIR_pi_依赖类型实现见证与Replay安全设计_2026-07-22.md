@@ -302,6 +302,12 @@ or the route must be a validated representation-only path.
 - 新增 predicate 或 observable effect；
 - 用 representation 路径改变 J/B 允许结果集合。
 
+这里的 placement 只回答“instance 位于哪个 region”，不隐含某条前端指令。例如
+`placement=program` 不等于 Source 读取了 program/grid coordinate。若 Source 确实包含
+`program_id`、grid offset 等 compiler-visible stage，Lift 应使用额外的 generic `realize` instance
+和 routes 表达该独立阶段；不需要扩充 mechanism enum。若没有这个独立 instance，Replay 不得仅
+根据 placement、常见 kernel 模板或 C 自行生成 program coordinate、乘加或 affine address。
+
 ### 4.4 对 semantic labels 参数化
 
 必须满足：

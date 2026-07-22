@@ -145,6 +145,25 @@ run-001 的三个拒绝当作正式 closure round。
 shape 中，且 dimension handle 不得进入 SSA scope definitions/captures 或 storage。对应 prompt 回归
 已加入。下一次从新的 `masked_copy/run-003` 开始。
 
+### `masked_copy / run-003`
+
+- runtime extent 修正生效：三轮均产生完整 artifact，dependent TypeCheck 全部通过，三个全新 Replay
+  也都成功编译；本次有 3 个正式 Gate1 round；
+- terminal：`NO_CLOSURE`。三轮 hard diff 完全稳定：Replay 都额外生成
+  `tl.program_id(0) * c0 + tl.arange(0,c0)`，而 Source 只有 `tl.arange(0,c0)`；
+- 额外 program coordinate 引入 `tt.get_program_id`、整数乘加、不同 predicate SSA 与 address
+  dataflow，`op_multiset/dataflow/predicate_effect` 均不闭合；Gate1 没有把它误归为 schedule-only；
+- 预算为 3 次 Lift、3 次 normal Replay、3 次 TypeCheck/正式 Gate1，Gate2 与 masked-J 均为 0；
+- Gate1 diff 只返回 Lift。第三轮 Lift 已调整 π（删除单独 d0 instance），但 Replay 仍从
+  `placement=program`/常见 Triton 模板自行发明 program coordinate，因此三轮耗尽后结束。
+
+该失败暴露的是现有关系的解释不精确，不需要增加 mechanism：region
+`placement=program` 只表示 instance 位于 program region，不断言读取 program/grid coordinate。
+真正的 `program_id/grid offset` 是额外 compiler-visible realization stage，应由独立 generic
+`realize` instance 与 routes 表达；缺少该 instance 时 Replay 禁止从 placement、grid 惯例或 C
+发明 coordinate、乘加或 affine address。此规则已同步到 π 核心文档、活动 spec 与 Lift/Replay
+共用 mechanism grammar。下一次从 `masked_copy/run-004` 开始。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

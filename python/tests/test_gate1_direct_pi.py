@@ -576,6 +576,8 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert mechanism_grammar in lift_instructions
     assert mechanism_grammar in replay_instructions
     assert "routing p0 to i1 is invalid" in grammar
+    assert "placement='program' only scopes an instance" in mechanism_grammar
+    assert "must not invent program_id" in mechanism_grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"
     ]["pattern"] == "^i[0-9]+$"

@@ -1,0 +1,12 @@
+{
+  "attempts": 1,
+  "elapsed_ms": 161994.31043630466,
+  "model": "gpt-5.6-sol",
+  "response_id": "resp_00e754e33114f420016a6117adcec8819b94d932aee50e830f",
+  "response_model": "gpt-5.6-sol",
+  "usage": {
+    "input_tokens": 9880,
+    "output_tokens": 8878,
+    "total_tokens": 18758
+  }
+}

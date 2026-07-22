@@ -64,6 +64,11 @@ BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选�
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。
 
+π region placement 不是隐式代码生成指令：`placement=program` 不等于存在 `program_id`。只有 π
+中另有一个表示 compiler-visible program/grid coordinate 的独立 `realize` instance 与 routes 时，
+Replay 才能生成对应 stage；不得按常见 kernel 模板从 placement、grid 惯例或 C 猜出额外 grid
+offset、整数乘加或 affine address。
+
 ## Gate1 失败与 relift
 
 Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读取 Source、上一轮完整

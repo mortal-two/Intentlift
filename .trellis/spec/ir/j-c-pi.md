@@ -55,6 +55,12 @@ mu : Instances -> Ids(J) union Ids(C)
 所有 observable realization instance 必须锚定 J-owned node/access/effect。representation-only
 scaffolding 折叠后，π 不得增加、删除或改写 J carrier 的逻辑边。
 
+`region.placement=program` 只说明 instance 位于单个 program 的 region 中，不表示 Source 读取了
+program/grid coordinate。若 Source 的确存在 `program_id`、grid offset 等 compiler-visible stage，
+Lift 必须用一个独立 `realize` instance 及 routes 记录；无需新增 mechanism enum。没有该独立
+instance 时，Replay 不得因 placement、常见前端写法或 C 自行发明 program coordinate、乘加或
+affine address stage。
+
 ## Authorization 与 parametricity
 
 ```text
