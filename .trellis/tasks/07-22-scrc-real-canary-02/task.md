@@ -90,6 +90,21 @@ update、alias 和 mutable storage 继续 fail closed。正例、domain mismatch
 Source–Replay、Source–J、Replay–J 三条 exact 边均通过、最大误差均为 0。下一步必须从全新的
 `run-003` 重新走完整主流程，才能形成新的认证结论。
 
+### `exact_vector_add / run-003`
+
+- terminal：`SCRC_CERTIFIED`；这是修复后的全新主流程，不复用 run-002 候选或离线 verdict；
+- 两轮 Lift 均通过 TypeCheck；第一轮 Gate1 不闭合，第二轮 `replay_closed`，因此该样本为
+  `closure@2`，accepted attempt 为 2；
+- Gate2 在实际 `c0={c0:128}` 上由 `dense_functional_v1` RefEval 产生 `O_J`，Source–Replay、
+  Source–J、Replay–J 三条 external-Q exact 边全部通过，三个最大绝对误差均为 0；
+- 调用预算：2 次 Lift、2 次 normal Replay、1 次 masked-J Replay、1 次 Source/Replay/RefEval
+  Gate2 execution；Gate2 case 数为 1；
+- `j_necessity_status=not_proved`：masked-J 也 hard-close。该结果只说明本次 topology 下没有证明
+  J 的操作性必要，不改变主状态 `SCRC_CERTIFIED`。
+
+至此 exact canary 已明确完成。下一步按既定顺序进入全新的 `masked_copy` 运行；不从 exact 结果
+外推 masked predicate/fill 已被 RefEval 支持。
+
 ## 实施内容
 
 ### 1. 可复现真实入口
