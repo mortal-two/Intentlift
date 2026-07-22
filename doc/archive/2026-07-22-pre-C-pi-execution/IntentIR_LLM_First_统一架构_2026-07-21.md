@@ -1,5 +1,8 @@
 # IntentIR：LLM-first、Verifier-closed 的统一架构与验证设计
 
+> 历史状态：本文件已被 2026-07-22 的 C、π 与最终执行流程三份核心设计取代，仅用于追溯。
+> 当前设计入口见 [文档 README](../../README.md)。
+
 > 状态：2026-07-21 起的规范性设计主文档
 > 目标：统一系统哲学、`J/C/π`、Gate1、Gate2、开放前端、在线成本与迁移边界
 > 口号：**不把碎片化生态编进系统，只把可验证性编进系统。**
@@ -25,7 +28,7 @@ the verifier bounds model uncertainty.
 
 ## 2. 设计来源与冲突消解
 
-本设计整合了 [source-notes](source-notes/README.md) 中的五份材料。它们存在两次明确
+本设计整合了 [source-notes](../../source-notes/README.md) 中的五份材料。它们存在两次明确
 的设计推进：
 
 1. `回答1` 正确识别了 composer/RuleCard/C.strategy 的工程膨胀，但其“放松 Gate1”
@@ -129,7 +132,7 @@ logical update 与 allowed-result relation。schema 可表达不等于 executor 
 已经受支持；能力结论仍必须来自真实 consumer、Gate1/Gate2 和 backend conformance。
 
 2026-07-21 的第一轮真实源码审计已经完成，详见
-[IntentOp_健壮性审计_2026-07-21.md](IntentOp_健壮性审计_2026-07-21.md)。审计冻结的是
+[IntentOp_健壮性审计_2026-07-21.md](../../source-notes/IntentOp_健壮性审计_2026-07-21.md)。审计冻结的是
 结构禁令与 fail-closed 能力边界。后续 Typed Relations 03 又把 bounds、update 和
 result relation 放入唯一 canonical B；per-op `layer_b`、`out`、J 内 `trip.tile_hint`
 以及 J 中的 `atomic/synchronize` spelling 仍被硬拒绝。
@@ -434,7 +437,7 @@ canonical J；尚未实现的 B relation 必须在执行/codegen 前 fail closed
 
 Architecture Reset 01 已完成：活动主链已切换到 LLM-direct `J+C+π`，旧控制面和第二
 semantic wire 已迁出 importable tree；新 epoch 对旧 artifact/cache 硬失败。实现证据见
-[归档任务](../.trellis/tasks/archive/2026-07/07-21-architecture-reset-01-direct-pi/task.md)。
+[归档任务](../../../.trellis/tasks/archive/2026-07/07-21-architecture-reset-01-direct-pi/task.md)。
 
 IntentOp Robustness 02 与 Typed Relations 03 也已完成：错误的第二 B/C/atomic 通道已回收，
 typed bounds/update/result relation 和 J-owned Gate2 comparator 已闭合；CPU scatter 与一般

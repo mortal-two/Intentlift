@@ -1,7 +1,11 @@
 # IntentIR C：所有权、绑定、消费与验证设计
 
-> 状态：新架构核心设计（2026-07-22）  
-> 修订依据：[高级 AI 对 C 设计的纠正](高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](高级ai对c的自省.md)  
+> 状态：新架构核心设计（2026-07-22）
+>
+> 修订依据：[高级 AI 对 C 设计的纠正](source-notes/高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](source-notes/高级ai对c的自省.md)
+>
+> 联合复审：[三份核心设计复审与四项修正](source-notes/高级ai对三份核心设计的复审与四项修正_2026-07-22.md)
+>
 > 范围：定义 C 在 Lift、Replay、Gate1、Gate2、reference semantics 与直接 production lowering 中的最小合同
 >
 > 核心不变量：**证明相关 artifact 严格只有 `(J,C,pi)`；Replay 只看 `J + pi + MaskC(C)`。**
