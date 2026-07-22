@@ -97,6 +97,8 @@ def test_normal_closure_reports_masked_j_mismatch_separately() -> None:
     assert result.normal_calls == 1
     assert result.masked_j_calls == 1
     assert writer.calls == [False, True]
+    assert result.observer_profile.frontend.value == "triton"
+    assert result.to_json()["observer_profile"]["compiler_stage"] == "ttir"
 
 
 def test_masked_j_hard_closure_does_not_reject_main_gate1() -> None:

@@ -156,6 +156,8 @@ def test_cute_normal_closure_reports_masked_j_mismatch_separately() -> None:
     assert result.normal.hard_closed
     assert result.masked_j is not None and not result.masked_j.hard_closed
     assert writer.calls == [False, True]
+    assert result.observer_profile.frontend is Frontend.CUTE
+    assert result.to_json()["observer_profile"]["compiler_stage"] == "mlir+ptx"
 
 
 def test_cute_masked_j_closure_does_not_reject_main_gate1() -> None:

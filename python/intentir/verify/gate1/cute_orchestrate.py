@@ -18,6 +18,7 @@ from .orchestrate import (
     Gate1ExecutionResult,
     canonical_artifact_digest,
 )
+from .profile import CUTE_OBSERVER_PROFILE
 from .replay import ReplayWriter
 
 
@@ -254,6 +255,7 @@ class CuteGate1Runner:
                 None,
                 0,
                 0,
+                observer_profile=CUTE_OBSERVER_PROFILE,
             )
         try:
             source_fingerprint = self._fingerprint(
@@ -277,6 +279,7 @@ class CuteGate1Runner:
                 None,
                 0,
                 0,
+                observer_profile=CUTE_OBSERVER_PROFILE,
             )
         normal = self._arm(
             artifact, source_fingerprint, source_case, masked=False
@@ -291,6 +294,7 @@ class CuteGate1Runner:
                 None,
                 1,
                 0,
+                observer_profile=CUTE_OBSERVER_PROFILE,
             )
         masked_evidence = None
         masked_calls = 0
@@ -309,6 +313,7 @@ class CuteGate1Runner:
             masked_evidence,
             1,
             masked_calls,
+            observer_profile=CUTE_OBSERVER_PROFILE,
         )
 
 

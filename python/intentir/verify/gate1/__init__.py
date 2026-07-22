@@ -52,6 +52,7 @@ from .model import (
     opaque_replay_abi,
 )
 from .pi import RealizationWitness, RealizationWitnessError
+from .profile import ObserverProfile, observer_profile_for
 
 __all__ = [
     "AccessKind", "AliasKind", "AliasSpec", "Boundary", "BoundaryAccess",
@@ -60,6 +61,7 @@ __all__ = [
     "Gate1Artifact", "Gate1Status", "ImplementationConfig",
     "IndexBoundsSpec", "LocationEntry", "LocationMap", "LogicalUpdateSpec",
     "LogicalSignature", "OutputMapping", "ParameterKind",
+    "ObserverProfile", "observer_profile_for",
     "ParameterMode", "PortableScope", "ProvenanceRecord", "ProvenanceRole",
     "RealizationAuthorization", "RealizationWitness",
     "RealizationWitnessError", "ReductionBoundary", "RefinementKind",

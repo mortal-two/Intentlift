@@ -18,6 +18,7 @@ from .model import (
     opaque_replay_abi,
 )
 from .replay import ReplayGeneration, ReplayWriter
+from .profile import ObserverProfile, TRITON_OBSERVER_PROFILE
 from .ttir import TTIRFingerprint, fingerprint_ttir
 
 
@@ -59,6 +60,7 @@ class Gate1ExecutionResult:
     normal_calls: int
     masked_j_calls: int
     protocol: str = GATE1_PROTOCOL
+    observer_profile: ObserverProfile = TRITON_OBSERVER_PROFILE
 
     @property
     def passed(self) -> bool:
@@ -120,6 +122,7 @@ class Gate1ExecutionResult:
 
         return {
             "protocol": self.protocol,
+            "observer_profile": self.observer_profile.to_json(),
             "status": self.status.value,
             "j_necessity_status": self.j_necessity_status.value,
             "artifact_digest": self.artifact_digest,
