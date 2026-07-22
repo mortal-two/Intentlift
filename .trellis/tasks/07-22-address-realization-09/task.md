@@ -163,3 +163,11 @@ v6 epoch 切换后的全量回归已通过：`814 passed, 4 skipped`，60 个既
 下一步生成并复验 v6 formal preflight；必须保持 `online_llm_calls=0`，并证明 26/26 Triton、
 2/2 CuTe、28/28 source observer/replay arm ready。preflight 提交后冻结受保护代码，才允许唯一
 一次 Swiglu v6 canary。
+
+v6 formal preflight 已生成并复验通过：26/26 Triton、2/2 CuTe、28/28 source/symbol pins、
+source observer 与 Replay arm 全部 ready，`online_llm_calls=0`。receipt SHA 为
+`ffda048dfdf00738359e4fe335d9b6d188bcd7590fdcc9297f7cf9e2052fec52`，详见
+`research/v6-preflight.md`。
+
+下一步提交 preflight evidence，确认 worktree clean 与 v6 output absent，然后只运行一次绑定
+v5 strict `no_closure` receipt 的 Swiglu `protocol_v6_recovery` canary。
