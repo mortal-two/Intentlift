@@ -1,0 +1,701 @@
+{
+  "artifact_digest": "3341053a77b184872bfc1a6c5024dccca0bee3e161ad3aac8e9526a2b439dbae",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 1,
+    "normal": 1
+  },
+  "masked_j": {
+    "comparison": null,
+    "compile": {
+      "asm_keys": [],
+      "cache_hit": false,
+      "cache_key": "0efe1b6e0756c595b5065df6240625701a169206b6051686a1ba68c089ad9a5a",
+      "compiler": {
+        "environment": {
+          "TRITON_ALWAYS_COMPILE": "1",
+          "TRITON_KERNEL_DUMP": "1",
+          "TRITON_STORE_BINARY_ONLY": "0"
+        },
+        "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+        "gate1_worker_sha256": "e54f3db5c77daaa3cf2c2bcc49ad030d5f717baa413a53c8cddc880cfd178f28",
+        "python": "3.10.12",
+        "torch": "2.10.0+cu130",
+        "torch_cuda": "13.0",
+        "triton": "3.6.0"
+      },
+      "diagnostic": "Traceback (most recent call last):\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 43, in wrapper\n    return fn(*args, **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 1644, in arange\n    return _semantic.arange(start, end)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/semantic.py\", line 574, in arange\n    raise ValueError(\"arange's arguments must be of type tl.constexpr\")\nValueError: arange's arguments must be of type tl.constexpr\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 499, in main\n    result = _compile(request)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 455, in _compile\n    warmup_result = compilable.warmup(grid=grid, **values)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 359, in warmup\n    return self.run(grid=grid, warmup=True, *map(MockTensor.wrap_dtype, args), **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 720, in run\n    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 849, in _do_compile\n    kernel = self.compile(src, target=target, options=options.__dict__)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 304, in compile\n    module = src.make_ir(target, options, codegen_fns, module_map, context)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 80, in make_ir\n    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,\ntriton.compiler.errors.CompilationError: at 5:14:\ndef scrc_k0(p0, p1, p2, c0: tl.constexpr):\n    i0 = c0\n\n    i1 = p0\n    i2 = i1 + tl.arange(0, i0)\n              ^\narange's arguments must be of type tl.constexpr\n",
+      "elapsed_ms": 4477.079405914992,
+      "ok": false,
+      "python_interface": {},
+      "target": {
+        "arch": 120,
+        "backend": "cuda",
+        "cuda": {
+          "compute_capability": [
+            12,
+            0
+          ],
+          "index": 0,
+          "multi_processor_count": 170,
+          "name": "NVIDIA GeForce RTX 5090 D",
+          "total_memory": 33668988928
+        },
+        "triton": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "warp_size": 32
+      },
+      "ttgir": null,
+      "ttir": null
+    },
+    "diagnostic": "Traceback (most recent call last):\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 43, in wrapper\n    return fn(*args, **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 1644, in arange\n    return _semantic.arange(start, end)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/semantic.py\", line 574, in arange\n    raise ValueError(\"arange's arguments must be of type tl.constexpr\")\nValueError: arange's arguments must be of type tl.constexpr\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 499, in main\n    result = _compile(request)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 455, in _compile\n    warmup_result = compilable.warmup(grid=grid, **values)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 359, in warmup\n    return self.run(grid=grid, warmup=True, *map(MockTensor.wrap_dtype, args), **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 720, in run\n    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 849, in _do_compile\n    kernel = self.compile(src, target=target, options=options.__dict__)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 304, in compile\n    module = src.make_ir(target, options, codegen_fns, module_map, context)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 80, in make_ir\n    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,\ntriton.compiler.errors.CompilationError: at 5:14:\ndef scrc_k0(p0, p1, p2, c0: tl.constexpr):\n    i0 = c0\n\n    i1 = p0\n    i2 = i1 + tl.arange(0, i0)\n              ^\narange's arguments must be of type tl.constexpr\n",
+    "fingerprint": null,
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "context_sha256": "2f2aa9fb65305a1da95ca9d31ea01ad45abb1b5b8e3c92c8e1dd6010f6e9ca62",
+        "retrieval_trace": []
+      },
+      "elapsed_ms": 77234.59581006318,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "packet_digest": "0983f35c2fd019fbdccace16d6bc2004a592de919ffff9a9a50d00b3f99c4e81",
+      "prompt_digest": "212d4d5fd0ebc0ccf578de6550bb167e4ad6d19cbd2661692fe31de914add2fc",
+      "raw_response_sha256": "9a89aedadeafda922d28a23f80dd2423c46d22bb5d5484c4d9db6d551d9ff0cd",
+      "request_sha256": "6432feea5ebbe05651639b381b00307584bda4ee96ebc6d0446324d225badfe3",
+      "response_id": "resp_0c761a3fff3ee001016a610953232481988c4191574d2424fb",
+      "response_model": "gpt-5.6-sol",
+      "response_sha256": "141a2850f4a9d3e61ba1e90336efc0269f04f7dbb644ec355ad0a47345f0356f",
+      "usage": {
+        "input_tokens": 2363,
+        "output_tokens": 3778,
+        "total_tokens": 6141
+      }
+    },
+    "mode": "masked_j"
+  },
+  "normal": {
+    "comparison": {
+      "active_categories": [
+        "interface",
+        "op_multiset",
+        "dataflow",
+        "predicate_effect"
+      ],
+      "active_weight": 0.8,
+      "components": [
+        {
+          "applicable": true,
+          "category": "interface",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": true,
+          "category": "op_multiset",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": true,
+          "category": "dataflow",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": false,
+          "category": "reduction",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": null
+        },
+        {
+          "applicable": true,
+          "category": "predicate_effect",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": true,
+          "category": "schedule-only",
+          "differences": [],
+          "hard": false,
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "differences": [],
+      "hard_pass": true,
+      "hard_passes": {
+        "dataflow": true,
+        "interface": true,
+        "op_multiset": true,
+        "predicate_effect": true,
+        "reduction": true
+      },
+      "inactive_categories": [
+        "reduction"
+      ],
+      "passed": true,
+      "primary_difference_category": null,
+      "rank_tuple": [
+        1,
+        5,
+        1.0,
+        0,
+        1,
+        0
+      ],
+      "score": 1.0,
+      "score_semantics": "active_evidence_weighted_v2"
+    },
+    "compile": {
+      "asm_keys": [
+        "cubin",
+        "llir",
+        "ptx",
+        "source",
+        "ttgir",
+        "ttir"
+      ],
+      "cache_hit": false,
+      "cache_key": "6a1084aaf9e9f0c46ccce0086a59c9f9f6fc658a92e1730cd7c673e6f0f9e3a4",
+      "compiler": {
+        "environment": {
+          "TRITON_ALWAYS_COMPILE": "1",
+          "TRITON_KERNEL_DUMP": "1",
+          "TRITON_STORE_BINARY_ONLY": "0"
+        },
+        "frontend_compat": {
+          "normalized_sha256": "7eef6eb837bd71948e044031415c1dbd19a61b3f6cafec1a2bb8b6d182fcdba4",
+          "protocol": "triton_static_dot_transpose_v1",
+          "rewrite_count": 0
+        },
+        "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+        "gate1_worker_sha256": "e54f3db5c77daaa3cf2c2bcc49ad030d5f717baa413a53c8cddc880cfd178f28",
+        "python": "3.10.12",
+        "torch": "2.10.0+cu130",
+        "torch_cuda": "13.0",
+        "triton": "3.6.0"
+      },
+      "diagnostic": "",
+      "elapsed_ms": 4275.616439990699,
+      "ok": true,
+      "python_interface": {
+        "arg_names": [
+          "p0",
+          "p1",
+          "p2",
+          "c0"
+        ],
+        "constexpr_indices": [
+          3
+        ],
+        "constexprs": [
+          "c0"
+        ],
+        "do_not_specialize": [],
+        "do_not_specialize_raw": []
+      },
+      "target": {
+        "arch": 120,
+        "backend": "cuda",
+        "compiled": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "cuda": {
+          "compute_capability": [
+            12,
+            0
+          ],
+          "index": 0,
+          "multi_processor_count": 170,
+          "name": "NVIDIA GeForce RTX 5090 D",
+          "total_memory": 33668988928
+        },
+        "triton": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "warp_size": 32
+      },
+      "ttgir": "#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\n#loc = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":6:0)\n#loc10 = loc(\"p0\"(#loc))\n#loc11 = loc(\"p1\"(#loc))\n#loc12 = loc(\"p2\"(#loc))\nmodule attributes {\"ttg.num-ctas\" = 1 : i32, \"ttg.num-warps\" = 4 : i32, ttg.target = \"cuda:120\", \"ttg.threads-per-warp\" = 32 : i32} {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %i0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32, #blocked> loc(#loc13)\n    %i2 = tt.splat %p0 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc14)\n    %i2_0 = tt.addptr %i2, %i0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc14)\n    %i3 = tt.load %i2_0 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc15)\n    %i5 = tt.splat %p1 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc16)\n    %i5_1 = tt.addptr %i5, %i0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc16)\n    %i6 = tt.load %i5_1 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc17)\n    %i8 = tt.splat %p2 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc18)\n    %i8_2 = tt.addptr %i8, %i0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc18)\n    %i9 = arith.addf %i3, %i6 : tensor<128xf32, #blocked> loc(#loc19)\n    tt.store %i8_2, %i9 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc8)\n    tt.return loc(#loc9)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":7:22)\n#loc2 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":10:14)\n#loc3 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":11:17)\n#loc4 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":14:14)\n#loc5 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":15:17)\n#loc6 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":18:14)\n#loc7 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":20:14)\n#loc8 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":21:17)\n#loc9 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":21:4)\n#loc13 = loc(\"i0\"(#loc1))\n#loc14 = loc(\"i2\"(#loc2))\n#loc15 = loc(\"i3\"(#loc3))\n#loc16 = loc(\"i5\"(#loc4))\n#loc17 = loc(\"i6\"(#loc5))\n#loc18 = loc(\"i8\"(#loc6))\n#loc19 = loc(\"i9\"(#loc7))\n",
+      "ttir": "#loc = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":6:0)\n#loc10 = loc(\"p0\"(#loc))\n#loc11 = loc(\"p1\"(#loc))\n#loc12 = loc(\"p2\"(#loc))\nmodule {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %i0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32> loc(#loc13)\n    %i2 = tt.splat %p0 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc14)\n    %i2_0 = tt.addptr %i2, %i0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc14)\n    %i3 = tt.load %i2_0 : tensor<128x!tt.ptr<f32>> loc(#loc15)\n    %i5 = tt.splat %p1 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc16)\n    %i5_1 = tt.addptr %i5, %i0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc16)\n    %i6 = tt.load %i5_1 : tensor<128x!tt.ptr<f32>> loc(#loc17)\n    %i8 = tt.splat %p2 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc18)\n    %i8_2 = tt.addptr %i8, %i0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc18)\n    %i9 = arith.addf %i3, %i6 : tensor<128xf32> loc(#loc19)\n    tt.store %i8_2, %i9 : tensor<128x!tt.ptr<f32>> loc(#loc8)\n    tt.return loc(#loc9)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":7:22)\n#loc2 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":10:14)\n#loc3 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":11:17)\n#loc4 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":14:14)\n#loc5 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":15:17)\n#loc6 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":18:14)\n#loc7 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":20:14)\n#loc8 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":21:17)\n#loc9 = loc(\"/tmp/intentir-gate1-module-0wabo5e8/gate1_kernel_7eef6eb837bd7194.py\":21:4)\n#loc13 = loc(\"i0\"(#loc1))\n#loc14 = loc(\"i2\"(#loc2))\n#loc15 = loc(\"i3\"(#loc3))\n#loc16 = loc(\"i5\"(#loc4))\n#loc17 = loc(\"i6\"(#loc5))\n#loc18 = loc(\"i8\"(#loc6))\n#loc19 = loc(\"i9\"(#loc7))\n"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "dataflow_edges": [
+        [
+          "arg[0]:!tt.ptr<f32>",
+          "tt.splat[8f93b6c10539044c54fd]",
+          "operand[0]"
+        ],
+        [
+          "arg[1]:!tt.ptr<f32>",
+          "tt.splat[483fba780eb98be90658]",
+          "operand[0]"
+        ],
+        [
+          "arg[2]:!tt.ptr<f32>",
+          "tt.splat[5942d25f617f0033cd50]",
+          "operand[0]"
+        ],
+        [
+          "arith.addf[0016b6830f8f83389308]",
+          "tt.store[20e26841444160f2da67]",
+          "operand[1]"
+        ],
+        [
+          "tt.addptr[291844b9f8d3aa824107]",
+          "tt.store[20e26841444160f2da67]",
+          "operand[0]"
+        ],
+        [
+          "tt.addptr[dbe64e9a611437265a1e]",
+          "tt.load[df98e4f55be57fbab28b]",
+          "operand[0]"
+        ],
+        [
+          "tt.addptr[fe26b6d51d9f58c4492d]",
+          "tt.load[6f1462a06bba9739058c]",
+          "operand[0]"
+        ],
+        [
+          "tt.load[6f1462a06bba9739058c]",
+          "arith.addf[0016b6830f8f83389308]",
+          "operand[0]"
+        ],
+        [
+          "tt.load[df98e4f55be57fbab28b]",
+          "arith.addf[0016b6830f8f83389308]",
+          "operand[1]"
+        ],
+        [
+          "tt.make_range[af5e152e734fe031463b]",
+          "tt.addptr[291844b9f8d3aa824107]",
+          "operand[1]"
+        ],
+        [
+          "tt.make_range[af5e152e734fe031463b]",
+          "tt.addptr[dbe64e9a611437265a1e]",
+          "operand[1]"
+        ],
+        [
+          "tt.make_range[af5e152e734fe031463b]",
+          "tt.addptr[fe26b6d51d9f58c4492d]",
+          "operand[1]"
+        ],
+        [
+          "tt.splat[483fba780eb98be90658]",
+          "tt.addptr[dbe64e9a611437265a1e]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[5942d25f617f0033cd50]",
+          "tt.addptr[291844b9f8d3aa824107]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[8f93b6c10539044c54fd]",
+          "tt.addptr[fe26b6d51d9f58c4492d]",
+          "operand[0]"
+        ]
+      ],
+      "dots": [],
+      "effect_multiset": {
+        "read": 2,
+        "write": 1
+      },
+      "interface": {
+        "arguments": [
+          {
+            "access": "input",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f32",
+            "kind": "pointer",
+            "position": 0,
+            "rank": null,
+            "type": "!tt.ptr<f32>"
+          },
+          {
+            "access": "input",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f32",
+            "kind": "pointer",
+            "position": 1,
+            "rank": null,
+            "type": "!tt.ptr<f32>"
+          },
+          {
+            "access": "output",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f32",
+            "kind": "pointer",
+            "position": 2,
+            "rank": null,
+            "type": "!tt.ptr<f32>"
+          }
+        ],
+        "python": {
+          "arg_names": [
+            "p0",
+            "p1",
+            "p2",
+            "c0"
+          ],
+          "constexpr_indices": [
+            3
+          ],
+          "constexprs": [
+            "c0"
+          ]
+        },
+        "results": []
+      },
+      "loops": [],
+      "mask_predicates": [],
+      "memory_effects": [
+        {
+          "attributes": "tt.load %:tensor<128x!tt.ptr<f32>>",
+          "kind": "load",
+          "masked": false,
+          "other": null,
+          "predicate": null
+        },
+        {
+          "attributes": "tt.load %:tensor<128x!tt.ptr<f32>>",
+          "kind": "load",
+          "masked": false,
+          "other": null,
+          "predicate": null
+        },
+        {
+          "attributes": "tt.store %,%:tensor<128x!tt.ptr<f32>>",
+          "kind": "store",
+          "masked": false,
+          "other": null,
+          "predicate": null
+        }
+      ],
+      "op_multiset": {
+        "arith.addf": 1,
+        "tt.addptr": 3,
+        "tt.load": 2,
+        "tt.make_range": 1,
+        "tt.splat": 3,
+        "tt.store": 1
+      },
+      "reductions": [],
+      "schedule_view": {
+        "c0": 128
+      },
+      "schema_version": "triton-ttir-3.6-gate1-v3"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "context_sha256": "2f2aa9fb65305a1da95ca9d31ea01ad45abb1b5b8e3c92c8e1dd6010f6e9ca62",
+        "retrieval_trace": []
+      },
+      "elapsed_ms": 29591.452396009117,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "packet_digest": "f8a21328fdc0e72989cb17a3e25a3e43926c61db13f58ccbd0e1ee2ee60c7990",
+      "prompt_digest": "f7ccf1972b7a61b04d642d2267713353059e964e65d1472c1098eb82d1767bfd",
+      "raw_response_sha256": "44109f37f397383f2804c74a640208a9ae9d2aa6ee28aec6876f053331685441",
+      "request_sha256": "88fcaa60450ba7cf943e52a9912463401156fbb67c0b35b184d8675fb3cdf2a7",
+      "response_id": "resp_0ffc6119bc01f8a9016a610930a09c819bb27e7b9b4ac01712",
+      "response_model": "gpt-5.6-sol",
+      "response_sha256": "793982b67c068f26a0dd98d52f8179e6aa920adcf626bd201b71a1fcfbd32c26",
+      "usage": {
+        "input_tokens": 2395,
+        "output_tokens": 1538,
+        "total_tokens": 3933
+      }
+    },
+    "mode": "normal"
+  },
+  "observer_profile": {
+    "canonicalization_version": "triton-ttir-3.6-gate1-v3",
+    "compiler_stage": "ttir",
+    "evidence_class": "strong_structural",
+    "frontend": "triton",
+    "profile_id": "triton_ttir_structural",
+    "profile_version": "triton-ttir-3.6-gate1-v3"
+  },
+  "protocol": "llm_direct_pi_gate1_level2_v1",
+  "source_compile": {
+    "asm_keys": [
+      "cubin",
+      "llir",
+      "ptx",
+      "source",
+      "ttgir",
+      "ttir"
+    ],
+    "cache_hit": false,
+    "cache_key": "d6f622b477522a07ac4a2c99827590c0f21d27d57417a858675d5f9fac797d01",
+    "compiler": {
+      "environment": {
+        "TRITON_ALWAYS_COMPILE": "1",
+        "TRITON_KERNEL_DUMP": "1",
+        "TRITON_STORE_BINARY_ONLY": "0"
+      },
+      "frontend_compat": {
+        "normalized_sha256": "be68b1d51b53da0fdce76a0b0eddb37be33c74fdf311f3ab7b0b913651aca216",
+        "protocol": "triton_static_dot_transpose_v1",
+        "rewrite_count": 0
+      },
+      "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+      "gate1_worker_sha256": "e54f3db5c77daaa3cf2c2bcc49ad030d5f717baa413a53c8cddc880cfd178f28",
+      "python": "3.10.12",
+      "torch": "2.10.0+cu130",
+      "torch_cuda": "13.0",
+      "triton": "3.6.0"
+    },
+    "diagnostic": "",
+    "elapsed_ms": 4420.716931577772,
+    "ok": true,
+    "python_interface": {
+      "arg_names": [
+        "p0",
+        "p1",
+        "p2",
+        "c0"
+      ],
+      "constexpr_indices": [
+        3
+      ],
+      "constexprs": [
+        "c0"
+      ],
+      "do_not_specialize": [],
+      "do_not_specialize_raw": []
+    },
+    "target": {
+      "arch": 120,
+      "backend": "cuda",
+      "compiled": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "cuda": {
+        "compute_capability": [
+          12,
+          0
+        ],
+        "index": 0,
+        "multi_processor_count": 170,
+        "name": "NVIDIA GeForce RTX 5090 D",
+        "total_memory": 33668988928
+      },
+      "triton": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "warp_size": 32
+    },
+    "ttgir": "#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\n#loc = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":5:0)\n#loc10 = loc(\"p0\"(#loc))\n#loc11 = loc(\"p1\"(#loc))\n#loc12 = loc(\"p2\"(#loc))\nmodule attributes {\"ttg.num-ctas\" = 1 : i32, \"ttg.num-warps\" = 4 : i32, ttg.target = \"cuda:120\", \"ttg.threads-per-warp\" = 32 : i32} {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %v0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32, #blocked> loc(#loc13)\n    %v1 = tt.splat %p0 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc14)\n    %v1_0 = tt.addptr %v1, %v0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc14)\n    %v1_1 = tt.load %v1_0 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc15)\n    %v2 = tt.splat %p1 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc16)\n    %v2_2 = tt.addptr %v2, %v0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc16)\n    %v2_3 = tt.load %v2_2 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc17)\n    %0 = tt.splat %p2 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>, #blocked> loc(#loc6)\n    %1 = tt.addptr %0, %v0 : tensor<128x!tt.ptr<f32>, #blocked>, tensor<128xi32, #blocked> loc(#loc6)\n    %2 = arith.addf %v1_1, %v2_3 : tensor<128xf32, #blocked> loc(#loc7)\n    tt.store %1, %2 : tensor<128x!tt.ptr<f32>, #blocked> loc(#loc8)\n    tt.return loc(#loc9)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":6:22)\n#loc2 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":7:22)\n#loc3 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":7:17)\n#loc4 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":8:22)\n#loc5 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":8:17)\n#loc6 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:18)\n#loc7 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:27)\n#loc8 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:22)\n#loc9 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:4)\n#loc13 = loc(\"v0\"(#loc1))\n#loc14 = loc(\"v1\"(#loc2))\n#loc15 = loc(\"v1\"(#loc3))\n#loc16 = loc(\"v2\"(#loc4))\n#loc17 = loc(\"v2\"(#loc5))\n",
+    "ttir": "#loc = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":5:0)\n#loc10 = loc(\"p0\"(#loc))\n#loc11 = loc(\"p1\"(#loc))\n#loc12 = loc(\"p2\"(#loc))\nmodule {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %v0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32> loc(#loc13)\n    %v1 = tt.splat %p0 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc14)\n    %v1_0 = tt.addptr %v1, %v0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc14)\n    %v1_1 = tt.load %v1_0 : tensor<128x!tt.ptr<f32>> loc(#loc15)\n    %v2 = tt.splat %p1 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc16)\n    %v2_2 = tt.addptr %v2, %v0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc16)\n    %v2_3 = tt.load %v2_2 : tensor<128x!tt.ptr<f32>> loc(#loc17)\n    %0 = tt.splat %p2 : !tt.ptr<f32> -> tensor<128x!tt.ptr<f32>> loc(#loc6)\n    %1 = tt.addptr %0, %v0 : tensor<128x!tt.ptr<f32>>, tensor<128xi32> loc(#loc6)\n    %2 = arith.addf %v1_1, %v2_3 : tensor<128xf32> loc(#loc7)\n    tt.store %1, %2 : tensor<128x!tt.ptr<f32>> loc(#loc8)\n    tt.return loc(#loc9)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":6:22)\n#loc2 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":7:22)\n#loc3 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":7:17)\n#loc4 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":8:22)\n#loc5 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":8:17)\n#loc6 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:18)\n#loc7 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:27)\n#loc8 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:22)\n#loc9 = loc(\"/tmp/intentir-gate1-module-ry9g49kw/gate1_kernel_be68b1d51b53da0f.py\":9:4)\n#loc13 = loc(\"v0\"(#loc1))\n#loc14 = loc(\"v1\"(#loc2))\n#loc15 = loc(\"v1\"(#loc3))\n#loc16 = loc(\"v2\"(#loc4))\n#loc17 = loc(\"v2\"(#loc5))\n"
+  },
+  "source_fingerprint": {
+    "dataflow_edges": [
+      [
+        "arg[0]:!tt.ptr<f32>",
+        "tt.splat[8f93b6c10539044c54fd]",
+        "operand[0]"
+      ],
+      [
+        "arg[1]:!tt.ptr<f32>",
+        "tt.splat[483fba780eb98be90658]",
+        "operand[0]"
+      ],
+      [
+        "arg[2]:!tt.ptr<f32>",
+        "tt.splat[5942d25f617f0033cd50]",
+        "operand[0]"
+      ],
+      [
+        "arith.addf[0016b6830f8f83389308]",
+        "tt.store[20e26841444160f2da67]",
+        "operand[1]"
+      ],
+      [
+        "tt.addptr[291844b9f8d3aa824107]",
+        "tt.store[20e26841444160f2da67]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[dbe64e9a611437265a1e]",
+        "tt.load[df98e4f55be57fbab28b]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[fe26b6d51d9f58c4492d]",
+        "tt.load[6f1462a06bba9739058c]",
+        "operand[0]"
+      ],
+      [
+        "tt.load[6f1462a06bba9739058c]",
+        "arith.addf[0016b6830f8f83389308]",
+        "operand[0]"
+      ],
+      [
+        "tt.load[df98e4f55be57fbab28b]",
+        "arith.addf[0016b6830f8f83389308]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[af5e152e734fe031463b]",
+        "tt.addptr[291844b9f8d3aa824107]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[af5e152e734fe031463b]",
+        "tt.addptr[dbe64e9a611437265a1e]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[af5e152e734fe031463b]",
+        "tt.addptr[fe26b6d51d9f58c4492d]",
+        "operand[1]"
+      ],
+      [
+        "tt.splat[483fba780eb98be90658]",
+        "tt.addptr[dbe64e9a611437265a1e]",
+        "operand[0]"
+      ],
+      [
+        "tt.splat[5942d25f617f0033cd50]",
+        "tt.addptr[291844b9f8d3aa824107]",
+        "operand[0]"
+      ],
+      [
+        "tt.splat[8f93b6c10539044c54fd]",
+        "tt.addptr[fe26b6d51d9f58c4492d]",
+        "operand[0]"
+      ]
+    ],
+    "dots": [],
+    "effect_multiset": {
+      "read": 2,
+      "write": 1
+    },
+    "interface": {
+      "arguments": [
+        {
+          "access": "input",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f32",
+          "kind": "pointer",
+          "position": 0,
+          "rank": null,
+          "type": "!tt.ptr<f32>"
+        },
+        {
+          "access": "input",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f32",
+          "kind": "pointer",
+          "position": 1,
+          "rank": null,
+          "type": "!tt.ptr<f32>"
+        },
+        {
+          "access": "output",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f32",
+          "kind": "pointer",
+          "position": 2,
+          "rank": null,
+          "type": "!tt.ptr<f32>"
+        }
+      ],
+      "python": {
+        "arg_names": [
+          "p0",
+          "p1",
+          "p2",
+          "c0"
+        ],
+        "constexpr_indices": [
+          3
+        ],
+        "constexprs": [
+          "c0"
+        ]
+      },
+      "results": []
+    },
+    "loops": [],
+    "mask_predicates": [],
+    "memory_effects": [
+      {
+        "attributes": "tt.load %:tensor<128x!tt.ptr<f32>>",
+        "kind": "load",
+        "masked": false,
+        "other": null,
+        "predicate": null
+      },
+      {
+        "attributes": "tt.load %:tensor<128x!tt.ptr<f32>>",
+        "kind": "load",
+        "masked": false,
+        "other": null,
+        "predicate": null
+      },
+      {
+        "attributes": "tt.store %,%:tensor<128x!tt.ptr<f32>>",
+        "kind": "store",
+        "masked": false,
+        "other": null,
+        "predicate": null
+      }
+    ],
+    "op_multiset": {
+      "arith.addf": 1,
+      "tt.addptr": 3,
+      "tt.load": 2,
+      "tt.make_range": 1,
+      "tt.splat": 3,
+      "tt.store": 1
+    },
+    "reductions": [],
+    "schedule_view": {
+      "c0": 128
+    },
+    "schema_version": "triton-ttir-3.6-gate1-v3"
+  },
+  "status": "replay_closed"
+}

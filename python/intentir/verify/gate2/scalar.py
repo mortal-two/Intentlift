@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -12,12 +13,28 @@ import numpy as np
 from intentir.backend.cpu.abi import CPUABIValidationError, CPUBackendUnsupportedError
 from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
 from intentir.ir.model import IntentOp
-from intentir.verify.gate1.model import SemanticArchive
+from intentir.verify.gate1.model import (
+    AccessKind,
+    EffectKind,
+    ParameterMode,
+    SemanticArchive,
+)
 
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v2"
+SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v3"
+
+
+_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_DIRECT_INDEX = re.compile(
+    rf"^\[\s*(?P<axes>(?:{_IDENTIFIER}(?:\s*,\s*{_IDENTIFIER})*)?)\s*\]$"
+)
+_FULL_DOMAIN_TERM = re.compile(
+    rf"\s*0\s*<=\s*(?P<axis>{_IDENTIFIER})\s+and\s+"
+    rf"(?P=axis)\s*<\s*(?P<extent>[0-9]+|{_IDENTIFIER})"
+)
+_DOMAIN_SEPARATOR = re.compile(r"\s+and\s+")
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -79,22 +96,247 @@ def _node_table(j: SemanticArchive) -> dict[str, IntentOp]:
     return result
 
 
+def _result_names(op: IntentOp) -> tuple[str, ...]:
+    if isinstance(op.result, str):
+        return (op.result,)
+    if isinstance(op.result, list):
+        return tuple(op.result)
+    return ()
+
+
+def _parse_direct_index(expression: str) -> tuple[str, ...]:
+    """Parse the conservative dense tensor projection supported by E_J.
+
+    General affine, gathered, predicated, or source-realization expressions are
+    deliberately not interpreted here.  They need a typed J relation and a
+    corresponding evaluator instead of an ad-hoc expression evaluator.
+    """
+
+    match = _DIRECT_INDEX.fullmatch(expression)
+    if match is None:
+        raise NotImplementedError(
+            "E_J dense access requires index_expression '[axis0, ...]'"
+        )
+    axes = match.group("axes")
+    if not axes:
+        return ()
+    result = tuple(item.strip() for item in axes.split(","))
+    if len(set(result)) != len(result):
+        raise ValueError("E_J dense access axes must be unique")
+    return result
+
+
+def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
+    """Parse full logical tensor domains, rejecting every wider grammar.
+
+    The accepted form is a conjunction of ``0 <= axis and axis < extent``
+    terms.  This is enough to prove that a direct access denotes the complete
+    logical tensor represented by IntentFunction.  Predicated/partial domains
+    remain unsupported until their denotation is implemented explicitly.
+    """
+
+    result: dict[str, int | str] = {}
+    for domain_id, expression in j.boundary.domains.items():
+        expression = expression.strip()
+        position = 0
+        matched = False
+        while position < len(expression):
+            term = _FULL_DOMAIN_TERM.match(expression, position)
+            if term is None:
+                raise NotImplementedError(
+                    "E_J dense domain requires '0 <= axis and axis < extent' "
+                    f"terms; unsupported domain {domain_id!r}"
+                )
+            matched = True
+            axis = term.group("axis")
+            extent_text = term.group("extent")
+            extent: int | str = (
+                int(extent_text) if extent_text.isdecimal() else extent_text
+            )
+            previous = result.get(axis)
+            if previous is not None and previous != extent:
+                raise ValueError(
+                    f"E_J domain axis {axis!r} has conflicting extents"
+                )
+            result[axis] = extent
+            position = term.end()
+            if position == len(expression):
+                break
+            separator = _DOMAIN_SEPARATOR.match(expression, position)
+            if separator is None:
+                raise NotImplementedError(
+                    f"E_J dense domain {domain_id!r} has unsupported syntax"
+                )
+            position = separator.end()
+        if not matched:
+            raise ValueError(f"E_J domain {domain_id!r} must not be empty")
+    return result
+
+
+def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
+    """Consume the dense access/effect projection represented by pure J values.
+
+    ``IntentFunction`` evaluates complete logical tensors.  Therefore an
+    explicit memory boundary can be projected to that evaluator only when it
+    proves a full, direct, unpredicated tensor access and its effects agree
+    exactly with the functional inputs/outputs.  Anything more expressive is
+    rejected rather than silently ignored.
+    """
+
+    boundary = j.boundary
+    if any(
+        parameter.mode is ParameterMode.INOUT or parameter.alias_of is not None
+        for parameter in j.signature.parameters
+    ):
+        raise NotImplementedError(
+            "E_J dense functional boundary does not implement inout/alias ABI"
+        )
+    if not boundary.accesses:
+        if boundary.domains or boundary.effects:
+            raise ValueError(
+                "E_J boundary domains/effects require explicit access relations"
+            )
+        return
+
+    domains = _parse_full_domains(j)
+    nodes = _node_table(j)
+    tensors = {
+        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+    }
+    input_names = {item.name for item in j.intent.inputs}
+    output_names = {item.name for item in j.intent.outputs}
+    returns = {item.output: item.value for item in j.intent.returns}
+    mappings = {item.output: item for item in boundary.output_mappings}
+    access_ids = [item.access_id for item in boundary.accesses]
+    if len(access_ids) != len(set(access_ids)):
+        raise ValueError("E_J dense functional boundary has duplicate access ids")
+    effect_ids = [item.effect_id for item in boundary.effects]
+    if len(effect_ids) != len(set(effect_ids)):
+        raise ValueError("E_J dense functional boundary has duplicate effect ids")
+    effects_by_access: dict[str, list[Any]] = {}
+    for effect in boundary.effects:
+        if effect.access_ref is None:
+            raise NotImplementedError(
+                "E_J dense functional boundary requires access-bound effects"
+            )
+        effects_by_access.setdefault(effect.access_ref, []).append(effect)
+
+    consumed_domain_axes: set[str] = set()
+    inferred_axis_extents: dict[str, int | str] = dict(domains)
+    loaded: set[str] = set()
+    store_counts = {name: 0 for name in output_names}
+    expected_effect = {
+        AccessKind.LOAD: EffectKind.READ,
+        AccessKind.STORE: EffectKind.WRITE,
+    }
+    for access in boundary.accesses:
+        if access.kind is AccessKind.UPDATE:
+            raise NotImplementedError(
+                "E_J dense functional boundary does not implement update access"
+            )
+        if access.predicate is not None or access.fill_value is not None:
+            raise NotImplementedError(
+                "E_J dense functional boundary does not implement predicated "
+                "access or fill"
+            )
+        if access.node_ref is None:
+            raise NotImplementedError(
+                "E_J dense functional access requires an owning J node"
+            )
+        op = nodes.get(access.node_ref)
+        if op is None:
+            raise ValueError(
+                f"E_J access {access.access_id!r} references an unknown J node"
+            )
+        tensor = tensors.get(access.tensor)
+        if tensor is None:
+            raise ValueError(
+                f"E_J access {access.access_id!r} references an unknown tensor"
+            )
+        assert access.index_expression is not None
+        axes = _parse_direct_index(access.index_expression)
+        if len(axes) != len(tensor.shape):
+            raise ValueError(
+                f"E_J access {access.access_id!r} rank differs from J tensor"
+            )
+        for axis, declared_extent in zip(axes, tensor.shape, strict=True):
+            # A direct axis over a typed J tensor is already bounded by that
+            # tensor's logical shape.  When B also spells out a domain, consume
+            # it and require exact agreement instead of treating it as an
+            # alternative source of extent information.
+            actual_extent = inferred_axis_extents.get(axis, declared_extent)
+            if actual_extent != declared_extent:
+                raise ValueError(
+                    f"E_J access axis {axis!r} extent {actual_extent!r} differs "
+                    f"from J tensor extent {declared_extent!r}"
+                )
+            inferred_axis_extents.setdefault(axis, declared_extent)
+            if axis in domains:
+                consumed_domain_axes.add(axis)
+
+        matching_effects = effects_by_access.get(access.access_id, [])
+        if len(matching_effects) != 1:
+            raise ValueError(
+                f"E_J access {access.access_id!r} requires exactly one effect"
+            )
+        effect = matching_effects[0]
+        if (
+            effect.kind is not expected_effect[access.kind]
+            or effect.target != access.tensor
+            or effect.node_ref != access.node_ref
+        ):
+            raise ValueError(
+                f"E_J access {access.access_id!r} disagrees with its effect"
+            )
+
+        if access.kind is AccessKind.LOAD:
+            if access.tensor not in input_names or access.tensor not in op.operands:
+                raise ValueError(
+                    f"E_J load {access.access_id!r} is not a direct J operand"
+                )
+            loaded.add(access.tensor)
+            continue
+
+        if access.tensor not in output_names:
+            raise ValueError(
+                f"E_J store {access.access_id!r} does not target a J output"
+            )
+        observable_value = returns.get(access.tensor, access.tensor)
+        mapping = mappings.get(access.tensor)
+        if mapping is not None:
+            observable_value = mapping.value
+            if mapping.node_ref is not None and nodes.get(mapping.node_ref) is not op:
+                raise ValueError(
+                    f"E_J store {access.access_id!r} disagrees with output mapping"
+                )
+        if observable_value not in _result_names(op):
+            raise ValueError(
+                f"E_J store {access.access_id!r} is not produced by its J node"
+            )
+        store_counts[access.tensor] += 1
+
+    if set(effects_by_access) != {item.access_id for item in boundary.accesses}:
+        raise ValueError("E_J contains an effect for an unknown access")
+    if loaded != input_names:
+        raise NotImplementedError(
+            "E_J dense functional boundary must cover every logical input"
+        )
+    if any(count != 1 for count in store_counts.values()):
+        raise NotImplementedError(
+            "E_J dense functional boundary requires exactly one store per "
+            "logical output"
+        )
+    if consumed_domain_axes != set(domains):
+        raise NotImplementedError(
+            "E_J dense functional boundary contains an unconsumed domain axis"
+        )
+
+
 def _validate_complete_boundary(j: SemanticArchive) -> str:
     """Consume supported B and reject every relation E_J cannot implement."""
 
     boundary = j.boundary
-    if boundary.domains:
-        raise NotImplementedError("E_J does not implement explicit domain relations")
-    if boundary.accesses:
-        kinds = sorted({item.kind.value for item in boundary.accesses})
-        raise NotImplementedError(
-            "E_J does not implement explicit access relations: " + ", ".join(kinds)
-        )
-    if boundary.effects:
-        kinds = sorted({item.kind.value for item in boundary.effects})
-        raise NotImplementedError(
-            "E_J does not implement explicit effect relations: " + ", ".join(kinds)
-        )
+    _validate_dense_functional_boundary(j)
     if boundary.aliases:
         raise NotImplementedError("E_J does not implement alias relations")
     if any(item.mutability.value == "mutable" for item in j.storage):
@@ -366,6 +608,14 @@ class ScalarLoweringRunner:
                     "j_digest": spec.j_digest,
                     "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
+                    "boundary_profile": (
+                        "dense_functional_v1"
+                        if spec.j.boundary.accesses
+                        else "pure_value_v1"
+                    ),
+                    "domain_relation_count": len(spec.j.boundary.domains),
+                    "access_relation_count": len(spec.j.boundary.accesses),
+                    "effect_relation_count": len(spec.j.boundary.effects),
                     "broadcast_consumer_count": len(broadcast_axes),
                     "index_bounds_count": len(spec.j.boundary.index_bounds),
                     "result_relation_count": len(

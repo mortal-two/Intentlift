@@ -70,6 +70,26 @@ INFRASTRUCTURE_FAILED
 修正后的 canary/runner 定向测试：`15 passed`。下一次运行从新的 `run-002` 开始，不覆盖或重判
 run-001。
 
+### `exact_vector_add / run-002`
+
+- 三轮 Lift 均通过 dependent TypeCheck；前两轮 Gate1 分别因 Replay 编译失败、结构不闭合而结束，
+  第三轮 `replay_closed`；真实预算为 3 次 Lift、3 次 normal Replay、1 次 masked-J Replay；
+- Gate2 Source 与 Replay 均成功执行，Source–Replay 在 external Q 的 exact relation 下误差为 0；
+- terminal：`GATE2_FAILED`，case 子状态为 `reference_unsupported`，不是数值
+  `pairwise_diverged`；具体原因是 scalar RefEval 一律拒绝 J 中合法的 load/store access relations，
+  因而没有产生 `O_J`，Source–J 与 Replay–J 未被伪造为比较失败；
+- 按协议，本次运行到此结束，Gate2 结果没有返回 Lift，也没有 patch 第三轮 Replay。
+
+结束 run-002 后新增通用 `dense_functional_v1` RefEval consumer：只接受 direct dense
+`[axis0, ...]`、与 J shape 一致的可选 full-domain、完整 logical input/output 覆盖，以及一一对应的
+load/read、store/write、J node operand/result 与 output mapping。predicate/fill、affine/gather、
+update、alias 和 mutable storage 继续 fail closed。正例、domain mismatch 与 predicated access
+负例均已加入测试。
+
+用 run-002 已选定的第三轮 `(J,C,pi,Replay)` 离线复验新 consumer（不重写历史 verdict）：
+Source–Replay、Source–J、Replay–J 三条 exact 边均通过、最大误差均为 0。下一步必须从全新的
+`run-003` 重新走完整主流程，才能形成新的认证结论。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

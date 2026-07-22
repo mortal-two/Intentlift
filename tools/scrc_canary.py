@@ -505,10 +505,20 @@ def _save_report(
         f"- accepted_attempt: `{report.accepted_attempt}`",
         f"- j_necessity_status: `{report.j_necessity_status.value if report.j_necessity_status else 'NOT_RUN'}`",
         f"- call_budget: `{json.dumps(report.call_budget.to_json(), sort_keys=True)}`",
-        "",
-        "本目录中的 receipt/digest 仅用于普通追溯，不参与候选合法性或认证。",
-        "",
     ]
+    if report.gate2 is not None:
+        summary.append(
+            "- gate2_status_counts: `"
+            + json.dumps(report.gate2.status_counts, sort_keys=True)
+            + "`"
+        )
+    summary.extend(
+        [
+            "",
+            "本目录中的 receipt/digest 仅用于普通追溯，不参与候选合法性或认证。",
+            "",
+        ]
+    )
     (run_dir / "SUMMARY.md").write_text("\n".join(summary), encoding="utf-8")
 
 

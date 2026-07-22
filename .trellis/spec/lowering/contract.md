@@ -24,6 +24,18 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - 不使用 case-specific tolerance、Source/Replay 输出或 C value 决定结果；
 - 输出只交给外部比较政策 Q 构造的 Gate2 comparator 裁决；Q 不进入 RefEval。
 
+当前 scalar RefEval 对显式内存边界只实现保守的 `dense_functional_v1` 投影：
+
+- `index_expression` 必须是与 J tensor rank 一致的直接 `[axis0, ...]`；tensor shape 本身定义完整
+  logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与 shape 精确相同；
+- load/store 必须分别覆盖全部 logical input/output，并与所属 J node 的 operand/result 对应；
+- 每个 access 必须有唯一且一致的 read/write effect，output mapping 必须与 J return 一致；
+- predicate/fill、affine/gathered access、update、alias、一般 mutable storage 仍显式 unsupported。
+
+这不是忽略 access/effect 后直接运行 A：只有整个边界可机械投影到完整逻辑张量求值时才进入
+Intent CPU 路径，其他关系继续 fail closed。后续每扩展一种 boundary relation，都必须同时增加
+其 denotation、正反例和真实 canary。
+
 ## Production 要求
 
 - C 的消费只能影响合法 implementation choice，不能改变 J denotation；
