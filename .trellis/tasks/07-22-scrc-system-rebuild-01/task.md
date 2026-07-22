@@ -83,6 +83,15 @@ Lift_H(Source) -> (J,C,pi)
 - Replay request 根 allowlist 已同步收敛为 `j + c + pi + u_f`，其中 c 是 `MaskC(C)`；旧
   `harness/interface/location/source/provenance` 字段直接拒绝，不提供兼容转换。
 - 阶段 1 定向回归：`112 passed`；全量回归：`669 passed, 4 skipped`。
+- 阶段 2 已完成：新增唯一生产入口 `type_check(j,c,pi)`；机械检查 J/C/π 引用、C 实际
+  valuation、route slot/type 与图、observable J anchor、sharing、敏感 refinement 的 J/B
+  authorization（含 kind/subject/source dtype）以及固定 `GlobalSafeRefinement`。TypeCheck 失败时
+  Replay builder 直接拒绝，不调用生成器。新增 11 个最小正反例；阶段 2 后全量回归：
+  `678 passed, 4 skipped`。
+- 阶段 3 的 Replay 输入边界已完成：新增 typed `ReplayPacket` 和唯一 canonical builder；根字段固定
+  为 `j + c + pi + u_f`，其中 c 只有 `MaskC(C).slots`，J/C/π/U_f 均使用闭合字段集合。
+  生产 API 不再接受调用方任意注入 frontend context；Source、Harness、BindingMap、interface、diff、
+  prior Replay/conversation 等嵌套旁路均 fail closed。相关定向回归：`77 passed`。
 
 ## 实施顺序
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .model import Frontend, Gate1Artifact, SchemaError
@@ -56,6 +57,31 @@ _FORBIDDEN_KEYS = frozenset(
     }
 )
 
+_REPLAY_COMPONENT_KEYS = {
+    "j": frozenset(
+        {
+            "kernel_id", "intent", "node_ids", "boundary", "signature",
+            "scopes", "storage",
+        }
+    ),
+    "c": frozenset({"slots"}),
+    "pi": frozenset(
+        {"regions", "instances", "routes", "order", "sharing", "refinements"}
+    ),
+}
+_U_F_KEYS = frozenset(
+    {
+        "protocol",
+        "frontend",
+        "replay_function",
+        "context_policy",
+        "retrieval_scope",
+        "tool_access",
+        "compile_entry",
+        "compile_entry_contract",
+    }
+)
+
 
 def _walk(value: Any, path: str = "$" ):
     yield path, value
@@ -76,6 +102,35 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
         raise SchemaError(
             "Replay payload root must contain exactly j, c, pi, and u_f"
         )
+    for component, expected in _REPLAY_COMPONENT_KEYS.items():
+        value = payload[component]
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise SchemaError(
+                f"Replay payload {component} must contain exactly "
+                + ", ".join(sorted(expected))
+            )
+    u_f = payload["u_f"]
+    if not isinstance(u_f, Mapping):
+        raise SchemaError("Replay payload u_f must be an object")
+    unknown_u_f = sorted(set(u_f) - _U_F_KEYS)
+    if unknown_u_f:
+        raise SchemaError(
+            f"Replay payload u_f has unknown field(s): {unknown_u_f}"
+        )
+    required_u_f = {"protocol", "frontend", "replay_function"}
+    missing_u_f = sorted(required_u_f - set(u_f))
+    if missing_u_f:
+        raise SchemaError(
+            f"Replay payload u_f is missing field(s): {missing_u_f}"
+        )
+    if u_f["protocol"] != REPLAY_PACKET_SCHEMA:
+        raise SchemaError("Replay payload u_f uses an unsupported protocol")
+    try:
+        Frontend(u_f["frontend"])
+    except (TypeError, ValueError) as exc:
+        raise SchemaError("Replay payload u_f has an unsupported frontend") from exc
+    if u_f["replay_function"] != "scrc_k0":
+        raise SchemaError("Replay payload u_f must use canonical replay_function")
     for path, value in _walk(dict(payload)):
         if isinstance(value, dict):
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
@@ -99,14 +154,37 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
             raise SchemaError("Replay payload contains retired control-plane data")
 
 
-def build_rewriter_payload(
+@dataclass(frozen=True)
+class ReplayPacket:
+    """Typed source-isolated request; this is not a fourth proof artifact."""
+
+    j: Mapping[str, Any]
+    c: Mapping[str, Any]
+    pi: Mapping[str, Any]
+    u_f: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        assert_source_isolated_payload(self.to_json(validate=False))
+
+    def to_json(self, *, validate: bool = True) -> dict[str, Any]:
+        payload = {
+            "j": copy.deepcopy(dict(self.j)),
+            "c": copy.deepcopy(dict(self.c)),
+            "pi": copy.deepcopy(dict(self.pi)),
+            "u_f": copy.deepcopy(dict(self.u_f)),
+        }
+        if validate:
+            assert_source_isolated_payload(payload)
+        return payload
+
+
+def build_rewriter_packet(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
-    frontend_context: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build exactly ``J + pi + MaskC(C) + U_f``."""
+) -> ReplayPacket:
+    """Build the one canonical ``J + pi + MaskC(C) + U_f`` packet."""
 
     # Local import avoids a package initialization cycle: TypeCheck depends on
     # the Gate1 data model, while this builder is its first production consumer.
@@ -120,11 +198,7 @@ def build_rewriter_payload(
         raise SchemaError("Replay requires TypeCheck(J,C,pi)=PASS: " + summary)
     view = artifact.rewriter_view(masked=masked)
     frontend = Frontend(frontend)
-    context = (
-        copy.deepcopy(dict(frontend_context))
-        if frontend_context is not None
-        else copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {}))
-    )
+    context = copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {}))
     context.update(
         {
             "protocol": REPLAY_PACKET_SCHEMA,
@@ -132,27 +206,31 @@ def build_rewriter_payload(
             "replay_function": "scrc_k0",
         }
     )
-    payload = {
-        "j": view["j"],
-        "c": view["c"],
-        "pi": view["pi"],
-        "u_f": context,
-    }
-    assert_source_isolated_payload(payload)
-    return payload
+    return ReplayPacket(view["j"], view["c"], view["pi"], context)
+
+
+def build_rewriter_payload(
+    artifact: Gate1Artifact,
+    *,
+    frontend: Frontend | str = Frontend.TRITON,
+    masked: bool = False,
+) -> dict[str, Any]:
+    """Build exactly ``J + pi + MaskC(C) + U_f``."""
+
+    return build_rewriter_packet(
+        artifact, frontend=frontend, masked=masked
+    ).to_json()
 
 
 def build_normal_rewriter_view(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
-    frontend_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=False,
-        frontend_context=frontend_context,
     )
 
 
@@ -160,13 +238,11 @@ def build_masked_rewriter_view(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
-    frontend_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=True,
-        frontend_context=frontend_context,
     )
 
 
@@ -205,13 +281,11 @@ def build_rewriter_prompt(
     *,
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
-    frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     payload = build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=masked,
-        frontend_context=frontend_context,
     )
     return _instructions(masked=masked), json.dumps(
         payload, sort_keys=True, ensure_ascii=False, allow_nan=False
@@ -222,13 +296,11 @@ def build_normal_rewriter_prompt(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
-    frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     return build_rewriter_prompt(
         artifact,
         frontend=frontend,
         masked=False,
-        frontend_context=frontend_context,
     )
 
 
@@ -236,13 +308,11 @@ def build_masked_rewriter_prompt(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
-    frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     return build_rewriter_prompt(
         artifact,
         frontend=frontend,
         masked=True,
-        frontend_context=frontend_context,
     )
 
 
@@ -254,9 +324,9 @@ def replay_packet_digest(payload: Mapping[str, Any]) -> str:
 
 
 __all__ = [
-    "PUBLIC_FRONTEND_CONTEXT", "REPLAY_PACKET_SCHEMA",
+    "PUBLIC_FRONTEND_CONTEXT", "REPLAY_PACKET_SCHEMA", "ReplayPacket",
     "assert_source_isolated_payload", "build_masked_rewriter_prompt",
     "build_masked_rewriter_view", "build_normal_rewriter_prompt",
     "build_normal_rewriter_view", "build_rewriter_payload",
-    "build_rewriter_prompt", "replay_packet_digest",
+    "build_rewriter_packet", "build_rewriter_prompt", "replay_packet_digest",
 ]

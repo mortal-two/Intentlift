@@ -131,7 +131,6 @@ class ResponsesReplayWriter:
     provider: ProviderConfig | None = None
     effort: str | None = None
     frontend: Frontend = Frontend.TRITON
-    frontend_context: Mapping[str, Any] | None = None
 
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
@@ -140,7 +139,6 @@ class ResponsesReplayWriter:
             artifact,
             frontend=self.frontend,
             masked=masked,
-            frontend_context=self.frontend_context,
         )
         packet = json.loads(user)
         u_f = packet["u_f"]

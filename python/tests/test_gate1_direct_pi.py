@@ -25,10 +25,12 @@ from intentir.verify.gate1.pi import (
     render_realization_witness_wire_grammar,
 )
 from intentir.verify.gate1.prompt import (
+    ReplayPacket,
     assert_source_isolated_payload,
     build_normal_rewriter_prompt,
     build_masked_rewriter_view,
     build_normal_rewriter_view,
+    build_rewriter_packet,
 )
 
 
@@ -448,12 +450,46 @@ def test_masked_j_changes_only_j() -> None:
 
 
 def test_replay_packet_is_source_isolated() -> None:
-    payload = build_normal_rewriter_view(make_reduce_artifact())
+    packet = build_rewriter_packet(make_reduce_artifact())
+    assert isinstance(packet, ReplayPacket)
+    payload = packet.to_json()
     encoded = json.dumps(payload, sort_keys=True)
     assert "PRIVATE_SOURCE_CANARY" not in encoded
     assert "location_map" not in encoded
     assert "provenance" not in encoded
+    assert set(payload["c"]) == {"slots"}
+    assert "values" not in payload["c"]
     assert_source_isolated_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("path", "key"),
+    [
+        (("j",), "interface"),
+        (("c",), "values"),
+        (("pi",), "binding_map"),
+        (("u_f",), "compiler_fingerprint"),
+    ],
+)
+def test_replay_packet_nested_allowlists_fail_closed(
+    path: tuple[str, ...], key: str
+) -> None:
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    target = payload
+    for component in path:
+        target = target[component]
+    target[key] = "forbidden"
+    with pytest.raises(SchemaError):
+        assert_source_isolated_payload(payload)
+
+
+def test_replay_packet_rejects_candidate_selected_frontend_context() -> None:
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    payload["u_f"]["custom_context"] = "source-derived hint"
+    with pytest.raises(SchemaError, match="unknown field"):
+        ReplayPacket(
+            payload["j"], payload["c"], payload["pi"], payload["u_f"]
+        )
 
 
 def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
