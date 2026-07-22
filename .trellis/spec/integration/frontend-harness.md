@@ -55,3 +55,27 @@ RefEval 的功能输入。
 新增前端首先实现上述薄 adapter；不要求 J-to-frontend lowerer、RuleCard、source-to-π parser
 或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须记录 frontend、observer
 profile/version、compiler/dump stage 与 canonicalization version。
+
+## 高性能工作负载投影与顺序批量入口
+
+SCRC 的高性能工作负载清单只能是现行 lowering capability registry 的确定性 Harness-side
+投影。direct kernel 的 ID、ordinal 与总数继续由
+`spec/lowering/high-performance-kernels.json` 及其 typed loader 唯一决定；SCRC 层不得复制第二份
+28 项 truth，也不得把 scenario 29 计作 direct kernel。
+
+投影可以附加 source module/file、entry symbol、frontend、observer/Q 版本、现有 lowering evidence、
+adapter readiness 与代表性 tier。这些字段只用于定位真实 Source、选择 Harness adapter 和组织顺序
+运行，不是 `(J,C,π)`、TypeCheck 或 Gate predicate 的输入。特别是，source path、Harness factory、
+concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容都不得进入 Replay packet。
+
+离线 manifest 校验必须做到：
+
+- 从现行 registry 逐项构造投影，并机械检查 `1..28` ordinal 与 ID 唯一性；
+- source file 可解析且目标函数定义恰好出现一次；
+- optional dependency 或 Dataset 缓存缺失记为 `CASE_UNAVAILABLE`；
+- source/schema 不一致记为 `MANIFEST_INVALID`，不得伪装成 Gate 失败；
+- list、validate 与 dry-run 不调用 Lift/Replay provider。
+
+批量入口默认顺序执行，每个 case 使用独立的新 Lift/Replay 生命周期。单个 case 的准备、编译或
+认证异常必须收敛为该 case 的结构化结果并继续后续 case；汇总层只统计既有 TypeCheck、Gate1、
+Gate2、main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
