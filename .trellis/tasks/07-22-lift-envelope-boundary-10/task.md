@@ -10,7 +10,7 @@ Protocol-v6 的模型响应正常 completed、未截断，也正确生成了三�
 `address_base -> address_lane -> transfer_direct`。但它把本应位于 root 的
 `interface/schedule/pi/location_map` 放进 `j`，导致 Lift parser 在 Replay 前 fail closed。
 
-诊断性内存移动（未落盘、未 Replay）还发现 rank-2 accesses 的
+诊断性内存移动（未落盘、未 Replay）还发现三个 accesses 的
 `index_expression/predicate/fill/domain` 被省略。因此这不是 address π capacity 问题，也不能靠
 自动补一个右括号解决；root ownership 和 J boundary 都需要模型一次完整生成。
 
@@ -23,7 +23,7 @@ root = schema + j + interface + schedule + pi + location_map
 j    = kernel_id + intent + node_ids + boundary + scopes + storage
 ```
 
-并保证 rank>0 access 的 logical index relation、源码逻辑 mask/fill/domain 不会因 frozen invocation
+并保证每个 load/store/update access 的 logical index relation、源码逻辑 mask/fill/domain 不会因 frozen invocation
 恰好全覆盖而被删除。固定代码仍只验证并 fail closed，不 hoist、不补字段、不从 source/v5 artifact
 复制内容。
 
@@ -34,7 +34,7 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
   section assembler、source-to-J/π extractor 或 deterministic response repair。
 - root grammar 只表达对象 ownership/required keys，不携带 kernel 语义或 source spelling。
 - J boundary grammar 只投影 parser 已有的全局 access contract，不按 Swiglu/LayerNorm/opcode 分支。
-- rank>0 access 的 index expression、logical domain/predicate/fill 属于 J；π 不得承载或修复它们。
+- 每个 load/store/update access 的 index expression、logical domain/predicate/fill 属于 J；π 不得承载或修复它们。
 - Replay 仍 source-blind；Gate1 strict topology 不弱化；normal 未闭合不运行 masked-J。
 - provider `strict=false` 事实显式保留，本地 parser 是最终权威；同一 epoch 不自动 retry。
 
@@ -53,7 +53,7 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
 
 - root/J required field declarations只维护一份，由 parser、Responses schema与 Lift prompt投影；
 - prompt 给出短小通用 skeleton，明确 `j` 在 `storage` 后关闭，其他 section 是 root siblings；
-- boundary grammar 同时进入 schema description 与 Lift prompt：rank>0 access 必须有 ordered logical
+- boundary grammar 同时进入 schema description 与 Lift prompt：每个 load/store/update access 必须有 ordered logical
   index expression；源码存在 logical mask/fill/domain 时必须保留，即使 frozen extent 全覆盖；
 - 不增加 parser 宽容路径，不接受 misnested alias，不做 hoist/repair。
 
@@ -62,8 +62,9 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
 ### 2. 双向 Conformance 与全量回归（0 次 LLM）
 
 - canonical v5 artifact root 与 boundary 在 schema/parser 双侧通过；v6 raw 在 root 精确拒绝；
-- 将 root section 移入 j、遗漏任一 root/J field、rank>0 null index、masked-load 缺 fill、删除 logical
-  predicate/domain 等 mutation 均 fail closed；
+- 将 root section 移入 j、遗漏任一 root/J field、access 缺失/null/空 index 等结构 mutation 均在
+  schema/parser 双侧 fail closed；删除源码 logical predicate/fill/domain 不能由单个 artifact 的 parser
+  证明，须由共享 Lift ownership grammar 与真实 Gate1 strict topology 暴露；
 - parse/to_json 幂等，source-private location map不进入 Replay；address π 原样存活且 masked-J 不泄漏；
 - v1--v6 evidence SHA 不变，全量回归通过。
 
