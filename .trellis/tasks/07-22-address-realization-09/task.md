@@ -156,3 +156,10 @@ protocol-v6 调用合同已完成：
   调用新增为 0。
 
 下一步运行全量回归；全绿并提交后才构建 v6 0-LLM preflight。
+
+v6 epoch 切换后的全量回归已通过：`814 passed, 4 skipped`，60 个既有 warning，耗时
+348.88 秒。历史 v1--v5 evidence 继续按 frozen identity 验证，current wire 只接受 v6。
+
+下一步生成并复验 v6 formal preflight；必须保持 `online_llm_calls=0`，并证明 26/26 Triton、
+2/2 CuTe、28/28 source observer/replay arm ready。preflight 提交后冻结受保护代码，才允许唯一
+一次 Swiglu v6 canary。
