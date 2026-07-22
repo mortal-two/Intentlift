@@ -11,6 +11,8 @@ from intentir.extraction.lifters.scrc import (
     ResponsesSCRCLiftAdapter,
     SCRCExtraction,
     SCRCHarnessBinding,
+    SCRCLiftAttempt,
+    SCRCLiftError,
     SCRCProvenance,
 )
 from intentir.verify.adapters import (
@@ -291,6 +293,40 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
     assert contexts[1].previous_artifact == artifact.to_json()
+
+
+def test_responses_lift_adapter_preserves_rejected_provider_evidence(
+    monkeypatch,
+) -> None:
+    rejected = SCRCLiftAttempt(
+        model="test-model",
+        diagnostic="ValueError: invalid anonymous handle",
+        response_text='{"invalid": true}',
+        response_id="response-1",
+        response_model="test-model-version",
+        usage={"input_tokens": 10, "output_tokens": 3, "total_tokens": 13},
+        request_sha256="request-trace",
+        response_sha256="response-trace",
+        raw_response_sha256="raw-response-trace",
+        attempts=1,
+        elapsed_ms=12.5,
+    )
+
+    def fake_extract(source, **kwargs):
+        del source, kwargs
+        raise SCRCLiftError(rejected)
+
+    monkeypatch.setattr(scrc, "extract_scrc_artifact", fake_extract)
+    adapter = ResponsesSCRCLiftAdapter()
+
+    with pytest.raises(CandidateLiftError):
+        adapter.lift(_request(), None)
+
+    assert len(adapter.records) == 1
+    record = adapter.records[0]
+    assert record.extraction is None
+    assert record.rejected_attempts == (rejected,)
+    assert "invalid anonymous handle" in (record.diagnostic or "")
 
 
 def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None:

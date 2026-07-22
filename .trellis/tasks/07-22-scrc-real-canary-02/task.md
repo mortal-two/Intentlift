@@ -105,6 +105,29 @@ Source–Replay、Source–J、Replay–J 三条 exact 边均通过、最大误�
 至此 exact canary 已明确完成。下一步按既定顺序进入全新的 `masked_copy` 运行；不从 exact 结果
 外推 masked predicate/fill 已被 RefEval 支持。
 
+### `masked_copy / run-001`
+
+- terminal：`NO_CLOSURE`，但不是三轮 Gate1 结构不闭合；三次 provider 响应均在 TypeCheck 前被
+  anonymous Lift contract 拒绝，正式 Gate1 round 为 0；
+- 三次拒绝的诊断完全相同：`J tensors must use declaration-order handles t0, t1, ...`。该 source 的
+  参数顺序为 input pointer `p0`、output pointer `p1`、runtime extent scalar `p2`，模型把 `t*`
+  后缀与 `p*` 位置混用，没有按 intent inputs 后接 outputs 形成独立连续 tensor sequence；
+- 真实预算为 3 次 Lift/3 次物理模型调用，TypeCheck、Replay、Gate1 Source compile、Gate2 与
+  masked-J 均为 0；因此不能从本次运行推断 predicate/fill 的 RefEval 状态；
+- 同一次运行没有修改 prompt，也没有把错误响应送入 Replay；pre-Replay rejection 上限耗尽后结束。
+
+本次还暴露了证据保存缺口：`SCRCLiftError` 内存中含拒绝 response/receipt，但
+`ResponsesSCRCLiftAdapter` 只把 diagnostic 写入 record，所以 run-001 只能保存三条错误字符串，
+无法事后检查具体错误 JSON。结束 run-001 后已做两项通用修正：
+
+1. prompt 明确 J tensor 是独立于 `p*` 位置、按 inputs 后接 outputs 的 gap-free sequence，并给出
+   pointer/scalar 混排的机械示例；校验诊断同时返回 expected/actual handles；
+2. rejected Lift record 保留 provider response、receipt、usage、耗时与普通 trace，并由 CLI 落盘；
+   这些 sidecar 不进入 TypeCheck、Replay 或 verdict。
+
+相应适配器与落盘回归已通过。下一次从新的 `masked_copy/run-002` 开始，不覆盖 run-001，也不把
+run-001 的三个拒绝当作正式 closure round。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

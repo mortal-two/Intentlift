@@ -16,6 +16,16 @@ J 必须包含 logical signature；不允许 root sibling `interface` 成为独�
 只能按需计算 `InterfaceView(J)`。H 可以向 Lift 提供匿名、未分类的 bindable coordinates，但
 不得预先替 Lift 做 J/C/π 语义分类。
 
+匿名 handle 是机械 wire contract：J tensor 必须按 `intent.inputs` 后接 `intent.outputs` 独立、
+无间隙地编号为 `t0,t1,...`，不得把 `p*` 参数位置直接复制为 `t*` 后缀。例如 input pointer `p0`、
+output pointer `p1`、runtime extent scalar `p2` 对应 input `t0`、output `t1` 与 dimension `x0`。
+
+provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
+round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
+和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或
+认证谓词。上限耗尽可以结束为 `NO_CLOSURE`，但报告必须显示正式 Gate1 round 为 0，而不是伪造
+一次 Gate1 失败。
+
 ## Replay 前检查
 
 ```text

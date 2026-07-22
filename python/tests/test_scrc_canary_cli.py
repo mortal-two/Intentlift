@@ -3,11 +3,13 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
 
 from direct_fixtures import make_copy_artifact
+from intentir.extraction.lifters.scrc import SCRCLiftAttempt, SCRCReliftRecord
 from intentir.verify.gate1.compiler import TritonCompiler
 
 
@@ -61,6 +63,42 @@ def test_run_directories_use_plain_monotonic_numbers(monkeypatch, tmp_path) -> N
     second = canary._next_run_dir(spec)
     assert first.name == "run-001"
     assert second.name == "run-002"
+
+
+def test_rejected_lift_response_and_receipt_are_persisted(tmp_path) -> None:
+    attempt = SCRCLiftAttempt(
+        model="test-model",
+        diagnostic="ValueError: bad tensor handles",
+        response_text='{"schema":"bad"}',
+        response_id="response-1",
+        response_model="test-model-version",
+        usage={"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
+        request_sha256="request-trace",
+        response_sha256="response-trace",
+        raw_response_sha256="raw-response-trace",
+        attempts=1,
+        elapsed_ms=8.0,
+    )
+    lift = SimpleNamespace(
+        records=(
+            SCRCReliftRecord(
+                1,
+                diagnostic=attempt.diagnostic,
+                rejected_attempts=(attempt,),
+            ),
+        )
+    )
+
+    canary._save_lift_records_on_failure(tmp_path, lift)
+
+    call_dir = tmp_path / "lift-call-01"
+    assert "bad tensor handles" in (call_dir / "rejection.txt").read_text()
+    assert (
+        call_dir / "rejection-01" / "response.txt"
+    ).read_text() == attempt.response_text
+    receipt = (call_dir / "rejection-01" / "receipt.json").read_text()
+    assert '"response_id": "response-1"' in receipt
+    assert '"request_sha256": "request-trace"' in receipt
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires Triton CUDA")

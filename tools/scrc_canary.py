@@ -410,6 +410,39 @@ def _write_json(path: Path, value: Any) -> None:
     )
 
 
+def _save_rejected_lift_record(
+    directory: Path,
+    record: Any,
+    *,
+    diagnostic_filename: str,
+) -> None:
+    (directory / diagnostic_filename).write_text(
+        (record.diagnostic or "unknown Lift rejection") + "\n",
+        encoding="utf-8",
+    )
+    for index, attempt in enumerate(record.rejected_attempts, start=1):
+        rejection_dir = directory / f"rejection-{index:02d}"
+        rejection_dir.mkdir(exist_ok=True)
+        _write_json(
+            rejection_dir / "receipt.json",
+            {
+                "model": attempt.model,
+                "response_model": attempt.response_model,
+                "response_id": attempt.response_id,
+                "usage": dict(attempt.usage),
+                "attempts": attempt.attempts,
+                "elapsed_ms": attempt.elapsed_ms,
+                "request_sha256": attempt.request_sha256,
+                "response_sha256": attempt.response_sha256,
+                "raw_response_sha256": attempt.raw_response_sha256,
+            },
+        )
+        (rejection_dir / "response.txt").write_text(
+            attempt.response_text,
+            encoding="utf-8",
+        )
+
+
 def _save_lift_records_on_failure(
     run_dir: Path,
     lift: ResponsesSCRCLiftAdapter,
@@ -418,9 +451,10 @@ def _save_lift_records_on_failure(
         call_dir = run_dir / f"lift-call-{index:02d}"
         call_dir.mkdir(exist_ok=True)
         if record.extraction is None:
-            (call_dir / "rejection.txt").write_text(
-                (record.diagnostic or "unknown Lift rejection") + "\n",
-                encoding="utf-8",
+            _save_rejected_lift_record(
+                call_dir,
+                record,
+                diagnostic_filename="rejection.txt",
             )
             continue
         extraction = record.extraction
@@ -492,8 +526,10 @@ def _save_report(
                     encoding="utf-8",
                 )
             elif record.diagnostic is not None:
-                (attempt_dir / "lift_rejection.txt").write_text(
-                    record.diagnostic + "\n", encoding="utf-8"
+                _save_rejected_lift_record(
+                    attempt_dir,
+                    record,
+                    diagnostic_filename="lift_rejection.txt",
                 )
     if report.gate2 is not None:
         _write_json(run_dir / "gate2.json", report.gate2.to_json())

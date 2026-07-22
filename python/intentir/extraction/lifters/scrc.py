@@ -158,6 +158,7 @@ class SCRCReliftRecord:
     relift_round: int
     extraction: SCRCExtraction | None = None
     diagnostic: str | None = None
+    rejected_attempts: tuple["SCRCLiftAttempt", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -590,6 +591,12 @@ values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
 effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
 c0,...; pi regions r0,... and instances i0,..., all by declaration order.
 
+J tensor handles form their own gap-free sequence over intent.inputs followed
+by intent.outputs. Never derive a t* suffix from a p* parameter position. For
+example, if p0 is an input pointer, p1 is an output pointer, and p2 is a
+runtime extent scalar, the J tensors are input t0 and output t1; p0.logical_ref
+is t0, p1.logical_ref is t1, and p2.logical_ref is the symbolic dimension x0.
+
 The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
 node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
 body[i].body[j], never to v* results. boundary.domains maps each d* key directly
@@ -856,8 +863,13 @@ def _validate_anonymous_lift(
     if artifact.j.intent.name != "scrc_j0":
         raise ValueError("Lift IntentFunction name must use scrc_j0")
     tensors = [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
-    if [item.name for item in tensors] != [f"t{index}" for index in range(len(tensors))]:
-        raise ValueError("J tensors must use declaration-order handles t0, t1, ...")
+    actual_tensors = [item.name for item in tensors]
+    expected_tensors = [f"t{index}" for index in range(len(tensors))]
+    if actual_tensors != expected_tensors:
+        raise ValueError(
+            "J tensors must use their own declaration-order handles independent "
+            f"of p* positions; expected {expected_tensors}, got {actual_tensors}"
+        )
     if list(artifact.j.node_ids) != [
         f"n{index}" for index in range(len(artifact.j.node_ids))
     ]:
@@ -1035,6 +1047,15 @@ class ResponsesSCRCRelifter:
                 relift_context=context,
                 source_symbol=self.source_symbol,
             )
+        except SCRCLiftError as exc:
+            self._records.append(
+                SCRCReliftRecord(
+                    round_index,
+                    diagnostic=f"{type(exc).__name__}: {exc}",
+                    rejected_attempts=exc.attempts,
+                )
+            )
+            raise
         except Exception as exc:
             self._records.append(
                 SCRCReliftRecord(
@@ -1096,7 +1117,11 @@ class ResponsesSCRCLiftAdapter:
                 item.diagnostic for item in exc.attempts
             )
             self._records.append(
-                SCRCReliftRecord(round_index, diagnostic=diagnostic)
+                SCRCReliftRecord(
+                    round_index,
+                    diagnostic=diagnostic,
+                    rejected_attempts=exc.attempts,
+                )
             )
             # Local import avoids making extraction depend on the verify package
             # during module initialization.
