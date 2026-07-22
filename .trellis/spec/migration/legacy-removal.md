@@ -16,6 +16,18 @@
 通用文件校验、缓存 key 或 Git 对象使用哈希不在此退役范围；只有把 hash/digest 当作实验合法性、
 信息隔离或语义认证依据的旧协议设施必须删除。
 
+## 2026-07-22 已完成的准备清理
+
+- formal batch v1–v7 的 runner、preflight、Lift wire lock、manifest、测试、Task10 与 artifacts 已
+  整体迁入 `.trellis/archive/experiments/2026-07-22-formal-hash-protocol/`；活动代码不再 import。
+- Gate2 已删除 replay/scalar artifact digest 对齐门，改为直接要求 RefEval request 与 comparator
+  持有同一个 J 对象。
+- Triton 与 CuTe Gate1 不再把 masked-J hard close 改写为 `LEAKAGE_REJECTED`；主 Gate1 closure
+  与 `j_necessity_status` 已分开报告。
+
+尚未完成、应作为第一步实质重构的工作，是把 logical signature 收入 J、移除活动 schema 中的
+独立 interface，并实现最小 `TypeCheck(J,C,π)`。在这三项完成前不运行新的正式 batch。
+
 ## 首步重构顺序
 
 1. 以三份核心文档和本 spec 替换旧运行口径，历史材料只留在 archive/source-notes。

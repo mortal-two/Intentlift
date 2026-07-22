@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -73,7 +72,6 @@ class Gate2Case:
     values: Mapping[str, Any]
     triton: TritonExecutionSpec
     scalar: ScalarLoweringRequest
-    replay_artifact_digest: str
     output_keys: tuple[str, ...]
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -84,20 +82,11 @@ class Gate2Case:
             raise ValueError("Gate2 case requires the canonical J object")
         if not self.output_keys:
             raise ValueError("Gate2 requires at least one output key")
-        if (
-            not isinstance(self.replay_artifact_digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", self.replay_artifact_digest) is None
-        ):
-            raise ValueError("Gate2 replay artifact digest must be lowercase SHA-256")
-        if self.replay_artifact_digest != self.scalar.final_artifact_digest:
+        if self.scalar.j is not self.j:
             raise ValueError(
-                "Gate2 replay is not bound to the scalar spec's final artifact"
+                "Gate2 RefEval request and comparator must receive the same J object"
             )
         if isinstance(self.scalar, ScalarLoweringSpec):
-            if self.scalar.j is not self.j:
-                raise ValueError(
-                    "Gate2 scalar and comparator must receive the same J object"
-                )
             scalar_outputs = set(self.scalar.output_binding_map.values())
             if set(self.output_keys) != scalar_outputs:
                 raise ValueError(
@@ -105,21 +94,6 @@ class Gate2Case:
                 )
         if len(self.output_keys) != len(set(self.output_keys)):
             raise ValueError("Gate2 output keys must be unique")
-        if isinstance(self.scalar, ScalarLoweringUnavailable) and (
-            self.scalar.j_digest
-            != hashlib.sha256(
-                json.dumps(
-                    self.j.to_json(),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                    allow_nan=False,
-                ).encode()
-            ).hexdigest()
-        ):
-            raise ValueError(
-                "unavailable scalar request is not bound to Gate2 canonical J"
-            )
 
 
 @dataclass(frozen=True)

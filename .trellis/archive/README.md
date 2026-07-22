@@ -5,5 +5,6 @@
 
 - [退役 Trellis workflow](2026-07-21-retired-workflow/README.md)
 - [2026-07-21 旧 spec 快照](spec/2026-07-21-pre-llm-first/README.md)
+- [2026-07-22 formal hash/epoch 实验控制面](experiments/2026-07-22-formal-hash-protocol/README.md)
 
 当前活动规范只位于 [`../spec`](../spec/index.md)，其上位权威是 `doc/` 下的三份核心设计。

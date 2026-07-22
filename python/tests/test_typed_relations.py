@@ -49,9 +49,6 @@ from intentir.verify.gate2.triton import (
 )
 
 
-_DIGEST = "a" * 64
-
-
 def _update_j(
     *,
     combiner: str = "overwrite",
@@ -172,7 +169,6 @@ class _FakeScalarRunner:
 def _gate2_case(j: SemanticArchive, values: dict[str, np.ndarray]) -> Gate2Case:
     spec = ScalarLoweringSpec.create(
         j,
-        final_artifact_digest=_DIGEST,
         dims={},
         input_bindings={"X": "base", "I": "indices", "V": "values"},
         output_bindings={"Y": "out"},
@@ -192,9 +188,7 @@ def _gate2_case(j: SemanticArchive, values: dict[str, np.ndarray]) -> Gate2Case:
         ),
         (1,),
     )
-    return Gate2Case(
-        "case0", j, values, triton, spec, _DIGEST, ("out",)
-    )
+    return Gate2Case("case0", j, values, triton, spec, ("out",))
 
 
 def _run_fake_gate2(
@@ -440,7 +434,6 @@ def test_cpu_e_j_recognizes_typed_update_then_fails_on_real_capability() -> None
     j = _update_j()
     spec = ScalarLoweringSpec.create(
         j,
-        final_artifact_digest=_DIGEST,
         dims={},
         input_bindings={"X": "base", "I": "indices", "V": "values"},
         output_bindings={"Y": "out"},
@@ -479,7 +472,6 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
     )
     spec = ScalarLoweringSpec.create(
         j,
-        final_artifact_digest=_DIGEST,
         dims={},
         input_bindings={"X": "input"},
         output_bindings={"Y": "out"},
@@ -495,7 +487,7 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
     )
     case = Gate2Case(
         "close", j, {"input": np.asarray([1.0], dtype=np.float32)},
-        triton, spec, _DIGEST, ("out",)
+        triton, spec, ("out",)
     )
     result = _run_fake_gate2(
         case,
@@ -518,14 +510,13 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
     exact_j = SemanticArchive("close", fn, {}, Boundary())
     exact_spec = ScalarLoweringSpec.create(
         exact_j,
-        final_artifact_digest=_DIGEST,
         dims={},
         input_bindings={"X": "input"},
         output_bindings={"Y": "out"},
     )
     exact_case = Gate2Case(
         "exact", exact_j, {"input": np.asarray([1.0], dtype=np.float32)},
-        triton, exact_spec, _DIGEST, ("out",)
+        triton, exact_spec, ("out",)
     )
     exact_result = _run_fake_gate2(
         exact_case,

@@ -1,6 +1,6 @@
 # Lift Envelope / Boundary 10：闭合 Root Ownership 与 Access 完整性
 
-> 状态：进行中
+> 状态：完成
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
 
@@ -96,5 +96,7 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
 阶段 0--1 已完成并提交：v6 反例、parser 真值、共享 root/J/boundary grammar、双向 mutation 与
 v7 wire/lineage 已冻结；最终完整回归为 `867 passed, 4 skipped, 60 warnings`；0-LLM preflight
 已经 28/28 ready 并独立复验，SHA 为 `0e7a6df61b2d11cfab4fb6e8092fed453c9a14897a474fe3777ec1654e988e2c`。
-下一步先提交 preflight evidence 并确认 worktree clean，然后只执行唯一 Swiglu canary；不 retry、
-不 repair，normal 未 hard-close 时不运行 masked-J。
+唯一 Swiglu canary 已完成：一次 Lift 与一次 normal Replay 均 completed，Gate1 `no_closure`，
+masked-J/retry 均为 0。Task10 的 root/J/boundary 生成合同已经真实闭合；后续不按缺失的两个
+`arith.extsi` 继续补 π tag，而是先回收 Replay 输入面，使 agent 只消费 J+π，并让 C 由通用规则
+吸收。

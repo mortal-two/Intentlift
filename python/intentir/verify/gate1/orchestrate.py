@@ -1,4 +1,4 @@
-"""Minimal online Gate1: normal closure, then at most one masked-J audit."""
+"""Gate1 realization closure with an independent optional masked-J audit."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
 from .model import (
     Gate1Artifact,
     Gate1Status,
+    JNecessityStatus,
     ParameterKind,
     ScheduleSlotKind,
     opaque_replay_abi,
@@ -64,6 +65,16 @@ class Gate1ExecutionResult:
         return self.status is Gate1Status.REPLAY_CLOSED
 
     @property
+    def j_necessity_status(self) -> JNecessityStatus:
+        """Report masked-J separately from the main Gate1 status."""
+
+        if self.masked_j is None or self.masked_j.comparison is None:
+            return JNecessityStatus.INCONCLUSIVE
+        if self.masked_j.hard_closed:
+            return JNecessityStatus.NOT_PROVED
+        return JNecessityStatus.PROVED
+
+    @property
     def replay_code(self) -> str | None:
         return self.normal.generation.code if self.normal.generation is not None else None
 
@@ -110,6 +121,7 @@ class Gate1ExecutionResult:
         return {
             "protocol": self.protocol,
             "status": self.status.value,
+            "j_necessity_status": self.j_necessity_status.value,
             "artifact_digest": self.artifact_digest,
             "source_compile": self.source_compile.to_payload(),
             "source_fingerprint": (
@@ -128,7 +140,7 @@ class Gate1ExecutionResult:
 def canonical_artifact_digest(
     artifact: Gate1Artifact, *, observer_level: int = 2
 ) -> str:
-    """Commit only new-epoch J/C/pi and the declared observer."""
+    """Compute an audit identifier; it is not a verdict or protocol gate."""
 
     payload = {
         "schema": artifact.SCHEMA,
@@ -470,8 +482,6 @@ class Gate1Runner:
             masked_evidence = self._arm(
                 artifact, source_fingerprint, replay_case, masked=True
             )
-            if masked_evidence.hard_closed:
-                status = Gate1Status.LEAKAGE_REJECTED
         return Gate1ExecutionResult(
             status,
             digest,

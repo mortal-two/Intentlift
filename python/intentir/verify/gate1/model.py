@@ -784,10 +784,15 @@ class ProvenanceRole(str, Enum):
 class Gate1Status(str, Enum):
     PENDING = "pending"
     LIFT_REJECTED = "lift_rejected"
-    LEAKAGE_REJECTED = "leakage_rejected"
     COMPILE_FAILED = "compile_failed"
     NO_CLOSURE = "no_closure"
     REPLAY_CLOSED = "replay_closed"
+
+
+class JNecessityStatus(str, Enum):
+    PROVED = "proved"
+    NOT_PROVED = "not_proved"
+    INCONCLUSIVE = "inconclusive"
 
 
 @dataclass
@@ -4243,7 +4248,7 @@ __all__ = [
     "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "GATE1_ARTIFACT_MODEL_FIELDS", "GATE1_ARTIFACT_PRIVATE_FIELDS",
-    "Gate1Artifact", "Gate1Status", "JsonValue", "KernelInterface",
+    "Gate1Artifact", "Gate1Status", "JNecessityStatus", "JsonValue", "KernelInterface",
     "IndexBoundsSpec", "KernelParameter", "LocationEntry", "LocationMap",
     "LogicalUpdateSpec", "OutputMapping",
     "opaque_replay_abi",

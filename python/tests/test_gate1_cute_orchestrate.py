@@ -146,7 +146,7 @@ class _Compiler:
         )
 
 
-def test_cute_normal_closure_then_masked_j_rejection() -> None:
+def test_cute_normal_closure_reports_masked_j_mismatch_separately() -> None:
     writer = StaticReplayWriter(_REPLAY)
     result = CuteGate1Runner(compiler=_Compiler(), writer=writer).run(
         _artifact(),
@@ -156,12 +156,13 @@ def test_cute_normal_closure_then_masked_j_rejection() -> None:
         source_case=_case(),
     )
     assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.j_necessity_status.value == "proved"
     assert result.normal.hard_closed
     assert result.masked_j is not None and not result.masked_j.hard_closed
     assert writer.calls == [False, True]
 
 
-def test_cute_masked_j_closure_rejects_representation_partition() -> None:
+def test_cute_masked_j_closure_does_not_reject_main_gate1() -> None:
     result = CuteGate1Runner(
         compiler=_Compiler(masked_closes=True),
         writer=StaticReplayWriter(_REPLAY),
@@ -172,4 +173,6 @@ def test_cute_masked_j_closure_rejects_representation_partition() -> None:
         ),
         source_case=_case(),
     )
-    assert result.status is Gate1Status.LEAKAGE_REJECTED
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.j_necessity_status.value == "not_proved"
+    assert result.passed

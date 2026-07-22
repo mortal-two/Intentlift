@@ -302,8 +302,6 @@ class CuteGate1Runner:
             masked_evidence = self._arm(
                 artifact, source_fingerprint, source_case, masked=True
             )
-            if masked_evidence.hard_closed:
-                status = Gate1Status.LEAKAGE_REJECTED
         return Gate1ExecutionResult(
             status,
             digest,

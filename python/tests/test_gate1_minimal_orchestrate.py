@@ -81,7 +81,7 @@ def _case() -> CompileCase:
     )
 
 
-def test_normal_closure_then_exactly_one_masked_j() -> None:
+def test_normal_closure_reports_masked_j_mismatch_separately() -> None:
     writer = StaticReplayWriter(REPLAY)
     compiler = FakeCompiler(masked_closes=False)
     result = Gate1Runner(compiler=compiler, writer=writer).run(
@@ -90,6 +90,8 @@ def test_normal_closure_then_exactly_one_masked_j() -> None:
         source_case=_case(),
     )
     assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.j_necessity_status.value == "proved"
+    assert result.to_json()["j_necessity_status"] == "proved"
     assert result.normal.hard_closed
     assert result.masked_j is not None and not result.masked_j.hard_closed
     assert result.normal_calls == 1
@@ -97,7 +99,7 @@ def test_normal_closure_then_exactly_one_masked_j() -> None:
     assert writer.calls == [False, True]
 
 
-def test_masked_j_hard_closure_rejects_partition() -> None:
+def test_masked_j_hard_closure_does_not_reject_main_gate1() -> None:
     writer = StaticReplayWriter(REPLAY)
     result = Gate1Runner(
         compiler=FakeCompiler(masked_closes=True), writer=writer
@@ -106,7 +108,9 @@ def test_masked_j_hard_closure_rejects_partition() -> None:
         source=KernelSource.from_code("source", "kernel", trusted=True),
         source_case=_case(),
     )
-    assert result.status is Gate1Status.LEAKAGE_REJECTED
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.j_necessity_status.value == "not_proved"
+    assert result.passed
     assert result.masked_j is not None and result.masked_j.hard_closed
 
 

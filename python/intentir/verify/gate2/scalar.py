@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -31,12 +30,6 @@ def _digest(value: Mapping[str, Any]) -> str:
             allow_nan=False,
         ).encode()
     ).hexdigest()
-
-
-def _checked_digest(value: str, context: str) -> str:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
-        raise ValueError(f"{context} must be a lowercase SHA-256 digest")
-    return value
 
 
 def _canonical_int_mapping(value: Mapping[str, int]) -> tuple[tuple[str, int], ...]:
@@ -218,7 +211,6 @@ class ScalarLoweringSpec:
     """Invocation request holding the same J object used by Gate1."""
 
     j: SemanticArchive
-    final_artifact_digest: str
     dims: tuple[tuple[str, int], ...]
     input_bindings: tuple[tuple[str, str], ...]
     output_bindings: tuple[tuple[str, str], ...]
@@ -226,11 +218,6 @@ class ScalarLoweringSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("scalar lowering requires canonical J")
-        object.__setattr__(
-            self,
-            "final_artifact_digest",
-            _checked_digest(self.final_artifact_digest, "final artifact digest"),
-        )
         dims = dict(self.dims)
         inputs = dict(self.input_bindings)
         outputs = dict(self.output_bindings)
@@ -251,14 +238,12 @@ class ScalarLoweringSpec:
         cls,
         j: SemanticArchive,
         *,
-        final_artifact_digest: str,
         dims: Mapping[str, int],
         input_bindings: Mapping[str, str],
         output_bindings: Mapping[str, str],
     ) -> "ScalarLoweringSpec":
         return cls(
             j,
-            final_artifact_digest,
             tuple(dims.items()),
             tuple(input_bindings.items()),
             tuple(output_bindings.items()),
@@ -285,7 +270,6 @@ class ScalarLoweringSpec:
         return _digest(
             {
                 "schema": SCALAR_LOWERING_PROTOCOL,
-                "final_artifact_digest": self.final_artifact_digest,
                 "j_digest": self.j_digest,
                 "dims": self.dims_map,
                 "input_bindings": self.input_binding_map,
@@ -296,16 +280,19 @@ class ScalarLoweringSpec:
 
 @dataclass(frozen=True)
 class ScalarLoweringUnavailable:
-    final_artifact_digest: str
-    j_digest: str
+    j: SemanticArchive
     error: str
     failure_class: str = "j_lowering_setup"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "final_artifact_digest", _checked_digest(self.final_artifact_digest, "final artifact digest"))
-        object.__setattr__(self, "j_digest", _checked_digest(self.j_digest, "J digest"))
+        if not isinstance(self.j, SemanticArchive):
+            raise ValueError("unavailable RefEval request requires canonical J")
         if not self.error:
             raise ValueError("unavailable E_J request requires an error")
+
+    @property
+    def j_digest(self) -> str:
+        return _digest(self.j.to_json())
 
     @property
     def spec_digest(self) -> str:
@@ -313,7 +300,6 @@ class ScalarLoweringUnavailable:
             {
                 "schema": SCALAR_LOWERING_PROTOCOL,
                 "availability": "unavailable",
-                "final_artifact_digest": self.final_artifact_digest,
                 "j_digest": self.j_digest,
                 "failure_class": self.failure_class,
                 "error": self.error,
@@ -328,7 +314,6 @@ class ScalarLoweringUnavailable:
             unsupported=True,
             metadata={
                 "protocol": SCALAR_LOWERING_PROTOCOL,
-                "final_artifact_digest": self.final_artifact_digest,
                 "j_digest": self.j_digest,
                 "scalar_spec_digest": self.spec_digest,
                 "failure_class": self.failure_class,
@@ -378,7 +363,6 @@ class ScalarLoweringRunner:
                     "protocol": SCALAR_LOWERING_PROTOCOL,
                     "path": "canonical J -> intent MLIR -> scalar CPU",
                     "function": spec.j.intent.name,
-                    "final_artifact_digest": spec.final_artifact_digest,
                     "j_digest": spec.j_digest,
                     "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
@@ -398,7 +382,6 @@ class ScalarLoweringRunner:
                 unsupported=True,
                 metadata={
                     "protocol": SCALAR_LOWERING_PROTOCOL,
-                    "final_artifact_digest": spec.final_artifact_digest,
                     "j_digest": spec.j_digest,
                     "scalar_spec_digest": spec.spec_digest,
                 },
