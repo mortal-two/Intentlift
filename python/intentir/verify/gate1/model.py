@@ -30,23 +30,23 @@ from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
-# One declaration for the closed model-visible Lift envelope.  ``source`` and
-# ``provenance`` are local persistence fields and are deliberately excluded
-# from the LLM response schema.
+# One declaration for the closed proof-relevant Lift envelope.  Source,
+# harness coordinates and provider receipts live outside this object.  Keeping
+# the declaration here makes it difficult for a new caller to accidentally
+# smuggle a fourth proof object into Replay or a Gate verdict.
 GATE1_ARTIFACT_MODEL_FIELDS = (
     "schema",
     "j",
-    "interface",
-    "schedule",
+    "c",
     "pi",
-    "location_map",
 )
-GATE1_ARTIFACT_PRIVATE_FIELDS = ("source", "provenance")
+GATE1_ARTIFACT_PRIVATE_FIELDS: tuple[str, ...] = ()
 SEMANTIC_ARCHIVE_WIRE_FIELDS = (
     "kernel_id",
     "intent",
     "node_ids",
     "boundary",
+    "signature",
     "scopes",
     "storage",
 )
@@ -86,10 +86,11 @@ def render_gate1_artifact_envelope_grammar() -> str:
         "The response root is one closed object with exactly these fields: "
         f"{', '.join(GATE1_ARTIFACT_MODEL_FIELDS)}. The j object is one closed "
         "object with exactly these fields: "
-        f"{', '.join(SEMANTIC_ARCHIVE_WIRE_FIELDS)}. Close j immediately after "
-        "storage: interface, schedule, pi, and location_map are root siblings, "
-        "never members of j. Do not add a wrapper. source and provenance are "
-        "private local fields and must not be emitted by the model."
+        f"{', '.join(SEMANTIC_ARCHIVE_WIRE_FIELDS)}. Logical callable facts are "
+        "declared only by j.signature. The root c object is the single "
+        "implementation-selection object and pi is indexed by j/c. Do not emit "
+        "interface, harness, location, source, provenance, binding-map or any "
+        "other root sibling."
     )
 
 
@@ -2436,6 +2437,7 @@ class SemanticArchive(StrictJSONMixin):
     intent: IntentFunction
     node_ids: dict[str, str]
     boundary: Boundary
+    signature: "LogicalSignature"
     scopes: list[PortableScope] = field(default_factory=list)
     storage: list[StorageObject] = field(default_factory=list)
 
@@ -2475,6 +2477,8 @@ class SemanticArchive(StrictJSONMixin):
                     operations = operation.get("body", [])
         if not isinstance(self.boundary, Boundary):
             self.boundary = Boundary.from_json(self.boundary)
+        if not isinstance(self.signature, LogicalSignature):
+            self.signature = LogicalSignature.from_json(self.signature)
         self.scopes = [
             item if isinstance(item, PortableScope) else PortableScope.from_json(item)
             for item in self.scopes
@@ -2483,6 +2487,7 @@ class SemanticArchive(StrictJSONMixin):
             item if isinstance(item, StorageObject) else StorageObject.from_json(item)
             for item in self.storage
         ]
+        _validate_logical_signature(self)
         _validate_typed_boundary_relations(self)
         _validate_semantic_scopes_and_storage(self)
 
@@ -2506,6 +2511,7 @@ class SemanticArchive(StrictJSONMixin):
             intent=_strict_intent(data["intent"]),
             node_ids=dict(node_ids),
             boundary=Boundary.from_json(data["boundary"]),
+            signature=LogicalSignature.from_json(data["signature"]),
             scopes=[PortableScope.from_json(item) for item in scopes],
             storage=[StorageObject.from_json(item) for item in storage],
         )
@@ -2516,50 +2522,80 @@ class SemanticArchive(StrictJSONMixin):
             "intent": self.intent.to_json(),
             "node_ids": dict(self.node_ids),
             "boundary": self.boundary.to_json(),
+            "signature": self.signature.to_json(),
             "scopes": [item.to_json() for item in self.scopes],
             "storage": [item.to_json() for item in self.storage],
         }
 
 
 @dataclass
-class KernelParameter(StrictJSONMixin):
+class SignatureParameter(StrictJSONMixin):
+    """One J-owned logical callable handle.
+
+    ``name`` is a canonical J handle, never a source parameter spelling.
+    ``logical_ref`` links the handle to a J tensor/value/dimension when one
+    exists.  Runtime plumbing that has no denotational value (for example a
+    public DSL opaque object) may omit the link, but it still lives in the J
+    signature namespace rather than a fourth interface namespace.
+    """
+
     name: str
     kind: ParameterKind
     mode: ParameterMode = ParameterMode.VALUE
     dtype: str | None = None
     rank: int | None = None
     alias_of: str | None = None
-    tensor_ref: str | None = None
+    logical_ref: str | None = None
 
     def __post_init__(self) -> None:
-        self.name = _string(self.name, "KernelParameter.name")
-        self.kind = _enum(ParameterKind, self.kind, "KernelParameter.kind")
-        self.mode = _enum(ParameterMode, self.mode, "KernelParameter.mode")
+        self.name = _string(self.name, "SignatureParameter.name")
+        if re.fullmatch(r"p[0-9]+", self.name) is None:
+            raise SchemaError("J.signature parameter names must be p0, p1, ...")
+        self.kind = _enum(ParameterKind, self.kind, "SignatureParameter.kind")
+        self.mode = _enum(ParameterMode, self.mode, "SignatureParameter.mode")
         if self.dtype is not None:
-            self.dtype = _string(self.dtype, "KernelParameter.dtype")
+            self.dtype = _string(self.dtype, "SignatureParameter.dtype")
         if self.rank is not None:
-            self.rank = _integer(self.rank, "KernelParameter.rank", minimum=0)
+            self.rank = _integer(self.rank, "SignatureParameter.rank", minimum=0)
         if self.alias_of is not None:
-            self.alias_of = _string(self.alias_of, "KernelParameter.alias_of")
-        if self.tensor_ref is not None:
-            self.tensor_ref = _string(self.tensor_ref, "KernelParameter.tensor_ref")
+            self.alias_of = _string(self.alias_of, "SignatureParameter.alias_of")
+        if self.logical_ref is not None:
+            self.logical_ref = _string(
+                self.logical_ref, "SignatureParameter.logical_ref"
+            )
         if self.kind is ParameterKind.OPAQUE and (
             self.mode is not ParameterMode.VALUE
             or self.dtype is None
             or self.rank is not None
             or self.alias_of is not None
-            or self.tensor_ref is not None
+            or self.logical_ref is not None
         ):
             raise SchemaError(
-                "opaque parameters expose only a positional name and public dtype"
+                "opaque signature parameters expose only a handle and public dtype"
+            )
+        if self.kind in {ParameterKind.TENSOR, ParameterKind.POINTER}:
+            if self.dtype is None or self.rank is None or self.logical_ref is None:
+                raise SchemaError(
+                    "tensor/pointer signature parameters require dtype, rank, "
+                    "and a J logical_ref"
+                )
+        if self.kind in {ParameterKind.SCALAR, ParameterKind.CONSTEXPR} and (
+            self.dtype is None or self.logical_ref is None
+        ):
+            raise SchemaError(
+                "logical scalar/constexpr signature parameters require dtype "
+                "and a J logical_ref; implementation-selection values belong to C"
             )
 
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "KernelParameter":
+    def from_json(cls, value: dict[str, Any]) -> "SignatureParameter":
         data = _strict_object(
             value,
-            path="KernelParameter",
-            allowed={"name", "kind", "mode", "dtype", "rank", "alias_of", "tensor_ref"},
+            path="SignatureParameter",
+            allowed={
+                "name", "kind", "mode", "dtype", "rank", "alias_of",
+                "logical_ref",
+            },
             required={"name", "kind"},
         )
         return cls(
@@ -2569,7 +2605,7 @@ class KernelParameter(StrictJSONMixin):
             dtype=data.get("dtype"),
             rank=data.get("rank"),
             alias_of=data.get("alias_of"),
-            tensor_ref=data.get("tensor_ref"),
+            logical_ref=data.get("logical_ref"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -2584,110 +2620,121 @@ class KernelParameter(StrictJSONMixin):
             result["rank"] = self.rank
         if self.alias_of is not None:
             result["alias_of"] = self.alias_of
-        if self.tensor_ref is not None:
-            result["tensor_ref"] = self.tensor_ref
+        if self.logical_ref is not None:
+            result["logical_ref"] = self.logical_ref
         return result
 
 
 @dataclass
-class KernelInterface(StrictJSONMixin):
-    kernel_id: str
-    frontend: Frontend
-    parameters: list[KernelParameter]
-    grid: list[str]
-    compiler_slots: list[str] = field(default_factory=list)
-    function_name: str | None = None
-    do_not_specialize: list[str] = field(default_factory=list)
+class LogicalSignature(StrictJSONMixin):
+    """The canonical callable signature owned by J.
+
+    Declaration order is the canonical Replay order for logical handles.  C
+    slots are declared by C and appended by the binding adapter; source-side
+    positions remain private Harness coordinates.
+    """
+
+    parameters: list[SignatureParameter] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.kernel_id = _string(self.kernel_id, "KernelInterface.kernel_id")
-        self.frontend = _enum(Frontend, self.frontend, "KernelInterface.frontend")
         self.parameters = [
-            item if isinstance(item, KernelParameter) else KernelParameter.from_json(item)
+            item
+            if isinstance(item, SignatureParameter)
+            else SignatureParameter.from_json(item)
             for item in self.parameters
         ]
-        self.grid = _string_list(self.grid, "KernelInterface.grid")
-        self.compiler_slots = _string_list(
-            self.compiler_slots, "KernelInterface.compiler_slots", unique=True,
-        )
-        if self.function_name is None:
-            self.function_name = self.kernel_id
-        else:
-            self.function_name = _string(self.function_name, "KernelInterface.function_name")
-        self.do_not_specialize = _string_list(
-            self.do_not_specialize, "KernelInterface.do_not_specialize", unique=True,
-        )
-        _unique(self.parameters, "name", "KernelInterface.parameters")
+        _unique(self.parameters, "name", "LogicalSignature.parameters")
+        expected = [f"p{index}" for index in range(len(self.parameters))]
         names = {item.name for item in self.parameters}
+        if [item.name for item in self.parameters] != expected:
+            raise SchemaError(
+                "J.signature parameter ids must be declaration-order handles "
+                "p0, p1, ..."
+            )
         unknown_aliases = sorted(
             item.alias_of for item in self.parameters
             if item.alias_of is not None and item.alias_of not in names
         )
         if unknown_aliases:
-            raise SchemaError(f"KernelInterface alias_of references unknown parameters: {unknown_aliases}")
-        unknown_dns = sorted(set(self.do_not_specialize) - names)
-        if unknown_dns:
             raise SchemaError(
-                "KernelInterface.do_not_specialize references unknown parameters: "
-                + ", ".join(unknown_dns)
+                "J.signature alias_of references unknown parameters: "
+                + ", ".join(unknown_aliases)
             )
 
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "KernelInterface":
+    def from_json(cls, value: dict[str, Any]) -> "LogicalSignature":
         data = _strict_object(
             value,
-            path="KernelInterface",
-            allowed={
-                "kernel_id", "frontend", "parameters", "grid", "compiler_slots",
-                "function_name", "do_not_specialize",
-            },
-            required={"kernel_id", "frontend", "parameters", "grid"},
+            path="LogicalSignature",
+            allowed={"parameters"},
+            required={"parameters"},
         )
         if not isinstance(data["parameters"], list):
-            raise SchemaError("KernelInterface.parameters must be an array")
+            raise SchemaError("LogicalSignature.parameters must be an array")
         return cls(
-            kernel_id=data["kernel_id"],
-            frontend=data["frontend"],
-            parameters=[KernelParameter.from_json(item) for item in data["parameters"]],
-            grid=_string_list(data["grid"], "KernelInterface.grid"),
-            compiler_slots=_string_list(
-                data.get("compiler_slots", []), "KernelInterface.compiler_slots", unique=True,
-            ),
-            function_name=data.get("function_name"),
-            do_not_specialize=_string_list(
-                data.get("do_not_specialize", []),
-                "KernelInterface.do_not_specialize",
-                unique=True,
-            ),
+            parameters=[
+                SignatureParameter.from_json(item) for item in data["parameters"]
+            ]
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "kernel_id": self.kernel_id,
-            "frontend": self.frontend.value,
-            "parameters": [item.to_json() for item in self.parameters],
-            "grid": list(self.grid),
-            "compiler_slots": list(self.compiler_slots),
-            "function_name": self.function_name,
-            "do_not_specialize": list(self.do_not_specialize),
-        }
+        return {"parameters": [item.to_json() for item in self.parameters]}
 
-    def rewriter_view(self) -> dict[str, Any]:
-        """Return the callable interface facts supplied to the replay writer.
 
-        ``do_not_specialize`` remains readable in legacy artifacts, but it is a
-        Triton JIT policy rather than the SCRC kernel signature.  It is not a
-        replay input and is not a hard Gate1 equality condition.
-        """
+def _validate_logical_signature(archive: SemanticArchive) -> None:
+    """Check that J.signature is a total, typed view of J's logical boundary."""
 
-        return {
-            "kernel_id": self.kernel_id,
-            "frontend": self.frontend.value,
-            "parameters": [item.to_json() for item in self.parameters],
-            "grid": list(self.grid),
-            "compiler_slots": list(self.compiler_slots),
-            "function_name": self.function_name,
-        }
+    tensors = {
+        tensor.name: tensor
+        for tensor in [*archive.intent.inputs, *archive.intent.outputs]
+    }
+    dimensions = {
+        dim
+        for tensor in tensors.values()
+        for dim in tensor.shape
+        if isinstance(dim, str)
+    }
+    input_refs = {tensor.name for tensor in archive.intent.inputs}
+    output_refs = {tensor.name for tensor in archive.intent.outputs}
+    seen_logical: set[str] = set()
+    for parameter in archive.signature.parameters:
+        ref = parameter.logical_ref
+        if ref is None:
+            continue
+        if ref not in tensors and ref not in dimensions:
+            raise SchemaError(
+                f"J.signature parameter {parameter.name!r} references unknown "
+                f"J logical handle {ref!r}"
+            )
+        if ref in tensors:
+            tensor = tensors[ref]
+            if parameter.dtype != tensor.dtype:
+                raise SchemaError(
+                    f"J.signature parameter {parameter.name!r} dtype differs "
+                    f"from logical tensor {ref!r}"
+                )
+            if parameter.rank != len(tensor.shape):
+                raise SchemaError(
+                    f"J.signature parameter {parameter.name!r} rank differs "
+                    f"from logical tensor {ref!r}"
+                )
+            if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
+                raise SchemaError("input signature parameter must bind a J input")
+            if parameter.mode is ParameterMode.OUTPUT and ref not in output_refs:
+                raise SchemaError("output signature parameter must bind a J output")
+            seen_logical.add(ref)
+        elif parameter.kind not in {
+            ParameterKind.SCALAR,
+            ParameterKind.CONSTEXPR,
+        }:
+            raise SchemaError(
+                "only scalar/constexpr signature parameters may bind a J dimension"
+            )
+    missing = sorted((input_refs | output_refs) - seen_logical)
+    if missing:
+        raise SchemaError(
+            "J.signature does not bind logical tensor(s): " + ", ".join(missing)
+        )
 
 
 @dataclass
@@ -2753,8 +2800,8 @@ class ScheduleSlot(StrictJSONMixin):
 
 
 @dataclass
-class ScheduleSpec(StrictJSONMixin):
-    """Frozen ``C.schedule`` slot declarations and trusted concrete values."""
+class ImplementationConfig(StrictJSONMixin):
+    """Canonical C: anonymous selection slots plus Harness-held valuation."""
 
     slots: list[ScheduleSlot] = field(default_factory=list)
     values: dict[str, JsonValue] = field(default_factory=dict)
@@ -2764,29 +2811,34 @@ class ScheduleSpec(StrictJSONMixin):
             item if isinstance(item, ScheduleSlot) else ScheduleSlot.from_json(item)
             for item in self.slots
         ]
-        _unique(self.slots, "name", "ScheduleSpec.slots")
+        _unique(self.slots, "name", "ImplementationConfig.slots")
         if not isinstance(self.values, dict):
-            raise SchemaError("ScheduleSpec.values must be an object")
+            raise SchemaError("ImplementationConfig.values must be an object")
         self.values = {
-            _string(key, "ScheduleSpec.values key"): _json_value(value, f"ScheduleSpec.values.{key}")
+            _string(key, "ImplementationConfig.values key"): _json_value(
+                value, f"ImplementationConfig.values.{key}"
+            )
             for key, value in self.values.items()
         }
         known = {slot.name for slot in self.slots}
         unknown = sorted(set(self.values) - known)
         if unknown:
-            raise SchemaError(f"ScheduleSpec.values has no declared slot(s): {', '.join(unknown)}")
+            raise SchemaError(
+                "ImplementationConfig.values has no declared slot(s): "
+                + ", ".join(unknown)
+            )
 
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "ScheduleSpec":
+    def from_json(cls, value: dict[str, Any]) -> "ImplementationConfig":
         data = _strict_object(
             value,
-            path="ScheduleSpec",
+            path="ImplementationConfig",
             allowed={"slots", "values"},
             required={"slots", "values"},
         )
         if not isinstance(data["slots"], list):
-            raise SchemaError("ScheduleSpec.slots must be an array")
-        values = _object(data["values"], "ScheduleSpec.values")
+            raise SchemaError("ImplementationConfig.slots must be an array")
+        values = _object(data["values"], "ImplementationConfig.values")
         return cls(
             slots=[ScheduleSlot.from_json(item) for item in data["slots"]],
             values=dict(values),
@@ -2798,8 +2850,8 @@ class ScheduleSpec(StrictJSONMixin):
             "values": copy.deepcopy(self.values),
         }
 
-    def rewriter_view(self) -> dict[str, Any]:
-        """Return slot declarations only; concrete C values are secret."""
+    def masked_view(self) -> dict[str, Any]:
+        """Return ``MaskC(C)``: slot declarations without concrete values."""
 
         return {"slots": [item.to_json() for item in self.slots]}
 
@@ -3049,62 +3101,24 @@ class ProvenanceRecord(StrictJSONMixin):
 
 @dataclass
 class Gate1Artifact(StrictJSONMixin):
-    """Privileged Lift result for the LLM-direct Gate1 epoch.
+    """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    Only ``J`` and pure ``C`` form Intent.  ``pi`` is a source-realization
-    witness outside Intent; interface/source/location/provenance belong to the
-    harness.  Persisted documents from earlier epochs are rejected rather than
-    upgraded through a compatibility path.
-    """
-
-    SCHEMA: ClassVar[str] = "intentir.gate1.llm-direct.v2"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v1"
 
     j: SemanticArchive
-    interface: KernelInterface
-    schedule: ScheduleSpec
+    c: ImplementationConfig
     pi: RealizationWitness
-    location_map: LocationMap
-    source: str | None = None
-    provenance: list[ProvenanceRecord] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             self.j = SemanticArchive.from_json(self.j)
-        if not isinstance(self.interface, KernelInterface):
-            self.interface = KernelInterface.from_json(self.interface)
-        if not isinstance(self.schedule, ScheduleSpec):
-            self.schedule = ScheduleSpec.from_json(self.schedule)
+        if not isinstance(self.c, ImplementationConfig):
+            self.c = ImplementationConfig.from_json(self.c)
         if not isinstance(self.pi, RealizationWitness):
             try:
                 self.pi = RealizationWitness.from_json(self.pi)
             except RealizationWitnessError as exc:
                 raise SchemaError(str(exc)) from exc
-        if not isinstance(self.location_map, LocationMap):
-            self.location_map = LocationMap.from_json(self.location_map)
-        if self.source is not None:
-            self.source = _string(self.source, "Gate1Artifact.source", nonempty=False)
-        self.provenance = [
-            item if isinstance(item, ProvenanceRecord)
-            else ProvenanceRecord.from_json(item)
-            for item in self.provenance
-        ]
-        if self.j.kernel_id != self.interface.kernel_id:
-            raise SchemaError("Gate1Artifact J and interface kernel ids must match")
-
-        tensors = {
-            tensor.name: tensor
-            for tensor in [*self.j.intent.inputs, *self.j.intent.outputs]
-        }
-        bad_tensor_refs = sorted(
-            parameter.tensor_ref
-            for parameter in self.interface.parameters
-            if parameter.tensor_ref is not None and parameter.tensor_ref not in tensors
-        )
-        if bad_tensor_refs:
-            raise SchemaError(
-                "interface parameters reference unknown J tensors: "
-                + ", ".join(bad_tensor_refs)
-            )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
         boundary_node_refs = {
@@ -3127,69 +3141,10 @@ class Gate1Artifact(StrictJSONMixin):
                 "Layer B references unknown J nodes: "
                 + ", ".join(unknown_boundary_nodes)
             )
-
-        semantic_refs: set[str] = set()
-
-        def collect_opaque_handles(value: Any) -> None:
-            if isinstance(value, str):
-                if re.fullmatch(r"(?:t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+", value):
-                    semantic_refs.add(value)
-            elif isinstance(value, dict):
-                for key, item in value.items():
-                    collect_opaque_handles(key)
-                    collect_opaque_handles(item)
-            elif isinstance(value, list):
-                for item in value:
-                    collect_opaque_handles(item)
-
-        collect_opaque_handles(self.j.to_json())
-        collect_opaque_handles(self.interface.to_json())
-        collect_opaque_handles(self.schedule.to_json())
-        for index, item in enumerate(self.pi.instances):
-            anchor = str(item["semantic_ref"])
-            if anchor not in semantic_refs:
-                raise SchemaError(
-                    f"pi.instances[{index}].semantic_ref references undeclared "
-                    f"J/C/interface handle {anchor!r}"
-                )
-
-        location_nodes = {
-            ref for entry in self.location_map.entries for ref in entry.node_refs
-        }
-        location_accesses = {
-            ref for entry in self.location_map.entries for ref in entry.access_refs
-        }
-        if location_nodes - node_refs:
-            raise SchemaError("LocationMap references unknown J nodes")
-        access_ids = {item.access_id for item in self.j.boundary.accesses}
-        if location_accesses - access_ids:
-            raise SchemaError("LocationMap references unknown Layer-B accesses")
-
-        schedule_by_name = {slot.name: slot for slot in self.schedule.slots}
-        constexprs = {
-            parameter.name
-            for parameter in self.interface.parameters
-            if parameter.kind is ParameterKind.CONSTEXPR
-        }
-        declared_constexprs = {
-            name for name, slot in schedule_by_name.items()
-            if slot.kind is ScheduleSlotKind.CONSTEXPR
-        }
-        if not declared_constexprs <= constexprs:
-            raise SchemaError(
-                "pure-C constexpr slots must be interface constexpr parameters"
-            )
-        compiler_slots = set(self.interface.compiler_slots)
-        declared_compiler = {
-            name for name, slot in schedule_by_name.items()
-            if slot.kind is ScheduleSlotKind.COMPILER
-        }
-        if not compiler_slots <= declared_compiler:
-            raise SchemaError("interface compiler slots are absent from pure C")
-        missing_values = self.schedule.missing_required_values()
+        missing_values = self.c.missing_required_values()
         if missing_values:
             raise SchemaError(
-                "Gate1Artifact is missing required C value(s): "
+                "SCRC artifact is missing required C value(s): "
                 + ", ".join(missing_values)
             )
 
@@ -3198,9 +3153,7 @@ class Gate1Artifact(StrictJSONMixin):
         data = _strict_object(
             value,
             path="Gate1Artifact",
-            allowed=set(
-                GATE1_ARTIFACT_MODEL_FIELDS + GATE1_ARTIFACT_PRIVATE_FIELDS
-            ),
+            allowed=set(GATE1_ARTIFACT_MODEL_FIELDS),
             required=set(GATE1_ARTIFACT_MODEL_FIELDS),
         )
         if data["schema"] != cls.SCHEMA:
@@ -3208,36 +3161,23 @@ class Gate1Artifact(StrictJSONMixin):
                 f"unsupported Gate1 artifact schema {data['schema']!r}; "
                 f"expected {cls.SCHEMA!r}"
             )
-        provenance = data.get("provenance", [])
-        if not isinstance(provenance, list):
-            raise SchemaError("Gate1Artifact.provenance must be an array")
         try:
             pi = RealizationWitness.from_json(data["pi"])
         except RealizationWitnessError as exc:
             raise SchemaError(str(exc)) from exc
         return cls(
             j=SemanticArchive.from_json(data["j"]),
-            interface=KernelInterface.from_json(data["interface"]),
-            schedule=ScheduleSpec.from_json(data["schedule"]),
+            c=ImplementationConfig.from_json(data["c"]),
             pi=pi,
-            location_map=LocationMap.from_json(data["location_map"]),
-            source=data.get("source"),
-            provenance=[ProvenanceRecord.from_json(item) for item in provenance],
         )
 
     def to_json(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
+        return {
             "schema": self.SCHEMA,
             "j": self.j.to_json(),
-            "interface": self.interface.to_json(),
-            "schedule": self.schedule.to_json(),
+            "c": self.c.to_json(),
             "pi": self.pi.to_json(),
-            "location_map": self.location_map.to_json(),
-            "provenance": [item.to_json() for item in self.provenance],
         }
-        if self.source is not None:
-            result["source"] = self.source
-        return result
 
     def rewriter_view(self, *, masked: bool = False) -> dict[str, Any]:
         if masked:
@@ -3250,13 +3190,12 @@ def opaque_replay_abi(
 ) -> tuple[str, dict[str, str], dict[str, str]]:
     """Return declaration-order aliases used by both replay packets."""
 
-    aliases, _bindings, _order = _opaque_reference_data(artifact)
     parameter_names = {
-        parameter.name: aliases[parameter.name]
-        for parameter in artifact.interface.parameters
+        parameter.name: parameter.name
+        for parameter in artifact.j.signature.parameters
     }
     schedule_names = {
-        slot.name: aliases[slot.name] for slot in artifact.schedule.slots
+        slot.name: slot.name for slot in artifact.c.slots
     }
     return "scrc_k0", parameter_names, schedule_names
 
@@ -3378,8 +3317,8 @@ def _opaque_reference_data(
         *(scope.scope_id for scope in artifact.j.scopes),
         *(storage.storage_id for storage in artifact.j.storage),
         *(member for storage in artifact.j.storage for member in storage.members),
-        *(parameter.name for parameter in artifact.interface.parameters),
-        *(slot.name for slot in artifact.schedule.slots),
+        *(parameter.name for parameter in artifact.j.signature.parameters),
+        *(slot.name for slot in artifact.c.slots),
     }
     for op, _ in _intent_ops_with_paths(body):
         occupied.update(_intent_result_names(op.get("result")))
@@ -3516,28 +3455,12 @@ def _opaque_reference_data(
             f"j.storage[{index}]",
         )
 
-    runtime_index = 0
-    constexpr_index = 0
-    c_constexprs = {
-        slot.name
-        for slot in artifact.schedule.slots
-        if slot.kind is ScheduleSlotKind.CONSTEXPR
-    }
-    for index, parameter in enumerate(artifact.interface.parameters):
-        if (
-            parameter.kind is ParameterKind.CONSTEXPR
-            and parameter.name in c_constexprs
-        ):
-            stem = f"c{constexpr_index}"
-            constexpr_index += 1
-        else:
-            stem = f"p{runtime_index}"
-            runtime_index += 1
+    for index, parameter in enumerate(artifact.j.signature.parameters):
         allocate(
             parameter.name,
-            stem,
-            "interface_parameter",
-            f"interface.parameters[{index}]",
+            f"p{index}",
+            "j_signature_parameter",
+            f"j.signature.parameters[{index}]",
         )
 
     dimension_index = 0
@@ -3554,18 +3477,12 @@ def _opaque_reference_data(
                 f"j.intent.tensor_shapes[{tensor_index}][{shape_index}]",
             )
             dimension_index += 1
-    compiler_index = constexpr_index
-    for index, slot in enumerate(artifact.schedule.slots):
-        if slot.name in aliases:
-            stem = aliases[slot.name]
-        else:
-            stem = f"c{compiler_index}"
-            compiler_index += 1
+    for index, slot in enumerate(artifact.c.slots):
         allocate(
             slot.name,
-            stem,
-            "schedule_slot",
-            f"schedule.slots[{index}]",
+            f"c{index}",
+            "c_slot",
+            f"c.slots[{index}]",
         )
 
     for expression, path in expression_fields:
@@ -3691,38 +3608,28 @@ def _opaque_pi_json(
     return result
 
 
-def _opaque_harness_view(
+def _opaque_signature_and_c_view(
     artifact: Gate1Artifact, aliases: dict[str, str]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Expose positional invocation shape without source spellings or C values."""
+    """Project J.signature and MaskC(C) without source binding coordinates."""
 
-    interface = artifact.interface.rewriter_view()
-    interface["kernel_id"] = "scrc_k0"
-    interface["function_name"] = "scrc_k0"
-    for parameter in interface["parameters"]:
+    signature = artifact.j.signature.to_json()
+    for parameter in signature["parameters"]:
         original = parameter["name"]
         parameter["name"] = _opaque_reference(original, aliases)
-        if parameter.get("tensor_ref") is not None:
-            parameter["tensor_ref"] = _opaque_reference(
-                parameter["tensor_ref"], aliases
+        if parameter.get("logical_ref") is not None:
+            parameter["logical_ref"] = _opaque_reference(
+                parameter["logical_ref"], aliases
             )
         if parameter.get("alias_of") is not None:
             parameter["alias_of"] = _opaque_reference(
                 parameter["alias_of"], aliases
             )
-    interface["grid"] = [
-        _rename_identifier_tokens(expression, aliases)
-        for expression in interface["grid"]
-    ]
-    interface["compiler_slots"] = [
-        _opaque_reference(name, aliases)
-        for name in interface["compiler_slots"]
-    ]
 
-    schedule = artifact.schedule.rewriter_view()
-    for slot in schedule["slots"]:
+    c_view = artifact.c.masked_view()
+    for slot in c_view["slots"]:
         slot["name"] = _opaque_reference(slot["name"], aliases)
-    return interface, schedule
+    return signature, c_view
 
 
 def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
@@ -3919,7 +3826,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         ],
     }
 
-    interface, schedule = _opaque_harness_view(artifact, aliases)
+    signature, c_view = _opaque_signature_and_c_view(artifact, aliases)
 
     return {
         "j": {
@@ -3930,6 +3837,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 for node_id, path in artifact.j.node_ids.items()
             },
             "boundary": opaque_boundary,
+            "signature": signature,
             "scopes": [
                 _opaque_scope_json(scope, aliases)
                 for scope in artifact.j.scopes
@@ -3939,8 +3847,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 for storage in artifact.j.storage
             ],
         },
-        "interface": interface,
-        "schedule": schedule,
+        "c": c_view,
         "pi": _opaque_pi_json(artifact.pi, aliases),
     }
 
@@ -4183,10 +4090,11 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         ],
     }
 
-    # The anti-leakage arm masks J only.  Its pi, C declaration and public
-    # frontend/harness context are byte-identical to the normal replay packet.
+    # The anti-leakage arm masks J's semantic declarations.  Its logical
+    # signature, pi and MaskC(C) stay usable without introducing a Harness or
+    # interface side channel.
     normal_aliases, _bindings, _order = _opaque_reference_data(artifact)
-    opaque_interface, opaque_schedule = _opaque_harness_view(
+    opaque_signature, opaque_c = _opaque_signature_and_c_view(
         artifact, normal_aliases
     )
     return {
@@ -4198,6 +4106,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 for index, node_id in enumerate(artifact.j.node_ids)
             },
             "boundary": masked_boundary,
+            "signature": opaque_signature,
             "scopes": [
                 {
                     "scope_id": scope_map[scope.scope_id],
@@ -4235,8 +4144,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 for item in artifact.j.storage
             ],
         },
-        "interface": opaque_interface,
-        "schedule": opaque_schedule,
+        "c": opaque_c,
         "pi": _opaque_pi_json(artifact.pi, normal_aliases),
     }
 
@@ -4248,8 +4156,9 @@ __all__ = [
     "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "GATE1_ARTIFACT_MODEL_FIELDS", "GATE1_ARTIFACT_PRIVATE_FIELDS",
-    "Gate1Artifact", "Gate1Status", "JNecessityStatus", "JsonValue", "KernelInterface",
-    "IndexBoundsSpec", "KernelParameter", "LocationEntry", "LocationMap",
+    "Gate1Artifact", "Gate1Status", "ImplementationConfig",
+    "JNecessityStatus", "JsonValue",
+    "IndexBoundsSpec", "LocationEntry", "LocationMap", "LogicalSignature",
     "LogicalUpdateSpec", "OutputMapping",
     "opaque_replay_abi",
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
@@ -4257,7 +4166,7 @@ __all__ = [
     "ResultRelationKind", "ResultRelationSpec",
     "render_boundary_access_wire_grammar",
     "render_gate1_artifact_envelope_grammar", "RuntimeArgument",
-    "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec", "SchemaError",
+    "ScheduleSlot", "ScheduleSlotKind", "SchemaError", "SignatureParameter",
     "ScopeKind", "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive",
     "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",

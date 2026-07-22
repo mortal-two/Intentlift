@@ -74,6 +74,16 @@ Lift_H(Source) -> (J,C,pi)
 
 第一步必须把这些事实映射到新边界，再修改生产代码；不得为了让旧测试继续通过而添加兼容旁路。
 
+## 执行记录
+
+- 重构前工程基线：`669 passed, 4 skipped`。
+- 阶段 1 已完成：`SemanticArchive.signature` 成为 J-owned logical signature；proof artifact wire
+  直接断代为 `schema + j + c + pi`；独立 `KernelInterface/KernelParameter/ScheduleSpec` 已从活动
+  imports/exports 移除；Source、Harness binding 与 provider provenance 留在 extraction sidecar。
+- Replay request 根 allowlist 已同步收敛为 `j + c + pi + u_f`，其中 c 是 `MaskC(C)`；旧
+  `harness/interface/location/source/provenance` 字段直接拒绝，不提供兼容转换。
+- 阶段 1 定向回归：`112 passed`；全量回归：`669 passed, 4 skipped`。
+
 ## 实施顺序
 
 ### 1. Canonical artifact 与 J.signature

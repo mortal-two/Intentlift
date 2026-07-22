@@ -91,6 +91,26 @@ def _loop_archive() -> dict:
             "updates": [],
             "result_relations": [],
         },
+        "signature": {
+            "parameters": [
+                {
+                    "name": "p0",
+                    "kind": "pointer",
+                    "mode": "input",
+                    "dtype": "f32",
+                    "rank": 1,
+                    "logical_ref": "x",
+                },
+                {
+                    "name": "p1",
+                    "kind": "pointer",
+                    "mode": "output",
+                    "dtype": "f32",
+                    "rank": 0,
+                    "logical_ref": "y",
+                },
+            ]
+        },
         "scopes": [
             {
                 "scope_id": "function0",
@@ -347,32 +367,7 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
         {
             "schema": Gate1Artifact.SCHEMA,
             "j": archive.to_json(),
-            "interface": {
-                "kernel_id": "semantic_scan",
-                "frontend": "triton",
-                "function_name": "semantic_scan",
-                "parameters": [
-                    {
-                        "name": "x",
-                        "kind": "pointer",
-                        "mode": "input",
-                        "dtype": "f32",
-                        "rank": 1,
-                        "tensor_ref": "x",
-                    },
-                    {
-                        "name": "y",
-                        "kind": "pointer",
-                        "mode": "output",
-                        "dtype": "f32",
-                        "rank": 0,
-                        "tensor_ref": "y",
-                    },
-                ],
-                "grid": ["1"],
-                "compiler_slots": [],
-            },
-            "schedule": {"slots": [], "values": {}},
+            "c": {"slots": [], "values": {}},
             "pi": {
                 "regions": [
                     {"id": "r0", "parent": None, "placement": "root"}
@@ -396,16 +391,6 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                 ],
                 "order": [{"before": "i0", "after": "i1"}],
                 "sharing": [],
-            },
-            "location_map": {
-                "source_name": "private.py",
-                "entries": [
-                    {
-                        "span": {"start_line": 1, "end_line": 1},
-                        "node_refs": ["n0"],
-                        "access_refs": ["a0"],
-                    }
-                ],
             },
         }
     )
@@ -467,6 +452,27 @@ def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
             "index_bounds": [],
             "updates": [],
             "result_relations": [],
+        },
+        "signature": {
+            "parameters": [
+                {
+                    "name": "p0",
+                    "kind": "pointer",
+                    "mode": "input",
+                    "dtype": "f32",
+                    "rank": 1,
+                    "logical_ref": "x",
+                },
+                {
+                    "name": "p1",
+                    "kind": "pointer",
+                    "mode": "output",
+                    "dtype": "f32",
+                    "rank": 1,
+                    "alias_of": "p0",
+                    "logical_ref": "y",
+                },
+            ]
         },
         "scopes": [
             {

@@ -7,14 +7,14 @@ import hashlib
 import json
 from typing import Any, Mapping
 
-from .model import Gate1Artifact, SchemaError
+from .model import Frontend, Gate1Artifact, SchemaError
 from .pi import (
     render_realization_mechanism_grammar,
     render_realization_witness_wire_grammar,
 )
 
 
-REPLAY_PACKET_SCHEMA = "intentir.gate1.replay-packet.v1"
+REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
         "context_policy": "public_frontend_context_v1",
@@ -46,6 +46,13 @@ _FORBIDDEN_KEYS = frozenset(
         "compiler_diff",
         "selected_cards",
         "registry_digest",
+        "harness",
+        "interface",
+        "binding_map",
+        "compiler_fingerprint",
+        "gate1_diff",
+        "prior_replay",
+        "conversation",
     }
 )
 
@@ -65,6 +72,10 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
 
     if not isinstance(payload, Mapping):
         raise SchemaError("Replay payload must be an object")
+    if set(payload) != {"j", "c", "pi", "u_f"}:
+        raise SchemaError(
+            "Replay payload root must contain exactly j, c, pi, and u_f"
+        )
     for path, value in _walk(dict(payload)):
         if isinstance(value, dict):
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
@@ -91,26 +102,31 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
 def build_rewriter_payload(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build exactly ``J + pure C + pi + public frontend context``."""
+    """Build exactly ``J + pi + MaskC(C) + U_f``."""
 
     view = artifact.rewriter_view(masked=masked)
-    frontend = view["interface"]["frontend"]
+    frontend = Frontend(frontend)
     context = (
         copy.deepcopy(dict(frontend_context))
         if frontend_context is not None
-        else copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend, {}))
+        else copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {}))
+    )
+    context.update(
+        {
+            "protocol": REPLAY_PACKET_SCHEMA,
+            "frontend": frontend.value,
+            "replay_function": "scrc_k0",
+        }
     )
     payload = {
-        "schema": REPLAY_PACKET_SCHEMA,
-        "mode": "masked_j" if masked else "normal",
         "j": view["j"],
-        "c": view["schedule"],
+        "c": view["c"],
         "pi": view["pi"],
-        "harness": view["interface"],
-        "frontend_context": context,
+        "u_f": context,
     }
     assert_source_isolated_payload(payload)
     return payload
@@ -119,20 +135,28 @@ def build_rewriter_payload(
 def build_normal_rewriter_view(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
-        artifact, masked=False, frontend_context=frontend_context
+        artifact,
+        frontend=frontend,
+        masked=False,
+        frontend_context=frontend_context,
     )
 
 
 def build_masked_rewriter_view(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
-        artifact, masked=True, frontend_context=frontend_context
+        artifact,
+        frontend=frontend,
+        masked=True,
+        frontend_context=frontend_context,
     )
 
 
@@ -148,11 +172,14 @@ def _instructions(*, masked: bool) -> str:
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
         "relation and region placement as required realization topology. Multiple "
         "instances anchored to one handle are distinct source stages: do not collapse "
-        "their chain, discard Interface/C dependencies, duplicate a shared producer, "
-        "or invent an undocumented stage. Obtain all logical operators, predicates, "
+        "their chain, discard J/C dependencies, duplicate a shared producer, "
+        "or invent an undocumented stage. Obtain callable logical handles from "
+        "J.signature and append the anonymous slots from MaskC(C). Obtain all "
+        "logical operators, predicates, "
         "fills, constants, index relations and effects only from J. Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "
-        "frontend APIs and the positional opaque signature in harness. Pi graph "
+        "frontend APIs and the canonical opaque handles in J.signature/MaskC(C). "
+        "Pi graph "
         "reference contract: "
         + render_realization_witness_wire_grammar()
         + " Pi mechanism contract: "
@@ -166,11 +193,15 @@ def _instructions(*, masked: bool) -> str:
 def build_rewriter_prompt(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     payload = build_rewriter_payload(
-        artifact, masked=masked, frontend_context=frontend_context
+        artifact,
+        frontend=frontend,
+        masked=masked,
+        frontend_context=frontend_context,
     )
     return _instructions(masked=masked), json.dumps(
         payload, sort_keys=True, ensure_ascii=False, allow_nan=False
@@ -180,20 +211,28 @@ def build_rewriter_prompt(
 def build_normal_rewriter_prompt(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     return build_rewriter_prompt(
-        artifact, masked=False, frontend_context=frontend_context
+        artifact,
+        frontend=frontend,
+        masked=False,
+        frontend_context=frontend_context,
     )
 
 
 def build_masked_rewriter_prompt(
     artifact: Gate1Artifact,
     *,
+    frontend: Frontend | str = Frontend.TRITON,
     frontend_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     return build_rewriter_prompt(
-        artifact, masked=True, frontend_context=frontend_context
+        artifact,
+        frontend=frontend,
+        masked=True,
+        frontend_context=frontend_context,
     )
 
 

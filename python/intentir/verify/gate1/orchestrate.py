@@ -145,7 +145,7 @@ def canonical_artifact_digest(
     payload = {
         "schema": artifact.SCHEMA,
         "j": artifact.j.to_json(),
-        "c": artifact.schedule.to_json(),
+        "c": artifact.c.to_json(),
         "pi": artifact.pi.to_json(),
         "observer_level": observer_level,
         "protocol": GATE1_PROTOCOL,
@@ -169,7 +169,12 @@ def _opaque_python_interface(
         isinstance(name, str) for name in raw_names
     ):
         raise ValueError("compiler metadata lacks an ordered Python signature")
-    if len(raw_names) != len(artifact.interface.parameters):
+    signature_parameters = artifact.j.signature.parameters
+    c_constexprs = [
+        slot for slot in artifact.c.slots
+        if slot.kind is ScheduleSlotKind.CONSTEXPR
+    ]
+    if len(raw_names) != len(signature_parameters) + len(c_constexprs):
         raise ValueError("compiled Python signature arity differs from artifact harness")
     constexpr_indices = result.get("constexpr_indices", [])
     if not isinstance(constexpr_indices, (list, tuple)) or not all(
@@ -177,18 +182,24 @@ def _opaque_python_interface(
         for index in constexpr_indices
     ):
         raise ValueError("compiler constexpr indices are malformed")
-    expected_constexpr = [
+    signature_constexpr = [
         index
-        for index, parameter in enumerate(artifact.interface.parameters)
+        for index, parameter in enumerate(signature_parameters)
         if parameter.kind is ParameterKind.CONSTEXPR
+    ]
+    expected_constexpr = [
+        *signature_constexpr,
+        *range(len(signature_parameters), len(signature_parameters) + len(c_constexprs)),
     ]
     if sorted(constexpr_indices) != expected_constexpr:
         raise ValueError("compiled constexpr positions differ from artifact harness")
 
-    opaque_function, parameter_names, _schedule_names = opaque_replay_abi(artifact)
+    opaque_function, parameter_names, schedule_names = opaque_replay_abi(artifact)
     aliases = [
         parameter_names[parameter.name]
-        for parameter in artifact.interface.parameters
+        for parameter in signature_parameters
+    ] + [
+        schedule_names[slot.name] for slot in c_constexprs
     ]
     result["arg_names"] = aliases
     result["constexpr_indices"] = expected_constexpr
@@ -203,10 +214,19 @@ def _replay_case(
     source_case: CompileCase,
     source_compile: CompileResult,
 ) -> CompileCase:
-    _function, parameter_names, _schedule_names = opaque_replay_abi(artifact)
+    _function, parameter_names, schedule_names = opaque_replay_abi(artifact)
+    signature_parameters = artifact.j.signature.parameters
     runtime_parameters = [
-        item for item in artifact.interface.parameters
+        item for item in signature_parameters
         if item.kind is not ParameterKind.CONSTEXPR
+    ]
+    semantic_constexprs = [
+        item for item in signature_parameters
+        if item.kind is ParameterKind.CONSTEXPR
+    ]
+    c_constexprs = [
+        slot for slot in artifact.c.slots
+        if slot.kind is ScheduleSlotKind.CONSTEXPR
     ]
     metadata_names = source_compile.python_interface.get("arg_names")
     constexpr_indices = source_compile.python_interface.get("constexpr_indices")
@@ -215,7 +235,7 @@ def _replay_case(
             isinstance(name, str) for name in metadata_names
         ):
             raise ValueError("source compiler returned malformed argument names")
-        if len(metadata_names) != len(artifact.interface.parameters):
+        if len(metadata_names) != len(signature_parameters) + len(c_constexprs):
             raise ValueError("source signature arity differs from artifact harness")
         if not isinstance(constexpr_indices, (list, tuple)):
             raise ValueError("source compiler returned malformed constexpr positions")
@@ -234,10 +254,7 @@ def _replay_case(
     else:
         argument_values = list(source_case.arguments.values())
         source_constexpr_names = list(source_case.schedule)[:
-            sum(
-                parameter.kind is ParameterKind.CONSTEXPR
-                for parameter in artifact.interface.parameters
-            )
+            len(semantic_constexprs) + len(c_constexprs)
         ]
     if len(runtime_parameters) != len(argument_values):
         raise ValueError(
@@ -291,41 +308,43 @@ def _replay_case(
         parameter_names[parameter.name]: value
         for parameter, value in zip(runtime_parameters, argument_values, strict=True)
     }
-    slots = {slot.name: slot for slot in artifact.schedule.slots}
-    constexpr_parameters = [
-        parameter for parameter in artifact.interface.parameters
-        if parameter.kind is ParameterKind.CONSTEXPR
-    ]
-    if len(source_constexpr_names) != len(constexpr_parameters):
+    slots = {slot.name: slot for slot in artifact.c.slots}
+    if len(source_constexpr_names) != len(semantic_constexprs) + len(c_constexprs):
         raise ValueError("source constexpr bindings differ from artifact harness")
     schedule: dict[str, Any] = {}
     consumed_source_schedule: set[str] = set()
     for parameter, source_name in zip(
-        constexpr_parameters, source_constexpr_names, strict=True
+        semantic_constexprs,
+        source_constexpr_names[: len(semantic_constexprs)],
+        strict=True,
     ):
         if source_name not in source_case.schedule:
             raise ValueError(f"source constexpr {source_name!r} is unbound")
-        slot = slots.get(parameter.name)
-        if slot is None:
-            # Semantic constexpr values belong to the frozen invocation harness,
-            # not C. Copy the positional binding without persisting or exposing
-            # it through the Replay packet.
-            expected = source_case.schedule[source_name]
-        else:
-            if slot.kind is not ScheduleSlotKind.CONSTEXPR:
-                raise ValueError("interface constexpr has a non-constexpr C slot")
-            expected = artifact.schedule.values.get(parameter.name)
-            if source_case.schedule[source_name] != expected:
-                raise ValueError(
-                    f"source constexpr position for {parameter.name!r} differs from C"
-                )
+        # Semantic compile-time values are Harness bindings.  Their logical
+        # consequence is already in J; no concrete value enters C or Replay.
+        expected = source_case.schedule[source_name]
         schedule[parameter_names[parameter.name]] = expected
+        consumed_source_schedule.add(source_name)
+
+    c_source_names = source_constexpr_names[len(semantic_constexprs):]
+    for slot, source_name in zip(c_constexprs, c_source_names, strict=True):
+        if source_name not in source_case.schedule:
+            raise ValueError(f"source C constexpr {source_name!r} is unbound")
+        expected = artifact.c.values.get(slot.name)
+        if source_case.schedule[source_name] != expected:
+            raise ValueError(
+                f"source constexpr position for {slot.name!r} differs from C"
+            )
+        schedule[schedule_names[slot.name]] = expected
         consumed_source_schedule.add(source_name)
 
     source_compiler_names = [
         name for name in source_case.schedule if name not in consumed_source_schedule
     ]
-    compiler_slot_names = list(artifact.interface.compiler_slots)
+    compiler_slot_names = [
+        slot.name for slot in artifact.c.slots
+        if slot.kind is ScheduleSlotKind.COMPILER
+    ]
     if len(source_compiler_names) != len(compiler_slot_names):
         raise ValueError("source compiler-option bindings differ from C")
     compiler_roles: set[str] = set()
@@ -338,7 +357,7 @@ def _replay_case(
         if slot.role in compiler_roles:
             raise ValueError("active compiler C roles must be unique")
         compiler_roles.add(slot.role)
-        expected = artifact.schedule.values.get(slot_name)
+        expected = artifact.c.values.get(slot_name)
         if source_case.schedule[source_name] != expected:
             raise ValueError(
                 f"source compiler-option position for {slot_name!r} differs from C"
@@ -397,7 +416,7 @@ class Gate1Runner:
                 python_interface=_opaque_python_interface(
                     artifact, compile_result.python_interface
                 ),
-                schedule=artifact.schedule.values,
+                schedule=artifact.c.values,
             )
         except Exception as exc:
             return Gate1ArmEvidence(
@@ -441,7 +460,7 @@ class Gate1Runner:
                 python_interface=_opaque_python_interface(
                     artifact, source_compile.python_interface
                 ),
-                schedule=artifact.schedule.values,
+                schedule=artifact.c.values,
             )
         except Exception as exc:
             normal = Gate1ArmEvidence(

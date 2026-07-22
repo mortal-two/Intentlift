@@ -130,7 +130,7 @@ def test_source_parameter_spelling_is_not_a_gate1_semantic() -> None:
 
 def test_source_schedule_value_must_match_c_before_replay() -> None:
     artifact = make_reduce_artifact()
-    artifact.schedule.values["c0"] = 256
+    artifact.c.values["c0"] = 256
     writer = StaticReplayWriter(REPLAY)
     result = Gate1Runner(compiler=FakeCompiler(), writer=writer).run(
         artifact,
@@ -145,14 +145,14 @@ def test_source_schedule_value_must_match_c_before_replay() -> None:
 
 def test_bound_constexpr_binding_is_copied_from_harness_not_c() -> None:
     payload = make_reduce_artifact().to_json()
-    payload["interface"]["parameters"].insert(
-        3,
+    payload["j"]["signature"]["parameters"].append(
         {
             "name": "p3",
             "kind": "constexpr",
             "mode": "value",
             "dtype": "i32",
             "rank": 0,
+            "logical_ref": "x1",
         },
     )
     artifact = Gate1Artifact.from_json(payload)
@@ -176,4 +176,4 @@ def test_bound_constexpr_binding_is_copied_from_harness_not_c() -> None:
     )
     replay_case = _replay_case(artifact, source_case, source_compile)
     assert replay_case.schedule == {"p3": 8, "c0": 128}
-    assert artifact.schedule.values == {"c0": 128}
+    assert artifact.c.values == {"c0": 128}

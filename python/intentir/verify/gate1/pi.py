@@ -107,7 +107,8 @@ def render_realization_witness_wire_grammar() -> str:
 
     return (
         "Pi has exactly two reference roles. instances[k].semantic_ref is an "
-        "anchor into a declared anonymous J/C/interface handle; it is not a pi "
+        "anchor into a declared anonymous J/C handle; J.signature handles are "
+        "ordinary J handles and there is no interface namespace. It is not a pi "
         "graph node. instances[k].id declares the only pi graph-node namespace "
         "i0,i1,... in declaration order. Every routes source/target, order "
         "before/after, and sharing source/consumer must equal one already "

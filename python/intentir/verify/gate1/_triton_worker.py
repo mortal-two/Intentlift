@@ -280,7 +280,7 @@ def _runtime_value(torch: Any, spec: Mapping[str, Any], device: str) -> Any:
 def _jit_metadata_owner(kernel: Any) -> Any:
     """Find the wrapped Triton JITFunction that owns ABI metadata.
 
-    Real libraries commonly expose a ``KernelInterface`` wrapper (for example
+    Real libraries commonly expose a callable kernel wrapper (for example
     FlagGems ``LibEntry``) while keeping ``constexprs`` and
     ``do_not_specialize`` on an inner JITFunction.  Follow only the conventional
     ``fn`` wrapper chain and fail closed on cycles or unrelated objects.

@@ -13,7 +13,7 @@ from intentir.backend.protocol import (
     ComparisonKind,
     LoweringRequest,
 )
-from intentir.verify.gate1.model import ScheduleSpec
+from intentir.verify.gate1.model import ImplementationConfig
 
 
 class _FakeCudaArtifact:
@@ -41,7 +41,7 @@ def test_cuda_lowering_consumes_the_same_j_and_separate_c(monkeypatch) -> None:
         artifact.j,
         cuda_program.cuda_target("sm_120a"),
         "generic",
-        artifact.schedule,
+        artifact.c,
     )
     lowered = cuda_program.lower_j_to_cuda(request, {"x0": 2, "x1": 4})
 
@@ -82,7 +82,7 @@ def test_cuda_fails_before_codegen_when_b_is_not_implemented(monkeypatch) -> Non
         artifact.j,
         cuda_program.cuda_target("sm_120a"),
         "generic",
-        artifact.schedule,
+        artifact.c,
     )
     with pytest.raises(cuda_program.CudaJLoweringError, match="explicit_access_relation"):
         cuda_program.lower_j_to_cuda(request, {"x0": 2, "x1": 4})
@@ -91,7 +91,7 @@ def test_cuda_fails_before_codegen_when_b_is_not_implemented(monkeypatch) -> Non
 
 def test_c_can_change_without_changing_j_identity() -> None:
     artifact = make_reduce_artifact(explicit_accesses=False)
-    changed_c = ScheduleSpec.from_json(
+    changed_c = ImplementationConfig.from_json(
         {
             "slots": [
                 {"name": "c0", "kind": "constexpr", "role": "tile_extent"}
@@ -100,7 +100,7 @@ def test_c_can_change_without_changing_j_identity() -> None:
         }
     )
     left = LoweringRequest(
-        artifact.j, BackendTarget("cuda", "sm_120a"), "generic", artifact.schedule
+        artifact.j, BackendTarget("cuda", "sm_120a"), "generic", artifact.c
     )
     right = LoweringRequest(
         artifact.j, BackendTarget("cuda", "sm_120a"), "generic", changed_c

@@ -5,20 +5,16 @@ from intentir.verify.gate1.model import (
     AccessKind,
     Boundary,
     BoundaryAccess,
-    Frontend,
     Gate1Artifact,
-    KernelInterface,
-    KernelParameter,
-    LocationEntry,
-    LocationMap,
+    ImplementationConfig,
+    LogicalSignature,
     ParameterKind,
     ParameterMode,
     ReductionBoundary,
     ScheduleSlot,
     ScheduleSlotKind,
-    ScheduleSpec,
     SemanticArchive,
-    SourceSpan,
+    SignatureParameter,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 
@@ -75,10 +71,10 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
         else []
     )
     j = SemanticArchive(
-        "scrc_k0",
-        function,
-        {"n0": "body[0]", "n1": "body[1]"},
-        Boundary(
+        kernel_id="scrc_k0",
+        intent=function,
+        node_ids={"n0": "body[0]", "n1": "body[1]"},
+        boundary=Boundary(
             domains={"d0": "v1 < x1"} if explicit_accesses else {},
             accesses=accesses,
             reductions=[
@@ -87,28 +83,24 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
                 )
             ],
         ),
-    )
-    interface = KernelInterface(
-        "scrc_k0",
-        Frontend.TRITON,
-        [
-            KernelParameter(
+        signature=LogicalSignature(
+            [
+            SignatureParameter(
                 "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 2, tensor_ref="t0",
+                "f32", 2, logical_ref="t0",
             ),
-            KernelParameter(
+            SignatureParameter(
                 "p1", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                "f32", 1, tensor_ref="t1",
+                "f32", 1, logical_ref="t1",
             ),
-            KernelParameter(
-                "p2", ParameterKind.SCALAR, ParameterMode.VALUE, "i32"
+            SignatureParameter(
+                "p2", ParameterKind.SCALAR, ParameterMode.VALUE, "i32",
+                logical_ref="x1",
             ),
-            KernelParameter("c0", ParameterKind.CONSTEXPR),
-        ],
-        ["ceil_div(p2, c0)"],
-        function_name="scrc_k0",
+            ]
+        ),
     )
-    schedule = ScheduleSpec(
+    c = ImplementationConfig(
         [ScheduleSlot("c0", ScheduleSlotKind.CONSTEXPR, "tile_extent")],
         {"c0": 128},
     )
@@ -145,20 +137,8 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
     pi = RealizationWitness.from_json(pi_payload)
     return Gate1Artifact(
         j,
-        interface,
-        schedule,
+        c,
         pi,
-        LocationMap(
-            "scrc_k0.py",
-            [
-                LocationEntry(
-                    SourceSpan(1, 2),
-                    ["n0", "n1"],
-                    ["a0", "a1"] if explicit_accesses else [],
-                )
-            ],
-        ),
-        source="PRIVATE_SOURCE_CANARY",
     )
 
 
@@ -181,32 +161,28 @@ def make_copy_artifact() -> Gate1Artifact:
     )
     return Gate1Artifact(
         SemanticArchive(
-            "scrc_k0",
-            function,
-            {"n0": "body[0]"},
-            Boundary(),
-        ),
-        KernelInterface(
-            "scrc_k0",
-            Frontend.TRITON,
-            [
-                KernelParameter(
+            kernel_id="scrc_k0",
+            intent=function,
+            node_ids={"n0": "body[0]"},
+            boundary=Boundary(),
+            signature=LogicalSignature(
+                [
+                SignatureParameter(
                     "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "f32", 1, tensor_ref="t0",
+                    "f32", 1, logical_ref="t0",
                 ),
-                KernelParameter(
+                SignatureParameter(
                     "p1", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                    "f32", 1, tensor_ref="t1",
+                    "f32", 1, logical_ref="t1",
                 ),
-                KernelParameter(
-                    "p2", ParameterKind.SCALAR, ParameterMode.VALUE, "i32"
+                SignatureParameter(
+                    "p2", ParameterKind.SCALAR, ParameterMode.VALUE, "i32",
+                    logical_ref="x0",
                 ),
-                KernelParameter("c0", ParameterKind.CONSTEXPR),
-            ],
-            ["ceil_div(p2, c0)"],
-            function_name="scrc_k0",
+                ]
+            ),
         ),
-        ScheduleSpec(
+        ImplementationConfig(
             [ScheduleSlot("c0", ScheduleSlotKind.CONSTEXPR, "tile_extent")],
             {"c0": 1024},
         ),
@@ -228,9 +204,4 @@ def make_copy_artifact() -> Gate1Artifact:
                 "sharing": [],
             }
         ),
-        LocationMap(
-            "scrc_k0.py",
-            [LocationEntry(SourceSpan(1, 1), ["n0"], [])],
-        ),
-        source="PRIVATE_SOURCE_CANARY",
     )

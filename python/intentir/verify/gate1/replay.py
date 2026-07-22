@@ -130,6 +130,7 @@ def _context_receipt(raw: Mapping[str, Any], context: Mapping[str, Any]) -> dict
 class ResponsesReplayWriter:
     provider: ProviderConfig | None = None
     effort: str | None = None
+    frontend: Frontend = Frontend.TRITON
     frontend_context: Mapping[str, Any] | None = None
 
     def generate(
@@ -137,12 +138,14 @@ class ResponsesReplayWriter:
     ) -> ReplayGeneration:
         instructions, user = build_rewriter_prompt(
             artifact,
+            frontend=self.frontend,
             masked=masked,
             frontend_context=self.frontend_context,
         )
         packet = json.loads(user)
-        function_name = packet["harness"]["function_name"]
-        frontend = Frontend(packet["harness"]["frontend"])
+        u_f = packet["u_f"]
+        function_name = u_f["replay_function"]
+        frontend = Frontend(u_f["frontend"])
         if frontend not in {Frontend.TRITON, Frontend.CUTE}:
             raise ValueError(
                 f"source-blind Replay has no audited validator for {frontend.value!r}"
@@ -201,7 +204,7 @@ class ResponsesReplayWriter:
             packet_digest=replay_packet_digest(packet),
             prompt_digest=prompt_digest,
             context_receipt=_context_receipt(
-                reply.raw, packet.get("frontend_context", {})
+                reply.raw, packet.get("u_f", {})
             ),
             usage=_usage(reply.raw),
             response_model=(
@@ -227,15 +230,19 @@ class ResponsesReplayWriter:
 class StaticReplayWriter:
     code: str
     model: str = "static-test-writer"
+    frontend: Frontend = Frontend.TRITON
     calls: list[bool] = field(default_factory=list, init=False)
 
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration:
-        instructions, user = build_rewriter_prompt(artifact, masked=masked)
+        instructions, user = build_rewriter_prompt(
+            artifact, frontend=self.frontend, masked=masked
+        )
         packet = json.loads(user)
-        function_name = packet["harness"]["function_name"]
-        frontend = Frontend(packet["harness"]["frontend"])
+        u_f = packet["u_f"]
+        function_name = u_f["replay_function"]
+        frontend = Frontend(u_f["frontend"])
         code, entry_function_name = _extract_replay_code(
             self.code,
             frontend=frontend,
@@ -255,7 +262,7 @@ class StaticReplayWriter:
             context_receipt={
                 "context_sha256": hashlib.sha256(
                     json.dumps(
-                        packet.get("frontend_context", {}),
+                        packet.get("u_f", {}),
                         sort_keys=True,
                         separators=(",", ":"),
                     ).encode()

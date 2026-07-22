@@ -11,7 +11,7 @@ from .cute_compiler import (
     CuteCompiler,
     CuteKernelSource,
 )
-from .model import Frontend, Gate1Artifact, Gate1Status, ParameterKind
+from .model import Gate1Artifact, Gate1Status, ParameterKind
 from .orchestrate import (
     Gate1ArmEvidence,
     Gate1Config,
@@ -56,8 +56,6 @@ def _opaque_cute_interface(
     metadata: Mapping[str, Any],
     case: CuteCompileCase,
 ) -> dict[str, Any]:
-    if artifact.interface.frontend is not Frontend.CUTE:
-        raise ValueError("CuTe Gate1 received a non-CuTe artifact")
     device = metadata.get("device")
     entry = metadata.get("entry")
     if not isinstance(device, Mapping) or not isinstance(entry, Mapping):
@@ -70,7 +68,7 @@ def _opaque_cute_interface(
         raise ValueError("CuTe device argument names are malformed")
     if not isinstance(annotations, list) or len(annotations) != len(device_names):
         raise ValueError("CuTe device annotations are malformed")
-    parameters = artifact.interface.parameters
+    parameters = artifact.j.signature.parameters
     if len(device_names) != len(parameters):
         raise ValueError("CuTe device arity differs from the artifact harness")
     expected_categories = {

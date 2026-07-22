@@ -14,11 +14,12 @@ from intentir.verify.gate1.model import (
     Frontend,
     Gate1Artifact,
     Gate1Status,
-    KernelInterface,
-    KernelParameter,
+    ImplementationConfig,
+    LogicalSignature,
     ParameterKind,
     ParameterMode,
-    ScheduleSpec,
+    SemanticArchive,
+    SignatureParameter,
 )
 from intentir.verify.gate1.replay import StaticReplayWriter
 
@@ -61,36 +62,31 @@ def scrc_entry(t0, t1, stream):
 
 def _artifact() -> Gate1Artifact:
     base = make_copy_artifact()
+    j_payload = base.j.to_json()
+    j_payload["signature"] = LogicalSignature(
+        [
+            SignatureParameter(
+                "p0",
+                ParameterKind.TENSOR,
+                ParameterMode.INPUT,
+                "f32",
+                1,
+                logical_ref="t0",
+            ),
+            SignatureParameter(
+                "p1",
+                ParameterKind.TENSOR,
+                ParameterMode.OUTPUT,
+                "f32",
+                1,
+                logical_ref="t1",
+            ),
+        ]
+    ).to_json()
     return Gate1Artifact(
-        base.j,
-        KernelInterface(
-            "scrc_k0",
-            Frontend.CUTE,
-            [
-                KernelParameter(
-                    "p0",
-                    ParameterKind.TENSOR,
-                    ParameterMode.INPUT,
-                    "f32",
-                    1,
-                    tensor_ref="t0",
-                ),
-                KernelParameter(
-                    "p1",
-                    ParameterKind.TENSOR,
-                    ParameterMode.OUTPUT,
-                    "f32",
-                    1,
-                    tensor_ref="t1",
-                ),
-            ],
-            ["1"],
-            function_name="scrc_k0",
-        ),
-        ScheduleSpec([], {}),
+        SemanticArchive.from_json(j_payload),
+        ImplementationConfig([], {}),
         base.pi,
-        base.location_map,
-        source=base.source,
     )
 
 
@@ -147,7 +143,7 @@ class _Compiler:
 
 
 def test_cute_normal_closure_reports_masked_j_mismatch_separately() -> None:
-    writer = StaticReplayWriter(_REPLAY)
+    writer = StaticReplayWriter(_REPLAY, frontend=Frontend.CUTE)
     result = CuteGate1Runner(compiler=_Compiler(), writer=writer).run(
         _artifact(),
         source=CuteKernelSource.from_code(
@@ -165,7 +161,7 @@ def test_cute_normal_closure_reports_masked_j_mismatch_separately() -> None:
 def test_cute_masked_j_closure_does_not_reject_main_gate1() -> None:
     result = CuteGate1Runner(
         compiler=_Compiler(masked_closes=True),
-        writer=StaticReplayWriter(_REPLAY),
+        writer=StaticReplayWriter(_REPLAY, frontend=Frontend.CUTE),
     ).run(
         _artifact(),
         source=CuteKernelSource.from_code(

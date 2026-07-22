@@ -57,7 +57,7 @@ _STRING = {"type": "string", "minLength": 1}
 _TENSOR_HANDLE = {"type": "string", "pattern": "^t[0-9]+$"}
 _NODE_HANDLE = {"type": "string", "pattern": "^n[0-9]+$"}
 _C_HANDLE = {"type": "string", "pattern": "^c[0-9]+$"}
-_PARAMETER_HANDLE = {"type": "string", "pattern": "^(p|c)[0-9]+$"}
+_PARAMETER_HANDLE = {"type": "string", "pattern": "^p[0-9]+$"}
 _PORTABLE_PREDICATE_STRING = {
     "type": "string",
     "minLength": 1,
@@ -282,7 +282,7 @@ def _boundary_schema() -> dict[str, Any]:
     )
 
 
-def _interface_schema() -> dict[str, Any]:
+def _signature_schema() -> dict[str, Any]:
     parameter = _closed_object(
         {
             "name": _PARAMETER_HANDLE,
@@ -297,51 +297,31 @@ def _interface_schema() -> dict[str, Any]:
             "dtype": _nullable(_STRING),
             "rank": _nullable({"type": "integer", "minimum": 0}),
             "alias_of": _nullable(_STRING),
-            "tensor_ref": _nullable(_STRING),
+            "logical_ref": _nullable(_STRING),
         },
         ("name", "kind", "mode"),
         description=(
-            "A callable parameter. tensor_ref is the only field that links a "
-            "pointer/tensor parameter or a computation-valued scalar parameter "
-            "to a J tensor; semantic scalars use shape=[]. Every trusted "
+            "One J-owned logical callable handle. logical_ref links a "
+            "pointer/tensor/scalar/semantic-constexpr handle to a J tensor, "
+            "value, or dimension. Every trusted "
             "compiler-view tensor argument, including one unused by the frozen "
-            "specialization, keeps a tensor_ref whose J tensor dtype, rank and "
+            "specialization, keeps a logical_ref whose J tensor dtype, rank and "
             "shape exactly match that view. The inactive tensor remains a typed "
             "ABI declaration but has no invented operation, access or effect. "
-            "A constexpr parameter without a same-name C slot is a frozen non-C "
-            "binding: semantic consequences must be present in J, while purely "
-            "representational use may appear only as an anonymous pi reference. "
-            "Its concrete value stays in the harness. Do not invent dimension "
-            "reference fields. An opaque parameter is "
+            "Implementation-selection constexprs are C slots and never appear "
+            "in this array. A semantic constexpr has a J logical_ref; its concrete "
+            "value stays in Harness. An opaque parameter is "
             "representation-only frontend plumbing such as cute.CopyAtom; it "
-            "has dtype but no tensor_ref and contributes no J semantics."
+            "has dtype but no logical_ref and contributes no J semantics."
         ),
     )
     return _closed_object(
-        {
-            "kernel_id": {"type": "string", "enum": ["scrc_k0"]},
-            "frontend": {
-                "type": "string",
-                "enum": ["triton", "cute", "tilelang", "cuda", "other"],
-            },
-            "function_name": {"type": "string", "enum": ["scrc_k0"]},
-            "parameters": _array(parameter),
-            "grid": _STRING_ARRAY,
-            "compiler_slots": _array(_C_HANDLE),
-            "do_not_specialize": _STRING_ARRAY,
-        },
-        (
-            "kernel_id",
-            "frontend",
-            "function_name",
-            "parameters",
-            "grid",
-            "compiler_slots",
-        ),
+        {"parameters": _array(parameter)},
+        ("parameters",),
     )
 
 
-def _schedule_schema() -> dict[str, Any]:
+def _c_schema() -> dict[str, Any]:
     slot = _closed_object(
         {
             "name": _C_HANDLE,
@@ -406,7 +386,7 @@ def _pi_schema() -> dict[str, Any]:
             "semantic_ref": {
                 **opaque_ref,
                 "description": (
-                    "Anchor into a declared anonymous J/C/interface handle. "
+                    "Anchor into a declared anonymous J/C handle. "
                     "It is not a pi graph-node ID and never appears directly "
                     "at route/order/sharing endpoints."
                 ),
@@ -609,6 +589,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
                 ),
             },
             "boundary": _boundary_schema(),
+            "signature": _signature_schema(),
             "scopes": {
                 "type": "array",
                 "minItems": 1,
@@ -623,13 +604,11 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
         {
             "schema": {
                 "type": "string",
-                "enum": ["intentir.gate1.llm-direct.v2"],
+                "enum": ["intentir.scrc.artifact.v1"],
             },
             "j": semantic_archive,
-            "interface": _interface_schema(),
-            "schedule": _schedule_schema(),
+            "c": _c_schema(),
             "pi": _pi_schema(),
-            "location_map": _location_map_schema(),
         },
         GATE1_ARTIFACT_MODEL_FIELDS,
         description=render_gate1_artifact_envelope_grammar(),

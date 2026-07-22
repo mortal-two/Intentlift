@@ -88,7 +88,7 @@ def test_real_triton_gate1_strict_closure_with_anonymous_signature(kind: str) ->
         grid = (1,)
     else:
         artifact = make_reduce_artifact()
-        artifact.schedule.values["c0"] = 1024
+        artifact.c.values["c0"] = 1024
         source_code, source_name, replay_code = (
             REDUCE_SOURCE,
             "source_reduce",
@@ -111,7 +111,7 @@ def test_real_triton_gate1_strict_closure_with_anonymous_signature(kind: str) ->
         source_case=CompileCase(
             arguments,
             grid,
-            {"BLOCK_SIZE": artifact.schedule.values["c0"]},
+            {"BLOCK_SIZE": artifact.c.values["c0"]},
         ),
     )
 

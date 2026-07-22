@@ -19,14 +19,40 @@ from intentir.verify.gate1.model import (
     Boundary,
     BoundaryAccess,
     EffectSpec,
+    LogicalSignature,
+    ParameterKind,
+    ParameterMode,
     SchemaError,
     SemanticArchive,
+    SignatureParameter,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 
 
 _ROOT = Path(__file__).resolve().parents[2]
 _INVENTORY = _ROOT / "test" / "intentop_real_sources.json"
+
+
+def _signature(fn: IntentFunction) -> LogicalSignature:
+    values = [*fn.inputs, *fn.outputs]
+    input_names = {item.name for item in fn.inputs}
+    return LogicalSignature(
+        [
+            SignatureParameter(
+                f"p{index}",
+                ParameterKind.POINTER,
+                (
+                    ParameterMode.INPUT
+                    if tensor.name in input_names
+                    else ParameterMode.OUTPUT
+                ),
+                tensor.dtype,
+                len(tensor.shape),
+                logical_ref=tensor.name,
+            )
+            for index, tensor in enumerate(values)
+        ]
+    )
 
 
 def _function_properties() -> dict:
@@ -293,6 +319,7 @@ def test_canonical_j_rejects_scatter_without_update_relation() -> None:
             fn,
             {"n0": "body[0]"},
             Boundary(),
+            _signature(fn),
         )
 
 

@@ -13,25 +13,48 @@ from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
     Boundary,
     DuplicatePolicy,
-    Frontend,
     Gate1Artifact,
+    ImplementationConfig,
     IndexBoundsSpec,
-    KernelInterface,
-    KernelParameter,
-    LocationEntry,
-    LocationMap,
+    LogicalSignature,
     LogicalUpdateSpec,
     ParameterKind,
     ParameterMode,
     ResultRelationKind,
     ResultRelationSpec,
-    ScheduleSpec,
     SchemaError,
     SemanticArchive,
-    SourceSpan,
+    SignatureParameter,
     UpdateCombiner,
     UpdateOrder,
 )
+
+
+def _signature(fn: IntentFunction) -> LogicalSignature:
+    parameters: list[SignatureParameter] = []
+    for tensor in fn.inputs:
+        parameters.append(
+            SignatureParameter(
+                f"p{len(parameters)}",
+                ParameterKind.POINTER,
+                ParameterMode.INPUT,
+                tensor.dtype,
+                len(tensor.shape),
+                logical_ref=tensor.name,
+            )
+        )
+    for tensor in fn.outputs:
+        parameters.append(
+            SignatureParameter(
+                f"p{len(parameters)}",
+                ParameterKind.POINTER,
+                ParameterMode.OUTPUT,
+                tensor.dtype,
+                len(tensor.shape),
+                logical_ref=tensor.name,
+            )
+        )
+    return LogicalSignature(parameters)
 from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Runner
@@ -117,6 +140,7 @@ def _update_j(
             ],
             result_relations=[result_relation],
         ),
+        _signature(fn),
     )
 
 
@@ -145,6 +169,7 @@ def _gather_j() -> SemanticArchive:
         fn,
         {"n0": "body[0]"},
         Boundary(index_bounds=[IndexBoundsSpec("n0", "X", "I", 0)]),
+        _signature(fn),
     )
 
 
@@ -246,31 +271,7 @@ def test_typed_relations_are_opaque_and_masked_with_the_rest_of_j() -> None:
     )
     artifact = Gate1Artifact(
         j,
-        KernelInterface(
-            "typed_update",
-            Frontend.TRITON,
-            [
-                KernelParameter(
-                    "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "f32", 1, tensor_ref="X",
-                ),
-                KernelParameter(
-                    "p1", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "i32", 1, tensor_ref="I",
-                ),
-                KernelParameter(
-                    "p2", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "f32", 1, tensor_ref="V",
-                ),
-                KernelParameter(
-                    "p3", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                    "f32", 1, tensor_ref="Y",
-                ),
-            ],
-            ["1"],
-            function_name="typed_update",
-        ),
-        ScheduleSpec([], {}),
+        ImplementationConfig([], {}),
         RealizationWitness.from_json(
             {
                 "regions": [{"id": "r0", "parent": None, "placement": "root"}],
@@ -287,10 +288,6 @@ def test_typed_relations_are_opaque_and_masked_with_the_rest_of_j() -> None:
                 "sharing": [],
             }
         ),
-        LocationMap(
-            "private.py", [LocationEntry(SourceSpan(1, 1), ["n0"], [])]
-        ),
-        source="PRIVATE_RELATION_SOURCE",
     )
     normal = artifact.rewriter_view()
     masked = artifact.rewriter_view(masked=True)
@@ -299,7 +296,7 @@ def test_typed_relations_are_opaque_and_masked_with_the_rest_of_j() -> None:
     assert masked["j"]["boundary"]["updates"][0]["combiner"] == "<masked>"
     assert masked["j"]["boundary"]["result_relations"][0]["kind"] == "<masked>"
     assert normal["pi"] == masked["pi"]
-    assert "PRIVATE_RELATION_SOURCE" not in repr(normal)
+    assert "interface" not in normal
 
 
 def test_bounds_and_update_must_exactly_match_target_node() -> None:
@@ -423,6 +420,7 @@ def test_bounds_authorization_is_node_specific_not_signature_wide() -> None:
                 IndexBoundsSpec("n1", "X", "I", 0),
             ]
         ),
+        _signature(fn),
     )
     mlir = emit_module(
         j.intent, {}, proven_index_bounds=frozenset({"n0"})
@@ -469,6 +467,7 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
                 ResultRelationSpec("Y", "tolerance", 0.1, 0.0, False)
             ]
         ),
+        _signature(fn),
     )
     spec = ScalarLoweringSpec.create(
         j,
@@ -507,7 +506,7 @@ def test_gate2_tolerance_is_owned_only_by_j() -> None:
     assert wrong_dtype.status is Gate2Status.REPLAY_DIVERGED
     assert "dtype differs from canonical J" in wrong_dtype.source_replay.outputs[0].detail
 
-    exact_j = SemanticArchive("close", fn, {}, Boundary())
+    exact_j = SemanticArchive("close", fn, {}, Boundary(), _signature(fn))
     exact_spec = ScalarLoweringSpec.create(
         exact_j,
         dims={},

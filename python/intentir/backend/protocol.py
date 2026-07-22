@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
-from intentir.verify.gate1.model import ScheduleSpec, SemanticArchive
+from intentir.verify.gate1.model import ImplementationConfig, SemanticArchive
 
 
 class BackendProtocolError(ValueError):
@@ -55,7 +55,7 @@ class LoweringRequest:
     j: SemanticArchive
     target: BackendTarget
     variant: str
-    c: ScheduleSpec | None = None
+    c: ImplementationConfig | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
@@ -63,7 +63,7 @@ class LoweringRequest:
         if not isinstance(self.target, BackendTarget):
             raise BackendProtocolError("lowering request requires BackendTarget")
         object.__setattr__(self, "variant", _identifier(self.variant, "lowering variant"))
-        if self.c is not None and not isinstance(self.c, ScheduleSpec):
+        if self.c is not None and not isinstance(self.c, ImplementationConfig):
             raise BackendProtocolError("C must use the canonical pure schedule schema")
 
     @property

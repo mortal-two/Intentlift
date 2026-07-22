@@ -19,8 +19,6 @@ from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
     ParameterKind,
-    ProvenanceRecord,
-    ProvenanceRole,
     ScheduleSlotKind,
     render_boundary_access_wire_grammar,
     render_gate1_artifact_envelope_grammar,
@@ -95,6 +93,7 @@ class SCRCExtraction:
     artifact: Gate1Artifact
     provenance: SCRCProvenance
     harness_binding: SCRCHarnessBinding
+    source: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -579,15 +578,16 @@ to one portable boolean expression string; it is never an axes/members object.
 J boundary access contract:
 {render_boundary_access_wire_grammar()}
 
-The trusted harness_compiler_view is byte-authoritative plumbing. Interface
-parameters must use its parameter_order exactly, including c* names at
-constexpr positions. Schedule values and compiler_slots must be identical to
-the supplied anonymous values. For each compiler slot, use exactly the public
-role in compiler_roles. Do not rename c* slots to p* and do not turn compiler
-roles into inferred strategy names.
+The trusted harness_compiler_view is byte-authoritative plumbing. Move every
+logical p* handle into J.signature and every implementation-selection c*
+handle into the single C object. Their relative source positions stay private
+to Harness and are not serialized in the artifact. C values and compiler_slots
+must be identical to the supplied anonymous values. For each compiler slot,
+use exactly the public role in compiler_roles. Do not rename c* slots to p* and
+do not turn compiler roles into inferred strategy names.
 
-bound_constexpr_values are frozen non-C invocation bindings. Their p*
-parameters remain constexpr in interface and never become schedule slots or
+bound_constexpr_values are non-C invocation bindings. Their p* parameters
+remain semantic constexpr handles in J.signature and never become C slots or
 values. Lift must classify their source use: any consequence that changes
 logical extent/value/predicate/result belongs only to J; representation-only
 layout/address realization may be referenced only by pi. A source constexpr
@@ -611,7 +611,7 @@ Pi mechanism contract:
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
-handle has multiple observable realization stages. Every anonymous Interface
+handle has multiple observable realization stages. Every anonymous J.signature
 or C handle materially used by address, transfer, synchronization, placement,
 or sharing realization must anchor an instance; dependencies then route only
 between the declared i* instance IDs.
@@ -747,14 +747,30 @@ def _validate_compiler_view(
     if anonymous_view is None:
         return
     if anonymous_view["parameter_order"]:
-        actual = [item.name for item in artifact.interface.parameters]
-        if actual != anonymous_view["parameter_order"]:
-            raise ValueError("Lift changed harness positional parameter order")
-    if artifact.schedule.values != anonymous_view["schedule_values"]:
+        expected_p = [
+            name for name in anonymous_view["parameter_order"]
+            if name.startswith("p")
+        ]
+        expected_c = [
+            name for name in anonymous_view["parameter_order"]
+            if name.startswith("c")
+        ]
+        actual_p = [item.name for item in artifact.j.signature.parameters]
+        actual_c = [
+            item.name for item in artifact.c.slots
+            if item.kind is ScheduleSlotKind.CONSTEXPR
+        ]
+        if actual_p != expected_p or actual_c != expected_c:
+            raise ValueError("Lift changed Harness-declared logical/C handles")
+    if artifact.c.values != anonymous_view["schedule_values"]:
         raise ValueError("Lift changed trusted pure-C values")
-    if artifact.interface.compiler_slots != anonymous_view["compiler_slots"]:
+    actual_compiler_slots = [
+        item.name for item in artifact.c.slots
+        if item.kind is ScheduleSlotKind.COMPILER
+    ]
+    if actual_compiler_slots != anonymous_view["compiler_slots"]:
         raise ValueError("Lift changed trusted compiler slots")
-    slots = {item.name: item for item in artifact.schedule.slots}
+    slots = {item.name: item for item in artifact.c.slots}
     for name, role in anonymous_view["compiler_roles"].items():
         slot = slots.get(name)
         if (
@@ -767,13 +783,16 @@ def _validate_compiler_view(
         raise ValueError("Lift changed trusted alias relation")
     expected_constexprs = set(anonymous_view["constexpr_parameters"])
     actual_constexprs = {
-        item.name for item in artifact.interface.parameters
+        item.name for item in artifact.j.signature.parameters
         if item.kind is ParameterKind.CONSTEXPR
+    } | {
+        item.name for item in artifact.c.slots
+        if item.kind is ScheduleSlotKind.CONSTEXPR
     }
     if actual_constexprs != expected_constexprs:
         raise ValueError("Lift changed constexpr parameter positions")
     bound_constexprs = set(anonymous_view["bound_constexpr_values"])
-    slots = {item.name: item for item in artifact.schedule.slots}
+    slots = {item.name: item for item in artifact.c.slots}
     for name in expected_constexprs:
         slot = slots.get(name)
         if name in bound_constexprs:
@@ -781,9 +800,13 @@ def _validate_compiler_view(
                 raise ValueError("Lift moved a bound constexpr into pure C")
         elif slot is None or slot.kind is not ScheduleSlotKind.CONSTEXPR:
             raise ValueError("Lift omitted a pure-C constexpr slot")
-    interface = {item.name: item for item in artifact.interface.parameters}
+    signature = {item.name: item for item in artifact.j.signature.parameters}
     for argument in anonymous_view["arguments"]:
-        parameter = interface.get(argument["name"])
+        if argument["name"].startswith("c"):
+            if argument["name"] not in slots:
+                raise ValueError("Lift omitted a trusted C argument")
+            continue
+        parameter = signature.get(argument["name"])
         if parameter is None:
             raise ValueError("Lift omitted a trusted compiler argument")
         expected_kind = {
@@ -801,17 +824,15 @@ def _validate_compiler_view(
             raise ValueError("Lift changed a trusted compiler argument dtype")
         if argument["kind"] == "tensor" and parameter.rank != len(argument["shape"]):
             raise ValueError("Lift changed a trusted compiler argument rank")
-    if anonymous_view["grid_contract"] and (
-        artifact.interface.grid != anonymous_view["grid_contract"]
-    ):
-        raise ValueError("Lift changed the trusted grid contract")
+    # Grid/source positions are Harness coordinates.  They are retained in the
+    # extraction sidecar and deliberately absent from the proof artifact.
 
 
 def _validate_anonymous_lift(
     artifact: Gate1Artifact, binding: SCRCHarnessBinding
 ) -> None:
-    if artifact.j.kernel_id != "scrc_k0" or artifact.interface.kernel_id != "scrc_k0":
-        raise ValueError("Lift kernel ids must use scrc_k0")
+    if artifact.j.kernel_id != "scrc_k0":
+        raise ValueError("Lift kernel id must use scrc_k0")
     if artifact.j.intent.name != "scrc_j0":
         raise ValueError("Lift IntentFunction name must use scrc_j0")
     tensors = [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
@@ -824,10 +845,10 @@ def _validate_anonymous_lift(
     expected_parameters = [
         opaque
         for _source, opaque in binding.source_to_opaque
-        if re.fullmatch(r"(?:p|c)[0-9]+", opaque)
+        if re.fullmatch(r"p[0-9]+", opaque)
     ]
-    if [item.name for item in artifact.interface.parameters] != expected_parameters:
-        raise ValueError("interface parameters differ from anonymous source order")
+    if [item.name for item in artifact.j.signature.parameters] != expected_parameters:
+        raise ValueError("J.signature parameters differ from anonymous source handles")
     dimensions: list[str] = []
     for tensor in tensors:
         for dim in tensor.shape:
@@ -844,14 +865,12 @@ def _validate_anonymous_lift(
     ):
         if values != [f"{prefix}{index}" for index in range(len(values))]:
             raise ValueError(f"J {prefix} handles are not declaration ordered")
-    if any(not re.fullmatch(r"c[0-9]+", item.name) for item in artifact.schedule.slots):
+    if any(not re.fullmatch(r"c[0-9]+", item.name) for item in artifact.c.slots):
         raise ValueError("pure C slots must use c0, c1, ...")
     visible = {
         "j": artifact.j.to_json(),
-        "interface": artifact.interface.to_json(),
-        "schedule": artifact.schedule.to_json(),
+        "c": artifact.c.to_json(),
         "pi": artifact.pi.to_json(),
-        "location_map": artifact.location_map.to_json(),
     }
     visible_strings: list[str] = []
     literal_fields = {
@@ -912,20 +931,6 @@ def extract_scrc_artifact(
     )
     try:
         payload = _json_object(reply.text)
-        payload["source"] = source
-        payload["provenance"] = [
-            ProvenanceRecord(
-                ProvenanceRole.LIFTER,
-                "intentir.extraction.lifters.scrc",
-                model=reply.model,
-                source_digest=hashlib.sha256(source.encode()).hexdigest(),
-                metadata={
-                    "prompt_sha256": prompt_sha,
-                    "response_id": reply.raw.get("id"),
-                    "protocol": SCRC_RELIFT_PROTOCOL,
-                },
-            ).to_json()
-        ]
         artifact = Gate1Artifact.from_json(payload)
         _validate_anonymous_lift(artifact, binding)
         _validate_compiler_view(artifact, anonymous_view)
@@ -972,7 +977,7 @@ def extract_scrc_artifact(
         attempts=reply.attempts,
         elapsed_ms=reply.elapsed_ms,
     )
-    return SCRCExtraction(artifact, provenance, binding)
+    return SCRCExtraction(artifact, provenance, binding, source)
 
 
 @dataclass
@@ -987,14 +992,14 @@ class ResponsesSCRCRelifter:
     def records(self) -> tuple[SCRCReliftRecord, ...]:
         return tuple(self._records)
 
-    def relift(self, artifact: Gate1Artifact, *, failure_kind: str) -> Gate1Artifact:
-        if artifact.source is None:
-            raise ValueError("source-aware relift requires retained source")
+    def relift(
+        self, previous: SCRCExtraction, *, failure_kind: str
+    ) -> SCRCExtraction:
         round_index = len(self._records) + 1
         context = SCRCReliftContext(round_index, failure_kind)
         try:
             extraction = extract_scrc_artifact(
-                artifact.source,
+                previous.source,
                 provider=self.provider,
                 compiler_view=self.compiler_view,
                 effort=self.effort,
@@ -1010,7 +1015,7 @@ class ResponsesSCRCRelifter:
             )
             raise
         self._records.append(SCRCReliftRecord(round_index, extraction=extraction))
-        return extraction.artifact
+        return extraction
 
 
 __all__ = [

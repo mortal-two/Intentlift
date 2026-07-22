@@ -32,16 +32,15 @@ from intentir.verify.gate1.prompt import (
 )
 
 
-def test_direct_pi_artifact_roundtrip_and_epoch_break() -> None:
+def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
     artifact = make_reduce_artifact()
     encoded = artifact.to_json()
     assert Gate1Artifact.from_json(encoded) == artifact
     assert encoded["schema"] == Gate1Artifact.SCHEMA
 
     legacy = copy.deepcopy(encoded)
-    legacy.pop("schema")
-    legacy["plan"] = {"steps": []}
-    with pytest.raises(SchemaError):
+    legacy["interface"] = {"parameters": []}
+    with pytest.raises(SchemaError, match=r"unknown key\(s\): interface"):
         Gate1Artifact.from_json(legacy)
 
 
@@ -62,12 +61,12 @@ def test_pi_rejects_semantic_atoms_and_source_text(forbidden: dict) -> None:
         RealizationWitness.from_json(payload)
 
 
-def test_pi_rejects_unknown_semantic_reference_and_cycles() -> None:
+def test_pi_parser_is_separate_from_dependent_refs_and_rejects_cycles() -> None:
     artifact = make_reduce_artifact()
     payload = artifact.to_json()
     payload["pi"]["instances"][0]["semantic_ref"] = "n99"
-    with pytest.raises(SchemaError, match="undeclared J/C/interface"):
-        Gate1Artifact.from_json(payload)
+    parsed = Gate1Artifact.from_json(payload)
+    assert parsed.pi.instances[0]["semantic_ref"] == "n99"
 
     pi = artifact.pi.to_json()
     pi["order"].append({"before": "i3", "after": "i0"})
@@ -179,7 +178,7 @@ def test_pi_rejects_duplicate_instance_and_sharing_consumer_ids() -> None:
 
 
 @pytest.mark.parametrize("semantic_ref", ["v0", "x0", "c0", "p0"])
-def test_pi_may_reference_any_declared_anonymous_j_c_or_harness_handle(
+def test_pi_may_reference_any_declared_anonymous_j_or_c_handle(
     semantic_ref: str,
 ) -> None:
     payload = make_reduce_artifact().to_json()
@@ -400,7 +399,7 @@ def test_pi_repeated_anchor_and_runtime_routes_survive_replay_packet() -> None:
     }
     instructions, _user = build_normal_rewriter_prompt(artifact)
     assert "do not collapse their chain" in instructions
-    assert "discard Interface/C dependencies" in instructions
+    assert "discard J/C dependencies" in instructions
 
 
 def test_layernorm_mask_motion_changes_j_not_pi_semantics() -> None:
@@ -443,10 +442,9 @@ def test_masked_j_changes_only_j() -> None:
     normal = build_normal_rewriter_view(artifact)
     masked = build_masked_rewriter_view(artifact)
     assert normal["j"] != masked["j"]
-    for key in ("c", "pi", "harness", "frontend_context"):
+    for key in ("c", "pi", "u_f"):
         assert normal[key] == masked[key]
-    assert normal["mode"] == "normal"
-    assert masked["mode"] == "masked_j"
+    assert set(normal) == {"j", "c", "pi", "u_f"}
 
 
 def test_replay_packet_is_source_isolated() -> None:
@@ -461,9 +459,7 @@ def test_replay_packet_is_source_isolated() -> None:
 def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
     schema = scrc_lift_core_json_schema()
     properties = schema["properties"]
-    assert set(properties) == {
-        "schema", "j", "interface", "schedule", "pi", "location_map"
-    }
+    assert set(properties) == {"schema", "j", "c", "pi"}
     function_properties = (
         properties["j"]["properties"]["intent"]["properties"]
         ["intent_function"]["properties"]
@@ -481,9 +477,14 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
     domains = j["properties"]["boundary"]["properties"]["domains"]
     assert domains["propertyNames"]["pattern"] == "^d[0-9]+$"
     assert domains["additionalProperties"]["type"] == "string"
-    interface = schema["properties"]["interface"]
-    assert interface["properties"]["function_name"]["enum"] == ["scrc_k0"]
-    assert interface["properties"]["compiler_slots"]["items"]["pattern"] == "^c[0-9]+$"
+    signature = j["properties"]["signature"]
+    assert signature["properties"]["parameters"]["items"]["properties"][
+        "name"
+    ]["pattern"] == "^p[0-9]+$"
+    c_schema = schema["properties"]["c"]
+    assert c_schema["properties"]["slots"]["items"]["properties"]["name"][
+        "pattern"
+    ] == "^c[0-9]+$"
 
 
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
@@ -620,20 +621,17 @@ def test_compiler_view_rejects_bound_schedule_overlap() -> None:
 
 def test_lift_keeps_bound_constexpr_outside_c(monkeypatch) -> None:
     response = make_reduce_artifact().to_json()
-    response.pop("source")
-    response.pop("provenance")
-    response["interface"]["parameters"].insert(
-        3,
+    response["j"]["signature"]["parameters"].append(
         {
             "name": "p3",
             "kind": "constexpr",
             "mode": "value",
             "dtype": "i32",
             "rank": 0,
+            "logical_ref": "x1",
         },
     )
     response["j"]["boundary"]["domains"]["d0"] = "v1 < p3"
-    response["interface"]["grid"] = ["1"]
 
     def fake_call(instructions, user, **kwargs):
         del instructions, kwargs
@@ -664,11 +662,11 @@ def private_reduce(X, Y, N, VALID: tl.constexpr, BLOCK: tl.constexpr):
     extraction = scrc.extract_scrc_artifact(
         source, compiler_view=compiler_view
     )
-    assert extraction.artifact.schedule.values == {"c0": 128}
+    assert extraction.artifact.c.values == {"c0": 128}
     assert [
-        item.name for item in extraction.artifact.interface.parameters
-    ] == ["p0", "p1", "p2", "p3", "c0"]
-    assert extraction.artifact.interface.parameters[3].kind.value == "constexpr"
+        item.name for item in extraction.artifact.j.signature.parameters
+    ] == ["p0", "p1", "p2", "p3"]
+    assert extraction.artifact.j.signature.parameters[3].kind.value == "constexpr"
 
 
 def test_source_symbol_selection_fails_closed() -> None:
@@ -680,8 +678,6 @@ def test_source_symbol_selection_fails_closed() -> None:
 def test_lift_llm_directly_returns_complete_pi_in_one_call(monkeypatch) -> None:
     artifact = make_reduce_artifact()
     response = artifact.to_json()
-    response.pop("source")
-    response.pop("provenance")
     calls = []
 
     def fake_call(instructions, user, **kwargs):
@@ -703,7 +699,7 @@ def private_reduce(X, Y, N, BLOCK_SIZE: tl.constexpr):
 """
     extraction = scrc.extract_scrc_artifact(source)
     assert extraction.artifact.pi == artifact.pi
-    assert extraction.artifact.source == source
+    assert extraction.source == source
     assert len(calls) == 1
     assert extraction.provenance.response_id == "resp0"
 
@@ -711,10 +707,7 @@ def private_reduce(X, Y, N, BLOCK_SIZE: tl.constexpr):
 def test_lift_preserves_trusted_c_and_public_compiler_role(monkeypatch) -> None:
     artifact = make_reduce_artifact()
     response = artifact.to_json()
-    response.pop("source")
-    response.pop("provenance")
-    response["interface"]["compiler_slots"] = ["c1"]
-    response["schedule"]["slots"].append(
+    response["c"]["slots"].append(
         {
             "name": "c1",
             "kind": "compiler",
@@ -723,7 +716,7 @@ def test_lift_preserves_trusted_c_and_public_compiler_role(monkeypatch) -> None:
             "required": True,
         }
     )
-    response["schedule"]["values"]["c1"] = 4
+    response["c"]["values"]["c1"] = 4
 
     def fake_call(instructions, user, **kwargs):
         del instructions, kwargs
@@ -751,5 +744,5 @@ def private_reduce(X, Y, N, BLOCK_SIZE: tl.constexpr):
     tl.store(Y, value)
 """
     extraction = scrc.extract_scrc_artifact(source, compiler_view=compiler_view)
-    assert extraction.artifact.schedule.values == {"c0": 128, "c1": 4}
-    assert extraction.artifact.schedule.slots[1].role == "num_warps"
+    assert extraction.artifact.c.values == {"c0": 128, "c1": 4}
+    assert extraction.artifact.c.slots[1].role == "num_warps"
