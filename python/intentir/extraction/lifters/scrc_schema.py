@@ -13,6 +13,14 @@ import copy
 from typing import Any
 
 from intentir.ir.intent_op_contract import intent_op_json_schema
+from intentir.verify.gate1.model import (
+    BOUNDARY_ACCESS_REQUIRED_FIELDS,
+    BOUNDARY_WIRE_FIELDS,
+    GATE1_ARTIFACT_MODEL_FIELDS,
+    SEMANTIC_ARCHIVE_WIRE_FIELDS,
+    render_boundary_access_wire_grammar,
+    render_gate1_artifact_envelope_grammar,
+)
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
     render_realization_mechanism_grammar,
@@ -132,9 +140,9 @@ def _boundary_schema() -> dict[str, Any]:
             "predicate": _nullable(_PORTABLE_PREDICATE_STRING),
             "fill_value": {},
             "node_ref": _nullable(_STRING),
-            "index_expression": _nullable(_STRING),
+            "index_expression": _STRING,
         },
-        ("access_id", "kind", "tensor", "index_expression"),
+        BOUNDARY_ACCESS_REQUIRED_FIELDS,
     )
     broadcast = _closed_object(
         {
@@ -269,18 +277,8 @@ def _boundary_schema() -> dict[str, Any]:
             "updates": _array(update),
             "result_relations": _array(result_relation),
         },
-        (
-            "domains",
-            "accesses",
-            "broadcasts",
-            "aliases",
-            "effects",
-            "output_mappings",
-            "reductions",
-            "index_bounds",
-            "updates",
-            "result_relations",
-        ),
+        BOUNDARY_WIRE_FIELDS,
+        description=render_boundary_access_wire_grammar(),
     )
 
 
@@ -618,7 +616,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             },
             "storage": _array(_storage_schema()),
         },
-        ("kernel_id", "intent", "node_ids", "boundary", "scopes", "storage"),
+        SEMANTIC_ARCHIVE_WIRE_FIELDS,
         description=render_semantic_archive_wire_grammar(),
     )
     schema = _closed_object(
@@ -633,7 +631,8 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             "pi": _pi_schema(),
             "location_map": _location_map_schema(),
         },
-        ("schema", "j", "interface", "schedule", "pi", "location_map"),
+        GATE1_ARTIFACT_MODEL_FIELDS,
+        description=render_gate1_artifact_envelope_grammar(),
     )
     schema["$defs"] = {"intent_op": intent_op_json_schema()}
     return copy.deepcopy(schema)
@@ -654,6 +653,8 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
 
 
 __all__ = [
+    "render_boundary_access_wire_grammar",
+    "render_gate1_artifact_envelope_grammar",
     "render_semantic_archive_wire_grammar",
     "scrc_lift_core_json_schema",
     "scrc_lift_core_text_format",

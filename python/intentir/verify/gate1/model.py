@@ -30,6 +30,84 @@ from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
+# One declaration for the closed model-visible Lift envelope.  ``source`` and
+# ``provenance`` are local persistence fields and are deliberately excluded
+# from the LLM response schema.
+GATE1_ARTIFACT_MODEL_FIELDS = (
+    "schema",
+    "j",
+    "interface",
+    "schedule",
+    "pi",
+    "location_map",
+)
+GATE1_ARTIFACT_PRIVATE_FIELDS = ("source", "provenance")
+SEMANTIC_ARCHIVE_WIRE_FIELDS = (
+    "kernel_id",
+    "intent",
+    "node_ids",
+    "boundary",
+    "scopes",
+    "storage",
+)
+BOUNDARY_WIRE_FIELDS = (
+    "domains",
+    "accesses",
+    "broadcasts",
+    "aliases",
+    "effects",
+    "output_mappings",
+    "reductions",
+    "index_bounds",
+    "updates",
+    "result_relations",
+)
+BOUNDARY_ACCESS_WIRE_FIELDS = (
+    "access_id",
+    "kind",
+    "tensor",
+    "predicate",
+    "fill_value",
+    "node_ref",
+    "index_expression",
+)
+BOUNDARY_ACCESS_REQUIRED_FIELDS = (
+    "access_id",
+    "kind",
+    "tensor",
+    "index_expression",
+)
+
+
+def render_gate1_artifact_envelope_grammar() -> str:
+    """Render the closed ownership boundary of a model-visible Lift result."""
+
+    return (
+        "The response root is one closed object with exactly these fields: "
+        f"{', '.join(GATE1_ARTIFACT_MODEL_FIELDS)}. The j object is one closed "
+        "object with exactly these fields: "
+        f"{', '.join(SEMANTIC_ARCHIVE_WIRE_FIELDS)}. Close j immediately after "
+        "storage: interface, schedule, pi, and location_map are root siblings, "
+        "never members of j. Do not add a wrapper. source and provenance are "
+        "private local fields and must not be emitted by the model."
+    )
+
+
+def render_boundary_access_wire_grammar() -> str:
+    """Render structural access rules and source-aware J ownership together."""
+
+    return (
+        "The J boundary is one closed object with exactly these fields: "
+        f"{', '.join(BOUNDARY_WIRE_FIELDS)}. Every load, store, or update "
+        "access requires a non-empty ordered logical index_expression, including "
+        "scalar accesses. predicate, fill_value, and logical domains belong only "
+        "to J when present in source semantics. Preserve every source logical "
+        "domain, access predicate, and masked-load fill even when the frozen "
+        "invocation makes a mask tautological. Do not move them to pi and do not "
+        "invent them when the source has none."
+    )
+
+
 class SchemaError(ValueError):
     """Raised when a Gate1 JSON object does not match its strict schema."""
 
@@ -722,10 +800,7 @@ class BoundaryAccess(StrictJSONMixin):
     node_ref: str | None = None
     index_expression: str | None = None
 
-    _KEYS: ClassVar[set[str]] = {
-        "access_id", "kind", "tensor", "predicate", "fill_value", "node_ref",
-        "index_expression",
-    }
+    _KEYS: ClassVar[set[str]] = set(BOUNDARY_ACCESS_WIRE_FIELDS)
 
     def __post_init__(self) -> None:
         self.access_id = _string(self.access_id, "BoundaryAccess.access_id")
@@ -749,8 +824,10 @@ class BoundaryAccess(StrictJSONMixin):
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "BoundaryAccess":
         data = _strict_object(
-            value, path="BoundaryAccess", allowed=cls._KEYS,
-            required={"access_id", "kind", "tensor"},
+            value,
+            path="BoundaryAccess",
+            allowed=cls._KEYS,
+            required=set(BOUNDARY_ACCESS_REQUIRED_FIELDS),
         )
         return cls(
             access_id=data["access_id"],
@@ -1191,10 +1268,7 @@ class Boundary(StrictJSONMixin):
     updates: list[LogicalUpdateSpec] = field(default_factory=list)
     result_relations: list[ResultRelationSpec] = field(default_factory=list)
 
-    _KEYS: ClassVar[set[str]] = {
-        "domains", "accesses", "broadcasts", "aliases", "effects", "output_mappings",
-        "reductions", "index_bounds", "updates", "result_relations",
-    }
+    _KEYS: ClassVar[set[str]] = set(BOUNDARY_WIRE_FIELDS)
 
     def __post_init__(self) -> None:
         if not isinstance(self.domains, dict):
@@ -2412,11 +2486,8 @@ class SemanticArchive(StrictJSONMixin):
         data = _strict_object(
             value,
             path="SemanticArchive",
-            allowed={
-                "kernel_id", "intent", "node_ids", "boundary", "scopes",
-                "storage",
-            },
-            required={"kernel_id", "intent", "node_ids", "boundary"},
+            allowed=set(SEMANTIC_ARCHIVE_WIRE_FIELDS),
+            required=set(SEMANTIC_ARCHIVE_WIRE_FIELDS),
         )
         node_ids = _object(data["node_ids"], "SemanticArchive.node_ids")
         scopes = data.get("scopes", [])
@@ -3122,13 +3193,10 @@ class Gate1Artifact(StrictJSONMixin):
         data = _strict_object(
             value,
             path="Gate1Artifact",
-            allowed={
-                "schema", "j", "interface", "schedule", "pi",
-                "location_map", "source", "provenance",
-            },
-            required={
-                "schema", "j", "interface", "schedule", "pi", "location_map",
-            },
+            allowed=set(
+                GATE1_ARTIFACT_MODEL_FIELDS + GATE1_ARTIFACT_PRIVATE_FIELDS
+            ),
+            required=set(GATE1_ARTIFACT_MODEL_FIELDS),
         )
         if data["schema"] != cls.SCHEMA:
             raise SchemaError(
@@ -4169,9 +4237,12 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 
 
 __all__ = [
-    "AccessKind", "AliasKind", "AliasSpec", "Boundary", "BoundaryAccess",
+    "AccessKind", "AliasKind", "AliasSpec",
+    "BOUNDARY_ACCESS_REQUIRED_FIELDS", "BOUNDARY_ACCESS_WIRE_FIELDS",
+    "BOUNDARY_WIRE_FIELDS", "Boundary", "BoundaryAccess",
     "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
+    "GATE1_ARTIFACT_MODEL_FIELDS", "GATE1_ARTIFACT_PRIVATE_FIELDS",
     "Gate1Artifact", "Gate1Status", "JsonValue", "KernelInterface",
     "IndexBoundsSpec", "KernelParameter", "LocationEntry", "LocationMap",
     "LogicalUpdateSpec", "OutputMapping",
@@ -4179,8 +4250,11 @@ __all__ = [
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
     "PortableScope", "RealizationWitness", "ReductionBoundary",
     "ResultRelationKind", "ResultRelationSpec",
-    "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec",
-    "SchemaError", "ScopeKind", "SemanticArchive", "SemanticEventKind",
+    "render_boundary_access_wire_grammar",
+    "render_gate1_artifact_envelope_grammar", "RuntimeArgument",
+    "ScheduleSlot", "ScheduleSlotKind", "ScheduleSpec", "SchemaError",
+    "ScopeKind", "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive",
+    "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
     "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",
 ]

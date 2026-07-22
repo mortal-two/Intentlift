@@ -10,11 +10,27 @@ Lift 直接完成 whole-tensor semantic lifting、J 原子化/组合化、纯 C 
 realization π 提取。固定代码不得禁止 LLM 输出 π 后再由 composer 重建，也不得用
 source-pattern recognizer修复结果。
 
+模型可见 Lift response 是一个封闭 root：
+
+```text
+root = {schema, j, interface, schedule, pi, location_map}
+j    = {kernel_id, intent, node_ids, boundary, scopes, storage}
+```
+
+`j` 必须在 `storage` 后关闭，`interface/schedule/pi/location_map` 始终是 root sibling。内部
+`source/provenance` 不属于模型输出。固定 parser 对错位、缺项或 wrapper 只拒绝，不 hoist、补项
+或从旧 artifact 复制。
+
 Lift 必须按 denotation 而不是按 Python/Triton binding kind 分类参数：semantic consequence
 进入 J，representation-only use 进入 pi，schedule constexpr 才进入 C。`tl.constexpr`、
 模板参数或编译期常量均不能被固定代码一律投影成 C；名字匿名化也不能改变该分类。
 
 J/C/π 在 Lift 边界已经使用 opaque handle。真实源码命名只留在不可见 harness sidecar。
+
+J 的每个 load/store/update access 都显式带非空 ordered logical `index_expression`，与 tensor rank
+无关。源码存在的 logical domain、predicate 与 masked-load fill 必须保留在 J，即使 frozen
+invocation 令 mask 恒真；源码不存在时也不得凭模板发明。单个 JSON parser 只能验证表示完整性，
+不能自行证明这些内容与源码一致，该义务由 source-aware Lift 提议并由 Gate1 strict topology 检验。
 
 ## Replay
 

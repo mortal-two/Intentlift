@@ -22,7 +22,20 @@ from intentir.ir.intent_op_contract import (
     render_intent_op_wire_grammar,
     validate_intent_op_structure,
 )
-from intentir.verify.gate1.model import Gate1Artifact, SchemaError, _strict_intent
+from intentir.verify.gate1.model import (
+    BOUNDARY_ACCESS_REQUIRED_FIELDS,
+    BOUNDARY_WIRE_FIELDS,
+    GATE1_ARTIFACT_MODEL_FIELDS,
+    GATE1_ARTIFACT_PRIVATE_FIELDS,
+    SEMANTIC_ARCHIVE_WIRE_FIELDS,
+    AccessKind,
+    BoundaryAccess,
+    Gate1Artifact,
+    SchemaError,
+    _strict_intent,
+    render_boundary_access_wire_grammar,
+    render_gate1_artifact_envelope_grammar,
+)
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
     RealizationWitness,
@@ -39,6 +52,26 @@ _CASE = (
     / "real_llm_batch_28_v2"
     / "recovery"
     / "liger_swiglu_forward"
+)
+_V5_RESPONSE = (
+    _ROOT
+    / "artifacts"
+    / "real_llm_batch_28_v5"
+    / "recovery"
+    / "liger_swiglu_forward"
+    / "calls"
+    / "01_lift"
+    / "response.txt"
+)
+_V6_RESPONSE = (
+    _ROOT
+    / "artifacts"
+    / "real_llm_batch_28_v6"
+    / "recovery"
+    / "liger_swiglu_forward"
+    / "calls"
+    / "01_lift"
+    / "response.txt"
 )
 
 
@@ -219,6 +252,160 @@ def test_global_scope_storage_grammar_is_shared_without_kernel_rules() -> None:
     assert "ordinary SSA temporaries" in grammar
     assert "storage array may be empty" in grammar
     assert "Swiglu" not in grammar
+
+
+def test_envelope_and_boundary_grammar_share_parser_field_declarations() -> None:
+    schema = scrc_lift_core_json_schema()
+    prompt = build_scrc_lift_instructions()
+    envelope = render_gate1_artifact_envelope_grammar()
+    boundary = render_boundary_access_wire_grammar()
+
+    assert tuple(schema["required"]) == GATE1_ARTIFACT_MODEL_FIELDS
+    assert tuple(schema["properties"]) == GATE1_ARTIFACT_MODEL_FIELDS
+    assert schema["description"] == envelope
+    assert envelope in prompt
+
+    j_schema = schema["properties"]["j"]
+    assert tuple(j_schema["required"]) == SEMANTIC_ARCHIVE_WIRE_FIELDS
+    assert tuple(j_schema["properties"]) == SEMANTIC_ARCHIVE_WIRE_FIELDS
+
+    boundary_schema = j_schema["properties"]["boundary"]
+    assert tuple(boundary_schema["required"]) == BOUNDARY_WIRE_FIELDS
+    assert tuple(boundary_schema["properties"]) == BOUNDARY_WIRE_FIELDS
+    assert boundary_schema["description"] == boundary
+    assert boundary in prompt
+    assert "Swiglu" not in envelope + boundary
+    assert "LayerNorm" not in envelope + boundary
+
+
+def test_model_visible_envelope_excludes_local_private_fields() -> None:
+    schema = scrc_lift_core_json_schema()
+    assert not set(GATE1_ARTIFACT_PRIVATE_FIELDS) & set(schema["properties"])
+
+    local = make_reduce_artifact().to_json()
+    assert set(GATE1_ARTIFACT_PRIVATE_FIELDS) <= set(local)
+    assert Gate1Artifact.from_json(local)
+    assert list(Draft7Validator(schema).iter_errors(local))
+
+
+def test_frozen_v5_response_is_canonical_envelope_boundary_and_round_trips() -> None:
+    response = json.loads(_V5_RESPONSE.read_text())
+    schema = scrc_lift_core_json_schema()
+    assert not list(Draft7Validator(schema).iter_errors(response))
+
+    artifact = Gate1Artifact.from_json(copy.deepcopy(response))
+    encoded = artifact.to_json()
+    encoded.pop("provenance")
+    assert tuple(encoded) == GATE1_ARTIFACT_MODEL_FIELDS
+    assert tuple(encoded["j"]) == SEMANTIC_ARCHIVE_WIRE_FIELDS
+    assert not list(Draft7Validator(schema).iter_errors(encoded))
+    reparsed = Gate1Artifact.from_json(encoded).to_json()
+    reparsed.pop("provenance")
+    assert reparsed == encoded
+
+
+def test_frozen_v6_response_rejects_misnested_root_without_repair() -> None:
+    response = json.loads(_V6_RESPONSE.read_text())
+    frozen = copy.deepcopy(response)
+    schema = scrc_lift_core_json_schema()
+    assert list(Draft7Validator(schema).iter_errors(response))
+    with pytest.raises(
+        SchemaError,
+        match="missing required key.*interface, location_map, pi, schedule",
+    ):
+        Gate1Artifact.from_json(response)
+    assert response == frozen
+
+    # Diagnostic only: expose the next independent parser boundary in memory.
+    diagnostic = copy.deepcopy(response)
+    for field in ("interface", "schedule", "pi", "location_map"):
+        diagnostic[field] = diagnostic["j"].pop(field)
+    assert list(Draft7Validator(schema).iter_errors(diagnostic))
+    with pytest.raises(SchemaError, match="BoundaryAccess.*index_expression"):
+        Gate1Artifact.from_json(diagnostic)
+    assert response == frozen
+
+
+@pytest.mark.parametrize("field", GATE1_ARTIFACT_MODEL_FIELDS)
+def test_model_visible_root_requires_every_declared_field(field: str) -> None:
+    response = json.loads(_V5_RESPONSE.read_text())
+    response.pop(field)
+    schema = scrc_lift_core_json_schema()
+    assert list(Draft7Validator(schema).iter_errors(response))
+    with pytest.raises(SchemaError, match="missing required key"):
+        Gate1Artifact.from_json(response)
+
+
+@pytest.mark.parametrize("field", SEMANTIC_ARCHIVE_WIRE_FIELDS)
+def test_semantic_archive_requires_every_canonical_wire_field(field: str) -> None:
+    response = json.loads(_V5_RESPONSE.read_text())
+    response["j"].pop(field)
+    schema = scrc_lift_core_json_schema()
+    assert list(Draft7Validator(schema).iter_errors(response))
+    with pytest.raises(SchemaError, match="missing required key"):
+        Gate1Artifact.from_json(response)
+
+
+@pytest.mark.parametrize("field", BOUNDARY_WIRE_FIELDS)
+def test_boundary_requires_every_canonical_wire_field(field: str) -> None:
+    response = json.loads(_V5_RESPONSE.read_text())
+    response["j"]["boundary"].pop(field)
+    schema = scrc_lift_core_json_schema()
+    assert list(Draft7Validator(schema).iter_errors(response))
+    with pytest.raises(SchemaError, match="missing required key"):
+        Gate1Artifact.from_json(response)
+
+
+@pytest.mark.parametrize("kind", tuple(AccessKind))
+@pytest.mark.parametrize(
+    "index_expression",
+    [pytest.param(None, id="null"), pytest.param("", id="empty")],
+)
+def test_every_access_kind_requires_nonempty_index_expression(
+    kind: AccessKind, index_expression: str | None
+) -> None:
+    value = {
+        "access_id": "a0",
+        "kind": kind.value,
+        "tensor": "t0",
+        "index_expression": index_expression,
+    }
+    with pytest.raises(SchemaError, match="index_expression"):
+        BoundaryAccess.from_json(value)
+
+
+@pytest.mark.parametrize("kind", tuple(AccessKind))
+def test_every_access_kind_rejects_missing_index_expression(kind: AccessKind) -> None:
+    value = {"access_id": "a0", "kind": kind.value, "tensor": "t0"}
+    with pytest.raises(SchemaError, match="missing required key.*index_expression"):
+        BoundaryAccess.from_json(value)
+
+
+def test_access_schema_uses_the_shared_nonnullable_required_fields() -> None:
+    schema = scrc_lift_core_json_schema()
+    access = schema["properties"]["j"]["properties"]["boundary"]["properties"][
+        "accesses"
+    ]["items"]
+    assert tuple(access["required"]) == BOUNDARY_ACCESS_REQUIRED_FIELDS
+    assert access["properties"]["index_expression"] == {
+        "type": "string",
+        "minLength": 1,
+    }
+
+
+def test_parser_does_not_claim_source_boundary_preservation() -> None:
+    response = json.loads(_V5_RESPONSE.read_text())
+    response["j"]["boundary"]["domains"]["d0"] = "True"
+    for access in response["j"]["boundary"]["accesses"]:
+        access["predicate"] = None
+        access["fill_value"] = None
+
+    # A single artifact cannot reveal that a source domain was weakened to a
+    # tautology or that access mask/fill semantics were deleted.  This remains
+    # a Lift ownership obligation checked by Gate1.
+    schema = scrc_lift_core_json_schema()
+    assert not list(Draft7Validator(schema).iter_errors(response))
+    assert Gate1Artifact.from_json(response)
 
 
 @pytest.mark.parametrize("field", sorted(LOOP_ONLY_FIELDS))

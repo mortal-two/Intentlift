@@ -22,6 +22,8 @@ from intentir.verify.gate1.model import (
     ProvenanceRecord,
     ProvenanceRole,
     ScheduleSlotKind,
+    render_boundary_access_wire_grammar,
+    render_gate1_artifact_envelope_grammar,
 )
 from intentir.verify.gate1.pi import (
     render_realization_mechanism_grammar,
@@ -561,6 +563,9 @@ Return one complete JSON object matching the supplied schema. You directly
 produce anonymous J=A+B, independent pure C, and the realization witness pi.
 There is no downstream composer and no rule catalog.
 
+Artifact envelope contract:
+{render_gate1_artifact_envelope_grammar()}
+
 Naming is mandatory: kernel scrc_k0; tensors t0,t1,...; J nodes n0,n1,...;
 values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
 effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
@@ -570,6 +575,9 @@ The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
 node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
 body[i].body[j], never to v* results. boundary.domains maps each d* key directly
 to one portable boolean expression string; it is never an axes/members object.
+
+J boundary access contract:
+{render_boundary_access_wire_grammar()}
 
 The trusted harness_compiler_view is byte-authoritative plumbing. Interface
 parameters must use its parameter_order exactly, including c* names at
