@@ -116,6 +116,7 @@ class SCRCReliftContext:
     relift_round: int
     failure_kind: str
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    previous_artifact: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.relift_round < 1:
@@ -133,12 +134,22 @@ class SCRCReliftContext:
         # JSON data rather than an executable callback or arbitrary object.
         json.dumps(diagnostics, sort_keys=True, allow_nan=False)
         object.__setattr__(self, "diagnostics", diagnostics)
+        if self.previous_artifact is not None:
+            if not isinstance(self.previous_artifact, Mapping):
+                raise TypeError("previous relift artifact must be a mapping")
+            previous = dict(self.previous_artifact)
+            json.dumps(previous, sort_keys=True, allow_nan=False)
+            object.__setattr__(self, "previous_artifact", previous)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "relift_round": self.relift_round,
             "failure_kind": self.failure_kind,
             "diagnostics": dict(self.diagnostics),
+            "previous_artifact": (
+                dict(self.previous_artifact)
+                if self.previous_artifact is not None else None
+            ),
         }
 
 
@@ -1010,7 +1021,10 @@ class ResponsesSCRCRelifter:
     ) -> SCRCExtraction:
         round_index = len(self._records) + 1
         context = SCRCReliftContext(
-            round_index, failure_kind, diagnostics or {}
+            round_index,
+            failure_kind,
+            diagnostics or {},
+            previous.artifact.to_json(),
         )
         try:
             extraction = extract_scrc_artifact(
@@ -1057,10 +1071,16 @@ class ResponsesSCRCLiftAdapter:
         if feedback is not None:
             kind = getattr(getattr(feedback, "kind", None), "value", None)
             diagnostics = getattr(feedback, "diagnostics", None)
+            previous_artifact = getattr(feedback, "previous_artifact", None)
             context = SCRCReliftContext(
                 max(1, len(self._records)),
                 kind,
                 diagnostics if isinstance(diagnostics, Mapping) else {},
+                (
+                    previous_artifact.to_json()
+                    if isinstance(previous_artifact, Gate1Artifact)
+                    else None
+                ),
             )
         try:
             extraction = extract_scrc_artifact(

@@ -108,12 +108,17 @@ class LiftFeedback:
     kind: FeedbackKind
     diagnostics: Mapping[str, Any]
     formal_round: int | None = None
+    previous_artifact: Gate1Artifact | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
             "formal_round": self.formal_round,
             "diagnostics": dict(self.diagnostics),
+            "previous_artifact": (
+                self.previous_artifact.to_json()
+                if self.previous_artifact is not None else None
+            ),
         }
 
 
@@ -190,6 +195,7 @@ class CandidateAttemptReport:
     lift_call: int
     formal_round: int | None
     typecheck_status: TypeCheckStatus
+    artifact: Gate1Artifact | None = None
     typecheck: TypeCheckReport | None = None
     gate1: Gate1ExecutionResult | None = None
     feedback: LiftFeedback | None = None
@@ -200,6 +206,7 @@ class CandidateAttemptReport:
             "lift_call": self.lift_call,
             "formal_round": self.formal_round,
             "typecheck_status": self.typecheck_status.value,
+            "artifact": self.artifact.to_json() if self.artifact is not None else None,
             "typecheck": (
                 self.typecheck.to_json() if self.typecheck is not None else None
             ),
@@ -277,7 +284,11 @@ class SCRCGateRunner:
         self.dependencies = dependencies
 
     @staticmethod
-    def _gate1_feedback(result: Gate1ExecutionResult, formal_round: int) -> LiftFeedback:
+    def _gate1_feedback(
+        result: Gate1ExecutionResult,
+        formal_round: int,
+        artifact: Gate1Artifact,
+    ) -> LiftFeedback:
         normal = result.normal
         diagnostics: dict[str, Any] = {
             "status": result.status.value,
@@ -285,11 +296,17 @@ class SCRCGateRunner:
         }
         if normal.comparison is not None:
             diagnostics["observer_diff"] = normal.comparison.to_dict()
-        return LiftFeedback(FeedbackKind.GATE1, diagnostics, formal_round)
+        return LiftFeedback(
+            FeedbackKind.GATE1,
+            diagnostics,
+            formal_round,
+            artifact,
+        )
 
     def run(self, request: SCRCRunRequest) -> SCRCRunReport:
         attempts: list[CandidateAttemptReport] = []
         feedback: LiftFeedback | None = None
+        last_artifact: Gate1Artifact | None = None
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0
@@ -311,6 +328,7 @@ class SCRCGateRunner:
                     FeedbackKind.LIFT,
                     exc.diagnostics,
                     None,
+                    last_artifact,
                 )
                 attempts.append(
                     CandidateAttemptReport(
@@ -329,6 +347,7 @@ class SCRCGateRunner:
                 )
             lift_physical_calls += lift_result.physical_calls
             artifact = lift_result.artifact
+            last_artifact = artifact
             request.binding.validate_artifact(artifact)
             typecheck_calls += 1
             report = self.dependencies.type_checker(
@@ -340,12 +359,14 @@ class SCRCGateRunner:
                     FeedbackKind.TYPECHECK,
                     {"typecheck": report.to_json()},
                     None,
+                    artifact,
                 )
                 attempts.append(
                     CandidateAttemptReport(
                         lift_call=lift_calls,
                         formal_round=None,
                         typecheck_status=TypeCheckStatus.FAIL,
+                        artifact=artifact,
                         typecheck=report,
                         feedback=feedback,
                         lift_metadata=lift_result.metadata,
@@ -373,12 +394,15 @@ class SCRCGateRunner:
                     "Gate1 source compilation failed; it is not a closure verdict"
                 )
             if gate1.status is not Gate1Status.REPLAY_CLOSED:
-                feedback = self._gate1_feedback(gate1, formal_rounds)
+                feedback = self._gate1_feedback(
+                    gate1, formal_rounds, artifact
+                )
                 attempts.append(
                     CandidateAttemptReport(
                         lift_call=lift_calls,
                         formal_round=formal_rounds,
                         typecheck_status=TypeCheckStatus.PASS,
+                        artifact=artifact,
                         typecheck=report,
                         gate1=gate1,
                         feedback=feedback,
@@ -397,6 +421,7 @@ class SCRCGateRunner:
                     lift_call=lift_calls,
                     formal_round=formal_rounds,
                     typecheck_status=TypeCheckStatus.PASS,
+                    artifact=artifact,
                     typecheck=report,
                     gate1=gate1,
                     lift_metadata=lift_result.metadata,

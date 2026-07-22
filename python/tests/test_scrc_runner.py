@@ -234,7 +234,9 @@ def test_typecheck_failure_relifts_without_entering_a_formal_round() -> None:
     assert gate2.calls == 1
     assert lift.feedbacks[0] is None
     assert lift.feedbacks[1].kind is FeedbackKind.TYPECHECK
+    assert lift.feedbacks[1].previous_artifact is invalid
     assert report.attempts[0].formal_round is None
+    assert report.attempts[0].artifact is invalid
 
 
 def test_unparseable_lift_is_recorded_without_entering_typecheck_or_replay() -> None:
@@ -280,6 +282,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
         FeedbackKind.GATE1,
         {"observer_diff": {"category": "dataflow"}},
         1,
+        artifact,
     )
     relifted = adapter.lift(request, feedback)
 
@@ -287,6 +290,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
+    assert contexts[1].previous_artifact == artifact.to_json()
 
 
 def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None:
@@ -312,6 +316,7 @@ def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None
         FeedbackKind.GATE1,
     ]
     assert "observer_diff" in lift.feedbacks[1].diagnostics
+    assert lift.feedbacks[1].previous_artifact is artifacts[0]
     assert gate2.calls == 1
 
 
