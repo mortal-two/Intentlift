@@ -551,6 +551,16 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
     ] == "^c[0-9]+$"
 
 
+def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> None:
+    instructions = " ".join(scrc.build_scrc_lift_instructions().split())
+
+    assert "only the current Harness binding" in instructions
+    assert "never permission to specialize J" in instructions
+    assert "use it in every affected J tensor shape" in instructions
+    assert "not SSA values" in instructions
+    assert "never list x* in portable scope definitions/captures" in instructions
+
+
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     grammar = render_realization_witness_wire_grammar()
     mechanism_grammar = render_realization_mechanism_grammar()

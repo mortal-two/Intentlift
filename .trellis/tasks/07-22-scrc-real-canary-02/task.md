@@ -128,6 +128,23 @@ Source–Replay、Source–J、Replay–J 三条 exact 边均通过、最大误�
 相应适配器与落盘回归已通过。下一次从新的 `masked_copy/run-002` 开始，不覆盖 run-001，也不把
 run-001 的三个拒绝当作正式 closure round。
 
+### `masked_copy / run-002`
+
+- terminal 仍为 `NO_CLOSURE`，预算仍是 3 次 Lift、0 次 TypeCheck/Replay/正式 Gate1/Gate2；
+- 新 sidecar 已完整保存三份匿名响应和 receipt，确认 run-001 的 tensor 编号问题已经解决：三份均为
+  input `t0`、output `t1`，signature 也正确使用 `p0→t0`、`p1→t1`、`p2→x0`；
+- 第 1/3 份把 tensor shape 特化为当前 runtime value `[1000]`，同时让 scalar `p2` 引用不存在的
+  symbolic `x0`，parser 因 unknown logical handle 拒绝；
+- 第 2 份正确保留 shape `[x0]`，但把 dimension `x0` 错当成 SSA definition 写入 function scope，
+  portable scope 的 derived definitions 检查因此拒绝；
+- 三次拒绝均发生在 TypeCheck 前，没有进入 Replay。receipt 显示每个逻辑 Lift 各对应一次物理调用，
+  response/usage/耗时均已保存，证明拒绝证据链修复有效。
+
+结束 run-002 后，prompt 与活动 spec 进一步明确：runtime scalar 的当前 Harness value 不是 J 常量；
+只要它控制 logical extent/index/predicate/result，就必须以 symbolic dimension 出现在相关 tensor
+shape 中，且 dimension handle 不得进入 SSA scope definitions/captures 或 storage。对应 prompt 回归
+已加入。下一次从新的 `masked_copy/run-003` 开始。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

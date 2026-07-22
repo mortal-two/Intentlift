@@ -1,0 +1,15 @@
+{
+  "attempts": 1,
+  "elapsed_ms": 215870.90498907492,
+  "model": "gpt-5.6-sol",
+  "raw_response_sha256": "4036840675ac0f7942634859a49e67a93f2fdb13aacc4a45f5d39c6735dbdf2a",
+  "request_sha256": "80cd623df33adc4f71271b3cf9d0840a23befe901a44097cadc3171c0f738d87",
+  "response_id": "resp_04ba10cada9fc82a016a6114840328819a87ec74ff99cf362a",
+  "response_model": "gpt-5.6-sol",
+  "response_sha256": "850edee504bcd0fd8a5c6ecf699c7a76bf55015c85f214da801570d7ac73b884",
+  "usage": {
+    "input_tokens": 9780,
+    "output_tokens": 11845,
+    "total_tokens": 21625
+  }
+}

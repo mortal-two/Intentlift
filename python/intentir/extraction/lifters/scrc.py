@@ -621,6 +621,13 @@ layout/address realization may be referenced only by pi. A source constexpr
 not listed there is pure scheduling, remains a c* parameter, and must have a
 matching pure-C constexpr slot.
 
+A runtime scalar p* value in harness_compiler_view is only the current Harness
+binding, never permission to specialize J. If source uses that scalar in a
+logical extent, index, predicate, or result, create a symbolic x* dimension,
+use it in every affected J tensor shape, and set the scalar parameter's
+logical_ref to that x*. Symbolic dimensions are type/signature handles, not SSA
+values: never list x* in portable scope definitions/captures or storage.
+
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
 
