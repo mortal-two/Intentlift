@@ -1,0 +1,390 @@
+{
+  "artifact_digest": "34cf0d9c93bbdcc9422454728270549d434c44196113aea02f40eadd20f47a99",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "normal": {
+    "comparison": null,
+    "compile": {
+      "asm_keys": [],
+      "cache_hit": false,
+      "cache_key": "57a61a30b30463042de32d3f2ca50d8593ca1788a4a22537bd7a9aaf05992821",
+      "compiler": {
+        "environment": {
+          "TRITON_ALWAYS_COMPILE": "1",
+          "TRITON_KERNEL_DUMP": "1",
+          "TRITON_STORE_BINARY_ONLY": "0"
+        },
+        "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+        "gate1_worker_sha256": "e54f3db5c77daaa3cf2c2bcc49ad030d5f717baa413a53c8cddc880cfd178f28",
+        "python": "3.10.12",
+        "torch": "2.10.0+cu130",
+        "torch_cuda": "13.0",
+        "triton": "3.6.0"
+      },
+      "diagnostic": "Traceback (most recent call last):\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 43, in wrapper\n    return fn(*args, **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 1644, in arange\n    return _semantic.arange(start, end)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/semantic.py\", line 574, in arange\n    raise ValueError(\"arange's arguments must be of type tl.constexpr\")\nValueError: arange's arguments must be of type tl.constexpr\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 499, in main\n    result = _compile(request)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 455, in _compile\n    warmup_result = compilable.warmup(grid=grid, **values)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 359, in warmup\n    return self.run(grid=grid, warmup=True, *map(MockTensor.wrap_dtype, args), **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 720, in run\n    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 849, in _do_compile\n    kernel = self.compile(src, target=target, options=options.__dict__)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 304, in compile\n    module = src.make_ir(target, options, codegen_fns, module_map, context)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 80, in make_ir\n    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,\ntriton.compiler.errors.CompilationError: at 12:14:\ndef scrc_k0(p0, p1, p2, c0: tl.constexpr):\n    i0 = p0\n    i1 = p1\n    i2 = p2\n\n    i3 = tl.arange(0, 2)\n    i4 = c0\n\n    i5 = i3[:, None] * i2\n    i6 = i0 + i5\n\n    i7_lane = tl.arange(0, i4)[None, :]\n              ^\narange's arguments must be of type tl.constexpr\n",
+      "elapsed_ms": 4378.821070771664,
+      "ok": false,
+      "python_interface": {},
+      "target": {
+        "arch": 120,
+        "backend": "cuda",
+        "cuda": {
+          "compute_capability": [
+            12,
+            0
+          ],
+          "index": 0,
+          "multi_processor_count": 170,
+          "name": "NVIDIA GeForce RTX 5090 D",
+          "total_memory": 33668988928
+        },
+        "triton": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "warp_size": 32
+      },
+      "ttgir": null,
+      "ttir": null
+    },
+    "diagnostic": "Traceback (most recent call last):\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 43, in wrapper\n    return fn(*args, **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/core.py\", line 1644, in arange\n    return _semantic.arange(start, end)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/semantic.py\", line 574, in arange\n    raise ValueError(\"arange's arguments must be of type tl.constexpr\")\nValueError: arange's arguments must be of type tl.constexpr\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 499, in main\n    result = _compile(request)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-backend-op-opt/python/intentir/verify/gate1/_triton_worker.py\", line 455, in _compile\n    warmup_result = compilable.warmup(grid=grid, **values)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 359, in warmup\n    return self.run(grid=grid, warmup=True, *map(MockTensor.wrap_dtype, args), **kwargs)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 720, in run\n    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/runtime/jit.py\", line 849, in _do_compile\n    kernel = self.compile(src, target=target, options=options.__dict__)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 304, in compile\n    module = src.make_ir(target, options, codegen_fns, module_map, context)\n  File \"/home/kingdom/.local/lib/python3.10/site-packages/triton/compiler/compiler.py\", line 80, in make_ir\n    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,\ntriton.compiler.errors.CompilationError: at 12:14:\ndef scrc_k0(p0, p1, p2, c0: tl.constexpr):\n    i0 = p0\n    i1 = p1\n    i2 = p2\n\n    i3 = tl.arange(0, 2)\n    i4 = c0\n\n    i5 = i3[:, None] * i2\n    i6 = i0 + i5\n\n    i7_lane = tl.arange(0, i4)[None, :]\n              ^\narange's arguments must be of type tl.constexpr\n",
+    "fingerprint": null,
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "context_sha256": "2f2aa9fb65305a1da95ca9d31ea01ad45abb1b5b8e3c92c8e1dd6010f6e9ca62",
+        "retrieval_trace": []
+      },
+      "elapsed_ms": 88996.03035021573,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "packet_digest": "8ebdc1ea53beac16aa97b7e8ade4e8571bb6dcb9074361ad4ba64c4a3b44fec5",
+      "prompt_digest": "1578d2640dd5a057e80093f30d98c7571e815a9a138b753f66891bc0dc9aaa03",
+      "raw_response_sha256": "68b658987647bbff495bd3d4a165111bb878ff89a618b8be6c47c354857dea33",
+      "request_sha256": "65fdf84ceed9e5ba4e871d3ade1495b3e99594626a12a8f7e5228dc1cc6cb3ee",
+      "response_id": "resp_057fe35de76321f3016a61237619bc819a9d4460684b45bf31",
+      "response_model": "gpt-5.6-sol",
+      "response_sha256": "c6670fd9241d6cc1ddcaea8d2e8d6d0d532110845203b55fecbaa971db267ef5",
+      "usage": {
+        "input_tokens": 2541,
+        "output_tokens": 4859,
+        "total_tokens": 7400
+      }
+    },
+    "mode": "normal"
+  },
+  "observer_profile": {
+    "canonicalization_version": "triton-ttir-3.6-gate1-v3",
+    "compiler_stage": "ttir",
+    "evidence_class": "strong_structural",
+    "frontend": "triton",
+    "profile_id": "triton_ttir_structural",
+    "profile_version": "triton-ttir-3.6-gate1-v3"
+  },
+  "protocol": "llm_direct_pi_gate1_level2_v1",
+  "source_compile": {
+    "asm_keys": [
+      "cubin",
+      "llir",
+      "ptx",
+      "source",
+      "ttgir",
+      "ttir"
+    ],
+    "cache_hit": false,
+    "cache_key": "a4cef99ab3c5f225abbb7c6a60d1d9217c2a9794462860675c131e397c76c35a",
+    "compiler": {
+      "environment": {
+        "TRITON_ALWAYS_COMPILE": "1",
+        "TRITON_KERNEL_DUMP": "1",
+        "TRITON_STORE_BINARY_ONLY": "0"
+      },
+      "frontend_compat": {
+        "normalized_sha256": "7ce3f013e0163a22a8f6a14df2822f750ebc8814d2b13a7f47f616f8a40abcd4",
+        "protocol": "triton_static_dot_transpose_v1",
+        "rewrite_count": 0
+      },
+      "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+      "gate1_worker_sha256": "e54f3db5c77daaa3cf2c2bcc49ad030d5f717baa413a53c8cddc880cfd178f28",
+      "python": "3.10.12",
+      "torch": "2.10.0+cu130",
+      "torch_cuda": "13.0",
+      "triton": "3.6.0"
+    },
+    "diagnostic": "",
+    "elapsed_ms": 4407.598474062979,
+    "ok": true,
+    "python_interface": {
+      "arg_names": [
+        "p0",
+        "p1",
+        "p2",
+        "c0"
+      ],
+      "constexpr_indices": [
+        3
+      ],
+      "constexprs": [
+        "c0"
+      ],
+      "do_not_specialize": [],
+      "do_not_specialize_raw": []
+    },
+    "target": {
+      "arch": 120,
+      "backend": "cuda",
+      "compiled": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "cuda": {
+        "compute_capability": [
+          12,
+          0
+        ],
+        "index": 0,
+        "multi_processor_count": 170,
+        "name": "NVIDIA GeForce RTX 5090 D",
+        "total_memory": 33668988928
+      },
+      "triton": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "warp_size": 32
+    },
+    "ttgir": "#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\n#loc = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":5:0)\n#loc1 = loc(unknown)\n#loc11 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":11:16)\n#loc16 = loc(\"p0\"(#loc))\n#loc17 = loc(\"p1\"(#loc))\n#loc18 = loc(\"p2\"(#loc))\n#loc27 = loc(\"v5\"(#loc11))\n#loc29 = loc(callsite(#loc1 at #loc27))\nmodule attributes {\"ttg.num-ctas\" = 1 : i32, \"ttg.num-warps\" = 4 : i32, ttg.target = \"cuda:120\", \"ttg.threads-per-warp\" = 32 : i32} {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: i32 loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %cst = arith.constant dense<0.000000e+00> : tensor<1024xf32, #blocked> loc(#loc1)\n    %v0 = tt.get_program_id x : i32 loc(#loc19)\n    %v1 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked> loc(#loc20)\n    %v2 = tt.splat %p2 : i32 -> tensor<1024xi32, #blocked> loc(#loc21)\n    %v2_0 = arith.cmpi slt, %v1, %v2 : tensor<1024xi32, #blocked> loc(#loc21)\n    %v3 = arith.muli %v0, %p2 : i32 loc(#loc22)\n    %v3_1 = tt.addptr %p0, %v3 : !tt.ptr<f32>, i32 loc(#loc23)\n    %v3_2 = tt.splat %v3_1 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>, #blocked> loc(#loc24)\n    %v3_3 = tt.addptr %v3_2, %v1 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked> loc(#loc24)\n    %v3_4 = tt.load %v3_3, %v2_0, %cst : tensor<1024x!tt.ptr<f32>, #blocked> loc(#loc25)\n    %v4 = arith.mulf %v3_4, %v3_4 : tensor<1024xf32, #blocked> loc(#loc26)\n    %v5 = \"tt.reduce\"(%v4) <{axis = 0 : i32}> ({\n    ^bb0(%v5_5: f32 loc(callsite(#loc1 at #loc27)), %v5_6: f32 loc(callsite(#loc1 at #loc27))):\n      %v5_7 = arith.addf %v5_5, %v5_6 : f32 loc(#loc30)\n      tt.reduce.return %v5_7 : f32 loc(#loc28)\n    }) : (tensor<1024xf32, #blocked>) -> f32 loc(#loc28)\n    %0 = tt.addptr %p1, %v0 : !tt.ptr<f32>, i32 loc(#loc13)\n    tt.store %0, %v5 : !tt.ptr<f32> loc(#loc14)\n    tt.return loc(#loc15)\n  } loc(#loc)\n} loc(#loc)\n#loc2 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":6:23)\n#loc3 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":7:22)\n#loc4 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":8:14)\n#loc5 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:27)\n#loc6 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:22)\n#loc7 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:32)\n#loc8 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:17)\n#loc9 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":10:14)\n#loc10 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":293:36)\n#loc12 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":263:15)\n#loc13 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:18)\n#loc14 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:22)\n#loc15 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:4)\n#loc19 = loc(\"v0\"(#loc2))\n#loc20 = loc(\"v1\"(#loc3))\n#loc21 = loc(\"v2\"(#loc4))\n#loc22 = loc(\"v3\"(#loc5))\n#loc23 = loc(\"v3\"(#loc6))\n#loc24 = loc(\"v3\"(#loc7))\n#loc25 = loc(\"v3\"(#loc8))\n#loc26 = loc(\"v4\"(#loc9))\n#loc28 = loc(callsite(#loc10 at #loc27))\n#loc30 = loc(callsite(#loc12 at #loc28))\n",
+    "ttir": "#loc = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":5:0)\n#loc10 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":11:16)\n#loc11 = loc(unknown)\n#loc16 = loc(\"p0\"(#loc))\n#loc17 = loc(\"p1\"(#loc))\n#loc18 = loc(\"p2\"(#loc))\n#loc27 = loc(\"v5\"(#loc10))\n#loc29 = loc(callsite(#loc11 at #loc27))\nmodule {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f32> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: i32 loc(\"p2\"(#loc))) attributes {noinline = false} {\n    %v3 = arith.constant dense<0.000000e+00> : tensor<1024xf32> loc(#loc19)\n    %v0 = tt.get_program_id x : i32 loc(#loc20)\n    %v1 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32> loc(#loc21)\n    %v2 = tt.splat %p2 : i32 -> tensor<1024xi32> loc(#loc22)\n    %v2_0 = arith.cmpi slt, %v1, %v2 : tensor<1024xi32> loc(#loc22)\n    %v3_1 = arith.muli %v0, %p2 : i32 loc(#loc23)\n    %v3_2 = tt.addptr %p0, %v3_1 : !tt.ptr<f32>, i32 loc(#loc24)\n    %v3_3 = tt.splat %v3_2 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>> loc(#loc25)\n    %v3_4 = tt.addptr %v3_3, %v1 : tensor<1024x!tt.ptr<f32>>, tensor<1024xi32> loc(#loc25)\n    %v3_5 = tt.load %v3_4, %v2_0, %v3 : tensor<1024x!tt.ptr<f32>> loc(#loc19)\n    %v4 = arith.mulf %v3_5, %v3_5 : tensor<1024xf32> loc(#loc26)\n    %v5 = \"tt.reduce\"(%v4) <{axis = 0 : i32}> ({\n    ^bb0(%v5_6: f32 loc(callsite(#loc11 at #loc27)), %v5_7: f32 loc(callsite(#loc11 at #loc27))):\n      %v5_8 = arith.addf %v5_6, %v5_7 : f32 loc(#loc30)\n      tt.reduce.return %v5_8 : f32 loc(#loc28)\n    }) : (tensor<1024xf32>) -> f32 loc(#loc28)\n    %0 = tt.addptr %p1, %v0 : !tt.ptr<f32>, i32 loc(#loc13)\n    tt.store %0, %v5 : !tt.ptr<f32> loc(#loc14)\n    tt.return loc(#loc15)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:17)\n#loc2 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":6:23)\n#loc3 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":7:22)\n#loc4 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":8:14)\n#loc5 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:27)\n#loc6 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:22)\n#loc7 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":9:32)\n#loc8 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":10:14)\n#loc9 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":293:36)\n#loc12 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":263:15)\n#loc13 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:18)\n#loc14 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:22)\n#loc15 = loc(\"/tmp/intentir-gate1-module-ctjpe0vu/gate1_kernel_7ce3f013e0163a22.py\":12:4)\n#loc19 = loc(\"v3\"(#loc1))\n#loc20 = loc(\"v0\"(#loc2))\n#loc21 = loc(\"v1\"(#loc3))\n#loc22 = loc(\"v2\"(#loc4))\n#loc23 = loc(\"v3\"(#loc5))\n#loc24 = loc(\"v3\"(#loc6))\n#loc25 = loc(\"v3\"(#loc7))\n#loc26 = loc(\"v4\"(#loc8))\n#loc28 = loc(callsite(#loc9 at #loc27))\n#loc30 = loc(callsite(#loc12 at #loc28))\n"
+  },
+  "source_fingerprint": {
+    "dataflow_edges": [
+      [
+        "arg[0]:!tt.ptr<f32>",
+        "tt.addptr[adb732c93eaebb560932]",
+        "operand[0]"
+      ],
+      [
+        "arg[1]:!tt.ptr<f32>",
+        "tt.addptr[10eccadfe3b990a31875]",
+        "operand[0]"
+      ],
+      [
+        "arg[2]:i32",
+        "arith.muli[6a800526fdbd57ab7955]",
+        "operand[0]"
+      ],
+      [
+        "arg[2]:i32",
+        "tt.splat[4957bd1fab52d19222f8]",
+        "operand[0]"
+      ],
+      [
+        "arith.addf[3e6c2f76fd1e079109f4]",
+        "tt.reduce[f14892459809ce826388]",
+        "region_result[0]"
+      ],
+      [
+        "arith.cmpi[b1bb2335f17518e6d7d5]",
+        "tt.load[f92a1a5bf7a87e401b35]",
+        "operand[1]"
+      ],
+      [
+        "arith.constant[ea97457efb2ca46385d6]",
+        "tt.load[f92a1a5bf7a87e401b35]",
+        "operand[2]"
+      ],
+      [
+        "arith.mulf[d081d882df5464062268]",
+        "tt.reduce[f14892459809ce826388]",
+        "operand[0]"
+      ],
+      [
+        "arith.muli[6a800526fdbd57ab7955]",
+        "tt.addptr[adb732c93eaebb560932]",
+        "operand[1]"
+      ],
+      [
+        "region[tt.reduce].arg[0]",
+        "arith.addf[3e6c2f76fd1e079109f4]",
+        "operand[0]"
+      ],
+      [
+        "region[tt.reduce].arg[1]",
+        "arith.addf[3e6c2f76fd1e079109f4]",
+        "operand[1]"
+      ],
+      [
+        "tt.addptr[10eccadfe3b990a31875]",
+        "tt.store[27d8e908d9de63e4ed77]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[1d353ecae8292d70a099]",
+        "tt.load[f92a1a5bf7a87e401b35]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[adb732c93eaebb560932]",
+        "tt.splat[3d1eec652079580165f9]",
+        "operand[0]"
+      ],
+      [
+        "tt.get_program_id[b66173daa46d95e66439]",
+        "arith.muli[6a800526fdbd57ab7955]",
+        "operand[1]"
+      ],
+      [
+        "tt.get_program_id[b66173daa46d95e66439]",
+        "tt.addptr[10eccadfe3b990a31875]",
+        "operand[1]"
+      ],
+      [
+        "tt.load[f92a1a5bf7a87e401b35]",
+        "arith.mulf[d081d882df5464062268]",
+        "operand[0]"
+      ],
+      [
+        "tt.load[f92a1a5bf7a87e401b35]",
+        "arith.mulf[d081d882df5464062268]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "arith.cmpi[b1bb2335f17518e6d7d5]",
+        "operand[0]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "tt.addptr[1d353ecae8292d70a099]",
+        "operand[1]"
+      ],
+      [
+        "tt.reduce[f14892459809ce826388]",
+        "tt.store[27d8e908d9de63e4ed77]",
+        "operand[1]"
+      ],
+      [
+        "tt.splat[3d1eec652079580165f9]",
+        "tt.addptr[1d353ecae8292d70a099]",
+        "operand[0]"
+      ],
+      [
+        "tt.splat[4957bd1fab52d19222f8]",
+        "arith.cmpi[b1bb2335f17518e6d7d5]",
+        "operand[1]"
+      ]
+    ],
+    "dots": [],
+    "effect_multiset": {
+      "read.masked": 1,
+      "write": 1
+    },
+    "interface": {
+      "arguments": [
+        {
+          "access": "input",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f32",
+          "kind": "pointer",
+          "position": 0,
+          "rank": null,
+          "type": "!tt.ptr<f32>"
+        },
+        {
+          "access": "output",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f32",
+          "kind": "pointer",
+          "position": 1,
+          "rank": null,
+          "type": "!tt.ptr<f32>"
+        },
+        {
+          "access": "value",
+          "attributes": {},
+          "dtype": "i32",
+          "kind": "scalar",
+          "position": 2,
+          "rank": 0,
+          "type": "i32"
+        }
+      ],
+      "python": {
+        "arg_names": [
+          "p0",
+          "p1",
+          "p2",
+          "c0"
+        ],
+        "constexpr_indices": [
+          3
+        ],
+        "constexprs": [
+          "c0"
+        ]
+      },
+      "results": []
+    },
+    "loops": [],
+    "mask_predicates": [
+      "arith.cmpi[b1bb2335f17518e6d7d5]"
+    ],
+    "memory_effects": [
+      {
+        "attributes": "tt.load %,%,%:tensor<1024x!tt.ptr<f32>>",
+        "kind": "load",
+        "masked": true,
+        "other": "arith.constant dense<0.000000e+00>:tensor<1024xf32>",
+        "predicate": "arith.cmpi[b1bb2335f17518e6d7d5]"
+      },
+      {
+        "attributes": "tt.store %,%:!tt.ptr<f32>",
+        "kind": "store",
+        "masked": false,
+        "other": null,
+        "predicate": null
+      }
+    ],
+    "op_multiset": {
+      "arith.addf": 1,
+      "arith.cmpi": 1,
+      "arith.constant": 1,
+      "arith.mulf": 1,
+      "arith.muli": 1,
+      "tt.addptr": 3,
+      "tt.get_program_id": 1,
+      "tt.load.masked": 1,
+      "tt.make_range": 1,
+      "tt.reduce": 1,
+      "tt.splat": 2,
+      "tt.store": 1
+    },
+    "reductions": [
+      {
+        "axis": 0,
+        "combiners": [
+          "arith.addf"
+        ],
+        "input_count": 1,
+        "result_count": 1
+      }
+    ],
+    "schedule_view": {
+      "c0": 1024
+    },
+    "schema_version": "triton-ttir-3.6-gate1-v3"
+  },
+  "status": "no_closure"
+}

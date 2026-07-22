@@ -1,0 +1,1 @@
+SchemaError: ScheduleSlot.role must remain pure scheduling metadata

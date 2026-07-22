@@ -1749,11 +1749,31 @@ def emit_module(
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
         env[t.name] = _resolve(t.shape, extents)[fold:]
+    return_values = {item.output: item.value for item in fn.returns}
+    if len(return_values) != len(fn.returns):
+        raise ValueError("emit_module: duplicate logical return output")
+    unknown_return_outputs = sorted(
+        set(return_values) - {item.name for item in fn.outputs}
+    )
+    if unknown_return_outputs:
+        raise ValueError(
+            "emit_module: logical returns reference undeclared outputs "
+            f"{unknown_return_outputs}"
+        )
     # A reduce whose result is a declared external output may intentionally
     # collapse its reduced axes (e.g. row_sum [M,N] -> [M]).  Seed only output
     # contracts; intermediate reductions retain the existing keepdims default.
     for t in fn.outputs:
-        env[t.name] = _resolve(t.shape, extents)[fold:]
+        output_shape = _resolve(t.shape, extents)[fold:]
+        env[t.name] = output_shape
+        returned_value = return_values.get(t.name, t.name)
+        previous_shape = env.get(returned_value)
+        if previous_shape is not None and previous_shape != output_shape:
+            raise ValueError(
+                f"emit_module: return value {returned_value!r} has conflicting "
+                "logical output shapes"
+            )
+        env[returned_value] = output_shape
     _infer_body(fn.body, env, fold, extents, broadcast_axes)
 
     dtypes = _flat_dtypes(fn)
@@ -1768,15 +1788,6 @@ def emit_module(
             node_ref=f"body[{index}]",
         )
 
-    return_values = {item.output: item.value for item in fn.returns}
-    if len(return_values) != len(fn.returns):
-        raise ValueError("emit_module: duplicate logical return output")
-    unknown_return_outputs = sorted(set(return_values) - {item.name for item in fn.outputs})
-    if unknown_return_outputs:
-        raise ValueError(
-            "emit_module: logical returns reference undeclared outputs "
-            f"{unknown_return_outputs}"
-        )
     outs: list[tuple[str, str]] = []
     for t in fn.outputs:
         value = return_values.get(t.name, t.name)

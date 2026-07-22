@@ -127,6 +127,7 @@ def test_extrema_boundary_uses_json_safe_infinity_sentinel() -> None:
     artifact.j.intent.body[1].attrs["fn"] = "max"
     reduction = artifact.j.boundary.reductions[0]
     reduction.identity = "NEG_INF"
+    reduction.masked_contribution = "NEG_INF"
     assert _validate_complete_boundary(artifact.j)
 
     reduction.identity = -1.0
@@ -134,21 +135,133 @@ def test_extrema_boundary_uses_json_safe_infinity_sentinel() -> None:
         _validate_complete_boundary(artifact.j)
 
 
-def test_scalar_e_j_fails_closed_on_predicated_access_relations() -> None:
-    artifact = make_reduce_artifact()
-    artifact.j.boundary.domains.clear()
+def _make_masked_sum_reduction_artifact():
+    artifact = make_reduce_artifact(explicit_accesses=False)
+    artifact.j.intent.body[0].type = {
+        "dtype": "f32",
+        "shape": ["x0", "x1"],
+    }
+    artifact.j.intent.body[1].result = "v1"
+    artifact.j.intent.body[1].type = {
+        "dtype": "f32",
+        "shape": ["x0"],
+    }
+    artifact.j.intent.returns = [IntentReturn("t1", "v1")]
+    artifact.j.boundary.domains = {
+        "d0": "0 <= i0 and i0 < x0",
+        "d1": "0 <= i1 and i1 < x1",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0",
+            AccessKind.LOAD,
+            "t0",
+            predicate="i1 < x1",
+            fill_value=0.0,
+            node_ref="n0",
+            index_expression="[i0, i1]",
+        ),
+        BoundaryAccess(
+            "a1",
+            AccessKind.STORE,
+            "t1",
+            node_ref="n1",
+            index_expression="[i0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
+    ]
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v1", "n1")
+    ]
+    artifact.j.boundary.reductions[0].tile_axis = 0
+    return artifact
+
+
+def test_scalar_e_j_consumes_masked_sum_reduction_padding() -> None:
+    artifact = _make_masked_sum_reduction_artifact()
     spec = ScalarLoweringSpec.create(
         artifact.j,
         dims={"x0": 2, "x1": 4},
         input_bindings={"t0": "input"},
         output_bindings={"t1": "output"},
     )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(
+        result.outputs["output"], np.sum(value * value, axis=1)
+    )
+    assert (
+        result.metadata["boundary_profile"]
+        == "logical_domain_reduction_padding_v1"
+    )
+    assert result.metadata["predicated_access_count"] == 1
+    assert result.metadata["erased_fill_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing_outer_domain", "full domain for every input axis"),
+        ("nonzero_fill", "explicit zero masked-load fill"),
+        ("wrong_predicate_axis", "does not bind the reduced axis"),
+        ("predicated_store", "unpredicated output store"),
+        ("wrong_store_axis", "differs from J tensor extent"),
+        ("nonzero_identity", "explicit neutral identity=0"),
+        ("nonzero_masked_contribution", "explicit neutral masked_contribution=0"),
+        ("wrong_tile_axis", "single physical tile axis 0"),
+        ("non_sum", "currently supports sum only"),
+        ("dead_prefix", "every prefix node to feed reduction"),
+        ("non_zero_stable_prefix", "zero-stable identity/mul prefix"),
+        ("missing_output_mapping", "explicit reduction output mapping"),
+    ],
+)
+def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    if mutation == "missing_outer_domain":
+        del artifact.j.boundary.domains["d0"]
+    elif mutation == "nonzero_fill":
+        artifact.j.boundary.accesses[0].fill_value = 1.0
+    elif mutation == "wrong_predicate_axis":
+        artifact.j.boundary.accesses[0].predicate = "i0 < x0"
+    elif mutation == "predicated_store":
+        artifact.j.boundary.accesses[1].predicate = "i0 < x0"
+    elif mutation == "wrong_store_axis":
+        artifact.j.boundary.accesses[1].index_expression = "[i1]"
+    elif mutation == "nonzero_identity":
+        artifact.j.boundary.reductions[0].identity = 1.0
+    elif mutation == "nonzero_masked_contribution":
+        artifact.j.boundary.reductions[0].masked_contribution = 1.0
+    elif mutation == "wrong_tile_axis":
+        artifact.j.boundary.reductions[0].tile_axis = 1
+    elif mutation == "non_sum":
+        artifact.j.intent.body[1].attrs["fn"] = "max"
+    elif mutation == "dead_prefix":
+        artifact.j.intent.body[1].operands = ["t0"]
+    elif mutation == "non_zero_stable_prefix":
+        artifact.j.intent.body[0].attrs["fn"] = "add"
+    elif mutation == "missing_output_mapping":
+        artifact.j.boundary.output_mappings = []
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+
     result = ScalarLoweringRunner().run(
         spec, {"input": np.ones((2, 4), dtype=np.float32)}
     )
+
     assert not result.ok
-    assert result.unsupported
-    assert "does not implement reduction/update padding" in (result.error or "")
+    assert expected in (result.error or "")
 
 
 def _make_masked_identity_artifact():

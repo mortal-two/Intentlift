@@ -23,7 +23,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v4"
+SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v5"
 
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -219,6 +219,251 @@ def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
     return result
 
 
+def _validate_masked_sum_reduction(
+    j: SemanticArchive,
+    *,
+    domains: Mapping[str, int | str],
+    axes_by_access: Mapping[str, tuple[str, ...]],
+    predicates_by_access: Mapping[
+        str,
+        tuple[frozenset[str], tuple[tuple[str, int | str], ...]] | None,
+    ],
+) -> None:
+    """Validate the narrow padded single-axis sum projection supported by E_J."""
+
+    boundary = j.boundary
+    if (
+        len(j.intent.inputs) != 1
+        or len(j.intent.outputs) != 1
+        or len(boundary.reductions) != 1
+    ):
+        raise NotImplementedError(
+            "E_J padded reduction requires one input, output, and contract"
+        )
+    if (
+        boundary.aliases
+        or boundary.broadcasts
+        or boundary.index_bounds
+        or boundary.updates
+    ):
+        raise NotImplementedError(
+            "E_J padded reduction does not implement auxiliary boundary relations"
+        )
+    loads = [item for item in boundary.accesses if item.kind is AccessKind.LOAD]
+    stores = [item for item in boundary.accesses if item.kind is AccessKind.STORE]
+    if len(loads) != 1 or len(stores) != 1:
+        raise NotImplementedError(
+            "E_J padded reduction requires one dense load and one store"
+        )
+    load, store = loads[0], stores[0]
+    if load.tensor != j.intent.inputs[0].name or store.tensor != j.intent.outputs[0].name:
+        raise ValueError("E_J padded reduction access tensors differ from J ABI")
+    if (
+        isinstance(load.fill_value, bool)
+        or not isinstance(load.fill_value, (int, float))
+        or float(load.fill_value) != 0.0
+    ):
+        raise NotImplementedError(
+            "E_J padded sum requires an explicit zero masked-load fill"
+        )
+    if store.predicate is not None or store.fill_value is not None:
+        raise NotImplementedError(
+            "E_J padded reduction requires an unpredicated output store"
+        )
+
+    nodes = _node_table(j)
+    contract = boundary.reductions[0]
+    reduction = nodes.get(contract.node_ref)
+    if reduction is None or reduction.op != "reduce":
+        raise ValueError("E_J padded reduction contract does not target reduce")
+    if reduction.attrs.get("fn") != "sum":
+        raise NotImplementedError(
+            "E_J padded reduction currently supports sum only"
+        )
+    reduction_axes = reduction.attrs.get("axes")
+    if (
+        not isinstance(reduction_axes, list)
+        or len(reduction_axes) != 1
+        or isinstance(reduction_axes[0], bool)
+        or not isinstance(reduction_axes[0], int)
+    ):
+        raise NotImplementedError(
+            "E_J padded reduction requires one canonical integer axis"
+        )
+    reduced_axis = reduction_axes[0]
+    input_tensor = j.intent.inputs[0]
+    output_tensor = j.intent.outputs[0]
+    if input_tensor.dtype != output_tensor.dtype:
+        raise NotImplementedError(
+            "E_J padded sum currently requires equal input/output dtype"
+        )
+    if reduced_axis < 0 or reduced_axis >= len(input_tensor.shape):
+        raise ValueError("E_J padded reduction axis is outside input rank")
+    expected_output_shape = [
+        extent
+        for index, extent in enumerate(input_tensor.shape)
+        if index != reduced_axis
+    ]
+    if output_tensor.shape != expected_output_shape:
+        raise ValueError("E_J padded reduction output shape is not axis removal")
+
+    load_axes = axes_by_access[load.access_id]
+    store_axes = axes_by_access[store.access_id]
+    if set(domains) != set(load_axes):
+        raise NotImplementedError(
+            "E_J padded reduction requires a full domain for every input axis"
+        )
+    expected_store_axes = tuple(
+        axis for index, axis in enumerate(load_axes) if index != reduced_axis
+    )
+    if store_axes != expected_store_axes:
+        raise ValueError("E_J padded reduction store indices are not axis removal")
+    predicate = predicates_by_access[load.access_id]
+    if predicate is None:
+        raise NotImplementedError("E_J padded reduction requires a load predicate")
+    lower_axes, upper_bounds = predicate
+    reduced_index = load_axes[reduced_axis]
+    expected_bound = (reduced_index, input_tensor.shape[reduced_axis])
+    if upper_bounds != (expected_bound,) or not lower_axes.issubset({reduced_index}):
+        raise ValueError(
+            "E_J padded reduction predicate does not bind the reduced axis"
+        )
+    if predicates_by_access[store.access_id] is not None:
+        raise NotImplementedError(
+            "E_J padded reduction output store must be unpredicated"
+        )
+    if store.node_ref is None or nodes.get(store.node_ref) is not reduction:
+        raise ValueError("E_J padded reduction store does not target reduce result")
+    if not isinstance(reduction.result, str):
+        raise NotImplementedError("E_J padded reduction requires one result")
+    returns = {item.output: item.value for item in j.intent.returns}
+    if returns != {output_tensor.name: reduction.result}:
+        raise ValueError("E_J padded reduction result is not the J output")
+    if (
+        len(boundary.output_mappings) != 1
+        or boundary.output_mappings[0].output != output_tensor.name
+        or boundary.output_mappings[0].value != reduction.result
+        or boundary.output_mappings[0].node_ref != contract.node_ref
+    ):
+        raise ValueError(
+            "E_J padded reduction requires one explicit reduction output mapping"
+        )
+
+    body = j.intent.body
+    if not body or body[-1] is not reduction or any(op.body for op in body):
+        raise NotImplementedError(
+            "E_J padded reduction requires one flat graph ending in reduction"
+        )
+    if sum(op.op == "reduce" for op in body) != 1:
+        raise NotImplementedError(
+            "E_J padded reduction requires exactly one reduction node"
+        )
+    if len(reduction.operands) != 1:
+        raise NotImplementedError(
+            "E_J padded reduction requires one reduced value"
+        )
+    producers: dict[str, IntentOp] = {}
+    for op in body:
+        results = _result_names(op)
+        if len(results) != 1:
+            raise NotImplementedError(
+                "E_J padded reduction requires single-result value nodes"
+            )
+        producers[results[0]] = op
+    required_prefix: set[int] = set()
+    pending = list(reduction.operands)
+    while pending:
+        value = pending.pop()
+        producer = producers.get(value)
+        if producer is None:
+            if value != input_tensor.name:
+                raise ValueError(
+                    "E_J padded reduction dataflow has a non-input leaf"
+                )
+            continue
+        if producer is reduction:
+            raise ValueError("E_J padded reduction dataflow is cyclic")
+        marker = id(producer)
+        if marker in required_prefix:
+            continue
+        required_prefix.add(marker)
+        pending.extend(producer.operands)
+    if required_prefix != {id(op) for op in body[:-1]}:
+        raise NotImplementedError(
+            "E_J padded reduction requires every prefix node to feed reduction"
+        )
+    load_owner = nodes.get(load.node_ref) if load.node_ref is not None else None
+    if load_owner is not reduction and id(load_owner) not in required_prefix:
+        raise ValueError(
+            "E_J padded reduction load does not feed the reduction slice"
+        )
+    for op in body[:-1]:
+        if (
+            op.type is None
+            or op.type.get("dtype") != input_tensor.dtype
+            or op.type.get("shape") != input_tensor.shape
+        ):
+            raise NotImplementedError(
+                "E_J padded reduction prefix must preserve input dtype and shape"
+            )
+    padded_values: dict[str, float] = {
+        input_tensor.name: float(load.fill_value),
+    }
+    for op in body[:-1]:
+        operands = [padded_values.get(value) for value in op.operands]
+        if any(value is None for value in operands):
+            raise NotImplementedError(
+                "E_J cannot prove the padded contribution through this dataflow"
+            )
+        if (
+            op.op == "map_binary"
+            and op.attrs.get("fn") == "mul"
+            and len(operands) == 2
+        ):
+            padded_result = float(operands[0]) * float(operands[1])
+        elif (
+            op.op == "map_unary"
+            and op.attrs.get("fn") == "identity"
+            and len(operands) == 1
+        ):
+            padded_result = float(operands[0])
+        else:
+            raise NotImplementedError(
+                "E_J padded reduction supports only a zero-stable identity/mul prefix"
+            )
+        padded_values[_result_names(op)[0]] = padded_result
+    padded_contribution = padded_values.get(reduction.operands[0])
+    if padded_contribution != 0.0:
+        raise NotImplementedError(
+            "E_J padded reduction prefix does not map fill to sum identity"
+        )
+    if (
+        reduction.type is None
+        or reduction.type.get("dtype") != output_tensor.dtype
+        or reduction.type.get("shape") != output_tensor.shape
+    ):
+        raise ValueError(
+            "E_J padded reduction result type differs from the output ABI"
+        )
+
+    if contract.tile_axis != 0:
+        raise NotImplementedError(
+            "E_J padded reduction requires the single physical tile axis 0"
+        )
+    for name, value in (
+        ("identity", contract.identity),
+        ("masked_contribution", contract.masked_contribution),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or float(value) != 0.0
+        ):
+            raise NotImplementedError(
+                f"E_J padded sum requires explicit neutral {name}=0"
+            )
+
+
 def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     """Consume the dense access/effect projection represented by pure J values.
 
@@ -249,11 +494,12 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         access.predicate is not None or access.fill_value is not None
         for access in boundary.accesses
     )
-    if has_predicate_or_fill and (boundary.reductions or boundary.updates):
+    masked_reduction = has_predicate_or_fill and bool(boundary.reductions)
+    if has_predicate_or_fill and boundary.updates:
         raise NotImplementedError(
-            "E_J mask erasure does not implement reduction/update padding"
+            "E_J mask erasure does not implement update padding"
         )
-    if has_predicate_or_fill and j.intent.body:
+    if has_predicate_or_fill and not masked_reduction and j.intent.body:
         raise NotImplementedError(
             "E_J mask erasure currently requires a direct identity J"
         )
@@ -264,13 +510,13 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     input_names = {item.name for item in j.intent.inputs}
     output_names = {item.name for item in j.intent.outputs}
     returns = {item.output: item.value for item in j.intent.returns}
-    if has_predicate_or_fill and any(
+    if has_predicate_or_fill and not masked_reduction and any(
         value not in input_names for value in returns.values()
     ):
         raise NotImplementedError(
             "E_J mask erasure currently requires outputs to return J inputs"
         )
-    if has_predicate_or_fill:
+    if has_predicate_or_fill and not masked_reduction:
         if (
             len(input_names) != len(output_names)
             or set(returns) != output_names
@@ -311,9 +557,11 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
 
     consumed_domain_axes: set[str] = set()
     inferred_axis_extents: dict[str, int | str] = dict(domains)
-    predicate_contracts: list[
+    predicate_contracts: dict[
+        str,
         tuple[frozenset[str], tuple[tuple[str, int | str], ...]] | None
-    ] = []
+    ] = {}
+    axes_by_access: dict[str, tuple[str, ...]] = {}
     loaded: set[str] = set()
     store_counts = {name: 0 for name in output_names}
     expected_effect = {
@@ -337,6 +585,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             )
         assert access.index_expression is not None
         axes = _parse_direct_index(access.index_expression)
+        axes_by_access[access.access_id] = axes
         if len(axes) != len(tensor.shape):
             raise ValueError(
                 f"E_J access {access.access_id!r} rank differs from J tensor"
@@ -361,7 +610,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             if access.predicate is not None
             else None
         )
-        predicate_contracts.append(predicate_contract)
+        predicate_contracts[access.access_id] = predicate_contract
         if predicate_contract is not None:
             if not domains:
                 raise NotImplementedError(
@@ -463,8 +712,17 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         raise NotImplementedError(
             "E_J dense functional boundary contains an unconsumed domain axis"
         )
-    concrete_predicates = [item for item in predicate_contracts if item is not None]
-    if concrete_predicates:
+    concrete_predicates = [
+        item for item in predicate_contracts.values() if item is not None
+    ]
+    if masked_reduction:
+        _validate_masked_sum_reduction(
+            j,
+            domains=domains,
+            axes_by_access=axes_by_access,
+            predicates_by_access=predicate_contracts,
+        )
+    elif concrete_predicates:
         if len(concrete_predicates) != len(predicate_contracts):
             raise NotImplementedError(
                 "E_J mask erasure requires the same predicate on every access"
@@ -499,20 +757,22 @@ def _validate_complete_boundary(j: SemanticArchive) -> str:
             "any": False,
             "all": True,
         }.get(fn)
-        declared = (
-            contract.identity
-            if contract.identity is not None else contract.masked_contribution
-        )
-        if fn in {"max", "min"}:
-            expected = "NEG_INF" if fn == "max" else "POS_INF"
-            if declared != expected:
+        declared_values = [
+            value
+            for value in (contract.identity, contract.masked_contribution)
+            if value is not None
+        ]
+        for declared in declared_values:
+            if fn in {"max", "min"}:
+                expected = "NEG_INF" if fn == "max" else "POS_INF"
+                if declared != expected:
+                    raise NotImplementedError(
+                        f"E_J requires {expected} padding for {fn}"
+                    )
+            elif neutral is not None and declared != neutral:
                 raise NotImplementedError(
-                    f"E_J requires {expected} padding for {fn}"
+                    f"E_J cannot eliminate non-neutral {fn!r} boundary padding"
                 )
-        elif neutral is not None and declared != neutral:
-            raise NotImplementedError(
-                f"E_J cannot eliminate non-neutral {fn!r} boundary padding"
-            )
 
     returns = {item.output: item.value for item in j.intent.returns}
     mappings = {item.output: item.value for item in boundary.output_mappings}
@@ -752,15 +1012,23 @@ class ScalarLoweringRunner:
                     "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
                     "boundary_profile": (
-                        "logical_domain_mask_erasure_v1"
+                        "logical_domain_reduction_padding_v1"
                         if any(
                             item.predicate is not None
                             for item in spec.j.boundary.accesses
                         )
+                        and spec.j.boundary.reductions
                         else (
-                            "dense_functional_v1"
-                            if spec.j.boundary.accesses
-                            else "pure_value_v1"
+                            "logical_domain_mask_erasure_v1"
+                            if any(
+                                item.predicate is not None
+                                for item in spec.j.boundary.accesses
+                            )
+                            else (
+                                "dense_functional_v1"
+                                if spec.j.boundary.accesses
+                                else "pure_value_v1"
+                            )
                         )
                     ),
                     "domain_relation_count": len(spec.j.boundary.domains),

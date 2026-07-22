@@ -202,6 +202,40 @@ Replay–J 三条 exact 边均通过，最大误差均为 0。下一次必须从
 至此 masked copy canary 已明确完成。下一步按既定顺序进入 `masked_row_square_sum`；当前
 mask-erasure 明确不支持 reduction padding，因此不能把 masked copy 的认证外推到 reduction。
 
+### `masked_row_square_sum / run-001`
+
+- terminal：`GATE2_FAILED`。本次共 4 次 Lift 物理调用：第一份响应因 C slot role 不是纯
+  `schedule` 在 TypeCheck 前被拒绝；之后 3 份完整 artifact 均通过 dependent TypeCheck，形成 3 个
+  正式 Gate1 round；
+- 第一轮 Replay 把 `c0` 先赋给普通局部变量再传入 `tl.arange`，Triton 因丢失可识别的
+  `tl.constexpr` 而编译失败；第二轮把两行同时向量化并在错误的物理轴上 reduction，Gate1 检出
+  program-coordinate、dataflow 与 reduction topology 不闭合；第三轮才 `replay_closed`。保存文件
+  `attempt-04` 是正式 round 3 的 accepted artifact，报告中的 `accepted_attempt=3` 指正式 round，
+  不是目录下所有 Lift 响应的序号；
+- Gate2 随后才构造输入。Source 与 accepted Replay 均执行成功，Source–Replay 在 external Q 下
+  通过且最大绝对误差为 0；当时 scalar RefEval 对 reduction padding 明确
+  `reference_unsupported`，所以 Source–J/Replay–J 没有被伪造为数值失败；
+- 预算为 4 次 Lift、3 次 TypeCheck/normal Replay/正式 Gate1、1 次 masked-J Replay，以及各 1 次
+  Source/Replay/RefEval execution；`j_necessity_status=not_proved` 与主失败状态正交。本次 Gate2
+  失败后没有 relift，也没有把数值结果回流给模型。
+
+结束 run-001 后新增通用 `logical_domain_reduction_padding_v1` RefEval consumer。它只解释单输入、
+单输出、同 dtype、单轴 sum、完整 direct domain/load/store/effect/output mapping、被归约轴上的
+logical-domain mask、零 fill/identity/masked contribution 与物理 tile axis 0。flat J graph 必须以唯一
+reduction 结束且所有前缀节点进入该 reduction；当前 closed pointwise 子集仅为 `identity`/`mul`，
+RefEval 会常量传播 fill，机械检查 `h(fill)=0`，而不是仅相信一个声明。其他 reducer、多轴、未知
+pointwise、update、broadcast、alias、gather/affine 均继续 fail closed。
+
+同一修正还使 Intent MLIR emitter 将 logical `returns(output <- value)` 的输出 shape 合同传播到真实
+SSA value；否则显式返回 `v1:[2]` 的 reduction 会被旧默认错误推断成 keepdims `[2,1]`。定向验证为
+`30 passed`，相邻 emitter/Gate2/canary/runner/typecheck 回归为 `91 passed, 1 skipped`；最终全量
+Python 回归为 `735 passed, 4 skipped`。
+
+用 run-001 保存的 accepted artifact 与 Replay 离线复验新 consumer（不改写历史 verdict）：
+RefEval profile 为 `logical_domain_reduction_padding_v1`；Source–Replay 最大绝对误差 0，Source–J 与
+Replay–J 均为 `0.0010986328125`，三边均在固定 external Q 的 f32 reduction 容差内通过。下一步必须
+从新的 `masked_row_square_sum/run-002` 完整重跑，才能形成新的主认证结论。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

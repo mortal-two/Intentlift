@@ -24,7 +24,7 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - 不使用 case-specific tolerance、Source/Replay 输出或 C value 决定结果；
 - 输出只交给外部比较政策 Q 构造的 Gate2 comparator 裁决；Q 不进入 RefEval。
 
-当前 scalar RefEval 对显式内存边界实现两个保守投影：
+当前 scalar RefEval 对显式内存边界实现三个保守投影：
 
 - `index_expression` 必须是 rank-1 bare axis 或与 J tensor rank 一致的直接 `[axis0, ...]`；tensor
   shape 本身定义完整 logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与
@@ -36,8 +36,15 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
   相同的 identity J；要求每个 load/store 使用同一直接轴与 full-logical-domain predicate、predicate
   upper bound 与 domain/shape 精确一致、masked load 有显式 fill、每个 output 独立 store 一次。
   此时 fill 只存在于 logical domain 外且没有可观察 store，RefEval 可以机械擦除 mask/fill；
-- predicated non-identity、reduction/update padding、affine/gathered access、alias/inout 与一般 mutable
-  storage 仍显式 unsupported。
+- `logical_domain_reduction_padding_v1` 只接收单 input、单 output、同 dtype、单轴 `sum`：一个 direct
+  load 覆盖完整输入 domain，一个无 predicate 的 direct store 覆盖删去 reduction axis 后的输出，且
+  access/effect/output mapping 均完整唯一；load predicate 只能约束被归约的 logical axis，masked-load
+  fill、reduction identity 与 `masked_contribution` 必须都是 typed zero，单一物理 tile axis 必须是 0。
+  J body 必须是 flat graph、以唯一 reduction 结束，所有前缀节点都进入 reduction slice。当前只接受
+  closed `identity`/`mul` pointwise 前缀，并用常量传播机械检查 padding fill 经完整前缀后仍为 sum
+  identity；不能证明 `h(fill)=identity` 时 fail closed；
+- 其他 predicated non-identity、非 sum 或多轴 reduction、一般 pointwise padding、update padding、
+  affine/gathered access、broadcast、alias/inout 与一般 mutable storage 仍显式 unsupported。
 
 这不是忽略 access/effect 后直接运行 A：mask erasure 必须先证明所有被擦除 lane 位于 J logical
 domain 外且没有可观察写入；执行证据记录 predicated access/fill 数量。只有整个边界可机械投影到
