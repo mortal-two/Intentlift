@@ -1,0 +1,28 @@
+{
+  "c0": {
+    "c0": 1024
+  },
+  "canary": "masked_row_square_sum",
+  "frontend": "triton",
+  "grid": [
+    2
+  ],
+  "model": "gpt-5.6-sol",
+  "provider": "gpt-5.6-sol",
+  "reasoning_effort": "xhigh",
+  "run_masked_j": true,
+  "source_to_opaque": {
+    "BLOCK_SIZE": "c0",
+    "N": "p2",
+    "X": "p0",
+    "Y": "p1",
+    "mask": "v2",
+    "offsets": "v1",
+    "row": "v0",
+    "source_masked_row_square_sum": "scrc_k0",
+    "squared": "v4",
+    "total": "v5",
+    "value": "v3"
+  },
+  "test_mode": "finite"
+}

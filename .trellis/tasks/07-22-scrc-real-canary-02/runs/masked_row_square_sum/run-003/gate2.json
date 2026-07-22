@@ -1,0 +1,201 @@
+{
+  "c0": {
+    "c0": 1024
+  },
+  "cases": [
+    {
+      "case_id": "finite-seed-7",
+      "input_digest": "b069a67e106f4f1533cd773c63bce3c870e8552ab7987d2baad1f5177032c8e3",
+      "metadata": {
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "seed": 7,
+        "test_mode": "finite"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 2,
+          "boundary_digest": "9390ace83ffcb1c39b9d60f103a99e47722cf517ee678938eef11ca9707850d6",
+          "boundary_profile": "logical_domain_reduction_padding_v1",
+          "broadcast_consumer_count": 0,
+          "domain_relation_count": 2,
+          "effect_relation_count": 2,
+          "erased_fill_count": 1,
+          "execution_evidence": {
+            "abi_protocol": "intentir_cpu_ranked_memref_abi_v1",
+            "cache_hit": true,
+            "cache_key": "e69a31e2088b9b38e6453396d84b64a6b4c86bd083c4570d8f49b7255ebaa130",
+            "compiler_protocol": "intentir_cpu_mlir_shared_object_v1",
+            "compute_symbol": "intentir_cpu_compute_v1",
+            "entry_symbol": "_mlir_ciface_intentir_cpu_entry_v1",
+            "input_count": 1,
+            "isolated_process": true,
+            "lowering_pipeline_digest": "e58721406846541b0c4c8722724a4b4320e5afe7773b86652d2866850604ae9f",
+            "module_depends_on_runtime_values": false,
+            "native_call_count": 1,
+            "output_count": 1,
+            "runtime_protocol": "intentir_cpu_isolated_runtime_v1",
+            "scalar_module_digest": "176ac31d9f24bd1636b6ca94ef60cdb027db6b96033d8f0ad0d90faecebd0409",
+            "schema": "intentir_cpu_execution_evidence_v1",
+            "shared_object_digest": "681dc9e189241e6e17f345c3a37ff4cab5e3c4c459a93eca0c1b33a9eba61b75",
+            "toolchain_digest": "ba7b497205fee10be7ea3dc764cf78ff0bbe1d8ad794ac81ccd7f3ec2e34fd62"
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "2c2284b4501269946778248b1733c6b005f73a3cb7ffc871e5a5ddcc0dc205c3",
+          "path": "canonical J -> intent MLIR -> scalar CPU",
+          "predicated_access_count": 1,
+          "protocol": "canonical_j_scalar_cpu_mlir_v5",
+          "result_relation_count": 1,
+          "scalar_spec_digest": "b5a05970c910406bebf3ba1e342cd99005d8820d83d8668436147aaf75cf8830"
+        },
+        "ok": true,
+        "outputs": {
+          "output0": {
+            "dtype": "float32",
+            "shape": [
+              2
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output0": {
+            "dtype": "float32",
+            "shape": [
+              2
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0010986328125,
+            "output": "output0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output0": {
+            "dtype": "float32",
+            "shape": [
+              2
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0010986328125,
+            "output": "output0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "failed_case_ids": [],
+  "passed": true,
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "masked_row_square_sum"
+}

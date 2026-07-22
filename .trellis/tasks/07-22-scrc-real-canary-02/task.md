@@ -1,6 +1,6 @@
 # Task 02：真实 SCRC Exact / Masked / Reduction Canary
 
-> 状态：执行中
+> 状态：已完成
 >
 > 类型：新门禁系统的真实 source-aware Lift / source-blind Replay canary；不是 28-kernel 批量或
 > 性能优化任务。
@@ -261,6 +261,53 @@ compile-time-only API 消费的 `c*` 必须直接使用，不能先 alias 成普
 axis，匹配的 `ReductionBoundary.tile_axis` 明确作为物理前端 reduction axis。下一次从新的
 `run-003` 开始。
 
+### `masked_row_square_sum / run-003`
+
+- terminal：`SCRC_CERTIFIED`。第一次 Lift response 因 π refinement 的 `auth_ref` 不是 J-owned `u*`
+  authorization handle，在 TypeCheck 前被 schema 拒绝；随后两份完整 artifact 均通过 dependent
+  TypeCheck，形成 2 个正式 Gate1 round；
+- 正式 round 1 已按新合同使用 `tl.program_id(0)`、直接 `c0` 和 program-per-row base，没有复现
+  run-002 的 coordinate/constexpr 错误；但 Replay 给 lane range 增加 `[None,:]`，随后
+  `sum(axis=1)` 产生 block value并写入 scalar pointer，Triton 在 TTIR 前拒绝；
+- 正式 round 2 使用一维 `tl.arange(0,c0)`、`sum(axis=0)` 与 scalar store，Source/Replay 的
+  `interface/op_multiset/dataflow/reduction/predicate_effect/schedule-only` 全部 hard-close，accepted
+  attempt 为正式 round 2；因前面有一次 pre-TypeCheck rejection，对应文件目录是 `attempt-03`；
+- Gate2 随后在实际 `c0={c0:1024}` 上运行。RefEval profile 为
+  `logical_domain_reduction_padding_v1`；Source–Replay 最大绝对误差为 0，Source–J 与 Replay–J 均为
+  `0.0010986328125`，三条 tolerance 边都通过固定 external Q；
+- 预算为 3 次 Lift（其中 1 次 pre-TypeCheck rejection）、2 次 TypeCheck/normal Replay/正式 Gate1、
+  1 次 masked-J Replay，以及各 1 次 Source/Replay/RefEval execution；
+  `j_necessity_status=not_proved`，因为 masked-J 也 hard-close。该独立结果不改变主认证。
+
+至此 reduction canary 已明确完成，而且是收紧 π/U_f 后全新完整运行得到的认证，不是 run-001 的
+离线重判。
+
+## Task 02 最终汇总
+
+最终认证运行只统计各 canary 的最新成功 run，不把系统改进前的失败混入成功率：
+
+| canary | final run | closure | Lift calls | TypeCheck | normal / masked Replay | Gate2 | J necessity |
+|---|---:|---:|---:|---:|---:|---|---|
+| exact vector add | run-003 | @2 | 2 | 2 | 2 / 1 | 三条 exact 边通过，误差 0 | not_proved |
+| masked copy | run-005 | @1 | 1 | 1 | 1 / 1 | 三条 exact 边通过，误差 0 | inconclusive |
+| masked row square sum | run-003 | @2 | 3 | 2 | 2 / 1 | 三条 tolerance 边通过 | not_proved |
+
+最终成功运行合计：6 次 Lift 物理调用、5 次 TypeCheck、5 次 normal Replay、3 次 masked-J Replay、
+3 个 Gate2 case，以及各 3 次 Source/Replay/RefEval execution。closure 分布为 `closure@1=1`、
+`closure@2=2`、`closure@3=0`；Gate2 为 `3/3`。reduction 多出的一次 Lift 是已保存证据的
+pre-TypeCheck rejection，不被伪装成正式 closure round。
+
+系统改进过程中的历史失败也全部保留：canonical/runtime dtype adapter 的 infrastructure failure、
+pre-TypeCheck anonymous/schema rejection、三轮 `NO_CLOSURE`、以及 dense/masked/reduction RefEval
+尚未支持时的 `GATE2_FAILED/reference_unsupported`。每次均先结束当前 run，再在实验外修改通用
+schema/prompt/consumer，并从新 run 重走；没有用 Gate2 数值 patch Replay，也没有新增 hash、冻结门、
+RuleCard、专用 lowerer 或第四 artifact。
+
+Task 02 的 claim 仅是三个代表性 Triton canary 在各自实际 c0 与保存的有限输入下获得
+SCRC certificate；不外推 28-kernel 成功率、所有 admissible C、一般集合值并发语义或性能。
+完成时全量 Python 回归为 `736 passed, 4 skipped`；warning 仅来自既有 Triton deprecation 与
+FlagGems SQLAlchemy registry，不含测试失败。
+
 ## 实施内容
 
 ### 1. 可复现真实入口
@@ -306,5 +353,6 @@ provider request/response 的普通 receipt 可以记录模型、token、耗时�
 
 ## 后续
 
-三个 canary 形成稳定证据后，再依据真实缺口创建 Task 03：扩展代表性 Kernel 范围、建立批量输入
-清单，并逐步接回 28 个高性能 Kernel；性能工作仍在更后面的独立任务中处理。
+Task 03 依据当前 doc/spec 与真实缺口扩展代表性 Kernel 范围、建立显式 workload manifest、批量
+入口与失败分类，并逐步接回 28 个高性能 Kernel。性能测量与优化仍在后续独立任务中处理，不能把
+“能进入门禁”与“达到性能目标”混成一个 verdict。
