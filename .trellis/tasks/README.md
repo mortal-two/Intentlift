@@ -5,11 +5,12 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
-- [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)
+- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（执行中）
+- [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)（已完成）
 
-这是当前唯一活动工作项。编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC
-数学总述已经替换此前 formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。Task 01
-只负责门禁系统能力的代码重构，不包含真实 LLM 规模实验或性能结论。
+编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC 数学总述已经替换此前
+formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。Task 01 只负责门禁系统能力的
+代码重构；当前 Task 02 从三个顺序 canary 开始使用真实 LLM，不直接跳到 28-kernel 或性能结论。
 
 ## 历史任务序列
 
