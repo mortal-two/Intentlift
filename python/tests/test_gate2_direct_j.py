@@ -6,12 +6,14 @@ import numpy as np
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
+from intentir.ir.model import IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
     EffectKind,
     EffectSpec,
+    OutputMapping,
     ParameterMode,
 )
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
@@ -146,7 +148,95 @@ def test_scalar_e_j_fails_closed_on_predicated_access_relations() -> None:
     )
     assert not result.ok
     assert result.unsupported
-    assert "predicated access or fill" in (result.error or "")
+    assert "does not implement reduction/update padding" in (result.error or "")
+
+
+def _make_masked_identity_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.body = []
+    artifact.j.intent.returns = [IntentReturn("t1", "t0")]
+    artifact.j.node_ids = {}
+    artifact.j.boundary.domains = {"d0": "0 <= i0 and i0 < x0"}
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", predicate="i0 < x0",
+            fill_value=0.0, index_expression="i0",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", predicate="i0 < x0",
+            index_expression="i0",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", effect_id="e0", access_ref="a0"),
+        EffectSpec(EffectKind.WRITE, "t1", effect_id="e1", access_ref="a1"),
+    ]
+    artifact.j.boundary.output_mappings = [OutputMapping("t1", "t0")]
+    return artifact
+
+
+def test_scalar_e_j_erases_full_logical_domain_mask_for_identity() -> None:
+    artifact = _make_masked_identity_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["output"], value)
+    assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
+    assert result.metadata["predicated_access_count"] == 2
+    assert result.metadata["erased_fill_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("predicate_extent", "differs from the full logical domain"),
+        ("unmasked_store", "same predicate on every access"),
+        ("missing_fill", "requires an explicit masked-load fill"),
+        ("non_identity", "requires a direct identity J"),
+        ("affine_index", "requires one bare axis"),
+        ("dtype_change", "identical input/output dtype and shape"),
+        ("destination_change", "outputs to return J inputs"),
+    ],
+)
+def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> None:
+    artifact = _make_masked_identity_artifact()
+    if mutation == "predicate_extent":
+        artifact.j.boundary.accesses[0].predicate = "i0 < 7"
+    elif mutation == "unmasked_store":
+        artifact.j.boundary.accesses[1].predicate = None
+    elif mutation == "missing_fill":
+        artifact.j.boundary.accesses[0].fill_value = None
+    elif mutation == "non_identity":
+        artifact.j.intent.body = make_copy_artifact().j.intent.body
+    elif mutation == "affine_index":
+        artifact.j.boundary.accesses[0].index_expression = "i0 + 1"
+    elif mutation == "dtype_change":
+        artifact.j.intent.outputs[0].dtype = "f16"
+    elif mutation == "destination_change":
+        artifact.j.intent.returns[0] = IntentReturn("t1", "t1")
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(8, dtype=np.float32)}
+    )
+
+    assert not result.ok
+    assert expected in (result.error or "")
 
 
 @pytest.mark.parametrize(
@@ -212,7 +302,7 @@ def test_scalar_e_j_rejects_dense_boundary_extent_mismatch() -> None:
 @pytest.mark.parametrize(
     "mutation, expected",
     [
-        ("malicious_index", "requires index_expression"),
+        ("malicious_index", "requires one bare axis"),
         ("effect_target", "disagrees with its effect"),
         ("duplicate_store", "exactly one store per logical output"),
         ("inout", "does not implement inout/alias ABI"),

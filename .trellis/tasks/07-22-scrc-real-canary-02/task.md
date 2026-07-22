@@ -164,6 +164,29 @@ shape 中，且 dimension handle 不得进入 SSA scope definitions/captures 或
 发明 coordinate、乘加或 affine address。此规则已同步到 π 核心文档、活动 spec 与 Lift/Replay
 共用 mechanism grammar。下一次从 `masked_copy/run-004` 开始。
 
+### `masked_copy / run-004`
+
+- program-coordinate 规则生效：第一轮完整 artifact 通过 TypeCheck，source-blind Replay 只生成
+  `tl.arange(0,c0)`，没有 `program_id` 或额外乘加；Gate1 首轮 hard-close；
+- 随后才构造 Gate2 输入。Source 与 Replay 均成功执行，Source–Replay 在 exact Q 下最大误差为
+  0；
+- terminal：`GATE2_FAILED`，case 子状态为 `reference_unsupported`。RefEval 明确拒绝
+  `predicated access or fill`，因此没有伪造 Source–J/Replay–J 数值比较；本次不再 relift；
+- accepted attempt 为 1，预算为 1 次 Lift、1 次 normal Replay、1 次 masked-J Replay，以及各 1 次
+  Source/Replay/RefEval Gate2 execution；`j_necessity_status=not_proved` 独立于主失败状态。
+
+该 J 是 body 为空、`output t1` 直接 return `input t0` 的 identity；input/output shape 都是 `[x0]`，
+load/store 使用同一 predicate `x1<x0`，domain 为 `0<=x1<x0`。load fill 只作用于 logical domain
+之外，且同一 mask 阻止这些 lane 写入 output。因此新增保守
+`logical_domain_mask_erasure_v1`：仅在 rank-1、input/output 一一 identity 且 dtype/shape 相同、full
+domain、所有 access 同一直接轴与 predicate、显式 masked-load fill、每个 output 独立 store、无
+reduction/update/alias/inout 时擦除 domain 外 mask/fill；其他 predicated 关系继续 fail closed。
+rank-1 bare index 与 bracketed direct index 都作为封闭语法支持。
+
+用 run-004 已选定候选离线复验新 RefEval（不改写历史 verdict）：Source–Replay、Source–J、
+Replay–J 三条 exact 边均通过，最大误差均为 0。下一次必须从新的 `masked_copy/run-005` 完整重跑，
+才能形成新的认证结论。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

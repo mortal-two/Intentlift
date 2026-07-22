@@ -24,17 +24,25 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - 不使用 case-specific tolerance、Source/Replay 输出或 C value 决定结果；
 - 输出只交给外部比较政策 Q 构造的 Gate2 comparator 裁决；Q 不进入 RefEval。
 
-当前 scalar RefEval 对显式内存边界只实现保守的 `dense_functional_v1` 投影：
+当前 scalar RefEval 对显式内存边界实现两个保守投影：
 
-- `index_expression` 必须是与 J tensor rank 一致的直接 `[axis0, ...]`；tensor shape 本身定义完整
-  logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与 shape 精确相同；
+- `index_expression` 必须是 rank-1 bare axis 或与 J tensor rank 一致的直接 `[axis0, ...]`；tensor
+  shape 本身定义完整 logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与
+  shape 精确相同；
 - load/store 必须分别覆盖全部 logical input/output，并与所属 J node 的 operand/result 对应；
 - 每个 access 必须有唯一且一致的 read/write effect，output mapping 必须与 J return 一致；
-- predicate/fill、affine/gathered access、update、alias、一般 mutable storage 仍显式 unsupported。
+- `dense_functional_v1` 只接收无 predicate/fill 的上述关系；
+- `logical_domain_mask_erasure_v1` 只接收 rank-1、body 为空、input/output 一一映射且 dtype/shape
+  相同的 identity J；要求每个 load/store 使用同一直接轴与 full-logical-domain predicate、predicate
+  upper bound 与 domain/shape 精确一致、masked load 有显式 fill、每个 output 独立 store 一次。
+  此时 fill 只存在于 logical domain 外且没有可观察 store，RefEval 可以机械擦除 mask/fill；
+- predicated non-identity、reduction/update padding、affine/gathered access、alias/inout 与一般 mutable
+  storage 仍显式 unsupported。
 
-这不是忽略 access/effect 后直接运行 A：只有整个边界可机械投影到完整逻辑张量求值时才进入
-Intent CPU 路径，其他关系继续 fail closed。后续每扩展一种 boundary relation，都必须同时增加
-其 denotation、正反例和真实 canary。
+这不是忽略 access/effect 后直接运行 A：mask erasure 必须先证明所有被擦除 lane 位于 J logical
+domain 外且没有可观察写入；执行证据记录 predicated access/fill 数量。只有整个边界可机械投影到
+完整逻辑张量求值时才进入 Intent CPU 路径，其他关系继续 fail closed。后续每扩展一种 boundary
+relation，都必须同时增加其 denotation、正反例和真实 canary。
 
 ## Production 要求
 
