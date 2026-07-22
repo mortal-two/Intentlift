@@ -94,6 +94,7 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
 ## 当前第一步
 
 阶段 0--1 已完成并提交：v6 反例、parser 真值、共享 root/J/boundary grammar、双向 mutation 与
-v7 wire/lineage 已冻结；最终完整回归为 `867 passed, 4 skipped, 60 warnings`，未调用 LLM，也没有
-repair 路径。下一步生成并复验 28/28、0-LLM preflight；只有 preflight evidence 提交且 worktree
-clean 后，才允许唯一 Swiglu canary。
+v7 wire/lineage 已冻结；最终完整回归为 `867 passed, 4 skipped, 60 warnings`；0-LLM preflight
+已经 28/28 ready 并独立复验，SHA 为 `0e7a6df61b2d11cfab4fb6e8092fed453c9a14897a474fe3777ec1654e988e2c`。
+下一步先提交 preflight evidence 并确认 worktree clean，然后只执行唯一 Swiglu canary；不 retry、
+不 repair，normal 未 hard-close 时不运行 masked-J。
