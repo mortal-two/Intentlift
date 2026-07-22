@@ -90,6 +90,7 @@ def _loop_archive() -> dict:
             "index_bounds": [],
             "updates": [],
             "result_relations": [],
+            "realization_authorizations": [],
         },
         "signature": {
             "parameters": [
@@ -452,6 +453,7 @@ def _aliased_destination_archive(alias_kind: str = "must_alias") -> dict:
             "index_bounds": [],
             "updates": [],
             "result_relations": [],
+            "realization_authorizations": [],
         },
         "signature": {
             "parameters": [

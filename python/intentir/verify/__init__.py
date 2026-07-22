@@ -8,5 +8,20 @@ under ``intentir.verify.back`` and are intentionally not re-exported here.
 
 from . import gate1
 from . import gate2
+from .typecheck import (
+    TypeCheckDiagnostic,
+    TypeCheckErrorCode,
+    TypeCheckReport,
+    TypeCheckStatus,
+    type_check,
+)
 
-__all__ = ["gate1", "gate2"]
+__all__ = [
+    "TypeCheckDiagnostic",
+    "TypeCheckErrorCode",
+    "TypeCheckReport",
+    "TypeCheckStatus",
+    "gate1",
+    "gate2",
+    "type_check",
+]

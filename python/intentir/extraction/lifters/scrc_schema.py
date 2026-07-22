@@ -23,6 +23,7 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
+    REPRESENTATION_REFINEMENTS,
     render_realization_mechanism_grammar,
     render_realization_witness_wire_grammar,
 )
@@ -256,6 +257,31 @@ def _boundary_schema() -> dict[str, Any]:
             "neither. The strict project parser enforces the tagged union."
         ),
     )
+    authorization = _closed_object(
+        {
+            "auth_id": {"type": "string", "pattern": "^u[0-9]+$"},
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "signed_widen",
+                    "unsigned_widen",
+                    "numeric_cast",
+                    "accumulation_dtype",
+                    "reassociation",
+                    "native_atomic",
+                    "privatized_update",
+                ],
+            },
+            "subject_ref": _STRING,
+            "source_dtype": _STRING,
+            "target_dtype": _STRING,
+        },
+        ("auth_id", "kind", "subject_ref"),
+        description=(
+            "J/B-owned authorization for one sensitive representation choice. "
+            "Pi may cite auth_id but may not redefine its semantic contract."
+        ),
+    )
     return _closed_object(
         {
             "domains": {
@@ -276,6 +302,7 @@ def _boundary_schema() -> dict[str, Any]:
             "index_bounds": _array(index_bounds),
             "updates": _array(update),
             "result_relations": _array(result_relation),
+            "realization_authorizations": _array(authorization),
         },
         BOUNDARY_WIRE_FIELDS,
         description=render_boundary_access_wire_grammar(),
@@ -455,6 +482,24 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("source", "consumers"),
     )
+    refinement = _closed_object(
+        {
+            "instance": {"type": "string", "pattern": "^i[0-9]+$"},
+            "kind": {
+                "type": "string",
+                "enum": list(REPRESENTATION_REFINEMENTS),
+            },
+            "auth_ref": _nullable(
+                {"type": "string", "pattern": "^u[0-9]+$"}
+            ),
+        },
+        ("instance", "kind", "auth_ref"),
+        description=(
+            "A representation refinement. Sensitive kinds cite one J/B-owned "
+            "authorization; identity materialization uses the verifier's closed "
+            "global-safe rule."
+        ),
+    )
     return _closed_object(
         {
             "regions": _array(region),
@@ -462,8 +507,9 @@ def _pi_schema() -> dict[str, Any]:
             "routes": _array(route),
             "order": _array(order),
             "sharing": _array(sharing),
+            "refinements": _array(refinement),
         },
-        ("regions", "instances", "routes", "order", "sharing"),
+        ("regions", "instances", "routes", "order", "sharing", "refinements"),
         description=(
             render_realization_witness_wire_grammar()
             + " "

@@ -61,6 +61,7 @@ BOUNDARY_WIRE_FIELDS = (
     "index_bounds",
     "updates",
     "result_relations",
+    "realization_authorizations",
 )
 BOUNDARY_ACCESS_WIRE_FIELDS = (
     "access_id",
@@ -745,6 +746,18 @@ class ResultRelationKind(str, Enum):
     ONE_OF_UPDATES = "one_of_updates"
 
 
+class RefinementKind(str, Enum):
+    """Closed J/B authorization classes for sensitive realization choices."""
+
+    SIGNED_WIDEN = "signed_widen"
+    UNSIGNED_WIDEN = "unsigned_widen"
+    NUMERIC_CAST = "numeric_cast"
+    ACCUMULATION_DTYPE = "accumulation_dtype"
+    REASSOCIATION = "reassociation"
+    NATIVE_ATOMIC = "native_atomic"
+    PRIVATIZED_UPDATE = "privatized_update"
+
+
 class AliasKind(str, Enum):
     MUST_ALIAS = "must_alias"
     MAY_ALIAS = "may_alias"
@@ -1260,6 +1273,71 @@ class ResultRelationSpec(StrictJSONMixin):
 
 
 @dataclass
+class RealizationAuthorization(StrictJSONMixin):
+    """A J/B-owned permission referenced by a π representation refinement."""
+
+    auth_id: str
+    kind: RefinementKind
+    subject_ref: str
+    source_dtype: str | None = None
+    target_dtype: str | None = None
+
+    def __post_init__(self) -> None:
+        self.auth_id = _string(self.auth_id, "RealizationAuthorization.auth_id")
+        if re.fullmatch(r"u[0-9]+", self.auth_id) is None:
+            raise SchemaError("realization authorization ids must be u0, u1, ...")
+        self.kind = _enum(
+            RefinementKind, self.kind, "RealizationAuthorization.kind"
+        )
+        self.subject_ref = _string(
+            self.subject_ref, "RealizationAuthorization.subject_ref"
+        )
+        if self.source_dtype is not None:
+            self.source_dtype = _string(
+                self.source_dtype, "RealizationAuthorization.source_dtype"
+            )
+        if self.target_dtype is not None:
+            self.target_dtype = _string(
+                self.target_dtype, "RealizationAuthorization.target_dtype"
+            )
+        typed = {self.source_dtype, self.target_dtype}
+        if None in typed and len(typed) > 1:
+            raise SchemaError(
+                "realization authorization source/target dtype must appear together"
+            )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "RealizationAuthorization":
+        data = _strict_object(
+            value,
+            path="RealizationAuthorization",
+            allowed={
+                "auth_id", "kind", "subject_ref", "source_dtype",
+                "target_dtype",
+            },
+            required={"auth_id", "kind", "subject_ref"},
+        )
+        return cls(
+            data["auth_id"],
+            data["kind"],
+            data["subject_ref"],
+            data.get("source_dtype"),
+            data.get("target_dtype"),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "auth_id": self.auth_id,
+            "kind": self.kind.value,
+            "subject_ref": self.subject_ref,
+        }
+        if self.source_dtype is not None:
+            result["source_dtype"] = self.source_dtype
+            result["target_dtype"] = self.target_dtype
+        return result
+
+
+@dataclass
 class Boundary(StrictJSONMixin):
     """Closed Layer-B schema owned by ``J``."""
 
@@ -1273,6 +1351,9 @@ class Boundary(StrictJSONMixin):
     index_bounds: list[IndexBoundsSpec] = field(default_factory=list)
     updates: list[LogicalUpdateSpec] = field(default_factory=list)
     result_relations: list[ResultRelationSpec] = field(default_factory=list)
+    realization_authorizations: list[RealizationAuthorization] = field(
+        default_factory=list
+    )
 
     _KEYS: ClassVar[set[str]] = set(BOUNDARY_WIRE_FIELDS)
 
@@ -1334,6 +1415,12 @@ class Boundary(StrictJSONMixin):
             item if isinstance(item, ResultRelationSpec) else ResultRelationSpec.from_json(item)
             for item in self.result_relations
         ]
+        self.realization_authorizations = [
+            item
+            if isinstance(item, RealizationAuthorization)
+            else RealizationAuthorization.from_json(item)
+            for item in self.realization_authorizations
+        ]
         _unique(self.accesses, "access_id", "Boundary.accesses")
         _unique(self.effects, "effect_id", "Boundary.effects")
         access_ids = {item.access_id for item in self.accesses}
@@ -1355,6 +1442,17 @@ class Boundary(StrictJSONMixin):
         _unique(self.index_bounds, "node_ref", "Boundary.index_bounds")
         _unique(self.updates, "node_ref", "Boundary.updates")
         _unique(self.result_relations, "output", "Boundary.result_relations")
+        _unique(
+            self.realization_authorizations,
+            "auth_id",
+            "Boundary.realization_authorizations",
+        )
+        if [item.auth_id for item in self.realization_authorizations] != [
+            f"u{index}" for index in range(len(self.realization_authorizations))
+        ]:
+            raise SchemaError(
+                "realization authorization ids must be declaration ordered"
+            )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "Boundary":
@@ -1378,6 +1476,10 @@ class Boundary(StrictJSONMixin):
             index_bounds=[IndexBoundsSpec.from_json(item) for item in data.get("index_bounds", [])],
             updates=[LogicalUpdateSpec.from_json(item) for item in data.get("updates", [])],
             result_relations=[ResultRelationSpec.from_json(item) for item in data.get("result_relations", [])],
+            realization_authorizations=[
+                RealizationAuthorization.from_json(item)
+                for item in data.get("realization_authorizations", [])
+            ],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -1392,6 +1494,9 @@ class Boundary(StrictJSONMixin):
             "index_bounds": [item.to_json() for item in self.index_bounds],
             "updates": [item.to_json() for item in self.updates],
             "result_relations": [item.to_json() for item in self.result_relations],
+            "realization_authorizations": [
+                item.to_json() for item in self.realization_authorizations
+            ],
         }
 
 
@@ -3314,6 +3419,10 @@ def _opaque_reference_data(
             for effect in artifact.j.boundary.effects
             if effect.effect_id is not None
         ),
+        *(
+            item.auth_id
+            for item in artifact.j.boundary.realization_authorizations
+        ),
         *(scope.scope_id for scope in artifact.j.scopes),
         *(storage.storage_id for storage in artifact.j.storage),
         *(member for storage in artifact.j.storage for member in storage.members),
@@ -3395,6 +3504,15 @@ def _opaque_reference_data(
             f"e{index}",
             "boundary_effect",
             f"j.boundary.effects[{index}]",
+        )
+    for index, authorization in enumerate(
+        artifact.j.boundary.realization_authorizations
+    ):
+        allocate(
+            authorization.auth_id,
+            f"u{index}",
+            "boundary_realization_authorization",
+            f"j.boundary.realization_authorizations[{index}]",
         )
 
     value_index = 0
@@ -3605,6 +3723,11 @@ def _opaque_pi_json(
         instance["semantic_ref"] = _opaque_reference(
             instance["semantic_ref"], aliases
         )
+    for refinement in result["refinements"]:
+        if refinement["auth_ref"] is not None:
+            refinement["auth_ref"] = _opaque_reference(
+                refinement["auth_ref"], aliases
+            )
     return result
 
 
@@ -3824,6 +3947,22 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in boundary.result_relations
         ],
+        "realization_authorizations": [
+            {
+                "auth_id": _opaque_reference(item.auth_id, aliases),
+                "kind": item.kind.value,
+                "subject_ref": _opaque_reference(item.subject_ref, aliases),
+                **(
+                    {
+                        "source_dtype": item.source_dtype,
+                        "target_dtype": item.target_dtype,
+                    }
+                    if item.source_dtype is not None
+                    else {}
+                ),
+            }
+            for item in boundary.realization_authorizations
+        ],
     }
 
     signature, c_view = _opaque_signature_and_c_view(artifact, aliases)
@@ -3885,6 +4024,12 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         for index, effect in enumerate(artifact.j.boundary.effects)
         if effect.effect_id is not None
     }
+    authorization_map = {
+        item.auth_id: f"u{index}"
+        for index, item in enumerate(
+            artifact.j.boundary.realization_authorizations
+        )
+    }
     scope_map = {
         scope.scope_id: f"q{index}"
         for index, scope in enumerate(artifact.j.scopes)
@@ -3899,6 +4044,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 
     reference_map = {
         **tensor_map, **node_map, **access_map, **domain_map, **effect_map,
+        **authorization_map,
         **scope_map, **storage_map,
     }
     fallback_reference_map: dict[str, str] = {}
@@ -4088,6 +4234,22 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in artifact.j.boundary.result_relations
         ],
+        "realization_authorizations": [
+            {
+                "auth_id": authorization_map[item.auth_id],
+                "kind": "<masked>",
+                "subject_ref": opaque_reference(item.subject_ref),
+                **(
+                    {
+                        "source_dtype": "<masked>",
+                        "target_dtype": "<masked>",
+                    }
+                    if item.source_dtype is not None
+                    else {}
+                ),
+            }
+            for item in artifact.j.boundary.realization_authorizations
+        ],
     }
 
     # The anti-leakage arm masks J's semantic declarations.  Its logical
@@ -4162,7 +4324,8 @@ __all__ = [
     "LogicalUpdateSpec", "OutputMapping",
     "opaque_replay_abi",
     "ParameterKind", "ParameterMode", "ProvenanceRecord", "ProvenanceRole",
-    "PortableScope", "RealizationWitness", "ReductionBoundary",
+    "PortableScope", "RealizationAuthorization", "RealizationWitness",
+    "ReductionBoundary", "RefinementKind",
     "ResultRelationKind", "ResultRelationSpec",
     "render_boundary_access_wire_grammar",
     "render_gate1_artifact_envelope_grammar", "RuntimeArgument",

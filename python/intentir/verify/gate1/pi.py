@@ -30,16 +30,29 @@ REALIZATION_MECHANISMS: tuple[str, ...] = (
     "synchronize",
 )
 
+REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
+    "identity_materialization",
+    "signed_widen",
+    "unsigned_widen",
+    "numeric_cast",
+    "accumulation_dtype",
+    "reassociation",
+    "native_atomic",
+    "privatized_update",
+)
+
 
 def _record(
     value: Any,
     *,
     path: str,
     required: frozenset[str],
+    allowed: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise RealizationWitnessError(f"{path} must be an object")
-    unknown = sorted(set(value) - required)
+    allowed = required if allowed is None else allowed
+    unknown = sorted(set(value) - allowed)
     missing = sorted(required - set(value))
     if unknown:
         raise RealizationWitnessError(f"{path} has forbidden fields: {unknown}")
@@ -173,6 +186,7 @@ class RealizationWitness:
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
+    refinements: list[dict[str, JsonValue]] = field(default_factory=list)
 
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
@@ -342,11 +356,48 @@ class RealizationWitness:
         if len(sharing_sources) != len(set(sharing_sources)):
             raise RealizationWitnessError("pi sharing source must be unique")
 
+        checked_refinements: list[dict[str, JsonValue]] = []
+        refined_instances: set[str] = set()
+        for index, raw in enumerate(self.refinements):
+            item = _record(
+                raw,
+                path=f"pi.refinements[{index}]",
+                required=frozenset({"instance", "kind", "auth_ref"}),
+            )
+            instance = _declared_instance_ref(
+                item["instance"],
+                path=f"pi.refinements[{index}].instance",
+                known_instances=known_instances,
+            )
+            if instance in refined_instances:
+                raise RealizationWitnessError(
+                    "pi refinements may refine each instance at most once"
+                )
+            refined_instances.add(instance)
+            kind = _name(item["kind"], f"pi.refinements[{index}].kind")
+            if kind not in REPRESENTATION_REFINEMENTS:
+                raise RealizationWitnessError(
+                    f"unsupported pi representation refinement {kind!r}"
+                )
+            auth_ref = item["auth_ref"]
+            if auth_ref is not None:
+                auth_ref = _name(
+                    auth_ref, f"pi.refinements[{index}].auth_ref"
+                )
+                if re.fullmatch(r"u[0-9]+", auth_ref) is None:
+                    raise RealizationWitnessError(
+                        "pi refinement auth_ref must be a J authorization handle u*"
+                    )
+            checked_refinements.append(
+                {"instance": instance, "kind": kind, "auth_ref": auth_ref}
+            )
+
         self.regions = checked_regions
         self.instances = checked_instances
         self.routes = checked_routes
         self.order = checked_order
         self.sharing = checked_sharing
+        self.refinements = checked_refinements
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
@@ -354,11 +405,23 @@ class RealizationWitness:
             value,
             path="pi",
             required=frozenset({"regions", "instances", "routes", "order", "sharing"}),
+            allowed=frozenset(
+                {"regions", "instances", "routes", "order", "sharing", "refinements"}
+            ),
         )
-        for key in ("regions", "instances", "routes", "order", "sharing"):
-            if not isinstance(data[key], list):
+        for key in (
+            "regions", "instances", "routes", "order", "sharing", "refinements"
+        ):
+            if key in data and not isinstance(data[key], list):
                 raise RealizationWitnessError(f"pi.{key} must be an array")
-        return cls(**copy.deepcopy(data))
+        return cls(
+            regions=copy.deepcopy(data["regions"]),
+            instances=copy.deepcopy(data["instances"]),
+            routes=copy.deepcopy(data["routes"]),
+            order=copy.deepcopy(data["order"]),
+            sharing=copy.deepcopy(data["sharing"]),
+            refinements=copy.deepcopy(data.get("refinements", [])),
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -367,6 +430,7 @@ class RealizationWitness:
             "routes": copy.deepcopy(self.routes),
             "order": copy.deepcopy(self.order),
             "sharing": copy.deepcopy(self.sharing),
+            "refinements": copy.deepcopy(self.refinements),
         }
 
 
@@ -374,6 +438,7 @@ __all__ = [
     "RealizationWitness",
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",
+    "REPRESENTATION_REFINEMENTS",
     "render_realization_mechanism_grammar",
     "render_realization_witness_wire_grammar",
 ]

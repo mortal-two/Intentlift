@@ -108,6 +108,16 @@ def build_rewriter_payload(
 ) -> dict[str, Any]:
     """Build exactly ``J + pi + MaskC(C) + U_f``."""
 
+    # Local import avoids a package initialization cycle: TypeCheck depends on
+    # the Gate1 data model, while this builder is its first production consumer.
+    from intentir.verify.typecheck import type_check
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    if not report.passed:
+        summary = ", ".join(
+            f"{item.code.value}@{item.path}" for item in report.diagnostics
+        )
+        raise SchemaError("Replay requires TypeCheck(J,C,pi)=PASS: " + summary)
     view = artifact.rewriter_view(masked=masked)
     frontend = Frontend(frontend)
     context = (

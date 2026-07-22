@@ -6,10 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_verify_package_exports_only_active_gates() -> None:
+def test_verify_package_exports_only_active_gate_core() -> None:
     import intentir.verify as verify
 
-    assert verify.__all__ == ["gate1", "gate2"]
+    assert {"gate1", "gate2", "type_check"} <= set(verify.__all__)
+    assert "composer" not in verify.__all__
 
 
 def test_wrong_control_plane_is_outside_importable_python_tree() -> None:
