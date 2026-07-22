@@ -1,6 +1,6 @@
 # Task 01：SCRC Gate Core 整体门禁能力重构
 
-> 状态：执行中
+> 状态：已完成
 >
 > 类型：代码系统新增/重构；不是规模实验、论文实验或性能任务。
 >
@@ -106,7 +106,10 @@ Lift_H(Source) -> (J,C,pi)
   terminal Gate2、基础设施错误和独立 `j_necessity_status`；报告逻辑/物理 Lift/Replay 调用数及三条
   执行腿次数，这些普通记录不参与认证。deterministic end-to-end smoke 已贯通 canonical packet、
   TypeCheck、现有 Gate1 observer/comparator、同一 c0、外部 Q 三边 Gate2；runner 状态机 11 个正反例
-  通过。最终全量回归待本任务最后一次执行。
+  通过。最终全量回归已在任务收尾完成。
+- 最终验收：`pytest -q python/tests` 为 `701 passed, 4 skipped`；705 个测试收集成功；
+  `python -m compileall -q python/intentir` 与 `git diff --check` 通过。Task 01 只完成门禁能力搭建，
+  未把 deterministic smoke 冒充真实 LLM canary 或 28-kernel 结果。
 
 ## 实施顺序
 

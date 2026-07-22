@@ -16,7 +16,7 @@
 通用文件校验、缓存 key 或 Git 对象使用哈希不在此退役范围；只有把 hash/digest 当作实验合法性、
 信息隔离或语义认证依据的旧协议设施必须删除。
 
-## 2026-07-22 已完成的准备清理
+## 2026-07-22 已完成的清理与门禁核心重构
 
 - formal batch v1–v7 的 runner、preflight、Lift wire lock、manifest、测试、Task10 与 artifacts 已
   整体迁入 `.trellis/archive/experiments/2026-07-22-formal-hash-protocol/`；活动代码不再 import。
@@ -24,11 +24,18 @@
   持有同一个 J 对象。
 - Triton 与 CuTe Gate1 不再把 masked-J hard close 改写为 `LEAKAGE_REJECTED`；主 Gate1 closure
   与 `j_necessity_status` 已分开报告。
+- logical signature 已收入 J；proof artifact wire 只保留 `(J,C,π)`，独立 interface namespace 与
+  兼容 fallback 已从活动 schema/API 删除。
+- dependent `TypeCheck(J,C,π)` 已成为 Replay 的生产前置条件，并 fail closed 地检查 refs、route、
+  observable ownership 与 sensitive authorization。
+- Replay packet 已收敛为 typed `J + π + MaskC(C) + U_f`；Source/Harness/C values/diff/旧对话等
+  嵌套旁路由闭合 allowlist 拒绝。
+- Gate2 已使用外部 Q 的对称 `Close_Q`，并保存 Source–Replay、Source–J、Replay–J 三条直接边；
+  J wire 不再携带 tolerance 数值。
+- 唯一 `SCRCGateRunner` 已统一完整 relift、fresh Replay factory、三轮 Gate1、terminal Gate2、同一
+  `c0`、独立 masked-J 状态和真实调用预算；局部 frontend runner 不再拥有第二套候选生命周期。
 
-尚未完成、应作为第一步实质重构的工作，是把 logical signature 收入 J、移除活动 schema 中的
-独立 interface，并实现最小 `TypeCheck(J,C,π)`。在这三项完成前不运行新的正式 batch。
-
-## 首步重构顺序
+## 已执行的首步重构顺序
 
 1. 以三份核心文档、数学/claim 总述和本 spec 替换旧运行口径，历史材料只留在 archive/source-notes。
 2. 删除 formal runner 中的旧 hash/epoch/commitment gate 与对应 schema/tests。
@@ -40,7 +47,7 @@
    只覆盖 deterministic / contract-deterministic Kernel。
 8. 拆分 `main_status`、`typecheck_status` 与 `j_necessity_status`，迁移 masked-J 行为。
 9. 记录 observer profile/version、compiler/dump stage、canonicalization version 与真实搜索预算。
-10. 用少量代表性 canary 验证边界，再决定下一步 schema/observer 能力改进。
+10. deterministic 本地 smoke 已验证门禁边界；真实 source-aware Lift/Replay canary 属于下一任务。
 
 ## 迁移纪律
 
@@ -60,4 +67,5 @@ main verdict   = TypeCheck and Gate1 and Gate2
 Gate2          = pairwise Close_Q(Source, Replay, RefEval(J)) under observed c0
 ```
 
-活动代码中不再存在旧协议入口；尚未实现的新能力明确 fail closed，随后才运行代表性 canary。
+上述首步完成条件已由活动代码、负例和本地 end-to-end smoke 覆盖。下一步只运行少量真实
+source-aware Lift/Replay canary；若暴露 schema/observer 能力缺口，再按系统改进流程修改通用能力。

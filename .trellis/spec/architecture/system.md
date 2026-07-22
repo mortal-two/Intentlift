@@ -48,13 +48,14 @@ TypeCheck 是 Replay 前的确定性合法性检查，不是新的证明对象�
 运行记录必须区分：
 
 ```text
-main_status          = SCRC_CERTIFIED | NO_CLOSURE | GATE2_FAILED | ...
-typecheck_status     = PASS | FAIL
+main_status          = SCRC_CERTIFIED | NO_CLOSURE | GATE2_FAILED
+typecheck_status     = NOT_RUN | PASS | FAIL
 j_necessity_status   = PROVED | NOT_PROVED | INCONCLUSIVE
 ```
 
 `TypeCheck=FAIL` 使当前 artifact 失败。masked-J hard close 且 TypeCheck 通过，只表示
-`J_NECESSARY` 未证明，不自动改变 `main_status`。
+`J_NECESSARY` 未证明，不自动改变 `main_status`。provider、compiler、device 等基础设施异常单独
+抛出并保存 partial evidence，不能伪装成上述任一主认证状态。
 
 ## 系统改进边界
 
