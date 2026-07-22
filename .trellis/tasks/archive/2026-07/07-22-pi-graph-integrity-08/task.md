@@ -1,8 +1,10 @@
 # Pi Graph Integrity 08：闭合 realization 外键合同并恢复单一 Canary
 
-> 状态：进行中
+> 状态：已结束（π graph 外键合同已闭合；v5 合法 Replay 暴露 address base/lane 表达缺口）
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
+> 归档原因：Task08 已让 fresh Lift artifact 通过 parser 并进入 Replay/Gate1；剩余失败满足预先
+> 冻结的最小 capacity escalation gate，转入 Task09，禁止在 v5 内重试或追加 prompt patch
 
 ## 为什么这是独立任务
 

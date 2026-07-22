@@ -5,10 +5,11 @@ Trellis CLI、自动 session 或 workflow phase。
 
 当前活动工作项：
 
-- [Pi Graph Integrity 08：闭合 realization 外键合同并恢复单一 Canary](07-22-pi-graph-integrity-08/task.md)
+- [Address Realization 09：区分 Program Base 与 Lane Address](07-22-address-realization-09/task.md)
 
 最近完成：
 
+- [Pi Graph Integrity 08：闭合 graph 外键，v5 暴露 address base/lane 缺口](archive/2026-07/07-22-pi-graph-integrity-08/task.md)
 - [Semantic/Realization Residual 07：完成 J/C/π 所有权回收，v4 暴露 graph 外键歧义](archive/2026-07/07-22-pi-realization-topology-07/task.md)
 - [Lift Wire / Parser Isomorphism 06：wire/parser 闭合，v3 暴露 pi topology 缺口](archive/2026-07/07-22-lift-wire-parser-isomorphism-06/task.md)
 - [Formal Batch V2 05：protocol-v2 recovery canary 失败并完整留证](archive/2026-07/07-22-formal-batch-v2-05/task.md)
