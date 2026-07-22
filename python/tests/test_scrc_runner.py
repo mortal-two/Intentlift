@@ -391,8 +391,11 @@ def test_source_compile_failure_is_not_reported_as_no_closure() -> None:
         _Gate1Factory([_gate1_result(closed=False, compile_failed=True)]),
         _Gate2(),
     )
-    with pytest.raises(SCRCInfrastructureError, match="source compilation"):
+    with pytest.raises(SCRCInfrastructureError, match="source compilation") as raised:
         runner.run(_request())
+    assert raised.value.evidence["formal_round"] == 1
+    assert raised.value.evidence["gate1"]["status"] == "compile_failed"
+    assert raised.value.evidence["artifact"]["schema"]
 
 
 def test_gate1_factory_cannot_reuse_one_replay_session_across_rounds() -> None:

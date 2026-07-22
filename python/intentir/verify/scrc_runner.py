@@ -36,6 +36,15 @@ class FeedbackKind(str, Enum):
 class SCRCInfrastructureError(RuntimeError):
     """An adapter/environment failure, never relabeled as a candidate failure."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.evidence = dict(evidence or {})
+        super().__init__(message)
+
 
 class CandidateLiftError(RuntimeError):
     """One model output was not a complete parseable artifact; relift is allowed."""
@@ -87,7 +96,8 @@ class HarnessBindingInstance:
     def validate_artifact(self, artifact: Gate1Artifact) -> None:
         if artifact.c.values != self.values:
             raise SCRCInfrastructureError(
-                "Lift artifact C differs from the Harness-provided c0"
+                "Lift artifact C differs from the Harness-provided c0",
+                evidence={"artifact": artifact.to_json()},
             )
 
 
@@ -391,7 +401,13 @@ class SCRCGateRunner:
                     replay_physical_calls += arm.generation.attempts
             if gate1.status is Gate1Status.COMPILE_FAILED:
                 raise SCRCInfrastructureError(
-                    "Gate1 source compilation failed; it is not a closure verdict"
+                    "Gate1 source compilation failed; it is not a closure verdict",
+                    evidence={
+                        "formal_round": formal_rounds,
+                        "artifact": artifact.to_json(),
+                        "typecheck": report.to_json(),
+                        "gate1": gate1.to_json(),
+                    },
                 )
             if gate1.status is not Gate1Status.REPLAY_CLOSED:
                 feedback = self._gate1_feedback(
@@ -413,7 +429,13 @@ class SCRCGateRunner:
 
             if gate1.normal.generation is None:
                 raise SCRCInfrastructureError(
-                    "Gate1 reported closure without the exact Replay generation"
+                    "Gate1 reported closure without the exact Replay generation",
+                    evidence={
+                        "formal_round": formal_rounds,
+                        "artifact": artifact.to_json(),
+                        "typecheck": report.to_json(),
+                        "gate1": gate1.to_json(),
+                    },
                 )
 
             attempts.append(

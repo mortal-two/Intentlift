@@ -4,7 +4,11 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
+import torch
+
 from direct_fixtures import make_copy_artifact
+from intentir.verify.gate1.compiler import TritonCompiler
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +28,8 @@ def test_canary_catalog_is_small_ordered_and_uses_real_harness_coordinates() -> 
     )
     request, mapping = canary.prepare_request(canary.CANARIES["masked_copy"])
     assert request.binding.values == {"c0": 1024}
+    assert request.binding.gate1_case.arguments["p0"].dtype == "float32"
+    assert request.binding.gate1_case.arguments["p2"].dtype == "int32"
     assert mapping["BLOCK_SIZE"] == "c0"
     code, _origin = request.source.gate_source.read_code()
     assert "def scrc_k0(p0, p1, p2, c0" in code
@@ -55,3 +61,16 @@ def test_run_directories_use_plain_monotonic_numbers(monkeypatch, tmp_path) -> N
     second = canary._next_run_dir(spec)
     assert first.name == "run-001"
     assert second.name == "run-002"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires Triton CUDA")
+def test_exact_canary_source_harness_reaches_real_ttir() -> None:
+    request, _mapping = canary.prepare_request(
+        canary.CANARIES["exact_vector_add"]
+    )
+    result = TritonCompiler(timeout=240).compile(
+        request.source.gate_source,
+        request.binding.gate1_case,
+    )
+    assert result.ok, result.diagnostic
+    assert result.ttir

@@ -51,6 +51,25 @@ INFRASTRUCTURE_FAILED
 - masked-J 默认作为独立诊断；其结果不改变 `main_status`。
 - 运行目录使用普通顺序编号 `run-001`、`run-002`；不增加 hash/commitment/epoch/freeze 有效性门。
 
+## 执行记录
+
+### `exact_vector_add / run-001`
+
+- 真实 `gpt-5.6-sol/xhigh` Lift 完成一次物理调用，并已进入 TypeCheck 后的 Gate1 Source compile；
+- terminal：`INFRASTRUCTURE_FAILED`，没有形成 `NO_CLOSURE` 或 Gate2 结论；
+- 根因：canary Harness 把 canonical dtype `f32/i32` 直接交给 Triton compile worker；该 worker 的
+  runtime argument spelling 要求 `float32/int32`，因此 Source 在 TTIR 之前失败；
+- 同时发现基础设施异常路径只保存 failure 摘要，未保存内存中已有的 Lift artifact/response。
+
+已在结束 run-001 后做两项通用修正：
+
+1. canary Harness 在机械边界显式映射 canonical dtype 到 runtime dtype，并新增真实 CUDA/TTIR 回归；
+2. `SCRCInfrastructureError` 携带普通 partial evidence，CLI 在异常时保存已有 Lift artifact、receipt、
+   response 与 Gate1 diagnostic；这些记录不改变认证规则。
+
+修正后的 canary/runner 定向测试：`15 passed`。下一次运行从新的 `run-002` 开始，不覆盖或重判
+run-001。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

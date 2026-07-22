@@ -191,13 +191,24 @@ CANARIES: dict[str, CanarySpec] = {
 
 
 def _runtime_argument(argument: SCRCCompilerArgument) -> RuntimeArgument:
+    runtime_dtype = {
+        "f16": "float16",
+        "bf16": "bfloat16",
+        "f32": "float32",
+        "f64": "float64",
+        "i1": "bool",
+        "i8": "int8",
+        "i16": "int16",
+        "i32": "int32",
+        "i64": "int64",
+    }.get(argument.dtype, argument.dtype)
     if argument.kind == "tensor":
-        return RuntimeArgument.tensor(argument.shape, argument.dtype)
+        return RuntimeArgument.tensor(argument.shape, runtime_dtype)
     if argument.kind == "scalar":
         assert argument.value is not None
-        return RuntimeArgument.scalar(argument.value, argument.dtype)
+        return RuntimeArgument.scalar(argument.value, runtime_dtype)
     if argument.kind == "none":
-        return RuntimeArgument.none(argument.dtype)
+        return RuntimeArgument.none(runtime_dtype)
     raise ValueError("Triton canaries do not support opaque runtime arguments")
 
 
@@ -399,6 +410,39 @@ def _write_json(path: Path, value: Any) -> None:
     )
 
 
+def _save_lift_records_on_failure(
+    run_dir: Path,
+    lift: ResponsesSCRCLiftAdapter,
+) -> None:
+    for index, record in enumerate(lift.records, start=1):
+        call_dir = run_dir / f"lift-call-{index:02d}"
+        call_dir.mkdir(exist_ok=True)
+        if record.extraction is None:
+            (call_dir / "rejection.txt").write_text(
+                (record.diagnostic or "unknown Lift rejection") + "\n",
+                encoding="utf-8",
+            )
+            continue
+        extraction = record.extraction
+        _write_json(call_dir / "artifact.json", extraction.artifact.to_json())
+        provenance = extraction.provenance
+        _write_json(
+            call_dir / "receipt.json",
+            {
+                "model": provenance.model,
+                "response_model": provenance.response_model,
+                "response_id": provenance.response_id,
+                "usage": dict(provenance.usage),
+                "attempts": provenance.attempts,
+                "elapsed_ms": provenance.elapsed_ms,
+            },
+        )
+        (call_dir / "response.txt").write_text(
+            provenance.response_text,
+            encoding="utf-8",
+        )
+
+
 def _save_report(
     run_dir: Path,
     spec: CanarySpec,
@@ -529,6 +573,10 @@ def run_canary(
     try:
         report = runner.run(request)
     except Exception as exc:
+        _save_lift_records_on_failure(run_dir, lift)
+        evidence = getattr(exc, "evidence", None)
+        if isinstance(evidence, Mapping) and evidence:
+            _write_json(run_dir / "partial_evidence.json", dict(evidence))
         _write_json(
             run_dir / "failure.json",
             {
