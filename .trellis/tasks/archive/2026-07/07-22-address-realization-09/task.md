@@ -1,8 +1,10 @@
 # Address Realization 09：区分 Program Base 与 Lane Address
 
-> 状态：进行中
+> 状态：已结束（address_base/lane 合同已实现并被真实 Lift 生成；v6 暴露 envelope/J-boundary 缺口）
 > 优先级：P0
 > 流程：普通 Markdown 工作项；只借用 Trellis 文件布局，不运行 Trellis workflow
+> 归档原因：两个 address tags 的能力目标已完成；唯一 v6 调用耗尽并完整留证，后续问题属于
+> 通用 Lift root/boundary 生成完整性，转入 Task10，不在 v6 内 repair 或重试
 
 ## 为什么这是独立任务
 
