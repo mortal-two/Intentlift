@@ -16,6 +16,7 @@ from intentir.extraction.lifters.scrc import (
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 from intentir.verify.gate1.model import Gate1Artifact, ScheduleSlot, SchemaError
+from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
     RealizationWitness,
@@ -355,6 +356,38 @@ def test_address_mechanisms_survive_replay_without_semantic_payload() -> None:
     encoded = json.dumps(view["pi"], sort_keys=True)
     for forbidden in ("formula", "dtype", "shape", "predicate", "tl.load"):
         assert forbidden not in encoded
+
+
+def test_address_mechanism_deletion_or_swap_changes_witness_identity() -> None:
+    staged = make_reduce_artifact()
+    staged.pi = _address_pi(staged=True)
+    flat = make_reduce_artifact()
+    flat.pi = _address_pi(staged=False)
+    swapped = make_reduce_artifact()
+    swapped_payload = _address_pi(staged=True).to_json()
+    swapped_payload["instances"][1]["mechanism"] = "address_lane"
+    swapped_payload["instances"][2]["mechanism"] = "address_base"
+    swapped.pi = RealizationWitness.from_json(swapped_payload)
+
+    assert len(
+        {
+            canonical_artifact_digest(staged),
+            canonical_artifact_digest(flat),
+            canonical_artifact_digest(swapped),
+        }
+    ) == 3
+
+
+def test_address_pi_is_unchanged_by_masked_j_and_cannot_supply_value_dag() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi = _address_pi(staged=True)
+    normal = build_normal_rewriter_view(artifact)
+    masked = build_masked_rewriter_view(artifact)
+    assert normal["pi"] == masked["pi"]
+    assert normal["j"] != masked["j"]
+    encoded = json.dumps(masked["pi"], sort_keys=True)
+    for semantic_atom in ("map_binary", "reduce", "sum", "mul", "output_mappings"):
+        assert semantic_atom not in encoded
 
 
 def test_pi_repeated_anchor_and_runtime_routes_survive_replay_packet() -> None:

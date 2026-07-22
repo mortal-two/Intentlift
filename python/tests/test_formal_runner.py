@@ -554,6 +554,12 @@ def test_protocol_v5_rejects_wrong_attempt_before_provider_or_ledger(
         raise AssertionError("provider resolution happened before lineage validation")
 
     monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    monkeypatch.setattr(formal_runner, "verify_lift_wire_lock", lambda _lock: None)
+    monkeypatch.setattr(
+        formal_runner,
+        "_validate_preflight",
+        lambda *_args, **_kwargs: {"schema": "offline-test"},
+    )
     output = tmp_path / "formal"
     with pytest.raises(FormalRunError, match="explicit attempt classification"):
         formal_runner.run_formal_gate1_case(
@@ -928,6 +934,9 @@ def test_committed_protocol_v5_canary_reaches_replay_then_exposes_address_gap() 
     ]
     assert len(artifact.pi.instances) == 21
     assert len(artifact.pi.routes) == 31
+    assert not {
+        "address_base", "address_lane"
+    } & {item["mechanism"] for item in artifact.pi.instances}
     p3_instances = [
         item["id"] for item in artifact.pi.instances
         if item["semantic_ref"] == "p3"

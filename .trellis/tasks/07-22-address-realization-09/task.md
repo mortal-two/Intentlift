@@ -134,3 +134,11 @@ Lift/Replay prompt，并用 source-neutral fixtures 验证 base→lane→transfe
 
 下一步进入阶段 2：补 address-specific masked-J/graph mutation、历史 evidence SHA 与 runner lineage
 测试，随后运行全量回归；在全绿前不冻结 v6。
+
+阶段 2 的离线 conformance 已补齐：删除 base stage、交换 base/lane tag 都改变 canonical witness
+identity；normal/masked-J packet 的 address π 完全相同，且不含 value DAG、predicate、logical index
+或 output mapping。v5 committed artifact 被明确断言不含新 tag，避免用新 parser 重新认证历史
+proposal。相关 targeted regression 为 `152 passed`，在线 LLM 调用新增为 0。
+
+下一步切换 protocol-v6 identity并精确绑定 v5 `gate1_failed` predecessor；v6 manifest 除 Lift wire
+外必须与 v5 相同。完成该 epoch 切换后再跑全量回归和 0-LLM preflight。
