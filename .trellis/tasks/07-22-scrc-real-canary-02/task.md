@@ -236,6 +236,31 @@ RefEval profile 为 `logical_domain_reduction_padding_v1`；Source–Replay 最�
 Replay–J 均为 `0.0010986328125`，三边均在固定 external Q 的 f32 reduction 容差内通过。下一步必须
 从新的 `masked_row_square_sum/run-002` 完整重跑，才能形成新的主认证结论。
 
+### `masked_row_square_sum / run-002`
+
+- terminal：`NO_CLOSURE`；3 次 Lift 均直接产生完整 artifact，dependent TypeCheck 全部通过，形成
+  3 个正式 Gate1 round；Gate2、masked-J 与三方 execution 均未运行；
+- 第一轮 J 正确表达 `[2,x0] -> square -> sum(axis=1) -> [2]`，但 Replay 把 row domain 实现成
+  `tl.arange(0,2)`，同时向量化两行，再在二维 tensor 的 axis 1 上 reduction。Gate1 正确检出
+  缺少 `tt.get_program_id`、额外 broadcast/expand/range、reduction axis 0→1，以及 address、mask、
+  store dataflow 全面不闭合；
+- 第二、三轮 J 仍正确，π 也分别把 row domain 作为独立 stage 接入 base/store 路径；但两个 fresh
+  Replay 都先执行 `i = c0`，再把普通 local `i` 传给 `tl.arange`。Triton 不保留这种 Python alias
+  的 `tl.constexpr` 身份，两个 Replay 均在 TTIR 前以
+  `arange's arguments must be of type tl.constexpr` 编译失败；
+- 真实预算为 3 次 Lift、3 次 TypeCheck、3 次 normal Replay 与 3 个正式 Gate1 round；第一轮
+  Lift/Replay 分别约 275.1s/23.9s，第二轮约 237.4s/61.2s，第三轮约 342.7s/54.5s。没有 provider
+  隐藏重试，也没有把 Gate1 diff 交给 Replay。
+
+该结果不是 RefEval 回归：本次根本没有进入 Gate2。结束 run-002 后收紧已有关系而不新增字段或
+mechanism enum：program region 中“J domain `realize` 的 scalar path 进入 `address_base`”明确表示
+program-coordinate stage，“domain/C path 进入 `address_lane`”表示 lane stage；Triton 的固定
+source-neutral `U_f` 将前者按声明顺序映射到 `tl.program_id(axis)`。同一 `U_f` 明确要求被
+compile-time-only API 消费的 `c*` 必须直接使用，不能先 alias 成普通 Python local；单个锚定
+`c*` 的 `realize` 由参数 binding 与直接 routed use 满足。`IntentFunction.reduce.axes` 保持 logical
+axis，匹配的 `ReductionBoundary.tile_axis` 明确作为物理前端 reduction axis。下一次从新的
+`run-003` 开始。
+
 ## 实施内容
 
 ### 1. 可复现真实入口

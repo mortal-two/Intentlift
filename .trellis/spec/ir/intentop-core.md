@@ -40,6 +40,11 @@ ResultRelation(output,
                | allowed_result(relation))
 ```
 
+`IntentFunction.reduce.attrs.axes` 始终是 whole-tensor logical axes；与该节点对应的
+`ReductionBoundary.tile_axis` 是每个 program 内物理 tile 的 frontend reduction axis。Replay 在
+公开前端 reduction call 使用后者，RefEval 用前者解释 J 的逻辑函数。`tile_axis` 不是 tile extent、
+C valuation 或任意公式；identity 与 masked contribution 仍由同一个 B reduction contract 约束。
+
 这些关系必须由 RefEval、comparator 或 production backend 实际消费。缺少必要 boundary、consumer
 不支持、关系参数非法或 authorization 不完整时必须 fail closed，不能退回 case-specific Python
 oracle 或旁路 metadata。

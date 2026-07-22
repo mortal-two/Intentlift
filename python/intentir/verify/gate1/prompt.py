@@ -18,9 +18,29 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v1",
+        "context_policy": "public_frontend_context_v2",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
+        "compile_entry_contract": (
+            "Define exactly one @triton.jit scrc_k0 with J.signature handles "
+            "followed by the anonymous MaskC(C) slots. Keep every C constexpr "
+            "slot annotated tl.constexpr. Triton compile-time-only APIs do not "
+            "preserve constexpr through ordinary Python aliases: pass a c* handle "
+            "directly to tl.arange and any other compile-time-only API, never copy "
+            "it to a local first. A single realize instance anchored to c* is "
+            "satisfied by the parameter binding and its direct routed use; do not "
+            "emit an identity assignment merely to materialize it. J reduce.axes "
+            "are whole-tensor logical axes, while each matching "
+            "J.boundary.reductions.tile_axis is the physical frontend reduction "
+            "axis and must be used at the public reduction call. Region "
+            "placement='program' alone never authorizes "
+            "tl.program_id. A domain-anchored realize stage in a program region "
+            "whose scalar dependency path enters address_base is a program "
+            "coordinate; map declaration-ordered stages of that form to "
+            "tl.program_id(axis). A domain/C stage whose path enters address_lane "
+            "is lane-varying and may use tl.arange. Do not vectorize a program "
+            "coordinate or turn a lane coordinate into tl.program_id."
+        ),
     },
     "cute": {
         "context_policy": "public_frontend_context_v1",

@@ -69,6 +69,16 @@ diff 施工。
 Replay 才能生成对应 stage；不得按常见 kernel 模板从 placement、grid 惯例或 C 猜出额外 grid
 offset、整数乘加或 affine address。
 
+现有关系的机械解释是：锚定 J domain、位于 program region 且 scalar dependency path 进入
+`address_base` 的 `realize` stage 是 program coordinate；进入 `address_lane` 的 domain/C path 是
+lane coordinate。Triton `U_f` 按声明顺序把前者映射为 `tl.program_id(axis)`，后者才使用
+`tl.arange` 等 lane realization；placement 单独出现时两者都不能推断。Triton 的 `tl.arange` 等
+compile-time-only API 必须直接读取仍带 `tl.constexpr` 注解的匿名 `c*` 参数，不得先复制到普通
+Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 binding 和直接 routed use 即可
+满足，不要求恒等 alias。`IntentFunction.reduce.axes` 是 logical axes；匹配的
+`J.boundary.reductions.tile_axis` 才是 Triton reduction call 使用的物理 tile axis。这里都是固定、
+source-neutral 的前端合同，不是 per-kernel hint。
+
 ## Gate1 失败与 relift
 
 Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读取 Source、上一轮完整

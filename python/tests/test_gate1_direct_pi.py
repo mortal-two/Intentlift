@@ -464,6 +464,24 @@ def test_replay_packet_is_source_isolated() -> None:
     assert_source_isolated_payload(payload)
 
 
+def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    context = payload["u_f"]
+    contract = context["compile_entry_contract"]
+
+    assert context["context_policy"] == "public_frontend_context_v2"
+    assert "pass a c* handle directly to tl.arange" in contract
+    assert "never copy it to a local first" in contract
+    assert "satisfied by the parameter binding" in contract
+    assert "J.boundary.reductions.tile_axis" in contract
+    assert "physical frontend reduction axis" in contract
+    assert "placement='program' alone never authorizes tl.program_id" in contract
+    assert "path enters address_base" in contract
+    assert "path enters address_lane" in contract
+    assert "map declaration-ordered stages" in contract
+    assert_source_isolated_payload(payload)
+
+
 @pytest.mark.parametrize(
     ("path", "key"),
     [
@@ -577,6 +595,10 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert mechanism_grammar in replay_instructions
     assert "routing p0 to i1 is invalid" in grammar
     assert "placement='program' only scopes an instance" in mechanism_grammar
+    assert "does not require an identity assignment" in mechanism_grammar
+    assert "corresponding J domain" in mechanism_grammar
+    assert "path enters address_base" in mechanism_grammar
+    assert "entering address_lane is lane-varying" in mechanism_grammar
     assert "must not invent program_id" in mechanism_grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"

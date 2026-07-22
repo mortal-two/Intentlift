@@ -61,6 +61,17 @@ Lift 必须用一个独立 `realize` instance 及 routes 记录；无需新增 m
 instance 时，Replay 不得因 placement、常见前端写法或 C 自行发明 program coordinate、乘加或
 affine address stage。
 
+该 generic relation 的机械区分是：program region 中锚定相应 J domain 的 `realize` instance，其
+scalar dependency path 先进入 `address_base` 再进入 transfer，表示 program-coordinate stage；进入
+`address_lane` 的 domain/C dependency path 表示 lane-varying stage。Replay 必须保持 base/lane
+区分，`U_f` 再把它映射到公共前端 API。该规则不在 π 中保存 `program_id`、axis 公式或前端文本，
+也不增加 mechanism enum。
+
+单个直接锚定 J signature handle 或 C slot 的 `realize` instance，可以由对应参数 binding 及其直接
+routed use 满足，不要求为了“显式 materialize”增加恒等赋值。尤其 `c*` 为 constexpr 时，前端
+合同可以要求直接 use 以保留编译期类型。若同一 handle 有多个 instance，它们仍必须对应不同的
+routed use-site/stage，不能据此全部折叠。
+
 ## Authorization 与 parametricity
 
 ```text

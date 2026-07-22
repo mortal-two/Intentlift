@@ -308,6 +308,17 @@ or the route must be a validated representation-only path.
 和 routes 表达该独立阶段；不需要扩充 mechanism enum。若没有这个独立 instance，Replay 不得仅
 根据 placement、常见 kernel 模板或 C 自行生成 program coordinate、乘加或 affine address。
 
+该 generic relation 必须有机械可解释的 base/lane 区分：在 program region 中锚定对应 J domain
+的 `realize` instance，若其 scalar dependency path 先进入 `address_base` 再进入 transfer，则表示
+program-coordinate stage；若 domain/C dependency path 进入 `address_lane`，则表示 lane-varying
+stage。Replay 保持该拓扑区分，公共前端上下文 (U_f) 再决定使用何种公开 API。π 本身仍不保存
+`program_id`、axis 公式、前端文本或新的 mechanism tag。
+
+一个直接锚定 J signature handle 或 C slot 的单独 `realize` instance，可以由对应参数 binding 与
+direct routed use 满足，不要求额外的 identity assignment。若同一 handle 声明多个 instance，
+它们仍表示多个 compiler-visible use-site/stage，不能折叠。这个区分对 constexpr 尤其重要：公共
+前端合同可以要求直接使用参数来保留编译期类型，而不是为了形式上的 materialization 破坏类型。
+
 ### 4.4 对 semantic labels 参数化
 
 必须满足：
