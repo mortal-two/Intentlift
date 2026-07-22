@@ -1,0 +1,140 @@
+{
+  "artifacts": {
+    "artifact_path": "lift/artifact.json",
+    "artifact_sha256": "611ef04b307b499a0c8e35db34b71e06f91b8b88eebdf4d557d15b7727e51794",
+    "c_sha256": "195c83a44fd4b4242aa4378edfbaa5b1b8dfd6f57f4121badf9c009dc8b81bb8",
+    "canonical_gate1_sha256": "a3ec791ee55ffbac51aac2dc68fe06d7cb45a85a3a2b497e2bbfb77b931ff68e",
+    "interface_sha256": "78c5d50f825bba5339e850fc9ae7c0a775bdaba388f5c6bf14c8fcddd4cd16b8",
+    "j_sha256": "178565783c7ad55577b5b72d414e61366e0aa327b6d79461c20c04b4cde1986c",
+    "pi_sha256": "3cf37fca161995c547d5f05392c6faddb9d9617210c82048b36f7ddeb6a82713",
+    "privileged_binding_path": "lift/privileged_binding.json"
+  },
+  "batch_id": "tianchenir-formal-real-kernels-protocol-v5-2026-07-22",
+  "call_budget": {
+    "lift": 1,
+    "masked_j": 1,
+    "normal_replay": 1
+  },
+  "calls": [
+    {
+      "attempts": 1,
+      "completed_at": "2026-07-22T00:00:15.794469+00:00",
+      "elapsed_ms": 333183.1642212346,
+      "kind": "lift",
+      "ordinal": 1,
+      "prompt_sha256": "aad903c035c8e053dc1b65fbdbac817fa1497764758ff674c16e1d1324c1ce71",
+      "raw_response_path": "calls/01_lift/response.raw.json",
+      "raw_response_sha256": "11542e23670c11591fce517b2261cb06d8fbd79e1530e023bd4b3bf731b23fa1",
+      "request_path": "calls/01_lift/request.json",
+      "request_sha256": "e3a3d120289bc35f0b9b465ceac8aa3523b4b7880eaf87fc98bee1a33a0038b6",
+      "requested_at": "2026-07-21T23:54:42.581880+00:00",
+      "response_id": "resp_08b0b449cab64dd9016a6006c3de888194b6a27a82f4e88e1b",
+      "response_model": "gpt-5.6-sol",
+      "response_path": "calls/01_lift/response.txt",
+      "response_sha256": "c22ce3c3ef585ae8d635ea8ef8bfee74a13ec8d6fa9c65ace93abdbd946cffac",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 10038,
+        "output_tokens": 18251,
+        "total_tokens": 28289
+      }
+    },
+    {
+      "attempts": 1,
+      "completed_at": "2026-07-22T00:00:42.861118+00:00",
+      "elapsed_ms": 23256.61603314802,
+      "kind": "normal_replay",
+      "ordinal": 2,
+      "packet_sha256": "5d55db034e99258185c7e252d60ea36b9d9b7ec8a9010674c9ad3eb12e9b5ee3",
+      "prompt_sha256": "1ef113a8bcf103d88c95110b17eed8e0feb7eca35050ecc252d8bf7345ec8d0e",
+      "raw_response_path": "calls/02_normal_replay/response.raw.json",
+      "raw_response_sha256": "30594fc74a0dc8d24afea4e6bab0f304ab8642926617e5ec1f1b5e852af3138f",
+      "replay_code_path": "calls/02_normal_replay/replay.py",
+      "replay_code_sha256": "95951e292cc76b4281e97b6999ef3b616ae2b660bb3107b72327b043ebdd9c4f",
+      "replay_entry_function": null,
+      "replay_function": "scrc_k0",
+      "request_path": "calls/02_normal_replay/request.json",
+      "request_sha256": "0ad5c9d51b07f02d0ecee3f91cfe8ebb7ce828352d60a057e3eaac2b455870e0",
+      "requested_at": "2026-07-22T00:00:19.594215+00:00",
+      "response_id": "resp_067f4b9cf7ca1d37016a600814a5388195887e4919cbd22113",
+      "response_model": "gpt-5.6-sol",
+      "response_path": "calls/02_normal_replay/response.txt",
+      "response_sha256": "d22947fdce7179e27732ea18666a2db2186530d6b9d311813a62c1d944f10c05",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 3589,
+        "output_tokens": 1150,
+        "total_tokens": 4739
+      }
+    }
+  ],
+  "case_id": "liger_swiglu_forward",
+  "gate1": {
+    "artifact_sha256": "a3ec791ee55ffbac51aac2dc68fe06d7cb45a85a3a2b497e2bbfb77b931ff68e",
+    "masked_j_calls": 0,
+    "normal_calls": 1,
+    "passed": false,
+    "protocol": "llm_direct_pi_gate1_level2_v1",
+    "receipt_path": "gate1/receipt.json",
+    "receipt_sha256": "e77401db2db33db8b4084f0cc8aa3eb5380d896c89fcd321eeb32c89ef4e3583",
+    "status": "no_closure"
+  },
+  "history": [
+    {
+      "at": "2026-07-21T23:54:42.571561+00:00",
+      "status": "prepared"
+    },
+    {
+      "at": "2026-07-21T23:54:42.581940+00:00",
+      "status": "lift_requested"
+    },
+    {
+      "at": "2026-07-22T00:00:15.800594+00:00",
+      "status": "lift_closed"
+    },
+    {
+      "at": "2026-07-22T00:00:19.594314+00:00",
+      "status": "normal_replay_requested"
+    },
+    {
+      "at": "2026-07-22T00:00:46.337701+00:00",
+      "status": "gate1_failed"
+    }
+  ],
+  "lineage": {
+    "attempt_class": "protocol_v5_recovery",
+    "predecessor": {
+      "attempt_class": "protocol_v4_recovery",
+      "batch_id": "tianchenir-formal-real-kernels-protocol-v4-2026-07-22",
+      "case_id": "liger_swiglu_forward",
+      "manifest_digest": "0da031b95049acf5884e1adb60126253ab5441d6f7de142a0373e2659ab98b18",
+      "manifest_file_sha256": "3d8be701069c404cce043779ca953113ec3c8cf2655dd1df6140430cebe800a9",
+      "receipt_sha256": "98a3efbc9b9027e2480e68347e053ea62ce7014b6f34db95b707fd39364573d2",
+      "schema": "intentir.formal-real-llm-case.v4",
+      "status": "lift_failed"
+    }
+  },
+  "manifest_digest": "bf6716ba75c0087a506031101a5628f30c06c29d08dfdaf60ef5a0bfcea5ceeb",
+  "manifest_file_sha256": "98056f9035d839e5d51f8b209accf0806606b7fbab2bca283a302c50265716cf",
+  "preflight": {
+    "schema": "intentir.real-llm-batch-preflight.v5",
+    "sha256": "f0c93e6230914a9f750173ef6853315b9a1df9c212c4592e0a258a6f48222b6e"
+  },
+  "provider": {
+    "model": "gpt-5.6-sol",
+    "name": "gpt-5.6-sol",
+    "reasoning_effort": "xhigh",
+    "wire_api": "responses"
+  },
+  "schema": "intentir.formal-real-llm-case.v5",
+  "source": {
+    "file_sha256": "b43271c472a07e6be8cfb1abfc7dfe89d6f7230f595e97e59e47fc2b368a496a",
+    "frontend": "triton",
+    "path": "src/liger_kernel/ops/swiglu.py",
+    "repository": "liger_kernel",
+    "resolved_path_sha256": "809d02a022cd4fc49f47e1c4eab99f22648d6fa25f751602eae9e8f569a2dd16",
+    "symbol": "_swiglu_forward_kernel",
+    "symbol_sha256": "82f326387a1114e456174254de5042ad6d5be3666caeffce1c166b902a6c2337"
+  },
+  "status": "gate1_failed"
+}

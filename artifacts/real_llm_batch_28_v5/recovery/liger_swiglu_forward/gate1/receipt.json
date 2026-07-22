@@ -1,0 +1,3014 @@
+{
+  "artifact_digest": "a3ec791ee55ffbac51aac2dc68fe06d7cb45a85a3a2b497e2bbfb77b931ff68e",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "normal": {
+    "comparison": {
+      "active_categories": [
+        "interface",
+        "op_multiset",
+        "dataflow",
+        "predicate_effect"
+      ],
+      "active_weight": 0.8,
+      "components": [
+        {
+          "applicable": true,
+          "category": "interface",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": true,
+          "category": "op_multiset",
+          "differences": [
+            {
+              "actual_count": 1,
+              "category": "op_multiset",
+              "expected_count": 0,
+              "item": "arith.addi",
+              "kind": "unexpected",
+              "message": "op_multiset \u591a\u51fa \"arith.addi\"\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "op_multiset",
+              "expected_count": 2,
+              "item": "arith.extsi",
+              "kind": "missing",
+              "message": "op_multiset \u7f3a\u5c11 \"arith.extsi\"\uff1a\u6e90=2\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 3,
+              "category": "op_multiset",
+              "expected_count": 6,
+              "item": "tt.addptr",
+              "kind": "missing",
+              "message": "op_multiset \u7f3a\u5c11 \"tt.addptr\"\uff1a\u6e90=6\uff0c\u91cd\u653e=3"
+            },
+            {
+              "actual_count": 4,
+              "category": "op_multiset",
+              "expected_count": 3,
+              "item": "tt.splat",
+              "kind": "unexpected",
+              "message": "op_multiset \u591a\u51fa \"tt.splat\"\uff1a\u6e90=3\uff0c\u91cd\u653e=4"
+            }
+          ],
+          "hard": true,
+          "passed": false,
+          "score": 0.78125
+        },
+        {
+          "applicable": true,
+          "category": "dataflow",
+          "differences": [
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arg[0]:!tt.ptr<f16>",
+                "tt.addptr[ff8fe801829c9c43f4f9]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[0]:!tt.ptr<f16>\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arg[0]:!tt.ptr<f16>",
+                "tt.splat[a0ad8fe7757a388eb544]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arg[0]:!tt.ptr<f16>\",\"tt.splat[a0ad8fe7757a388eb544]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arg[1]:!tt.ptr<f16>",
+                "tt.addptr[2b0403843cdd241ec860]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[1]:!tt.ptr<f16>\",\"tt.addptr[2b0403843cdd241ec860]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arg[1]:!tt.ptr<f16>",
+                "tt.splat[eb3d1ff8fc69871d16d9]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arg[1]:!tt.ptr<f16>\",\"tt.splat[eb3d1ff8fc69871d16d9]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arg[2]:!tt.ptr<f16>",
+                "tt.addptr[4b403a7c543af06f6992]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[2]:!tt.ptr<f16>\",\"tt.addptr[4b403a7c543af06f6992]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arg[2]:!tt.ptr<f16>",
+                "tt.splat[5672767799111f4bc048]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arg[2]:!tt.ptr<f16>\",\"tt.splat[5672767799111f4bc048]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arg[3]:i32",
+                "arith.extsi[034725eb63c1b0031c8c]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[3]:i32\",\"arith.extsi[034725eb63c1b0031c8c]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arg[3]:i32",
+                "arith.muli[36c50a27039e7e13481e]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arg[3]:i32\",\"arith.muli[36c50a27039e7e13481e]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.addf[247d77d1a068013a3f15]",
+                "arith.divf[b78385bb9c609de60da7]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.addf[247d77d1a068013a3f15]\",\"arith.divf[b78385bb9c609de60da7]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.addf[39dfc92618ee8b4e29d5]",
+                "arith.divf[5822566aec1a060533c0]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"arith.divf[5822566aec1a060533c0]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.addi[964af14de1955985ddc9]",
+                "tt.addptr[4754e99353b39773bf41]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[4754e99353b39773bf41]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.addi[964af14de1955985ddc9]",
+                "tt.addptr[4ebcedaebb7040b50385]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[4ebcedaebb7040b50385]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.addi[964af14de1955985ddc9]",
+                "tt.addptr[acc2bcdb3700bc9f4587]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.load[140e2b51e64236b8884e]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.load[3423c93e940e38e673b8]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.load[cccabe13fd52254e362b]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.load[fdeec1aa9a9db85fb5b6]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.store[18a686214fd50cad29b9]",
+                "operand[2]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.cmpi[29cbc20c1caa61732444]",
+                "tt.store[2a111b99bda475dc53c6]",
+                "operand[2]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.constant[111be030622848c7b889]",
+                "arith.addf[247d77d1a068013a3f15]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.addf[247d77d1a068013a3f15]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.constant[111be030622848c7b889]",
+                "arith.addf[39dfc92618ee8b4e29d5]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.constant[111be030622848c7b889]",
+                "arith.divf[5822566aec1a060533c0]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.divf[5822566aec1a060533c0]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.constant[111be030622848c7b889]",
+                "arith.divf[b78385bb9c609de60da7]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.divf[b78385bb9c609de60da7]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.constant[3e850c5cf74f3952aeda]",
+                "tt.load[140e2b51e64236b8884e]",
+                "operand[2]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.constant[3e850c5cf74f3952aeda]",
+                "tt.load[3423c93e940e38e673b8]",
+                "operand[2]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.constant[3e850c5cf74f3952aeda]",
+                "tt.load[cccabe13fd52254e362b]",
+                "operand[2]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.constant[3e850c5cf74f3952aeda]",
+                "tt.load[fdeec1aa9a9db85fb5b6]",
+                "operand[2]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.constant[ea97457efb2ca46385d6]",
+                "arith.subf[bfff2f3b5c75f147cb66]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[ea97457efb2ca46385d6]\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.constant[ea97457efb2ca46385d6]",
+                "arith.subf[c90cf4e8d3bbe48a46b2]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[ea97457efb2ca46385d6]\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.divf[5822566aec1a060533c0]",
+                "arith.mulf[22f080eee42c68f623ae]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.divf[5822566aec1a060533c0]\",\"arith.mulf[22f080eee42c68f623ae]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.divf[b78385bb9c609de60da7]",
+                "arith.mulf[a97df421db0be5f5d50b]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.divf[b78385bb9c609de60da7]\",\"arith.mulf[a97df421db0be5f5d50b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.extf[12b2cd13d855097b0a5e]",
+                "arith.mulf[22f080eee42c68f623ae]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.extf[12b2cd13d855097b0a5e]\",\"arith.mulf[22f080eee42c68f623ae]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.extf[12b2cd13d855097b0a5e]",
+                "arith.subf[bfff2f3b5c75f147cb66]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.extf[12b2cd13d855097b0a5e]\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.extf[e70bc675e2429ec7629c]",
+                "arith.mulf[a97df421db0be5f5d50b]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extf[e70bc675e2429ec7629c]\",\"arith.mulf[a97df421db0be5f5d50b]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.extf[e70bc675e2429ec7629c]",
+                "arith.subf[c90cf4e8d3bbe48a46b2]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extf[e70bc675e2429ec7629c]\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.extsi[034725eb63c1b0031c8c]",
+                "arith.muli[b3d4cecfa402cb57aa58]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extsi[034725eb63c1b0031c8c]\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.extsi[6fbddfcf085dd110f240]",
+                "arith.muli[b3d4cecfa402cb57aa58]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extsi[6fbddfcf085dd110f240]\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.mulf[22f080eee42c68f623ae]",
+                "arith.truncf[854a24b0b3ea92fa3cdf]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.mulf[22f080eee42c68f623ae]\",\"arith.truncf[854a24b0b3ea92fa3cdf]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.mulf[511ffc4effc99a7b3cf7]",
+                "tt.store[2a111b99bda475dc53c6]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.mulf[5818e079f904a3f1dca9]",
+                "tt.store[18a686214fd50cad29b9]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.mulf[5818e079f904a3f1dca9]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.mulf[a97df421db0be5f5d50b]",
+                "arith.truncf[a92f3f5db4a9b1f5063b]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.mulf[a97df421db0be5f5d50b]\",\"arith.truncf[a92f3f5db4a9b1f5063b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.muli[36c50a27039e7e13481e]",
+                "tt.splat[f67fc993d2b0570dbe29]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.muli[36c50a27039e7e13481e]\",\"tt.splat[f67fc993d2b0570dbe29]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.muli[b3d4cecfa402cb57aa58]",
+                "tt.addptr[2b0403843cdd241ec860]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[2b0403843cdd241ec860]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.muli[b3d4cecfa402cb57aa58]",
+                "tt.addptr[4b403a7c543af06f6992]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[4b403a7c543af06f6992]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.muli[b3d4cecfa402cb57aa58]",
+                "tt.addptr[ff8fe801829c9c43f4f9]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.subf[bfff2f3b5c75f147cb66]",
+                "math.exp[2434ba0362d4fca99109]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"math.exp[2434ba0362d4fca99109]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.subf[c90cf4e8d3bbe48a46b2]",
+                "math.exp[83265d8600538d2c2b9b]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"math.exp[83265d8600538d2c2b9b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "arith.truncf[854a24b0b3ea92fa3cdf]",
+                "arith.mulf[511ffc4effc99a7b3cf7]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"arith.truncf[854a24b0b3ea92fa3cdf]\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "arith.truncf[a92f3f5db4a9b1f5063b]",
+                "arith.mulf[5818e079f904a3f1dca9]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.truncf[a92f3f5db4a9b1f5063b]\",\"arith.mulf[5818e079f904a3f1dca9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "math.exp[2434ba0362d4fca99109]",
+                "arith.addf[39dfc92618ee8b4e29d5]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"math.exp[2434ba0362d4fca99109]\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "math.exp[83265d8600538d2c2b9b]",
+                "arith.addf[247d77d1a068013a3f15]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"math.exp[83265d8600538d2c2b9b]\",\"arith.addf[247d77d1a068013a3f15]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[2b0403843cdd241ec860]",
+                "tt.splat[4e8895c34eb4b9161d71]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[2b0403843cdd241ec860]\",\"tt.splat[4e8895c34eb4b9161d71]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.addptr[4754e99353b39773bf41]",
+                "tt.load[fdeec1aa9a9db85fb5b6]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[4754e99353b39773bf41]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[4b403a7c543af06f6992]",
+                "tt.splat[5b90e84ef8019bdc077a]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[4b403a7c543af06f6992]\",\"tt.splat[5b90e84ef8019bdc077a]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.addptr[4ebcedaebb7040b50385]",
+                "tt.store[2a111b99bda475dc53c6]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[4ebcedaebb7040b50385]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[5c39ec606ec8d9cfc136]",
+                "tt.store[18a686214fd50cad29b9]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[75123c689b8df489ff8e]",
+                "tt.load[140e2b51e64236b8884e]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[75123c689b8df489ff8e]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.addptr[acc2bcdb3700bc9f4587]",
+                "tt.load[cccabe13fd52254e362b]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+                "tt.load[3423c93e940e38e673b8]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.addptr[ff8fe801829c9c43f4f9]",
+                "tt.splat[fb099af16a002d2705a3]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"tt.splat[fb099af16a002d2705a3]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.get_program_id[b66173daa46d95e66439]",
+                "arith.extsi[6fbddfcf085dd110f240]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.get_program_id[b66173daa46d95e66439]\",\"arith.extsi[6fbddfcf085dd110f240]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.get_program_id[b66173daa46d95e66439]",
+                "arith.muli[36c50a27039e7e13481e]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.get_program_id[b66173daa46d95e66439]\",\"arith.muli[36c50a27039e7e13481e]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.load[140e2b51e64236b8884e]",
+                "arith.extf[e70bc675e2429ec7629c]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.load[140e2b51e64236b8884e]\",\"arith.extf[e70bc675e2429ec7629c]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.load[3423c93e940e38e673b8]",
+                "arith.mulf[5818e079f904a3f1dca9]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.load[3423c93e940e38e673b8]\",\"arith.mulf[5818e079f904a3f1dca9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.load[cccabe13fd52254e362b]",
+                "arith.extf[12b2cd13d855097b0a5e]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.load[cccabe13fd52254e362b]\",\"arith.extf[12b2cd13d855097b0a5e]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.load[fdeec1aa9a9db85fb5b6]",
+                "arith.mulf[511ffc4effc99a7b3cf7]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.make_range[d1fea77f36a7660b901b]",
+                "arith.addi[964af14de1955985ddc9]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"arith.addi[964af14de1955985ddc9]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.make_range[d1fea77f36a7660b901b]",
+                "tt.addptr[5c39ec606ec8d9cfc136]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.make_range[d1fea77f36a7660b901b]",
+                "tt.addptr[75123c689b8df489ff8e]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[75123c689b8df489ff8e]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.make_range[d1fea77f36a7660b901b]",
+                "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+                "operand[1]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.splat[4e8895c34eb4b9161d71]",
+                "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[4e8895c34eb4b9161d71]\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.splat[5672767799111f4bc048]",
+                "tt.addptr[4ebcedaebb7040b50385]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[5672767799111f4bc048]\",\"tt.addptr[4ebcedaebb7040b50385]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.splat[5b90e84ef8019bdc077a]",
+                "tt.addptr[5c39ec606ec8d9cfc136]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[5b90e84ef8019bdc077a]\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.splat[a0ad8fe7757a388eb544]",
+                "tt.addptr[acc2bcdb3700bc9f4587]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[a0ad8fe7757a388eb544]\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.splat[eb3d1ff8fc69871d16d9]",
+                "tt.addptr[4754e99353b39773bf41]",
+                "operand[0]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[eb3d1ff8fc69871d16d9]\",\"tt.addptr[4754e99353b39773bf41]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 1,
+              "category": "dataflow",
+              "expected_count": 0,
+              "item": [
+                "edge",
+                "tt.splat[f67fc993d2b0570dbe29]",
+                "arith.addi[964af14de1955985ddc9]",
+                "operand[1]"
+              ],
+              "kind": "unexpected",
+              "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[f67fc993d2b0570dbe29]\",\"arith.addi[964af14de1955985ddc9]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+            },
+            {
+              "actual_count": 0,
+              "category": "dataflow",
+              "expected_count": 1,
+              "item": [
+                "edge",
+                "tt.splat[fb099af16a002d2705a3]",
+                "tt.addptr[75123c689b8df489ff8e]",
+                "operand[0]"
+              ],
+              "kind": "missing",
+              "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[fb099af16a002d2705a3]\",\"tt.addptr[75123c689b8df489ff8e]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+            }
+          ],
+          "hard": true,
+          "passed": false,
+          "score": 0.02531645569620253
+        },
+        {
+          "applicable": false,
+          "category": "reduction",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": null
+        },
+        {
+          "applicable": true,
+          "category": "predicate_effect",
+          "differences": [],
+          "hard": true,
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "applicable": true,
+          "category": "schedule-only",
+          "differences": [],
+          "hard": false,
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "differences": [
+        {
+          "actual_count": 1,
+          "category": "op_multiset",
+          "expected_count": 0,
+          "item": "arith.addi",
+          "kind": "unexpected",
+          "message": "op_multiset \u591a\u51fa \"arith.addi\"\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "op_multiset",
+          "expected_count": 2,
+          "item": "arith.extsi",
+          "kind": "missing",
+          "message": "op_multiset \u7f3a\u5c11 \"arith.extsi\"\uff1a\u6e90=2\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 3,
+          "category": "op_multiset",
+          "expected_count": 6,
+          "item": "tt.addptr",
+          "kind": "missing",
+          "message": "op_multiset \u7f3a\u5c11 \"tt.addptr\"\uff1a\u6e90=6\uff0c\u91cd\u653e=3"
+        },
+        {
+          "actual_count": 4,
+          "category": "op_multiset",
+          "expected_count": 3,
+          "item": "tt.splat",
+          "kind": "unexpected",
+          "message": "op_multiset \u591a\u51fa \"tt.splat\"\uff1a\u6e90=3\uff0c\u91cd\u653e=4"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arg[0]:!tt.ptr<f16>",
+            "tt.addptr[ff8fe801829c9c43f4f9]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[0]:!tt.ptr<f16>\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arg[0]:!tt.ptr<f16>",
+            "tt.splat[a0ad8fe7757a388eb544]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arg[0]:!tt.ptr<f16>\",\"tt.splat[a0ad8fe7757a388eb544]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arg[1]:!tt.ptr<f16>",
+            "tt.addptr[2b0403843cdd241ec860]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[1]:!tt.ptr<f16>\",\"tt.addptr[2b0403843cdd241ec860]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arg[1]:!tt.ptr<f16>",
+            "tt.splat[eb3d1ff8fc69871d16d9]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arg[1]:!tt.ptr<f16>\",\"tt.splat[eb3d1ff8fc69871d16d9]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arg[2]:!tt.ptr<f16>",
+            "tt.addptr[4b403a7c543af06f6992]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[2]:!tt.ptr<f16>\",\"tt.addptr[4b403a7c543af06f6992]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arg[2]:!tt.ptr<f16>",
+            "tt.splat[5672767799111f4bc048]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arg[2]:!tt.ptr<f16>\",\"tt.splat[5672767799111f4bc048]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arg[3]:i32",
+            "arith.extsi[034725eb63c1b0031c8c]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arg[3]:i32\",\"arith.extsi[034725eb63c1b0031c8c]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arg[3]:i32",
+            "arith.muli[36c50a27039e7e13481e]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arg[3]:i32\",\"arith.muli[36c50a27039e7e13481e]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.addf[247d77d1a068013a3f15]",
+            "arith.divf[b78385bb9c609de60da7]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.addf[247d77d1a068013a3f15]\",\"arith.divf[b78385bb9c609de60da7]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.addf[39dfc92618ee8b4e29d5]",
+            "arith.divf[5822566aec1a060533c0]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"arith.divf[5822566aec1a060533c0]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.addi[964af14de1955985ddc9]",
+            "tt.addptr[4754e99353b39773bf41]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[4754e99353b39773bf41]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.addi[964af14de1955985ddc9]",
+            "tt.addptr[4ebcedaebb7040b50385]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[4ebcedaebb7040b50385]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.addi[964af14de1955985ddc9]",
+            "tt.addptr[acc2bcdb3700bc9f4587]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.addi[964af14de1955985ddc9]\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.load[140e2b51e64236b8884e]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.load[3423c93e940e38e673b8]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.load[cccabe13fd52254e362b]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.load[fdeec1aa9a9db85fb5b6]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.store[18a686214fd50cad29b9]",
+            "operand[2]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.cmpi[29cbc20c1caa61732444]",
+            "tt.store[2a111b99bda475dc53c6]",
+            "operand[2]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.cmpi[29cbc20c1caa61732444]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.constant[111be030622848c7b889]",
+            "arith.addf[247d77d1a068013a3f15]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.addf[247d77d1a068013a3f15]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.constant[111be030622848c7b889]",
+            "arith.addf[39dfc92618ee8b4e29d5]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.constant[111be030622848c7b889]",
+            "arith.divf[5822566aec1a060533c0]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.divf[5822566aec1a060533c0]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.constant[111be030622848c7b889]",
+            "arith.divf[b78385bb9c609de60da7]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[111be030622848c7b889]\",\"arith.divf[b78385bb9c609de60da7]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.constant[3e850c5cf74f3952aeda]",
+            "tt.load[140e2b51e64236b8884e]",
+            "operand[2]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.constant[3e850c5cf74f3952aeda]",
+            "tt.load[3423c93e940e38e673b8]",
+            "operand[2]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[2]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.constant[3e850c5cf74f3952aeda]",
+            "tt.load[cccabe13fd52254e362b]",
+            "operand[2]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.constant[3e850c5cf74f3952aeda]",
+            "tt.load[fdeec1aa9a9db85fb5b6]",
+            "operand[2]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[3e850c5cf74f3952aeda]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[2]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.constant[ea97457efb2ca46385d6]",
+            "arith.subf[bfff2f3b5c75f147cb66]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.constant[ea97457efb2ca46385d6]\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.constant[ea97457efb2ca46385d6]",
+            "arith.subf[c90cf4e8d3bbe48a46b2]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.constant[ea97457efb2ca46385d6]\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.divf[5822566aec1a060533c0]",
+            "arith.mulf[22f080eee42c68f623ae]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.divf[5822566aec1a060533c0]\",\"arith.mulf[22f080eee42c68f623ae]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.divf[b78385bb9c609de60da7]",
+            "arith.mulf[a97df421db0be5f5d50b]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.divf[b78385bb9c609de60da7]\",\"arith.mulf[a97df421db0be5f5d50b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.extf[12b2cd13d855097b0a5e]",
+            "arith.mulf[22f080eee42c68f623ae]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.extf[12b2cd13d855097b0a5e]\",\"arith.mulf[22f080eee42c68f623ae]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.extf[12b2cd13d855097b0a5e]",
+            "arith.subf[bfff2f3b5c75f147cb66]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.extf[12b2cd13d855097b0a5e]\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.extf[e70bc675e2429ec7629c]",
+            "arith.mulf[a97df421db0be5f5d50b]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extf[e70bc675e2429ec7629c]\",\"arith.mulf[a97df421db0be5f5d50b]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.extf[e70bc675e2429ec7629c]",
+            "arith.subf[c90cf4e8d3bbe48a46b2]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extf[e70bc675e2429ec7629c]\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.extsi[034725eb63c1b0031c8c]",
+            "arith.muli[b3d4cecfa402cb57aa58]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extsi[034725eb63c1b0031c8c]\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.extsi[6fbddfcf085dd110f240]",
+            "arith.muli[b3d4cecfa402cb57aa58]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.extsi[6fbddfcf085dd110f240]\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.mulf[22f080eee42c68f623ae]",
+            "arith.truncf[854a24b0b3ea92fa3cdf]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.mulf[22f080eee42c68f623ae]\",\"arith.truncf[854a24b0b3ea92fa3cdf]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.mulf[511ffc4effc99a7b3cf7]",
+            "tt.store[2a111b99bda475dc53c6]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.mulf[5818e079f904a3f1dca9]",
+            "tt.store[18a686214fd50cad29b9]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.mulf[5818e079f904a3f1dca9]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.mulf[a97df421db0be5f5d50b]",
+            "arith.truncf[a92f3f5db4a9b1f5063b]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.mulf[a97df421db0be5f5d50b]\",\"arith.truncf[a92f3f5db4a9b1f5063b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.muli[36c50a27039e7e13481e]",
+            "tt.splat[f67fc993d2b0570dbe29]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.muli[36c50a27039e7e13481e]\",\"tt.splat[f67fc993d2b0570dbe29]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.muli[b3d4cecfa402cb57aa58]",
+            "tt.addptr[2b0403843cdd241ec860]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[2b0403843cdd241ec860]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.muli[b3d4cecfa402cb57aa58]",
+            "tt.addptr[4b403a7c543af06f6992]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[4b403a7c543af06f6992]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.muli[b3d4cecfa402cb57aa58]",
+            "tt.addptr[ff8fe801829c9c43f4f9]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.muli[b3d4cecfa402cb57aa58]\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.subf[bfff2f3b5c75f147cb66]",
+            "math.exp[2434ba0362d4fca99109]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.subf[bfff2f3b5c75f147cb66]\",\"math.exp[2434ba0362d4fca99109]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.subf[c90cf4e8d3bbe48a46b2]",
+            "math.exp[83265d8600538d2c2b9b]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.subf[c90cf4e8d3bbe48a46b2]\",\"math.exp[83265d8600538d2c2b9b]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "arith.truncf[854a24b0b3ea92fa3cdf]",
+            "arith.mulf[511ffc4effc99a7b3cf7]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"arith.truncf[854a24b0b3ea92fa3cdf]\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "arith.truncf[a92f3f5db4a9b1f5063b]",
+            "arith.mulf[5818e079f904a3f1dca9]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"arith.truncf[a92f3f5db4a9b1f5063b]\",\"arith.mulf[5818e079f904a3f1dca9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "math.exp[2434ba0362d4fca99109]",
+            "arith.addf[39dfc92618ee8b4e29d5]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"math.exp[2434ba0362d4fca99109]\",\"arith.addf[39dfc92618ee8b4e29d5]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "math.exp[83265d8600538d2c2b9b]",
+            "arith.addf[247d77d1a068013a3f15]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"math.exp[83265d8600538d2c2b9b]\",\"arith.addf[247d77d1a068013a3f15]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[2b0403843cdd241ec860]",
+            "tt.splat[4e8895c34eb4b9161d71]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[2b0403843cdd241ec860]\",\"tt.splat[4e8895c34eb4b9161d71]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.addptr[4754e99353b39773bf41]",
+            "tt.load[fdeec1aa9a9db85fb5b6]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[4754e99353b39773bf41]\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[4b403a7c543af06f6992]",
+            "tt.splat[5b90e84ef8019bdc077a]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[4b403a7c543af06f6992]\",\"tt.splat[5b90e84ef8019bdc077a]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.addptr[4ebcedaebb7040b50385]",
+            "tt.store[2a111b99bda475dc53c6]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[4ebcedaebb7040b50385]\",\"tt.store[2a111b99bda475dc53c6]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[5c39ec606ec8d9cfc136]",
+            "tt.store[18a686214fd50cad29b9]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"tt.store[18a686214fd50cad29b9]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[75123c689b8df489ff8e]",
+            "tt.load[140e2b51e64236b8884e]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[75123c689b8df489ff8e]\",\"tt.load[140e2b51e64236b8884e]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.addptr[acc2bcdb3700bc9f4587]",
+            "tt.load[cccabe13fd52254e362b]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"tt.load[cccabe13fd52254e362b]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+            "tt.load[3423c93e940e38e673b8]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"tt.load[3423c93e940e38e673b8]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.addptr[ff8fe801829c9c43f4f9]",
+            "tt.splat[fb099af16a002d2705a3]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.addptr[ff8fe801829c9c43f4f9]\",\"tt.splat[fb099af16a002d2705a3]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.get_program_id[b66173daa46d95e66439]",
+            "arith.extsi[6fbddfcf085dd110f240]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.get_program_id[b66173daa46d95e66439]\",\"arith.extsi[6fbddfcf085dd110f240]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.get_program_id[b66173daa46d95e66439]",
+            "arith.muli[36c50a27039e7e13481e]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.get_program_id[b66173daa46d95e66439]\",\"arith.muli[36c50a27039e7e13481e]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.load[140e2b51e64236b8884e]",
+            "arith.extf[e70bc675e2429ec7629c]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.load[140e2b51e64236b8884e]\",\"arith.extf[e70bc675e2429ec7629c]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.load[3423c93e940e38e673b8]",
+            "arith.mulf[5818e079f904a3f1dca9]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.load[3423c93e940e38e673b8]\",\"arith.mulf[5818e079f904a3f1dca9]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.load[cccabe13fd52254e362b]",
+            "arith.extf[12b2cd13d855097b0a5e]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.load[cccabe13fd52254e362b]\",\"arith.extf[12b2cd13d855097b0a5e]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.load[fdeec1aa9a9db85fb5b6]",
+            "arith.mulf[511ffc4effc99a7b3cf7]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.load[fdeec1aa9a9db85fb5b6]\",\"arith.mulf[511ffc4effc99a7b3cf7]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.make_range[d1fea77f36a7660b901b]",
+            "arith.addi[964af14de1955985ddc9]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"arith.addi[964af14de1955985ddc9]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.make_range[d1fea77f36a7660b901b]",
+            "tt.addptr[5c39ec606ec8d9cfc136]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.make_range[d1fea77f36a7660b901b]",
+            "tt.addptr[75123c689b8df489ff8e]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[75123c689b8df489ff8e]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.make_range[d1fea77f36a7660b901b]",
+            "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+            "operand[1]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.make_range[d1fea77f36a7660b901b]\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"operand[1]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.splat[4e8895c34eb4b9161d71]",
+            "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[4e8895c34eb4b9161d71]\",\"tt.addptr[d9ebfdfcf7dc8b63e4c7]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.splat[5672767799111f4bc048]",
+            "tt.addptr[4ebcedaebb7040b50385]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[5672767799111f4bc048]\",\"tt.addptr[4ebcedaebb7040b50385]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.splat[5b90e84ef8019bdc077a]",
+            "tt.addptr[5c39ec606ec8d9cfc136]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[5b90e84ef8019bdc077a]\",\"tt.addptr[5c39ec606ec8d9cfc136]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.splat[a0ad8fe7757a388eb544]",
+            "tt.addptr[acc2bcdb3700bc9f4587]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[a0ad8fe7757a388eb544]\",\"tt.addptr[acc2bcdb3700bc9f4587]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.splat[eb3d1ff8fc69871d16d9]",
+            "tt.addptr[4754e99353b39773bf41]",
+            "operand[0]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[eb3d1ff8fc69871d16d9]\",\"tt.addptr[4754e99353b39773bf41]\",\"operand[0]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 1,
+          "category": "dataflow",
+          "expected_count": 0,
+          "item": [
+            "edge",
+            "tt.splat[f67fc993d2b0570dbe29]",
+            "arith.addi[964af14de1955985ddc9]",
+            "operand[1]"
+          ],
+          "kind": "unexpected",
+          "message": "dataflow \u591a\u51fa [\"edge\",\"tt.splat[f67fc993d2b0570dbe29]\",\"arith.addi[964af14de1955985ddc9]\",\"operand[1]\"]\uff1a\u6e90=0\uff0c\u91cd\u653e=1"
+        },
+        {
+          "actual_count": 0,
+          "category": "dataflow",
+          "expected_count": 1,
+          "item": [
+            "edge",
+            "tt.splat[fb099af16a002d2705a3]",
+            "tt.addptr[75123c689b8df489ff8e]",
+            "operand[0]"
+          ],
+          "kind": "missing",
+          "message": "dataflow \u7f3a\u5c11 [\"edge\",\"tt.splat[fb099af16a002d2705a3]\",\"tt.addptr[75123c689b8df489ff8e]\",\"operand[0]\"]\uff1a\u6e90=1\uff0c\u91cd\u653e=0"
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "dataflow": false,
+        "interface": true,
+        "op_multiset": false,
+        "predicate_effect": true,
+        "reduction": true
+      },
+      "inactive_categories": [
+        "reduction"
+      ],
+      "passed": false,
+      "primary_difference_category": "op_multiset",
+      "rank_tuple": [
+        0,
+        3,
+        0.640723892405,
+        -81,
+        1,
+        0
+      ],
+      "score": 0.6407238924050632,
+      "score_semantics": "active_evidence_weighted_v2"
+    },
+    "compile": {
+      "asm_keys": [
+        "cubin",
+        "llir",
+        "ptx",
+        "source",
+        "ttgir",
+        "ttir"
+      ],
+      "cache_hit": false,
+      "cache_key": "6e4f820de3e8a459386bcb6c6a2cca34cb33f606785c846cce2570414230ec94",
+      "compiler": {
+        "environment": {
+          "TRITON_ALWAYS_COMPILE": "1",
+          "TRITON_KERNEL_DUMP": "1",
+          "TRITON_STORE_BINARY_ONLY": "0"
+        },
+        "frontend_compat": {
+          "normalized_sha256": "95951e292cc76b4281e97b6999ef3b616ae2b660bb3107b72327b043ebdd9c4f",
+          "protocol": "triton_static_dot_transpose_v1",
+          "rewrite_count": 0
+        },
+        "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+        "gate1_worker_sha256": "595554141a5e4d3616cc2952a6f8a531372e7fd37b1bb5c482b7dd115d2e9a00",
+        "python": "3.10.12",
+        "torch": "2.10.0+cu130",
+        "torch_cuda": "13.0",
+        "triton": "3.6.0"
+      },
+      "diagnostic": "",
+      "elapsed_ms": 2924.645603634417,
+      "ok": true,
+      "python_interface": {
+        "arg_names": [
+          "p0",
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "c0"
+        ],
+        "constexpr_indices": [
+          4,
+          5
+        ],
+        "constexprs": [
+          "p4",
+          "c0"
+        ],
+        "do_not_specialize": [],
+        "do_not_specialize_raw": []
+      },
+      "target": {
+        "arch": 120,
+        "backend": "cuda",
+        "compiled": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "cuda": {
+          "compute_capability": [
+            12,
+            0
+          ],
+          "index": 0,
+          "multi_processor_count": 170,
+          "name": "NVIDIA GeForce RTX 5090 D",
+          "total_memory": 33668988928
+        },
+        "triton": {
+          "arch": 120,
+          "backend": "cuda",
+          "warp_size": 32
+        },
+        "warp_size": 32
+      },
+      "ttgir": "#blocked = #ttg.blocked<{sizePerThread = [8], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\n#loc = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":6:0)\n#loc23 = loc(\"p0\"(#loc))\n#loc24 = loc(\"p1\"(#loc))\n#loc25 = loc(\"p2\"(#loc))\n#loc26 = loc(\"p3\"(#loc))\nmodule attributes {\"ttg.num-ctas\" = 1 : i32, \"ttg.num-warps\" = 4 : i32, ttg.target = \"cuda:120\", \"ttg.threads-per-warp\" = 32 : i32} {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc)), %p3: i32 {tt.divisibility = 16 : i32} loc(\"p3\"(#loc))) attributes {noinline = false} {\n    %cst = arith.constant dense<1.000000e+00> : tensor<1024xf32, #blocked> loc(#loc1)\n    %cst_0 = arith.constant dense<0.000000e+00> : tensor<1024xf32, #blocked> loc(#loc1)\n    %cst_1 = arith.constant dense<0.000000e+00> : tensor<1024xf16, #blocked> loc(#loc1)\n    %cst_2 = arith.constant dense<1024> : tensor<1024xi32, #blocked> loc(#loc1)\n    %v5 = tt.get_program_id x : i32 loc(#loc27)\n    %v6 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked> loc(#loc28)\n    %mask = arith.cmpi slt, %v6, %cst_2 : tensor<1024xi32, #blocked> loc(#loc29)\n    %offsets = arith.muli %v5, %p3 : i32 loc(#loc30)\n    %offsets_3 = tt.splat %offsets : i32 -> tensor<1024xi32, #blocked> loc(#loc31)\n    %offsets_4 = arith.addi %offsets_3, %v6 : tensor<1024xi32, #blocked> loc(#loc31)\n    %x = tt.splat %p0 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc32)\n    %x_5 = tt.addptr %x, %offsets_4 : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc32)\n    %x_6 = tt.load %x_5, %mask, %cst_1 : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc33)\n    %x_7 = arith.extf %x_6 : tensor<1024xf16, #blocked> to tensor<1024xf32, #blocked> loc(#loc34)\n    %gate = tt.splat %p1 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc35)\n    %gate_8 = tt.addptr %gate, %offsets_4 : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc35)\n    %gate_9 = tt.load %gate_8, %mask, %cst_1 : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc36)\n    %sigmoid_x = arith.subf %cst_0, %x_7 : tensor<1024xf32, #blocked> loc(#loc41)\n    %sigmoid_x_10 = math.exp %sigmoid_x : tensor<1024xf32, #blocked> loc(#loc42)\n    %sigmoid_x_11 = arith.addf %sigmoid_x_10, %cst : tensor<1024xf32, #blocked> loc(#loc43)\n    %sigmoid_x_12 = arith.divf %cst, %sigmoid_x_11 : tensor<1024xf32, #blocked> loc(#loc44)\n    %activated = arith.mulf %x_7, %sigmoid_x_12 : tensor<1024xf32, #blocked> loc(#loc38)\n    %activated_13 = arith.truncf %activated : tensor<1024xf32, #blocked> to tensor<1024xf16, #blocked> loc(#loc39)\n    %output = arith.mulf %activated_13, %gate_9 : tensor<1024xf16, #blocked> loc(#loc40)\n    %0 = tt.splat %p2 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc20)\n    %1 = tt.addptr %0, %offsets_4 : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc20)\n    tt.store %1, %output, %mask : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc21)\n    tt.return loc(#loc22)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(unknown)\n#loc2 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":14:23)\n#loc3 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":15:22)\n#loc4 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":16:16)\n#loc5 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":17:19)\n#loc6 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":17:24)\n#loc7 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:21)\n#loc8 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:16)\n#loc9 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:55)\n#loc10 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":20:24)\n#loc11 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":20:19)\n#loc12 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:30)\n#loc13 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":22:27)\n#loc14 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:29)\n#loc15 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:20)\n#loc16 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:16)\n#loc17 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":23:21)\n#loc18 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":23:35)\n#loc19 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":24:26)\n#loc20 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:18)\n#loc21 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:27)\n#loc22 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:4)\n#loc27 = loc(\"v5\"(#loc2))\n#loc28 = loc(\"v6\"(#loc3))\n#loc29 = loc(\"mask\"(#loc4))\n#loc30 = loc(\"offsets\"(#loc5))\n#loc31 = loc(\"offsets\"(#loc6))\n#loc32 = loc(\"x\"(#loc7))\n#loc33 = loc(\"x\"(#loc8))\n#loc34 = loc(\"x\"(#loc9))\n#loc35 = loc(\"gate\"(#loc10))\n#loc36 = loc(\"gate\"(#loc11))\n#loc37 = loc(\"sigmoid_x\"(#loc13))\n#loc38 = loc(\"activated\"(#loc17))\n#loc39 = loc(\"activated\"(#loc18))\n#loc40 = loc(\"output\"(#loc19))\n#loc41 = loc(callsite(#loc12 at #loc37))\n#loc42 = loc(callsite(#loc14 at #loc37))\n#loc43 = loc(callsite(#loc15 at #loc37))\n#loc44 = loc(callsite(#loc16 at #loc37))\n",
+      "ttir": "#loc = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":6:0)\n#loc23 = loc(\"p0\"(#loc))\n#loc24 = loc(\"p1\"(#loc))\n#loc25 = loc(\"p2\"(#loc))\n#loc26 = loc(\"p3\"(#loc))\nmodule {\n  tt.func public @scrc_k0(%p0: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p0\"(#loc)), %p1: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p1\"(#loc)), %p2: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"p2\"(#loc)), %p3: i32 {tt.divisibility = 16 : i32} loc(\"p3\"(#loc))) attributes {noinline = false} {\n    %sigmoid_x = arith.constant dense<0.000000e+00> : tensor<1024xf32> loc(#loc41)\n    %sigmoid_x_0 = arith.constant dense<1.000000e+00> : tensor<1024xf32> loc(#loc42)\n    %cst = arith.constant dense<0.000000e+00> : tensor<1024xf16> loc(#loc3)\n    %mask = arith.constant dense<1024> : tensor<1024xi32> loc(#loc28)\n    %v5 = tt.get_program_id x : i32 loc(#loc29)\n    %v6 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32> loc(#loc30)\n    %mask_1 = arith.cmpi slt, %v6, %mask : tensor<1024xi32> loc(#loc28)\n    %offsets = arith.muli %v5, %p3 : i32 loc(#loc31)\n    %offsets_2 = tt.splat %offsets : i32 -> tensor<1024xi32> loc(#loc32)\n    %offsets_3 = arith.addi %offsets_2, %v6 : tensor<1024xi32> loc(#loc32)\n    %x = tt.splat %p0 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc33)\n    %x_4 = tt.addptr %x, %offsets_3 : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc33)\n    %x_5 = tt.load %x_4, %mask_1, %cst : tensor<1024x!tt.ptr<f16>> loc(#loc34)\n    %x_6 = arith.extf %x_5 : tensor<1024xf16> to tensor<1024xf32> loc(#loc35)\n    %gate = tt.splat %p1 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc36)\n    %gate_7 = tt.addptr %gate, %offsets_3 : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc36)\n    %gate_8 = tt.load %gate_7, %mask_1, %cst : tensor<1024x!tt.ptr<f16>> loc(#loc37)\n    %sigmoid_x_9 = arith.subf %sigmoid_x, %x_6 : tensor<1024xf32> loc(#loc41)\n    %sigmoid_x_10 = math.exp %sigmoid_x_9 : tensor<1024xf32> loc(#loc43)\n    %sigmoid_x_11 = arith.addf %sigmoid_x_10, %sigmoid_x_0 : tensor<1024xf32> loc(#loc44)\n    %sigmoid_x_12 = arith.divf %sigmoid_x_0, %sigmoid_x_11 : tensor<1024xf32> loc(#loc45)\n    %activated = arith.mulf %x_6, %sigmoid_x_12 : tensor<1024xf32> loc(#loc38)\n    %activated_13 = arith.truncf %activated : tensor<1024xf32> to tensor<1024xf16> loc(#loc39)\n    %output = arith.mulf %activated_13, %gate_8 : tensor<1024xf16> loc(#loc40)\n    %0 = tt.splat %p2 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc20)\n    %1 = tt.addptr %0, %offsets_3 : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc20)\n    tt.store %1, %output, %mask_1 : tensor<1024x!tt.ptr<f16>> loc(#loc21)\n    tt.return loc(#loc22)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:30)\n#loc2 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":22:27)\n#loc3 = loc(unknown)\n#loc4 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":16:16)\n#loc5 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":14:23)\n#loc6 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":15:22)\n#loc7 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":17:19)\n#loc8 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":17:24)\n#loc9 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:21)\n#loc10 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:16)\n#loc11 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":19:55)\n#loc12 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":20:24)\n#loc13 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":20:19)\n#loc14 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:29)\n#loc15 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:20)\n#loc16 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:16)\n#loc17 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":23:21)\n#loc18 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":23:35)\n#loc19 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":24:26)\n#loc20 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:18)\n#loc21 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:27)\n#loc22 = loc(\"/tmp/intentir-gate1-module-rgstn3zo/gate1_kernel_95951e292cc76b42.py\":26:4)\n#loc27 = loc(\"sigmoid_x\"(#loc2))\n#loc28 = loc(\"mask\"(#loc4))\n#loc29 = loc(\"v5\"(#loc5))\n#loc30 = loc(\"v6\"(#loc6))\n#loc31 = loc(\"offsets\"(#loc7))\n#loc32 = loc(\"offsets\"(#loc8))\n#loc33 = loc(\"x\"(#loc9))\n#loc34 = loc(\"x\"(#loc10))\n#loc35 = loc(\"x\"(#loc11))\n#loc36 = loc(\"gate\"(#loc12))\n#loc37 = loc(\"gate\"(#loc13))\n#loc38 = loc(\"activated\"(#loc17))\n#loc39 = loc(\"activated\"(#loc18))\n#loc40 = loc(\"output\"(#loc19))\n#loc41 = loc(callsite(#loc1 at #loc27))\n#loc42 = loc(callsite(#loc3 at #loc27))\n#loc43 = loc(callsite(#loc14 at #loc27))\n#loc44 = loc(callsite(#loc15 at #loc27))\n#loc45 = loc(callsite(#loc16 at #loc27))\n"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "dataflow_edges": [
+        [
+          "arg[0]:!tt.ptr<f16>",
+          "tt.splat[a0ad8fe7757a388eb544]",
+          "operand[0]"
+        ],
+        [
+          "arg[1]:!tt.ptr<f16>",
+          "tt.splat[eb3d1ff8fc69871d16d9]",
+          "operand[0]"
+        ],
+        [
+          "arg[2]:!tt.ptr<f16>",
+          "tt.splat[5672767799111f4bc048]",
+          "operand[0]"
+        ],
+        [
+          "arg[3]:i32",
+          "arith.muli[36c50a27039e7e13481e]",
+          "operand[0]"
+        ],
+        [
+          "arith.addf[39dfc92618ee8b4e29d5]",
+          "arith.divf[5822566aec1a060533c0]",
+          "operand[1]"
+        ],
+        [
+          "arith.addi[964af14de1955985ddc9]",
+          "tt.addptr[4754e99353b39773bf41]",
+          "operand[1]"
+        ],
+        [
+          "arith.addi[964af14de1955985ddc9]",
+          "tt.addptr[4ebcedaebb7040b50385]",
+          "operand[1]"
+        ],
+        [
+          "arith.addi[964af14de1955985ddc9]",
+          "tt.addptr[acc2bcdb3700bc9f4587]",
+          "operand[1]"
+        ],
+        [
+          "arith.cmpi[29cbc20c1caa61732444]",
+          "tt.load[cccabe13fd52254e362b]",
+          "operand[1]"
+        ],
+        [
+          "arith.cmpi[29cbc20c1caa61732444]",
+          "tt.load[fdeec1aa9a9db85fb5b6]",
+          "operand[1]"
+        ],
+        [
+          "arith.cmpi[29cbc20c1caa61732444]",
+          "tt.store[2a111b99bda475dc53c6]",
+          "operand[2]"
+        ],
+        [
+          "arith.constant[111be030622848c7b889]",
+          "arith.addf[39dfc92618ee8b4e29d5]",
+          "operand[0]"
+        ],
+        [
+          "arith.constant[111be030622848c7b889]",
+          "arith.divf[5822566aec1a060533c0]",
+          "operand[0]"
+        ],
+        [
+          "arith.constant[3e850c5cf74f3952aeda]",
+          "tt.load[cccabe13fd52254e362b]",
+          "operand[2]"
+        ],
+        [
+          "arith.constant[3e850c5cf74f3952aeda]",
+          "tt.load[fdeec1aa9a9db85fb5b6]",
+          "operand[2]"
+        ],
+        [
+          "arith.constant[aab5e1f31a7ddcaac735]",
+          "arith.cmpi[29cbc20c1caa61732444]",
+          "operand[1]"
+        ],
+        [
+          "arith.constant[ea97457efb2ca46385d6]",
+          "arith.subf[bfff2f3b5c75f147cb66]",
+          "operand[0]"
+        ],
+        [
+          "arith.divf[5822566aec1a060533c0]",
+          "arith.mulf[22f080eee42c68f623ae]",
+          "operand[0]"
+        ],
+        [
+          "arith.extf[12b2cd13d855097b0a5e]",
+          "arith.mulf[22f080eee42c68f623ae]",
+          "operand[1]"
+        ],
+        [
+          "arith.extf[12b2cd13d855097b0a5e]",
+          "arith.subf[bfff2f3b5c75f147cb66]",
+          "operand[1]"
+        ],
+        [
+          "arith.mulf[22f080eee42c68f623ae]",
+          "arith.truncf[854a24b0b3ea92fa3cdf]",
+          "operand[0]"
+        ],
+        [
+          "arith.mulf[511ffc4effc99a7b3cf7]",
+          "tt.store[2a111b99bda475dc53c6]",
+          "operand[1]"
+        ],
+        [
+          "arith.muli[36c50a27039e7e13481e]",
+          "tt.splat[f67fc993d2b0570dbe29]",
+          "operand[0]"
+        ],
+        [
+          "arith.subf[bfff2f3b5c75f147cb66]",
+          "math.exp[2434ba0362d4fca99109]",
+          "operand[0]"
+        ],
+        [
+          "arith.truncf[854a24b0b3ea92fa3cdf]",
+          "arith.mulf[511ffc4effc99a7b3cf7]",
+          "operand[0]"
+        ],
+        [
+          "math.exp[2434ba0362d4fca99109]",
+          "arith.addf[39dfc92618ee8b4e29d5]",
+          "operand[1]"
+        ],
+        [
+          "tt.addptr[4754e99353b39773bf41]",
+          "tt.load[fdeec1aa9a9db85fb5b6]",
+          "operand[0]"
+        ],
+        [
+          "tt.addptr[4ebcedaebb7040b50385]",
+          "tt.store[2a111b99bda475dc53c6]",
+          "operand[0]"
+        ],
+        [
+          "tt.addptr[acc2bcdb3700bc9f4587]",
+          "tt.load[cccabe13fd52254e362b]",
+          "operand[0]"
+        ],
+        [
+          "tt.get_program_id[b66173daa46d95e66439]",
+          "arith.muli[36c50a27039e7e13481e]",
+          "operand[1]"
+        ],
+        [
+          "tt.load[cccabe13fd52254e362b]",
+          "arith.extf[12b2cd13d855097b0a5e]",
+          "operand[0]"
+        ],
+        [
+          "tt.load[fdeec1aa9a9db85fb5b6]",
+          "arith.mulf[511ffc4effc99a7b3cf7]",
+          "operand[1]"
+        ],
+        [
+          "tt.make_range[d1fea77f36a7660b901b]",
+          "arith.addi[964af14de1955985ddc9]",
+          "operand[0]"
+        ],
+        [
+          "tt.make_range[d1fea77f36a7660b901b]",
+          "arith.cmpi[29cbc20c1caa61732444]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[5672767799111f4bc048]",
+          "tt.addptr[4ebcedaebb7040b50385]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[a0ad8fe7757a388eb544]",
+          "tt.addptr[acc2bcdb3700bc9f4587]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[eb3d1ff8fc69871d16d9]",
+          "tt.addptr[4754e99353b39773bf41]",
+          "operand[0]"
+        ],
+        [
+          "tt.splat[f67fc993d2b0570dbe29]",
+          "arith.addi[964af14de1955985ddc9]",
+          "operand[1]"
+        ]
+      ],
+      "dots": [],
+      "effect_multiset": {
+        "read.masked": 2,
+        "write.masked": 1
+      },
+      "interface": {
+        "arguments": [
+          {
+            "access": "input",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f16",
+            "kind": "pointer",
+            "position": 0,
+            "rank": null,
+            "type": "!tt.ptr<f16>"
+          },
+          {
+            "access": "input",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f16",
+            "kind": "pointer",
+            "position": 1,
+            "rank": null,
+            "type": "!tt.ptr<f16>"
+          },
+          {
+            "access": "output",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "f16",
+            "kind": "pointer",
+            "position": 2,
+            "rank": null,
+            "type": "!tt.ptr<f16>"
+          },
+          {
+            "access": "value",
+            "attributes": {
+              "tt.divisibility": "16:i32"
+            },
+            "dtype": "i32",
+            "kind": "scalar",
+            "position": 3,
+            "rank": 0,
+            "type": "i32"
+          }
+        ],
+        "python": {
+          "arg_names": [
+            "p0",
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "c0"
+          ],
+          "constexpr_indices": [
+            4,
+            5
+          ],
+          "constexprs": [
+            "c0",
+            "p4"
+          ]
+        },
+        "results": []
+      },
+      "loops": [],
+      "mask_predicates": [
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "arith.cmpi[29cbc20c1caa61732444]"
+      ],
+      "memory_effects": [
+        {
+          "attributes": "tt.load %,%,%:tensor<1024x!tt.ptr<f16>>",
+          "kind": "load",
+          "masked": true,
+          "other": "arith.constant dense<0.000000e+00>:tensor<1024xf16>",
+          "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+        },
+        {
+          "attributes": "tt.load %,%,%:tensor<1024x!tt.ptr<f16>>",
+          "kind": "load",
+          "masked": true,
+          "other": "arith.constant dense<0.000000e+00>:tensor<1024xf16>",
+          "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+        },
+        {
+          "attributes": "tt.store %,%,%:tensor<1024x!tt.ptr<f16>>",
+          "kind": "store",
+          "masked": true,
+          "other": null,
+          "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+        }
+      ],
+      "op_multiset": {
+        "arith.addf": 1,
+        "arith.addi": 1,
+        "arith.cmpi": 1,
+        "arith.constant": 4,
+        "arith.divf": 1,
+        "arith.extf": 1,
+        "arith.mulf": 2,
+        "arith.muli": 1,
+        "arith.subf": 1,
+        "arith.truncf": 1,
+        "math.exp": 1,
+        "tt.addptr": 3,
+        "tt.get_program_id": 1,
+        "tt.load.masked": 2,
+        "tt.make_range": 1,
+        "tt.splat": 4,
+        "tt.store.masked": 1
+      },
+      "reductions": [],
+      "schedule_view": {
+        "c0": 1024,
+        "c1": 4
+      },
+      "schema_version": "triton-ttir-3.6-gate1-v3"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "context_sha256": "6906aa18d45c405f4360503c7b1f875b26f8db281179681d11e0f54c12bfd067",
+        "retrieval_trace": []
+      },
+      "elapsed_ms": 23256.61603314802,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "packet_digest": "5d55db034e99258185c7e252d60ea36b9d9b7ec8a9010674c9ad3eb12e9b5ee3",
+      "prompt_digest": "1ef113a8bcf103d88c95110b17eed8e0feb7eca35050ecc252d8bf7345ec8d0e",
+      "raw_response_sha256": "30594fc74a0dc8d24afea4e6bab0f304ab8642926617e5ec1f1b5e852af3138f",
+      "request_sha256": "0ad5c9d51b07f02d0ecee3f91cfe8ebb7ce828352d60a057e3eaac2b455870e0",
+      "response_id": "resp_067f4b9cf7ca1d37016a600814a5388195887e4919cbd22113",
+      "response_model": "gpt-5.6-sol",
+      "response_sha256": "d22947fdce7179e27732ea18666a2db2186530d6b9d311813a62c1d944f10c05",
+      "usage": {
+        "input_tokens": 3589,
+        "output_tokens": 1150,
+        "total_tokens": 4739
+      }
+    },
+    "mode": "normal"
+  },
+  "protocol": "llm_direct_pi_gate1_level2_v1",
+  "source_compile": {
+    "asm_keys": [
+      "cubin",
+      "llir",
+      "ptx",
+      "source",
+      "ttgir",
+      "ttir"
+    ],
+    "cache_hit": false,
+    "cache_key": "818b2e0af23ffdc9f8a5018568fc267fbd4ecf75a5d127def30bcb0f4781185c",
+    "compiler": {
+      "environment": {
+        "TRITON_ALWAYS_COMPILE": "1",
+        "TRITON_KERNEL_DUMP": "1",
+        "TRITON_STORE_BINARY_ONLY": "0"
+      },
+      "frontend_compat": {
+        "normalized_sha256": "b43271c472a07e6be8cfb1abfc7dfe89d6f7230f595e97e59e47fc2b368a496a",
+        "protocol": "triton_static_dot_transpose_v1",
+        "rewrite_count": 0
+      },
+      "frontend_compat_protocol": "triton_static_dot_transpose_v1",
+      "gate1_worker_sha256": "595554141a5e4d3616cc2952a6f8a531372e7fd37b1bb5c482b7dd115d2e9a00",
+      "python": "3.10.12",
+      "torch": "2.10.0+cu130",
+      "torch_cuda": "13.0",
+      "triton": "3.6.0"
+    },
+    "diagnostic": "",
+    "elapsed_ms": 2910.1911140605807,
+    "ok": true,
+    "python_interface": {
+      "arg_names": [
+        "a_ptr",
+        "b_ptr",
+        "c_ptr",
+        "stride",
+        "n_cols",
+        "BLOCK_SIZE"
+      ],
+      "constexpr_indices": [
+        4,
+        5
+      ],
+      "constexprs": [
+        "n_cols",
+        "BLOCK_SIZE"
+      ],
+      "do_not_specialize": [],
+      "do_not_specialize_raw": []
+    },
+    "target": {
+      "arch": 120,
+      "backend": "cuda",
+      "compiled": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "cuda": {
+        "compute_capability": [
+          12,
+          0
+        ],
+        "index": 0,
+        "multi_processor_count": 170,
+        "name": "NVIDIA GeForce RTX 5090 D",
+        "total_memory": 33668988928
+      },
+      "triton": {
+        "arch": 120,
+        "backend": "cuda",
+        "warp_size": 32
+      },
+      "warp_size": 32
+    },
+    "ttgir": "#blocked = #ttg.blocked<{sizePerThread = [8], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\n#loc = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":15:0)\n#loc27 = loc(\"a_ptr\"(#loc))\n#loc28 = loc(\"b_ptr\"(#loc))\n#loc29 = loc(\"c_ptr\"(#loc))\n#loc30 = loc(\"stride\"(#loc))\nmodule attributes {\"ttg.num-ctas\" = 1 : i32, \"ttg.num-warps\" = 4 : i32, ttg.target = \"cuda:120\", \"ttg.threads-per-warp\" = 32 : i32} {\n  tt.func public @_swiglu_forward_kernel(%a_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"a_ptr\"(#loc)), %b_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"b_ptr\"(#loc)), %c_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"c_ptr\"(#loc)), %stride: i32 {tt.divisibility = 16 : i32} loc(\"stride\"(#loc))) attributes {noinline = false} {\n    %cst = arith.constant dense<1.000000e+00> : tensor<1024xf32, #blocked> loc(#loc1)\n    %cst_0 = arith.constant dense<0.000000e+00> : tensor<1024xf32, #blocked> loc(#loc1)\n    %cst_1 = arith.constant dense<0.000000e+00> : tensor<1024xf16, #blocked> loc(#loc1)\n    %cst_2 = arith.constant dense<1024> : tensor<1024xi32, #blocked> loc(#loc1)\n    %program_id = tt.get_program_id x : i32 loc(#loc31)\n    %program_id_3 = arith.extsi %program_id : i32 to i64 loc(#loc32)\n    %a_ptr_4 = arith.extsi %stride : i32 to i64 loc(#loc33)\n    %a_ptr_5 = arith.muli %program_id_3, %a_ptr_4 : i64 loc(#loc33)\n    %a_ptr_6 = tt.addptr %a_ptr, %a_ptr_5 : !tt.ptr<f16>, i64 loc(#loc34)\n    %b_ptr_7 = tt.addptr %b_ptr, %a_ptr_5 : !tt.ptr<f16>, i64 loc(#loc35)\n    %c_ptr_8 = tt.addptr %c_ptr, %a_ptr_5 : !tt.ptr<f16>, i64 loc(#loc36)\n    %col_offsets = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked> loc(#loc37)\n    %mask = arith.cmpi slt, %col_offsets, %cst_2 : tensor<1024xi32, #blocked> loc(#loc38)\n    %a_row = tt.splat %a_ptr_6 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc39)\n    %a_row_9 = tt.addptr %a_row, %col_offsets : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc39)\n    %a_row_10 = tt.load %a_row_9, %mask, %cst_1 : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc40)\n    %a_row_11 = arith.extf %a_row_10 : tensor<1024xf16, #blocked> to tensor<1024xf32, #blocked> loc(#loc41)\n    %b_row = tt.splat %b_ptr_7 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc42)\n    %b_row_12 = tt.addptr %b_row, %col_offsets : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc42)\n    %b_row_13 = tt.load %b_row_12, %mask, %cst_1 : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc43)\n    %c_row = arith.subf %cst_0, %a_row_11 : tensor<1024xf32, #blocked> loc(#loc49)\n    %c_row_14 = math.exp %c_row : tensor<1024xf32, #blocked> loc(#loc50)\n    %c_row_15 = arith.addf %c_row_14, %cst : tensor<1024xf32, #blocked> loc(#loc51)\n    %c_row_16 = arith.divf %cst, %c_row_15 : tensor<1024xf32, #blocked> loc(#loc52)\n    %c_row_17 = arith.mulf %a_row_11, %c_row_16 : tensor<1024xf32, #blocked> loc(#loc48)\n    %c_row_18 = arith.truncf %c_row_17 : tensor<1024xf32, #blocked> to tensor<1024xf16, #blocked> loc(#loc45)\n    %c_row_19 = arith.mulf %c_row_18, %b_row_13 : tensor<1024xf16, #blocked> loc(#loc46)\n    %0 = tt.splat %c_ptr_8 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc24)\n    %1 = tt.addptr %0, %col_offsets : tensor<1024x!tt.ptr<f16>, #blocked>, tensor<1024xi32, #blocked> loc(#loc24)\n    tt.store %1, %c_row_19, %mask : tensor<1024x!tt.ptr<f16>, #blocked> loc(#loc25)\n    tt.return loc(#loc26)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(unknown)\n#loc2 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":16:31)\n#loc3 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":16:37)\n#loc4 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":19:26)\n#loc5 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":19:13)\n#loc6 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":20:13)\n#loc7 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":21:13)\n#loc8 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":23:31)\n#loc9 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":24:25)\n#loc10 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:28)\n#loc11 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:20)\n#loc12 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:64)\n#loc13 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":28:28)\n#loc14 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":28:20)\n#loc15 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:30)\n#loc16 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":11:26)\n#loc17 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:17)\n#loc18 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:29)\n#loc19 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:20)\n#loc20 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:16)\n#loc21 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":11:15)\n#loc22 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:29)\n#loc23 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:44)\n#loc24 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:21)\n#loc25 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:34)\n#loc26 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:4)\n#loc31 = loc(\"program_id\"(#loc2))\n#loc32 = loc(\"program_id\"(#loc3))\n#loc33 = loc(\"a_ptr\"(#loc4))\n#loc34 = loc(\"a_ptr\"(#loc5))\n#loc35 = loc(\"b_ptr\"(#loc6))\n#loc36 = loc(\"c_ptr\"(#loc7))\n#loc37 = loc(\"col_offsets\"(#loc8))\n#loc38 = loc(\"mask\"(#loc9))\n#loc39 = loc(\"a_row\"(#loc10))\n#loc40 = loc(\"a_row\"(#loc11))\n#loc41 = loc(\"a_row\"(#loc12))\n#loc42 = loc(\"b_row\"(#loc13))\n#loc43 = loc(\"b_row\"(#loc14))\n#loc44 = loc(\"c_row\"(#loc17))\n#loc45 = loc(\"c_row\"(#loc22))\n#loc46 = loc(\"c_row\"(#loc23))\n#loc47 = loc(callsite(#loc16 at #loc44))\n#loc48 = loc(callsite(#loc21 at #loc44))\n#loc49 = loc(callsite(#loc15 at #loc47))\n#loc50 = loc(callsite(#loc18 at #loc47))\n#loc51 = loc(callsite(#loc19 at #loc47))\n#loc52 = loc(callsite(#loc20 at #loc47))\n",
+    "ttir": "#loc = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":15:0)\n#loc27 = loc(\"a_ptr\"(#loc))\n#loc28 = loc(\"b_ptr\"(#loc))\n#loc29 = loc(\"c_ptr\"(#loc))\n#loc30 = loc(\"stride\"(#loc))\nmodule {\n  tt.func public @_swiglu_forward_kernel(%a_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"a_ptr\"(#loc)), %b_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"b_ptr\"(#loc)), %c_ptr: !tt.ptr<f16> {tt.divisibility = 16 : i32} loc(\"c_ptr\"(#loc)), %stride: i32 {tt.divisibility = 16 : i32} loc(\"stride\"(#loc))) attributes {noinline = false} {\n    %c_row = arith.constant dense<0.000000e+00> : tensor<1024xf32> loc(#loc49)\n    %c_row_0 = arith.constant dense<1.000000e+00> : tensor<1024xf32> loc(#loc50)\n    %cst = arith.constant dense<0.000000e+00> : tensor<1024xf16> loc(#loc4)\n    %mask = arith.constant dense<1024> : tensor<1024xi32> loc(#loc32)\n    %program_id = tt.get_program_id x : i32 loc(#loc33)\n    %program_id_1 = arith.extsi %program_id : i32 to i64 loc(#loc34)\n    %a_ptr_2 = arith.extsi %stride : i32 to i64 loc(#loc35)\n    %a_ptr_3 = arith.muli %program_id_1, %a_ptr_2 : i64 loc(#loc35)\n    %a_ptr_4 = tt.addptr %a_ptr, %a_ptr_3 : !tt.ptr<f16>, i64 loc(#loc36)\n    %b_ptr_5 = tt.addptr %b_ptr, %a_ptr_3 : !tt.ptr<f16>, i64 loc(#loc37)\n    %c_ptr_6 = tt.addptr %c_ptr, %a_ptr_3 : !tt.ptr<f16>, i64 loc(#loc38)\n    %col_offsets = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32> loc(#loc39)\n    %mask_7 = arith.cmpi slt, %col_offsets, %mask : tensor<1024xi32> loc(#loc32)\n    %a_row = tt.splat %a_ptr_4 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc40)\n    %a_row_8 = tt.addptr %a_row, %col_offsets : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc40)\n    %a_row_9 = tt.load %a_row_8, %mask_7, %cst : tensor<1024x!tt.ptr<f16>> loc(#loc41)\n    %a_row_10 = arith.extf %a_row_9 : tensor<1024xf16> to tensor<1024xf32> loc(#loc42)\n    %b_row = tt.splat %b_ptr_5 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc43)\n    %b_row_11 = tt.addptr %b_row, %col_offsets : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc43)\n    %b_row_12 = tt.load %b_row_11, %mask_7, %cst : tensor<1024x!tt.ptr<f16>> loc(#loc44)\n    %c_row_13 = arith.subf %c_row, %a_row_10 : tensor<1024xf32> loc(#loc49)\n    %c_row_14 = math.exp %c_row_13 : tensor<1024xf32> loc(#loc51)\n    %c_row_15 = arith.addf %c_row_14, %c_row_0 : tensor<1024xf32> loc(#loc52)\n    %c_row_16 = arith.divf %c_row_0, %c_row_15 : tensor<1024xf32> loc(#loc53)\n    %c_row_17 = arith.mulf %a_row_10, %c_row_16 : tensor<1024xf32> loc(#loc48)\n    %c_row_18 = arith.truncf %c_row_17 : tensor<1024xf32> to tensor<1024xf16> loc(#loc45)\n    %c_row_19 = arith.mulf %c_row_18, %b_row_12 : tensor<1024xf16> loc(#loc46)\n    %0 = tt.splat %c_ptr_6 : !tt.ptr<f16> -> tensor<1024x!tt.ptr<f16>> loc(#loc24)\n    %1 = tt.addptr %0, %col_offsets : tensor<1024x!tt.ptr<f16>>, tensor<1024xi32> loc(#loc24)\n    tt.store %1, %c_row_19, %mask_7 : tensor<1024x!tt.ptr<f16>> loc(#loc25)\n    tt.return loc(#loc26)\n  } loc(#loc)\n} loc(#loc)\n#loc1 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:30)\n#loc2 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":11:26)\n#loc3 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:17)\n#loc4 = loc(unknown)\n#loc5 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":24:25)\n#loc6 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":16:31)\n#loc7 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":16:37)\n#loc8 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":19:26)\n#loc9 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":19:13)\n#loc10 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":20:13)\n#loc11 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":21:13)\n#loc12 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":23:31)\n#loc13 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:28)\n#loc14 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:20)\n#loc15 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":27:64)\n#loc16 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":28:28)\n#loc17 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":28:20)\n#loc18 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:29)\n#loc19 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:20)\n#loc20 = loc(\"/home/kingdom/.local/lib/python3.10/site-packages/triton/language/standard.py\":50:16)\n#loc21 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":11:15)\n#loc22 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:29)\n#loc23 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":29:44)\n#loc24 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:21)\n#loc25 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:34)\n#loc26 = loc(\"/home/kingdom/phdworks/Dataset/Liger-Kernel/src/liger_kernel/ops/swiglu.py\":30:4)\n#loc31 = loc(\"c_row\"(#loc3))\n#loc32 = loc(\"mask\"(#loc5))\n#loc33 = loc(\"program_id\"(#loc6))\n#loc34 = loc(\"program_id\"(#loc7))\n#loc35 = loc(\"a_ptr\"(#loc8))\n#loc36 = loc(\"a_ptr\"(#loc9))\n#loc37 = loc(\"b_ptr\"(#loc10))\n#loc38 = loc(\"c_ptr\"(#loc11))\n#loc39 = loc(\"col_offsets\"(#loc12))\n#loc40 = loc(\"a_row\"(#loc13))\n#loc41 = loc(\"a_row\"(#loc14))\n#loc42 = loc(\"a_row\"(#loc15))\n#loc43 = loc(\"b_row\"(#loc16))\n#loc44 = loc(\"b_row\"(#loc17))\n#loc45 = loc(\"c_row\"(#loc22))\n#loc46 = loc(\"c_row\"(#loc23))\n#loc47 = loc(callsite(#loc2 at #loc31))\n#loc48 = loc(callsite(#loc21 at #loc31))\n#loc49 = loc(callsite(#loc1 at #loc47))\n#loc50 = loc(callsite(#loc4 at #loc47))\n#loc51 = loc(callsite(#loc18 at #loc47))\n#loc52 = loc(callsite(#loc19 at #loc47))\n#loc53 = loc(callsite(#loc20 at #loc47))\n"
+  },
+  "source_fingerprint": {
+    "dataflow_edges": [
+      [
+        "arg[0]:!tt.ptr<f16>",
+        "tt.addptr[ff8fe801829c9c43f4f9]",
+        "operand[0]"
+      ],
+      [
+        "arg[1]:!tt.ptr<f16>",
+        "tt.addptr[2b0403843cdd241ec860]",
+        "operand[0]"
+      ],
+      [
+        "arg[2]:!tt.ptr<f16>",
+        "tt.addptr[4b403a7c543af06f6992]",
+        "operand[0]"
+      ],
+      [
+        "arg[3]:i32",
+        "arith.extsi[034725eb63c1b0031c8c]",
+        "operand[0]"
+      ],
+      [
+        "arith.addf[247d77d1a068013a3f15]",
+        "arith.divf[b78385bb9c609de60da7]",
+        "operand[1]"
+      ],
+      [
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "tt.load[140e2b51e64236b8884e]",
+        "operand[1]"
+      ],
+      [
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "tt.load[3423c93e940e38e673b8]",
+        "operand[1]"
+      ],
+      [
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "tt.store[18a686214fd50cad29b9]",
+        "operand[2]"
+      ],
+      [
+        "arith.constant[111be030622848c7b889]",
+        "arith.addf[247d77d1a068013a3f15]",
+        "operand[0]"
+      ],
+      [
+        "arith.constant[111be030622848c7b889]",
+        "arith.divf[b78385bb9c609de60da7]",
+        "operand[0]"
+      ],
+      [
+        "arith.constant[3e850c5cf74f3952aeda]",
+        "tt.load[140e2b51e64236b8884e]",
+        "operand[2]"
+      ],
+      [
+        "arith.constant[3e850c5cf74f3952aeda]",
+        "tt.load[3423c93e940e38e673b8]",
+        "operand[2]"
+      ],
+      [
+        "arith.constant[aab5e1f31a7ddcaac735]",
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "operand[1]"
+      ],
+      [
+        "arith.constant[ea97457efb2ca46385d6]",
+        "arith.subf[c90cf4e8d3bbe48a46b2]",
+        "operand[0]"
+      ],
+      [
+        "arith.divf[b78385bb9c609de60da7]",
+        "arith.mulf[a97df421db0be5f5d50b]",
+        "operand[0]"
+      ],
+      [
+        "arith.extf[e70bc675e2429ec7629c]",
+        "arith.mulf[a97df421db0be5f5d50b]",
+        "operand[1]"
+      ],
+      [
+        "arith.extf[e70bc675e2429ec7629c]",
+        "arith.subf[c90cf4e8d3bbe48a46b2]",
+        "operand[1]"
+      ],
+      [
+        "arith.extsi[034725eb63c1b0031c8c]",
+        "arith.muli[b3d4cecfa402cb57aa58]",
+        "operand[0]"
+      ],
+      [
+        "arith.extsi[6fbddfcf085dd110f240]",
+        "arith.muli[b3d4cecfa402cb57aa58]",
+        "operand[1]"
+      ],
+      [
+        "arith.mulf[5818e079f904a3f1dca9]",
+        "tt.store[18a686214fd50cad29b9]",
+        "operand[1]"
+      ],
+      [
+        "arith.mulf[a97df421db0be5f5d50b]",
+        "arith.truncf[a92f3f5db4a9b1f5063b]",
+        "operand[0]"
+      ],
+      [
+        "arith.muli[b3d4cecfa402cb57aa58]",
+        "tt.addptr[2b0403843cdd241ec860]",
+        "operand[1]"
+      ],
+      [
+        "arith.muli[b3d4cecfa402cb57aa58]",
+        "tt.addptr[4b403a7c543af06f6992]",
+        "operand[1]"
+      ],
+      [
+        "arith.muli[b3d4cecfa402cb57aa58]",
+        "tt.addptr[ff8fe801829c9c43f4f9]",
+        "operand[1]"
+      ],
+      [
+        "arith.subf[c90cf4e8d3bbe48a46b2]",
+        "math.exp[83265d8600538d2c2b9b]",
+        "operand[0]"
+      ],
+      [
+        "arith.truncf[a92f3f5db4a9b1f5063b]",
+        "arith.mulf[5818e079f904a3f1dca9]",
+        "operand[0]"
+      ],
+      [
+        "math.exp[83265d8600538d2c2b9b]",
+        "arith.addf[247d77d1a068013a3f15]",
+        "operand[1]"
+      ],
+      [
+        "tt.addptr[2b0403843cdd241ec860]",
+        "tt.splat[4e8895c34eb4b9161d71]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[4b403a7c543af06f6992]",
+        "tt.splat[5b90e84ef8019bdc077a]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[5c39ec606ec8d9cfc136]",
+        "tt.store[18a686214fd50cad29b9]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[75123c689b8df489ff8e]",
+        "tt.load[140e2b51e64236b8884e]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+        "tt.load[3423c93e940e38e673b8]",
+        "operand[0]"
+      ],
+      [
+        "tt.addptr[ff8fe801829c9c43f4f9]",
+        "tt.splat[fb099af16a002d2705a3]",
+        "operand[0]"
+      ],
+      [
+        "tt.get_program_id[b66173daa46d95e66439]",
+        "arith.extsi[6fbddfcf085dd110f240]",
+        "operand[0]"
+      ],
+      [
+        "tt.load[140e2b51e64236b8884e]",
+        "arith.extf[e70bc675e2429ec7629c]",
+        "operand[0]"
+      ],
+      [
+        "tt.load[3423c93e940e38e673b8]",
+        "arith.mulf[5818e079f904a3f1dca9]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "arith.cmpi[29cbc20c1caa61732444]",
+        "operand[0]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "tt.addptr[5c39ec606ec8d9cfc136]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "tt.addptr[75123c689b8df489ff8e]",
+        "operand[1]"
+      ],
+      [
+        "tt.make_range[d1fea77f36a7660b901b]",
+        "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+        "operand[1]"
+      ],
+      [
+        "tt.splat[4e8895c34eb4b9161d71]",
+        "tt.addptr[d9ebfdfcf7dc8b63e4c7]",
+        "operand[0]"
+      ],
+      [
+        "tt.splat[5b90e84ef8019bdc077a]",
+        "tt.addptr[5c39ec606ec8d9cfc136]",
+        "operand[0]"
+      ],
+      [
+        "tt.splat[fb099af16a002d2705a3]",
+        "tt.addptr[75123c689b8df489ff8e]",
+        "operand[0]"
+      ]
+    ],
+    "dots": [],
+    "effect_multiset": {
+      "read.masked": 2,
+      "write.masked": 1
+    },
+    "interface": {
+      "arguments": [
+        {
+          "access": "input",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f16",
+          "kind": "pointer",
+          "position": 0,
+          "rank": null,
+          "type": "!tt.ptr<f16>"
+        },
+        {
+          "access": "input",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f16",
+          "kind": "pointer",
+          "position": 1,
+          "rank": null,
+          "type": "!tt.ptr<f16>"
+        },
+        {
+          "access": "output",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "f16",
+          "kind": "pointer",
+          "position": 2,
+          "rank": null,
+          "type": "!tt.ptr<f16>"
+        },
+        {
+          "access": "value",
+          "attributes": {
+            "tt.divisibility": "16:i32"
+          },
+          "dtype": "i32",
+          "kind": "scalar",
+          "position": 3,
+          "rank": 0,
+          "type": "i32"
+        }
+      ],
+      "python": {
+        "arg_names": [
+          "p0",
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "c0"
+        ],
+        "constexpr_indices": [
+          4,
+          5
+        ],
+        "constexprs": [
+          "c0",
+          "p4"
+        ]
+      },
+      "results": []
+    },
+    "loops": [],
+    "mask_predicates": [
+      "arith.cmpi[29cbc20c1caa61732444]",
+      "arith.cmpi[29cbc20c1caa61732444]",
+      "arith.cmpi[29cbc20c1caa61732444]"
+    ],
+    "memory_effects": [
+      {
+        "attributes": "tt.load %,%,%:tensor<1024x!tt.ptr<f16>>",
+        "kind": "load",
+        "masked": true,
+        "other": "arith.constant dense<0.000000e+00>:tensor<1024xf16>",
+        "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+      },
+      {
+        "attributes": "tt.load %,%,%:tensor<1024x!tt.ptr<f16>>",
+        "kind": "load",
+        "masked": true,
+        "other": "arith.constant dense<0.000000e+00>:tensor<1024xf16>",
+        "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+      },
+      {
+        "attributes": "tt.store %,%,%:tensor<1024x!tt.ptr<f16>>",
+        "kind": "store",
+        "masked": true,
+        "other": null,
+        "predicate": "arith.cmpi[29cbc20c1caa61732444]"
+      }
+    ],
+    "op_multiset": {
+      "arith.addf": 1,
+      "arith.cmpi": 1,
+      "arith.constant": 4,
+      "arith.divf": 1,
+      "arith.extf": 1,
+      "arith.extsi": 2,
+      "arith.mulf": 2,
+      "arith.muli": 1,
+      "arith.subf": 1,
+      "arith.truncf": 1,
+      "math.exp": 1,
+      "tt.addptr": 6,
+      "tt.get_program_id": 1,
+      "tt.load.masked": 2,
+      "tt.make_range": 1,
+      "tt.splat": 3,
+      "tt.store.masked": 1
+    },
+    "reductions": [],
+    "schedule_view": {
+      "c0": 1024,
+      "c1": 4
+    },
+    "schema_version": "triton-ttir-3.6-gate1-v3"
+  },
+  "status": "no_closure"
+}

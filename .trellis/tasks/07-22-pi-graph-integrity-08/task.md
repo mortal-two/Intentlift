@@ -158,3 +158,22 @@ source observer 与 Replay arm 全部 ready，`online_llm_calls=0`，overall rea
 
 下一步提交 preflight evidence，确认 worktree clean 与 v5 output absent，然后只运行一次绑定
 v4 `lift_failed` receipt 的 Swiglu `protocol_v5_recovery` canary。
+
+## 阶段 3 唯一 Canary 结果（2026-07-22）
+
+- v5 Lift 一次调用后被完整 schema/parser 接受；artifact 保留二维 J、non-C `p4`、pure C，且
+  π graph 所有 foreign keys 闭合。
+- source-blind normal Replay 一次生成并真实编译；它使用了 p3、logical extent 与 shared offset，
+  证明 v4 的 graph namespace blocker 已关闭。
+- strict Gate1 为 `no_closure`，score `0.6407238924050632`；interface、reduction、predicate/effect、
+  schedule-only 通过，op multiset/dataflow 不通过。normal 未闭合，masked-J 为 0。
+- 合法 π 已包含 p3/program instance 到三路 access realization 的 fanout、sharing 与
+  realization→transfer chain；Replay 仍把 program-uniform pointer base 与 lane-varying address
+  合并成 vector offset。
+- 当前通用 `realize` tag 无法区分 address base/lane/flat 三种 source topology，故 Task07 冻结的
+  capacity escalation gate 已满足。精确 TTIR、hash、usage 与差异见
+  `research/v5-gate1-address-audit.md`。
+
+Task08 到此完成其目标：π graph 外键可生成合同已闭合，并把系统推进到一个合法 artifact 的
+strict Gate1 address-realization 反例。后续不能在 v5 重试；应归档 Task08，并创建只增加
+`address_base/address_lane` 两个 source-neutral mechanism tags 的 Task09。

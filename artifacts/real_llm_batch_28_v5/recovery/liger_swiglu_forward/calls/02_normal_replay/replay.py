@@ -1,0 +1,26 @@
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def scrc_k0(
+    p0,
+    p1,
+    p2,
+    p3,
+    p4: tl.constexpr,
+    c0: tl.constexpr,
+):
+    v5 = tl.program_id(0)
+    v6 = tl.arange(0, c0)
+    mask = v6 < p4
+    offsets = v5 * p3 + v6
+
+    x = tl.load(p0 + offsets, mask=mask, other=0.0).to(tl.float32)
+    gate = tl.load(p1 + offsets, mask=mask, other=0.0)
+
+    sigmoid_x = tl.sigmoid(x)
+    activated = (x * sigmoid_x).to(tl.float16)
+    output = (activated * gate).to(tl.float16)
+
+    tl.store(p2 + offsets, output, mask=mask)

@@ -47,6 +47,7 @@ _PROGRESS_V2 = _ROOT / "artifacts" / "real_llm_batch_28_v2" / "progress.json"
 _RECOVERY_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "recovery"
 _PROGRESS_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "progress.json"
 _RECOVERY_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "recovery"
+_RECOVERY_V5 = _ROOT / "artifacts" / "real_llm_batch_28_v5" / "recovery"
 
 
 class _Response:
@@ -871,3 +872,103 @@ def test_committed_protocol_v4_canary_rejects_pi_endpoint_and_stops() -> None:
     assert "gate1" not in receipt
     assert not (case_dir / "calls" / "02_normal_replay").exists()
     assert not (case_dir / "calls" / "02_masked_j").exists()
+
+
+def test_committed_protocol_v5_canary_reaches_replay_then_exposes_address_gap() -> None:
+    case_dir = _RECOVERY_V5 / "liger_swiglu_forward"
+    receipt_bytes = (case_dir / "receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert hashlib.sha256(receipt_bytes).hexdigest() == (
+        "5a286725e22f1fadc83771eb460a26e823e0c9675606bde311412563f2921b71"
+    )
+    assert receipt["schema"] == "intentir.formal-real-llm-case.v5"
+    assert receipt["status"] == "gate1_failed"
+    assert receipt["lineage"]["attempt_class"] == "protocol_v5_recovery"
+    assert receipt["lineage"]["predecessor"]["receipt_sha256"] == (
+        "98a3efbc9b9027e2480e68347e053ea62ce7014b6f34db95b707fd39364573d2"
+    )
+    assert [
+        (item["kind"], item["status"], item["attempts"])
+        for item in receipt["calls"]
+    ] == [
+        ("lift", "completed", 1),
+        ("normal_replay", "completed", 1),
+    ]
+    assert [item["usage"] for item in receipt["calls"]] == [
+        {"input_tokens": 10038, "output_tokens": 18251, "total_tokens": 28289},
+        {"input_tokens": 3589, "output_tokens": 1150, "total_tokens": 4739},
+    ]
+    for call in receipt["calls"]:
+        for path_key, digest_key in (
+            ("request_path", "request_sha256"),
+            ("response_path", "response_sha256"),
+            ("raw_response_path", "raw_response_sha256"),
+        ):
+            payload = (case_dir / call[path_key]).read_bytes()
+            assert hashlib.sha256(payload).hexdigest() == call[digest_key]
+    lift_raw = json.loads(
+        (case_dir / receipt["calls"][0]["raw_response_path"]).read_text()
+    )
+    replay_raw = json.loads(
+        (case_dir / receipt["calls"][1]["raw_response_path"]).read_text()
+    )
+    assert lift_raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 15743
+    assert replay_raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 947
+
+    artifact = Gate1Artifact.from_json(
+        json.loads((case_dir / "lift" / "artifact.json").read_text())
+    )
+    assert [item.shape for item in artifact.j.intent.inputs] == [
+        [128, 1024], [128, 1024]
+    ]
+    assert artifact.j.intent.outputs[0].shape == [128, 1024]
+    assert artifact.schedule.values == {"c0": 1024, "c1": 4}
+    assert [item.name for item in artifact.interface.parameters] == [
+        "p0", "p1", "p2", "p3", "p4", "c0"
+    ]
+    assert len(artifact.pi.instances) == 21
+    assert len(artifact.pi.routes) == 31
+    p3_instances = [
+        item["id"] for item in artifact.pi.instances
+        if item["semantic_ref"] == "p3"
+    ]
+    assert p3_instances == ["i2"]
+    assert {
+        item["target"] for item in artifact.pi.routes
+        if item["source"] == "i2"
+    } == {"i4", "i6", "i8"}
+    assert {
+        item["source"]: item["consumers"] for item in artifact.pi.sharing
+    }["i2"] == ["i4", "i6", "i8"]
+
+    replay = (case_dir / receipt["calls"][1]["replay_code_path"]).read_text()
+    assert "offsets = v5 * p3 + v6" in replay
+    assert "p0 + offsets" in replay
+    assert "p0 +=" not in replay
+    gate1 = json.loads((case_dir / "gate1" / "receipt.json").read_text())
+    assert gate1["status"] == "no_closure"
+    assert gate1["llm_calls"] == {"normal": 1, "masked_j": 0}
+    assert gate1["normal"]["comparison"]["score"] == pytest.approx(
+        0.6407238924050632
+    )
+    components = {
+        item["category"]: item
+        for item in gate1["normal"]["comparison"]["components"]
+    }
+    assert components["interface"]["passed"] is True
+    assert components["reduction"]["passed"] is True
+    assert components["predicate_effect"]["passed"] is True
+    assert components["schedule-only"]["passed"] is True
+    assert components["dataflow"]["passed"] is False
+    assert len(components["dataflow"]["differences"]) == 77
+    assert {
+        (item["item"], item["expected_count"], item["actual_count"])
+        for item in components["op_multiset"]["differences"]
+    } == {
+        ("arith.addi", 0, 1),
+        ("arith.extsi", 2, 0),
+        ("tt.addptr", 6, 3),
+        ("tt.splat", 3, 4),
+    }
+    assert receipt["gate1"]["masked_j_calls"] == 0
+    assert not (case_dir / "calls" / "03_masked_j").exists()
