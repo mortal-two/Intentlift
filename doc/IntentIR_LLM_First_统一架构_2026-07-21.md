@@ -245,6 +245,12 @@ instance ID。edge 不隐式声明 instance，也不能直接写 `p0 -> i1`。�
 应声明锚定 p0 的 i0 与锚定 access 的 i1，再写 `i0 -> i1`。确定性 validator 只检查这一
 foreign-key closure，不按 anchor 猜测或补写 graph。
 
+当 strict compiler topology 需要区分寻址阶段时，π 只使用两个 source-neutral mechanism tag：
+`address_base` 表示 program 内 lane-uniform 的独立 pointer/base realization，`address_lane` 表示
+lane-varying final address realization。它们不能保存 offset/index 公式、cast/width、dtype/shape、
+mask 或 API；logical index 仍只在 J。address stage 后再连接 direct/async transfer 或 atomic/
+privatized update，因此这不是一个新的可执行 address plan。
+
 ## 7. C：纯调度
 
 C 只包含替换后不改变 J 的调度与性能提示，例如 tile extent、vector width、线程映射、

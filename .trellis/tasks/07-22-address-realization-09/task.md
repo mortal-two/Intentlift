@@ -112,6 +112,11 @@ Lift LLM 直接依据匿名源码标注，Replay LLM 直接消费；固定代码
 
 ## 当前第一步
 
-只做阶段 0，不改 schema、不调用 LLM。以 v5 的合法 π、Replay 源码与 source/replay TTIR 为
-权威，先把 program-uniform base、lane-varying address、transfer 三段的可观察边界写成唯一合同，
-并证明它不携带 logical index formula 或 pointer width。
+阶段 0 已完成，详见 `research/stage0-address-mechanism-contract.md`。合同已明确：base/lane 只分类
+已有 compiler-visible address stages，与 direct/async transfer、atomic/private update 正交；不携带
+formula、width/cast、dtype/shape、mask、API 或 logical index。flat source 没有独立 base 时不得
+虚构 instance。
+
+下一步进入阶段 1：集中 mechanism enum/grammar 真相，投影 parser、Responses schema 与
+Lift/Replay prompt，并用 source-neutral fixtures 验证 base→lane→transfer 与 flat graph；继续保持
+0 次 LLM。

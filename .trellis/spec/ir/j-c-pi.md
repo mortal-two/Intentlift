@@ -29,6 +29,12 @@ instance、region、route、operand slot、order、sharing、placement，以及�
 必需的 source-neutral mechanism tag（如 async/direct transfer 或 atomic/privatized
 realization）。mechanism tag 不得携带逻辑 operator、combiner、predicate 或数值。
 
+寻址 realization 使用两个正交 tag：`address_base` 只表示一个独立、program-uniform 的
+pointer/base stage；`address_lane` 只表示形成 lane-varying final address 的 stage。它们可与
+`transfer_direct/transfer_async/update_atomic/update_privatized` 串联，但不取代 transfer/update。
+address tag 不携带 index/offset formula、integer width、cast、dtype、shape、vector length、mask
+或 frontend API。flat source 没有独立 base stage 时不能为了 Gate1 虚构 `address_base`。
+
 一个 instance 表示一个 compiler-observable realization event，不是一份新语义值。同一
 `semantic_ref` 可以有多个 instance，以表达同一匿名 handle 的多级 realization；route 是
 instance 间匿名 def-use，order 是必要偏序，sharing 表示一个实际 producer 被多个 consumer
