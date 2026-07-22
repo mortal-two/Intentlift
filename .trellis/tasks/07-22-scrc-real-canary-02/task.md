@@ -187,6 +187,21 @@ rank-1 bare index 与 bracketed direct index 都作为封闭语法支持。
 Replay–J 三条 exact 边均通过，最大误差均为 0。下一次必须从新的 `masked_copy/run-005` 完整重跑，
 才能形成新的认证结论。
 
+### `masked_copy / run-005`
+
+- terminal：`SCRC_CERTIFIED`；全新候选首轮通过 TypeCheck 与 Gate1，accepted attempt 为 1；
+- Gate2 在实际 `c0={c0:1024}` 上使用 `logical_domain_mask_erasure_v1`，证据记录 2 个 predicated
+  access 与 1 个被证明可擦除的 fill；
+- Source–Replay、Source–J、Replay–J 三条 external-Q exact 边全部通过，最大绝对误差均为 0；
+- 预算为 1 次 Lift、1 次 normal Replay、1 次 masked-J Replay，以及各 1 次
+  Source/Replay/RefEval Gate2 execution；
+- `j_necessity_status=inconclusive`：masked-J Replay 把 `c0` 赋给普通局部变量后传给 `tl.arange`，
+  Triton 因其不再是可识别的 `tl.constexpr` 而编译失败。该独立诊断不改变主认证，也不被误写成
+  `PROVED/NOT_PROVED`。
+
+至此 masked copy canary 已明确完成。下一步按既定顺序进入 `masked_row_square_sum`；当前
+mask-erasure 明确不支持 reduction padding，因此不能把 masked copy 的认证外推到 reduction。
+
 ## 实施内容
 
 ### 1. 可复现真实入口
