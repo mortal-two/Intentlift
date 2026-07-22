@@ -331,7 +331,7 @@ def compare_outputs(
                 OutputAgreement(
                     runtime_key,
                     False,
-                    float("inf"),
+                    None,
                     f"shape mismatch: {lhs.shape} != {rhs.shape}",
                     relation.kind.value,
                     True,
