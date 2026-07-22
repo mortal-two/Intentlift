@@ -54,6 +54,7 @@ from .real_batch import (
     SCHEMA_V4,
     SCHEMA_V5,
     SCHEMA_V6,
+    SCHEMA_V7,
     V2_BATCH_ID,
     V2_MANIFEST_DIGEST,
     V2_MANIFEST_FILE_SHA256,
@@ -66,6 +67,9 @@ from .real_batch import (
     V5_BATCH_ID,
     V5_MANIFEST_DIGEST,
     V5_MANIFEST_FILE_SHA256,
+    V6_BATCH_ID,
+    V6_MANIFEST_DIGEST,
+    V6_MANIFEST_FILE_SHA256,
     compiler_pythonpath,
     cute_compile_case,
     cute_entry_symbol,
@@ -83,6 +87,7 @@ RUN_SCHEMA_V3 = "intentir.formal-real-llm-case.v3"
 RUN_SCHEMA_V4 = "intentir.formal-real-llm-case.v4"
 RUN_SCHEMA_V5 = "intentir.formal-real-llm-case.v5"
 RUN_SCHEMA_V6 = "intentir.formal-real-llm-case.v6"
+RUN_SCHEMA_V7 = "intentir.formal-real-llm-case.v7"
 _V2_ATTEMPT_CLASSES = frozenset(
     {"protocol_v2_first_attempt", "protocol_v2_recovery"}
 )
@@ -98,12 +103,16 @@ _V5_ATTEMPT_CLASSES = frozenset(
 _V6_ATTEMPT_CLASSES = frozenset(
     {"protocol_v6_first_attempt", "protocol_v6_recovery"}
 )
+_V7_ATTEMPT_CLASSES = frozenset(
+    {"protocol_v7_first_attempt", "protocol_v7_recovery"}
+)
 _ATTEMPT_CLASSES_BY_SCHEMA = {
     SCHEMA_V2: _V2_ATTEMPT_CLASSES,
     SCHEMA_V3: _V3_ATTEMPT_CLASSES,
     SCHEMA_V4: _V4_ATTEMPT_CLASSES,
     SCHEMA_V5: _V5_ATTEMPT_CLASSES,
     SCHEMA_V6: _V6_ATTEMPT_CLASSES,
+    SCHEMA_V7: _V7_ATTEMPT_CLASSES,
 }
 _RUN_SCHEMA_BY_MANIFEST = {
     SCHEMA_V1: RUN_SCHEMA,
@@ -112,6 +121,7 @@ _RUN_SCHEMA_BY_MANIFEST = {
     SCHEMA_V4: RUN_SCHEMA_V4,
     SCHEMA_V5: RUN_SCHEMA_V5,
     SCHEMA_V6: RUN_SCHEMA_V6,
+    SCHEMA_V7: RUN_SCHEMA_V7,
 }
 
 _V4_RECOVERY_RECEIPT_SHA256 = (
@@ -137,6 +147,21 @@ _V5_ARTIFACT_SHA256 = (
 )
 _V5_GATE1_RECEIPT_SHA256 = (
     "e77401db2db33db8b4084f0cc8aa3eb5380d896c89fcd321eeb32c89ef4e3583"
+)
+_V6_RECOVERY_RECEIPT_SHA256 = (
+    "21fb0a2e548f75c619e0339664092defb554dacef5b6a132b54d5db0aed04b9d"
+)
+_V6_PREFLIGHT_SHA256 = (
+    "ffda048dfdf00738359e4fe335d9b6d188bcd7590fdcc9297f7cf9e2052fec52"
+)
+_V6_REQUEST_SHA256 = (
+    "cc44b107c1bad9ffa89f9489de539dc078bd81f167d297ec149f568f30cf3d9f"
+)
+_V6_ENVELOPE_RESPONSE_SHA256 = (
+    "4ec0e7f4b8ef75ac0e0794ece900e8cb00e7e7575d2823a0aec74ce59f7d01fb"
+)
+_V6_RAW_RESPONSE_SHA256 = (
+    "60c6242c419c79bbd2215842b8e88af8d93ef4fa0588915601fc669ffa1f0700"
 )
 
 
@@ -555,6 +580,14 @@ def _lineage(
             predecessor,
             payload,
         )
+    if manifest_schema == SCHEMA_V7:
+        return _v7_recovery_lineage(
+            manifest,
+            case_id,
+            attempt_class,
+            predecessor,
+            payload,
+        )
     if (
         predecessor.get("case_id") != case_id
         or predecessor.get("status") != "lift_failed"
@@ -907,6 +940,106 @@ def _v6_recovery_lineage(
     }
 
 
+def _v7_recovery_lineage(
+    manifest: BatchManifest,
+    case_id: str,
+    attempt_class: str,
+    predecessor: Mapping[str, Any],
+    payload: bytes,
+) -> Mapping[str, Any]:
+    """Bind v7 recovery to the exact frozen v6 envelope rejection."""
+
+    if attempt_class != "protocol_v7_recovery":
+        raise FormalRunError("protocol-v7 recovery classification is invalid")
+    if _sha256(payload) != _V6_RECOVERY_RECEIPT_SHA256:
+        raise FormalRunError(
+            "protocol-v7 recovery requires the exact frozen protocol-v6 receipt"
+        )
+    if (
+        predecessor.get("case_id") != case_id
+        or predecessor.get("status") != "lift_failed"
+        or predecessor.get("schema") != RUN_SCHEMA_V6
+        or predecessor.get("batch_id") != V6_BATCH_ID
+        or predecessor.get("manifest_digest") != V6_MANIFEST_DIGEST
+        or predecessor.get("manifest_file_sha256")
+        != V6_MANIFEST_FILE_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v7 recovery requires the frozen protocol-v6 Lift failure"
+        )
+    calls = predecessor.get("calls")
+    if (
+        not isinstance(calls, list)
+        or len(calls) != 1
+        or calls[0].get("kind") != "lift"
+        or calls[0].get("status") != "failed"
+        or calls[0].get("attempts") != 1
+        or calls[0].get("request_sha256") != _V6_REQUEST_SHA256
+        or calls[0].get("response_sha256")
+        != _V6_ENVELOPE_RESPONSE_SHA256
+        or calls[0].get("raw_response_sha256") != _V6_RAW_RESPONSE_SHA256
+        or "Gate1Artifact is missing required key(s)" not in str(
+            calls[0].get("diagnostic")
+        )
+        or predecessor.get("artifacts") != {}
+        or predecessor.get("gate1") is not None
+    ):
+        raise FormalRunError(
+            "protocol-v7 predecessor is not the one-call envelope rejection"
+        )
+    preflight = predecessor.get("preflight")
+    if (
+        not isinstance(preflight, dict)
+        or preflight.get("schema") != "intentir.real-llm-batch-preflight.v6"
+        or preflight.get("sha256") != _V6_PREFLIGHT_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v7 predecessor lacks the frozen protocol-v6 preflight"
+        )
+    predecessor_lineage = predecessor.get("lineage")
+    previous = (
+        predecessor_lineage.get("predecessor")
+        if isinstance(predecessor_lineage, dict)
+        else None
+    )
+    if (
+        not isinstance(predecessor_lineage, dict)
+        or predecessor_lineage.get("attempt_class")
+        != "protocol_v6_recovery"
+        or not isinstance(previous, dict)
+        or previous.get("receipt_sha256") != _V5_RECOVERY_RECEIPT_SHA256
+    ):
+        raise FormalRunError(
+            "protocol-v7 predecessor lacks exact protocol-v6 recovery lineage"
+        )
+    case = manifest.case(case_id)
+    source = predecessor.get("source")
+    expected_source = case["source"]
+    if not isinstance(source, dict) or any(
+        source.get(key) != expected_source[key]
+        for key in (
+            "repository", "path", "symbol", "frontend", "file_sha256",
+            "symbol_sha256",
+        )
+    ):
+        raise FormalRunError("protocol-v7 predecessor source identity differs")
+    if predecessor.get("provider") != manifest.data["provider"]:
+        raise FormalRunError("protocol-v7 predecessor provider identity differs")
+    return {
+        "attempt_class": attempt_class,
+        "predecessor": {
+            "schema": predecessor["schema"],
+            "batch_id": predecessor["batch_id"],
+            "case_id": predecessor["case_id"],
+            "status": predecessor["status"],
+            "attempt_class": predecessor_lineage["attempt_class"],
+            "manifest_digest": predecessor["manifest_digest"],
+            "manifest_file_sha256": predecessor["manifest_file_sha256"],
+            "receipt_sha256": _sha256(payload),
+        },
+    }
+
+
 def _v2_lineage(
     manifest: BatchManifest,
     case_id: str,
@@ -1161,6 +1294,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             _V2_ATTEMPT_CLASSES | _V3_ATTEMPT_CLASSES | _V4_ATTEMPT_CLASSES
             | _V5_ATTEMPT_CLASSES
             | _V6_ATTEMPT_CLASSES
+            | _V7_ATTEMPT_CLASSES
         ),
     )
     parser.add_argument("--predecessor-receipt", type=Path)
@@ -1191,5 +1325,6 @@ __all__ = [
     "RUN_SCHEMA_V4",
     "RUN_SCHEMA_V5",
     "RUN_SCHEMA_V6",
+    "RUN_SCHEMA_V7",
     "run_formal_gate1_case",
 ]

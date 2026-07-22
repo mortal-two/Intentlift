@@ -39,6 +39,7 @@ _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
 _MANIFEST_V5 = _ROOT / "test" / "real_llm_batch_28_v5.json"
 _MANIFEST_V6 = _ROOT / "test" / "real_llm_batch_28_v6.json"
+_MANIFEST_V7 = _ROOT / "test" / "real_llm_batch_28_v7.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "preflight.json"
 _PREFLIGHT_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "preflight.json"
@@ -52,6 +53,7 @@ _PROGRESS_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "progress.json"
 _RECOVERY_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "recovery"
 _RECOVERY_V5 = _ROOT / "artifacts" / "real_llm_batch_28_v5" / "recovery"
 _RECOVERY_V6 = _ROOT / "artifacts" / "real_llm_batch_28_v6" / "recovery"
+
 
 
 class _Response:
@@ -419,6 +421,118 @@ def test_protocol_v6_recovery_rejects_nonexact_v5_receipt(tmp_path: Path) -> Non
         )
 
 
+def test_protocol_v7_recovery_binds_exact_v6_envelope_rejection() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V7)
+    predecessor = _RECOVERY_V6 / "liger_swiglu_forward" / "receipt.json"
+    lineage = formal_runner._lineage(
+        manifest,
+        "liger_swiglu_forward",
+        "protocol_v7_recovery",
+        predecessor,
+    )
+    assert lineage == {
+        "attempt_class": "protocol_v7_recovery",
+        "predecessor": {
+            "schema": "intentir.formal-real-llm-case.v6",
+            "batch_id": "tianchenir-formal-real-kernels-protocol-v6-2026-07-22",
+            "case_id": "liger_swiglu_forward",
+            "status": "lift_failed",
+            "attempt_class": "protocol_v6_recovery",
+            "manifest_digest": "c3144d17dc7a691dbe7127e8fea2aeb6be526cfb8788239ecf9466b27142212d",
+            "manifest_file_sha256": "162c86ef069434ae74c993d6003eb127de0b75382910481861491b06e4e84e95",
+            "receipt_sha256": "21fb0a2e548f75c619e0339664092defb554dacef5b6a132b54d5db0aed04b9d",
+        },
+    }
+    with pytest.raises(FormalRunError, match="requires its predecessor"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v7_recovery",
+            None,
+        )
+
+
+def test_protocol_v7_recovery_rejects_nonexact_v6_receipt(tmp_path: Path) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V7)
+    original = _RECOVERY_V6 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    receipt["history"].append({"status": "tampered", "at": "never"})
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(FormalRunError, match="exact frozen protocol-v6 receipt"):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v7_recovery",
+            predecessor,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda receipt: receipt.update({"status": "gate1_failed"}), "Lift failure"),
+        (
+            lambda receipt: receipt["calls"].append(
+                {"kind": "normal_replay", "status": "failed", "attempts": 1}
+            ),
+            "one-call envelope rejection",
+        ),
+        (
+            lambda receipt: receipt["calls"][0].update(
+                {"response_sha256": "0" * 64}
+            ),
+            "one-call envelope rejection",
+        ),
+        (
+            lambda receipt: receipt["preflight"].update({"sha256": "0" * 64}),
+            "frozen protocol-v6 preflight",
+        ),
+        (
+            lambda receipt: receipt["lineage"].update(
+                {"attempt_class": "protocol_v6_first_attempt"}
+            ),
+            "exact protocol-v6 recovery lineage",
+        ),
+        (
+            lambda receipt: receipt["source"].update(
+                {"symbol_sha256": "0" * 64}
+            ),
+            "source identity differs",
+        ),
+        (
+            lambda receipt: receipt["provider"].update({"model": "other"}),
+            "provider identity differs",
+        ),
+    ],
+)
+def test_protocol_v7_structurally_rejects_tampered_v6_predecessor(
+    tmp_path: Path,
+    monkeypatch,
+    mutation,
+    message: str,
+) -> None:
+    manifest = load_batch_manifest(_MANIFEST_V7)
+    original = _RECOVERY_V6 / "liger_swiglu_forward" / "receipt.json"
+    receipt = json.loads(original.read_text(encoding="utf-8"))
+    mutation(receipt)
+    payload = json.dumps(receipt, sort_keys=True).encode()
+    predecessor = tmp_path / "receipt.json"
+    predecessor.write_bytes(payload)
+    monkeypatch.setattr(
+        formal_runner,
+        "_V6_RECOVERY_RECEIPT_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    with pytest.raises(FormalRunError, match=message):
+        formal_runner._lineage(
+            manifest,
+            "liger_swiglu_forward",
+            "protocol_v7_recovery",
+            predecessor,
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -689,6 +803,12 @@ def test_protocol_v6_rejects_wrong_attempt_before_provider_or_ledger(
         raise AssertionError("provider resolution happened before lineage validation")
 
     monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    monkeypatch.setattr(formal_runner, "verify_lift_wire_lock", lambda _lock: None)
+    monkeypatch.setattr(
+        formal_runner,
+        "_validate_preflight",
+        lambda *_args, **_kwargs: {"schema": "offline-test"},
+    )
     output = tmp_path / "formal"
     with pytest.raises(FormalRunError, match="explicit attempt classification"):
         formal_runner.run_formal_gate1_case(
@@ -699,6 +819,33 @@ def test_protocol_v6_rejects_wrong_attempt_before_provider_or_ledger(
             attempt_class="protocol_v5_recovery",
             predecessor_receipt=(
                 _RECOVERY_V5 / "liger_swiglu_forward" / "receipt.json"
+            ),
+        )
+    assert not output.exists()
+
+
+def test_protocol_v7_rejects_wrong_attempt_before_provider_or_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def provider_must_not_run(*args, **kwargs):
+        raise AssertionError("provider resolution happened before lineage validation")
+
+    monkeypatch.setattr(formal_runner, "get_provider", provider_must_not_run)
+    monkeypatch.setattr(
+        formal_runner,
+        "_validate_preflight",
+        lambda *_args, **_kwargs: {"schema": "offline-test"},
+    )
+    output = tmp_path / "formal"
+    with pytest.raises(FormalRunError, match="explicit attempt classification"):
+        formal_runner.run_formal_gate1_case(
+            _MANIFEST_V7,
+            "liger_swiglu_forward",
+            output_root=output,
+            preflight_path=tmp_path / "not-read.json",
+            attempt_class="protocol_v6_recovery",
+            predecessor_receipt=(
+                _RECOVERY_V6 / "liger_swiglu_forward" / "receipt.json"
             ),
         )
     assert not output.exists()

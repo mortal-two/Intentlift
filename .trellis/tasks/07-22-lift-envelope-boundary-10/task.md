@@ -93,6 +93,6 @@ j    = kernel_id + intent + node_ids + boundary + scopes + storage
 
 ## 当前第一步
 
-只做阶段 0，不改 schema、不调用 LLM。先从 v6 raw response 与 Gate1Artifact/BoundaryAccess parser
-逐字段建立 root/J/boundary ownership 表，区分“模型必须输出”与“parser 可选/派生”，再决定最小
-共享 grammar；禁止以 v5 artifact 作为自动补全模板。
+阶段 0--1 已完成并提交：v6 反例、parser 真值、共享 root/J/boundary grammar、双向 mutation 与
+v7 wire/lineage 已冻结；未调用 LLM，也没有 repair 路径。下一步是用 v7 current lock 跑最终完整
+回归；全绿后生成并复验 28/28、0-LLM preflight，然后才允许唯一 Swiglu canary。

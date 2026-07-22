@@ -33,6 +33,7 @@ _MANIFEST_V3 = _ROOT / "test" / "real_llm_batch_28_v3.json"
 _MANIFEST_V4 = _ROOT / "test" / "real_llm_batch_28_v4.json"
 _MANIFEST_V5 = _ROOT / "test" / "real_llm_batch_28_v5.json"
 _MANIFEST_V6 = _ROOT / "test" / "real_llm_batch_28_v6.json"
+_MANIFEST_V7 = _ROOT / "test" / "real_llm_batch_28_v7.json"
 _PREFLIGHT = _ROOT / "artifacts" / "real_llm_batch_28" / "preflight.json"
 _PREFLIGHT_V2 = (
     _ROOT / "artifacts" / "real_llm_batch_28_v2" / "preflight.json"
@@ -73,6 +74,10 @@ def _raw_v5() -> dict:
 
 def _raw_v6() -> dict:
     return json.loads(_MANIFEST_V6.read_text())
+
+
+def _raw_v7() -> dict:
+    return json.loads(_MANIFEST_V7.read_text())
 
 
 def test_formal_manifest_has_28_verified_source_symbols() -> None:
@@ -352,7 +357,7 @@ def test_protocol_v5_rejects_v4_identity_or_open_parameter_class() -> None:
         validate_batch_manifest(raw, verify_sources=False)
 
 
-def test_protocol_v6_is_current_and_changes_only_lift_identity() -> None:
+def test_protocol_v6_is_retired_and_changed_only_lift_identity() -> None:
     v5 = load_batch_manifest(_MANIFEST_V5)
     v6 = load_batch_manifest(_MANIFEST_V6)
     assert v6.digest == (
@@ -369,9 +374,9 @@ def test_protocol_v6_is_current_and_changes_only_lift_identity() -> None:
     } == {
         key: value for key, value in v5.data["protocols"].items() if key != "lift"
     }
-    assert verify_lift_wire_lock(v6.data["lift_wire"]) == (
-        current_lift_wire_identity()
-    )
+    assert v6.data["lift_wire"] != current_lift_wire_identity()
+    with pytest.raises(LiftWireError, match="differs"):
+        verify_lift_wire_lock(v6.data["lift_wire"])
     assert v6.data["lift_wire"]["schema_sha256"] == (
         "10834a38fb7f7bc00228599ec123d63fff2f25d017fd01247c0fb5a56b499393"
     )
@@ -380,6 +385,44 @@ def test_protocol_v6_is_current_and_changes_only_lift_identity() -> None:
 def test_protocol_v6_rejects_v5_wire_identity() -> None:
     raw = _raw_v6()
     raw["lift_wire"] = _raw_v5()["lift_wire"]
+    with pytest.raises(ManifestError, match="version"):
+        validate_batch_manifest(raw, verify_sources=False)
+
+
+def test_protocol_v7_is_current_and_changes_only_envelope_wire() -> None:
+    v6 = load_batch_manifest(_MANIFEST_V6)
+    v7 = load_batch_manifest(_MANIFEST_V7)
+    assert v7.digest == (
+        "66bf2db6af8b7c26d6ea04d045bc3e50eb1f64dcf667890e801c938621312a34"
+    )
+    assert hashlib.sha256(_MANIFEST_V7.read_bytes()).hexdigest() == (
+        "fc9e8902b07da4687b67f1b5c11884e8dd73d3f3785a11b2f1e1e820a2df2c50"
+    )
+    assert v7.data["cases"] == v6.data["cases"]
+    assert v7.data["repositories"] == v6.data["repositories"]
+    assert v7.data["call_budget"] == v6.data["call_budget"]
+    assert {
+        key: value for key, value in v7.data["protocols"].items() if key != "lift"
+    } == {
+        key: value for key, value in v6.data["protocols"].items() if key != "lift"
+    }
+    assert verify_lift_wire_lock(v7.data["lift_wire"]) == (
+        current_lift_wire_identity()
+    )
+    assert v7.data["lift_wire"]["schema_sha256"] == (
+        "f7612a64c587cdcdfd07b754b9f8f881443520a4dc2dafb716aaadd1360444b7"
+    )
+    assert v7.data["lift_wire"]["prompt_sha256"] == (
+        "8f97ce5928725e837e69bf3a22cfea35a2ef8d42439e6344db4c52536115085a"
+    )
+    assert v7.data["lift_wire"]["client_files"][-1]["path"] == (
+        "python/intentir/verify/gate1/model.py"
+    )
+
+
+def test_protocol_v7_rejects_v6_wire_identity() -> None:
+    raw = _raw_v7()
+    raw["lift_wire"] = _raw_v6()["lift_wire"]
     with pytest.raises(ManifestError, match="version"):
         validate_batch_manifest(raw, verify_sources=False)
 
@@ -403,6 +446,13 @@ def test_protocol_v5_preflight_cannot_authorize_protocol_v6() -> None:
     receipt = json.loads(_PREFLIGHT_V5.read_text(encoding="utf-8"))
     with pytest.raises(ValueError, match="active epoch"):
         verify_formal_preflight(receipt, manifest, _MANIFEST_V6)
+
+
+def test_protocol_v6_preflight_cannot_authorize_protocol_v7() -> None:
+    manifest = load_batch_manifest(_MANIFEST_V7)
+    receipt = json.loads(_PREFLIGHT_V6.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="active epoch"):
+        verify_formal_preflight(receipt, manifest, _MANIFEST_V7)
 
 
 def test_protocol_v5_preflight_remains_frozen_zero_llm_evidence() -> None:
@@ -443,17 +493,20 @@ def test_protocol_v5_preflight_remains_frozen_zero_llm_evidence() -> None:
     )
 
 
-def test_protocol_v6_preflight_is_current_zero_llm_and_28_of_28() -> None:
+def test_protocol_v6_preflight_remains_frozen_zero_llm_evidence() -> None:
     manifest = load_batch_manifest(_MANIFEST_V6)
     receipt = json.loads(_PREFLIGHT_V6.read_text(encoding="utf-8"))
-    verify_formal_preflight(receipt, manifest, _MANIFEST_V6)
     assert hashlib.sha256(_PREFLIGHT_V6.read_bytes()).hexdigest() == (
         "ffda048dfdf00738359e4fe335d9b6d188bcd7590fdcc9297f7cf9e2052fec52"
     )
     assert receipt["schema"] == "intentir.real-llm-batch-preflight.v6"
     assert receipt["online_llm_calls"] == 0
-    assert receipt["lift_wire"] == current_lift_wire_identity()
-    assert receipt["gate1_code"] == current_gate1_code_identity()
+    assert receipt["manifest_digest"] == manifest.digest
+    assert receipt["lift_wire"] == manifest.data["lift_wire"]
+    assert receipt["lift_wire"] != current_lift_wire_identity()
+    assert receipt["gate1_code"] != current_gate1_code_identity()
+    with pytest.raises(ValueError, match="Lift wire differs"):
+        verify_formal_preflight(receipt, manifest, _MANIFEST_V6)
     assert receipt["summary"] == {
         "blocking_capability": None,
         "cute_compiled": 2,
