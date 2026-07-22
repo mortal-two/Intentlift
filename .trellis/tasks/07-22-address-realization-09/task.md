@@ -142,3 +142,17 @@ proposal。相关 targeted regression 为 `152 passed`，在线 LLM 调用新增
 
 下一步切换 protocol-v6 identity并精确绑定 v5 `gate1_failed` predecessor；v6 manifest 除 Lift wire
 外必须与 v5 相同。完成该 epoch 切换后再跑全量回归和 0-LLM preflight。
+
+protocol-v6 调用合同已完成：
+
+- v6 manifest 的 28 cases、repositories、call budget 与非 Lift protocols 和 v5 完全一致；
+- manifest digest：`c3144d17dc7a691dbe7127e8fea2aeb6be526cfb8788239ecf9466b27142212d`；
+- manifest file SHA：`162c86ef069434ae74c993d6003eb127de0b75382910481861491b06e4e84e95`；
+- Lift wire v6 schema SHA：`10834a38fb7f7bc00228599ec123d63fff2f25d017fd01247c0fb5a56b499393`；
+- Lift prompt SHA：`51176bb9b508b4d22482f597ea8cd27debb6da908cdcfe58c4d28a7f9fe7f6d2`；
+- v6 recovery 绑定 exact v5 receipt/manifest/preflight/artifact/Gate1 receipt、一次 Lift+一次 normal
+  Replay、strict no-closure、0 masked-J、v5→v4 lineage 与 source/provider；
+- current-v6/historical-v5、lineage tamper 与 address conformance 定向回归 `193 passed`，在线 LLM
+  调用新增为 0。
+
+下一步运行全量回归；全绿并提交后才构建 v6 0-LLM preflight。
