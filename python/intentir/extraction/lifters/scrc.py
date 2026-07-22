@@ -23,7 +23,10 @@ from intentir.verify.gate1.model import (
     ProvenanceRole,
     ScheduleSlotKind,
 )
-from intentir.verify.gate1.pi import render_realization_witness_wire_grammar
+from intentir.verify.gate1.pi import (
+    render_realization_mechanism_grammar,
+    render_realization_witness_wire_grammar,
+)
 
 from .prompt import SCHEMA as INTENTIR_SCHEMA
 from .scrc_schema import (
@@ -594,6 +597,9 @@ frontend API, source identifier, source fragment, prose, or rule identity in pi.
 
 Pi graph reference contract:
 {render_realization_witness_wire_grammar()}
+
+Pi mechanism contract:
+{render_realization_mechanism_grammar()}
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared

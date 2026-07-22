@@ -120,3 +120,17 @@ formula、width/cast、dtype/shape、mask、API 或 logical index。flat source 
 下一步进入阶段 1：集中 mechanism enum/grammar 真相，投影 parser、Responses schema 与
 Lift/Replay prompt，并用 source-neutral fixtures 验证 base→lane→transfer 与 flat graph；继续保持
 0 次 LLM。
+
+阶段 1 已完成：
+
+- `REALIZATION_MECHANISMS` 是唯一 closed enum，parser 与 Responses schema 从它投影；
+- `render_realization_mechanism_grammar()` 同时进入 schema description、Lift instructions 与 Replay
+  instructions，明确 base→lane 不得代数折叠；
+- JSON shape 不变，只新增 `address_base/address_lane` 两个值；没有 formula/width/cast/dtype/API；
+- staged base→lane→transfer 与 flat lane→transfer fixtures 可区分、可 round-trip，并完整进入 Replay
+  packet；address tags 与 direct/async transfer、atomic/privatized update 正交组合；
+- schema/parser 对全部 mechanism 接受域一致，未知 `address_formula_i64` 双侧拒绝；定向回归
+  `144 passed`，在线 LLM 调用新增为 0。
+
+下一步进入阶段 2：补 address-specific masked-J/graph mutation、历史 evidence SHA 与 runner lineage
+测试，随后运行全量回归；在全绿前不冻结 v6。

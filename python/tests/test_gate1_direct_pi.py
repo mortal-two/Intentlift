@@ -17,8 +17,10 @@ from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 from intentir.verify.gate1.model import Gate1Artifact, ScheduleSlot, SchemaError
 from intentir.verify.gate1.pi import (
+    REALIZATION_MECHANISMS,
     RealizationWitness,
     RealizationWitnessError,
+    render_realization_mechanism_grammar,
     render_realization_witness_wire_grammar,
 )
 from intentir.verify.gate1.prompt import (
@@ -232,6 +234,73 @@ def _flat_pi() -> RealizationWitness:
     )
 
 
+def _address_pi(*, staged: bool) -> RealizationWitness:
+    instances = [
+        {"id": "i0", "semantic_ref": "p0", "region": "r1", "mechanism": "realize"},
+    ]
+    if staged:
+        instances.extend(
+            [
+                {
+                    "id": "i1",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_base",
+                },
+                {
+                    "id": "i2",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_lane",
+                },
+                {
+                    "id": "i3",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "transfer_direct",
+                },
+            ]
+        )
+        routes = [
+            {"source": "i0", "target": "i1", "slots": [0]},
+            {"source": "i1", "target": "i2", "slots": [0]},
+            {"source": "i2", "target": "i3", "slots": [0]},
+        ]
+    else:
+        instances.extend(
+            [
+                {
+                    "id": "i1",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_lane",
+                },
+                {
+                    "id": "i2",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "transfer_direct",
+                },
+            ]
+        )
+        routes = [
+            {"source": "i0", "target": "i1", "slots": [0]},
+            {"source": "i1", "target": "i2", "slots": [0]},
+        ]
+    return RealizationWitness.from_json(
+        {
+            "regions": [
+                {"id": "r0", "parent": None, "placement": "root"},
+                {"id": "r1", "parent": "r0", "placement": "program"},
+            ],
+            "instances": instances,
+            "routes": routes,
+            "order": [],
+            "sharing": [],
+        }
+    )
+
+
 def test_existing_pi_distinguishes_runtime_row_base_from_flat_access() -> None:
     row = _row_stride_pi()
     flat = _flat_pi()
@@ -241,6 +310,51 @@ def test_existing_pi_distinguishes_runtime_row_base_from_flat_access() -> None:
     ].count("p2") == 3
     assert all(item["semantic_ref"] != "p2" for item in flat.instances)
     assert row.sharing == [{"source": "i2", "consumers": ["i3", "i5"]}]
+
+
+def test_address_mechanisms_distinguish_staged_base_from_flat_lane() -> None:
+    staged = _address_pi(staged=True)
+    flat = _address_pi(staged=False)
+    assert staged.to_json() != flat.to_json()
+    assert [item["mechanism"] for item in staged.instances] == [
+        "realize", "address_base", "address_lane", "transfer_direct"
+    ]
+    assert [item["mechanism"] for item in flat.instances] == [
+        "realize", "address_lane", "transfer_direct"
+    ]
+    assert staged.routes[1] == {
+        "source": "i1", "target": "i2", "slots": [0]
+    }
+    assert RealizationWitness.from_json(staged.to_json()) == staged
+
+
+@pytest.mark.parametrize(
+    "downstream",
+    [
+        "transfer_direct",
+        "transfer_async",
+        "update_atomic",
+        "update_privatized",
+    ],
+)
+def test_address_mechanisms_are_orthogonal_to_transfer_and_update(
+    downstream: str,
+) -> None:
+    payload = _address_pi(staged=True).to_json()
+    payload["instances"][-1]["mechanism"] = downstream
+    parsed = RealizationWitness.from_json(payload)
+    assert parsed.instances[-2]["mechanism"] == "address_lane"
+    assert parsed.instances[-1]["mechanism"] == downstream
+
+
+def test_address_mechanisms_survive_replay_without_semantic_payload() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi = _address_pi(staged=True)
+    view = build_normal_rewriter_view(artifact)
+    assert view["pi"] == artifact.pi.to_json()
+    encoded = json.dumps(view["pi"], sort_keys=True)
+    for forbidden in ("formula", "dtype", "shape", "predicate", "tl.load"):
+        assert forbidden not in encoded
 
 
 def test_pi_repeated_anchor_and_runtime_routes_survive_replay_packet() -> None:
@@ -341,6 +455,7 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
 
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     grammar = render_realization_witness_wire_grammar()
+    mechanism_grammar = render_realization_mechanism_grammar()
     schema = scrc_lift_core_json_schema()
     pi_schema = schema["properties"]["pi"]
     lift_instructions = scrc.build_scrc_lift_instructions()
@@ -349,10 +464,18 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert grammar in pi_schema["description"]
     assert grammar in lift_instructions
     assert grammar in replay_instructions
+    assert mechanism_grammar in pi_schema["description"]
+    assert mechanism_grammar in lift_instructions
+    assert mechanism_grammar in replay_instructions
     assert "routing p0 to i1 is invalid" in grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"
     ]["pattern"] == "^i[0-9]+$"
+    mechanism_schema = pi_schema["properties"]["instances"]["items"][
+        "properties"
+    ]["mechanism"]
+    assert mechanism_schema["enum"] == list(REALIZATION_MECHANISMS)
+    assert mechanism_schema["description"] == mechanism_grammar
 
 
 def test_c_role_rejects_semantic_or_realization_payload() -> None:

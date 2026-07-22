@@ -19,6 +19,17 @@ class RealizationWitnessError(ValueError):
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
+REALIZATION_MECHANISMS: tuple[str, ...] = (
+    "realize",
+    "address_base",
+    "address_lane",
+    "transfer_direct",
+    "transfer_async",
+    "update_atomic",
+    "update_privatized",
+    "synchronize",
+)
+
 
 def _record(
     value: Any,
@@ -110,6 +121,27 @@ def render_realization_witness_wire_grammar() -> str:
     )
 
 
+def render_realization_mechanism_grammar() -> str:
+    """Return the shared, non-executable meaning of pi mechanism tags."""
+
+    return (
+        "Pi mechanism is one closed source-neutral event class. realize is a "
+        "generic representation-only stage when no more specific class applies. "
+        "address_base is an independently compiler-visible, program-uniform "
+        "pointer/base stage before lane broadcast or lane-varying addressing; "
+        "Lift uses it only when that separate source stage exists. address_lane "
+        "is the compiler-visible stage that forms lane-varying final addresses. "
+        "When routes contain address_base -> address_lane, Replay must materialize "
+        "two distinct stages in that order and must not algebraically fold them "
+        "into one flat vector offset. transfer_direct and transfer_async classify "
+        "data movement after address formation; update_atomic and "
+        "update_privatized classify physical update realization; synchronize "
+        "classifies synchronization. Address classes never carry an index/offset "
+        "formula, constant, integer width, cast, dtype, shape, vector length, "
+        "predicate, fill, frontend API, or logical access semantics."
+    )
+
+
 def _require_acyclic(
     nodes: set[str], edges: list[tuple[str, str]], path: str
 ) -> None:
@@ -144,16 +176,7 @@ class RealizationWitness:
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
     )
-    MECHANISMS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "realize",
-            "transfer_direct",
-            "transfer_async",
-            "update_atomic",
-            "update_privatized",
-            "synchronize",
-        }
-    )
+    MECHANISMS: ClassVar[frozenset[str]] = frozenset(REALIZATION_MECHANISMS)
 
     def __post_init__(self) -> None:
         checked_regions: list[dict[str, JsonValue]] = []
@@ -349,5 +372,7 @@ class RealizationWitness:
 __all__ = [
     "RealizationWitness",
     "RealizationWitnessError",
+    "REALIZATION_MECHANISMS",
+    "render_realization_mechanism_grammar",
     "render_realization_witness_wire_grammar",
 ]

@@ -8,7 +8,10 @@ import json
 from typing import Any, Mapping
 
 from .model import Gate1Artifact, SchemaError
-from .pi import render_realization_witness_wire_grammar
+from .pi import (
+    render_realization_mechanism_grammar,
+    render_realization_witness_wire_grammar,
+)
 
 
 REPLAY_PACKET_SCHEMA = "intentir.gate1.replay-packet.v1"
@@ -152,6 +155,8 @@ def _instructions(*, masked: bool) -> str:
         "frontend APIs and the positional opaque signature in harness. Pi graph "
         "reference contract: "
         + render_realization_witness_wire_grammar()
+        + " Pi mechanism contract: "
+        + render_realization_mechanism_grammar()
         + " "
         + masked_clause
         + "Return Python source only."

@@ -13,7 +13,11 @@ import copy
 from typing import Any
 
 from intentir.ir.intent_op_contract import intent_op_json_schema
-from intentir.verify.gate1.pi import render_realization_witness_wire_grammar
+from intentir.verify.gate1.pi import (
+    REALIZATION_MECHANISMS,
+    render_realization_mechanism_grammar,
+    render_realization_witness_wire_grammar,
+)
 
 
 def _closed_object(
@@ -412,10 +416,8 @@ def _pi_schema() -> dict[str, Any]:
             "region": {"type": "string", "pattern": "^r[0-9]+$"},
             "mechanism": {
                 "type": "string",
-                "enum": [
-                    "realize", "transfer_direct", "transfer_async",
-                    "update_atomic", "update_privatized", "synchronize",
-                ],
+                "enum": list(REALIZATION_MECHANISMS),
+                "description": render_realization_mechanism_grammar(),
             },
         },
         ("id", "semantic_ref", "region", "mechanism"),
@@ -486,6 +488,8 @@ def _pi_schema() -> dict[str, Any]:
         ("regions", "instances", "routes", "order", "sharing"),
         description=(
             render_realization_witness_wire_grammar()
+            + " "
+            + render_realization_mechanism_grammar()
             + " Preserve route/order/share/region multiplicity. No operator, "
             "value, predicate, dtype, frontend API, rule identity or source text."
         ),

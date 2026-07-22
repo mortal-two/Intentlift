@@ -23,6 +23,11 @@ from intentir.ir.intent_op_contract import (
     validate_intent_op_structure,
 )
 from intentir.verify.gate1.model import Gate1Artifact, SchemaError, _strict_intent
+from intentir.verify.gate1.pi import (
+    REALIZATION_MECHANISMS,
+    RealizationWitness,
+    RealizationWitnessError,
+)
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 
@@ -361,6 +366,24 @@ def test_pi_dangling_i_endpoint_passes_shape_but_fails_local_closure() -> None:
     assert not list(Draft7Validator(pi_schema).iter_errors(payload["pi"]))
     with pytest.raises(SchemaError, match="references undeclared pi instance 'i99'"):
         Gate1Artifact.from_json(payload)
+
+
+@pytest.mark.parametrize("mechanism", REALIZATION_MECHANISMS)
+def test_pi_mechanism_enum_is_schema_parser_isomorphic(mechanism: str) -> None:
+    pi = make_reduce_artifact().pi.to_json()
+    pi["instances"][0]["mechanism"] = mechanism
+    pi_schema = scrc_lift_core_json_schema()["properties"]["pi"]
+    assert not list(Draft7Validator(pi_schema).iter_errors(pi))
+    assert RealizationWitness.from_json(pi).instances[0]["mechanism"] == mechanism
+
+
+def test_pi_unknown_mechanism_is_rejected_by_schema_and_parser() -> None:
+    pi = make_reduce_artifact().pi.to_json()
+    pi["instances"][0]["mechanism"] = "address_formula_i64"
+    pi_schema = scrc_lift_core_json_schema()["properties"]["pi"]
+    assert list(Draft7Validator(pi_schema).iter_errors(pi))
+    with pytest.raises(RealizationWitnessError, match="not source-neutral"):
+        RealizationWitness.from_json(pi)
 
 
 @pytest.mark.parametrize(
