@@ -35,7 +35,7 @@ from .scrc_schema import (
 )
 
 
-SCRC_RELIFT_PROTOCOL = "llm_direct_pi_source_aware_relift_v1"
+SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -111,25 +111,34 @@ class SCRCLiftRequest:
 
 @dataclass(frozen=True)
 class SCRCReliftContext:
-    """Only a coarse failure class may cross back to the source-aware Lift."""
+    """Structured TypeCheck/Gate1 evidence visible only to source-aware Lift."""
 
     relift_round: int
     failure_kind: str
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.relift_round < 1:
             raise ValueError("relift_round must be positive")
         if self.failure_kind not in {
-            "replay_generation_failed",
-            "replay_compile_failed",
-            "normal_no_closure",
+            "lift",
+            "typecheck",
+            "gate1",
         }:
             raise ValueError("unsupported relift failure kind")
+        if not isinstance(self.diagnostics, Mapping):
+            raise TypeError("relift diagnostics must be a mapping")
+        diagnostics = dict(self.diagnostics)
+        # The payload is sent only to Lift, but it must still be deterministic
+        # JSON data rather than an executable callback or arbitrary object.
+        json.dumps(diagnostics, sort_keys=True, allow_nan=False)
+        object.__setattr__(self, "diagnostics", diagnostics)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "relift_round": self.relift_round,
             "failure_kind": self.failure_kind,
+            "diagnostics": dict(self.diagnostics),
         }
 
 
@@ -993,10 +1002,16 @@ class ResponsesSCRCRelifter:
         return tuple(self._records)
 
     def relift(
-        self, previous: SCRCExtraction, *, failure_kind: str
+        self,
+        previous: SCRCExtraction,
+        *,
+        failure_kind: str,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> SCRCExtraction:
         round_index = len(self._records) + 1
-        context = SCRCReliftContext(round_index, failure_kind)
+        context = SCRCReliftContext(
+            round_index, failure_kind, diagnostics or {}
+        )
         try:
             extraction = extract_scrc_artifact(
                 previous.source,
@@ -1018,8 +1033,80 @@ class ResponsesSCRCRelifter:
         return extraction
 
 
+@dataclass
+class ResponsesSCRCLiftAdapter:
+    """Source-aware provider adapter for the unified SCRC lifecycle."""
+
+    provider: ProviderConfig | None = None
+    compiler_view: SCRCCompilerView | None = None
+    effort: str | None = None
+    source_symbol: str | None = None
+    _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
+
+    @property
+    def records(self) -> tuple[SCRCReliftRecord, ...]:
+        return tuple(self._records)
+
+    def lift(self, request: Any, feedback: Any) -> Any:
+        source_program = getattr(request, "source", None)
+        source = getattr(source_program, "text", None)
+        if not isinstance(source, str) or not source:
+            raise TypeError("Responses SCRC Lift requires SourceProgram.text")
+        round_index = len(self._records) + 1
+        context = None
+        if feedback is not None:
+            kind = getattr(getattr(feedback, "kind", None), "value", None)
+            diagnostics = getattr(feedback, "diagnostics", None)
+            context = SCRCReliftContext(
+                max(1, len(self._records)),
+                kind,
+                diagnostics if isinstance(diagnostics, Mapping) else {},
+            )
+        try:
+            extraction = extract_scrc_artifact(
+                source,
+                provider=self.provider,
+                compiler_view=self.compiler_view,
+                effort=self.effort,
+                relift_context=context,
+                source_symbol=self.source_symbol,
+            )
+        except SCRCLiftError as exc:
+            diagnostic = "; ".join(
+                item.diagnostic for item in exc.attempts
+            )
+            self._records.append(
+                SCRCReliftRecord(round_index, diagnostic=diagnostic)
+            )
+            # Local import avoids making extraction depend on the verify package
+            # during module initialization.
+            from intentir.verify.scrc_runner import CandidateLiftError
+
+            raise CandidateLiftError(
+                {"diagnostic": diagnostic, "failure_class": "lift_response"},
+                physical_calls=max(item.attempts for item in exc.attempts),
+            ) from exc
+        self._records.append(
+            SCRCReliftRecord(round_index, extraction=extraction)
+        )
+        from intentir.verify.scrc_runner import LiftCallResult
+
+        return LiftCallResult(
+            extraction.artifact,
+            physical_calls=extraction.provenance.attempts,
+            metadata={
+                "model": extraction.provenance.model,
+                "response_model": extraction.provenance.response_model,
+                "response_id": extraction.provenance.response_id,
+                "usage": dict(extraction.provenance.usage),
+                "elapsed_ms": extraction.provenance.elapsed_ms,
+            },
+        )
+
+
 __all__ = [
-    "ResponsesSCRCRelifter", "SCRC_RELIFT_PROTOCOL", "SCRCCompilerArgument",
+    "ResponsesSCRCLiftAdapter", "ResponsesSCRCRelifter",
+    "SCRC_RELIFT_PROTOCOL", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
     "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",

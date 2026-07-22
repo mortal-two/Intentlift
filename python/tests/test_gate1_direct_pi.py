@@ -11,7 +11,9 @@ from intentir.extraction.lifters import scrc
 from intentir.extraction.lifters.scrc import (
     SCRCCompilerArgument,
     SCRCCompilerView,
+    SCRCReliftContext,
     anonymize_source,
+    prepare_scrc_lift,
 )
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
@@ -490,6 +492,32 @@ def test_replay_packet_rejects_candidate_selected_frontend_context() -> None:
         ReplayPacket(
             payload["j"], payload["c"], payload["pi"], payload["u_f"]
         )
+
+
+def test_structured_gate1_diff_returns_only_to_source_aware_relift() -> None:
+    source = """
+import triton
+import triton.language as tl
+
+@triton.jit
+def source_kernel(X, Y, N: tl.constexpr):
+    tl.store(Y, tl.load(X))
+"""
+    context = SCRCReliftContext(
+        1,
+        "gate1",
+        {"observer_diff": {"category": "dataflow", "kind": "missing"}},
+    )
+    request = prepare_scrc_lift(source, relift_context=context)
+    lift_payload = json.loads(request.user_input)
+    assert lift_payload["relift"] == context.to_json()
+
+    replay_payload = build_normal_rewriter_view(make_reduce_artifact())
+    assert "relift" not in json.dumps(replay_payload, sort_keys=True)
+    assert "observer_diff" not in json.dumps(replay_payload, sort_keys=True)
+
+    with pytest.raises(ValueError, match="unsupported relift"):
+        SCRCReliftContext(1, "normal_no_closure")
 
 
 def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:

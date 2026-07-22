@@ -1,6 +1,7 @@
 """LLM lifters from real kernel source to IntentIR/SCRC artifacts."""
 
 from .scrc import (
+    ResponsesSCRCLiftAdapter,
     ResponsesSCRCRelifter,
     SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
@@ -22,6 +23,7 @@ from .scrc_schema import (
 
 __all__ = [
     "ResponsesSCRCRelifter",
+    "ResponsesSCRCLiftAdapter",
     "SCRC_RELIFT_PROTOCOL",
     "SCRCExtraction",
     "SCRCCompilerArgument",

@@ -92,6 +92,21 @@ Lift_H(Source) -> (J,C,pi)
   为 `j + c + pi + u_f`，其中 c 只有 `MaskC(C).slots`，J/C/π/U_f 均使用闭合字段集合。
   生产 API 不再接受调用方任意注入 frontend context；Source、Harness、BindingMap、interface、diff、
   prior Replay/conversation 等嵌套旁路均 fail closed。相关定向回归：`77 passed`。
+- 阶段 4 已完成：Triton TTIR 与 CuTe MLIR/PTX Gate1 均显式记录 frontend、observer profile/
+  version、compiler stage、canonicalization version 和 evidence class；局部 Gate1 runner 只执行单轮，
+  完整 relift 生命周期由统一 runner 唯一维护。Gate1 structured diff 只进入 source-aware relift
+  context，不进入 Replay；每个正式轮次必须由 factory 创建新的 attempt adapter。
+- 阶段 5 已完成：J 的 `ResultRelationSpec` 只保留 comparison class，候选 wire 中的
+  `rtol/atol/equal_nan` 已删除并拒绝；外部 Q 提供闭合 dtype policy。`Close_Q` 使用
+  `atol + rtol * max(|a|,|b|)` 的对称定义，单独处理 dtype/shape、NaN/Inf，并直接保存
+  Source–Replay、Source–J、Replay–J 三条边。非传递负例会被第三边拒绝；集合值
+  `one_of_updates` 在当前 deterministic/contract-deterministic 主路径明确 unsupported。
+- 阶段 6 已完成：新增唯一 `SCRCGateRunner`、真实 frontend adapter、`SourceProgram` 与
+  `HarnessBindingInstance(c0)`。状态机区分 parse/Lift rejection、TypeCheck、三轮正式 Gate1、
+  terminal Gate2、基础设施错误和独立 `j_necessity_status`；报告逻辑/物理 Lift/Replay 调用数及三条
+  执行腿次数，这些普通记录不参与认证。deterministic end-to-end smoke 已贯通 canonical packet、
+  TypeCheck、现有 Gate1 observer/comparator、同一 c0、外部 Q 三边 Gate2；runner 状态机 11 个正反例
+  通过。最终全量回归待本任务最后一次执行。
 
 ## 实施顺序
 

@@ -27,6 +27,7 @@ GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 
 class TypeCheckStatus(str, Enum):
+    NOT_RUN = "not_run"
     PASS = "pass"
     FAIL = "fail"
 
