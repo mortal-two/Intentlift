@@ -3,9 +3,18 @@
 本目录只借用 Trellis 的文件布局。工作项是普通 Markdown，不使用 `task.json` 状态机、
 Trellis CLI、自动 session 或 workflow phase。
 
-当前活动工作项：
+## 当前新设计序列
 
-- [Lift Envelope / Boundary 10：闭合 Root Ownership 与 Access 完整性](07-22-lift-envelope-boundary-10/task.md)
+- [SCRC System Rebuild 01：真实搭建 TypeCheck、Replay、Gate1 与 Gate2 主链](07-22-scrc-system-rebuild-01/task.md)
+
+这是当前唯一活动工作项。编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC
+数学总述已经替换此前 formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。
+
+## 历史任务序列
+
+此前 01–10 只用于追溯，不约束当前实现。其中旧 Task 10 与 formal batch v1–v7 已迁入：
+
+- [旧 Lift Envelope / Boundary 10 与 formal/hash 实验归档](../archive/experiments/2026-07-22-formal-hash-protocol/task/task.md)
 
 最近完成：
 
