@@ -26,6 +26,7 @@ from intentir.verify.gate1.prompt import (
     replay_packet_digest,
 )
 from intentir.verify.gate1.model import Gate1Artifact, SchemaError
+from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate1.replay import ReplayGeneration
 
 from direct_fixtures import make_copy_artifact
@@ -50,6 +51,7 @@ _RECOVERY_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "recovery"
 _PROGRESS_V3 = _ROOT / "artifacts" / "real_llm_batch_28_v3" / "progress.json"
 _RECOVERY_V4 = _ROOT / "artifacts" / "real_llm_batch_28_v4" / "recovery"
 _RECOVERY_V5 = _ROOT / "artifacts" / "real_llm_batch_28_v5" / "recovery"
+_RECOVERY_V6 = _ROOT / "artifacts" / "real_llm_batch_28_v6" / "recovery"
 
 
 class _Response:
@@ -1108,3 +1110,62 @@ def test_committed_protocol_v5_canary_reaches_replay_then_exposes_address_gap() 
     }
     assert receipt["gate1"]["masked_j_calls"] == 0
     assert not (case_dir / "calls" / "03_masked_j").exists()
+
+
+def test_committed_protocol_v6_canary_rejects_misnested_lift_and_stops() -> None:
+    case_dir = _RECOVERY_V6 / "liger_swiglu_forward"
+    receipt_bytes = (case_dir / "receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert hashlib.sha256(receipt_bytes).hexdigest() == (
+        "21fb0a2e548f75c619e0339664092defb554dacef5b6a132b54d5db0aed04b9d"
+    )
+    assert receipt["schema"] == "intentir.formal-real-llm-case.v6"
+    assert receipt["status"] == "lift_failed"
+    assert receipt["lineage"]["attempt_class"] == "protocol_v6_recovery"
+    assert receipt["lineage"]["predecessor"]["receipt_sha256"] == (
+        "5a286725e22f1fadc83771eb460a26e823e0c9675606bde311412563f2921b71"
+    )
+    assert [
+        (item["kind"], item["status"], item["attempts"])
+        for item in receipt["calls"]
+    ] == [("lift", "failed", 1)]
+    call = receipt["calls"][0]
+    assert call["usage"] == {
+        "input_tokens": 10567,
+        "output_tokens": 18349,
+        "total_tokens": 28916,
+    }
+    assert call["response_sha256"] == (
+        "4ec0e7f4b8ef75ac0e0794ece900e8cb00e7e7575d2823a0aec74ce59f7d01fb"
+    )
+    raw = json.loads((case_dir / call["raw_response_path"]).read_text())
+    assert raw["status"] == "completed"
+    assert raw["incomplete_details"] is None
+    assert raw["error"] is None
+    assert raw["usage"]["output_tokens_details"]["reasoning_tokens"] == 16335
+
+    response = json.loads((case_dir / call["response_path"]).read_text())
+    assert list(response) == ["schema", "j"]
+    misplaced = ["interface", "schedule", "pi", "location_map"]
+    assert all(key not in response for key in misplaced)
+    assert all(key in response["j"] for key in misplaced)
+    pi = RealizationWitness.from_json(response["j"]["pi"])
+    mechanisms = [item["mechanism"] for item in pi.instances]
+    assert mechanisms.count("address_base") == 3
+    assert mechanisms.count("address_lane") == 3
+    assert mechanisms.count("transfer_direct") == 3
+    assert len(pi.instances) == 15
+    assert len(pi.routes) == 15
+
+    with pytest.raises(
+        SchemaError,
+        match=(
+            "Gate1Artifact is missing required key.*interface, location_map, "
+            "pi, schedule"
+        ),
+    ):
+        Gate1Artifact.from_json(response)
+    assert receipt["artifacts"] == {}
+    assert "gate1" not in receipt
+    assert not (case_dir / "calls" / "02_normal_replay").exists()
+    assert not (case_dir / "calls" / "02_masked_j").exists()

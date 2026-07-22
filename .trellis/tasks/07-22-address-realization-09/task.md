@@ -171,3 +171,17 @@ source observer 与 Replay arm 全部 ready，`online_llm_calls=0`。receipt SHA
 
 下一步提交 preflight evidence，确认 worktree clean 与 v6 output absent，然后只运行一次绑定
 v5 strict `no_closure` receipt 的 Swiglu `protocol_v6_recovery` canary。
+
+## 阶段 3 唯一 Canary 结果（2026-07-22）
+
+- v6 只调用一次 Lift；provider response 为 completed、未截断，但本地 parser 因 root 缺少
+  `interface/schedule/pi/location_map` fail closed；Replay/Gate1/masked-J 均为 0。
+- 四个 section 实际被误放进 `j`，不是缺失内容；nested π 自身合法且包含 3 组
+  address_base→address_lane→transfer_direct，证明新 mechanism contract 到达模型。
+- 诊断性内存 hoist（未落盘、未 Replay）还暴露 rank-2 BoundaryAccess 缺少 index_expression，
+  predicate/fill/domain 也被省略。因此不能用一个 bracket repair 掩盖 J boundary 回退。
+- 精确 hashes、usage、raw status 与结构审计见 `research/v6-lift-envelope-rejection.md`。
+
+Task09 到此完成两个 address tags 的全局定义、实现与真实生成验证；系统 canary 未到达 Gate1，
+阻塞已经转为独立的 root envelope/J-boundary 生成完整性问题。不得在 v6 重试；应归档 Task09，
+创建 Task10，只闭合共享 envelope/boundary grammar，不扩 address π、不做 deterministic repair。
