@@ -5,10 +5,11 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
-- [SCRC System Rebuild 01：真实搭建 TypeCheck、Replay、Gate1 与 Gate2 主链](07-22-scrc-system-rebuild-01/task.md)
+- [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)
 
 这是当前唯一活动工作项。编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC
-数学总述已经替换此前 formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。
+数学总述已经替换此前 formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。Task 01
+只负责门禁系统能力的代码重构，不包含真实 LLM 规模实验或性能结论。
 
 ## 历史任务序列
 
