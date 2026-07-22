@@ -6,6 +6,10 @@
 >
 > 前置设计：[IntentIR π：依赖类型实现见证与 Replay 安全设计](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)
 >
+> 数学与 claim 总述：[IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
+>
+> Claim 收紧复审：[最终数学与三份设计的局部收紧建议](source-notes/高级ai对最终数学与三份设计的局部收紧建议_2026-07-22.md)
+>
 > 纠错与复审：[旧执行流程纠错](source-notes/高级ai对于之前流程的纠错和判断.md)、[三份核心设计复审与四项修正](source-notes/高级ai对三份核心设计的复审与四项修正_2026-07-22.md)
 
 ## 1. 这份文档解决什么问题
@@ -24,7 +28,8 @@ C 和 π 已经确定了对象所有权、Replay 可见范围以及 Gate1/Gate2 
 
 > **一次实验运行期间，系统规则保持不变；实验结束后，才根据失败证据修改系统。**
 
-这里的“系统规则”包括 J/C/π schema、Lift prompt、Replay prompt、Gate1 observer、Comparator、编译器和本次实验使用的工具能力。它只表示一次实验中的运行纪律。
+这里的“系统规则”包括 J/C/π schema、Lift prompt、Replay prompt、Gate1 observer profile、比较
+政策 Q、编译器和本次实验使用的工具能力。它只表示一次实验中的运行纪律。
 
 ## 2. 系统中的对象和职责
 
@@ -97,7 +102,9 @@ Replay = W_f(J, π, MaskC(C); U_f)
 - 去掉具体值后的 `MaskC(C)`；
 - 与当前 Source 无关的公共前端知识 `U_f`。
 
-它不能看到 Source、Harness、C 的具体值、Gate1 diff、旧 Replay 或旧候选代码。
+它不能看到 Source、Harness、C 的具体值、source parameter name/position、BindingMap、独立
+interface sidecar、Gate1 diff、source/compiler fingerprint、旧 Replay、旧候选代码、旧模型
+conversation context 或 per-kernel RuleCard。
 
 ### 2.6 Harness
 
@@ -125,7 +132,7 @@ Harness 不负责：
 - J/C/π schema；
 - TypeCheck 规则；
 - Lift 和 Replay prompt；
-- Gate1 observer 和 Comparator；
+- Gate1 observer profile 和比较政策 Q；
 - 编译器、前端和工具能力；
 - relift 次数上限。
 
@@ -251,6 +258,16 @@ TypeCheck 不是新的 Gate，也不是新的证明对象。它只是 Replay 之
 - sensitive refinement 是否引用 J/B 中已有的 authorization，或属于系统安全白名单；
 - 是否存在 source text、frontend API、C value 或可执行自由文本。
 
+artifact schema 必须 closed-world：未知字段、未知 relation 和自由文本扩展均 fail closed。若
+`SemDecl` 只计直接创建的显式逻辑语义声明，则 TypeCheck 支撑的是：
+
+```text
+FreshLogicalSemDecl(C,pi | J) = empty
+```
+
+或在合法引用解析回 J 后写成 `SemDecl(J,C,pi)=SemDecl(J)`。它不证明 π 没有统计语义线索，
+不证明 J 对 Source 正确，也不证明 realization 保持 J 行为。
+
 TypeCheck 不证明某种 representation 在一般情况下与 J 语义等价。对于 cast、integer width、
 reassociation、atomic form 等 sensitive refinement，它只检查两件事：J/B 是否已有明确的 typed/effect
 authorization，或者该 refinement 是否属于系统统一维护的安全白名单；两者都不满足就直接失败。
@@ -294,6 +311,10 @@ Replay 不得：
 - 从旧 Replay 或 Gate1 diff 推断修补方案；
 - 等待 Harness 在生成后补出新的 use-site。
 
+`U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
+runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
+不需要为此增加 hash、commitment 或签名门。
+
 ## 8. 第四步：Harness 绑定 C
 
 Replay source 生成并完成后，Harness 执行：
@@ -305,17 +326,22 @@ Bind_H(Replay,C)
 
 绑定必须使用同一个 `ν_C`。
 
+记本次实际绑定为 `c0 = Bind_H(C)`。当前证书只覆盖这个 observed c0；即使 C 的设计合同要求
+所有 admissible choice 保持 J，单次 Gate1/Gate2 也不能外推成全配置证明。多 C 测试只能按实际
+覆盖的有限配置集合另行报告。
+
 Harness 可以把同一个 C slot 绑定到 Source 和 Replay 的不同参数名或不同调用位置，但这只是机械调用关系，不得修改 Replay AST。
 
 如果 C slot 无法绑定，实验在 Gate1 之前失败，原因归入 C/接口绑定问题；不能靠 Injector 新增使用点解决。
 
 ## 9. 第五步：Gate1
 
-设当前 frontend observer 为 `F_f`：
+设当前 frontend 与 observer profile 为 `(f,p)`，其中 p 固定 observer/version、compiler/dump stage
+与 canonicalization version：
 
 ```text
-F_source = F_f(Compile_H(Source,C))
-F_replay = F_f(Compile_H(Replay,C))
+F_source = F_(f,p)(Compile_H(Source,c0))
+F_replay = F_(f,p)(Compile_H(Replay,c0))
 ```
 
 Gate1 为：
@@ -351,6 +377,10 @@ Gate1 可以使用协议中已经确定的全局 canonicalization，例如：
 ```text
 在当前 observer 和当前 canonicalization 规则下精确比较。
 ```
+
+每份证书必须记录 `frontend`、observer profile/version、compiler/dump stage 和 canonicalization
+version。mutation test 可以在 CI 或消融中评估 observer 能抓住哪些错误，但不进入主 Gate，也
+不能被表述成 observer 完备性证明。
 
 ## 10. 第六步：Gate1 diff 与 relift
 
@@ -436,17 +466,17 @@ experiment_status = NO_CLOSURE
 对测试输入 `x`：
 
 ```text
-O_S = Exec(Source, ρ_H^S(C), x)
-O_R = Exec(Replay, ρ_H^R(C), x)
+O_S = Exec(Source, c0, x)
+O_R = Exec(Replay, c0, x)
 O_J = RefEval(J, x)
 ```
 
 Gate2 为：
 
 ```text
-G2 = (O_S equivalent_B O_R)
-     and
-     (O_S equivalent_B O_J)
+G2 = Close_Q(O_S,O_R)
+     and Close_Q(O_S,O_J)
+     and Close_Q(O_R,O_J)
 ```
 
 其中：
@@ -454,32 +484,43 @@ G2 = (O_S equivalent_B O_R)
 - Source 和 Replay 使用同一 C；
 - `RefEval(J,x)` 不接收 C；
 - `RefEval` 不读取 π；
-- B 只声明封闭 comparison class 与必要语义合同，系统比较协议据此构造 `equivalent_B`。
+- B 只声明封闭 comparison class 与必要语义合同，外部比较政策 Q 据此构造 `Close_Q`。
 
 ### 11.1 比较关系的来源和范围
 
-B 只能声明系统支持的 comparison class 和必要语义合同，例如 exact、浮点 tolerance 或
-允许结果集合。`equivalent_B` 是预先确定的系统比较协议依据该声明构造出的关系；下标 B 不表示
-候选可以提供任意 comparator。系统根据 dtype、reduction extent、reassociation 权限等构造
-comparator，并检查全部参数，包括 tolerance 上限、NaN/Inf 合同和 atomic/allowed-result 合同；
-不支持的类别或非法参数直接 fail closed。
+B 只能声明系统支持的 comparison class 和必要语义合同，例如 exact 或受限浮点 tolerance。Q 是
+实验协议或 benchmark correctness policy 预先确定的可信政策，根据经验证的 class、dtype、
+reduction extent、reassociation 权限等构造 comparator，并检查 tolerance 上限、NaN/Inf 合同等
+全部参数；不支持的类别或非法参数直接 fail closed。Q 不是 Lift artifact，也不进入 Replay。
 
 Lift 不能自由写入任意 Python comparator，也不能通过任意大的 `rtol/atol` 或“所有输出均可接受”
 来放宽自己的 Gate2。B 保留对语义比较类别与必要合同的所有权，但候选不能自己决定及格线。
 
+`Close_Q` 必须是确定性、对称的比较谓词；若底层 `isclose` 有方向性，Q 必须显式对称化或执行
+双向检查。第三条 Replay–J 边不增加一次执行，只比较三个已经产生的输出；它防止近似关系不传递
+时，两条 Source-centered 边都通过但 Replay 与 J 彼此超出范围。
+
+当前主线只覆盖 deterministic / contract-deterministic Kernel：内部执行顺序可以变化，但 J/B
+在协议可观察层面必须给出唯一合同结果。真正集合值的语义不因“非确定性”一词自动降低 claim，
+而是留给未来 `Accept_{J,Q}(x,o)` 的逐观察 conformance；有限次 membership 不能宣称完整
+`Beh(P,x) subseteq Spec_J(x)`。
+
 ### 11.2 Gate2 输入的生成顺序
 
-Gate1 首次通过的那一组 `(J,C,pi,Replay)` 在本次 Gate2 中不再修改，随后才生成 Gate2 输入。
-如果采用隐藏随机输入模式，必须从预先声明的分布 D 独立同分布地抽取输入，并对 Lift/Replay
-隐藏这些输入；Gate2 结果也不回流本次实验。只有在预先确定的系统比较关系下，把 epsilon 定义为
-Source–J 在 D 上的错误质量时，才可以报告 m 个 challenge 全部漏检的概率上界 `(1-epsilon)^m`。
+Gate1 首次通过的完整候选 `a*=(J,C,pi,Replay)` 先选定；随后才生成 Gate2 输入，本次 Gate2
+期间不再修改该候选。如果采用隐藏随机输入模式，必须从预先声明的分布 D 独立同分布地抽取输入，
+并对 Lift/Replay 隐藏这些输入；Gate2 结果也不回流本次实验。令 `g2_Q(a*,x)` 表示三条边在 x
+上全部通过，只有当固定候选的 `Pr_D[not g2_Q(a*,x)] >= epsilon > 0` 时，才能报告 m 个
+challenge 全部通过的上界 `(1-epsilon)^m`。Source–J 错误质量是其中的充分特例；“错误 J”本身
+不自动保证在 D、Q 下有可检测 disagreement。
 
 如果只使用预先给定的有限测试集合 `T`，则只报告：
 
 ```text
 for every x in T:
-    Source(x) equivalent_B Replay(x)
-    and Source(x) equivalent_B RefEval(J,x)
+    Close_Q(Source(x),Replay(x))
+    and Close_Q(Source(x),RefEval(J,x))
+    and Close_Q(Replay(x),RefEval(J,x))
 ```
 
 不能在只使用固定 `T` 时同时引用隐藏随机测试的概率结论。两种输入模式都不需要新的证明对象
@@ -498,6 +539,8 @@ J_NECESSARY = masked-J hard mismatch
 ```
 
 它只说明：在当前 J、π、C 和 Replay 模型下，删除 J 后是否仍能完成相同的 Gate1 closure。
+即使状态记录为 `PROVED`，结论也只相对于记录的模型、解码配置、Replay packet 和 masked-J
+干预成立，不是对所有生成器的全局不可替代性证明。
 
 masked-J hard-close 不直接等同于语义泄漏，也不自动推翻：
 
@@ -505,7 +548,8 @@ masked-J hard-close 不直接等同于语义泄漏，也不自动推翻：
 TypeCheck(J,C,π) + Gate1 + Gate2
 ```
 
-如果需要进一步检查 J 的语义权威，可以使用单独的 J-authority challenge；该结果独立记录，不改变主流程的对象边界。
+如果需要进一步检查 J 的语义权威，可以另行运行离线 J-authority challenge；它不自动触发，
+结果独立记录，也不改变主流程的对象边界。
 
 ## 13. `arith.extsi` 的处理方式
 
@@ -606,13 +650,17 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 建议分别报告：
 
 ```text
-Lift 首轮 TypeCheck 通过率
+first-attempt TypeCheck pass rate
 Lift 格式修正次数
-第一轮 Gate1 closure rate
-三轮内 Gate1 closure rate
-Gate2 Source/Replay/J closure rate
+closure@1 / closure@2 / closure@3
+Lift call count / Replay call count / total LLM call count
+NO_CLOSURE failure categories
+Gate2 pairwise Source/Replay/J pass rate among Gate1-closed candidates
 SCRC_CERTIFIED rate
 ```
+
+`closure@k` 定义为截至第 k 个正式 Gate1 轮次的累计闭合任务比例，不是第 k 轮的独立成功率。
+证书绑定实际生成的 Replay，而不是不报告搜索成本的抽象 `exists R`。
 
 这样能够区分：
 
@@ -649,6 +697,13 @@ C 所有权问题        → 改 C/绑定规则
 ```
 
 最终认证条件只有：
+
+```text
+SCRC_CERTIFIED_(f,p,Q,T,c0)(Source,J,C,pi,Replay)
+```
+
+其中 p 是 observer profile，c0 是本次实际绑定。为便于实现可继续使用下面的简写，但论文不得
+把它外推到其他 observer、比较政策、C 配置或全输入域：
 
 ```text
 SCRC_CERTIFIED

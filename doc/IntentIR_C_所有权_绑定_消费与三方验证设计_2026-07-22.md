@@ -6,6 +6,10 @@
 >
 > 联合复审：[三份核心设计复审与四项修正](source-notes/高级ai对三份核心设计的复审与四项修正_2026-07-22.md)
 >
+> 数学与 claim 总述：[IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
+>
+> Claim 收紧复审：[最终数学与三份设计的局部收紧建议](source-notes/高级ai对最终数学与三份设计的局部收紧建议_2026-07-22.md)
+>
 > 范围：定义 C 在 Lift、Replay、Gate1、Gate2、reference semantics 与直接 production lowering 中的最小合同
 >
 > 核心不变量：**证明相关 artifact 严格只有 `(J,C,pi)`；Replay 只看 `J + pi + MaskC(C)`。**
@@ -37,9 +41,9 @@ Gate1:
     Observe(Compile_H(Replay, C))
 
 Gate2:
-    Source(C)
-    Replay(C)
-    RefEval(J)       # function interface contains no C
+    Close_Q(Source(c0), Replay(c0))
+    Close_Q(Source(c0), RefEval(J))
+    Close_Q(Replay(c0), RefEval(J))
 
 Production:
     Lower_t(J, C)
@@ -145,6 +149,26 @@ Lift 可以从 H 获得匿名、未分类的 bindable coordinates，以便形成
 - 不改变 production lowering；
 - 不成为从源码到 Replay 的额外通道。
 
+### 2.6 显式语义所有权投影
+
+定义：
+
+```text
+SpecProj(J,C,pi) = J
+```
+
+该式只表示 artifact grammar 中 operator、predicate、result relation、access/effect contract 等
+显式逻辑语义声明由 J 独占。它不是实现行为集合的等式，不能推出 Replay 已正确实现 J、C/π
+与语义统计独立，或所有 admissible C 都保持 J 行为。若 `SemDecl` 只计 closed-world schema 中
+直接创建的显式逻辑语义声明，则 TypeCheck 的目标性质是：
+
+```text
+TypeCheck(J,C,pi)
+    -> SemDecl(J,C,pi) = SemDecl(J)
+```
+
+行为结论仍必须由实际绑定实例上的 TypeCheck、Gate1 和 Gate2 联合支持。
+
 ## 3. J、C、pi 与 Harness
 
 | 对象 | 数学身份 | 所有内容 | 禁止内容 |
@@ -191,6 +215,16 @@ C 的纯调度性质是：
 for every c in Adm_t(J,H,device_t,toolchain_t):
     Obs(Exec(I_t(J,c),x)) belongs to [[J]](x)
 ```
+
+这是实现族的设计合同或未来 backend conformance 目标，不是一次 SCRC 证书已经证明的全称定理。
+当前在线证书只针对 Harness 实际绑定的：
+
+```text
+c0 = Bind_H(C)
+```
+
+因此论文与实验报告应写成 **instance-wise certification under the observed c0**。若测试多个
+配置，只能报告被实际测试的有限集合；不得从单个 c0 外推到所有 admissible C。
 
 C 可以改变 loop、tile、vector width、thread/warp mapping、pipeline、buffer、memory placement 与
 允许范围内的浮点 association，但不能改变 `[[J]]`。
@@ -282,7 +316,10 @@ Replay 看不到：
 - source parameter position；
 - source/replay invocation binding；
 - Harness；
-- prior Replay 或 compiler diff。
+- 独立 interface sidecar 或 BindingMap；
+- source/compiler fingerprint；
+- prior Replay、compiler diff 或旧模型 conversation context；
+- per-kernel RuleCard 或其他 source-conditioned frontend context。
 
 ### 5.3 Gate view
 
@@ -460,9 +497,11 @@ J + pi + MaskC(C)
 - source span/location；
 - complete C values；
 - Harness view；
+- 独立 interface sidecar；
 - selected RuleCard；
 - prior candidate；
-- source/compiler diff。
+- source/compiler diff 或 fingerprint；
+- 旧模型 conversation context。
 
 ### 8.2 参数化生成
 
@@ -530,30 +569,38 @@ RefEval : J x runtime inputs -> observable outputs
 对测试输入 `x`：
 
 ```text
-O_S = Exec(Source, rho_H^S(C), x)
-O_R = Exec(Replay, rho_H^R(C), x)
+O_S = Exec(Source, c0, x)
+O_R = Exec(Replay, c0, x)
 O_J = RefEval(J, x)
 ```
 
 Gate2：
 
 ```text
-G2 = (O_S equivalent_B O_R)
-     and
-     (O_S equivalent_B O_J)
+G2 = Close_Q(O_S,O_R)
+     and Close_Q(O_S,O_J)
+     and Close_Q(O_R,O_J)
 ```
 
-其中 `equivalent_B` 是预先确定的系统比较协议依据 B 所声明的封闭 comparison class 构造出的
-关系；下标 B 不表示候选可以提供任意 comparator。系统根据 dtype、reduction extent、
-reassociation 权限等构造 comparator，并检查全部参数，包括 tolerance 上限、NaN/Inf 合同和
-atomic/allowed-result 合同；不支持的类别或非法参数直接 fail closed。Lift 不得在 J/B 中写入
-任意可执行 comparator，也不得用任意大的 `rtol/atol` 或“所有输出均可接受”来定义自己的及格线。
+其中 Q 是实验协议或 benchmark correctness policy 预先确定的可信比较政策。J/B 只声明封闭的
+comparison class 与必要语义合同；Q 根据经验证的 class、dtype、reduction extent、reassociation
+权限等构造 comparator，并检查 tolerance 上限、NaN/Inf 合同等全部参数。不支持的类别或非法
+参数直接 fail closed。Lift 不得在 J/B 中写入任意可执行 comparator，也不得用任意大的
+`rtol/atol` 或“所有输出均可接受”来定义自己的及格线。
+
+`Close_Q` 必须是确定性且由协议定义为对称的比较谓词；若底层 `isclose` 有方向性，Q 必须显式
+对称化或执行双向检查。第三条 Replay–J 比较不增加执行，只比较已经产生的输出；它防止非传递
+近似关系下两条 Source-centered 边同时通过、但 Replay 与 J 彼此超出政策范围。
+
+当前主认证只覆盖 deterministic 或 contract-deterministic Kernel，即内部执行顺序可以变化，但
+J/B 在协议可观察层面给出唯一合同结果。真正集合值的输出语义留给未来
+`Accept_{J,Q}(x,o)` 的逐观察 conformance；有限次 membership 不能被表述成完整行为集合包含证明。
 
 因此这里的所有权分工是：
 
 ```text
 B declares a closed comparison class and its required semantic contract
-the pre-established system protocol validates all parameters and builds the comparator
+Q validates all parameters and builds the trusted comparator
 ```
 
 而不是候选 J 可以自由定义比较程序。
@@ -564,7 +611,7 @@ the pre-established system protocol validates all parameters and builds the comp
 
 - 同一 logical inputs；
 - 同一组 J/C/pi 与 Replay；
-- 同一 comparator；
+- 同一 Q 与 comparator；
 - 同一 runtime shape/condition；
 - 同一实验记录。
 
@@ -605,7 +652,7 @@ production lowerer 是被验证对象，不能同时充当 J 的独立 semantic 
 
 ```text
 O_target = Exec(Lower_t(J,C), x)
-G_backend = O_target equivalent_B RefEval(J,x)
+G_backend = Close_Q(O_target, RefEval(J,x))
 ```
 
 该 conformance 与 Gate2 主三角分开记录。
@@ -652,8 +699,8 @@ Exec(Lower_t(J,C')) belongs to [[J]]
 
 ## 12. C-purity 与多值实验
 
-C 的数学定义要求合法 C 不改变 `[[J]]`，但多值 intervention 不进入每个 artifact 的基础在线
-Gate2。
+C 的数学定义要求合法 C 不改变 `[[J]]`，但基础在线 Gate1/Gate2 只认证实际绑定
+`c0 = Bind_H(C)`；多值 intervention 不进入每个 artifact 的基础在线 Gate2。
 
 原因：
 
@@ -803,9 +850,11 @@ Gate2(Source(C),Replay(C),RefEval(J))
 ### 17.4 Gate2
 
 - Source 与 Replay 使用相同 C；
+- 主认证只覆盖实际绑定 c0 下的 deterministic / contract-deterministic Kernel；
 - RefEval API 没有 C 参数；
 - RefEval 实验记录可注明 `c_access=forbidden_by_interface`；
-- J/B 只选择系统允许的 comparison class；tolerance 和允许结果参数通过系统上限检查；
+- J/B 只声明系统允许的 comparison class；外部 Q 决定 comparator 模板与参数上限；
+- Source–Replay、Source–J 与 Replay–J 三条边均直接执行 `Close_Q`；
 - production backend conformance 与主 Gate2 分开。
 
 ### 17.5 Production boundary
@@ -841,9 +890,9 @@ Gate1:
     F_f(Compile_H(S,C)) == F_f(Compile_H(R,C))
 
 Gate2:
-    Obs_H(S,C,x) equivalent_B Obs_H(R,C,x)
-    and
-    Obs_H(S,C,x) equivalent_B RefEval(J,x)
+    Close_Q(Obs_H(S,c0,x), Obs_H(R,c0,x))
+    and Close_Q(Obs_H(S,c0,x), RefEval(J,x))
+    and Close_Q(Obs_H(R,c0,x), RefEval(J,x))
 
 Production:
     K_t = Lower_t(J,C)

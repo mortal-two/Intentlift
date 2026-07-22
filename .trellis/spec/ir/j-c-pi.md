@@ -13,7 +13,7 @@ result relation 以及 logical signature。signature 中的 input、output、run
 dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
 B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
-任意可执行 comparator。
+任意可执行 comparator；外部验证政策 Q 根据 B 的封闭类别构造实际比较关系。
 
 ## C：一个 implementation-selection 对象
 
@@ -83,4 +83,13 @@ Sensitive(r)
 TypeCheck。
 
 TypeCheck 的结构化错误可以返回 source-aware Lift；检查结果和 sidecar 不得进入 Replay 作为
-新的信息通道。
+新的信息通道。schema 为 closed-world：未知字段、未知 relation 与自由文本扩展均 fail closed。
+
+准确的 TypeCheck claim 是：
+
+```text
+TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
+```
+
+在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
+线索，也不证明 J 或 realization 的行为正确。

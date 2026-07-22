@@ -17,7 +17,7 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 1. 证明相关 artifact 严格只有 J、C、π。
 2. J 是唯一 denotational semantic object，并拥有 logical signature。
 3. C 是不改变 J denotation 的 implementation-selection 对象；一个实验中的 Source 与 Replay
-   使用同一个 C 对象和 valuation。
+   使用同一个 C 对象和实际 valuation `c0`。主证书只覆盖该 c0，不自动覆盖所有 admissible C。
 4. π 是依赖 J/C 才有意义的 source-realization witness，没有独立语义权威。
 5. 工程接口只能是 `InterfaceView(J)` 的确定性投影，不是第四对象、额外命名空间或 Replay 输入。
 6. Replay 只接收 `J + π + MaskC(C) + U_f`；U_f 是与当前源码无关的公共前端上下文。
@@ -25,13 +25,15 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 8. `RefEval` 只读取 J；production lowering 读取 J/C，不读取 π。
 9. 主认证严格是 `TypeCheck(J,C,π) ∧ Gate1 ∧ Gate2`。
 10. masked-J 只报告 J 的操作性必要性，不自动推翻主认证。
+11. 当前 Gate2 主线覆盖 deterministic / contract-deterministic Kernel，并直接检查 Source–Replay、
+    Source–J 与 Replay–J 三条对称 `Close_Q` 边。
 
 ## 固定代码可以做什么
 
 - closed schema、引用、类型、授权和隔离检查；
 - `MaskC(C)`、`InterfaceView(J)` 等确定性投影；
 - build、bind、run、observe、compare 和结构化诊断；
-- 按系统比较协议从 B 的封闭类别构造 Gate2 comparator；
+- 按外部比较政策 Q 从 B 的封闭类别构造确定性、对称的 Gate2 comparator；
 - 对不支持或不合法的输入 fail closed。
 
 固定代码不得识别 Kernel family、从规则库构造实现、补写遗漏语义、从 compiler diff 修补 Replay，
@@ -49,7 +51,7 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 
 ## 实验与系统改进
 
-实验期间规则、prompt、模型配置、TypeCheck、observer 和 comparator protocol 保持不变，只修改
+实验期间规则、prompt、模型配置、TypeCheck、observer profile 和比较政策 Q 保持不变，只修改
 候选 artifact。Gate1 失败的 diff 只反馈给 source-aware Lift；relift 必须产生完整新三元组，
 随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
 

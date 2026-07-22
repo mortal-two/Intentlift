@@ -2,13 +2,15 @@
 
 > 状态：2026-07-22 当前实现规范。
 
-`.trellis/spec` 只把三份核心设计投影为 schema、API、runner 和测试要求，不形成第四套设计。
+`.trellis/spec` 只把三份核心设计及其数学/claim 总述投影为 schema、API、runner 和测试要求，
+不形成另一套设计。
 规范优先级为：
 
 1. [C：所有权、绑定、消费与三方验证](../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
 2. [π：依赖类型实现见证与 Replay 安全](../../doc/IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)
 3. [Lift、Replay、Gate1、Gate2 最终执行流程](../../doc/IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)
-4. 本目录中的派生规范
+4. [IntentIR / SCRC 最终数学、执行流程与论文表述](../../doc/IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
+5. 本目录中的派生规范
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。

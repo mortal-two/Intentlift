@@ -44,11 +44,16 @@ ResultRelation(output,
 不支持、关系参数非法或 authorization 不完整时必须 fail closed，不能退回 case-specific Python
 oracle 或旁路 metadata。
 
+当前 SCRC 主认证只接收 deterministic / contract-deterministic 的可观察合同。schema 能表达
+`allowed_result` 不等于主 Gate2 已支持真正集合值语义；只有当合同在 Q 下给出唯一外部观察要求
+时才能进入当前三边 `Close_Q`。一般集合值语义留给未来逐观察 `Accept_{J,Q}`，不得从有限次
+membership 外推完整行为集合包含。
+
 ## Comparator class
 
-B 只能从系统支持的封闭 comparison class 中选择并声明必要语义合同。系统比较协议根据 dtype、
-reduction extent、reassociation 权限等构造实际 comparator，并约束 tolerance、NaN/Inf、
-allowed-result 与 atomic 相关参数。Lift 不得写入任意 comparator 或自行放宽及格线。
+B 只能从系统支持的封闭 comparison class 中选择并声明必要语义合同。外部比较政策 Q 根据
+dtype、reduction extent、reassociation 权限等构造确定性、对称的 comparator，并约束 tolerance、
+NaN/Inf 等参数。Lift 不得写入任意 comparator 或自行放宽及格线。
 
 ## 禁止恢复的旧旁路
 

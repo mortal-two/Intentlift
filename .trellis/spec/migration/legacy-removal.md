@@ -1,6 +1,6 @@
 # 旧实现退役与首步重构
 
-> 状态：当前迁移规范。目标是让代码开始实现三份核心设计，不维持新旧双轨。
+> 状态：当前迁移规范。目标是让代码开始实现三份核心设计及其数学/claim 总述，不维持新旧双轨。
 
 ## 必须退役的协议设施
 
@@ -30,14 +30,17 @@
 
 ## 首步重构顺序
 
-1. 以三份核心文档和本 spec 替换旧运行口径，历史材料只留在 archive/source-notes。
+1. 以三份核心文档、数学/claim 总述和本 spec 替换旧运行口径，历史材料只留在 archive/source-notes。
 2. 删除 formal runner 中的旧 hash/epoch/commitment gate 与对应 schema/tests。
 3. 将 logical signature 收入 J，删除独立 interface 输入；需要时只计算 `InterfaceView(J)`。
 4. 建立最小 `TypeCheck(J,C,π)`：refs、slot/type、observable J anchor、泄漏禁令、authorization。
 5. 将 Replay packet 收紧为 `J + π + MaskC(C) + U_f`。
 6. 重写 runner：每轮完整 relift、全新盲 Replay、最多三轮；Gate2 失败结束实验。
-7. 拆分 `main_status`、`typecheck_status` 与 `j_necessity_status`，迁移 masked-J 行为。
-8. 用少量代表性 canary 验证边界，再决定下一步 schema/observer 能力改进。
+7. Gate2 接入外部 Q，并直接比较 Source–Replay、Source–J 与 Replay–J 三条 `Close_Q` 边；当前
+   只覆盖 deterministic / contract-deterministic Kernel。
+8. 拆分 `main_status`、`typecheck_status` 与 `j_necessity_status`，迁移 masked-J 行为。
+9. 记录 observer profile/version、compiler/dump stage、canonicalization version 与真实搜索预算。
+10. 用少量代表性 canary 验证边界，再决定下一步 schema/observer 能力改进。
 
 ## 迁移纪律
 
@@ -54,6 +57,7 @@ proof artifact = (J,C,pi)
 Replay inputs  = J + pi + MaskC(C) + U_f
 pre-Replay     = TypeCheck(J,C,pi)
 main verdict   = TypeCheck and Gate1 and Gate2
+Gate2          = pairwise Close_Q(Source, Replay, RefEval(J)) under observed c0
 ```
 
 活动代码中不再存在旧协议入口；尚未实现的新能力明确 fail closed，随后才运行代表性 canary。

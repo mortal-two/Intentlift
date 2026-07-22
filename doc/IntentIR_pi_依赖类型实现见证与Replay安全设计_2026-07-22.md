@@ -8,6 +8,10 @@
 >
 > 前置规范：[IntentIR C：所有权、绑定、消费与验证设计](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
 >
+> 数学与 claim 总述：[IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
+>
+> Claim 收紧复审：[最终数学与三份设计的局部收紧建议](source-notes/高级ai对最终数学与三份设计的局部收紧建议_2026-07-22.md)
+>
 > 范围：在 artifact 严格只有 `(J,C,pi)`、Replay 不接收额外 per-kernel 输入的约束下，定义足以闭合 Replay、但没有显式语义副本和独立语义权威的 π
 >
 > 核心结论：**π 可以完整，但不能语义闭合；masked-J 测量 J 的操作性必要性，不再独自裁决 artifact 的语义合法性。**
@@ -23,8 +27,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 ```
 
 Replay 不再接收 RuleCard、BindingMap、Harness、source diff、旧候选或其他 source-conditioned
-输入。此时，所有不属于 J/C、但 strict Gate1 要求恢复的 source realization topology，只能由
-π 表达。
+输入；同样不得接收 source parameter name/position、interface sidecar、source/compiler
+fingerprint、旧模型 conversation context 或 per-kernel frontend context。此时，所有不属于
+J/C、但 strict Gate1 要求恢复的 source realization topology，只能由 π 表达。
 
 因此：
 
@@ -84,11 +89,11 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 其中：
 
 - `MaskC(C)` 只有匿名 slot schema，无具体值与 source binding；
-- `U_f` 是固定、公共、与当前源码无关的 frontend 上下文；
+- `U_f` 是版本化、公共、与当前源码无关的 frontend 上下文，不能按 Kernel/op/失败样本选择；
 - Harness 不进入 Replay；
 - π 可以引用匿名 C slot，但不能包含 C value。
 
-### 2.3 Gate1 与 Gate2 不变
+### 2.3 Gate 边界不变，Gate2 谓词收紧
 
 Gate1：
 
@@ -99,15 +104,15 @@ F_f(Compile_H(Source,C)) == F_f(Compile_H(Replay,C))
 Gate2：
 
 ```text
-Obs_H(Source,C,x) equivalent_B Obs_H(Replay,C,x)
-and
-Obs_H(Source,C,x) equivalent_B RefEval(J,x)
+Close_Q(Obs_H(Source,c0,x), Obs_H(Replay,c0,x))
+and Close_Q(Obs_H(Source,c0,x), RefEval(J,x))
+and Close_Q(Obs_H(Replay,c0,x), RefEval(J,x))
 ```
 
-`RefEval` 接口中没有 C，也不读取 π。`equivalent_B` 是预先确定的系统比较协议依据 B 所声明的
-封闭 comparison class 构造出的关系；下标 B 不表示候选可以提供任意 comparator。系统必须检查
-全部比较参数，包括 tolerance 上限、NaN/Inf 合同和 atomic/allowed-result 合同；不支持的类别或
-非法参数直接 fail closed。
+`RefEval` 接口中没有 C，也不读取 π。Q 是实验协议预先确定的可信比较政策；B 只声明封闭
+comparison class 与必要语义合同。Q 构造确定性、对称的 `Close_Q`，并检查 tolerance 上限、
+NaN/Inf 合同等全部参数；不支持的类别或非法参数直接 fail closed。第三条 Replay–J 边是直接
+比较，不依赖近似关系的传递性。
 
 ### 2.4 Production lowering 不读取 π
 
@@ -141,6 +146,23 @@ node/access/effect/value handles。
 - sensitive representation refinement 必须引用 J/B 中已经存在的显式 authorization，或者属于
   系统安全白名单；
 - 删除 J/C 后，π 不能获得独立 denotation。
+
+π schema 是 closed-world 的：未知字段、未知 relation、可执行自由文本和未声明的 semantic
+constructor 必须 fail closed。若 `SemDecl` 只计显式逻辑语义声明，则 TypeCheck 的准确 claim 是：
+
+```text
+TypeCheck(J,C,pi)
+    -> FreshLogicalSemDecl(C,pi | J) = empty
+```
+
+等价地，在把对 J 的合法引用解析回其定义后，可以写成：
+
+```text
+SemDecl(J,C,pi) = SemDecl(J)
+```
+
+这只保证 artifact grammar 中没有新的显式逻辑语义声明和未授权的 sensitive refinement；不证明
+π 与 J 在信息论上独立，不证明 J 对 Source 正确，也不证明 realization 行为等于 `[[J]]`。
 
 ### 3.2 J 的 carrier 与 semantic labels
 
@@ -295,6 +317,9 @@ then TypeCheck(J1,C,pi) == TypeCheck(J2,C,pi)
 reassociation、允许 native atomic 或允许 shared materialization；它不复制具体 operator、
 predicate、fill 或 reducer 语义。
 
+这里 B 是 J 内部的 boundary/typed-effect contract 子结构，不是 Lift 的第四个输出或 Replay 的
+额外输入。
+
 只要 J1/J2 具有相同 carrier 和相同 realization authorization，π 的 TypeCheck 结果不应依赖其
 semantic label 是：
 
@@ -373,6 +398,10 @@ placement
 representation refinements
 schedule_refs
 ```
+
+“generic”仍表示封闭的 typed constructors 与 opaque J/C refs，不能接受任意 formula、自由文本或
+可执行 relation。新增前端或 operator 应优先组合这些关系；不得用一个可表达任意语义的
+`generic_relation` 逃避 SemDecl 与 authorization 检查。
 
 ### 5.2 示意 schema
 
@@ -681,6 +710,8 @@ J_NECESSARY = masked-J hard mismatch
 ```
 
 该证书更强，但不要求每个 kernel 都获得。
+这里的 `J_NECESSARY=PROVED` 仅表示在记录的模型、解码配置、Replay packet 与 masked-J 干预下
+观察到 J 的操作性必要性，不是对所有生成器或所有实现的全局不可替代性证明。
 
 ### 10.3 为什么 masked-J 不能继续绝对否决
 
@@ -711,7 +742,7 @@ masked-J hard-close 只能否定“J 对此样本的操作性必要”，不能�
 |---|---|---|
 | hard mismatch | 支持 J 对 Replay 的操作性必要性 | 主认证可通过，并附 `J_NECESSARY` |
 | hard close 且 `TypeCheck(J,C,pi)` 失败 | π 存在显式/权威泄漏 | FAIL |
-| hard close 且 `TypeCheck(J,C,pi)` 通过 | topology 对语义具有预测力；J 必要性未证明 | 不自动否定主认证，报告/触发条件挑战 |
+| hard close 且 `TypeCheck(J,C,pi)` 通过 | topology 对语义具有预测力；J 必要性未证明 | 不自动否定主认证；报告，必要时另行运行离线挑战 |
 | generation/compiler/tool failure | inconclusive | 不颁发 J 必要性证书 |
 
 这要求修改当前：
@@ -724,7 +755,8 @@ masked hard-close -> LEAKAGE_REJECTED
 
 ## 11. 条件式 J-authority challenge
 
-该挑战只在：
+该挑战是可选的离线消融，不进入主流程，也不在 masked-J hard-close 后自动触发。只有在下列条件
+成立时，它才具有可解释性：
 
 ```text
 normal Gate1 closed
@@ -778,35 +810,42 @@ Exec(R',C,x) equivalent_(B') RefEval(J',x)
 
 ## 12. Gate2 对完整 π 的 soundness
 
+当前主认证域是 deterministic / contract-deterministic Kernel：内部执行顺序可以变化，但 J/B
+在协议可观察层面给出唯一合同结果。真正集合值的语义留给未来 `Accept_{J,Q}(x,o)` 的逐观察
+conformance；有限次 membership 不能被宣称为完整的 `Beh(P,x) subseteq Spec_J(x)` 证明。
+
 Gate2 的 J-only reference 边不读取 π：
 
 ```text
 O_J = RefEval(J,x)
 ```
 
-因此，即使 π 对 source semantics 有很强统计预测能力，也无法救活错误 J。若采用隐藏随机输入
-模式，Gate1 首次通过的 `(J,C,pi,Replay)` 不再修改，随后才从预先声明的分布 D 独立同分布地
-抽取 m 个对 Lift/Replay 隐藏的测试输入，且 Gate2 结果不回流本次实验。在预先确定的系统比较
-关系 `equivalent_B` 下定义错误 J 的 Source–J 错误质量：
+因此，即使 π 对 source semantics 有很强统计预测能力，也无法绕过错误 J 的 Source–J 边。若采用
+隐藏随机输入模式，Gate1 首次通过的完整候选 `a*=(J,C,pi,Replay)` 先选定且在本次 Gate2 中不再
+修改，随后才从预先声明的分布 D 独立同分布地抽取 m 个对 Lift/Replay 隐藏的测试输入，且 Gate2
+结果不回流本次实验。在预先确定的 Q 下定义完整三边谓词 `g2_Q(a*,x)` 及其错误质量：
 
 ```text
-epsilon_J = Pr_{x ~ D}[Obs_H(Source,C,x) not equivalent_B RefEval(J,x)]
+epsilon_a = Pr_{x ~ D}[not g2_Q(a*,x)]
 ```
 
-若 `epsilon_J >= epsilon > 0`，则错误 J 通过全部 m 个 Source–J challenge 的概率上界是：
+若 `epsilon_a >= epsilon > 0`，则该固定坏候选通过全部 m 个 challenge 的概率上界是：
 
 ```text
 (1-epsilon)^m <= exp(-m*epsilon)
 ```
 
-该上界对任意 π、Lift/Replay model 和 prompt 成立，因为 Gate2 Source–J 边不读取 π。
+Source–J disagreement mass 是该界的充分特例，因为 Source–J 是 Gate2 必须通过的一条边。该上界
+不对所有“错误 J”无条件成立：只有错误在 D 的支持内、能被 Q 区分并具有至少 epsilon 的错误质量
+时才适用；三条比较边也不会把 m 变成 3m。
 
 若实验只使用预先给定的有限测试集合 `T`，则只声明：
 
 ```text
 for every x in T:
-    Source(x) equivalent_B Replay(x)
-    and Source(x) equivalent_B RefEval(J,x)
+    Close_Q(Source(x),Replay(x))
+    and Close_Q(Source(x),RefEval(J,x))
+    and Close_Q(Replay(x),RefEval(J,x))
 ```
 
 此时不引用上述随机测试概率上界。两种实验口径必须明确区分，但都不需要新增 proof artifact、
@@ -877,6 +916,7 @@ TypeCheck(J,C,pi)
 3. observable instance 锚定 J-owned node/access/effect；
 4. π 不含语义原子、frontend API、source text 或 C value；
 5. sensitive refinement 具有 J/B 显式 authorization，或属于系统安全白名单。
+6. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
 完成这五项后才能进入代表性 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
 已经由系统机械保证。
@@ -914,14 +954,14 @@ canonical subterms。若不能，π 无法在不复制 formula 的情况下表�
 
 ### 14.4 masked-J 状态机与完整 π 冲突
 
-当前 Triton/CuTe orchestrator 在 normal closure 后：
+旧 Triton/CuTe orchestrator 曾在 normal closure 后执行：
 
 ```text
 if masked hard-closed:
     status = LEAKAGE_REJECTED
 ```
 
-目标状态机应拆分：
+该旧分支已从活动 Gate1 orchestrator 中移除；当前运行记录已经拆分：
 
 ```text
 main_status = SCRC_CERTIFIED / NO_CLOSURE / ...
@@ -929,10 +969,10 @@ j_necessity_status = PROVED / NOT_PROVED / INCONCLUSIVE
 typecheck_status = PASS / FAIL
 ```
 
-只有 `typecheck_status=FAIL` 或 J-authority challenge 证明非 J 通道覆盖 J 时，才是 artifact leakage
-FAIL。
+`typecheck_status=FAIL` 使当前 artifact 无效。可选离线 J-authority challenge 若观察到非 J 通道
+覆盖 J，只形成独立 authority-leakage 诊断，并用于下一轮系统改进；它不重新成为主在线 Gate。
 
-因此新的运行关系必须是：
+因此运行关系必须保持为：
 
 ```text
 TypeCheck(J,C,pi) = FAIL
@@ -1081,10 +1121,16 @@ Replay topology 应发生预期变化，但 Gate2 semantics 应继续满足同�
 
 ```text
 TypeCheck(J,C,pi) pass rate
-normal Gate1 closure rate
-Gate2 Source/Replay/J closure rate
+first-attempt TypeCheck pass rate
+closure@1 / closure@2 / closure@3
+Lift call count / Replay call count / total LLM call count
+NO_CLOSURE failure categories
+Gate2 pairwise Source/Replay/J pass rate among Gate1-closed candidates
 SCRC_CERTIFIED rate
 ```
+
+`closure@k` 是截至第 k 个正式 Gate1 轮次的累计闭合率，不是第 k 轮的独立成功率。证书绑定
+实际找到的 Replay，不把有限预算搜索写成无成本的抽象存在式 `exists R`。
 
 J 必要性单独报告：
 

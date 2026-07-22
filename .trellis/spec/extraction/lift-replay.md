@@ -29,9 +29,11 @@ TypeCheck(J,C,pi)
 3. observable instance 锚定 J-owned node/access/effect；
 4. π 不含语义原子、Source/API、C value 或可执行自由文本；
 5. sensitive refinement 引用 J/B authorization，或属于系统级安全白名单。
+6. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
 TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时当前 artifact fail closed，
-不进入 Replay。
+不进入 Replay。它只支撑 `FreshLogicalSemDecl(C,pi | J)=empty` 的显式所有权结论，不证明 π
+没有统计语义线索，也不证明 realization 行为正确。
 
 ## Replay
 
@@ -39,9 +41,11 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-`U_f` 是固定的公共前端文档与工具上下文，不按当前 Kernel/op/pattern 选择。Replay 看不到 Source、
-Harness、C values、source binding、旧候选、旧 Replay 或 Gate1 diff。`MaskC(C)` 只暴露 C 的匿名
-schema/slot 视图，不暴露 valuation 与私有 provenance。
+`U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败
+样本选择。Replay 看不到 Source、Harness、C values、source parameter name/position、真实
+BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选、旧 Replay、Gate1 diff、
+旧模型 conversation context 或 per-kernel RuleCard。`MaskC(C)` 只暴露 C 的匿名 schema/slot
+视图，不暴露 valuation 与私有 provenance。
 
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。

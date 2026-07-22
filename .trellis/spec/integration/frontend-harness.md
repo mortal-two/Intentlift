@@ -38,6 +38,9 @@ C 是一个对象。Source 与 Replay 在同一候选中使用同一 C valuation
 提供匿名 slot/schema。non-C compile-time value 作为调用事实绑定，但其 semantic consequence
 必须已经在 J 中表达，其 realization use 才可由 π 引用。
 
+该 valuation 记为 `c0 = Bind_H(C)`。Gate1/Gate2 的主证书只覆盖实际 c0；测试多个配置时只能
+报告实际覆盖的有限集合，不能据此声称所有 admissible C 都已认证。
+
 ## 三方执行权限
 
 ```text
@@ -50,4 +53,5 @@ RefEval <- logical inputs only
 RefEval 的功能输入。
 
 新增前端首先实现上述薄 adapter；不要求 J-to-frontend lowerer、RuleCard、source-to-π parser
-或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须如实记录其能力边界。
+或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须记录 frontend、observer
+profile/version、compiler/dump stage 与 canonicalization version。

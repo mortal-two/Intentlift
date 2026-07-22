@@ -22,7 +22,7 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - 逐项消费 J logical signature、A semantics 与 B result relation；
 - 对 unsupported op/relation 在执行前给出具体 capability reason 并 fail closed；
 - 不使用 case-specific tolerance、Source/Replay 输出或 C value 决定结果；
-- 输出只交给系统 Gate2 comparator 裁决。
+- 输出只交给外部比较政策 Q 构造的 Gate2 comparator 裁决；Q 不进入 RefEval。
 
 ## Production 要求
 
