@@ -6,7 +6,7 @@
 
 该快照已经退役，主要冲突包括 deterministic composer、RuleCard、`C.strategy`、重型
 `IntentProgram/LogicalABI` 和在线多干预协议。当前规范入口是
-[新 spec index](../../index.md)。
+[新 spec index](../../../spec/index.md)。
 
 旧 `atomic-ops.md`、`op-signatures.md` 等可以作为 IntentOp 健壮性问题清单，但不是当前
 冻结 schema。

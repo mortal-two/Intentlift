@@ -1,78 +1,86 @@
-# J、C、π 所有权合同
+# J、C、π 与 TypeCheck
 
-## J
+> 状态：当前派生规范。上位设计见 [C](../../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md) 与 [π](../../../doc/IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)。
+
+## J：唯一语义对象
 
 ```text
 J = A + B
 ```
 
-J 是唯一具有 Kernel denotation 的对象：A 描述逻辑值/状态关系，B 描述真正改变可观察
-结果的边界。J 使用按声明顺序规范化的匿名 handle，不保存源码 spelling。
+J 拥有 logical values/state relation、domain、predicate、fill、logical index、effect、alias、
+result relation 以及 logical signature。signature 中的 input、output、runtime scalar、destination、
+dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
-## C
+B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
+任意可执行 comparator。
 
-C 是独立、可替换的纯调度提示。改变合法 C 不得改变 J denotation。C 不允许有
-`strategy`、source topology、predicate、operator、API spelling 或 per-kernel policy。
-canonical C 只有 `{slots, values}`；每个 slot 由匿名名、kind、source-neutral 调度 `role`、
-value type 和 required bit 构成。`role` 可以表达 `tile_extent/num_warps/vector_width`，不能
-表达 mask placement、operator、predicate 或 source family。
+## C：一个 implementation-selection 对象
 
-`constexpr` 只描述前端绑定时机，不决定所有权。非 C constexpr 在匿名 interface 中使用
-`p*` handle，具体冻结值只留在 harness：会改变 logical shape/domain/predicate/result
-relation 的 consequence 进入 J；只影响 layout/address realization 的 use 只能由 pi 匿名引用。
-只有不改变 J denotation 的 tile/block/stage 等 constexpr 才使用 `c*` 并成为 C slot。
+C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind、value type、concrete
+valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
+logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-## π
+```text
+MaskC(C) = erase(concrete values, private provenance)
+```
 
-π 是 Intent 外的 Gate1 witness，由 Lift LLM 直接产生。它可以表达匿名 realization
-instance、region、route、operand slot、order、sharing、placement，以及区分源码实现所
-必需的 source-neutral mechanism tag（如 async/direct transfer 或 atomic/privatized
-realization）。mechanism tag 不得携带逻辑 operator、combiner、predicate 或数值。
+Replay 只读取 `MaskC(C)`；Harness 将同一 C valuation 绑定给 Source 与 Replay。C 不拆成
+`C_source`、binding map、portable hints 或其他顶层对象。
 
-寻址 realization 使用两个正交 tag：`address_base` 只表示一个独立、program-uniform 的
-pointer/base stage；`address_lane` 只表示形成 lane-varying final address 的 stage。它们可与
-`transfer_direct/transfer_async/update_atomic/update_privatized` 串联，但不取代 transfer/update。
-address tag 不携带 index/offset formula、integer width、cast、dtype、shape、vector length、mask
-或 frontend API。flat source 没有独立 base stage 时不能为了 Gate1 虚构 `address_base`。
+## π：依赖类型实现见证
 
-一个 instance 表示一个 compiler-observable realization event，不是一份新语义值。同一
-`semantic_ref` 可以有多个 instance，以表达同一匿名 handle 的多级 realization；route 是
-instance 间匿名 def-use，order 是必要偏序，sharing 表示一个实际 producer 被多个 consumer
-复用。源码中参与 address/transfer/synchronization/placement/share 的 interface/C handle
-必须在 pi 中出现并连接到受影响的 event。Replay 必须保留 event 数量、链、fanout、region
-和 sharing，不能把它们压平。
+```text
+Gamma_(J,C) |- pi : RealizationWitness(J,C)
+```
 
-这里严格区分两种引用角色：J/C/interface 的 raw `t*/n*/a*/p*/c*` handle 只能出现在
-`instances[*].semantic_ref`，用来锚定一个 realization event；π 图内 route/order/sharing 的
-所有端点只能引用已经声明的 `instances[*].id`，即 `i*`。edge 不会隐式声明 instance。
-例如 p0 参与 a0 realization 时，应先声明一个锚定 p0 的 i0 和一个锚定 a0 的 i1，再写
-`i0 -> i1`，不能直接写 `p0 -> i1`。固定代码不得把 raw handle 自动映射成某个 instance，
-因为多个 instance 可以合法地锚定同一 handle。
+π 可以表达 region、instance、route、operand slot、order、sharing、placement、materialization 与
+受约束 representation refinement。其锚定关系为：
 
-这些结构不能当作无定义的 covert code。instance 的意义只来自上述全局合同和它锚定的
-J/C/interface handle；缺少 operator/formula 时，Replay LLM 负责从完整 J/C/interface 推理出
-前端写法，最终由 Gate1 strict observer 验证，而不是由固定 composer 解码。
+```text
+mu : Instances -> Ids(J) union Ids(C)
+```
 
-π 不允许声明：
+不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
+不序列化成独立 artifact，也不作为 Replay 的额外输入。
 
-- operator/function；
-- constant、dtype 或 shape 语义；
-- predicate/fill；
-- reduction combiner/identity；
-- logical index map；
-- output/destination/conflict policy；
-- 具体 frontend API、源码名或自由文本实现片段。
+π 禁止携带：
 
-固定代码只做 schema、唯一性和引用存在性检查。它不得根据 J/C 推导 π、补步骤、排序、
-选择规则或规范化成某种施工算法。
+- operator/function/reducer、predicate/fill/index formula 或 semantic constant；
+- logical shape、result relation、destination/conflict semantics；
+- Source text/name/path/span、Kernel/rule/family ID；
+- frontend API、C concrete value 或可执行自由文本；
+- 任何能在删除 J/C 后获得独立 denotation 的结构。
 
-## HarnessContext
+所有 observable realization instance 必须锚定 J-owned node/access/effect。representation-only
+scaffolding 折叠后，π 不得增加、删除或改写 J carrier 的逻辑边。
 
-源码函数名、真实参数名、具体值、device、grid 和 invocation metadata 只存在于 harness。
-逻辑参数按位置连接 J；不建立第二份 ABI 语义对象，也不把实名映射交给 Replay。
-Gate1 observer 同样按位置 alpha-normalize 源与 Replay 的参数 spelling；arity、kind、rank、
-dtype、constexpr 位置与 C 值仍是硬合同。
+## Authorization 与 parametricity
 
-Gate1 编译时，non-C constexpr 的具体值按源码声明位置从同一冻结 invocation 复制到
-Replay；这只是调用绑定，不是 C，也不建立 `LogicalABI`。其 semantic consequence 必须已经
-在 J 中；pi 只能引用 representation use，不能补写遗漏语义。
+```text
+RealSig(J) = (Carrier(J), Capabilities(J,B))
+```
+
+`Capabilities(J,B)` 只包含 realization authorization，不复制 operator、predicate、fill、reducer
+等 semantic labels。在相同 `RealSig(J)` 下，替换 semantic label 不得改变 π 的 TypeCheck 结果。
+
+对 integer width、numeric cast、accumulation dtype、reassociation、atomic form 等 sensitive
+refinement：
+
+```text
+Sensitive(r)
+  => auth_ref(r) in Auth(J,B)
+     or kind(r) in GlobalSafeRefinement
+```
+
+`GlobalSafeRefinement` 是系统统一维护的封闭安全集合，不由 Lift 或单个 Kernel 修改。两项均不
+满足时 fail closed；TypeCheck 不现场运行 SMT、range proof 或一般语义等价证明。
+
+## 最小 TypeCheck
+
+`TypeCheck(J,C,π)` 至少检查 refs、route slot/type、observable J anchor、语义/API/Source/C-value
+隔离以及 sensitive authorization。自闭合 `Parse(π)` 只能作为语法解析器，不能冒充 dependent
+TypeCheck。
+
+TypeCheck 的结构化错误可以返回 source-aware Lift；检查结果和 sidecar 不得进入 Replay 作为
+新的信息通道。

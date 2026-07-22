@@ -1,24 +1,30 @@
-# IntentIR 当前规范
+# IntentIR 当前派生规范
 
-本 spec 树定义 2026-07-21 LLM-first reset 后的活动架构。它只借用 Trellis 文件布局，
-不使用 Trellis workflow。
+> 状态：2026-07-22 当前实现规范。
 
-规范优先级：
+`.trellis/spec` 只把三份核心设计投影为 schema、API、runner 和测试要求，不形成第四套设计。
+规范优先级为：
 
-1. [项目宪法](project/constitution.md)
-2. [系统架构](architecture/system.md)
-3. 各子系统合同
-4. [主设计文档](../../doc/IntentIR_LLM_First_统一架构_2026-07-21.md)
+1. [C：所有权、绑定、消费与三方验证](../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
+2. [π：依赖类型实现见证与 Replay 安全](../../doc/IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)
+3. [Lift、Replay、Gate1、Gate2 最终执行流程](../../doc/IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)
+4. 本目录中的派生规范
+
+若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
+epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
 ## 导航
 
-- [J、C、π 所有权](ir/j-c-pi.md)
-- [IntentOp 健壮性要求](ir/intentop-core.md)
-- [LLM Lift 与 Replay](extraction/lift-replay.md)
+- [项目边界](project/constitution.md)
+- [系统数据流与状态](architecture/system.md)
+- [J、C、π 与 TypeCheck](ir/j-c-pi.md)
+- [J/IntentOp 语义核心](ir/intentop-core.md)
+- [Lift 与 Replay](extraction/lift-replay.md)
+- [Frontend Harness](integration/frontend-harness.md)
 - [Gate1](verification/gate1.md)
 - [Gate2](verification/gate2.md)
-- [开放前端 harness](integration/frontend-harness.md)
-- [Lowering 合同](lowering/contract.md)
-- [旧系统清除边界](migration/legacy-removal.md)
+- [RefEval 与 Production Lowering](lowering/contract.md)
+- [旧实现退役与首步重构](migration/legacy-removal.md)
 
-此前 spec 已完整移入 [archive](archive/2026-07-21-pre-llm-first/README.md)，只作历史取证。
+历史 spec 已迁至 [`.trellis/archive/spec`](../archive/spec/2026-07-21-pre-llm-first/README.md)，
+不属于活动规范树。

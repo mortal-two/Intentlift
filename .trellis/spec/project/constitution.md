@@ -1,43 +1,56 @@
-# IntentIR 项目宪法（LLM-first v1）
+# IntentIR 项目边界
+
+> 状态：当前派生规范。上位权威见 [spec 入口](../index.md)。
 
 ## 目标
 
-让 LLM 负责理解任意 Kernel、抽取 `J/C/π`、并在源码隔离下生成完整 Replay；让极小的
-固定验证核心只负责隔离、构建、执行、比较和审计。
+IntentIR 让 Lift 负责从 Source 提出完整 `(J,C,π)`，让 source-blind Replay 根据受限输入生成
+完整前端源码，让很薄的固定核心只做机械检查、绑定、构建、执行和比较。
 
 ```text
-不把碎片化生态编进系统，只把可验证性编进系统。
+Lift_H(S) -> (J,C,pi)
+Replay = W_f(J,pi,MaskC(C);U_f)
 ```
 
-## 必须坚持
+## 不可破坏的边界
 
-1. `Intent = J(A+B)+C`，且 `π∉Intent`。
-2. J 是唯一语义对象；π 是 source-realization witness；C 是纯调度。
-3. Lift LLM 直接输出匿名 J、纯 C 和 π；Replay LLM 直接输出完整前端源码。
-4. 固定代码可以拒绝错误，不得理解 Kernel family 或替 LLM 构造实现。
-5. Gate1 是 source-blind、frontend-observer-parameterized 的构造闭合。
-6. Gate2 的正式边是 `Source↔Replay` 与 `Source↔E_J`；`E_J` 只读取 J。
-7. 新前端只需最小 build/run/observe harness；强 observer 是可插拔证明增强器。
-8. 在线最多一次 normal Replay 和一次 gated masked-J Replay；其他消融离线运行。
-9. 失败只能回到 source-aware Lift，随后 fresh blind Replay；禁止 patch Replay。
-10. production lowering 直接消费完整 J，C 独立传入；backend conformance 不属于 Gate2。
+1. 证明相关 artifact 严格只有 J、C、π。
+2. J 是唯一 denotational semantic object，并拥有 logical signature。
+3. C 是不改变 J denotation 的 implementation-selection 对象；一个实验中的 Source 与 Replay
+   使用同一个 C 对象和 valuation。
+4. π 是依赖 J/C 才有意义的 source-realization witness，没有独立语义权威。
+5. 工程接口只能是 `InterfaceView(J)` 的确定性投影，不是第四对象、额外命名空间或 Replay 输入。
+6. Replay 只接收 `J + π + MaskC(C) + U_f`；U_f 是与当前源码无关的公共前端上下文。
+7. Harness 只保存和绑定调用事实，不构造 J、C、π 或 Replay。
+8. `RefEval` 只读取 J；production lowering 读取 J/C，不读取 π。
+9. 主认证严格是 `TypeCheck(J,C,π) ∧ Gate1 ∧ Gate2`。
+10. masked-J 只报告 J 的操作性必要性，不自动推翻主认证。
 
-## 禁止
+## 固定代码可以做什么
 
-- deterministic composer、work-item 枚举或 source-pattern dispatcher；
-- RuleCard/RuleRegistry、selected card、per-op frontend API mapping；
-- `C.strategy` 或任何 realization 兜底字段；
-- 重型 `IntentProgram` 第二 wire IR和独立 `LogicalABI` 语义对象；
-- kernel-name recognizer、per-kernel construction policy；
-- 在线 semantic mutation、π swap、C swap、dropout/family sweep；
-- 使用源码、旧 Replay 或差分对 Replay 做局部修补；
-- 让 Gate verdict、provider identity、source path 或 dataset identity进入 lowering；
-- 把当前 IntentOp 候选设计伪装成已经完成的通用支持 claim。
+- closed schema、引用、类型、授权和隔离检查；
+- `MaskC(C)`、`InterfaceView(J)` 等确定性投影；
+- build、bind、run、observe、compare 和结构化诊断；
+- 按系统比较协议从 B 的封闭类别构造 Gate2 comparator；
+- 对不支持或不合法的输入 fail closed。
 
-## 审查问题
+固定代码不得识别 Kernel family、从规则库构造实现、补写遗漏语义、从 compiler diff 修补 Replay，
+或把历史候选转换成新的证明输入。
 
-每个新增组件都必须回答：
+## 明确禁止
 
-1. 它是在理解/生成，还是在检查已生成对象？前者默认交给 LLM。
-2. 维护成本是否随 `|frontend|×|operator|×|realization|` 增长？若是则拒绝。
-3. 它增强的是外部闭合证据，还是复制了第二份语义真值？后者拒绝。
+- 独立 interface/ABI 语义对象、BindingMap 或 source-conditioned sidecar 进入 Replay；
+- deterministic composer、RuleCard/RuleRegistry、`C.strategy` 或 per-kernel construction policy；
+- 以 hash、digest、commitment、epoch 或所谓冻结门决定候选是否合法；
+- 让 Lift 自定义任意 comparator、任意 tolerance 或“所有输出均可接受”；
+- Gate1 失败后 patch Replay，或 Gate2 失败后在同一次实验中继续修补候选；
+- 将 masked-J hard close 直接映射为 `LEAKAGE_REJECTED`；
+- 让 production backend 从 π、源码身份、provider 或 Gate verdict 补语义。
+
+## 实验与系统改进
+
+实验期间规则、prompt、模型配置、TypeCheck、observer 和 comparator protocol 保持不变，只修改
+候选 artifact。Gate1 失败的 diff 只反馈给 source-aware Lift；relift 必须产生完整新三元组，
+随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
+
+Gate2 失败结束本次实验。此后才允许根据跨样本失败修改系统，再从新的实验开始运行。

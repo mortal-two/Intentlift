@@ -1,53 +1,56 @@
-# LLM Lift 与 Replay 合同
+# Lift 与 Replay 合同
+
+> 状态：当前派生规范。上位设计见 [π](../../../doc/IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md) 与 [执行流程](../../../doc/IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)。
 
 ## Lift
 
 ```text
-LiftLLM(source, retrieved_context?) -> {J, C, π, diagnostics?}
+Lift_H(Source) -> (J,C,pi)
 ```
 
-Lift 直接完成 whole-tensor semantic lifting、J 原子化/组合化、纯 C 分离和 source
-realization π 提取。固定代码不得禁止 LLM 输出 π 后再由 composer 重建，也不得用
-source-pattern recognizer修复结果。
+Lift 直接完成 whole-tensor semantic lifting、C 分离与 source realization π 的提出。proof-relevant
+输出只有 J、C、π。diagnostic、location、provider receipt 等可以作为 proof-irrelevant sidecar
+保存，但不得进入 Replay、Gate verdict 或 production lowering。
 
-模型可见 Lift response 是一个封闭 root：
+J 必须包含 logical signature；不允许 root sibling `interface` 成为独立对象。实现若需要接口，
+只能按需计算 `InterfaceView(J)`。H 可以向 Lift 提供匿名、未分类的 bindable coordinates，但
+不得预先替 Lift 做 J/C/π 语义分类。
+
+## Replay 前检查
 
 ```text
-root = {schema, j, interface, schedule, pi, location_map}
-j    = {kernel_id, intent, node_ids, boundary, scopes, storage}
+TypeCheck(J,C,pi)
 ```
 
-`j` 必须在 `storage` 后关闭，`interface/schedule/pi/location_map` 始终是 root sibling。内部
-`source/provenance` 不属于模型输出。固定 parser 对错位、缺项或 wrapper 只拒绝，不 hoist、补项
-或从旧 artifact 复制。
+最小 TypeCheck 必须机械检查：
 
-Lift 必须按 denotation 而不是按 Python/Triton binding kind 分类参数：semantic consequence
-进入 J，representation-only use 进入 pi，schedule constexpr 才进入 C。`tl.constexpr`、
-模板参数或编译期常量均不能被固定代码一律投影成 C；名字匿名化也不能改变该分类。
+1. 所有 J/C 引用存在；
+2. route operand slot 与类型兼容；
+3. observable instance 锚定 J-owned node/access/effect；
+4. π 不含语义原子、Source/API、C value 或可执行自由文本；
+5. sensitive refinement 引用 J/B authorization，或属于系统级安全白名单。
 
-J/C/π 在 Lift 边界已经使用 opaque handle。真实源码命名只留在不可见 harness sidecar。
-
-J 的每个 load/store/update access 都显式带非空 ordered logical `index_expression`，与 tensor rank
-无关。源码存在的 logical domain、predicate 与 masked-load fill 必须保留在 J，即使 frozen
-invocation 令 mask 恒真；源码不存在时也不得凭模板发明。单个 JSON parser 只能验证表示完整性，
-不能自行证明这些内容与源码一致，该义务由 source-aware Lift 提议并由 Gate1 strict topology 检验。
+TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时当前 artifact fail closed，
+不进入 Replay。
 
 ## Replay
 
 ```text
-ReplayLLM(J, C, π, Context_f) -> complete source R_f
+ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-Replay 看不到源码、source span、真实名字、旧候选或 compiler diff。`Context_f` 可以来自
-LLM 动态检索的公共前端文档、仓库示例和工具说明，检索 trace 进入 artifact receipt；
-核心仓库不维护或预选按当前 Kernel/op/pattern 组织的 RuleCard/API mapping。
+`U_f` 是固定的公共前端文档与工具上下文，不按当前 Kernel/op/pattern 选择。Replay 看不到 Source、
+Harness、C values、source binding、旧候选、旧 Replay 或 Gate1 diff。`MaskC(C)` 只暴露 C 的匿名
+schema/slot 视图，不暴露 valuation 与私有 provenance。
 
-Replay 的 harness 可以给 non-C constexpr 提供与 source 相同的冻结调用值，但 Replay
-不能从 C 获得该值的语义权威；逻辑 extent/predicate/result 只能来自 J，纯表示 use 只能
-来自 pi 的匿名 topology。
+Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
+diff 施工。
 
-## 失败
+## Gate1 失败与 relift
 
-Replay/compile/Gate1 失败只能反馈给 source-aware Lift。新 Lift 产生完整新 artifact，随后
-重新执行一次 blind Replay。禁止 base-candidate repair、diff-guided Replay patch 和同隐藏
-challenge 上的自适应修补。
+Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读取 Source、上一轮完整
+`(J,C,π)` 与累计 Gate1 diff，但必须重新输出完整新三元组。随后使用新三元组发起全新的盲
+Replay。
+
+禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
+最多三轮正式候选；仍不闭合则 `NO_CLOSURE`。

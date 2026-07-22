@@ -1,65 +1,78 @@
-# Gate2：Source-anchored 三角语义验证
+# Gate2：Source / Replay / J 三方语义验证
 
-## 三腿与一般结果关系
+> 状态：当前派生规范。上位设计见 [C](../../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md) 与 [执行流程](../../../doc/IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)。
 
-对同一逻辑输入 x：
+## 三腿与权限
 
-```text
-O_src = Exec(Source, x)
-O_rep = Exec(Replay, x)
-O_J   = Exec(E_J, x)
-```
-
-`E_J` 是简单、无优化、只读取完整 J 的 backend-neutral scalar semantic executor。对单值
-输出，J 的 relation 是 exact 或 tolerance；对允许多个结果的 logical update，记完整允许
-结果集合为 `R_J(x)`。`E_J` 产生一个独立合法 witness，Gate2 comparator 负责 membership。
-relation、`rtol/atol/equal_nan` 均来自同一个 canonical J，不属于 case harness。
-
-## 正式裁决
-
-Gate2 PASS 对每个冻结 case 都要求三腿均属于同一个 relation：
+对 logical input x：
 
 ```text
-O_src ∈ R_J(x)
-O_rep ∈ R_J(x)
-O_J   ∈ R_J(x)
+O_S = Exec(Source, rho_H^S(C), x)
+O_R = Exec(Replay, rho_H^R(C), x)
+O_J = RefEval(J, x)
 ```
 
-对 exact/tolerance，这退化为原来的 `O_src≈O_rep` 与 `O_src≈O_J` 两条 source-anchored
-边。对 `one_of_updates`，source 与 replay 可以选择不同的合法 contender；Gate2 检查二者
-各自 membership，不能错误要求 pairwise equality。
+Source 与 Replay 使用同一个 C 对象和 valuation。`RefEval` 的接口中不存在 C 或 π，也不读取
+Source/Replay。所有 output、inout、alias/writeback 与声明的 observable effect 都必须裁决。
 
-所有 output、inout、alias/writeback 和声明的可观察 effect 都必须逐项裁决。unsupported、
-缺腿、执行不完整或 comparator 未冻结都不能 PASS。`E_J` 必须接收 Gate1 使用的同一个
-canonical J 对象，不得先转换成第二份 semantic wrapper。尚未实现的 B relation 必须在
-执行前 fail closed；不能只执行 A 后把 boundary digest 记作“已消费”。
-
-每一腿在执行前获得 committed input pre-state 的独立副本。typed bounds 与
-`duplicate_policy=forbid` 先作为 J 输入域检查；不满足前置条件的 case 是无效 challenge，
-不能进入执行或产生 PASS。
-
-## 诊断边界
-
-- exact/tolerance 下 `Source=Replay≠E_J`：J/scalar-semantic 路径有问题；
-- exact/tolerance 下 `Source=E_J≠Replay`：Replay/π/调用路径有问题；
-- one-of 下报告各腿的 membership，不把不同合法 winner 误报为 divergence；
-- 任一腿不属于 `R_J(x)`：只报告具体 relation failure，不由 comparator 武断归因。
-
-## 有限关系和随机声度
-
-冻结 envelope T 上，Gate1 与 source-anchored Gate2 共同定义
-`Source≈SCRC^(f,k,T,R_J)J`。若最终 artifact 在 challenge 前 commitment，随机 case 独立
-采样自 D，则任何错误质量大于 ε 的固定 artifact 通过 m 个 challenge 的概率至多：
+## 比较关系
 
 ```text
-(1-ε)^m <= exp(-mε)
+G2 = (O_S equivalent_B O_R)
+     and
+     (O_S equivalent_B O_J)
 ```
 
-该界对任意 π 和任意 LLM 都成立。失败后提交新 artifact 必须使用新 seed。确定性 hard
-envelope 可与随机 challenge 并存。
+`equivalent_B` 是系统比较协议根据 B 所声明的封闭 comparison class 和必要语义合同构造的关系。
+B 不提供任意可执行 comparator。系统必须验证 dtype、reduction extent、reassociation 权限、
+tolerance 上限、NaN/Inf 与 allowed-result/atomic 等全部参数；不支持的类别、非法参数、缺腿或
+执行不完整均 fail closed。
 
-## TCB 与 backend 边界
+对 exact/tolerance relation，关系按系统模板比较。对允许多个合法结果的 relation，
+`equivalent_B` 检查各腿是否满足同一个 J-owned allowed-result contract，不能把两个不同但合法的
+winner 误报为失败，也不能接受 B 未授权的任意结果。
 
-`E_J` 与 relation comparator 是可执行语义的可信基座，必须简单、版本化并由
-primitive-level test 验证。CUDA/RVV production lowering 属独立 backend conformance，
-不能代替 Gate2 任一腿。
+## Gate2 输入模式
+
+Gate1 首次通过的 `(J,C,π,Replay)` 在本次 Gate2 期间不再修改，随后才产生 Gate2 输入。两种
+实验口径必须明确区分。
+
+### 隐藏随机输入
+
+从预先声明的分布 D 独立同分布抽取 m 个对 Lift/Replay 隐藏的输入，Gate2 结果不回流本次实验。
+在系统 `equivalent_B` 下定义：
+
+```text
+epsilon_J = Pr_{x ~ D}[Exec(Source,C,x) not equivalent_B RefEval(J,x)]
+```
+
+若 `epsilon_J >= epsilon > 0`，错误 J 通过全部 Source–J challenge 的概率至多为：
+
+```text
+(1-epsilon)^m <= exp(-m*epsilon)
+```
+
+### 有限测试集合
+
+若只使用预先给定的有限集合 T，只能声明：
+
+```text
+for every x in T:
+  Source(x) equivalent_B Replay(x)
+  and Source(x) equivalent_B RefEval(J,x)
+```
+
+此时不得引用隐藏随机 challenge 的概率上界。
+
+## 失败与认证
+
+Gate2 失败结束本次实验，不在同一实验中把结果反馈给 Lift/Replay 做局部修补。实验结束后可以
+聚合失败、修改系统，再从新实验开始。
+
+```text
+SCRC_CERTIFIED
+iff TypeCheck(J,C,pi) and Gate1 and Gate2
+```
+
+masked-J/J-authority 状态单独报告，不进入上述合取。Production CUDA/RVV 等 backend conformance
+也独立于 Gate2，不能替代 Source–Replay 或 Source–J 任一腿。

@@ -1,39 +1,53 @@
-# 开放前端最小合同
+# Frontend Harness 合同
 
-新增前端只要求一个薄 adapter：
+> 状态：当前派生规范。上位设计见 [C 文档](../../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)。
+
+Harness 是预先存在的运行与调用环境，不是 IR、模型产物或第四个 proof artifact。
+
+## 最小职责
 
 ```text
-Build(source, specialization, C) -> artifact
-Run(artifact, logical_inputs) -> execution
-Observe(execution) -> outputs/inout/effects
-OptionalDump(artifact) -> observer input
+EnumerateBindings(source invocation) -> anonymous coordinates
+BindSource(Source,C,inputs)           -> source invocation
+BindReplay(Replay,C,inputs)           -> replay invocation
+Build(invocation)                     -> executable
+Run(executable)                       -> observable result
+Observe(executable/result)            -> Gate evidence
 ```
 
-首次接入不要求：
+Harness 可以保存：
 
-- J→frontend lowerer；
-- frontend API mapping table；
-- source→π parser；
-- RuleCard 或 StrategyFamily；
-- 修改 Intent schema；
-- 强 Level-2 compiler observer。
+- concrete logical inputs 与 C values；
+- source/replay 的机械调用坐标；
+- grid、device、toolchain 与 compiler options；
+- build/run/observation diagnostics。
 
-真实参数名、调用约定和设备对象只在 adapter 内部。对 J 使用有序匿名参数；相同逻辑
-输入按位置供给 Source、Replay 和 `E_J`。
+Harness 不得：
 
-该 positional binding 必须核对 arity、tensor/scalar kind、rank、dtype、constexpr 位置和
-C 值，但不保存一份带语义的 ABI schema。compiler-only C slot 由纯调度 `role` 连接固定
-frontend option；连接表不按 kernel/op/pattern 变化。
+- 根据参数名、`constexpr` 或 Kernel family 判断 J/C/π 归属；
+- 生成 operator、predicate、formula、schedule strategy 或 Replay code；
+- 把真实 Source binding、compiler diff 或 H 整体交给 Replay；
+- 建立独立 `LogicalABI`、`InterfaceArtifact` 或带语义的 BindingMap。
 
-`constexpr` 位置也不能自动归 C。冻结 invocation 用一份按源码声明顺序排列的 parameter
-数组作为唯一物理调用真值；每个 constexpr 只标为 `binding` 或 `schedule`：
+## Logical signature 与绑定
 
-- `schedule` 才投影成 pure C；
-- `binding` 使用匿名 `p*`，具体值仅供 source/replay 同一调用。Lift 根据源码把它的 semantic
-  consequence 写入 J，或把 representation-only use 写入 pi。
+input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical
+signature。adapter 若需要函数视图，只能使用 `InterfaceView(J)`，且该视图必须由 J 确定性产生。
 
-该二分类只区分“是不是 C”，不在 harness 中建立 J/π 语义对象。参数数组是编译/运行所需的
-一次调用记录，不是 `LogicalABI`，也不包含 kernel rule。
+C 是一个对象。Source 与 Replay 在同一候选中使用同一 C valuation；`MaskC(C)` 只给 Replay
+提供匿名 slot/schema。non-C compile-time value 作为调用事实绑定，但其 semantic consequence
+必须已经在 J 中表达，其 realization use 才可由 π 引用。
 
-前端 observer 可以随后增强，但证书必须记录 frontend、observer level/version 和 dump
-可用性。
+## 三方执行权限
+
+```text
+Source  <- H binds C and inputs
+Replay  <- H binds the same C and inputs
+RefEval <- logical inputs only
+```
+
+`RefEval` 的函数接口不能接收 C 或 π。实验记录可以关联当前候选，但关联 metadata 不得变成
+RefEval 的功能输入。
+
+新增前端首先实现上述薄 adapter；不要求 J-to-frontend lowerer、RuleCard、source-to-π parser
+或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须如实记录其能力边界。
