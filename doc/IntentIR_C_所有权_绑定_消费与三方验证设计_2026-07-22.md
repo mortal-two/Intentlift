@@ -2,7 +2,8 @@
 
 > 状态：新架构核心设计（2026-07-22）  
 > 修订依据：[高级 AI 对 C 设计的纠正](高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](高级ai对c的自省.md)  
-> 范围：冻结 C 在 Lift、Replay、Gate1、Gate2、reference semantics 与直接 production lowering 中的最小合同  
+> 范围：定义 C 在 Lift、Replay、Gate1、Gate2、reference semantics 与直接 production lowering 中的最小合同
+>
 > 核心不变量：**证明相关 artifact 严格只有 `(J,C,pi)`；Replay 只看 `J + pi + MaskC(C)`。**
 
 ## 1. 最终判断
@@ -16,6 +17,8 @@
 
 ```text
 Lift_H(Source) -> (J, C, pi)
+
+TypeCheck(J,C,pi)
 
 Replay = ReplayLLM(
     J,
@@ -42,6 +45,7 @@ Production:
 
 - Harness 是预先存在的隐藏求值环境，不是 IR，也不是 Lift 的第四输出；
 - C 是一个对象，不拆成多个顶层 artifact；
+- logical signature 属于 J；任何工程 `InterfaceView` 都只能是 `J` 的确定性投影；
 - Replay view、Gate view 和 lowering view 都是 C 的确定性投影；
 - `RefEval` 在接口层面禁止访问 C；
 - production lowerer 可以消费或忽略 C，但不读取 pi；
@@ -109,7 +113,25 @@ Source -> (J,C,pi) -> Replay
 
 是当前研究必须保住的因子化命题。
 
-### 2.4 Proof-irrelevant sidecars
+### 2.4 Logical signature 属于 J
+
+输入、输出、runtime scalar、destination、dtype、rank、shape、alias、inout 与 observable effect
+都属于 J 的 logical signature 或 J/B 边界。它们不能形成独立的第四个 Lift artifact。
+
+如果前端适配器或实现代码需要一个接口视图，只允许定义：
+
+```text
+InterfaceView(J)
+```
+
+`InterfaceView(J)` 是 J 的确定性投影，不具有独立语义，不单独序列化为证明对象，也不作为
+Replay 的额外输入。C slots 仍通过 `MaskC(C)` 单独提供；Harness 只保存 source/replay 的机械
+调用坐标。
+
+Lift 可以从 H 获得匿名、未分类的 bindable coordinates，以便形成 J signature 和 C；该机械输入
+不是 `InterfaceView` artifact，也不能替 Lift 预先完成 J/C 分类。
+
+### 2.5 Proof-irrelevant sidecars
 
 实现可以保存 audit、location、diagnostic、provider receipt、compiler receipt 等 sidecar，但它们
 必须是 proof-irrelevant：
@@ -123,7 +145,7 @@ Source -> (J,C,pi) -> Replay
 
 | 对象 | 数学身份 | 所有内容 | 禁止内容 |
 |---|---|---|---|
-| `J=A+B` | 唯一 denotational semantic object | value/state relation、domain、predicate、fill、effect、alias、result relation | schedule、frontend API、source topology |
+| `J=A+B` | 唯一 denotational semantic object | logical signature、value/state relation、domain、predicate、fill、effect、alias、result relation | schedule、frontend API、source topology |
 | `C` | denotation-preserving implementation-selection object | anonymous slots、binding kind、value type、concrete valuation，以及已有的最小 source-neutral schedule metadata | J 语义副本、predicate/formula、kernel-specific executable policy |
 | `pi` | source realization witness | instance、region、route、slot、order、sharing、placement、representation topology | C value、J 语义副本、production target policy |
 | `H` | 隐藏求值环境 | inputs、C values、source/replay invocation coordinates、grid、device、compiler options、receipts | 新 IR、语义分类、Replay construction |
@@ -328,7 +350,7 @@ rho_H^R(c0) = Replay.c0       := 128
 
 - 枚举参数、constexpr 与 compiler option 的机械坐标；
 - 保存 concrete inputs 与 C values；
-- 将相同 C commitment 绑定给 Source 和 Replay；
+- 将相同 C valuation 绑定给 Source 和 Replay；
 - 保存 grid、device、toolchain、compiler options 与 receipts；
 - 执行 compile/run/measure。
 
@@ -365,8 +387,9 @@ rho_H^R(c0) = Replay.c0       := 128
        to Source and Replay invocations
 ```
 
-Lift 是否需要一个极小、匿名化 compile-time interface 是实现问题；无论如何 H 不进入 Replay，
-也不能产生额外 source-conditioned object 再送给 Replay。
+Lift 可以读取 H 提供的极小、匿名化机械坐标；最终 logical signature 必须进入 J。Replay 若需要
+接口信息，只能读取 `InterfaceView(J)` 这一确定性投影。H 不进入 Replay，也不能产生额外
+source-conditioned object 再送给 Replay。
 
 ## 7. 谁决定一个 source coordinate 属于 C
 
@@ -454,7 +477,7 @@ pi 负责表达 C slot 在 source realization topology 中的 use；Injector 不
 
 ### 8.3 生成后绑定
 
-Replay source 完成并冻结后，Harness 执行：
+Replay source 生成完成后，Harness 执行：
 
 ```text
 Bind_H(Source,C)
@@ -516,27 +539,40 @@ G2 = (O_S equivalent_B O_R)
      (O_S equivalent_B O_J)
 ```
 
-其中 comparator 与允许结果关系只来自 J/B。
+其中 `equivalent_B` 是预先确定的系统比较协议依据 B 所声明的封闭 comparison class 构造出的
+关系；下标 B 不表示候选可以提供任意 comparator。系统根据 dtype、reduction extent、
+reassociation 权限等构造 comparator，并检查全部参数，包括 tolerance 上限、NaN/Inf 合同和
+atomic/allowed-result 合同；不支持的类别或非法参数直接 fail closed。Lift 不得在 J/B 中写入
+任意可执行 comparator，也不得用任意大的 `rtol/atol` 或“所有输出均可接受”来定义自己的及格线。
 
-### 10.3 同 epoch，不同权限
+因此这里的所有权分工是：
+
+```text
+B declares a closed comparison class and its required semantic contract
+the pre-established system protocol validates all parameters and builds the comparator
+```
+
+而不是候选 J 可以自由定义比较程序。
+
+### 10.3 同一次实验，不同权限
 
 三腿可以共享：
 
 - 同一 logical inputs；
-- 同一 artifact epoch；
+- 同一组 J/C/pi 与 Replay；
 - 同一 comparator；
 - 同一 runtime shape/condition；
-- 同一 evidence ledger。
+- 同一实验记录。
 
 但 `RefEval(J,x)` 不得从 C 恢复 logical domain、predicate、fill 或 result relation。
 
-RefEval receipt 可以记录关联 epoch 与 C digest，但必须记录：
+RefEval 的实验记录可以关联当前 J/C/pi，但其函数接口必须保证：
 
 ```text
 c_access = forbidden_by_interface
 ```
 
-关联 digest 是 evidence metadata，不是功能输入。
+该记录只说明接口权限，不向 `RefEval` 提供 C。
 
 ## 11. Production lowering
 
@@ -723,7 +759,7 @@ Gate2(Source(C),Replay(C),RefEval(J))
 ## 16. 禁止的退化方案
 
 1. Lift 输出 `(J,C,pi)` 之外的 source-conditioned proof object。
-2. 独立 BindingMap/portable hints/Resolver output 进入 Replay 或 Gate verdict。
+2. 独立 interface/BindingMap/portable hints/Resolver output 进入 Replay 或 Gate verdict。
 3. Harness 根据 `tl.constexpr` 或参数名做 J/C 语义分类。
 4. Harness 整体进入 Replay。
 5. Replay 看到 C values 或 source binding。
@@ -740,6 +776,7 @@ Gate2(Source(C),Replay(C),RefEval(J))
 ### 17.1 Artifact factorization
 
 - proof-relevant Lift codomain 只有 J、C、pi；
+- logical signature 属于 J，`InterfaceView(J)` 只能是确定性投影；
 - 额外 sidecars 不进入 Replay/Gate/lowering；
 - Replay request schema 不存在第四个 kernel-conditioned payload；
 - historical source/binding names在 Replay packet 中不可搜索到。
@@ -749,7 +786,7 @@ Gate2(Source(C),Replay(C),RefEval(J))
 - canonical C 只有一个对象，保存 slots 与 values；
 - Replay view 确定性删除 values 和 private provenance；
 - Harness 只枚举/绑定坐标，不做 J/C 分类；
-- Source/Replay 使用同一 C digest；
+- Source/Replay 使用同一个 C 对象和同一份 valuation；
 - Injector 只绑定，不修改 AST。
 
 ### 17.3 Gate1
@@ -763,8 +800,8 @@ Gate2(Source(C),Replay(C),RefEval(J))
 
 - Source 与 Replay 使用相同 C；
 - RefEval API 没有 C 参数；
-- RefEval receipt 记录 `c_access=forbidden_by_interface`；
-- relation 只来自 J/B；
+- RefEval 实验记录可注明 `c_access=forbidden_by_interface`；
+- J/B 只选择系统允许的 comparison class；tolerance 和允许结果参数通过系统上限检查；
 - production backend conformance 与主 Gate2 分开。
 
 ### 17.5 Production boundary
@@ -774,13 +811,13 @@ Gate2(Source(C),Replay(C),RefEval(J))
 - 未理解的 C 可被忽略而不破坏 generic correctness；
 - future retune/cost model 不进入当前 acceptance。
 
-## 18. 待最终审查的开放项
+## 18. 后续实现中需要确定的通用接口
 
 1. `Sigma_C` 的最小字段是否保留当前 `role`，还是只保留 handle/type/binding kind？
 2. Harness 的匿名 bindable coordinate 如何机械形成，避免预先做 J/C 分类？
 3. source coordinate 到 C slot 的关系优先采用同 handle，还是 C private provenance？
 4. 一个 source parameter 的多用途如何同时体现在 J 与 C，而不新增第四对象？
-5. Lift 最小可见 compile-time interface 到底包含哪些结构事实？
+5. Lift 最小可见的 H 机械坐标包含哪些结构事实，以及如何确定性形成 `InterfaceView(J)`？
 6. 如何从类型/API 层机械证明 RefEval 无法访问 artifact C？
 7. 当前 production lowerer对 C 的 consume/ignore receipt 需要做到什么粒度？
 8. future backend cost model 在 reviewer response 中如何表述而不形成当前实现承诺？
@@ -791,6 +828,8 @@ Gate2(Source(C),Replay(C),RefEval(J))
 
 ```text
 Lift_H(S) = (J,C,pi)
+
+TypeCheck(J,C,pi)
 
 Replay = W_f(J,pi,MaskC(C);U_f)
 

@@ -41,10 +41,15 @@ J 是唯一的语义对象，负责表达：
 - value 和 state relation；
 - logical domain、predicate、fill；
 - logical index 和 typed index relation；
+- logical signature（inputs、outputs、runtime scalar、dtype、rank、shape、alias/inout）；
 - operator、reducer、effect、alias、result relation；
 - 必要的数值、宽度、signedness、overflow 或地址语义。
 
 如果一个事实可能改变 J 的允许结果关系，它必须先由 J 或 B 表达，不能只放进 π 或 C。
+
+如果工程实现需要函数接口视图，只能从 J 确定性得到 `InterfaceView(J)`。它不是第四个 Lift
+artifact，也不作为 Replay 的额外输入；C slots 仍由 `MaskC(C)` 提供，调用位置由 Harness
+机械绑定。
 
 ### 2.3 C
 
@@ -238,8 +243,13 @@ TypeCheck 不是新的 Gate，也不是新的证明对象。它只是 Replay 之
 - route slot 是否与被引用 J carrier 相容；
 - 是否出现未由 J/B 授权的 observable stage；
 - 是否新增 operator、predicate、fill、formula、effect 或 semantic constant；
-- representation refinement 是否被 J/B 允许；
+- representation refinement 是否属于系统封闭 schema，且参数与类型是否合法；
+- sensitive refinement 是否引用 J/B 中已有的 authorization，或属于系统安全白名单；
 - 是否存在 source text、frontend API、C value 或可执行自由文本。
+
+TypeCheck 不证明某种 representation 在一般情况下与 J 语义等价。对于 cast、integer width、
+reassociation、atomic form 等 sensitive refinement，它只检查两件事：J/B 是否已有明确的 typed/effect
+authorization，或者该 refinement 是否属于系统统一维护的安全白名单；两者都不满足就直接失败。
 
 ### 6.4 格式修正和正式实验轮次
 
@@ -375,14 +385,14 @@ Comparator 不直接下结论：
 
 ```text
 Source
-A_r = (J_r,C_r,π_r)
+Artifact_r = (J_r,C_r,π_r)
 D_r
 ```
 
 它必须输出：
 
 ```text
-A_(r+1) = (J_(r+1),C_(r+1),π_(r+1))
+Artifact_(r+1) = (J_(r+1),C_(r+1),π_(r+1))
 ```
 
 接着重新执行：
@@ -440,7 +450,36 @@ G2 = (O_S equivalent_B O_R)
 - Source 和 Replay 使用同一 C；
 - `RefEval(J,x)` 不接收 C；
 - `RefEval` 不读取 π；
-- comparator 和允许结果关系来自 J/B。
+- B 只声明封闭 comparison class 与必要语义合同，系统比较协议据此构造 `equivalent_B`。
+
+### 11.1 比较关系的来源和范围
+
+B 只能声明系统支持的 comparison class 和必要语义合同，例如 exact、浮点 tolerance 或
+允许结果集合。`equivalent_B` 是预先确定的系统比较协议依据该声明构造出的关系；下标 B 不表示
+候选可以提供任意 comparator。系统根据 dtype、reduction extent、reassociation 权限等构造
+comparator，并检查全部参数，包括 tolerance 上限、NaN/Inf 合同和 atomic/allowed-result 合同；
+不支持的类别或非法参数直接 fail closed。
+
+Lift 不能自由写入任意 Python comparator，也不能通过任意大的 `rtol/atol` 或“所有输出均可接受”
+来放宽自己的 Gate2。B 保留对语义比较类别与必要合同的所有权，但候选不能自己决定及格线。
+
+### 11.2 Gate2 输入的生成顺序
+
+Gate1 首次通过的那一组 `(J,C,pi,Replay)` 在本次 Gate2 中不再修改，随后才生成 Gate2 输入。
+如果采用隐藏随机输入模式，必须从预先声明的分布 D 独立同分布地抽取输入，并对 Lift/Replay
+隐藏这些输入；Gate2 结果也不回流本次实验。只有在预先确定的系统比较关系下，把 epsilon 定义为
+Source–J 在 D 上的错误质量时，才可以报告 m 个 challenge 全部漏检的概率上界 `(1-epsilon)^m`。
+
+如果只使用预先给定的有限测试集合 `T`，则只报告：
+
+```text
+for every x in T:
+    Source(x) equivalent_B Replay(x)
+    and Source(x) equivalent_B RefEval(J,x)
+```
+
+不能在只使用固定 `T` 时同时引用隐藏随机测试的概率结论。两种输入模式都不需要新的证明对象
+或新的运行阶段。
 
 Gate2 失败后，不在同一次实验中继续使用该结果做局部修补。实验结束，进入系统改进，再开始下一次实验。
 

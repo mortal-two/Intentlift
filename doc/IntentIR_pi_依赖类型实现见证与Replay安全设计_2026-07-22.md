@@ -51,12 +51,12 @@ normalized compiler topology with J/C semantic holes
 
 ## 2. 与 C 规范的硬兼容条件
 
-本设计不得修改已经冻结的 C 不变量。
+本设计不得修改 C 文档已经确定的不变量。
 
 ### 2.1 Proof artifact 仍只有三件东西
 
 ```text
-A = (J,C,pi)
+Artifact = (J,C,pi)
 ```
 
 π 的增强不能引入：
@@ -98,7 +98,10 @@ and
 Obs_H(Source,C,x) equivalent_B RefEval(J,x)
 ```
 
-`RefEval` 接口中没有 C，也不读取 π。
+`RefEval` 接口中没有 C，也不读取 π。`equivalent_B` 是预先确定的系统比较协议依据 B 所声明的
+封闭 comparison class 构造出的关系；下标 B 不表示候选可以提供任意 comparator。系统必须检查
+全部比较参数，包括 tolerance 上限、NaN/Inf 合同和 atomic/allowed-result 合同；不支持的类别或
+非法参数直接 fail closed。
 
 ### 2.4 Production lowering 不读取 π
 
@@ -119,15 +122,18 @@ K_t = Lower_t(J,C)
 Gamma_(J,C) |- pi : RealizationWitness(J,C)
 ```
 
-π 不是独立 JSON 图；它只有在给定 J、C 的声明环境后才有类型和意义。
+π 不是独立 JSON 图；它只有在给定 J、C 的声明环境后才有类型和意义。这里
+`Ids(J)` 已经包括 J logical signature 中的 input、output、runtime scalar、destination 以及
+node/access/effect/value handles。
 
 这意味着：
 
-- `semantic_ref` 必须解析到 J/C/匿名 interface 中已声明的 handle；
+- `semantic_ref` 必须解析到 J/C 中已声明的 handle；
 - operand slot 必须与被引用 J carrier 的 arity 相容；
 - effect realization 必须由 J/B 中已存在的 effect 授权；
 - C use 只能引用 `MaskC(C)` 中存在的 slot；
-- representation refinement 必须不超出 J/B 允许结果关系；
+- sensitive representation refinement 必须引用 J/B 中已经存在的显式 authorization，或者属于
+  系统安全白名单；
 - 删除 J/C 后，π 不能获得独立 denotation。
 
 ### 3.2 J 的 carrier 与 semantic labels
@@ -140,10 +146,12 @@ J = (K, lambda)
 
 其中：
 
-- `K`：node/access/effect/value 的类型、arity、引用与 carrier；
+- `K`：logical signature 以及 node/access/effect/value 的类型、arity、引用与 carrier；
 - `lambda`：operator、predicate、fill、reducer、index formula、result relation 等具体语义。
 
-π 可以依赖 `K`，不能把 `lambda` 复制进自身。
+π 的结构锚定可以依赖 `K`，并可以引用 J/B 中不透明的 realization authorization handle；
+TypeCheck 的合法性取决于第 4.4 节定义的 `RealSig(J)`。π 不能把 `lambda` 或 authorization
+所保护的具体语义复制进自身。
 
 ### 3.3 Realization graph
 
@@ -156,11 +164,12 @@ G_pi = (Regions, Instances, Routes, Order, Sharing, Placement, Representation, S
 并有锚定映射：
 
 ```text
-mu : Instances -> Ids(J) union Ids(C) union Ids(interface)
+mu : Instances -> Ids(J) union Ids(C)
 ```
 
 本设计优先要求每个 instance 都具有 opaque anchor。region、order、sharing 等纯关系无需伪造
-新的 semantic node。
+新的 semantic node。如果工程实现需要接口视图，只能使用 `InterfaceView(J)`；它是 J 的确定性
+投影，不增加新的 anchor namespace，也不是 Replay 的额外输入。
 
 ## 4. π 的硬安全条件
 
@@ -223,7 +232,7 @@ SemAtoms(pi) = empty
 Observable(i) => mu(i) in Ids(J)
 ```
 
-锚定 interface/C 的 instance 只能提供：
+锚定 J signature/C 的 instance 只能提供：
 
 - binding；
 - placement；
@@ -270,11 +279,18 @@ or the route must be a validated representation-only path.
 必须满足：
 
 ```text
-if K(J1) == K(J2),
-then WF(J1,C,pi) == WF(J2,C,pi)
+RealSig(J) = (Carrier(J), Capabilities(J,B))
+
+if RealSig(J1) == RealSig(J2),
+then TypeCheck(J1,C,pi) == TypeCheck(J2,C,pi)
 ```
 
-只要 J1/J2 具有相同 realization signature，π 的结构合法性不应依赖其 semantic label 是：
+`Capabilities(J,B)` 只包含 realization authorization，例如允许 signed widening、允许
+reassociation、允许 native atomic 或允许 shared materialization；它不复制具体 operator、
+predicate、fill 或 reducer 语义。
+
+只要 J1/J2 具有相同 carrier 和相同 realization authorization，π 的 TypeCheck 结果不应依赖其
+semantic label 是：
 
 - add 还是 mul；
 - sum 还是 max；
@@ -320,7 +336,7 @@ BLOCK_N
 num_warps = 4
 ```
 
-C value 仅由 Harness 在 Replay source 冻结后绑定。
+C value 仅由 Harness 在 Replay source 生成完成后绑定。
 
 ## 5. 最小关系型 π schema
 
@@ -448,7 +464,7 @@ declaration-order subterm handles。该派生是 J 的确定性视图，不是�
 - memory space，在不改变可观察状态时；
 - representation-only staging。
 
-需要 J/B 授权或独立证明的候选：
+需要 J/B 显式授权的 sensitive refinement：
 
 - integer width；
 - numeric cast；
@@ -458,12 +474,18 @@ declaration-order subterm handles。该派生是 J 的确定性视图，不是�
 - atomic/privatized update form；
 - 会改变 rounding、overflow、conflict 或允许结果的任何属性。
 
-规则不是“representation 一律属于 π”，而是：
+TypeCheck 不负责现场证明某个 refinement 不改变 `[[J]]`，也不运行 SMT、range proof 或一般语义
+等价检查。它只机械检查：
 
 ```text
-只有已证明不改变 J/B 允许结果关系的 refinement 才能进入 π；
-否则该语义必须先由 J/B 授权。
+Sensitive(r)
+  => auth_ref(r) in Auth(J,B)
+     or kind(r) in GlobalSafeRefinement
 ```
+
+其中 `GlobalSafeRefinement` 是系统统一维护的安全白名单，不由 Lift 或单个 Kernel 修改。若两者都
+不满足，TypeCheck 直接失败。这样整数宽度、numeric cast 等语义由 J/B 表达，π 只表达显式
+materialization、placement、order 与 sharing。
 
 ### 5.5 Effect realization
 
@@ -548,7 +570,7 @@ Replay LLM 应遵守以下过程合同：
 
 - schema/type/reference validation；
 - graph closure/acyclicity；
-- dependent well-formedness；
+- `TypeCheck(J,C,pi)`；
 - Replay code policy；
 - compiler observation 与 Gate verdict。
 
@@ -626,7 +648,7 @@ MutualInformation(pi, semantics) = 0
 定义：
 
 ```text
-SCRC_CERTIFIED = WF_pi and Gate1 and Gate2
+SCRC_CERTIFIED = TypeCheck(J,C,pi) and Gate1 and Gate2
 ```
 
 它证明：
@@ -682,8 +704,8 @@ masked-J hard-close 只能否定“J 对此样本的操作性必要”，不能�
 | masked-J 结果 | 解释 | 主认证处理 |
 |---|---|---|
 | hard mismatch | 支持 J 对 Replay 的操作性必要性 | 主认证可通过，并附 `J_NECESSARY` |
-| hard close 且 `WF_pi` 失败 | π 存在显式/权威泄漏 | FAIL |
-| hard close 且 `WF_pi` 通过 | topology 对语义具有预测力；J 必要性未证明 | 不自动否定主认证，报告/触发条件挑战 |
+| hard close 且 `TypeCheck(J,C,pi)` 失败 | π 存在显式/权威泄漏 | FAIL |
+| hard close 且 `TypeCheck(J,C,pi)` 通过 | topology 对语义具有预测力；J 必要性未证明 | 不自动否定主认证，报告/触发条件挑战 |
 | generation/compiler/tool failure | inconclusive | 不颁发 J 必要性证书 |
 
 这要求修改当前：
@@ -700,7 +722,7 @@ masked hard-close -> LEAKAGE_REJECTED
 
 ```text
 normal Gate1 closed
-and WF_pi passed
+and TypeCheck(J,C,pi) passed
 and masked-J hard-closed
 ```
 
@@ -708,10 +730,10 @@ and masked-J hard-closed
 
 ### 11.1 构造
 
-固定：
+保持不变：
 
 ```text
-pi, C, K(J)
+pi, C, RealSig(J)
 ```
 
 改变一个 realization-signature-compatible semantic atom：
@@ -756,15 +778,33 @@ Gate2 的 J-only reference 边不读取 π：
 O_J = RefEval(J,x)
 ```
 
-因此，即使 π 对 source semantics 有很强统计预测能力，也无法救活错误 J。正式 artifact 在随机
-challenge 前冻结后，若错误 J 在分布 D 上的错误质量大于 epsilon，通过 m 个隐藏 Source–J
-challenge 的概率上界仍是：
+因此，即使 π 对 source semantics 有很强统计预测能力，也无法救活错误 J。若采用隐藏随机输入
+模式，Gate1 首次通过的 `(J,C,pi,Replay)` 不再修改，随后才从预先声明的分布 D 独立同分布地
+抽取 m 个对 Lift/Replay 隐藏的测试输入，且 Gate2 结果不回流本次实验。在预先确定的系统比较
+关系 `equivalent_B` 下定义错误 J 的 Source–J 错误质量：
+
+```text
+epsilon_J = Pr_{x ~ D}[Obs_H(Source,C,x) not equivalent_B RefEval(J,x)]
+```
+
+若 `epsilon_J >= epsilon > 0`，则错误 J 通过全部 m 个 Source–J challenge 的概率上界是：
 
 ```text
 (1-epsilon)^m <= exp(-m*epsilon)
 ```
 
 该上界对任意 π、Lift/Replay model 和 prompt 成立，因为 Gate2 Source–J 边不读取 π。
+
+若实验只使用预先给定的有限测试集合 `T`，则只声明：
+
+```text
+for every x in T:
+    Source(x) equivalent_B Replay(x)
+    and Source(x) equivalent_B RefEval(J,x)
+```
+
+此时不引用上述随机测试概率上界。两种实验口径必须明确区分，但都不需要新增 proof artifact、
+额外 Gate 或其他运行设施。
 
 因此需要区分：
 
@@ -780,7 +820,7 @@ Gate2：semantic soundness
 当前实现已经具备：
 
 - closed `regions/instances/routes/order/sharing` schema；
-- declaration-order opaque `r*/i*/J/C/interface` handles；
+- declaration-order opaque `r*/i*/J/C` handles；
 - raw handle 与 π graph instance namespace 分离；
 - route operand slots；
 - order/region acyclicity；
@@ -808,8 +848,9 @@ Gate2：semantic soundness
 - observable instance 是否由 J node/access/effect 授权；
 - route operand slot 是否与 J carrier 相容；
 - quotient/homomorphism 是否不新增逻辑图；
-- representation refinement 是否被 J/B 允许；
-- semantic-label parametricity。
+- representation refinement 是否属于系统封闭 schema，以及 sensitive refinement 是否具有
+  J/B authorization 或属于系统安全白名单；
+- `RealSig(J)` parametricity。
 
 目标是从：
 
@@ -822,6 +863,17 @@ Parse(pi)
 ```text
 TypeCheck(J,C,pi)
 ```
+
+首版 TypeCheck 不必先完成完整 quotient/homomorphism 证明，但至少必须机械完成：
+
+1. 所有 J/C refs 存在；
+2. route operand slot 与类型合法；
+3. observable instance 锚定 J-owned node/access/effect；
+4. π 不含语义原子、frontend API、source text 或 C value；
+5. sensitive refinement 具有 J/B 显式 authorization，或属于系统安全白名单。
+
+完成这五项后才能进入代表性 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
+已经由系统机械保证。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 
@@ -868,11 +920,22 @@ if masked hard-closed:
 ```text
 main_status = SCRC_CERTIFIED / NO_CLOSURE / ...
 j_necessity_status = PROVED / NOT_PROVED / INCONCLUSIVE
-pi_well_formed = true / false
+typecheck_status = PASS / FAIL
 ```
 
-只有 `pi_well_formed=false` 或 J-authority challenge 证明非 J 通道覆盖 J 时，才是 artifact leakage
+只有 `typecheck_status=FAIL` 或 J-authority challenge 证明非 J 通道覆盖 J 时，才是 artifact leakage
 FAIL。
+
+因此新的运行关系必须是：
+
+```text
+TypeCheck(J,C,pi) = FAIL
+    -> artifact FAIL
+
+masked-J hard close and TypeCheck(J,C,pi) = PASS
+    -> J_NECESSARY not proved
+    -> does not automatically reject the main certification
+```
 
 ## 15. 当前阶段不做什么
 
@@ -890,12 +953,12 @@ FAIL。
 
 ## 16. 建议迁移阶段
 
-### 阶段 0：冻结规范，不调用 LLM
+### 阶段 0：确认对象边界与 TypeCheck 合同，不调用 LLM
 
-- 冻结 `(J,C)` dependent type judgement；
+- 确认 `(J,C)` dependent type judgement；
 - 建立 explicit semantics/authority/structural-inference 三类泄漏定义；
 - 将主认证与 J 必要性证书分开；
-- 冻结当前历史 receipts，不重写旧 verdict。
+- 保留当前历史实验记录，不静默重写旧 verdict。
 
 ### 阶段 1：Dependent validator
 
@@ -924,7 +987,7 @@ FAIL。
 
 ### 阶段 4：Gate 状态拆分
 
-- `WF_pi + Gate1 + Gate2` 形成主认证；
+- `TypeCheck(J,C,pi) + Gate1 + Gate2` 形成主认证；
 - masked-J 单列 J necessity；
 - 静态非法 π 仍 hard fail；
 - masked hard-close + legal π 不再自动 leakage reject；
@@ -970,13 +1033,14 @@ FAIL。
 
 ### 17.2 Parametricity
 
-在相同 J carrier 下替换 semantic label：
+在相同 `RealSig(J)` 下替换 semantic label：
 
 - add ↔ mul；
 - sum ↔ max；
 - predicate/fill 合法替换。
 
-π 的 well-formedness 不应因具体 label 改变。
+π 的 TypeCheck 结果不应因具体 label 改变；若 realization authorization 改变，则
+`RealSig(J)` 已经不同，不适用这一要求。
 
 ### 17.3 J authority
 
@@ -1010,7 +1074,7 @@ Replay topology 应发生预期变化，但 Gate2 semantics 应继续满足同�
 主结果报告：
 
 ```text
-WF_pi pass rate
+TypeCheck(J,C,pi) pass rate
 normal Gate1 closure rate
 Gate2 Source/Replay/J closure rate
 SCRC_CERTIFIED rate
@@ -1047,13 +1111,13 @@ J 与 Source 不等价
 
 后者由 Gate2 Source–J relation 决定。
 
-## 19. 待最终审查的开放项
+## 19. 后续实现中需要确定的通用接口
 
 1. 当前 `mechanism` 字段是删除、保留 generic `realize`，还是迁移成 closed representation refinements？
 2. q* subterm handles 的 canonical 派生与稳定性如何定义？
 3. quotient/homomorphism 的首版检查应覆盖哪些 J carrier edge？
 4. 哪些 representation property 可无条件进入 π，哪些必须由 J/B 显式授权？
-5. auxiliary instance 是否允许 `ref=null`，还是要求全部锚定 J/C/interface？
+5. auxiliary instance 是否允许 `ref=null`，还是要求全部锚定 J/C？
 6. sharing 与 recomputation 如何在不携带 operator 的情况下完整表达？
 7. compiler observer 哪些 incidental topology 应 normalize away，而不是继续扩 π？
 8. `SCRC_CERTIFIED` 与 `J_NECESSARY` 在当前 receipt schema 中如何分离？
@@ -1072,7 +1136,7 @@ Lift_H(S) = (J,C,pi)
 
 Replay = W_f(J,pi,MaskC(C);U_f)
 
-SCRC_CERTIFIED = WF_pi and Gate1 and Gate2
+SCRC_CERTIFIED = TypeCheck(J,C,pi) and Gate1 and Gate2
 
 J_NECESSARY = masked-J hard mismatch
 ```
