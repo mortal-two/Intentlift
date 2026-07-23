@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
+from intentir.ir.canonical_j import CanonicalJError
 from intentir.ir.model import IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
@@ -92,7 +93,7 @@ def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     )
     case = Gate2Case(
         "case0",
-        artifact.j,
+        spec.j,
         {"input": x},
         triton_spec,
         spec,
@@ -115,7 +116,7 @@ def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     assert result.source_replay is not None and result.source_replay.passed
     assert result.source_j is not None and result.source_j.passed
     assert result.replay_j is not None and result.replay_j.passed
-    assert spec.j is artifact.j
+    assert spec.canonical_j.to_json() == spec.j.to_json()
     assert result.reference.metadata["boundary_digest"]
     report = result.to_json()
     assert report["source_replay"]["passed"]
@@ -315,9 +316,9 @@ def test_scalar_e_j_erases_full_logical_domain_mask_for_identity() -> None:
         ("predicate_extent", "differs from the full logical domain"),
         ("unmasked_store", "same predicate on every access"),
         ("missing_fill", "requires an explicit masked-load fill"),
-        ("affine_index", "requires one bare axis"),
-        ("dtype_change", "does not match return value"),
-        ("destination_change", "output mapping differs from the J return"),
+        ("affine_index", "requires a direct ordered axis vector"),
+        ("dtype_change", "infers conflicting types"),
+        ("destination_change", "references unknown Layer-A value"),
     ],
 )
 def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> None:
@@ -336,6 +337,15 @@ def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> No
         artifact.j.intent.returns[0] = IntentReturn("t1", "t1")
     else:  # pragma: no cover - parametrization is closed above
         raise AssertionError(mutation)
+    if mutation in {"dtype_change", "destination_change"}:
+        with pytest.raises((CanonicalJError, ValueError), match=expected):
+            ScalarLoweringSpec.create(
+                artifact.j,
+                dims={"x0": 8},
+                input_bindings={"t0": "input"},
+                output_bindings={"t1": "output"},
+            )
+        return
     spec = ScalarLoweringSpec.create(
         artifact.j,
         dims={"x0": 8},
@@ -391,10 +401,11 @@ def test_mask_predicate_parser_separates_logical_guard_from_domain_bound() -> No
     assert upper == (("i0", "x0"),)
 
 
-def test_direct_index_parser_accepts_only_zero_as_a_literal_projection() -> None:
+def test_direct_index_parser_canonicalizes_equivalent_axis_vectors() -> None:
     assert _parse_direct_index("[0]") == ("0",)
     assert _parse_direct_index("[i0, i1]") == ("i0", "i1")
-    with pytest.raises(NotImplementedError, match="one bare axis"):
+    assert _parse_direct_index("i0,i1") == ("i0", "i1")
+    with pytest.raises(NotImplementedError, match="direct ordered axis vector"):
         _parse_direct_index("[1]")
 
 
@@ -451,17 +462,9 @@ def test_scalar_e_j_erases_2d_pointwise_full_domain_mask() -> None:
     assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
 
 
-@pytest.mark.parametrize(
-    ("mutation", "expected"),
-    [
-        ("unbracketed", "one bare axis or '[axis0, ...]'"),
-        ("missing_type", "store producer type differs"),
-        ("redundant_mapping", "output destination relation is incomplete"),
-    ],
-)
-def test_scalar_e_j_2d_pointwise_contract_fails_closed(
+@pytest.mark.parametrize("mutation", ["unbracketed", "missing_type", "redundant_mapping"])
+def test_scalar_e_j_2d_pointwise_elaborates_unique_surface_forms(
     mutation: str,
-    expected: str,
 ) -> None:
     artifact = _make_masked_2d_pointwise_artifact()
     if mutation == "unbracketed":
@@ -486,8 +489,16 @@ def test_scalar_e_j_2d_pointwise_contract_fails_closed(
         {"input": np.arange(8, dtype=np.float32).reshape(2, 4)},
     )
 
-    assert not result.ok
-    assert expected in (result.error or "")
+    assert result.ok, result.error
+    if mutation == "unbracketed":
+        assert spec.j.boundary.accesses[0].index_expression == "[i0, i1]"
+        assert spec.canonical_j.accesses[0].index.direct_axes == ("i0", "i1")
+    elif mutation == "missing_type":
+        assert spec.j.intent.body[0].type == {
+            "dtype": "f32", "shape": ["x0", "x1"]
+        }
+    else:
+        assert spec.j.boundary.output_mappings == []
 
 
 @pytest.mark.parametrize(
@@ -553,7 +564,7 @@ def test_scalar_e_j_rejects_dense_boundary_extent_mismatch() -> None:
 @pytest.mark.parametrize(
     "mutation, expected",
     [
-        ("malicious_index", "requires one bare axis"),
+        ("malicious_index", "requires a direct ordered axis vector"),
         ("effect_target", "disagrees with its effect"),
         ("duplicate_store", "exactly one store per logical output"),
         ("inout", "does not implement inout/alias ABI"),

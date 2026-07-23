@@ -1,6 +1,6 @@
 # Task 06：CanonicalJ 标准化与统一 lowering 消费边界
 
-> 状态：执行中
+> 状态：已完成
 >
 > 类型：SCRC 系统重构；不是实验内反馈，也不是让 Lift 学习具体 MLIR consumer 拼写。
 
@@ -117,3 +117,28 @@ RefEval/production consumer 漂移。
   evidence，不复用 `NO_CLOSURE`/infrastructure failure；
 - 聚焦回归仅运行 fanout、SCRC runner 与 CLI 三个相关文件：`27 passed`。未运行全量回归；
 - 下一步进入 Phase 1，清点并定义 J wire 与 typed CanonicalJ 的唯一边界。
+
+## 2026-07-23 Phase 1--3 completion checkpoint
+
+- 新增 `intentir.ir.canonical_j`：ContractExpr v1 使用受限 AST parser，不执行文本；
+  `CanonicalIndex.components` 保存 ordered structured expression，`k1,k0`、`[k1,k0]` 与空白变体
+  canonicalize 为同一 `[k1, k0]` wire dump，malformed/call/attribute/wrong-sort fail closed；
+- `ElaborateJ` 同时物化 closed op signature 与 J graph 唯一确定的 result dtype/shape，并消去经
+  producer/store 机械确认的 direct same-handle identity output mapping；显式冲突在 consumer 前
+  拒绝，不从 Source 猜测；
+- raw provider response/trajectory 继续作为 proof-irrelevant sidecar 保存；Runner 将 Lift result
+  替换为 canonical artifact 后才执行 binding、TypeCheck、Replay，TypeCheck 升级为 v2 并包含
+  `j_elaboration_failed`；Replay packet 只序列化 canonical J；
+- `ScalarLoweringSpec` 与 production `LoweringRequest` 持有同一个缓存 CanonicalJ view；新增唯一
+  `emit_canonical_j_module`，scalar CPU RefEval 与 CUDA production lower 均通过它进入现有 Intent
+  MLIR emitter；RefEval 的 dense/mask parser 已改为消费 structured indices/predicate AST，旧 helper
+  只保留测试兼容，不再是 consumer 解释权威；
+- Lift schema/prompt 不再要求模型猜 `k1,k0` 是否加括号、重复填写唯一 result type或手工删除恒等
+  mapping；orphan fill、缺语义、类型冲突与 general affine-as-dense 仍 fail closed；
+- Task04 真实 DYT `run-003/attempt-03` 的原始 artifact 未 relift、未手改：五个 pointwise type 被唯一
+  推导，`k1,k0 -> [k1,k0]`，`t5 -> t5` mapping 被消去；原先失败的 complete-boundary 与实际
+  scalar CPU RefEval 均通过，输出 shape `[2,8]`、profile `logical_domain_mask_erasure_v1`。这不
+  retroactively 改写历史 run-003 verdict，只作为新系统能力的真实回归输入；
+- 聚焦回归分两组执行：CanonicalJ/Gate2/backend/TypeCheck/runner `76 passed`；workload/canary/
+  MiniSWE ingress `36 passed`。另有真实 DYT RefEval smoke 通过；按推进要求未运行全量回归，也未
+  再消耗 provider 调用重做已经闭合的 Lift/Replay 搜索。

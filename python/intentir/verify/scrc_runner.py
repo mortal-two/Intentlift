@@ -12,6 +12,7 @@ from enum import Enum
 import re
 from typing import Any, Callable, Mapping, Protocol
 
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .gate1.model import Gate1Artifact, Gate1Status, JNecessityStatus
 from .gate1.orchestrate import Gate1ExecutionResult
 from .gate2.model import Gate2SuiteResult
@@ -508,7 +509,7 @@ class SCRCGateRunner:
                     "Lift adapter must return LiftCallResult"
                 )
             lift_physical_calls += lift_result.physical_calls
-            artifact = lift_result.artifact
+            artifact = canonicalize_gate1_artifact(lift_result.artifact)
             last_artifact = artifact
             stopped = superseded("after_lift")
             if stopped is not None:

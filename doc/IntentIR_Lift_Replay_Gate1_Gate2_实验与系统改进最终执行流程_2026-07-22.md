@@ -60,6 +60,18 @@ J 是唯一的语义对象，负责表达：
 artifact，也不作为 Replay 的额外输入；C slots 仍由 `MaskC(C)` 提供，调用位置由 Harness
 机械绑定。
 
+J 的 LLM-facing wire encoding 在进入任何消费者前，必须经过唯一的固定代码标准化：
+
+```text
+J_wire -> ElaborateJ -> CanonicalJ | deterministic diagnostic
+```
+
+这里 `CanonicalJ` 只是 J 的 typed 内部形式与 canonical serialization，不是第四个 artifact。它将
+`k0`/`[k0]`、`k1,k0`/`[k1,k0]` 等 closed surface sugar 归一为 structured axes，将
+domain/predicate/index 解析为 ContractExpr AST，并物化 closed op signature 唯一确定的 result type、
+消去可机械证明的 identity output mapping。它不读 Source、C/π、Harness concrete value 或 Gate
+结果；需要猜 operator、predicate、effect、authorization 或类型选择时必须 fail closed。
+
 ### 2.3 C
 
 C 是保持 J denotation 的 implementation-selection 对象：
@@ -172,7 +184,12 @@ Source + Harness 机械信息
       (J,C,π)
           │
           ▼
-   TypeCheck(J,C,π)
+ ElaborateJ(J_wire)
+          │
+          ├─ 失败：Lift 修正；不进入 Replay
+          │
+          ▼
+ TypeCheck(CanonicalJ,C,π)
           │
           ├─ 失败：Lift 修正；达到修正上限则实验失败
           │
@@ -227,9 +244,20 @@ Source
 
 但它仍然必须重新输出完整的 `(J,C,π)`，而不是输出对旧 artifact 的 patch。
 
-## 6. 第二步：TypeCheck(J,C,π)
+## 6. 第二步：ElaborateJ 与 TypeCheck(J,C,π)
 
-TypeCheck 不是新的 Gate，也不是新的证明对象。它只是 Replay 之前的确定性合法性检查。
+ElaborateJ 与 TypeCheck 都不是新的 Gate或证明对象，而是 Replay 之前的确定性闭合 IR 前端。
+ElaborateJ 只消除合法 surface form 的偶然差异；TypeCheck 再检查所有权、引用和授权。形式上：
+
+```text
+TC_wire(J_wire,C,pi)
+  iff exists unique J_hat = ElaborateJ(J_wire)
+      and TypeCheck(J_hat,C,pi)
+```
+
+Replay packet、RefEval 与 production lowering 只消费 `J_hat` 的 canonical serialization/typed view，
+不得各自重新解析 wire string。RefEval 与正式 backend 的 MLIR 路径共享同一个
+`CanonicalJ -> Intent MLIR` 入口，随后才在 reference execution 与 target/C lowering 处分叉。
 
 ### 6.1 J 检查
 
@@ -697,7 +725,7 @@ SCRC_CERTIFIED rate
 
 ```text
 B=5 个独立 branch 并行：
-  Lift → TypeCheck(J,C,π)
+  Lift → ElaborateJ(J_wire) → TypeCheck(CanonicalJ,C,π)
        → source-blind Replay(J,π,MaskC(C);U_f)
        → Harness 绑定同一 c0 → Gate1
        → Gate1 diff 只返回本 branch 的 Lift 并 relift

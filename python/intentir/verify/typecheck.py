@@ -13,6 +13,7 @@ from enum import Enum
 import re
 from typing import Any, Iterable, Mapping
 
+from intentir.ir.canonical_j import canonicalize_semantic_archive
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     RefinementKind,
@@ -22,7 +23,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v1"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v2"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 
@@ -33,6 +34,7 @@ class TypeCheckStatus(str, Enum):
 
 
 class TypeCheckErrorCode(str, Enum):
+    J_ELABORATION_FAILED = "j_elaboration_failed"
     DUPLICATE_J_REF = "duplicate_j_ref"
     INVALID_C_SLOT = "invalid_c_slot"
     C_REQUIRED_VALUE_MISSING = "c_required_value_missing"
@@ -341,6 +343,20 @@ def type_check(
         raise TypeError("type_check requires canonical ImplementationConfig C")
     if not isinstance(pi, RealizationWitness):
         raise TypeError("type_check requires parsed RealizationWitness pi")
+
+    try:
+        j = canonicalize_semantic_archive(j)
+    except ValueError as exc:
+        return TypeCheckReport(
+            TypeCheckStatus.FAIL,
+            (
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.J_ELABORATION_FAILED,
+                    "j",
+                    str(exc),
+                ),
+            ),
+        )
 
     diagnostics: list[TypeCheckDiagnostic] = []
     for index, access in enumerate(j.boundary.accesses):

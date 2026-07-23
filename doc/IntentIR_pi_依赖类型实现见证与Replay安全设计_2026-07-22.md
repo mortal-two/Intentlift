@@ -133,6 +133,11 @@ K_t = Lower_t(J,C)
 Gamma_(J,C) |- pi : RealizationWitness(J,C)
 ```
 
+这里的 J 是 `ElaborateJ(J_wire)` 得到的 typed CanonicalJ。elaboration 只做 closed grammar 的
+确定性消糖、handle/type resolution 与恒等表示消除，不读 π 来决定 J，也不根据 Source/Gate
+结果修补语义；无唯一解释时在 TypeCheck/Replay 前 fail closed。因此 `CanonicalJ` 不扩充
+`Ids(J)`、不改变 π 的数学身份，也不是新的 interface/artifact。
+
 π 不是独立 JSON 图；它只有在给定 J、C 的声明环境后才有类型和意义。这里
 `Ids(J)` 已经包括 J logical signature 中的 input、output、runtime scalar、destination 以及
 node/access/effect/value handles。
@@ -905,9 +910,9 @@ Gate2：semantic soundness
 
 这些部分应保留并扩展，而不是恢复 composer。
 
-## 14. 当前实现的核心缺口
+## 14. 当前实现状态与剩余缺口
 
-### 14.1 π parser 尚未真正依赖 J/C
+### 14.1 π parser 保持自闭合，系统 TypeCheck 已真正依赖 J/C
 
 当前 `RealizationWitness` 主要验证 JSON 自身闭合：
 
@@ -916,17 +921,19 @@ Gate2：semantic soundness
 - route/order/sharing graph legality；
 - mechanism enum。
 
-它尚未系统验证：
+当前活动系统已在 parser 之后运行 `TypeCheck(CanonicalJ,C,pi)`，机械验证：
 
 - anchor 是否真的存在于当前 J/C；
 - observable instance 是否由 J node/access/effect 授权；
 - route operand slot 是否与 J carrier 相容；
-- quotient/homomorphism 是否不新增逻辑图；
 - representation refinement 是否属于系统封闭 schema，以及 sensitive refinement 是否具有
   J/B authorization 或属于系统安全白名单；
-- `RealSig(J)` parametricity。
+- observable instance 的 J ownership、route slot/type 与 sharing/order legality。
 
-目标是从：
+尚未宣称由固定核完整证明的部分是一般 quotient/homomorphism 与 `RealSig(J)` 的全量 mutation
+性质；这些属于继续增强/测试的 claim 边界，不等于当前仍只有 `Parse(pi)`。
+
+系统调用链已经从：
 
 ```text
 Parse(pi)
@@ -938,7 +945,7 @@ Parse(pi)
 TypeCheck(J,C,pi)
 ```
 
-首版 TypeCheck 不必先完成完整 quotient/homomorphism 证明，但至少必须机械完成：
+当前首版 TypeCheck 已机械完成：
 
 1. 所有 J/C refs 存在；
 2. route operand slot 与类型合法；
@@ -947,8 +954,9 @@ TypeCheck(J,C,pi)
 5. sensitive refinement 具有 J/B 显式 authorization，或属于系统安全白名单。
 6. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
-完成这五项后才能进入代表性 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
-已经由系统机械保证。
+这些项目已有聚焦正反例和真实 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
+已经由系统机械保证。J wire 还会先经 `ElaborateJ` 形成 typed CanonicalJ，使 TypeCheck 不依赖
+consumer 私有字符串解析。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

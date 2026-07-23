@@ -145,11 +145,11 @@ def _boundary_schema() -> dict[str, Any]:
         },
         BOUNDARY_ACCESS_REQUIRED_FIELDS,
         description=(
-            "Portable logical access. For direct dense projection, rank 1 uses "
-            "one bare axis such as k0; rank 0 or rank N uses [] or bracketed "
-            "ordered axes such as [k1, k0]. An unbracketed comma list such as "
-            "k1,k0 is not a direct index expression. General non-direct affine "
-            "relations may be represented but can be unsupported by RefEval. "
+            "Portable logical access in ContractExpr v1. Direct dense surface "
+            "forms k0/[k0] and k1,k0/[k1,k0] are deterministically elaborated "
+            "to the same structured ordered axes. General non-direct affine "
+            "relations remain typed expressions but can be unsupported by a "
+            "particular RefEval capability profile. "
             "fill_value is legal only on a load with a non-null predicate. An "
             "unconditional access uses the unique canonical spelling with both "
             "predicate and fill_value absent/null; consumers reject rather than "

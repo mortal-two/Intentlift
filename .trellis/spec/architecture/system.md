@@ -12,7 +12,10 @@ Source + Harness coordinates
 Lift_H(Source) -> (J,C,pi)
         |
         v
-TypeCheck(J,C,pi)
+ElaborateJ(J_wire) -> CanonicalJ
+        |
+        v
+TypeCheck(CanonicalJ,C,pi)
         |
         v
 Replay W_f(J,pi,MaskC(C);U_f) -> R
@@ -28,7 +31,8 @@ structured diff -> relift      Gate2(Source,R,RefEval(J))
                               SCRC_CERTIFIED
 ```
 
-TypeCheck 是 Replay 前的确定性合法性检查，不是新的证明对象或额外 Gate。只有 TypeCheck 通过并
+ElaborateJ 与 TypeCheck 是 Replay 前的确定性 closed-IR 前端，不是新的证明对象或额外 Gate。
+CanonicalJ 是 J 的 typed view/canonical serialization，不是第四 artifact。只有二者通过并
 进入一次全新 Replay 的候选才计为正式实验轮次；最多三轮，之后报告 `NO_CLOSURE`。
 
 ## 可见性矩阵
@@ -36,12 +40,13 @@ TypeCheck 是 Replay 前的确定性合法性检查，不是新的证明对象�
 | 组件 | 可以读取 | 不得读取或产生 |
 |---|---|---|
 | Lift | Source、H 的最小匿名机械坐标、上一轮完整 artifact 与 Gate1 diff | 第四个 proof artifact |
-| Replay | J、π、`MaskC(C)`、版本化公共 `U_f` | Source、H、C values、source name/position、BindingMap、interface sidecar、compiler diff/fingerprint、旧 Replay/conversation、per-kernel RuleCard |
+| ElaborateJ | J wire 的 closed ContractExpr、J graph/signature | Source、H/C values、π、Gate output、语义猜测或修复 |
+| Replay | CanonicalJ、π、`MaskC(C)`、版本化公共 `U_f` | Source、H、C values、source name/position、BindingMap、interface sidecar、compiler diff/fingerprint、旧 Replay/conversation、per-kernel RuleCard |
 | Harness | 调用坐标、inputs、C valuation、device/grid/toolchain | 语义分类、实现构造 |
 | Gate1 | Source/Replay 的 compiler observation、同一 c0 与 observer profile | 数值语义裁决、Replay 修补 |
-| RefEval | J 与 logical inputs | C、π、Source、Replay |
+| RefEval | CanonicalJ 与 logical inputs | raw J wire、C、π、Source、Replay |
 | Gate2 | 三腿输出、外部 Q 及三条直接 `Close_Q` 比较 | 候选自定义及格线、真正集合值全行为证明 |
-| Production lowerer | J、可选 C、target | π、Gate verdict、源码身份 |
+| Production lowerer | CanonicalJ、可选 C、target | raw J wire 私有解释、π、Gate verdict、源码身份 |
 
 ## 状态分解
 

@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from direct_fixtures import make_copy_artifact
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.extraction.lifters.miniswe import (
     MINISWE_LIFT_KNOWLEDGE,
     MiniSWELiftAdapter,
@@ -167,7 +168,7 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "rank-0 J input" in output
     assert "never names a v* SSA value" in output
     assert '"access_id"' in output
-    assert "unbracketed comma list" in output
+    assert "deterministically elaborated" in output
     assert "fill_value is legal only on a load" in output
     assert "leave output_mappings empty" in output
     assert '"semantic_ref"' in output
@@ -801,7 +802,9 @@ def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
     )
     repaired = adapter.lift(request, feedback)
 
-    assert repaired.artifact.to_json() == artifact.to_json()
+    assert repaired.artifact.to_json() == canonicalize_gate1_artifact(
+        artifact
+    ).to_json()
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "lift"
     assert captured[1][1]["previous_artifact"] == invalid

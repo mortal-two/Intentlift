@@ -294,9 +294,9 @@ def test_typecheck_failure_relifts_without_entering_a_formal_round() -> None:
     assert gate2.calls == 1
     assert lift.feedbacks[0] is None
     assert lift.feedbacks[1].kind is FeedbackKind.TYPECHECK
-    assert lift.feedbacks[1].previous_artifact is invalid
+    assert lift.feedbacks[1].previous_artifact is report.attempts[0].artifact
     assert report.attempts[0].formal_round is None
-    assert report.attempts[0].artifact is invalid
+    assert report.attempts[0].artifact.j.to_json() != invalid.j.to_json()
 
 
 def test_unparseable_lift_is_recorded_without_entering_typecheck_or_replay() -> None:
@@ -410,7 +410,7 @@ def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None
         FeedbackKind.GATE1,
     ]
     assert "observer_diff" in lift.feedbacks[1].diagnostics
-    assert lift.feedbacks[1].previous_artifact is artifacts[0]
+    assert lift.feedbacks[1].previous_artifact is report.attempts[0].artifact
     assert gate2.calls == 1
 
 

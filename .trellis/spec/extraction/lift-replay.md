@@ -30,11 +30,12 @@ operator 或 result 的逻辑数据，必须声明 dtype 相容、shape `[]` 的
 进入 J dataflow；只有 integral extent-only handle 才绑定 `x*`。value 参数不能为了复用现成 ID 而
 绑定方向或 dtype 不相容的 output tensor。
 
-对普通 dense logical access，Lift 使用 RefEval/production 共享的 portable direct-index 拼写：rank-1
-用 bare axis，rank-0/rank-N 用 `[]`/`[axis0, ...]`，不得用未括号化逗号列表。predicated pure
-functional boundary 的 observable store producer 必须声明与 output 一致的 result type。op 直接产生
-同名 output handle 时不声明冗余 `output_mappings`；只有显式 function `returns` 重绑定存在时 mapping
-才出现并与其完全一致。`fill_value` 只允许出现在带非空 predicate 的 load 上；无条件 access 的
+对 ordinary dense logical access，Lift 只需使用 closed ContractExpr surface grammar。`k0`/`[k0]`
+与 `k1,k0`/`[k1,k0]` 分别由固定 elaborator 归一为相同 structured axes；这类标点差异不触发
+relift。predicated pure functional boundary 的 observable store producer 类型若能由 closed op
+signature 与 J graph 唯一确定，可以省略；显式类型必须一致。direct same-handle identity mapping 可
+省略或显式写出，canonicalizer 统一为省略形式；非恒等 `returns`/mapping 仍必须明确且一致。
+`fill_value` 只允许出现在带非空 predicate 的 load 上；无条件 access 的
 predicate/fill 均为空。static schema 可以提前报错，TypeCheck 仍必须权威拒绝 orphan fill，消费者
 不得静默删除。这些是全局 J wire/consumer 合同，不是 per-kernel Replay hint。
 
@@ -90,15 +91,20 @@ provider secret。隔离设施不可用时报告 infrastructure failure，不得
 >
 > 第三次 DYT canary（run-003）使用 knowledge-v3：3 份 candidate 均通过 canonical decode 与
 > TypeCheck，第 3 个 formal round 获得 normal Replay closure，masked-J mismatch 证明 J necessity。
-> Gate2 的 Source--Replay 腿通过且误差为 0，但 RefEval 因二维 dense access 使用未括号化
-> `k1,k0` 而 `REFERENCE_UNSUPPORTED`。这完成 MiniSWE Lift backend 的接入验收，并把下一系统
-> 缺口收敛到既有 `E_J` direct-index 合同；Gate2 结果没有回流本次 Lift。
+> Gate2 的 Source--Replay 腿通过且误差为 0，但当时 RefEval 因二维 dense access 使用未括号化
+> `k1,k0` 而 `REFERENCE_UNSUPPORTED`。Task06 随后把它确认为 wire-to-canonical elaboration 缺口：
+> 原 artifact 不经 relift即可规范为 `[k1,k0]`、物化唯一 result type、消去冗余 identity mapping，
+> 并通过同一 RefEval boundary。该后续系统修改不回写 run-003 的历史 verdict。
 
 ## Replay 前检查
 
 ```text
-TypeCheck(J,C,pi)
+J_wire -> ElaborateJ -> CanonicalJ
+TypeCheck(CanonicalJ,C,pi)
 ```
+
+ElaborateJ 是 Replay 前固定代码的一部分，不是 Agent/Gate。它不读 Source/C/π，只处理唯一可判定的
+surface normalization、handle/type elaboration 和恒等表示消除；无唯一解时 fail closed。
 
 最小 TypeCheck 必须机械检查：
 

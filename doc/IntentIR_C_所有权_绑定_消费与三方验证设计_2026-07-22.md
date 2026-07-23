@@ -149,6 +149,13 @@ Lift 可以从 H 获得匿名、未分类的 bindable coordinates，以便形成
 - 不改变 production lowering；
 - 不成为从源码到 Replay 的额外通道。
 
+LLM 返回的 J wire 在进入证明相关路径前可以经过确定性的 `ElaborateJ`，得到 typed
+`CanonicalJ`。它将 closed ContractExpr surface sugar（例如 `k1,k0` 与 `[k1,k0]`）解析为同一
+structured axes，并物化唯一可推导类型、消去可机械证明的恒等表示。`CanonicalJ` 是 J 的内部
+normal form 与 canonical serialization，不是 sidecar 或第四个 artifact；它不读取 Source、C/π、
+Harness concrete value 或 Gate 结果，也不得猜测缺失语义。Replay、RefEval 与 production lowering
+只消费该 canonical J。
+
 ### 2.6 显式语义所有权投影
 
 定义：
@@ -163,7 +170,7 @@ SpecProj(J,C,pi) = J
 直接创建的显式逻辑语义声明，则 TypeCheck 的目标性质是：
 
 ```text
-TypeCheck(J,C,pi)
+TypeCheck(CanonicalJ,C,pi)
     -> SemDecl(J,C,pi) = SemDecl(J)
 ```
 

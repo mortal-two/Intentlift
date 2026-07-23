@@ -16,7 +16,9 @@ from typing import Any
 
 import numpy as np
 
+from ...frontend.canonical_j import emit_canonical_j_module
 from ...frontend.emit_mlir import IndexBoundsProjection, emit_module
+from ...ir.canonical_j import CanonicalJ
 from ...ir.model import IntentFunction
 from .abi import (
     CPU_ENTRY_SYMBOL,
@@ -238,7 +240,7 @@ def _append_cpu_entry(
 
 
 def emit_cpu_module(
-    fn: IntentFunction,
+    fn: IntentFunction | CanonicalJ,
     dims: Mapping[str, int],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
@@ -246,6 +248,9 @@ def emit_cpu_module(
 ) -> str:
     """Emit the input-value-independent scalar module with one public entry."""
 
+    canonical = fn if isinstance(fn, CanonicalJ) else None
+    if canonical is not None:
+        fn = canonical.archive.intent
     if not fn.outputs:
         raise ValueError("CPU execution requires at least one logical output")
     validate_cpu_capability(fn)
@@ -256,12 +261,21 @@ def emit_cpu_module(
         output_shapes,
         output_element_types,
     ) = _infer_contracts(fn, checked_dims, broadcast_axes)
-    kernel = emit_module(
-        fn,
-        checked_dims,
-        func_name=CPU_COMPUTE_SYMBOL,
-        broadcast_axes=broadcast_axes,
-        proven_index_bounds=proven_index_bounds,
+    kernel = (
+        emit_canonical_j_module(
+            canonical,
+            checked_dims,
+            func_name=CPU_COMPUTE_SYMBOL,
+            broadcast_axes=broadcast_axes,
+            proven_index_bounds=proven_index_bounds,
+        )
+        if canonical is not None else emit_module(
+            fn,
+            checked_dims,
+            func_name=CPU_COMPUTE_SYMBOL,
+            broadcast_axes=broadcast_axes,
+            proven_index_bounds=proven_index_bounds,
+        )
     )
     return _append_cpu_entry(
         kernel,
@@ -273,7 +287,7 @@ def emit_cpu_module(
 
 
 def execute_on_cpu_outputs(
-    fn: IntentFunction,
+    fn: IntentFunction | CanonicalJ,
     dims: Mapping[str, int],
     inputs: Sequence[np.ndarray],
     *,
@@ -282,6 +296,9 @@ def execute_on_cpu_outputs(
 ) -> CPUExecutionResult:
     """Compile once and execute all logical outputs with one native call."""
 
+    canonical = fn if isinstance(fn, CanonicalJ) else None
+    if canonical is not None:
+        fn = canonical.archive.intent
     if len(inputs) != len(fn.inputs):
         raise CPUABIValidationError(
             "CPU execution input arity mismatch: "
@@ -327,7 +344,7 @@ def execute_on_cpu_outputs(
         )
 
     module = emit_cpu_module(
-        fn,
+        canonical if canonical is not None else fn,
         checked_dims,
         broadcast_axes=broadcast_axes,
         proven_index_bounds=proven_index_bounds,

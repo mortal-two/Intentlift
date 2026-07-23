@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
 from intentir.backend.cpu.abi import CPUABIValidationError, CPUBackendUnsupportedError
 from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
+from intentir.ir.canonical_j import (
+    CanonicalJ,
+    ContractExpr,
+    ContractSort,
+    elaborate_j,
+    parse_contract_expr,
+    parse_index_expression,
+)
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     AccessKind,
@@ -24,25 +31,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v5"
-
-
-_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
-_DIRECT_INDEX_TOKEN = rf"(?:{_IDENTIFIER}|0)"
-_DIRECT_INDEX = re.compile(
-    rf"^\[\s*(?P<axes>(?:{_DIRECT_INDEX_TOKEN}(?:\s*,\s*"
-    rf"{_DIRECT_INDEX_TOKEN})*)?)\s*\]$"
-)
-_BARE_DIRECT_INDEX = re.compile(rf"^(?P<axis>{_DIRECT_INDEX_TOKEN})$")
-_FULL_DOMAIN_TERM = re.compile(
-    rf"\s*0\s*<=\s*(?P<axis>{_IDENTIFIER})\s+and\s+"
-    rf"(?P=axis)\s*<\s*(?P<extent>[0-9]+|{_IDENTIFIER})"
-)
-_DOMAIN_SEPARATOR = re.compile(r"\s+and\s+")
-_PREDICATE_LOWER = re.compile(rf"^0\s*<=\s*(?P<axis>{_IDENTIFIER})$")
-_PREDICATE_UPPER = re.compile(
-    rf"^(?P<axis>{_IDENTIFIER})\s*<\s*(?P<extent>[0-9]+|{_IDENTIFIER})$"
-)
+SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v6"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -113,28 +102,97 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
 
 
 def _parse_direct_index(expression: str) -> tuple[str, ...]:
-    """Parse the conservative dense tensor projection supported by E_J.
+    """Compatibility helper backed by the shared ContractExpr elaborator."""
 
-    General affine, gathered, predicated, or source-realization expressions are
-    deliberately not interpreted here.  They need a typed J relation and a
-    corresponding evaluator instead of an ad-hoc expression evaluator.
-    """
-
-    match = _DIRECT_INDEX.fullmatch(expression)
-    if match is None:
-        bare = _BARE_DIRECT_INDEX.fullmatch(expression.strip())
-        if bare is not None:
-            return (bare.group("axis"),)
+    axes = parse_index_expression(expression).direct_axes
+    if axes is None:
         raise NotImplementedError(
-            "E_J dense access requires one bare axis or '[axis0, ...]'"
+            "E_J dense access requires a direct ordered axis vector"
         )
-    axes = match.group("axes")
-    if not axes:
-        return ()
-    result = tuple(item.strip() for item in axes.split(","))
-    if len(set(result)) != len(result):
+    if len(set(axes)) != len(axes):
         raise ValueError("E_J dense access axes must be unique")
-    return result
+    return axes
+
+
+def _flatten_conjunction(expression: ContractExpr) -> tuple[ContractExpr, ...]:
+    if expression.op != "and":
+        return (expression,)
+    result: list[ContractExpr] = []
+    for argument in expression.args:
+        result.extend(_flatten_conjunction(argument))
+    return tuple(result)
+
+
+def _reference(expression: ContractExpr) -> str | None:
+    if expression.op == "ref" and isinstance(expression.value, str):
+        return expression.value
+    return None
+
+
+def _bound_value(expression: ContractExpr) -> int | str | None:
+    if expression.op == "int" and isinstance(expression.value, int):
+        return expression.value
+    return _reference(expression)
+
+
+def _domain_predicate_contract(
+    expression: ContractExpr,
+    *,
+    logical_guards: frozenset[str] = frozenset(),
+) -> tuple[
+    frozenset[str],
+    frozenset[str],
+    tuple[tuple[str, int | str], ...],
+]:
+    """Project the typed AST onto the mask-erasure profile understood by E_J."""
+
+    lower: set[str] = set()
+    guards: set[str] = set()
+    upper: dict[str, int | str] = {}
+    for term in _flatten_conjunction(expression):
+        guard = _reference(term)
+        if guard is None and term.op == "not" and len(term.args) == 1:
+            guard = _reference(term.args[0])
+        if guard in logical_guards:
+            guards.add(guard)
+            continue
+
+        left, right = term.args if len(term.args) == 2 else (None, None)
+        lower_axis: str | None = None
+        if term.op == "le" and left is not None and right is not None:
+            if left.op == "int" and left.value == 0:
+                lower_axis = _reference(right)
+        elif term.op == "ge" and left is not None and right is not None:
+            if right.op == "int" and right.value == 0:
+                lower_axis = _reference(left)
+        if lower_axis is not None:
+            lower.add(lower_axis)
+            continue
+
+        upper_axis: str | None = None
+        extent: int | str | None = None
+        if term.op == "lt" and left is not None and right is not None:
+            upper_axis = _reference(left)
+            extent = _bound_value(right)
+        if upper_axis is None or extent is None:
+            raise NotImplementedError(
+                "E_J mask erasure supports only logical-domain bound predicates"
+            )
+        previous = upper.get(upper_axis)
+        if previous is not None and previous != extent:
+            raise ValueError(
+                f"E_J predicate axis {upper_axis!r} has conflicting extents"
+            )
+        upper[upper_axis] = extent
+    if not upper and not guards:
+        raise NotImplementedError(
+            "E_J mask erasure requires an upper logical-domain bound"
+        )
+    return (
+        frozenset(guards),
+        frozenset(lower),
+        tuple(sorted(upper.items())),
+    )
 
 
 def _parse_domain_predicate(
@@ -146,52 +204,13 @@ def _parse_domain_predicate(
     frozenset[str],
     tuple[tuple[str, int | str], ...],
 ]:
-    """Parse the closed logical-domain predicate subset used for mask erasure."""
-
-    lower: set[str] = set()
-    guards: set[str] = set()
-    upper: dict[str, int | str] = {}
-    terms = re.split(r"\s+and\s+", expression.strip())
-    if not terms or any(not term for term in terms):
-        raise ValueError("E_J access predicate must not be empty")
-    for term in terms:
-        normalized_term = term.strip()
-        guard_name = (
-            normalized_term.removeprefix("not ").strip()
-            if normalized_term.startswith("not ")
-            else normalized_term
-        )
-        if guard_name in logical_guards:
-            guards.add(guard_name)
-            continue
-        lower_match = _PREDICATE_LOWER.fullmatch(term.strip())
-        if lower_match is not None:
-            lower.add(lower_match.group("axis"))
-            continue
-        upper_match = _PREDICATE_UPPER.fullmatch(term.strip())
-        if upper_match is None:
-            raise NotImplementedError(
-                "E_J mask erasure supports only logical-domain bound predicates"
-            )
-        axis = upper_match.group("axis")
-        extent_text = upper_match.group("extent")
-        extent: int | str = (
-            int(extent_text) if extent_text.isdecimal() else extent_text
-        )
-        previous = upper.get(axis)
-        if previous is not None and previous != extent:
-            raise ValueError(
-                f"E_J predicate axis {axis!r} has conflicting extents"
-            )
-        upper[axis] = extent
-    if not upper and not guards:
-        raise NotImplementedError(
-            "E_J mask erasure requires an upper logical-domain bound"
-        )
-    return (
-        frozenset(guards),
-        frozenset(lower),
-        tuple(sorted(upper.items())),
+    return _domain_predicate_contract(
+        parse_contract_expr(
+            expression,
+            expected=ContractSort.BOOLEAN,
+            context="E_J access predicate",
+        ),
+        logical_guards=logical_guards,
     )
 
 
@@ -215,59 +234,42 @@ def _logical_boolean_guards(j: SemanticArchive) -> frozenset[str]:
     )
 
 
-def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
-    """Parse full logical tensor domains, rejecting every wider grammar.
+def _canonical_full_domains(canonical: CanonicalJ) -> dict[str, int | str]:
+    """Project CanonicalJ domains onto complete logical axis bounds."""
 
-    The accepted form is a conjunction of ``0 <= axis and axis < extent``
-    terms.  This is enough to prove that a direct access denotes the complete
-    logical tensor represented by IntentFunction.  Predicated/partial domains
-    remain unsupported until their denotation is implemented explicitly.
-    """
-
+    j = canonical.archive
     result: dict[str, int | str] = {}
     logical_guards = _logical_boolean_guards(j)
-    for domain_id, expression in j.boundary.domains.items():
-        expression = expression.strip()
-        guard_name = (
-            expression.removeprefix("not ").strip()
-            if expression.startswith("not ")
-            else expression
-        )
-        if guard_name in logical_guards:
-            continue
-        position = 0
-        matched = False
-        while position < len(expression):
-            term = _FULL_DOMAIN_TERM.match(expression, position)
-            if term is None:
-                raise NotImplementedError(
-                    "E_J dense domain requires '0 <= axis and axis < extent' "
-                    f"terms; unsupported domain {domain_id!r}"
-                )
-            matched = True
-            axis = term.group("axis")
-            extent_text = term.group("extent")
-            extent: int | str = (
-                int(extent_text) if extent_text.isdecimal() else extent_text
+    for domain_id, expression in canonical.domains:
+        try:
+            guards, lower, upper = _domain_predicate_contract(
+                expression, logical_guards=logical_guards
             )
+        except NotImplementedError as exc:
+            raise NotImplementedError(
+                "E_J dense domain requires complete logical axis bounds; "
+                f"unsupported domain {domain_id!r}"
+            ) from exc
+        if guards and not upper:
+            continue
+        if set(axis for axis, _ in upper) - set(lower):
+            raise NotImplementedError(
+                f"E_J dense domain {domain_id!r} lacks a lower zero bound"
+            )
+        for axis, extent in upper:
             previous = result.get(axis)
             if previous is not None and previous != extent:
                 raise ValueError(
                     f"E_J domain axis {axis!r} has conflicting extents"
                 )
             result[axis] = extent
-            position = term.end()
-            if position == len(expression):
-                break
-            separator = _DOMAIN_SEPARATOR.match(expression, position)
-            if separator is None:
-                raise NotImplementedError(
-                    f"E_J dense domain {domain_id!r} has unsupported syntax"
-                )
-            position = separator.end()
-        if not matched:
-            raise ValueError(f"E_J domain {domain_id!r} must not be empty")
     return result
+
+
+def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
+    """Compatibility API; consumers elaborate once and use the typed view."""
+
+    return _canonical_full_domains(elaborate_j(j))
 
 
 def _validate_masked_sum_reduction(
@@ -524,7 +526,7 @@ def _validate_masked_sum_reduction(
             )
 
 
-def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
+def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
     """Consume the dense access/effect projection represented by pure J values.
 
     ``IntentFunction`` evaluates complete logical tensors.  Therefore an
@@ -534,6 +536,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     rejected rather than silently ignored.
     """
 
+    j = canonical.archive
     boundary = j.boundary
     if any(
         parameter.mode is ParameterMode.INOUT or parameter.alias_of is not None
@@ -549,7 +552,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             )
         return
 
-    domains = _parse_full_domains(j)
+    domains = _canonical_full_domains(canonical)
     has_predicate_or_fill = any(
         access.predicate is not None or access.fill_value is not None
         for access in boundary.accesses
@@ -606,6 +609,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         AccessKind.LOAD: EffectKind.READ,
         AccessKind.STORE: EffectKind.WRITE,
     }
+    canonical_accesses = canonical.access_by_id
     for access in boundary.accesses:
         if access.kind is AccessKind.UPDATE:
             raise NotImplementedError(
@@ -621,8 +625,14 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             raise ValueError(
                 f"E_J access {access.access_id!r} references an unknown tensor"
             )
-        assert access.index_expression is not None
-        axes = _parse_direct_index(access.index_expression)
+        canonical_access = canonical_accesses[access.access_id]
+        axes = canonical_access.index.direct_axes
+        if axes is None:
+            raise NotImplementedError(
+                "E_J dense access requires a direct ordered axis vector"
+            )
+        if len(set(axes)) != len(axes):
+            raise ValueError("E_J dense access axes must be unique")
         axes_by_access[access.access_id] = axes
         if len(axes) != len(tensor.shape):
             raise ValueError(
@@ -648,11 +658,11 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 consumed_domain_axes.add(axis)
 
         predicate_contract = (
-            _parse_domain_predicate(
-                access.predicate, logical_guards=logical_guards
+            _domain_predicate_contract(
+                canonical_access.predicate,
+                logical_guards=logical_guards,
             )
-            if access.predicate is not None
-            else None
+            if canonical_access.predicate is not None else None
         )
         predicate_contracts[access.access_id] = predicate_contract
         if predicate_contract is not None:
@@ -797,11 +807,13 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                     )
 
 
-def _validate_complete_boundary(j: SemanticArchive) -> str:
+def _validate_complete_boundary(j: SemanticArchive | CanonicalJ) -> str:
     """Consume supported B and reject every relation E_J cannot implement."""
 
+    canonical = j if isinstance(j, CanonicalJ) else elaborate_j(j)
+    j = canonical.archive
     boundary = j.boundary
-    _validate_dense_functional_boundary(j)
+    _validate_dense_functional_boundary(canonical)
     if boundary.aliases:
         raise NotImplementedError("E_J does not implement alias relations")
     if any(item.mutability.value == "mutable" for item in j.storage):
@@ -917,16 +929,20 @@ def scalar_broadcast_axes(
 
 @dataclass(frozen=True)
 class ScalarLoweringSpec:
-    """Invocation request holding the same J object used by Gate1."""
+    """Invocation request holding the one elaborated J used by all consumers."""
 
     j: SemanticArchive
     dims: tuple[tuple[str, int], ...]
     input_bindings: tuple[tuple[str, str], ...]
     output_bindings: tuple[tuple[str, str], ...]
+    canonical_j: CanonicalJ = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("scalar lowering requires canonical J")
+        canonical = elaborate_j(self.j)
+        object.__setattr__(self, "canonical_j", canonical)
+        object.__setattr__(self, "j", canonical.archive)
         dims = dict(self.dims)
         inputs = dict(self.input_bindings)
         outputs = dict(self.output_bindings)
@@ -992,10 +1008,14 @@ class ScalarLoweringUnavailable:
     j: SemanticArchive
     error: str
     failure_class: str = "j_lowering_setup"
+    canonical_j: CanonicalJ = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("unavailable RefEval request requires canonical J")
+        canonical = elaborate_j(self.j)
+        object.__setattr__(self, "canonical_j", canonical)
+        object.__setattr__(self, "j", canonical.archive)
         if not self.error:
             raise ValueError("unavailable E_J request requires an error")
 
@@ -1043,7 +1063,7 @@ class ScalarLoweringRunner:
         except KeyError as exc:
             return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
-            boundary_digest = _validate_complete_boundary(spec.j)
+            boundary_digest = _validate_complete_boundary(spec.canonical_j)
             inputs_by_ref = {
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)
@@ -1051,7 +1071,7 @@ class ScalarLoweringRunner:
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = scalar_broadcast_axes(spec.j)
             execution = execute_on_cpu_outputs(
-                spec.j.intent,
+                spec.canonical_j,
                 spec.dims_map,
                 inputs,
                 broadcast_axes=broadcast_axes,

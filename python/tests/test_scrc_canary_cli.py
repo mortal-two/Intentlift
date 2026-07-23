@@ -50,8 +50,8 @@ def test_gate2_suite_is_constructed_from_accepted_j_and_same_c0() -> None:
     assert suite.c_values == request.binding.c_values == (("c0", 1024),)
     assert len(suite.cases) == 1
     case = suite.cases[0]
-    assert case.j is artifact.j
-    assert case.refeval.j is artifact.j
+    assert case.j is case.refeval.j
+    assert case.j.to_json() != artifact.j.to_json()
     assert case.output_keys == ("output0",)
     assert case.triton.schedule == {"c0": 1024}
 

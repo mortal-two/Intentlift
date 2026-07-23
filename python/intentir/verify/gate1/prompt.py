@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .model import Frontend, Gate1Artifact, SchemaError
 from .pi import (
     render_realization_mechanism_grammar,
@@ -227,6 +228,7 @@ def build_rewriter_packet(
     # the Gate1 data model, while this builder is its first production consumer.
     from intentir.verify.typecheck import type_check
 
+    artifact = canonicalize_gate1_artifact(artifact)
     report = type_check(artifact.j, artifact.c, artifact.pi)
     if not report.passed:
         summary = ", ".join(

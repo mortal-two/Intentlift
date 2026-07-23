@@ -17,6 +17,20 @@ selection、source realization、Harness 或历史 artifact 补语义。
 production lowerer 必须消费完整 J，并可消费或安全忽略 C。它不读取 π，因为 π 只证明 Source
 realization 与 Replay closure，不是目标 backend 的施工输入。
 
+两条路径在分叉前必须共享唯一标准化前端：
+
+```text
+J_wire -> ElaborateJ -> CanonicalJ -> Intent MLIR
+                                      |          |
+                                      |          `-> target lowering(J,C,target)
+                                      `-> scalar CPU RefEval(J)
+```
+
+`ElaborateJ` 将 access index、predicate/domain ContractExpr、唯一可推导 result type 与恒等 output
+binding 变成 typed canonical form。RefEval 和 production backend 均不得重新读取或各自解释 J wire
+字符串；`CanonicalJ -> Intent MLIR` 只有一个共享入口。CanonicalJ 是 J 的确定性内部形式，不增加
+artifact、Agent 或 Gate。
+
 ## RefEval 要求
 
 - 逐项消费 J logical signature、A semantics 与 B result relation；
@@ -29,7 +43,8 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - 每个 access 满足 canonical fill 合同：`fill_value != null` 蕴含它是带非空 predicate 的 load；
   无条件 access 的 predicate/fill 均为空。orphan fill 是非法 J，必须由 TypeCheck 及消费者 fail closed，
   不得由 RefEval 静默删除或从 domain/index 猜测未声明 predicate；
-- `index_expression` 必须是 rank-1 bare axis 或与 J tensor rank 一致的直接 `[axis0, ...]`；tensor
+- CanonicalJ 中 structured index 必须是与 J tensor rank 一致的 direct ordered axes；wire 的 bare、
+  bracketed 与 unbracketed-comma surface 差异在此之前已经消失；tensor
   shape 本身定义完整 logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与
   shape 精确相同；
 - load/store 必须分别覆盖全部 logical input/output，并与所属 J node 的 operand/result 对应；
@@ -38,8 +53,9 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 - `logical_domain_mask_erasure_v1` 接收 pure functional identity 或 pointwise J：每个 tensor access
   必须是与 tensor rank 一致的 direct axes，所有被 mask 的 logical axes 在相关 load/store 上使用同一
   full-logical-domain predicate，predicate upper bound 与 domain/shape 精确一致，masked load 有显式
-  fill，每个 output 独立 store 一次，且 observable store producer 的显式 result type 与 output 完全
-  一致。logical scalar/guard 可以是 rank-0 J input，但 guard 必须真实进入 J dataflow。此时 fill 只
+  fill，每个 output 独立 store 一次，且 observable store producer 的 elaborated result type 与 output
+  完全一致。该类型可以由 closed op signature 唯一物化，不要求 Lift 重复填写。logical scalar/guard
+  可以是 rank-0 J input，但 guard 必须真实进入 J dataflow。此时 fill 只
   存在于 logical domain 外且没有可观察 store，RefEval 可以机械擦除 mask/fill；
 - `logical_domain_reduction_padding_v1` 只接收单 input、单 output、同 dtype、单轴 `sum`：一个 direct
   load 覆盖完整输入 domain，一个无 predicate 的 direct store 覆盖删去 reduction axis 后的输出，且

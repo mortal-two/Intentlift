@@ -379,7 +379,7 @@ def _build_gate2_suite(
     )
     case = Gate2Case(
         "finite-seed-7",
-        artifact.j,
+        scalar.j,
         values,
         execution,
         scalar,

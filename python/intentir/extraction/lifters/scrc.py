@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
@@ -661,18 +662,22 @@ Every J.boundary access must have exactly one matching effect. The effect's
 kind, target, node_ref (including null), and access_ref must agree exactly with
 the access; never attach an otherwise matching access to a different node.
 
-Use the closed portable spelling for direct dense index_expression: a rank-1
-tensor uses one bare logical axis such as k0; rank 0 or rank N uses [] or an
-ordered bracketed list such as [k1, k0]. Never emit an unbracketed comma list
-such as k1,k0. A fill_value is legal only on a load with a non-null predicate.
+index_expression uses the closed ContractExpr syntax. For a direct dense
+projection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and
+[k1, k0] are equivalent ordered two-axis forms; deterministic J elaboration
+normalizes them before TypeCheck and Replay. Do not encode frontend APIs or
+free prose as an index expression. A fill_value is legal only on a load with a
+non-null predicate.
 For an unconditional access, omit both predicate and fill_value; never attach a
 redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,
-the observable store-producing op must carry an explicit type whose dtype and
-shape exactly match the J output. If that op directly produces the same output
-handle, boundary.output_mappings stays empty. Emit output_mappings only when an
-explicit IntentFunction.returns binding maps an output to a different value,
-and make the two relations exactly identical.
+the observable store-producing op's result type must be uniquely determined by
+the closed op signature and J value graph; an explicit type is optional but, if
+present, must agree. A direct same-handle output may omit its identity
+output_mapping or spell that redundant identity explicitly; deterministic J
+elaboration produces one omission form. Emit a non-identity output_mapping only
+when an explicit IntentFunction.returns binding maps an output to a different
+value, and make the two relations exactly identical.
 
 Preserve every compiler-visible sensitive representation event in the Source,
 including explicit or mandatory implicit integer widening, numeric cast,
@@ -807,7 +812,19 @@ def _json_object(text: str) -> dict[str, Any]:
     def reject_nonfinite(token: str) -> None:
         raise ValueError(f"Lift response contains non-JSON number {token}")
 
-    parsed = json.loads(text, parse_constant=reject_nonfinite)
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Lift response contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    parsed = json.loads(
+        text,
+        parse_constant=reject_nonfinite,
+        object_pairs_hook=reject_duplicate_keys,
+    )
     if not isinstance(parsed, dict):
         raise TypeError("Lift response must be a JSON object")
     return parsed
@@ -820,7 +837,7 @@ def decode_scrc_lift_artifact(
     """Apply the one canonical J/C/pi decoder to any Lift backend output."""
 
     payload = _json_object(response_text)
-    artifact = Gate1Artifact.from_json(payload)
+    artifact = canonicalize_gate1_artifact(Gate1Artifact.from_json(payload))
     _validate_anonymous_lift(artifact, request.harness_binding)
     _validate_compiler_view(artifact, request.anonymous_compiler_view)
     return artifact

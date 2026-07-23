@@ -5,7 +5,9 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
-- [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（执行中）
+- [Task 06：CanonicalJ 标准化与统一 lowering 消费边界](07-23-canonical-j-elaboration-06/task.md)（已完成）
+- [Task 05：Gate2 dense pointwise RefEval 合同闭合](07-23-gate2-dense-refeval-05/task.md)（已完成）
+- [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（已完成）
 - [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](07-22-scrc-real-kernel-batch-03/task.md)（执行中；先完成 Task 04 的 Lift 生成能力替换）
 - [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（已完成）
 - [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)（已完成）

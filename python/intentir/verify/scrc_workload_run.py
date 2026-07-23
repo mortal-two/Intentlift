@@ -316,7 +316,7 @@ def build_workload_gate2_suite(
     )
     case = Gate2Case(
         "finite-hidden-1",
-        artifact.j,
+        refeval.j,
         values,
         execution,
         refeval,

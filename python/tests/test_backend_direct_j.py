@@ -6,6 +6,7 @@ import pytest
 
 import intentir.backend.cuda.program as cuda_program
 from direct_fixtures import make_reduce_artifact
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.backend.protocol import (
     BackendProtocolError,
     BackendTarget,
@@ -25,7 +26,9 @@ class _FakeCudaArtifact:
 
 
 def test_cuda_lowering_consumes_the_same_j_and_separate_c(monkeypatch) -> None:
-    artifact = make_reduce_artifact(explicit_accesses=False)
+    artifact = canonicalize_gate1_artifact(
+        make_reduce_artifact(explicit_accesses=False)
+    )
     seen: dict[str, object] = {}
 
     def fake_lower(source, *, target, allow_specialized):
