@@ -5,6 +5,7 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
+- [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](07-23-canonical-boundary-lowering-07/task.md)（执行中）
 - [Task 06：CanonicalJ 标准化与统一 lowering 消费边界](07-23-canonical-j-elaboration-06/task.md)（已完成）
 - [Task 05：Gate2 dense pointwise RefEval 合同闭合](07-23-gate2-dense-refeval-05/task.md)（已完成）
 - [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（已完成）
