@@ -94,6 +94,7 @@ class MainStatus(str, Enum):
 class Gate1SearchStatus(str, Enum):
     GATE1_CLOSED = "GATE1_CLOSED"
     NO_CLOSURE = "NO_CLOSURE"
+    SUPERSEDED = "SUPERSEDED"
 
 
 class FeedbackKind(str, Enum):
@@ -334,10 +335,17 @@ class SCRCGate1SearchReport:
     accepted_attempt: int | None
     j_necessity_status: JNecessityStatus | None
     call_budget: CallBudget
+    stop_reason: str | None = None
+    winner_branch_id: int | None = None
+    stop_observed_at: str | None = None
 
     @property
     def closed(self) -> bool:
         return self.status is Gate1SearchStatus.GATE1_CLOSED
+
+    @property
+    def superseded(self) -> bool:
+        return self.status is Gate1SearchStatus.SUPERSEDED
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -349,6 +357,9 @@ class SCRCGate1SearchReport:
                 if self.j_necessity_status is not None else None
             ),
             "call_budget": self.call_budget.to_json(),
+            "stop_reason": self.stop_reason,
+            "winner_branch_id": self.winner_branch_id,
+            "stop_observed_at": self.stop_observed_at,
         }
 
 
@@ -411,7 +422,12 @@ class SCRCGateRunner:
             artifact,
         )
 
-    def search_gate1(self, request: SCRCRunRequest) -> SCRCGate1SearchReport:
+    def search_gate1(
+        self,
+        request: SCRCRunRequest,
+        *,
+        stop_requested: Callable[[], int | None] | None = None,
+    ) -> SCRCGate1SearchReport:
         """Search one isolated branch through TypeCheck and Gate1 only."""
 
         attempts: list[CandidateAttemptReport] = []
@@ -427,7 +443,40 @@ class SCRCGateRunner:
         replay_physical_calls = 0
         gate1_adapters: list[Gate1AttemptAdapter] = []
 
+        def budget() -> CallBudget:
+            return CallBudget(
+                lift_calls=lift_calls,
+                lift_physical_calls=lift_physical_calls,
+                typecheck_calls=typecheck_calls,
+                formal_gate1_rounds=formal_rounds,
+                replay_normal_calls=replay_normal_calls,
+                replay_masked_calls=replay_masked_calls,
+                replay_physical_calls=replay_physical_calls,
+                gate2_cases=0,
+                source_executions=0,
+                replay_executions=0,
+                refeval_executions=0,
+            )
+
+        def superseded(observed_at: str) -> SCRCGate1SearchReport | None:
+            winner = stop_requested() if stop_requested is not None else None
+            if winner is None:
+                return None
+            return SCRCGate1SearchReport(
+                status=Gate1SearchStatus.SUPERSEDED,
+                attempts=tuple(attempts),
+                accepted_attempt=None,
+                j_necessity_status=None,
+                call_budget=budget(),
+                stop_reason="first_gate1_closure",
+                winner_branch_id=winner,
+                stop_observed_at=observed_at,
+            )
+
         while formal_rounds < request.max_gate1_rounds:
+            stopped = superseded("before_lift")
+            if stopped is not None:
+                return stopped
             lift_calls += 1
             try:
                 lift_result = self.dependencies.lift.lift(request, feedback)
@@ -448,6 +497,9 @@ class SCRCGateRunner:
                         feedback=feedback,
                     )
                 )
+                stopped = superseded("after_lift")
+                if stopped is not None:
+                    return stopped
                 if pre_replay_rejections >= request.max_pre_replay_rejections:
                     break
                 continue
@@ -458,6 +510,18 @@ class SCRCGateRunner:
             lift_physical_calls += lift_result.physical_calls
             artifact = lift_result.artifact
             last_artifact = artifact
+            stopped = superseded("after_lift")
+            if stopped is not None:
+                attempts.append(
+                    CandidateAttemptReport(
+                        lift_call=lift_calls,
+                        formal_round=None,
+                        typecheck_status=TypeCheckStatus.NOT_RUN,
+                        artifact=artifact,
+                        lift_metadata=lift_result.metadata,
+                    )
+                )
+                return superseded("after_lift") or stopped
             request.binding.validate_artifact(artifact)
             typecheck_calls += 1
             report = self.dependencies.type_checker(
@@ -482,9 +546,26 @@ class SCRCGateRunner:
                         lift_metadata=lift_result.metadata,
                     )
                 )
+                stopped = superseded("after_typecheck")
+                if stopped is not None:
+                    return stopped
                 if pre_replay_rejections >= request.max_pre_replay_rejections:
                     break
                 continue
+
+            stopped = superseded("before_replay")
+            if stopped is not None:
+                attempts.append(
+                    CandidateAttemptReport(
+                        lift_call=lift_calls,
+                        formal_round=None,
+                        typecheck_status=TypeCheckStatus.PASS,
+                        artifact=artifact,
+                        typecheck=report,
+                        lift_metadata=lift_result.metadata,
+                    )
+                )
+                return superseded("before_replay") or stopped
 
             formal_rounds += 1
             gate1_adapter = self.dependencies.gate1_factory(formal_rounds)
@@ -534,6 +615,9 @@ class SCRCGateRunner:
                         lift_metadata=lift_result.metadata,
                     )
                 )
+                stopped = superseded("after_gate1")
+                if stopped is not None:
+                    return stopped
                 continue
 
             if gate1.normal.generation is None:
@@ -566,19 +650,7 @@ class SCRCGateRunner:
                     gate1.j_necessity_status
                     if gate1.masked_j is not None else None
                 ),
-                call_budget=CallBudget(
-                    lift_calls=lift_calls,
-                    lift_physical_calls=lift_physical_calls,
-                    typecheck_calls=typecheck_calls,
-                    formal_gate1_rounds=formal_rounds,
-                    replay_normal_calls=replay_normal_calls,
-                    replay_masked_calls=replay_masked_calls,
-                    replay_physical_calls=replay_physical_calls,
-                    gate2_cases=0,
-                    source_executions=0,
-                    replay_executions=0,
-                    refeval_executions=0,
-                ),
+                call_budget=budget(),
             )
 
         return SCRCGate1SearchReport(
@@ -586,19 +658,7 @@ class SCRCGateRunner:
             attempts=tuple(attempts),
             accepted_attempt=None,
             j_necessity_status=None,
-            call_budget=CallBudget(
-                lift_calls=lift_calls,
-                lift_physical_calls=lift_physical_calls,
-                typecheck_calls=typecheck_calls,
-                formal_gate1_rounds=formal_rounds,
-                replay_normal_calls=replay_normal_calls,
-                replay_masked_calls=replay_masked_calls,
-                replay_physical_calls=replay_physical_calls,
-                gate2_cases=0,
-                source_executions=0,
-                replay_executions=0,
-                refeval_executions=0,
-            ),
+            call_budget=budget(),
         )
 
     @staticmethod

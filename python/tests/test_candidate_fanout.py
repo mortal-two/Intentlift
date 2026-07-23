@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from threading import Barrier
+from threading import Barrier, Event
 
 from intentir.verify.candidate_fanout import (
     CANDIDATE_SELECTION_RULE,
     CandidateBranchOutcome,
     CandidateBranchStatus,
     ConcurrentCandidateFanoutRunner,
+    FirstClosureControl,
 )
 from intentir.verify.workload_manifest import build_workload_manifest
 
@@ -18,15 +19,21 @@ def _entry():
 def test_candidate_fanout_is_concurrent_and_orders_results_by_branch() -> None:
     entry = _entry()
     barrier = Barrier(3, timeout=2.0)
+    callback_started = Event()
+    control = FirstClosureControl()
 
     def execute(item, branch_id):
         assert item is entry
         barrier.wait()
-        status = (
-            CandidateBranchStatus.GATE1_CLOSED
-            if branch_id in {2, 3}
-            else CandidateBranchStatus.NO_CLOSURE
-        )
+        if branch_id == 2:
+            status = CandidateBranchStatus.GATE1_CLOSED
+        else:
+            assert callback_started.wait(2.0)
+            status = (
+                CandidateBranchStatus.GATE1_CLOSED
+                if branch_id == 3
+                else CandidateBranchStatus.SUPERSEDED
+            )
         return CandidateBranchOutcome(
             branch_id,
             item.case_id,
@@ -36,14 +43,31 @@ def test_candidate_fanout_is_concurrent_and_orders_results_by_branch() -> None:
             call_budget={"lift_calls": branch_id},
         )
 
+    callbacks = []
+
+    def on_first_closed(outcome):
+        callbacks.append(outcome.branch_id)
+        assert control.stop_requested() == outcome.branch_id
+        callback_started.set()
+
     report = ConcurrentCandidateFanoutRunner().run(
-        entry, execute, candidates=3
+        entry,
+        execute,
+        candidates=3,
+        control=control,
+        on_first_closed=on_first_closed,
     )
 
     assert [item.branch_id for item in report.branches] == [1, 2, 3]
     assert report.winner is report.branches[1]
+    assert report.winner_branch_id == 2
+    assert callbacks == [2]
     assert report.selection_rule == CANDIDATE_SELECTION_RULE
-    assert report.counts == {"gate1_closed": 2, "no_closure": 1}
+    assert report.counts == {
+        "gate1_closed": 1,
+        "gate1_closed_not_selected": 1,
+        "superseded": 1,
+    }
     assert report.aggregate_call_budget == {"lift_calls": 6}
 
 

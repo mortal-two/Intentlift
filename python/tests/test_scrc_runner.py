@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Event
 
 import numpy as np
 import pytest
@@ -462,6 +463,38 @@ def test_gate1_search_defers_hidden_gate2_until_explicit_completion() -> None:
     assert report.call_budget.gate2_cases == 1
     assert gate2.calls == 1
     assert events == ["lift", "gate1", "gate2_inputs_and_execution"]
+
+
+def test_gate1_search_cooperatively_stops_before_relift() -> None:
+    stop = Event()
+    lift = _Lift([make_reduce_artifact(), make_reduce_artifact()])
+
+    class StopAfterGate1:
+        def run(self, artifact, request):
+            del artifact, request
+            stop.set()
+            return _gate1_result(closed=False)
+
+    rounds = []
+
+    def factory(formal_round):
+        rounds.append(formal_round)
+        return StopAfterGate1()
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        stop_requested=lambda: 7 if stop.is_set() else None,
+    )
+
+    assert search.status is Gate1SearchStatus.SUPERSEDED
+    assert search.superseded and not search.closed
+    assert search.stop_reason == "first_gate1_closure"
+    assert search.winner_branch_id == 7
+    assert search.stop_observed_at == "after_gate1"
+    assert search.call_budget.lift_calls == 1
+    assert search.call_budget.formal_gate1_rounds == 1
+    assert rounds == [1]
+    assert len(lift.feedbacks) == 1
 
 
 def test_masked_j_status_is_independent_of_main_certification() -> None:

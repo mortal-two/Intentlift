@@ -167,5 +167,8 @@ relift diagnostic view 必须明确区分。
 当前同一 case 使用 `B=5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
 Gate1 round，`K` 包含首次候选。每个 branch 的 previous artifact、Gate1 diff、Lift conversation、
 Replay writer 与调用预算完全隔离；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
-artifact。只有五个完整 branch 都未闭合时才报告 `NO_CLOSURE_(5,3)`；infrastructure-incomplete
-branch 必须单独报告。
+artifact。首个正式 Gate1 closure exactly-once 成为 winner，并立即生成隐藏 Gate2 输入和执行 Gate2，
+不等待 fanout barrier。其他 branch 已开始的 provider call自然返回，在紧邻阶段边界记录为
+`SUPERSEDED` 并停止，不再启动新的 Lift/Replay/relift；它们不能冒充 `NO_CLOSURE` 或 infrastructure
+failure。只有没有 winner 且所有未被外部停止的完整 branch 都未闭合时才报告
+`NO_CLOSURE_(5,3)`；infrastructure-incomplete branch 必须单独报告。

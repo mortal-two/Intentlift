@@ -104,3 +104,16 @@ RefEval/production consumer 漂移。
 - 不把 CanonicalJ 变成第二份语义 artifact；它是 J wire 的唯一确定性内部形式；
 - 不让 canonicalizer读取 Source、Gate1/Gate2 结果、历史 candidate 或 sibling branch；
 - 不把 production optimization 放进 RefEval，也不让 C/π进入 `RefEval(J,logical_inputs)`。
+
+## 2026-07-23 Phase 0 checkpoint
+
+- fanout protocol/selection rule 升级为 `candidate-fanout.v2` /
+  `first_gate1_closure_cooperative_stop.v2`；winner 不再由 search barrier 后的最低 branch id 决定；
+- `FirstClosureControl` exactly-once 选择首个正式 Gate1 closure，并在 drain loser 之前执行 Gate2
+  callback；
+- 单 branch search 在 `before_lift`、`after_lift`、`after_typecheck/before_replay` 与
+  `after_gate1/before_relift` 边界协作停止，真实已开始调用保留预算，停止后不再新增调用；
+- branch 状态新增 `SUPERSEDED` 与 `GATE1_CLOSED_NOT_SELECTED`，停止原因、winner id 与观察阶段进入
+  evidence，不复用 `NO_CLOSURE`/infrastructure failure；
+- 聚焦回归仅运行 fanout、SCRC runner 与 CLI 三个相关文件：`27 passed`。未运行全量回归；
+- 下一步进入 Phase 1，清点并定义 J wire 与 typed CanonicalJ 的唯一边界。

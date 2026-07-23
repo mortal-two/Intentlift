@@ -7,7 +7,7 @@ from collections import Counter
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import numpy as np
 
@@ -524,6 +524,7 @@ def search_prepared_workload_gate1(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    stop_requested: Callable[[], int | None] | None = None,
 ) -> WorkloadGate1Search:
     """Run one independent branch only through TypeCheck and Gate1."""
 
@@ -535,7 +536,10 @@ def search_prepared_workload_gate1(
         lift_backend=lift_backend,
     )
     try:
-        report = runner.search_gate1(prepared.request)
+        report = runner.search_gate1(
+            prepared.request,
+            stop_requested=stop_requested,
+        )
     except Exception as exc:
         raise WorkloadExecutionError(exc, lift, tuple(writers)) from exc
     return WorkloadGate1Search(report, runner, lift, tuple(writers))

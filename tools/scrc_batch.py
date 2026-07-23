@@ -138,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             CandidateBranchOutcome,
             CandidateBranchStatus,
             ConcurrentCandidateFanoutRunner,
+            FirstClosureControl,
         )
         from intentir.verify.scrc_workload_run import (
             classify_scrc_report,
@@ -294,10 +295,13 @@ def main(argv: list[str] | None = None) -> int:
                         "branch_id": branch_id,
                         "candidate_count": args.candidates,
                         "selection_rule": (
-                            "lowest_branch_after_gate1_search_barrier.v1"
+                            "first_gate1_closure_cooperative_stop.v2"
                         ),
                     },
                 )
+
+            control = FirstClosureControl()
+            winner_result_holder = {}
 
             def candidate_executor(candidate_entry, branch_id):
                 branch_dir = branch_dirs[branch_id]
@@ -311,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
                         effort=args.effort,
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
+                        stop_requested=control.stop_requested,
                     )
                 except Exception as exc:
                     runtime = (
@@ -332,15 +337,17 @@ def main(argv: list[str] | None = None) -> int:
                         diagnostic=f"{type(cause).__name__}: {cause}",
                         evidence_path=evidence_path,
                     )
+                if search.report.superseded:
+                    status = CandidateBranchStatus.SUPERSEDED
+                elif search.report.closed:
+                    status = CandidateBranchStatus.GATE1_CLOSED
+                else:
+                    status = CandidateBranchStatus.NO_CLOSURE
                 return CandidateBranchOutcome(
                     branch_id,
                     candidate_entry.case_id,
                     candidate_entry.ordinal,
-                    (
-                        CandidateBranchStatus.GATE1_CLOSED
-                        if search.report.closed
-                        else CandidateBranchStatus.NO_CLOSURE
-                    ),
+                    status,
                     diagnostic=scrc_gate1_search_diagnostic(search.report),
                     evidence_path=evidence_path,
                     call_budget=search.report.call_budget.to_json(),
@@ -350,34 +357,19 @@ def main(argv: list[str] | None = None) -> int:
                             search.report
                         ),
                         "observer_profile": entry.observer_profile,
+                        "stop_reason": search.report.stop_reason,
+                        "winner_branch_id": search.report.winner_branch_id,
+                        "stop_observed_at": search.report.stop_observed_at,
                     },
                     runtime=(search, branch_dir),
                 )
 
-            fanout = ConcurrentCandidateFanoutRunner().run(
-                entry,
-                candidate_executor,
-                candidates=args.candidates,
-            )
-            winner = fanout.winner
-            for branch in fanout.branches:
-                if branch.runtime is None or branch is winner:
-                    continue
-                search, branch_dir = branch.runtime
-                save_workload_gate1_search(
-                    branch_dir,
-                    prepared,
-                    search,
-                    selected_for_gate2=False,
-                )
-
-            winner_result = None
-            if winner is not None:
-                winner_search, winner_dir = winner.runtime
-                evidence_path = winner.evidence_path
+            def complete_first_closed(branch):
+                search, winner_dir = branch.runtime
+                evidence_path = branch.evidence_path
                 try:
                     execution = complete_prepared_workload_gate2(
-                        prepared, winner_search
+                        prepared, search
                     )
                 except Exception as exc:
                     runtime = (
@@ -391,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
                         runtime=runtime,
                     )
                     cause = runtime.cause if runtime is not None else exc
-                    winner_result = BatchCaseResult(
+                    winner_result_holder["result"] = BatchCaseResult(
                         entry.case_id,
                         entry.ordinal,
                         BatchClassification.INFRASTRUCTURE_FAILED,
@@ -402,9 +394,30 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 else:
                     save_workload_execution(winner_dir, prepared, execution)
-                    winner_result = execution_result(
+                    winner_result_holder["result"] = execution_result(
                         entry, prepared, execution, evidence_path
                     )
+
+            fanout = ConcurrentCandidateFanoutRunner().run(
+                entry,
+                candidate_executor,
+                candidates=args.candidates,
+                control=control,
+                on_first_closed=complete_first_closed,
+            )
+            winner = fanout.winner
+            for branch in fanout.branches:
+                if branch.runtime is None or branch is winner:
+                    continue
+                search, branch_dir = branch.runtime
+                save_workload_gate1_search(
+                    branch_dir,
+                    prepared,
+                    search,
+                    selected_for_gate2=False,
+                )
+
+            winner_result = winner_result_holder.get("result")
             value = fanout.to_json()
             value["mode"] = "live_candidate_fanout"
             value["winner_result"] = (

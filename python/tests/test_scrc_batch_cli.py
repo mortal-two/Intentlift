@@ -140,17 +140,23 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     class SearchReport:
         closed = True
+        superseded = False
         accepted_attempt = 1
         attempts = ()
+        stop_reason = None
+        winner_branch_id = None
+        stop_observed_at = None
         call_budget = CallBudget(1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0)
 
     def fake_search(
-        _prepared, *, provider, effort, run_masked_j, lift_backend
+        _prepared, *, provider, effort, run_masked_j, lift_backend,
+        stop_requested,
     ):
         assert provider is not None
         assert effort == "xhigh"
         assert run_masked_j
         assert lift_backend == "responses"
+        assert callable(stop_requested)
         barrier.wait()
         with counter_lock:
             calls["search"] += 1
@@ -183,6 +189,9 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert run_masked_j
         assert lift_backend == "responses"
         assert search_metadata["candidate_count"] == 5
+        assert search_metadata["selection_rule"] == (
+            "first_gate1_closure_cooperative_stop.v2"
+        )
         calls["initialized_efforts"].append(effort)
 
     def fake_next_fanout_dir(root, _case_id):
@@ -222,7 +231,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["candidate_count"] == 5
-    assert payload["winner_branch_id"] == 1
+    assert payload["winner_branch_id"] in range(1, 6)
     assert payload["winner_result"]["main_status"] == "SCRC_CERTIFIED"
     assert calls == {
         "search": 5,
