@@ -193,8 +193,13 @@ Source + Harness 机械信息
                        Gate2
                          │
                          ├─ 失败：实验失败，进入系统改进
-                         └─ 通过：SCRC_CERTIFIED
+                       └─ 通过：SCRC_CERTIFIED
 ```
+
+实际候选搜索采用同一 Source、同一 Harness 与同一 `c0` 下的有界并行 fan-out，而不是把不同
+Kernel 并发混在一次认证中。设 branch 数 `B=5`；每个 branch 拥有独立 Lift 上下文、完整
+`(J,C,pi)`、TypeCheck、全新盲 Replay、Gate1 evidence 与 branch-local relift history。branch 之间
+不得读取、拼接或投票组合 artifact。Harness 仍是机械绑定环境，不变成新的 LLM Agent。
 
 ## 5. 第一步：Lift 生成完整三元 artifact
 
@@ -440,15 +445,21 @@ TypeCheck
 
 旧 Replay 只作实验记录，不进入下一轮 Replay 输入。
 
-### 10.2 relift 次数
+### 10.2 branch 数与 relift 预算
 
-一次实验最多进行三次能够进入 Replay 的正式轮次。三次均未通过 Gate1：
+当前搜索预算固定为 `B=5` 个并行 branch。每个 branch 最多进行 `K=3` 次能够进入 Replay 的
+TypeCheck-valid 正式 Gate1 round，`K` 包含首次候选；schema/TypeCheck 的 pre-Replay rejection
+另按既定上限计数，并必须报告 logical 与 physical provider calls。
+
+五个 branch 都在各自预算内未通过 Gate1，且没有 infrastructure-incomplete branch 时：
 
 ```text
-experiment_status = NO_CLOSURE
+experiment_status = NO_CLOSURE_(B=5,K=3)
 ```
 
-`NO_CLOSURE` 只表示：在本次实验所使用的 J/C/π 表达能力、prompt、Replay 能力和 Gate1 observer 下，没有找到闭合候选。
+`NO_CLOSURE_(B,K)` 只表示：该次有界并行搜索在所使用的 J/C/π 表达能力、prompt、Replay 能力和
+Gate1 observer 下没有找到闭合候选。只要存在尚未完成的 provider/infrastructure branch，就只能
+报告搜索不完整，不能伪装成 `NO_CLOSURE`。
 
 它不自动说明：
 
@@ -507,7 +518,15 @@ Lift 不能自由写入任意 Python comparator，也不能通过任意大的 `r
 
 ### 11.2 Gate2 输入的生成顺序
 
-Gate1 首次通过的完整候选 `a*=(J,C,pi,Replay)` 先选定；随后才生成 Gate2 输入，本次 Gate2
+令 `tau_pre` 表示五个 branch 的 Lift、TypeCheck、Replay 与 Gate1 记录，但不含任何 Gate2 输入或
+结果。当前实现等待这一 search wave 完成，然后使用预先确定的选择函数：
+
+```text
+a* = sigma(tau_pre)
+sigma = 按 branch_id、formal_round 的固定顺序选择第一个 Gate1-closed 候选
+```
+
+只有这个完整候选 `a*=(J,C,pi,Replay)` 被选定；随后才生成 Gate2 输入，本次 Gate2
 期间不再修改该候选。如果采用隐藏随机输入模式，必须从预先声明的分布 D 独立同分布地抽取输入，
 并对 Lift/Replay 隐藏这些输入；Gate2 结果也不回流本次实验。令 `g2_Q(a*,x)` 表示三条边在 x
 上全部通过，只有当固定候选的 `Pr_D[not g2_Q(a*,x)] >= epsilon > 0` 时，才能报告 m 个
@@ -526,7 +545,9 @@ for every x in T:
 不能在只使用固定 `T` 时同时引用隐藏随机测试的概率结论。两种输入模式都不需要新的证明对象
 或新的运行阶段。
 
-Gate2 失败后，不在同一次实验中继续使用该结果做局部修补。实验结束，进入系统改进，再开始下一次实验。
+未选 branch 即使 Gate1 闭合也不执行 Gate2。Gate2 失败后，不 fallback 到 sibling candidate，
+不把结果返回任何 Lift，也不在同一次运行中继续局部修补。运行结束，进入通用系统改进，再开始
+新的完整 fan-out。
 
 ## 12. masked-J 的位置
 
@@ -565,7 +586,8 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 
 如果整数宽度、signedness 或 overflow 可能改变 J 的允许结果，那么这些内容必须由 J/B 拥有，π 只能表达 realization 关系。
 
-如果当前 J/π schema 无法表达该 relation，最多三轮后结束本实验。之后在系统改进阶段决定：
+如果当前 J/π schema 无法表达该 relation，各 branch 达到 `K=3` 且完整 `B=5` fan-out 仍未闭合后
+结束本次运行。之后在系统改进阶段决定：
 
 - 扩充 J 的 typed index/conversion 能力；
 - 扩充 π 的 generic representation relation；
@@ -674,16 +696,17 @@ SCRC_CERTIFIED rate
 一次实验的完整逻辑是：
 
 ```text
-Lift
-→ TypeCheck(J,C,π)
-→ source-blind Replay(J,π,MaskC(C);U_f)
-→ Harness 绑定 C
-→ Gate1
-→ Gate1 diff 返回 Lift 并 relift
-→ Gate1 通过后执行 Gate2
+B=5 个独立 branch 并行：
+  Lift → TypeCheck(J,C,π)
+       → source-blind Replay(J,π,MaskC(C);U_f)
+       → Harness 绑定同一 c0 → Gate1
+       → Gate1 diff 只返回本 branch 的 Lift 并 relift
+→ sigma 仅根据 pre-Gate2 evidence 选择一个 Gate1-closed winner
+→ 只为 winner 生成隐藏输入并执行 Gate2
 ```
 
-实验期间不改变系统规则；达到 relift 次数仍失败就结束实验。系统改进只能在实验结束后进行，并且必须以通用能力修改的方式解决：
+运行期间不改变系统规则；达到 branch/relift 预算仍失败就结束本次搜索。系统改进只能在完整运行
+结束后进行，并且必须以通用能力修改的方式解决：
 
 ```text
 Lift 能力问题       → 改 Lift

@@ -80,6 +80,15 @@ concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容�
 认证异常必须收敛为该 case 的结构化结果并继续后续 case；汇总层只统计既有 TypeCheck、Gate1、
 Gate2、main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
 
+不同 Kernel/case 的外层顺序保持串行；并发只允许发生在同一 Source、同一 Harness 与同一 `c0`
+的候选搜索内部。主线程预先分配 `B` 个互不重叠的 evidence 目录，每个 worker 新建独立 Lift、
+Replay writer、TypeCheck/Gate1 runner 与 relift history。Source slice 和只读 adapter 描述可以共享，
+但 candidate artifact、provider response、Replay、diff、输出 buffer 与可变执行状态不得共享。
+
+Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out 结束后由
+受信任 runner 依据 pre-Gate2 evidence 选择一个 winner，再由 Harness 为该 winner 生成隐藏 Gate2
+输入；其余 branch 不读取这些输入。
+
 ## 真实 Triton Source 投影与声明式 adapter
 
 真实工作负载进入统一 SCRC 生命周期前，Harness 可以从已解析的 source file 机械构造 fixed-C

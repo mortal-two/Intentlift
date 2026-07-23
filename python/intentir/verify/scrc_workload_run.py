@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.verify.candidate_fanout import CandidateFanoutSearchReport
 from intentir.verify.gate1.model import (
     Gate1Artifact,
     ParameterKind,
@@ -45,6 +46,7 @@ from intentir.verify.scrc_batch import BatchClassification
 from intentir.verify.scrc_runner import (
     MainStatus,
     SCRCGateRunner,
+    SCRCGate1SearchReport,
     SCRCRunDependencies,
     SCRCRunReport,
 )
@@ -359,18 +361,9 @@ def classify_scrc_report(report: SCRCRunReport) -> BatchClassification:
     return BatchClassification.NO_CLOSURE
 
 
-def scrc_report_diagnostic(report: SCRCRunReport) -> str:
-    if report.gate2 is not None:
-        failures = [
-            case
-            for case in report.gate2.cases
-            if case.status is not Gate2Status.PASS
-        ]
-        if failures:
-            case = failures[0]
-            return case.source.error or case.replay.error or case.reference.error
-    if report.attempts:
-        terminal = report.attempts[-1]
+def _attempts_diagnostic(attempts: tuple[Any, ...]) -> str:
+    if attempts:
+        terminal = attempts[-1]
         if terminal.feedback is not None:
             diagnostics = terminal.feedback.diagnostics
             if isinstance(diagnostics.get("diagnostic"), str):
@@ -399,7 +392,26 @@ def scrc_report_diagnostic(report: SCRCRunReport) -> str:
     return ""
 
 
-def scrc_attempt_stage_counts(report: SCRCRunReport) -> dict[str, int]:
+def scrc_report_diagnostic(report: SCRCRunReport) -> str:
+    if report.gate2 is not None:
+        failures = [
+            case
+            for case in report.gate2.cases
+            if case.status is not Gate2Status.PASS
+        ]
+        if failures:
+            case = failures[0]
+            return case.source.error or case.replay.error or case.reference.error
+    return _attempts_diagnostic(report.attempts)
+
+
+def scrc_gate1_search_diagnostic(report: SCRCGate1SearchReport) -> str:
+    return _attempts_diagnostic(report.attempts)
+
+
+def scrc_attempt_stage_counts(
+    report: SCRCRunReport | SCRCGate1SearchReport,
+) -> dict[str, int]:
     stages: Counter[str] = Counter()
     for attempt in report.attempts:
         if attempt.formal_round is None:
@@ -433,6 +445,14 @@ class WorkloadExecution:
     replay_writers: tuple[ResponsesReplayWriter, ...]
 
 
+@dataclass(frozen=True)
+class WorkloadGate1Search:
+    report: SCRCGate1SearchReport
+    runner: SCRCGateRunner
+    lift: ResponsesSCRCLiftAdapter
+    replay_writers: tuple[ResponsesReplayWriter, ...]
+
+
 class WorkloadExecutionError(RuntimeError):
     def __init__(
         self,
@@ -448,15 +468,13 @@ class WorkloadExecutionError(RuntimeError):
         super().__init__(f"{type(cause).__name__}: {cause}")
 
 
-def execute_prepared_workload(
+def _build_workload_runtime(
     prepared: PreparedTritonWorkload,
     *,
     provider: ProviderConfig,
     effort: str | None = None,
     run_masked_j: bool = True,
-) -> WorkloadExecution:
-    """Run one independent real case through the only active SCRC lifecycle."""
-
+) -> tuple[SCRCGateRunner, ResponsesSCRCLiftAdapter, list[ResponsesReplayWriter]]:
     lift = ResponsesSCRCLiftAdapter(
         provider=provider,
         compiler_view=prepared.compiler_view,
@@ -483,13 +501,77 @@ def execute_prepared_workload(
             prepared, artifact
         ),
     )
+    runner = SCRCGateRunner(SCRCRunDependencies(lift, gate1_factory, gate2))
+    return runner, lift, writers
+
+
+def search_prepared_workload_gate1(
+    prepared: PreparedTritonWorkload,
+    *,
+    provider: ProviderConfig,
+    effort: str | None = None,
+    run_masked_j: bool = True,
+) -> WorkloadGate1Search:
+    """Run one independent branch only through TypeCheck and Gate1."""
+
+    runner, lift, writers = _build_workload_runtime(
+        prepared,
+        provider=provider,
+        effort=effort,
+        run_masked_j=run_masked_j,
+    )
     try:
-        report = SCRCGateRunner(
-            SCRCRunDependencies(lift, gate1_factory, gate2)
-        ).run(prepared.request)
+        report = runner.search_gate1(prepared.request)
     except Exception as exc:
         raise WorkloadExecutionError(exc, lift, tuple(writers)) from exc
-    return WorkloadExecution(report, lift, tuple(writers))
+    return WorkloadGate1Search(report, runner, lift, tuple(writers))
+
+
+def complete_prepared_workload_gate2(
+    prepared: PreparedTritonWorkload,
+    search: WorkloadGate1Search,
+) -> WorkloadExecution:
+    """Execute hidden Gate2 once for the preselected Gate1-closed branch."""
+
+    if not search.report.closed:
+        raise ValueError("cannot execute Gate2 for a branch without Gate1 closure")
+    try:
+        report = search.runner.complete_gate2(
+            prepared.request, search.report
+        )
+    except Exception as exc:
+        raise WorkloadExecutionError(
+            exc, search.lift, search.replay_writers
+        ) from exc
+    return WorkloadExecution(report, search.lift, search.replay_writers)
+
+
+def execute_prepared_workload(
+    prepared: PreparedTritonWorkload,
+    *,
+    provider: ProviderConfig,
+    effort: str | None = None,
+    run_masked_j: bool = True,
+) -> WorkloadExecution:
+    """Run one independent real case through the canonical full lifecycle."""
+
+    search = search_prepared_workload_gate1(
+        prepared,
+        provider=provider,
+        effort=effort,
+        run_masked_j=run_masked_j,
+    )
+    if search.report.closed:
+        return complete_prepared_workload_gate2(prepared, search)
+    report = SCRCRunReport(
+        MainStatus.NO_CLOSURE,
+        search.report.attempts,
+        None,
+        None,
+        None,
+        search.report.call_budget,
+    )
+    return WorkloadExecution(report, search.lift, search.replay_writers)
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -527,6 +609,22 @@ def next_workload_run_dir(output_root: str | Path, case_id: str) -> Path:
     return run_dir
 
 
+def next_candidate_fanout_dir(
+    output_root: str | Path,
+    case_id: str,
+) -> Path:
+    parent = Path(output_root) / _case_slug(case_id)
+    parent.mkdir(parents=True, exist_ok=True)
+    indexes = [
+        int(path.name.removeprefix("fanout-"))
+        for path in parent.glob("fanout-[0-9][0-9][0-9]")
+        if path.name.removeprefix("fanout-").isdigit()
+    ]
+    fanout_dir = parent / f"fanout-{max(indexes, default=0) + 1:03d}"
+    fanout_dir.mkdir()
+    return fanout_dir
+
+
 def initialize_workload_evidence(
     run_dir: Path,
     prepared: PreparedTritonWorkload,
@@ -534,6 +632,7 @@ def initialize_workload_evidence(
     provider: ProviderConfig,
     effort: str | None,
     run_masked_j: bool,
+    search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     (run_dir / "source.py").write_text(
         prepared.source_slice.code, encoding="utf-8"
@@ -546,22 +645,22 @@ def initialize_workload_evidence(
             "source_location": prepared.source_location,
         },
     )
-    _write_json(
-        run_dir / "request.json",
-        {
-            "case_id": prepared.entry.case_id,
-            "provider": provider.name,
-            "model": provider.model,
-            "reasoning_effort": effort or provider.reasoning_effort,
-            "frontend": prepared.entry.frontend,
-            "observer_profile": prepared.entry.observer_profile,
-            "q_policy": prepared.entry.q_policy,
-            "c0": prepared.request.binding.values,
-            "grid": list(prepared.adapter.grid),
-            "run_masked_j": run_masked_j,
-            "source_to_opaque": dict(prepared.source_to_opaque),
-        },
-    )
+    request_record = {
+        "case_id": prepared.entry.case_id,
+        "provider": provider.name,
+        "model": provider.model,
+        "reasoning_effort": effort or provider.reasoning_effort,
+        "frontend": prepared.entry.frontend,
+        "observer_profile": prepared.entry.observer_profile,
+        "q_policy": prepared.entry.q_policy,
+        "c0": prepared.request.binding.values,
+        "grid": list(prepared.adapter.grid),
+        "run_masked_j": run_masked_j,
+        "source_to_opaque": dict(prepared.source_to_opaque),
+    }
+    if search_metadata is not None:
+        request_record["candidate_search"] = dict(search_metadata)
+    _write_json(run_dir / "request.json", request_record)
 
 
 def save_workload_execution(
@@ -571,86 +670,12 @@ def save_workload_execution(
 ) -> None:
     report = execution.report
     _write_json(run_dir / "report.json", report.to_json())
-    for index, attempt in enumerate(report.attempts, start=1):
-        attempt_dir = run_dir / f"attempt-{index:02d}"
-        attempt_dir.mkdir()
-        if attempt.artifact is not None:
-            _write_json(attempt_dir / "artifact.json", attempt.artifact.to_json())
-        if attempt.typecheck is not None:
-            _write_json(
-                attempt_dir / "typecheck.json", attempt.typecheck.to_json()
-            )
-        if attempt.gate1 is not None:
-            _write_json(attempt_dir / "gate1.json", attempt.gate1.to_json())
-            normal = attempt.gate1.normal.generation
-            if normal is not None:
-                (attempt_dir / "replay.py").write_text(
-                    normal.code, encoding="utf-8"
-                )
-            masked = (
-                attempt.gate1.masked_j.generation
-                if attempt.gate1.masked_j is not None
-                else None
-            )
-            if masked is not None:
-                (attempt_dir / "masked_j_replay.py").write_text(
-                    masked.code, encoding="utf-8"
-                )
-        if index <= len(execution.lift.records):
-            record = execution.lift.records[index - 1]
-            if record.extraction is not None:
-                provenance = record.extraction.provenance
-                _write_json(
-                    attempt_dir / "lift_receipt.json",
-                    {
-                        "model": provenance.model,
-                        "response_model": provenance.response_model,
-                        "response_id": provenance.response_id,
-                        "usage": dict(provenance.usage),
-                        "attempts": provenance.attempts,
-                        "elapsed_ms": provenance.elapsed_ms,
-                    },
-                )
-                (attempt_dir / "lift_response.txt").write_text(
-                    provenance.response_text, encoding="utf-8"
-                )
-            else:
-                (attempt_dir / "lift_rejection.txt").write_text(
-                    (record.diagnostic or "Lift response rejected") + "\n",
-                    encoding="utf-8",
-                )
-                for rejected_index, rejected in enumerate(
-                    record.rejected_attempts, start=1
-                ):
-                    (attempt_dir / f"lift_rejected_{rejected_index:02d}.txt").write_text(
-                        rejected.response_text, encoding="utf-8"
-                    )
-    formal_attempt_dirs = [
-        run_dir / f"attempt-{index:02d}"
-        for index, attempt in enumerate(report.attempts, start=1)
-        if attempt.formal_round is not None
-    ]
-    for attempt_dir, writer in zip(
-        formal_attempt_dirs, execution.replay_writers, strict=True
-    ):
-        for record_index, record in enumerate(writer.records, start=1):
-            if not isinstance(record, ReplayAttempt):
-                continue
-            (attempt_dir / f"replay_rejected_{record_index:02d}.txt").write_text(
-                record.response_text, encoding="utf-8"
-            )
-            _write_json(
-                attempt_dir / f"replay_rejected_{record_index:02d}_receipt.json",
-                {
-                    "model": record.model,
-                    "response_model": record.response_model,
-                    "response_id": record.response_id,
-                    "usage": dict(record.usage),
-                    "attempts": record.attempts,
-                    "elapsed_ms": record.elapsed_ms,
-                    "diagnostic": record.diagnostic,
-                },
-            )
+    _save_attempt_evidence(
+        run_dir,
+        report.attempts,
+        execution.lift,
+        execution.replay_writers,
+    )
     if report.gate2 is not None:
         _write_json(run_dir / "gate2.json", report.gate2.to_json())
     classification = classify_scrc_report(report)
@@ -685,6 +710,169 @@ def save_workload_execution(
         ]
     )
     (run_dir / "SUMMARY.md").write_text(
+        "\n".join(summary), encoding="utf-8"
+    )
+
+
+def _save_attempt_evidence(
+    run_dir: Path,
+    attempts: tuple[Any, ...],
+    lift: ResponsesSCRCLiftAdapter,
+    replay_writers: tuple[ResponsesReplayWriter, ...],
+) -> None:
+    for index, attempt in enumerate(attempts, start=1):
+        attempt_dir = run_dir / f"attempt-{index:02d}"
+        attempt_dir.mkdir()
+        if attempt.artifact is not None:
+            _write_json(attempt_dir / "artifact.json", attempt.artifact.to_json())
+        if attempt.typecheck is not None:
+            _write_json(
+                attempt_dir / "typecheck.json", attempt.typecheck.to_json()
+            )
+        if attempt.gate1 is not None:
+            _write_json(attempt_dir / "gate1.json", attempt.gate1.to_json())
+            normal = attempt.gate1.normal.generation
+            if normal is not None:
+                (attempt_dir / "replay.py").write_text(
+                    normal.code, encoding="utf-8"
+                )
+            masked = (
+                attempt.gate1.masked_j.generation
+                if attempt.gate1.masked_j is not None
+                else None
+            )
+            if masked is not None:
+                (attempt_dir / "masked_j_replay.py").write_text(
+                    masked.code, encoding="utf-8"
+                )
+        if index <= len(lift.records):
+            record = lift.records[index - 1]
+            if record.extraction is not None:
+                provenance = record.extraction.provenance
+                _write_json(
+                    attempt_dir / "lift_receipt.json",
+                    {
+                        "model": provenance.model,
+                        "response_model": provenance.response_model,
+                        "response_id": provenance.response_id,
+                        "usage": dict(provenance.usage),
+                        "attempts": provenance.attempts,
+                        "elapsed_ms": provenance.elapsed_ms,
+                    },
+                )
+                (attempt_dir / "lift_response.txt").write_text(
+                    provenance.response_text, encoding="utf-8"
+                )
+            else:
+                (attempt_dir / "lift_rejection.txt").write_text(
+                    (record.diagnostic or "Lift response rejected") + "\n",
+                    encoding="utf-8",
+                )
+                for rejected_index, rejected in enumerate(
+                    record.rejected_attempts, start=1
+                ):
+                    (attempt_dir / f"lift_rejected_{rejected_index:02d}.txt").write_text(
+                        rejected.response_text, encoding="utf-8"
+                    )
+    formal_attempt_dirs = [
+        run_dir / f"attempt-{index:02d}"
+        for index, attempt in enumerate(attempts, start=1)
+        if attempt.formal_round is not None
+    ]
+    for attempt_dir, writer in zip(
+        formal_attempt_dirs, replay_writers, strict=True
+    ):
+        for record_index, record in enumerate(writer.records, start=1):
+            if not isinstance(record, ReplayAttempt):
+                continue
+            (attempt_dir / f"replay_rejected_{record_index:02d}.txt").write_text(
+                record.response_text, encoding="utf-8"
+            )
+            _write_json(
+                attempt_dir / f"replay_rejected_{record_index:02d}_receipt.json",
+                {
+                    "model": record.model,
+                    "response_model": record.response_model,
+                    "response_id": record.response_id,
+                    "usage": dict(record.usage),
+                    "attempts": record.attempts,
+                    "elapsed_ms": record.elapsed_ms,
+                    "diagnostic": record.diagnostic,
+                },
+            )
+
+
+def save_workload_gate1_search(
+    run_dir: Path,
+    prepared: PreparedTritonWorkload,
+    search: WorkloadGate1Search,
+    *,
+    selected_for_gate2: bool,
+) -> None:
+    report = search.report
+    _write_json(run_dir / "gate1_search.json", report.to_json())
+    _save_attempt_evidence(
+        run_dir,
+        report.attempts,
+        search.lift,
+        search.replay_writers,
+    )
+    summary = [
+        f"# {prepared.entry.case_id} {run_dir.name}",
+        "",
+        "- phase: `pre_gate2_candidate_search`",
+        f"- status: `{report.status.value}`",
+        f"- accepted_attempt: `{report.accepted_attempt}`",
+        f"- selected_for_gate2: `{str(selected_for_gate2).lower()}`",
+        "- call_budget: `"
+        + json.dumps(report.call_budget.to_json(), sort_keys=True)
+        + "`",
+        "",
+        "该目录是候选搜索 evidence，不是第四个证明 artifact。未被选择的 Gate1-closed "
+        "candidate 不执行 Gate2。",
+        "",
+    ]
+    (run_dir / "SUMMARY.md").write_text(
+        "\n".join(summary), encoding="utf-8"
+    )
+
+
+def save_candidate_fanout_report(
+    fanout_dir: Path,
+    report: CandidateFanoutSearchReport,
+    *,
+    winner_result: Mapping[str, Any] | None,
+) -> None:
+    payload = report.to_json()
+    payload["winner_result"] = (
+        dict(winner_result) if winner_result is not None else None
+    )
+    _write_json(fanout_dir / "fanout-report.json", payload)
+    summary = [
+        f"# {report.case_id} {fanout_dir.name}",
+        "",
+        f"- candidate_count: `{len(report.branches)}`",
+        f"- selection_rule: `{report.selection_rule}`",
+        "- winner_branch_id: `"
+        + (str(report.winner.branch_id) if report.winner is not None else "None")
+        + "`",
+        "- pre_gate2_status_counts: `"
+        + json.dumps(report.counts, sort_keys=True)
+        + "`",
+    ]
+    if winner_result is not None:
+        summary.append(
+            f"- winner_main_status: `{winner_result.get('main_status')}`"
+        )
+    summary.extend(
+        [
+            "",
+            "所有 branch 使用同一 Source/Harness/c0，但拥有独立 Lift、Replay、TypeCheck、"
+            "Gate1 与 relift history。Gate2 只对预先选定的 winner 执行。",
+            "",
+        ]
+    )
+    (fanout_dir / "SUMMARY.md").write_text(
         "\n".join(summary), encoding="utf-8"
     )
 
@@ -778,13 +966,20 @@ def save_workload_failure(
 __all__ = [
     "WorkloadExecution",
     "WorkloadExecutionError",
+    "WorkloadGate1Search",
     "build_workload_gate2_suite",
     "classify_scrc_report",
+    "complete_prepared_workload_gate2",
     "execute_prepared_workload",
     "initialize_workload_evidence",
+    "next_candidate_fanout_dir",
     "next_workload_run_dir",
+    "save_candidate_fanout_report",
     "save_workload_execution",
     "save_workload_failure",
+    "save_workload_gate1_search",
+    "scrc_gate1_search_diagnostic",
     "scrc_attempt_stage_counts",
     "scrc_report_diagnostic",
+    "search_prepared_workload_gate1",
 ]

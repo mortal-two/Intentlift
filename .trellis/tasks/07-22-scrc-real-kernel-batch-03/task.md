@@ -140,7 +140,8 @@ Gate1 primary diff、Gate2 三边、RefEval profile/unsupported reason、真实 
 ### 真实纵切
 
 7. 六项各有真实 source 与 Harness adapter，不从性能测试 stdout 反解析；
-8. 六项顺序运行，保存每项完整 terminal/failure evidence 与调用预算；
+8. 不同 Kernel 仍按六项顺序运行；同一 Kernel 使用 `B=5` 个候选 branch 并行搜索，保存每 branch
+   的完整 pre-Gate2 evidence、固定 winner 坐标、唯一 Gate2 结果与调用预算；
 9. 当前支持域若暴露通用缺口，先结束 run，再增加通用 schema/consumer/prompt 回归并新跑；
 10. frontier unsupported 必须准确落在具体阶段，不能归成未知异常；
 11. Task 03 完成时运行全量测试，工作区无 secret 或无主 sidecar。
@@ -151,7 +152,8 @@ Gate1 primary diff、Gate2 三边、RefEval profile/unsupported reason、真实 
 - 不做性能计时、排名、beat/parity 结论或 retune；
 - 不为 softmax/RMSNorm/matmul 写 per-kernel RefEval 特例；
 - 不增加一般集合值并发、atomic、scatter/update、alias/inout 支持；
-- 不建设异步、分布式、复杂 resume 或 hash/commitment 系统；
+- 不建设跨 Kernel 异步队列、分布式调度、复杂 resume 或 hash/commitment 系统；同 case 的固定
+  5-worker candidate fan-out 是本任务明确建设的搜索能力；
 - 不让旧 Replay、旧 conversation 或其他 Kernel 的 Gate1 diff 跨 case 传播。
 
 ## 后续
@@ -196,7 +198,7 @@ terminal evidence 与真实调用预算。在六项纵切完成以前，本 Task
 
 ### 首个真实 case 暴露的问题与处理
 
-`high_performance:liger_dyt` 已产生七个独立 run。`run-001`/`run-005` 是候选未闭合，`run-002`/
+`high_performance:liger_dyt` 初始产生七个独立 run。`run-001`/`run-005` 是候选未闭合，`run-002`/
 `run-003` 暴露并复现了 Gate2 rank-0 logical scalar binding 缺口，`run-004`/`run-006`/`run-007`
 是外部 provider 502/408。上述 run 的原始 terminal verdict 不回写；历史记录的计数/证据限制与
 离线诊断分别写在各 run 的 `AUDIT.md`。
@@ -231,9 +233,30 @@ observer、TypeCheck 与 strict parser 均未放宽。
 继续落盘，relift 只接收每类至多 8 个代表差异的确定性 actionable view，不再重复发送低层节点
 fingerprint、components 与 score/rank。相关回归 `92 passed`。
 
-`liger_dyt` 已有正式 `NO_CLOSURE` 终态，不再为了调到 PASS 重复运行。Task03 下一项进入
-`high_performance:liger_swiglu`，优先使用 `xhigh`；provider 不可用时只记 infrastructure。
+### Phase C：同 case 多候选并发（进行中）
+
+单链 `B=1` 容易让一次 schema/π 提取偏差串行占满 wall time，也不足以满足 dyt 必须实际闭合的
+目标。现将搜索控制面改为：
+
+```text
+B=5 个 branch 并行
+每 branch: 最多 K=3 个 TypeCheck-valid Gate1 round + branch-local relift
+wave barrier 后按 (branch_id, formal_round) 固定顺序选择一个 Gate1-closed winner
+winner 选定后才生成隐藏输入，且只执行这一次 Gate2
+```
+
+已把统一 runner 拆为 `search_gate1` 与 `complete_gate2`，原单候选 `run()` 继续组合两者且保持兼容；
+新增 fixed-size thread fan-out、独立 evidence 目录、稳定 branch 汇总、异常隔离与 aggregate physical
+call budget。测试用五线程 barrier 证明 Lift branch 实际重叠执行，并验证即使五个 branch 都闭合，
+也只有固定 branch 1 进入 Gate2。并发不同 Kernel、候选拼接、Gate2 fallback 和 HarnessAgent 均禁止。
+并发重构后的全量回归为 `801 passed, 4 skipped`。
+
+此前启动的 `liger_swiglu/run-001` 是旧单链 xhigh 运行，在尚未产生 Lift response 时因本次控制面
+重构被人工停止；它不计 `NO_CLOSURE` 或 Gate 失败。重构完成后先回到 `liger_dyt`，使用
+`--candidates 5 --effort xhigh` 获得完整 Gate1 closure 与 winner Gate2 结果，再进入 swiglu。
 
 本阶段 checkpoint 前已再次验证：manifest `28/28 resolved`、六个 representative dry-run 均为
-`ready`，全量 Python 回归为 `793 passed, 4 skipped`。接下来用可用 provider 配置从全新 run
-继续六项顺序纵切。Task 03 在六项各自收敛为结构化 terminal evidence 前仍保持“执行中”。
+`ready`；Phase B checkpoint 的全量回归为 `793 passed, 4 skipped`，Phase C fan-out checkpoint
+更新为 `801 passed, 4 skipped`。接下来用可用 provider 配置从全新 run
+继续六项外层顺序纵切。Task 03 在 dyt 获得完整 closure、且六项各自收敛为结构化 evidence 前
+仍保持“执行中”。

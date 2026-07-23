@@ -46,8 +46,13 @@ Source + previous complete (J,C,pi) + accumulated Gate1 diff
   -> Gate1
 ```
 
-diff 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或只修改 artifact 的局部字段。最多三轮
-正式候选，仍失败则 `NO_CLOSURE`。
+diff 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或只修改 artifact 的局部字段。当前
+同一 Source/c0 启动 `B=5` 个独立 branch，每 branch 最多 `K=3` 个正式候选；diff 只返回产生它的
+branch。并行 wave 结束后，仅根据 TypeCheck/Gate1 evidence 按固定 branch/round 顺序选择一个
+Gate1-closed winner；未选 closed branch 不进入 Gate2。
+
+全部完整 branch 都失败才是 `NO_CLOSURE_(B,K)`；该状态只说明本次有界搜索未找到 closure，不能
+解释为合法 witness 不存在。provider/infrastructure 未完成的 branch 不得计作 Gate1 失败。
 
 ## masked-J 的位置
 

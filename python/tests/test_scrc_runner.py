@@ -54,6 +54,7 @@ from intentir.verify.gate2.triton import (
 from intentir.verify.scrc_runner import (
     CandidateLiftError,
     FeedbackKind,
+    Gate1SearchStatus,
     HarnessBindingInstance,
     LiftCallResult,
     LiftFeedback,
@@ -437,6 +438,30 @@ def test_gate2_is_terminal_and_hidden_cases_are_created_after_gate1() -> None:
     assert report.call_budget.lift_calls == 1
     assert events == ["lift", "gate1", "gate2_inputs_and_execution"]
     assert gate2.calls == 1
+
+
+def test_gate1_search_defers_hidden_gate2_until_explicit_completion() -> None:
+    events = []
+    lift = _Lift([make_reduce_artifact()], events)
+    factory = _Gate1Factory([_gate1_result(closed=True)], events)
+    gate2 = _Gate2(events=events)
+    runner = _runner(lift, factory, gate2)
+
+    search = runner.search_gate1(_request())
+
+    assert search.status is Gate1SearchStatus.GATE1_CLOSED
+    assert search.closed
+    assert search.accepted_attempt == 1
+    assert search.call_budget.gate2_cases == 0
+    assert gate2.calls == 0
+    assert events == ["lift", "gate1"]
+
+    report = runner.complete_gate2(_request(), search)
+
+    assert report.main_status is MainStatus.SCRC_CERTIFIED
+    assert report.call_budget.gate2_cases == 1
+    assert gate2.calls == 1
+    assert events == ["lift", "gate1", "gate2_inputs_and_execution"]
 
 
 def test_masked_j_status_is_independent_of_main_certification() -> None:

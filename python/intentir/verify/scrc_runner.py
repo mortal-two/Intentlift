@@ -91,6 +91,11 @@ class MainStatus(str, Enum):
     GATE2_FAILED = "GATE2_FAILED"
 
 
+class Gate1SearchStatus(str, Enum):
+    GATE1_CLOSED = "GATE1_CLOSED"
+    NO_CLOSURE = "NO_CLOSURE"
+
+
 class FeedbackKind(str, Enum):
     LIFT = "lift"
     TYPECHECK = "typecheck"
@@ -321,6 +326,33 @@ class CallBudget:
 
 
 @dataclass(frozen=True)
+class SCRCGate1SearchReport:
+    """Pre-Gate2 branch result used by bounded candidate fan-out."""
+
+    status: Gate1SearchStatus
+    attempts: tuple[CandidateAttemptReport, ...]
+    accepted_attempt: int | None
+    j_necessity_status: JNecessityStatus | None
+    call_budget: CallBudget
+
+    @property
+    def closed(self) -> bool:
+        return self.status is Gate1SearchStatus.GATE1_CLOSED
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "attempts": [item.to_json() for item in self.attempts],
+            "accepted_attempt": self.accepted_attempt,
+            "j_necessity_status": (
+                self.j_necessity_status.value
+                if self.j_necessity_status is not None else None
+            ),
+            "call_budget": self.call_budget.to_json(),
+        }
+
+
+@dataclass(frozen=True)
 class SCRCRunReport:
     main_status: MainStatus
     attempts: tuple[CandidateAttemptReport, ...]
@@ -379,7 +411,9 @@ class SCRCGateRunner:
             artifact,
         )
 
-    def run(self, request: SCRCRunRequest) -> SCRCRunReport:
+    def search_gate1(self, request: SCRCRunRequest) -> SCRCGate1SearchReport:
+        """Search one isolated branch through TypeCheck and Gate1 only."""
+
         attempts: list[CandidateAttemptReport] = []
         feedback: LiftFeedback | None = None
         last_artifact: Gate1Artifact | None = None
@@ -524,31 +558,10 @@ class SCRCGateRunner:
                     lift_metadata=lift_result.metadata,
                 )
             )
-            try:
-                gate2 = self.dependencies.gate2.execute(
-                    artifact, gate1, request
-                )
-            except Exception as exc:
-                raise SCRCInfrastructureError(
-                    "Gate2 adapter failed after Gate1 closure: "
-                    f"{type(exc).__name__}: {exc}",
-                    evidence={
-                        "artifact": artifact.to_json(),
-                        "typecheck": report.to_json(),
-                        "gate1": gate1.to_json(),
-                        "attempts": [item.to_json() for item in attempts],
-                        "formal_round": formal_rounds,
-                    },
-                ) from exc
-            if gate2.passed:
-                main_status = MainStatus.SCRC_CERTIFIED
-            else:
-                main_status = MainStatus.GATE2_FAILED
-            return SCRCRunReport(
-                main_status=main_status,
+            return SCRCGate1SearchReport(
+                status=Gate1SearchStatus.GATE1_CLOSED,
                 attempts=tuple(attempts),
                 accepted_attempt=formal_rounds,
-                gate2=gate2,
                 j_necessity_status=(
                     gate1.j_necessity_status
                     if gate1.masked_j is not None else None
@@ -561,18 +574,17 @@ class SCRCGateRunner:
                     replay_normal_calls=replay_normal_calls,
                     replay_masked_calls=replay_masked_calls,
                     replay_physical_calls=replay_physical_calls,
-                    gate2_cases=len(gate2.cases),
-                    source_executions=len(gate2.cases),
-                    replay_executions=len(gate2.cases),
-                    refeval_executions=len(gate2.cases),
+                    gate2_cases=0,
+                    source_executions=0,
+                    replay_executions=0,
+                    refeval_executions=0,
                 ),
             )
 
-        return SCRCRunReport(
-            main_status=MainStatus.NO_CLOSURE,
+        return SCRCGate1SearchReport(
+            status=Gate1SearchStatus.NO_CLOSURE,
             attempts=tuple(attempts),
             accepted_attempt=None,
-            gate2=None,
             j_necessity_status=None,
             call_budget=CallBudget(
                 lift_calls=lift_calls,
@@ -589,12 +601,109 @@ class SCRCGateRunner:
             ),
         )
 
+    @staticmethod
+    def _accepted_search_attempt(
+        search: SCRCGate1SearchReport,
+    ) -> CandidateAttemptReport:
+        if not search.closed or search.accepted_attempt is None:
+            raise ValueError("Gate2 requires one Gate1-closed search result")
+        accepted = [
+            attempt
+            for attempt in search.attempts
+            if attempt.formal_round == search.accepted_attempt
+        ]
+        if len(accepted) != 1:
+            raise SCRCInfrastructureError(
+                "Gate1 search does not identify exactly one accepted attempt"
+            )
+        attempt = accepted[0]
+        if (
+            attempt.artifact is None
+            or attempt.typecheck is None
+            or not attempt.typecheck.passed
+            or attempt.gate1 is None
+            or not attempt.gate1.passed
+            or attempt.gate1.normal.generation is None
+        ):
+            raise SCRCInfrastructureError(
+                "Gate1 search accepted attempt lacks certified pre-Gate2 evidence"
+            )
+        return attempt
+
+    def complete_gate2(
+        self,
+        request: SCRCRunRequest,
+        search: SCRCGate1SearchReport,
+    ) -> SCRCRunReport:
+        """Run Gate2 exactly once for a winner selected without Gate2 evidence."""
+
+        accepted = self._accepted_search_attempt(search)
+        artifact = accepted.artifact
+        typecheck_report = accepted.typecheck
+        gate1 = accepted.gate1
+        assert artifact is not None
+        assert typecheck_report is not None
+        assert gate1 is not None
+        try:
+            gate2 = self.dependencies.gate2.execute(artifact, gate1, request)
+        except Exception as exc:
+            raise SCRCInfrastructureError(
+                "Gate2 adapter failed after Gate1 closure: "
+                f"{type(exc).__name__}: {exc}",
+                evidence={
+                    "artifact": artifact.to_json(),
+                    "typecheck": typecheck_report.to_json(),
+                    "gate1": gate1.to_json(),
+                    "attempts": [item.to_json() for item in search.attempts],
+                    "formal_round": search.accepted_attempt,
+                },
+            ) from exc
+        budget = search.call_budget
+        case_count = len(gate2.cases)
+        return SCRCRunReport(
+            main_status=(
+                MainStatus.SCRC_CERTIFIED
+                if gate2.passed else MainStatus.GATE2_FAILED
+            ),
+            attempts=search.attempts,
+            accepted_attempt=search.accepted_attempt,
+            gate2=gate2,
+            j_necessity_status=search.j_necessity_status,
+            call_budget=CallBudget(
+                lift_calls=budget.lift_calls,
+                lift_physical_calls=budget.lift_physical_calls,
+                typecheck_calls=budget.typecheck_calls,
+                formal_gate1_rounds=budget.formal_gate1_rounds,
+                replay_normal_calls=budget.replay_normal_calls,
+                replay_masked_calls=budget.replay_masked_calls,
+                replay_physical_calls=budget.replay_physical_calls,
+                gate2_cases=case_count,
+                source_executions=case_count,
+                replay_executions=case_count,
+                refeval_executions=case_count,
+            ),
+        )
+
+    def run(self, request: SCRCRunRequest) -> SCRCRunReport:
+        search = self.search_gate1(request)
+        if search.closed:
+            return self.complete_gate2(request, search)
+        return SCRCRunReport(
+            main_status=MainStatus.NO_CLOSURE,
+            attempts=search.attempts,
+            accepted_attempt=None,
+            gate2=None,
+            j_necessity_status=None,
+            call_budget=search.call_budget,
+        )
+
 
 __all__ = [
     "CallBudget",
     "CandidateLiftError",
     "CandidateAttemptReport",
     "FeedbackKind",
+    "Gate1SearchStatus",
     "Gate1AttemptAdapter",
     "Gate2ExecutionAdapter",
     "HarnessBindingInstance",
@@ -605,6 +714,7 @@ __all__ = [
     "MAX_GATE1_ROUNDS",
     "MAX_PRE_REPLAY_REJECTIONS",
     "SCRCGateRunner",
+    "SCRCGate1SearchReport",
     "SCRCInfrastructureError",
     "SCRCRunDependencies",
     "SCRCRunReport",

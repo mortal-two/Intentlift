@@ -1,0 +1,34 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "case_id": "high_performance:liger_swiglu",
+  "frontend": "triton",
+  "grid": [
+    2
+  ],
+  "model": "gpt-5.6-sol",
+  "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3",
+  "provider": "gpt-5.6-sol",
+  "q_policy": "intentir.gate2.default.v1",
+  "reasoning_effort": "xhigh",
+  "run_masked_j": true,
+  "source_to_opaque": {
+    "BLOCK_SIZE": "c0",
+    "_swiglu_forward_kernel": "scrc_k0",
+    "a_ptr": "p0",
+    "a_row": "v4",
+    "b_ptr": "p1",
+    "b_row": "v5",
+    "c_ptr": "p2",
+    "c_row": "v6",
+    "col_offsets": "v2",
+    "gate_multiplier": "p4",
+    "mask": "v3",
+    "n_cols": "p5",
+    "program_id": "v1",
+    "silu": "scrc_k1",
+    "stride": "p3",
+    "x": "v0"
+  }
+}

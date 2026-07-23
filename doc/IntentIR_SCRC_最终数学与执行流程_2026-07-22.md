@@ -846,6 +846,40 @@ c_0=\operatorname{Bind}_H(C).
 
 如果论文希望给出概率声度，设 \(\mathcal F\) 表示隐藏测试生成前的全部历史，包括 Lift、relift、Replay、Gate1 和最终候选。最终候选在 \(\mathcal F\) 下已经固定。
 
+并行候选搜索时，令 branch `b=1,...,B`、branch 内正式候选 `k=1,...,K`：
+
+\[
+A_{b,k}=(J_{b,k},C_{b,k},\pi_{b,k},R_{b,k}).
+\]
+
+每个候选独立满足自己的 ownership、TypeCheck 与 source-blind Replay 合同。定义：
+
+\[
+\operatorname{PreClose}(A_{b,k})
+=
+\operatorname{TypeCheck}(J_{b,k},C_{b,k},\pi_{b,k})
+\land G_1(S,c_0,A_{b,k}).
+\]
+
+令 \(\tau_{\mathrm{pre}}\) 为所有 branch 的 Gate2 前记录，并用预先确定且不读取 Gate2 的选择函数：
+
+\[
+A^*=\sigma(\tau_{\mathrm{pre}}),
+\qquad
+A^*\in\{A_{b,k}:\operatorname{PreClose}(A_{b,k})\}.
+\]
+
+当前实现采用 search-wave barrier 后的固定 `(branch_id, formal_round)` 顺序。候选集合不是第四
+artifact；证书始终绑定这一个实际 winner：
+
+\[
+\boxed{
+\operatorname{SCRC\_CERTIFIED}(A^*)
+\iff
+\operatorname{PreClose}(A^*)\land G_{2,Q}(S,c_0,A^*;T).
+}
+\]
+
 随后独立采样：
 
 \[
@@ -906,6 +940,19 @@ Source–J disagreement mass 可以作为这一结论的一个充分特例，因
 它不是通过后的后验正确概率，也不是全输入域证明；三条比较边不会把 \(m\) 变成 \(3m\)，多个
 artifact 或重复选择的 batch 也不能不做额外错误率核算就直接复用单候选上界。
 
+本实现只在 \(A^*\) 选定后生成隐藏输入，并且只执行一次 Gate2，因此搜索过 \(BK\) 个 pre-Gate2
+候选不会给上界额外乘 `BK`。若另一实现对 `q` 个候选都执行 Gate2，并以任一通过为接受，则只能写：
+
+\[
+\Pr[\text{至少一个错误候选通过}]
+\le
+\sum_{i=1}^{q}(1-\varepsilon_i)^{m_i}
+\le
+\min\{1,q(1-\varepsilon)^m\}.
+\]
+
+不能写成 \((1-\varepsilon)^{mq}\)，也不能在 winner Gate2 失败后切换 sibling candidate。
+
 ---
 
 # 13. Relift：固定验证器下的自适应 witness 搜索
@@ -953,16 +1000,19 @@ R_{r+1}
 
 它影响在有限预算中找到可接受 witness 的概率，不改变 certificate predicate 的含义。
 
-证书绑定实际找到的 Replay \(R\)，不是不计搜索成本的抽象存在式 \(\exists R\)。实验必须分别
-报告首轮 TypeCheck 通过率、`closure@1/2/3`、Lift/Replay 与总 LLM 调用次数、`NO_CLOSURE`
-分类，以及 Gate1 闭合候选中的 Gate2 通过率；`closure@k` 指截至第 k 个正式轮次的累计闭合率。
+证书绑定实际找到的 Replay \(R\)，不是不计搜索成本的抽象存在式 \(\exists R\)。运行必须分别
+报告 branch 数 `B`、每分支正式预算 `K`、首轮 TypeCheck 通过率、`closure@branch/round`、
+time-to-first-closure、logical/physical Lift、normal/masked Replay、transport retry、未完成 branch
+与 `NO_CLOSURE_(B,K)` 分类。Gate2 只报告预选 winner 的三边结果。
 
 一次实验中：
 
 - schema、prompt、TypeCheck、observer、Q、compiler 和最大轮数保持不变；
 - 只搜索新的 \((J,C,\pi)\) 候选；
-- 例如最多三个 TypeCheck-valid Gate1 rounds；
-- 三轮仍失败即 `NO_CLOSURE`；
+- 当前 `B=5`，每 branch 最多 `K=3` 个 TypeCheck-valid Gate1 rounds；
+- 所有完整 branch 都未闭合才是 `NO_CLOSURE_(5,3)`；
+- Gate1 diff 只进入同 branch，sibling artifact/Replay/diff 永不共享；
+- 只从 Gate1-closed 候选中按固定 pre-Gate2 规则选择一个 winner；
 - Gate2 失败后本次实验结束，不再 relift。
 
 实验结束后才修改系统，并重新开始一场新实验。
@@ -1185,14 +1235,15 @@ Replay R ─ Bind same c0 ─ Compile_f ─ Observe/Canon Φ_(f,p) ─┘
 ## 图 5：实验内循环与系统改进外循环
 
 ```text
-固定系统规则
+固定系统规则；B=5 个 branch 并行
       │
-Lift → TypeCheck → fresh Replay → Gate1
-  ▲                               │
-  └──────── structured diff ──────┘
-          最多三轮
+每 branch: Lift → TypeCheck → fresh Replay → Gate1
+              ▲                               │
+              └── branch-local diff ──────────┘
+                   每 branch 最多 K=3 轮
 
-Gate1 PASS → Gate2 → CERTIFIED / FAILED
+pre-Gate2 sigma 选择一个 Gate1 PASS winner
+      → 生成隐藏输入 → Gate2 → CERTIFIED / FAILED
 
 NO_CLOSURE or GATE2_FAILED
       │

@@ -703,6 +703,11 @@ MutualInformation(pi, semantics) = 0
 SCRC_CERTIFIED = TypeCheck(J,C,pi) and Gate1 and Gate2
 ```
 
+候选 fan-out 时，上式逐 branch、逐完整 `(J,C,pi,Replay)` 检查。每个 π 只能由本候选的 `(J,C)`
+索引；不得引用 sibling candidate 的 handle、π topology、Gate1 diff、prior Replay 或对话。多个 π
+不能拼接成一个 witness。并行只扩大 adaptive witness search 的预算，不改变 TypeCheck 或证书
+谓词；Gate2 只检查在任何隐藏输入产生前按固定规则选中的一个 Gate1-closed witness。
+
 它证明：
 
 - π 满足 `(J,C)` dependent ownership contract；

@@ -702,6 +702,11 @@ Exec(Lower_t(J,C')) belongs to [[J]]
 C 的数学定义要求合法 C 不改变 `[[J]]`，但基础在线 Gate1/Gate2 只认证实际绑定
 `c0 = Bind_H(C)`；多值 intervention 不进入每个 artifact 的基础在线 Gate2。
 
+并行候选搜索不会产生“候选集合 C”或新的 proof artifact。每个 branch 都独立产生自己的
+`(J_b,C_b,pi_b)`，Harness 机械检查并为所有 branch 绑定同一次运行的实际 `c0`。sibling 的 C、
+artifact、Replay 或 diff 不得相互消费；最终证书只属于 pre-Gate2 选中的单个 branch，而不是对
+五个候选投票或对所有 admissible C 的证明。
+
 原因：
 
 - source 未必支持重新绑定；

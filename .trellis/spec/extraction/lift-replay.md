@@ -92,4 +92,9 @@ fingerprint、重复 components、score/rank 等非行动信息不应占满 reli
 relift diagnostic view 必须明确区分。
 
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
-最多三轮正式候选；仍不闭合则 `NO_CLOSURE`。
+
+当前同一 case 使用 `B=5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
+Gate1 round，`K` 包含首次候选。每个 branch 的 previous artifact、Gate1 diff、Lift conversation、
+Replay writer 与调用预算完全隔离；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
+artifact。只有五个完整 branch 都未闭合时才报告 `NO_CLOSURE_(5,3)`；infrastructure-incomplete
+branch 必须单独报告。

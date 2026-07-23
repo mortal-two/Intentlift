@@ -42,8 +42,10 @@ per-observation conformance；有限次 membership 不能被宣称为完整的�
 
 ## Gate2 输入模式
 
-Gate1 首次通过的 `(J,C,π,Replay)` 在本次 Gate2 期间不再修改，随后才产生 Gate2 输入。两种
-实验口径必须明确区分。
+多候选搜索先完成 pre-Gate2 wave，并仅依据 TypeCheck/Gate1 evidence 按固定
+`(branch_id, formal_round)` 顺序选择一个 `(J,C,π,Replay)` winner。选择函数看不到 Gate2 输入、
+输出或 verdict；winner 此后不再替换或修改，随后才产生 Gate2 输入。未选 sibling 不执行 Gate2，
+winner 失败后也不能 fallback。两种输入口径必须明确区分。
 
 ### 隐藏随机输入
 
