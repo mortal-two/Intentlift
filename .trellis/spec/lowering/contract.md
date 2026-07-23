@@ -108,5 +108,31 @@ relation，都必须同时增加其 denotation、正反例和真实 canary。
 - authorization、alias/effect、logical update 与 allowed-result obligation 必须实际实现或拒绝；
 - correctness 由独立 backend conformance 记录，不替代 Gate1/Gate2。
 
+## J-facing executable CUDA boundary
+
+production compile 与 execution 的正式接口是：
+
+```text
+L = LowerCUDA(LoweringRequest(J,C,target), concrete_extents)
+O_target = ExecuteCUDA(L, logical_inputs)
+```
+
+`L` 已持有生成它的唯一 J、确定性 Intent MLIR 与已编译程序；execution 不再接受另一份 J 或
+interface/BindingMap sidecar。调用者必须用 `J.intent.inputs` 的 logical handles 提供精确 input set；
+缺失、额外或 legacy `argN` positional fallback 在进入底层 runtime 前拒绝。shape/dtype/device 由从
+同一个 J 发射的静态 MLIR ABI机械校验。底层按 return 顺序产生的 `out0/out1/...` 只能在 backend
+内部一一映射回 `J.intent.outputs` handles，不能泄漏为上层接口或由 Harness 猜测。
+
+execution 必须复用 `L` 中已编译的 cubin，不得在运行阶段重新生成 J、替换 MLIR 或重新调用
+compiler。其正确性关系独立写成：
+
+```text
+Close_Q(ExecuteCUDA(L,x), RefEval(J,x))
+```
+
+这是 backend conformance，不是第四条 Gate2 edge，也不改变 `SCRC_CERTIFIED`。当前正式 J-facing
+CUDA API 对 alias/inout 继续 fail closed；若以后开放，destination/alias mapping 必须直接来自
+J.signature/B，而不能复用 Source Harness binding。
+
 Intent MLIR 可以作为 J 的确定性编码，但不得成为携带 interface、C/π 语义副本或 Gate verdict 的
 第二 wire truth。

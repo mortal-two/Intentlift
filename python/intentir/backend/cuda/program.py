@@ -27,11 +27,15 @@ from intentir.verify.gate1.model import (
     UpdateOrder,
 )
 
-from .pipeline import LoweredProgram, lower_to_cuda
+from .pipeline import LoweredProgram, execute_cuda_artifact, lower_to_cuda
 from .selection import LoweringTarget
 
 
 class CudaJLoweringError(ValueError):
+    pass
+
+
+class CudaJExecutionError(ValueError):
     pass
 
 
@@ -298,11 +302,72 @@ def lower_j_to_cuda(
     return CudaJLowering(request, consumption, mlir, artifact)
 
 
+def execute_j_cuda(
+    lowering: CudaJLowering,
+    inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Execute one compiled J lowering using only J-owned logical handles.
+
+    The MLIR-level orchestrator intentionally supports positional ``argN``
+    fallbacks for legacy callers.  This J-facing boundary does not: the exact
+    logical input set comes from the same accepted J that produced the cubin,
+    and ordered ``outN`` runtime buffers are mapped back to J output handles.
+    """
+
+    if not isinstance(lowering, CudaJLowering):
+        raise CudaJExecutionError("CUDA J execution requires CudaJLowering")
+    if not isinstance(inputs, Mapping):
+        raise CudaJExecutionError(
+            "CUDA J execution inputs must map J logical handles to values"
+        )
+    if any(not isinstance(name, str) for name in inputs):
+        raise CudaJExecutionError(
+            "CUDA J execution input keys must be J logical handle strings"
+        )
+    expected_inputs = tuple(item.name for item in lowering.request.j.intent.inputs)
+    provided = set(inputs)
+    expected = set(expected_inputs)
+    if provided != expected:
+        missing = sorted(expected - provided)
+        unexpected = sorted(provided - expected)
+        details: list[str] = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if unexpected:
+            details.append("unexpected=" + ",".join(unexpected))
+        raise CudaJExecutionError(
+            "CUDA J execution inputs differ from J logical inputs: "
+            + "; ".join(details)
+        )
+
+    runtime_outputs = execute_cuda_artifact(
+        lowering.artifact,
+        lowering.intent_mlir,
+        {name: inputs[name] for name in expected_inputs},
+    )
+    if not isinstance(runtime_outputs, Mapping):
+        raise CudaJExecutionError("CUDA runtime did not return an output mapping")
+    logical_outputs = tuple(item.name for item in lowering.request.j.intent.outputs)
+    runtime_keys = tuple(f"out{index}" for index in range(len(logical_outputs)))
+    if set(runtime_outputs) != set(runtime_keys):
+        raise CudaJExecutionError(
+            "CUDA runtime outputs differ from J logical outputs: expected "
+            f"{list(runtime_keys)}, got {sorted(runtime_outputs)}"
+        )
+    return {
+        logical_name: runtime_outputs[runtime_name]
+        for logical_name, runtime_name in zip(
+            logical_outputs, runtime_keys, strict=True
+        )
+    }
+
+
 def cuda_target(architecture: str, *, features: Sequence[str] = ()) -> BackendTarget:
     return BackendTarget("cuda", architecture, tuple(features))
 
 
 __all__ = [
-    "CudaJLowering", "CudaJLoweringError", "analyze_j_for_cuda",
-    "cuda_target", "lower_j_to_cuda",
+    "CudaJExecutionError", "CudaJLowering", "CudaJLoweringError",
+    "analyze_j_for_cuda", "cuda_target", "execute_j_cuda",
+    "lower_j_to_cuda",
 ]

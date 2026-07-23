@@ -686,6 +686,12 @@ J + C
 production lowerer可以消费、部分消费或忽略 C；但不能读取 pi 或 source-specific hidden binding。
 若它忽略未知 C，必须仍能从完整 J 走 generic correctness fallback。
 
+production execution 也不能重新接收一份 J 或独立 interface sidecar。已编译 lowering 持有唯一 J
+及由它生成的 target program；runtime input 必须以 J logical handles 精确绑定，底层顺序 output
+只能在 backend 内部确定性映射回 J outputs。缺失/额外/positional fallback 均 fail closed。该路径的
+正确性继续由 `Close_Q(Exec(Lower_t(J,C),x),RefEval(J,x))` 的独立 backend conformance 表达，不向
+Gate2 增加第四条边。
+
 ### 11.4 未来 retune 与 cost model
 
 未来若实现 target autotuning，可以在 backend 内部选择：
