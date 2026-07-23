@@ -1,0 +1,210 @@
+{
+  "aggregate_call_budget": {
+    "formal_gate1_rounds": 12,
+    "gate2_cases": 0,
+    "lift_calls": 14,
+    "lift_physical_calls": 103,
+    "refeval_executions": 0,
+    "replay_executions": 0,
+    "replay_masked_calls": 4,
+    "replay_normal_calls": 12,
+    "replay_physical_calls": 16,
+    "source_executions": 0,
+    "typecheck_calls": 12
+  },
+  "branches": [
+    {
+      "branch_id": 1,
+      "call_budget": {
+        "formal_gate1_rounds": 2,
+        "gate2_cases": 0,
+        "lift_calls": 2,
+        "lift_physical_calls": 14,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 1,
+        "replay_normal_calls": 2,
+        "replay_physical_calls": 3,
+        "source_executions": 0,
+        "typecheck_calls": 2
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": 2,
+        "attempt_stage_counts": {
+          "gate1_hard_mismatch": 1,
+          "replay_closed": 1
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-01",
+      "ordinal": 10,
+      "status": "gate1_closed"
+    },
+    {
+      "branch_id": 2,
+      "call_budget": {
+        "formal_gate1_rounds": 3,
+        "gate2_cases": 0,
+        "lift_calls": 5,
+        "lift_physical_calls": 35,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 0,
+        "replay_normal_calls": 3,
+        "replay_physical_calls": 3,
+        "source_executions": 0,
+        "typecheck_calls": 3
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": null,
+        "attempt_stage_counts": {
+          "gate1_hard_mismatch": 2,
+          "lift_response_rejected": 2,
+          "replay_compile_failed": 1
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "Gate1 hard mismatch: op_multiset, dataflow",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-02",
+      "ordinal": 10,
+      "status": "no_closure"
+    },
+    {
+      "branch_id": 3,
+      "call_budget": {
+        "formal_gate1_rounds": 2,
+        "gate2_cases": 0,
+        "lift_calls": 2,
+        "lift_physical_calls": 14,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 1,
+        "replay_normal_calls": 2,
+        "replay_physical_calls": 3,
+        "source_executions": 0,
+        "typecheck_calls": 2
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": 2,
+        "attempt_stage_counts": {
+          "gate1_hard_mismatch": 1,
+          "replay_closed": 1
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-03",
+      "ordinal": 10,
+      "status": "gate1_closed"
+    },
+    {
+      "branch_id": 4,
+      "call_budget": {
+        "formal_gate1_rounds": 3,
+        "gate2_cases": 0,
+        "lift_calls": 3,
+        "lift_physical_calls": 21,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 1,
+        "replay_normal_calls": 3,
+        "replay_physical_calls": 4,
+        "source_executions": 0,
+        "typecheck_calls": 3
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": 3,
+        "attempt_stage_counts": {
+          "gate1_hard_mismatch": 1,
+          "replay_closed": 1,
+          "replay_compile_failed": 1
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-04",
+      "ordinal": 10,
+      "status": "gate1_closed"
+    },
+    {
+      "branch_id": 5,
+      "call_budget": {
+        "formal_gate1_rounds": 2,
+        "gate2_cases": 0,
+        "lift_calls": 2,
+        "lift_physical_calls": 19,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 1,
+        "replay_normal_calls": 2,
+        "replay_physical_calls": 3,
+        "source_executions": 0,
+        "typecheck_calls": 2
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": 2,
+        "attempt_stage_counts": {
+          "gate1_hard_mismatch": 1,
+          "replay_closed": 1
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-05",
+      "ordinal": 10,
+      "status": "gate1_closed"
+    }
+  ],
+  "candidate_count": 5,
+  "case_id": "high_performance:liger_dyt",
+  "ordinal": 10,
+  "protocol": "intentir.scrc.candidate-fanout.v1",
+  "selection_rule": "lowest_branch_after_gate1_search_barrier.v1",
+  "status_counts": {
+    "gate1_closed": 4,
+    "no_closure": 1
+  },
+  "winner_branch_id": 1,
+  "winner_result": {
+    "call_budget": {
+      "formal_gate1_rounds": 2,
+      "gate2_cases": 1,
+      "lift_calls": 2,
+      "lift_physical_calls": 14,
+      "refeval_executions": 1,
+      "replay_executions": 1,
+      "replay_masked_calls": 1,
+      "replay_normal_calls": 2,
+      "replay_physical_calls": 3,
+      "source_executions": 1,
+      "typecheck_calls": 2
+    },
+    "case_id": "high_performance:liger_dyt",
+    "classification": "scrc_certified",
+    "details": {
+      "accepted_attempt": 2,
+      "attempt_stage_counts": {
+        "gate1_hard_mismatch": 1,
+        "replay_closed": 1
+      },
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
+      "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3",
+      "q_policy": "intentir.gate2.default.v1"
+    },
+    "diagnostic": "",
+    "evidence_path": "run-root://liger_dyt/fanout-001/candidate-01",
+    "j_necessity_status": "proved",
+    "main_status": "SCRC_CERTIFIED",
+    "ordinal": 10,
+    "representative_tier": "core.elementwise",
+    "source_file": "module://liger_kernel.ops.dyt"
+  }
+}

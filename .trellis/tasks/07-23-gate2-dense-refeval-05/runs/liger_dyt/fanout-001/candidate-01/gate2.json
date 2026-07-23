@@ -1,0 +1,206 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "3d5f52606ae86da3864307c9823e90bf9f9890b2a8ede4059dc1aca223684e97",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.triton-workload-adapter.v1",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 5,
+          "boundary_digest": "6a01586e9954eaf777236cf139309cb43f0af060e4dc076f66ee871b8744eccd",
+          "boundary_profile": "logical_domain_mask_erasure_v1",
+          "broadcast_consumer_count": 4,
+          "domain_relation_count": 2,
+          "effect_relation_count": 5,
+          "erased_fill_count": 3,
+          "execution_evidence": {
+            "abi_protocol": "intentir_cpu_ranked_memref_abi_v1",
+            "cache_hit": true,
+            "cache_key": "bf0a9b0e136b8f8524bff29798c2b4e2f36f1c664ce9ef6aa250058253566718",
+            "compiler_protocol": "intentir_cpu_mlir_shared_object_v1",
+            "compute_symbol": "intentir_cpu_compute_v1",
+            "entry_symbol": "_mlir_ciface_intentir_cpu_entry_v1",
+            "input_count": 5,
+            "isolated_process": true,
+            "lowering_pipeline_digest": "e58721406846541b0c4c8722724a4b4320e5afe7773b86652d2866850604ae9f",
+            "module_depends_on_runtime_values": false,
+            "native_call_count": 1,
+            "output_count": 1,
+            "runtime_protocol": "intentir_cpu_isolated_runtime_v1",
+            "scalar_module_digest": "8f13ba957e87188ea60142d0e97626479f70830efb4af4fe5444980cbc6cd3d5",
+            "schema": "intentir_cpu_execution_evidence_v1",
+            "shared_object_digest": "2c85b68c576a83ac5bc2c2638546c3b87fcb592fab1fd45503cdcde399860b18",
+            "toolchain_digest": "ba7b497205fee10be7ea3dc764cf78ff0bbe1d8ad794ac81ccd7f3ec2e34fd62"
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "af9aadf175b639fca50dc168bf75ce07bf5e9952d37fc329b189a6c1ac892804",
+          "path": "canonical J -> intent MLIR -> scalar CPU",
+          "predicated_access_count": 4,
+          "protocol": "canonical_j_scalar_cpu_mlir_v5",
+          "result_relation_count": 1,
+          "scalar_spec_digest": "8863ec2b3b6f0dceff380b16de809a83a3070fd8644f81d5d4074345c17f03fd"
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            1,
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 2.9802322387695312e-08,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            1,
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 2.9802322387695312e-08,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "failed_case_ids": [],
+  "passed": true,
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "high_performance:liger_dyt"
+}

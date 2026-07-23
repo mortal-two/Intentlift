@@ -1,6 +1,6 @@
 # Task 05：Gate2 dense pointwise RefEval 合同闭合
 
-> 状态：执行中
+> 状态：已完成
 >
 > 类型：SCRC 系统能力新增/收紧；不是在失败实验内反馈 Gate2，也不是 per-kernel oracle。
 
@@ -126,3 +126,25 @@ Task04 run-003 已获得：
   diff check 通过；run-002 evidence 中 provider secret 扫描为 0 命中。
 - 下一步先完成该全局合同的回归与 checkpoint，然后按现行 spec 的 `B=5,K=3` 启动独立并行
   branch canary；每个 branch 仍有独立 Lift/Replay/TypeCheck/Gate 预算，不能共享候选。
+
+## 2026-07-23 最终 canary 结果
+
+Task05 `fanout-001` 使用 knowledge-v6 从 Source 启动 5 个独立并行 branch。结果为：
+
+- 4/5 branch 获得 Gate1 closure，branch 1/3/5 在 formal round 2 闭合，branch 4 在 round 3 闭合；
+- 最低编号 branch 1 按现行 barrier 规则被选为 winner；其 candidate 通过 TypeCheck，normal Replay
+  closure 与 masked-J mismatch，`J_NECESSARY=PROVED`；
+- 隐藏 Gate2 执行 1 个 case，三条边全部通过：Source--Replay `max_abs_error=0`，Source--J 与
+  Replay--J 均为 `2.9802322387695312e-08`；
+- RefEval 成功使用 `logical_domain_mask_erasure_v1`，证据记录 4 个 predicated access、3 个 erased
+  fill；最终主状态为 `SCRC_CERTIFIED`。
+
+因此本任务已完成：dense direct-index/type/output-mapping/orphan-fill/base-lane 合同均进入公共
+knowledge/TypeCheck/consumer 路径，真实 DYT 已经通过完整认证，而不是只完成 Source--Replay。
+
+性能账本同时暴露下一项基础设施问题：winner 自身只使用 14 次 Lift physical call 与 3 次 Replay
+physical call，但 barrier 等待全部 branch，聚合执行了 103 次 Lift 与 16 次 Replay call，总墙钟约
+40 分钟。后续 fanout 必须改为 cooperative early-stop，不能再让最慢 NO_CLOSURE branch 支配墙钟。
+此外，下一系统重构应建立统一 typed `CanonicalJ` elaboration：LLM 只生成开放 wire，确定性代码
+负责 bounded syntax canonicalization/type elaboration，RefEval 与 production lowering 共用该唯一
+canonical input；不能继续要求 Lift 学习每个 MLIR consumer 的表面拼写。
