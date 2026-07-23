@@ -393,8 +393,101 @@ def test_mask_predicate_parser_separates_logical_guard_from_domain_bound() -> No
 
 def test_direct_index_parser_accepts_only_zero_as_a_literal_projection() -> None:
     assert _parse_direct_index("[0]") == ("0",)
+    assert _parse_direct_index("[i0, i1]") == ("i0", "i1")
     with pytest.raises(NotImplementedError, match="one bare axis"):
         _parse_direct_index("[1]")
+
+
+def _make_masked_2d_pointwise_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = ["x0", "x1"]
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    operation = artifact.j.intent.body[0]
+    operation.attrs["fn"] = "tanh"
+    operation.type = {"dtype": "f32", "shape": ["x0", "x1"]}
+    artifact.j.boundary.domains = {
+        "d0": "0 <= i0 and i0 < x0",
+        "d1": "0 <= i1 and i1 < x1",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0",
+            predicate="0 <= i1 and i1 < x1",
+            fill_value=0.0,
+            node_ref="n0",
+            index_expression="[i0, i1]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1",
+            predicate="0 <= i1 and i1 < x1",
+            node_ref="n0",
+            index_expression="[i0, i1]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+    artifact.j.boundary.output_mappings = []
+    return artifact
+
+
+def test_scalar_e_j_erases_2d_pointwise_full_domain_mask() -> None:
+    artifact = _make_masked_2d_pointwise_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+    assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("unbracketed", "one bare axis or '[axis0, ...]'"),
+        ("missing_type", "store producer type differs"),
+        ("redundant_mapping", "output destination relation is incomplete"),
+    ],
+)
+def test_scalar_e_j_2d_pointwise_contract_fails_closed(
+    mutation: str,
+    expected: str,
+) -> None:
+    artifact = _make_masked_2d_pointwise_artifact()
+    if mutation == "unbracketed":
+        artifact.j.boundary.accesses[0].index_expression = "i0,i1"
+    elif mutation == "missing_type":
+        artifact.j.intent.body[0].type = None
+    elif mutation == "redundant_mapping":
+        artifact.j.boundary.output_mappings = [
+            OutputMapping("t1", "t1", "n0")
+        ]
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"input": np.arange(8, dtype=np.float32).reshape(2, 4)},
+    )
+
+    assert not result.ok
+    assert expected in (result.error or "")
 
 
 @pytest.mark.parametrize(

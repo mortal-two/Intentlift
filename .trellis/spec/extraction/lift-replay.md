@@ -30,6 +30,12 @@ operator 或 result 的逻辑数据，必须声明 dtype 相容、shape `[]` 的
 进入 J dataflow；只有 integral extent-only handle 才绑定 `x*`。value 参数不能为了复用现成 ID 而
 绑定方向或 dtype 不相容的 output tensor。
 
+对普通 dense logical access，Lift 使用 RefEval/production 共享的 portable direct-index 拼写：rank-1
+用 bare axis，rank-0/rank-N 用 `[]`/`[axis0, ...]`，不得用未括号化逗号列表。predicated pure
+functional boundary 的 observable store producer 必须声明与 output 一致的 result type。op 直接产生
+同名 output handle 时不声明冗余 `output_mappings`；只有显式 function `returns` 重绑定存在时 mapping
+才出现并与其完全一致。这些是全局 J wire/consumer 合同，不是 per-kernel Replay hint。
+
 provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
 round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
 和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或

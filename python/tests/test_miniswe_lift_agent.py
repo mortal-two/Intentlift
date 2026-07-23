@@ -113,7 +113,7 @@ def source_copy(a, b, n, block: tl.constexpr):
 def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v3"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v4"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -146,6 +146,8 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
                     "python /input/tools/schema_query.py "
                     "/input/schema/artifact.schema.json section access; "
                     "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json section output_mapping; "
+                    "python /input/tools/schema_query.py "
                     "/input/schema/artifact.schema.json section pi_instance"
                 )
             }
@@ -162,6 +164,8 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "rank-0 J input" in output
     assert "never names a v* SSA value" in output
     assert '"access_id"' in output
+    assert "unbracketed comma list" in output
+    assert "leave output_mappings empty" in output
     assert '"semantic_ref"' in output
     assert len(output.splitlines()) < 350
 

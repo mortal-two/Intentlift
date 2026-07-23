@@ -661,6 +661,16 @@ Every J.boundary access must have exactly one matching effect. The effect's
 kind, target, node_ref (including null), and access_ref must agree exactly with
 the access; never attach an otherwise matching access to a different node.
 
+Use the closed portable spelling for direct dense index_expression: a rank-1
+tensor uses one bare logical axis such as k0; rank 0 or rank N uses [] or an
+ordered bracketed list such as [k1, k0]. Never emit an unbracketed comma list
+such as k1,k0. For a pure-functional boundary with any access predicate/fill,
+the observable store-producing op must carry an explicit type whose dtype and
+shape exactly match the J output. If that op directly produces the same output
+handle, boundary.output_mappings stays empty. Emit output_mappings only when an
+explicit IntentFunction.returns binding maps an output to a different value,
+and make the two relations exactly identical.
+
 Preserve every compiler-visible sensitive representation event in the Source,
 including explicit or mandatory implicit integer widening, numeric cast,
 accumulation dtype, reassociation, and native/privatized update choice. J owns

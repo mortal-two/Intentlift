@@ -144,6 +144,13 @@ def _boundary_schema() -> dict[str, Any]:
             "index_expression": _STRING,
         },
         BOUNDARY_ACCESS_REQUIRED_FIELDS,
+        description=(
+            "Portable logical access. For direct dense projection, rank 1 uses "
+            "one bare axis such as k0; rank 0 or rank N uses [] or bracketed "
+            "ordered axes such as [k1, k0]. An unbracketed comma list such as "
+            "k1,k0 is not a direct index expression. General non-direct affine "
+            "relations may be represented but can be unsupported by RefEval."
+        ),
     )
     broadcast = _closed_object(
         {
@@ -189,6 +196,12 @@ def _boundary_schema() -> dict[str, Any]:
             "node_ref": _nullable(_STRING),
         },
         ("output", "value"),
+        description=(
+            "Declare only when IntentFunction.returns explicitly rebinds an "
+            "output to another J value; it must match that return exactly. "
+            "When an op directly produces the same output handle, leave "
+            "output_mappings empty."
+        ),
     )
     reduction = _closed_object(
         {

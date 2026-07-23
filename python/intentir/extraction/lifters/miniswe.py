@@ -32,7 +32,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v3"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v4"
 
 
 def _usage_and_response_identity(

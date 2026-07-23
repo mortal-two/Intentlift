@@ -102,13 +102,20 @@ def render_boundary_access_wire_grammar() -> str:
         "The J boundary is one closed object with exactly these fields: "
         f"{', '.join(BOUNDARY_WIRE_FIELDS)}. Every load, store, or update "
         "access requires a non-empty ordered logical index_expression, including "
-        "scalar accesses. predicate, fill_value, and logical domains belong only "
+        "scalar accesses. A direct rank-1 projection is one bare axis; a direct "
+        "rank-0/rank-N projection uses []/[axis0, ...]. Never spell a direct "
+        "multi-axis projection as an unbracketed comma list. predicate, "
+        "fill_value, and logical domains belong only "
         "to J when present in source semantics. Preserve every source logical "
         "domain, access predicate, and masked-load fill even when the current "
         "bound invocation makes a mask tautological. Every access has exactly "
         "one EffectSpec whose kind, target, node_ref (including null), and "
         "access_ref exactly match that access. Do not move these facts to pi, "
-        "omit the matching effect, or invent them when the source has none."
+        "omit the matching effect, or invent them when the source has none. "
+        "For a predicated pure-functional boundary, the observable store "
+        "producer carries an explicit result type equal to the J output. A "
+        "direct same-handle output needs no output_mapping; output_mappings "
+        "exist only for an explicit function returns rebinding and must match it."
     )
 
 
