@@ -34,6 +34,7 @@ minisweagent = [
     "config/*.yaml",
     "config/**/*.yaml",
     "config/*.md",
+    "config/*.json",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,107 @@
+{
+  "schema": "intentir.scrc.artifact.v1",
+  "j": {
+    "kernel_id": "scrc_k0",
+    "intent": {
+      "intent_function": {
+        "name": "scrc_j0",
+        "inputs": [
+          {"name": "t0", "dtype": "f32", "shape": ["x0"]}
+        ],
+        "outputs": [
+          {"name": "t1", "dtype": "f32", "shape": ["x0"]}
+        ],
+        "body": [
+          {
+            "op": "map_unary",
+            "id": "n0",
+            "result": "t1",
+            "operands": ["t0"],
+            "attrs": {"fn": "identity"}
+          }
+        ]
+      }
+    },
+    "node_ids": {"n0": "body[0]"},
+    "boundary": {
+      "domains": {},
+      "accesses": [],
+      "broadcasts": [],
+      "aliases": [],
+      "effects": [],
+      "output_mappings": [],
+      "reductions": [],
+      "index_bounds": [],
+      "updates": [],
+      "result_relations": [],
+      "realization_authorizations": []
+    },
+    "signature": {
+      "parameters": [
+        {
+          "name": "p0",
+          "kind": "pointer",
+          "mode": "input",
+          "dtype": "f32",
+          "rank": 1,
+          "logical_ref": "t0"
+        },
+        {
+          "name": "p1",
+          "kind": "pointer",
+          "mode": "output",
+          "dtype": "f32",
+          "rank": 1,
+          "logical_ref": "t1"
+        },
+        {
+          "name": "p2",
+          "kind": "scalar",
+          "mode": "value",
+          "dtype": "i32",
+          "logical_ref": "x0"
+        }
+      ]
+    },
+    "scopes": [
+      {
+        "scope_id": "q0",
+        "kind": "function",
+        "parent_scope": null,
+        "captures": [],
+        "definitions": ["t0", "t1"],
+        "effects": []
+      }
+    ],
+    "storage": []
+  },
+  "c": {
+    "slots": [
+      {
+        "name": "c0",
+        "kind": "constexpr",
+        "role": "tile_extent",
+        "value_type": "int",
+        "required": true
+      }
+    ],
+    "values": {"c0": 1024}
+  },
+  "pi": {
+    "regions": [
+      {"id": "r0", "parent": null, "placement": "root"}
+    ],
+    "instances": [
+      {
+        "id": "i0",
+        "semantic_ref": "n0",
+        "region": "r0",
+        "mechanism": "realize"
+      }
+    ],
+    "routes": [],
+    "order": [],
+    "sharing": [],
+    "refinements": []
+  }
+}

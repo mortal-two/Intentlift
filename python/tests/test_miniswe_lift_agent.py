@@ -10,8 +10,14 @@ import threading
 import pytest
 
 from direct_fixtures import make_copy_artifact
-from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
+from intentir.extraction.lifters.miniswe import (
+    MINISWE_LIFT_KNOWLEDGE,
+    MiniSWELiftAdapter,
+    _input_files,
+)
+from intentir.extraction.lifters.scrc import prepare_scrc_lift
 from intentir.extraction.providers.provider import ProviderConfig
+from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.scrc_runner import (
     FeedbackKind,
     HarnessBindingInstance,
@@ -36,6 +42,7 @@ from minisweagent.run.intentir_lift import (
     IntentIRLiftRunError,
     IntentIRLiftRunResult,
     create_intentir_lift_model,
+    load_intentir_lift_config,
     run_intentir_lift,
 )
 
@@ -83,6 +90,128 @@ def _workspace() -> IntentIRLiftWorkspace:
             "schema/artifact.schema.json": "{}",
         }
     )
+
+
+def _real_lift_input_files() -> dict[str, str]:
+    prepared = prepare_scrc_lift(
+        """@triton.jit
+def source_copy(a, b, n, block: tl.constexpr):
+    offsets = tl.arange(0, block)
+    mask = offsets < n
+    value = tl.load(a + offsets, mask=mask)
+    tl.store(b + offsets, value, mask=mask)
+"""
+    )
+    return _input_files(prepared)
+
+
+def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
+    files = _real_lift_input_files()
+
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v2"
+    assert "knowledge/minimal_example.json" in files
+    assert "knowledge/intent_ops.md" in files
+    assert "tools/schema_query.py" in files
+    assert "map_binary" in files["knowledge/intent_ops.md"]
+    assert "Do not page through the raw schema" in files["README.md"]
+
+
+def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
+    workspace = IntentIRLiftWorkspace.create(_real_lift_input_files())
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        result = environment.execute(
+            {
+                "command": (
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json top; "
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json catalog; "
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json op map_binary; "
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json section parameter; "
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json section access; "
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json section pi_instance"
+                )
+            }
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result["returncode"] == 0, result
+    output = result["output"]
+    assert "root: required=['schema', 'j', 'c', 'pi']" in output
+    assert "ordinary operations: map_binary, map_unary" in output
+    assert 'fn in' in output
+    assert '"logical_ref"' in output
+    assert '"access_id"' in output
+    assert '"semantic_ref"' in output
+    assert len(output.splitlines()) < 350
+
+
+def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
+    files = _real_lift_input_files()
+    payload = json.loads(files["knowledge/minimal_example.json"])
+    artifact = Gate1Artifact.from_json(payload)
+    assert artifact.to_json()["j"]["scopes"][0]["scope_id"] == "q0"
+
+    workspace = IntentIRLiftWorkspace.create(files)
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        result = environment.execute(
+            {
+                "command": (
+                    "cp /input/knowledge/minimal_example.json "
+                    "/output/candidate.json && "
+                    "python /input/tools/validate_candidate.py "
+                    "/input/schema/artifact.schema.json "
+                    "/output/candidate.json"
+                )
+            }
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result["returncode"] == 0, result
+    assert "static schema: PASS" in result["output"]
+
+
+def test_intentir_observation_exposes_remaining_turn_budget() -> None:
+    assert load_intentir_lift_config()["agent"]["step_limit"] == 10
+    model = create_intentir_lift_model(
+        model_name="test",
+        api_base="http://provider.invalid/v1",
+        api_key="not-used",
+        reasoning_effort="xhigh",
+        timeout_seconds=1,
+    )
+    message = {
+        "extra": {
+            "actions": [
+                {"command": "true", "tool_call_id": "call-budget"}
+            ]
+        }
+    }
+    observation = model.format_observation_messages(
+        message,
+        [{"returncode": 0, "output": "ok", "exception_info": ""}],
+        {"n_model_calls": 7, "step_limit": 10},
+    )[0]
+    rendered = json.loads(observation["output"])
+
+    assert rendered["turn_budget"] == {"used": 7, "limit": 10, "remaining": 3}
+    assert rendered["directive"].startswith("Stop browsing")
 
 
 def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:

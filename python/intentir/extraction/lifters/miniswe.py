@@ -28,10 +28,11 @@ from .scrc import (
     prepare_scrc_lift,
 )
 from .scrc_schema import scrc_lift_core_json_schema
+from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v1"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v2"
 
 
 def _usage_and_response_identity(
@@ -133,6 +134,12 @@ def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
     preflight = (
         Path(package_dir) / "config" / "intentir_lift_preflight.md"
     ).read_text(encoding="utf-8")
+    schema_query = (
+        Path(package_dir) / "config" / "intentir_schema_query.py"
+    ).read_text(encoding="utf-8")
+    minimal_example = (
+        Path(package_dir) / "config" / "intentir_lift_example.json"
+    ).read_text(encoding="utf-8")
     readme = """# IntentIR Lift input
 
 This directory is the complete allowlisted input for one fresh Lift round.
@@ -143,12 +150,26 @@ This directory is the complete allowlisted input for one fresh Lift round.
   allowed previous TypeCheck/Gate1 feedback and previous candidate.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
+- `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
 - `knowledge/preflight.md`: short source-neutral handle/ownership checklist.
+- `knowledge/minimal_example.json`: source-neutral wire-shape example only;
+  replace all semantics, handles, shapes, values, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
+- `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
+  `section`) so raw 1400-line schema never needs to be paged end-to-end.
 
-Recommended workflow: inspect the source and Harness view; search the contract
-and schema only where needed; draft in `/work`; write the complete object to
-`/output/candidate.json`; then run:
+Do not page through the raw schema. Read Source/Harness and the short contract,
+then use the example plus one compact query such as:
+
+`python /input/tools/schema_query.py /input/schema/artifact.schema.json top`
+
+`python /input/tools/schema_query.py /input/schema/artifact.schema.json catalog`
+
+Query exact `op NAME` or leaf `section NAME` only when needed. Useful leaf
+sections include `access`, `effect`, `result_relation`, `authorization`,
+`scope`, `c_slot`, `pi_instance`, `pi_route`, and `pi_refinement`. Create the
+first complete candidate early, then let validator errors drive further lookup.
+Write it to `/output/candidate.json`; then run:
 
 `python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`
 
@@ -173,8 +194,11 @@ The validator is not TypeCheck and does not certify the artifact.
         )
         + "\n",
         "knowledge/lift_contract.md": request.instructions,
+        "knowledge/intent_ops.md": INTENTIR_OPERATION_REFERENCE,
         "knowledge/preflight.md": preflight,
+        "knowledge/minimal_example.json": minimal_example,
         "tools/validate_candidate.py": validator,
+        "tools/schema_query.py": schema_query,
     }
 
 

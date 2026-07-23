@@ -16,6 +16,12 @@ agent:
     response. Do not emit private chain-of-thought. When candidate.json is
     complete and the static validator passes, finish with a separate command:
     `printf 'INTENTIR_LIFT_SUBMIT\n'`.
+
+    This is a construction task, not a schema-reading task. Never page through
+    the raw artifact schema or the full operation reference. Use the supplied
+    compact schema_query tool and minimal wire example. Produce a first complete
+    candidate by model turn 5, then reserve the remaining turns for static
+    validation, focused fixes, and submission.
   instance_template: |
     Read /input/README.md first. It indexes the anonymous Source, trusted
     Harness compiler view, current artifact schema, Lift contract, and any
@@ -24,16 +30,25 @@ agent:
     Work incrementally if useful, but submit exactly one complete
     /output/candidate.json. The submission command only delivers the candidate;
     it does not certify it. Do not create any other file under /output.
-  step_limit: 8
+
+    Bounded workflow:
+    1. Read README, Source, Harness view, feedback, contract, and preflight in
+       one shell action.
+    2. Read the minimal example and run schema_query `top` + `catalog` in one
+       shell action; query only exact operations and leaf sections needed by
+       Source, combining those lookups in one shell action.
+    3. Write the complete first candidate by turn 5.
+    4. Run the static validator, fix focused errors, and submit before budget.
+  step_limit: 10
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 2
 model:
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 3 %}, "directive": "Stop browsing. Finish, validate, and submit the complete candidate now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 3 %}, "directive": "Stop browsing. Finish, validate, and submit the complete candidate now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}

@@ -28,7 +28,9 @@ provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不
 round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
 和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或
 认证谓词。上限耗尽可以结束为 `NO_CLOSURE`，但报告必须显示正式 Gate1 round 为 0，而不是伪造
-一次 Gate1 失败。
+一次 Gate1 失败。worker 连 candidate 都没有提交时同样属于 pre-TypeCheck Lift rejection；报告必须
+显式显示 submitted candidate、canonical decode、TypeCheck、Replay 与 Gate 执行数均为 0，不能
+把 aggregate `NO_CLOSURE` 解读成一个已经进入 Gate1 的 artifact 未闭合。
 
 ### 有界 agent 实现
 
@@ -55,6 +57,11 @@ agent model turns 与实际 provider calls。
 agent shell 必须 fail closed 地隔离：`/input` 只读、`/output` 只允许唯一 candidate、私有 `/work`
 可写、网络 namespace 隔离、宿主环境清空，且不挂载仓库、历史 evidence、Gate executable 或
 provider secret。隔离设施不可用时报告 infrastructure failure，不得降级到宿主 LocalEnvironment。
+
+> 实现状态（2026-07-23，不是认证证据）：第一次 DYT canary 执行了 3 个 fresh MiniSWE Lift
+> invocation，每个达到 8 model turn，共 24 次物理 provider 调用；三次均在浏览 schema 时耗尽预算，
+> 未提交 candidate，因此 canonical decode、TypeCheck、Replay、Gate1 和 Gate2 均未执行。该记录
+> 只用于改进 Lift worker，不改变任何认证谓词；详细数据见 Task04 的 run-001。
 
 ## Replay 前检查
 

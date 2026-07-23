@@ -178,7 +178,7 @@ prior Replay、Gate2 evidence、其他候选、provider secret 或正式 Gate ex
 - IntentIR 模式直接复用 `DefaultAgent + LitellmResponseModel`，从既有
   `llm_providers.local.json` 读取 CPA，未新增 `CPAResponsesModel`；本地假 CPA 已机械确认请求走
   `/v1/responses`、model 正确、`reasoning.effort=xhigh`、`parallel_tool_calls=false`；
-- 一个 invocation 最多八个串行 model/action turn，每个 response 恰好一个 bash action；模型层、
+- 一个 invocation 使用有限串行 model/action turn，每个 response 恰好一个 bash action；模型层、
   LiteLLM 与 OpenAI transport 的隐式 retry 均关闭，IntentIR 模式不参加 upstream process-global
   model budget；
 - sandbox 已机械验证 `/input` 只读，宿主 repo、`intentir` package、provider secret 与网络不可见；
@@ -190,5 +190,30 @@ prior Replay、Gate2 evidence、其他候选、provider secret 或正式 Gate ex
   license 与 upstream provenance；无 extra 的 core wheel 仍可 `import intentir` 和
   `import minisweagent`；
 - 定向 agent/CPA/隔离/并发/预算测试通过；最终全量 Python 回归为 `818 passed`，`compileall` 与
-  staged diff check 通过。下一步只剩使用显式 `--lift-backend miniswe --effort xhigh` 执行真实
-  `liger_dyt` 单分支 smoke，确认实际多 turn 延迟后再恢复五分支 fan-out。
+  staged diff check 通过。
+
+## 2026-07-23 DYT implementation canary：run-001
+
+本次运行是 MiniSWE Lift backend 的实现 canary，不是 SCRC 认证实验：
+
+- 命令显式选择 `--lift-backend miniswe --effort xhigh`；
+- fresh Lift invocations 为 3，每个 invocation 恰好 8 个 model turn；
+- physical provider calls 为 24；
+- 三个 worker 耗时分别为 49.073、36.893、45.317 秒；
+- submitted `(J,C,pi)` candidate 为 0；
+- canonical decode、TypeCheck、Replay、Gate1、RefEval 与 Gate2 执行次数均为 0；
+- workload 的阶段分类是 `lift_response_rejected`；aggregate `main_status=NO_CLOSURE` 只表示本次
+  有限搜索没有 winner，不能解释成 Gate1 已执行后不闭合。
+
+三个 invocation 均为独立的新 session/workspace。它们读取 Source、Harness view 与合同后，把剩余
+turn 全部用于逐段浏览 1420 行静态 schema，最终以 `LimitsExceeded` 结束，没有 artifact 越过 Lift
+输出边界。因此这份记录只定位 MiniSWE 的 schema discovery、任务引导和 action-budget 分配问题；
+它不构成 TypeCheck failure、Gate1 failure 或 SCRC certificate evidence，也不能说明 `(J,C,pi)`
+设计过严。完整运行记录保存在 `runs/liger_dyt/run-001/`。
+
+针对该失败，knowledge profile 升级为 `intentir.lift-knowledge.v2`：加入固定、source-neutral 的合法
+wire 示例与全局 IntentIR operation reference，提供 `top/catalog/op/section` 的确定性叶子查询，明确
+禁止翻页 raw schema，要求最迟第 5 turn 写出首个完整 candidate，并在每次 observation 中显示剩余
+turn。预算小幅调整为 10 turn，新增内容不进入 artifact、Replay 或 certificate predicate。定向验证
+为 `21 passed`，全量 Python 回归为 `822 passed`，`compileall` 与 diff check 通过。下一步使用同一
+case 运行 run-002；只有单 worker 能稳定提交 candidate 后才恢复五分支 fan-out。
