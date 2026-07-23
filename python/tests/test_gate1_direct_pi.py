@@ -482,6 +482,9 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
     assert "map declaration-ordered stages" in contract
+    assert "merge before one pointer addition" in contract
+    assert "even if that grid extent is one" in contract
+    assert "do not invent a second pointer addition" in contract
     assert "from triton.language.extra.cuda import libdevice" in contract
     assert "Directly importing a libdevice function is rejected" in contract
     assert "Every pi.refinements entry is mandatory" in contract
@@ -513,6 +516,8 @@ def test_lift_preserves_degenerate_program_coordinate_topology() -> None:
     assert "program-coordinate occurrence" in normalized
     assert "even when the current concrete grid extent on that axis is one" in normalized
     assert "both a program-coordinate path into address_base" in normalized
+    assert "merges them before one pointer addition" in normalized
+    assert "do not invent a second pointer addition" in normalized
 
 
 @pytest.mark.parametrize(
@@ -658,7 +663,8 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert "entering address_lane is lane-varying" in mechanism_grammar
     assert "must not invent program_id" in mechanism_grammar
     assert "Integer coordinate arithmetic is a realize stage" in mechanism_grammar
-    assert "must not invent an extra pointer address_base" in mechanism_grammar
+    assert "does not require a second pointer addition" in mechanism_grammar
+    assert "no separable program-uniform contribution" in mechanism_grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"
     ]["pattern"] == "^i[0-9]+$"

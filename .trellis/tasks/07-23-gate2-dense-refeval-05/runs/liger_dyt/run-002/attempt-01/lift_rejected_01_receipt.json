@@ -1,0 +1,15 @@
+{
+  "attempts": 9,
+  "backend": "minisweagent.intentir-lift.v1",
+  "diagnostic": "SchemaError: J.signature parameter 'p5' rank None differs from logical tensor 't4' rank 0",
+  "elapsed_ms": 341215.5326772481,
+  "model": "gpt-5.6-sol",
+  "response_id": "resp_bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVyOm9wZW5haTttb2RlbF9pZDpOb25lO3Jlc3BvbnNlX2lkOnJlc3BfMDhmYjdkMmE4ZGUxZWQ5ZDAxNmE2MWQzNGNhYmM0ODE5Yjg1NjgwYWNmNDMyYjhmZDQ=",
+  "response_model": "gpt-5.6-sol",
+  "termination_status": "Submitted",
+  "usage": {
+    "input_tokens": 143209,
+    "output_tokens": 17245,
+    "total_tokens": 160454
+  }
+}

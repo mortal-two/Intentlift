@@ -144,6 +144,12 @@ Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 bind
 `J.boundary.reductions.tile_axis` 才是 Triton reduction call 使用的物理 tile axis。这里都是固定、
 source-neutral 的前端合同，不是 per-kernel hint。
 
+base/lane 是 address contribution 角色而不是 pointer-add 计数。Source 若形成可分离的
+program-uniform integer base 与 lane offset，并在一次 pointer add 前合并，π 仍保留 program path
+进入 `address_base`、再 route 到 `address_lane` 的拓扑；Replay 保留两个 integer stage、一个
+pointer add，且即使当前 grid extent 为 1 也不能用常量替换 program coordinate。只有 Source 没有
+可分离 program-uniform contribution 时才允许 lone `address_lane`。
+
 ## Gate1 失败与 relift
 
 Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读取 Source、上一轮完整

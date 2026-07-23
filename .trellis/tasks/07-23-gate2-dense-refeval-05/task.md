@@ -104,3 +104,25 @@ Task04 run-003 已获得：
   Python 回归 `833 passed`，`compileall` 与 diff check 通过。
 - `run-001` 已结束且 Gate2 结果不会回流；下一步提交本 checkpoint，再从 Source 启动全新 v5
   canary。只有新的完整 artifact 自行通过 TypeCheck、Gate1 与 Gate2 三边才完成本任务。
+
+## 2026-07-23 v5 canary 与 coordinate 合同纠错
+
+- Task05 `run-002` 从 Source 启动，未读取 run-001 candidate/Gate2：4 次 fresh Lift 共 29 次物理
+  provider call；第 1 次因 rank-0 constexpr signature 在 canonical decode 被拒，后 3 次均通过
+  TypeCheck，执行 3 个 formal Gate1 round。结果为 1 次 Replay compile failure、2 次 hard mismatch，
+  `NO_CLOSURE`；Gate2/Source/RefEval/masked-J 均未执行。
+- v5 access 合同已生效：三个 TypeCheck-valid artifact 均满足 orphan-fill invariant，run-001 的
+  RefEval 错误没有复现。round 1 的 Replay 错用不存在的 `tl.tanh`；round 2 的 Lift 又把 logical
+  `tanh` 改写为 sigmoid 展开；round 3 的 J 恢复 `tanh` 且 Replay 正确使用 `libdevice.tanh`，但
+  Replay 把 Source 的 `program_id(0)` 常量化为 0，仅保留一个 `tt.get_program_id`，因此缺少
+  `arith.muli/arith.addi` 并改变全部 mask/address fingerprint。
+- 该结果暴露既有 base/lane 文案冲突：一处要求 program-coordinate path 进入 `address_base`，另一处
+  又把“一次 pointer add 前合并的完整 integer coordinate”写成 lone `address_lane`。knowledge-v6
+  将现有 mechanism 消歧为 address-contribution 角色：可分离的 program-uniform integer base 必须
+  进入 `address_base` 再 route 到 `address_lane`；Replay 保留两个 integer stage、仍只生成一个
+  pointer add，且 grid extent 为 1 时也不得常量化 program path。没有增加 mechanism enum、公式、
+  frontend API 或 DYT hint。
+- knowledge-v6 合同一致性聚焦回归 `100 passed`、全量 Python 回归 `833 passed`，`compileall` 与
+  diff check 通过；run-002 evidence 中 provider secret 扫描为 0 命中。
+- 下一步先完成该全局合同的回归与 checkpoint，然后按现行 spec 的 `B=5,K=3` 启动独立并行
+  branch canary；每个 branch 仍有独立 Lift/Replay/TypeCheck/Gate 预算，不能共享候选。

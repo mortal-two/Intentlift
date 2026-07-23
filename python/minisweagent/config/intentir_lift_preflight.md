@@ -30,15 +30,21 @@ the artifact schema or external TypeCheck.
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;
    declare a mapping only for a matching explicit function `returns` rebinding.
-9. Every sensitive pi refinement `auth_ref` names an actually declared J
+9. Preserve every Source program/grid-coordinate occurrence as a distinct
+   domain-anchored `realize` path in a program region, even when its current grid
+   extent is one. Its program-uniform path enters `address_base`; the lane/C path
+   enters `address_lane`. If the two integer contributions merge before one
+   pointer addition, keep both roles and their route without inventing a second
+   pointer add. Never replace the program path with constant zero.
+10. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-10. C contains only the exact trusted scheduling slots and values from
+11. C contains only the exact trusted scheduling slots and values from
    `harness_view.json`. It contains no operator, predicate, formula, strategy,
    source/API name, or semantic constant.
-11. Pi contains anonymous realization relations only. It contains no dtype,
+12. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-12. Run the supplied static schema validator. Passing it only means the JSON
+13. Run the supplied static schema validator. Passing it only means the JSON
    envelope is well formed; the external runner still performs canonical
    parsing, dependent TypeCheck, Replay, and Gates in a new phase.

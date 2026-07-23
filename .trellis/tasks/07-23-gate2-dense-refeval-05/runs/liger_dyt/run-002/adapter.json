@@ -1,0 +1,70 @@
+{
+  "buffers": [
+    {
+      "dtype": "f32",
+      "formal": "X",
+      "output_key": null,
+      "role": "input",
+      "shape": [
+        2,
+        127
+      ]
+    },
+    {
+      "dtype": "f32",
+      "formal": "Y",
+      "output_key": "y",
+      "role": "output",
+      "shape": [
+        2,
+        127
+      ]
+    },
+    {
+      "dtype": "f32",
+      "formal": "Alpha",
+      "output_key": null,
+      "role": "input",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "dtype": "f32",
+      "formal": "Gamma",
+      "output_key": null,
+      "role": "input",
+      "shape": [
+        127
+      ]
+    },
+    {
+      "dtype": "f32",
+      "formal": "Beta",
+      "output_key": null,
+      "role": "input",
+      "shape": [
+        127
+      ]
+    }
+  ],
+  "c_values": {
+    "BLOCK_N": 128
+  },
+  "case_id": "high_performance:liger_dyt",
+  "grid": [
+    1,
+    2
+  ],
+  "grid_contract": [
+    "ceil_div(N,BLOCK_N)",
+    "rows"
+  ],
+  "protocol": "intentir.scrc.triton-workload-adapter.v1",
+  "scalars": [],
+  "seed": 101,
+  "semantic_constexprs": {
+    "HAVE_BETA": true,
+    "N": 127
+  }
+}

@@ -77,6 +77,12 @@ scalar dependency path 先进入 `address_base` 再进入 transfer，表示 prog
 区分，`U_f` 再把它映射到公共前端 API。该规则不在 π 中保存 `program_id`、axis 公式或前端文本，
 也不增加 mechanism enum。
 
+`address_base/address_lane` 标记 address contribution 角色，不等价于两次 pointer addition。Source
+若先形成可分离的 program-uniform integer base 与 lane offset，再合并后执行一次 pointer add，
+program path 仍进入 `address_base` 并 route 到 `address_lane`；Replay 保留两个 integer stage 和
+唯一 pointer add，不能因当前 grid extent 为 1 将 program path 常量化。只有不存在可分离
+program-uniform contribution 时才允许 lone `address_lane`。
+
 单个直接锚定 J signature handle 或 C slot 的 `realize` instance，可以由对应参数 binding 及其直接
 routed use 满足，不要求为了“显式 materialize”增加恒等赋值。尤其 `c*` 为 constexpr 时，前端
 合同可以要求直接 use 以保留编译期类型。若同一 handle 有多个 instance，它们仍必须对应不同的

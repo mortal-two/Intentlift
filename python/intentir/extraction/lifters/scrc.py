@@ -703,7 +703,12 @@ domain-anchored realization path entering an address_base instance, even when
 the current concrete grid extent on that axis is one. One logical domain may
 therefore have both a program-coordinate path into address_base and a separate
 lane-coordinate path into address_lane; never collapse the former into a loop
-or erase it as constant-degenerate topology.
+or erase it as constant-degenerate topology. When Source forms a separable
+program-uniform integer base and lane offset and merges them before one pointer
+addition, address_base/address_lane classify those two address contributions:
+preserve both integer stages and their route, but do not invent a second pointer
+addition. A lone address_lane is legal only when Source has no separable
+program-uniform contribution.
 Preserve source event multiplicity, def-use routes, partial order, regions, and
 one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,

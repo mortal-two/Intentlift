@@ -113,7 +113,7 @@ def source_copy(a, b, n, block: tl.constexpr):
 def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v5"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v6"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -121,6 +121,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "Do not page through the raw schema" in files["README.md"]
     assert "never names a source/local or J-body v*" in (
         files["knowledge/lift_contract.md"]
+    )
+    assert "Never replace the program path with constant zero" in (
+        files["knowledge/preflight.md"]
     )
 
 

@@ -314,6 +314,13 @@ program-coordinate stage；若 domain/C dependency path 进入 `address_lane`，
 stage。Replay 保持该拓扑区分，公共前端上下文 (U_f) 再决定使用何种公开 API。π 本身仍不保存
 `program_id`、axis 公式、前端文本或新的 mechanism tag。
 
+这里的 `address_base/address_lane` 是 address contribution 的角色边界，不要求 Source 已经执行
+两次 pointer addition。若 Source 先形成可分离的 program-uniform integer base（例如 grid
+coordinate 与 tile extent 的组合）和 lane offset，再把两者合并后只执行一次 pointer addition，
+program path 仍必须进入 `address_base` 并 route 到 `address_lane`。Replay 保留两个 integer stage 与
+唯一的 pointer addition；它不能因为当前 grid extent 为 1 把 program path 改成常量。只有 Source
+根本不存在可分离的 program-uniform contribution 时，才使用单独的 `address_lane`。
+
 一个直接锚定 J signature handle 或 C slot 的单独 `realize` instance，可以由对应参数 binding 与
 direct routed use 满足，不要求额外的 identity assignment。若同一 handle 声明多个 instance，
 它们仍表示多个 compiler-visible use-site/stage，不能折叠。这个区分对 constexpr 尤其重要：公共
