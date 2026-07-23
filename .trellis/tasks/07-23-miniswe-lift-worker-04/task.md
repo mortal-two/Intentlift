@@ -1,6 +1,6 @@
 # Task 04：mini-swe-agent 有界 Lift Worker 接入
 
-> 状态：执行中
+> 状态：已完成
 >
 > 类型：SCRC 系统生成能力新增/重构；不是论文实验、性能实验或新的认证流程。
 
@@ -249,3 +249,25 @@ knowledge-v3 因此做两项系统修正：
 v3 定向回归为 `120 passed`，全量 Python 回归为 `827 passed`，`compileall` 与 diff check 通过。
 下一步 run-003 必须首先验证 canonical decode/TypeCheck 是否被真正到达；未达到前不扩大到五分支
 正式 fan-out。
+
+## 2026-07-23 DYT implementation canary：run-003
+
+run-003 使用已提交的 knowledge-v3，实际完成了本任务要求的整条 MiniSWE Lift 接入验证：
+
+- 3 个 fresh Lift invocation 分别使用 9、7、8 个 model turn，共 24 次物理 provider 调用；
+- worker 耗时分别为 391.684、193.620、168.773 秒；后两轮读取完整 previous artifact 与外部
+  Gate1 diagnostic 后做 fresh relift，没有恢复旧 conversation/workspace；
+- canonical decode 3/3 通过，dependent TypeCheck 3/3 通过，形成 3 个 formal Gate1 round；
+- round 1 的 Replay 编译失败；round 2 把 Source `tanh` 展开为 sigmoid 组合，数学等价但 TTIR
+  observer hard mismatch；round 3 使用直接 `map_unary tanh` 后 normal Replay hard-close；
+- masked-J mismatch 使 `j_necessity_status=PROVED`；accepted attempt 为 3；
+- Gate2 随后只执行一次，Source--Replay 比较通过且 `max_abs_error=0`；Gate2 没有回流 Lift；
+- `E_J` 在解释 J 的二维 dense access 时返回 `REFERENCE_UNSUPPORTED`，因为 artifact 使用
+  `"k1,k0"`，现行 RefEval 合同要求 bare rank-1 axis 或 bracketed `"[k1,k0]"`；最终
+  `main_status=GATE2_FAILED`，不是 SCRC certificate。
+
+因此 Task04 的目标已经完成：MiniSWE 只作为 Lift implementation，完整 candidate 能通过外部
+canonical decode/TypeCheck，fresh relift 能消费明确 Gate1 diff，source-blind Replay 与既有 Gate1
+保持独立，并真实获得 Gate1 closure。Gate2 暴露的是下一项 `E_J`/Lift direct-index 合同能力，不再
+属于 MiniSWE 接入阻塞。完整证据保存在 `runs/liger_dyt/run-003/`；下一任务从该真实
+`REFERENCE_UNSUPPORTED` 出发，在实验外修改系统后开启全新 canary。

@@ -1,0 +1,14 @@
+{
+  "attempts": 7,
+  "backend": "minisweagent.intentir-lift.v1",
+  "elapsed_ms": 193620.47511013225,
+  "model": "gpt-5.6-sol",
+  "response_id": "resp_bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVyOm9wZW5haTttb2RlbF9pZDpOb25lO3Jlc3BvbnNlX2lkOnJlc3BfMDRlYmU2ODY2MmQzMDk1YjAxNmE2MWMwNTU0ODM0ODE5YTk4MmZmM2IxM2RhYmU1MGU=",
+  "response_model": "gpt-5.6-sol",
+  "termination_status": "Submitted",
+  "usage": {
+    "input_tokens": 96796,
+    "output_tokens": 8637,
+    "total_tokens": 105433
+  }
+}

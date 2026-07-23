@@ -1,0 +1,131 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "3d5f52606ae86da3864307c9823e90bf9f9890b2a8ede4059dc1aca223684e97",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.triton-workload-adapter.v1",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "NotImplementedError: E_J dense access requires one bare axis or '[axis0, ...]'",
+        "leg": "j",
+        "metadata": {
+          "j_digest": "78c0a83723a7e4610ab5cb81e0a2f6443c8a7cbbb1b5c185b413e32541b9d6c7",
+          "protocol": "canonical_j_scalar_cpu_mlir_v5",
+          "scalar_spec_digest": "87f3efb216244d9b75e404e06bed280564627ceafbd692f1b327bd648e918bea"
+        },
+        "ok": false,
+        "outputs": {},
+        "unsupported": true
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            1,
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": null,
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "function": "scrc_k0",
+          "grid": [
+            1,
+            2
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": null,
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "reference_unsupported"
+    }
+  ],
+  "failed_case_ids": [
+    "finite-hidden-1"
+  ],
+  "passed": false,
+  "status_counts": {
+    "reference_unsupported": 1
+  },
+  "suite_id": "high_performance:liger_dyt"
+}

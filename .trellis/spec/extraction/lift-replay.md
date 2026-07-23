@@ -79,6 +79,12 @@ provider secret。隔离设施不可用时报告 infrastructure failure，不得
 > candidate，证明“只浏览、不生成”已解决；但三份 candidate 都在 canonical signature binding
 > 检查被拒，TypeCheck/Replay/Gate 仍为 0。该结果定位了 schema 中允许 `logical_ref` 指向任意
 > “value”的旧文字与 canonical parser 只接受 tensor/dimension 的冲突，详见 Task04。
+>
+> 第三次 DYT canary（run-003）使用 knowledge-v3：3 份 candidate 均通过 canonical decode 与
+> TypeCheck，第 3 个 formal round 获得 normal Replay closure，masked-J mismatch 证明 J necessity。
+> Gate2 的 Source--Replay 腿通过且误差为 0，但 RefEval 因二维 dense access 使用未括号化
+> `k1,k0` 而 `REFERENCE_UNSUPPORTED`。这完成 MiniSWE Lift backend 的接入验收，并把下一系统
+> 缺口收敛到既有 `E_J` direct-index 合同；Gate2 结果没有回流本次 Lift。
 
 ## Replay 前检查
 
