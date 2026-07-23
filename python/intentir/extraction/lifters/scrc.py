@@ -75,6 +75,9 @@ class SCRCProvenance:
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
+    backend: str = "responses"
+    termination_status: str | None = None
+    trajectory: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,7 @@ class SCRCReliftRecord:
     extraction: SCRCExtraction | None = None
     diagnostic: str | None = None
     rejected_attempts: tuple["SCRCLiftAttempt", ...] = ()
+    backend_evidence: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -342,6 +346,9 @@ class SCRCLiftAttempt:
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
+    backend: str = "responses"
+    termination_status: str | None = None
+    trajectory: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 class SCRCLiftError(RuntimeError):
@@ -779,6 +786,19 @@ def _json_object(text: str) -> dict[str, Any]:
     return parsed
 
 
+def decode_scrc_lift_artifact(
+    response_text: str,
+    request: SCRCLiftRequest,
+) -> Gate1Artifact:
+    """Apply the one canonical J/C/pi decoder to any Lift backend output."""
+
+    payload = _json_object(response_text)
+    artifact = Gate1Artifact.from_json(payload)
+    _validate_anonymous_lift(artifact, request.harness_binding)
+    _validate_compiler_view(artifact, request.anonymous_compiler_view)
+    return artifact
+
+
 def _response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
     usage = raw.get("usage")
     if not isinstance(usage, Mapping):
@@ -978,8 +998,6 @@ def extract_scrc_artifact(
     )
     instructions = request.instructions
     user = request.user_input
-    binding = request.harness_binding
-    anonymous_view = request.anonymous_compiler_view
     prompt_sha = request.prompt_sha256
     reply = call_responses(
         instructions,
@@ -989,10 +1007,7 @@ def extract_scrc_artifact(
         text_format=scrc_lift_core_text_format(),
     )
     try:
-        payload = _json_object(reply.text)
-        artifact = Gate1Artifact.from_json(payload)
-        _validate_anonymous_lift(artifact, binding)
-        _validate_compiler_view(artifact, anonymous_view)
+        artifact = decode_scrc_lift_artifact(reply.text, request)
     except Exception as exc:
         attempt = SCRCLiftAttempt(
             model=reply.model,
@@ -1036,7 +1051,12 @@ def extract_scrc_artifact(
         attempts=reply.attempts,
         elapsed_ms=reply.elapsed_ms,
     )
-    return SCRCExtraction(artifact, provenance, binding, source)
+    return SCRCExtraction(
+        artifact,
+        provenance,
+        request.harness_binding,
+        source,
+    )
 
 
 @dataclass
@@ -1182,6 +1202,6 @@ __all__ = [
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
     "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
-    "extract_scrc_artifact", "prepare_scrc_lift", "scrc_lift_prompt_sha256",
+    "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
 ]

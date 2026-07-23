@@ -51,7 +51,7 @@ iff TypeCheck(J,C,pi) and Gate1 and Gate2.
 ```text
 SCRCGateRunner
     -> MiniSWELiftAdapter     # 实现既有 LiftAdapter protocol
-        -> upstream mini-swe-agent DefaultAgent / existing model configuration
+        -> 仓库内 minisweagent.DefaultAgent / existing model configuration
         -> candidate.json
 ```
 
@@ -101,13 +101,16 @@ prior Replay、Gate2 evidence、其他候选、provider secret 或正式 Gate ex
 - 从自然语言 final response 代替 `candidate.json`；
 - 用自己的完成声明代替外部 Parse/TypeCheck。
 
-## 上游与依赖纪律
+## 模块与依赖纪律
 
-- 使用 mini-swe-agent v2 的明确 release/commit，不从浮动 `main` 安装；
-- 首选项目 optional dependency + 本仓库薄 adapter/config，不复制其完整 runner；
-- 不修改 upstream 默认 Agent loop，除非实际接入证明配置/继承无法表达一次一候选终止；
+- 完整 `mini-swe-agent v2.4.5` 源码直接进入 `python/minisweagent`，成为仓库一级模块；
+- 在该模块内部直接按 IntentIR 要求修改，不维护 upstream + patch overlay，不依赖 PyPI
+  `mini-swe-agent` 包，也不建立 `third_party`；
+- 复用其中的 `DefaultAgent`、Responses model 与 Bubblewrap environment，只在真正影响 Lift
+  边界、隔离和预算处直接修改；
 - 依赖不可用时给出明确 infrastructure/unavailable 结果，不静默回退 one-shot Lift；
-- provider key 只通过运行环境配置，不进入 prompt、trajectory 或 evidence。
+- provider 配置只读取仓库既有、gitignored 的 `llm_providers.local.json`；key 仅用于宿主侧模型
+  调用，不进入 agent shell、prompt、trajectory 或 evidence。
 
 ## 实施阶段
 
@@ -165,3 +168,27 @@ prior Replay、Gate2 evidence、其他候选、provider secret 或正式 Gate ex
   一分支 HTTP 408，未产生 winner。该记录属于 Task 03，不作为本任务实现结果。
 - 当前任务从 upstream 依赖/接口可行性与离线 adapter 测试开始，不在未完成隔离与轮次测试前调用
   真实 provider。
+
+## 2026-07-23 实现 checkpoint
+
+- `mini-swe-agent v2.4.5` 的完整 `src/minisweagent` 已直接成为 `python/minisweagent`，来源 commit
+  为 `e187bcb2ff5825d85761a6f9c1f98c9fa6cfbc79`；模块在仓库内直接修改，不存在 patch overlay；
+- `MiniSWELiftAdapter` 已实现既有 `LiftAdapter`，继续复用唯一的 Source anonymization、
+  `Gate1Artifact` canonical decoder、compiler-view 检查和 runner feedback；
+- IntentIR 模式直接复用 `DefaultAgent + LitellmResponseModel`，从既有
+  `llm_providers.local.json` 读取 CPA，未新增 `CPAResponsesModel`；本地假 CPA 已机械确认请求走
+  `/v1/responses`、model 正确、`reasoning.effort=xhigh`、`parallel_tool_calls=false`；
+- 一个 invocation 最多八个串行 model/action turn，每个 response 恰好一个 bash action；模型层、
+  LiteLLM 与 OpenAI transport 的隐式 retry 均关闭，IntentIR 模式不参加 upstream process-global
+  model budget；
+- sandbox 已机械验证 `/input` 只读，宿主 repo、`intentir` package、provider secret 与网络不可见；
+  根、`/dev` 及 system-package mask 只读，只有受总额/文件数/深度/输出/进程资源约束的
+  `/work`、`/output`、`/tmp` 可写，异常退出使用非递归清理；
+- 每轮只接受唯一 `candidate.json`；trajectory、knowledge retrieval、草稿和 provider envelope
+  只作为 proof-irrelevant evidence，不进入 artifact 或 Replay；
+- 依赖以 `lift-agent` extra 声明，wheel 已确认包含完整模块、IntentIR config、preflight、validator、
+  license 与 upstream provenance；无 extra 的 core wheel 仍可 `import intentir` 和
+  `import minisweagent`；
+- 定向 agent/CPA/隔离/并发/预算测试通过；最终全量 Python 回归为 `818 passed`，`compileall` 与
+  staged diff check 通过。下一步只剩使用显式 `--lift-backend miniswe --effort xhigh` 执行真实
+  `liger_dyt` 单分支 smoke，确认实际多 turn 延迟后再恢复五分支 fan-out。

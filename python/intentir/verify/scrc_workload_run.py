@@ -17,6 +17,7 @@ from intentir.verify.gate1.model import (
     ParameterKind,
     ParameterMode,
 )
+from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
 from intentir.extraction.lifters.scrc import ResponsesSCRCLiftAdapter
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.adapters import (
@@ -55,6 +56,9 @@ from intentir.verify.workload_adapters import (
     BufferRole,
     PreparedTritonWorkload,
 )
+
+
+RecordedLiftAdapter = ResponsesSCRCLiftAdapter | MiniSWELiftAdapter
 
 
 def _numpy_dtype(dtype: str) -> np.dtype[Any]:
@@ -441,7 +445,7 @@ def scrc_attempt_stage_counts(
 @dataclass(frozen=True)
 class WorkloadExecution:
     report: SCRCRunReport
-    lift: ResponsesSCRCLiftAdapter
+    lift: RecordedLiftAdapter
     replay_writers: tuple[ResponsesReplayWriter, ...]
 
 
@@ -449,7 +453,7 @@ class WorkloadExecution:
 class WorkloadGate1Search:
     report: SCRCGate1SearchReport
     runner: SCRCGateRunner
-    lift: ResponsesSCRCLiftAdapter
+    lift: RecordedLiftAdapter
     replay_writers: tuple[ResponsesReplayWriter, ...]
 
 
@@ -457,7 +461,7 @@ class WorkloadExecutionError(RuntimeError):
     def __init__(
         self,
         cause: BaseException,
-        lift: ResponsesSCRCLiftAdapter,
+        lift: RecordedLiftAdapter,
         replay_writers: tuple[ResponsesReplayWriter, ...],
     ) -> None:
         self.cause = cause
@@ -474,8 +478,16 @@ def _build_workload_runtime(
     provider: ProviderConfig,
     effort: str | None = None,
     run_masked_j: bool = True,
-) -> tuple[SCRCGateRunner, ResponsesSCRCLiftAdapter, list[ResponsesReplayWriter]]:
-    lift = ResponsesSCRCLiftAdapter(
+    lift_backend: str = "responses",
+) -> tuple[SCRCGateRunner, RecordedLiftAdapter, list[ResponsesReplayWriter]]:
+    lift_class: type[RecordedLiftAdapter]
+    if lift_backend == "responses":
+        lift_class = ResponsesSCRCLiftAdapter
+    elif lift_backend == "miniswe":
+        lift_class = MiniSWELiftAdapter
+    else:
+        raise ValueError(f"unknown Lift backend: {lift_backend!r}")
+    lift = lift_class(
         provider=provider,
         compiler_view=prepared.compiler_view,
         effort=effort,
@@ -511,6 +523,7 @@ def search_prepared_workload_gate1(
     provider: ProviderConfig,
     effort: str | None = None,
     run_masked_j: bool = True,
+    lift_backend: str = "responses",
 ) -> WorkloadGate1Search:
     """Run one independent branch only through TypeCheck and Gate1."""
 
@@ -519,6 +532,7 @@ def search_prepared_workload_gate1(
         provider=provider,
         effort=effort,
         run_masked_j=run_masked_j,
+        lift_backend=lift_backend,
     )
     try:
         report = runner.search_gate1(prepared.request)
@@ -552,6 +566,7 @@ def execute_prepared_workload(
     provider: ProviderConfig,
     effort: str | None = None,
     run_masked_j: bool = True,
+    lift_backend: str = "responses",
 ) -> WorkloadExecution:
     """Run one independent real case through the canonical full lifecycle."""
 
@@ -560,6 +575,7 @@ def execute_prepared_workload(
         provider=provider,
         effort=effort,
         run_masked_j=run_masked_j,
+        lift_backend=lift_backend,
     )
     if search.report.closed:
         return complete_prepared_workload_gate2(prepared, search)
@@ -632,6 +648,7 @@ def initialize_workload_evidence(
     provider: ProviderConfig,
     effort: str | None,
     run_masked_j: bool,
+    lift_backend: str = "responses",
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     (run_dir / "source.py").write_text(
@@ -650,6 +667,7 @@ def initialize_workload_evidence(
         "provider": provider.name,
         "model": provider.model,
         "reasoning_effort": effort or provider.reasoning_effort,
+        "lift_backend": lift_backend,
         "frontend": prepared.entry.frontend,
         "observer_profile": prepared.entry.observer_profile,
         "q_policy": prepared.entry.q_policy,
@@ -717,7 +735,7 @@ def save_workload_execution(
 def _save_attempt_evidence(
     run_dir: Path,
     attempts: tuple[Any, ...],
-    lift: ResponsesSCRCLiftAdapter,
+    lift: RecordedLiftAdapter,
     replay_writers: tuple[ResponsesReplayWriter, ...],
 ) -> None:
     for index, attempt in enumerate(attempts, start=1):
@@ -758,11 +776,18 @@ def _save_attempt_evidence(
                         "usage": dict(provenance.usage),
                         "attempts": provenance.attempts,
                         "elapsed_ms": provenance.elapsed_ms,
+                        "backend": provenance.backend,
+                        "termination_status": provenance.termination_status,
                     },
                 )
                 (attempt_dir / "lift_response.txt").write_text(
                     provenance.response_text, encoding="utf-8"
                 )
+                if provenance.trajectory is not None:
+                    _write_json(
+                        attempt_dir / "lift_trajectory.json",
+                        provenance.trajectory,
+                    )
             else:
                 (attempt_dir / "lift_rejection.txt").write_text(
                     (record.diagnostic or "Lift response rejected") + "\n",
@@ -774,6 +799,36 @@ def _save_attempt_evidence(
                     (attempt_dir / f"lift_rejected_{rejected_index:02d}.txt").write_text(
                         rejected.response_text, encoding="utf-8"
                     )
+                    _write_json(
+                        attempt_dir
+                        / f"lift_rejected_{rejected_index:02d}_receipt.json",
+                        {
+                            "model": rejected.model,
+                            "response_model": rejected.response_model,
+                            "response_id": rejected.response_id,
+                            "usage": dict(rejected.usage),
+                            "attempts": rejected.attempts,
+                            "elapsed_ms": rejected.elapsed_ms,
+                            "backend": rejected.backend,
+                            "termination_status": rejected.termination_status,
+                            "diagnostic": rejected.diagnostic,
+                        },
+                    )
+                    if rejected.trajectory is not None:
+                        _write_json(
+                            attempt_dir
+                            / f"lift_rejected_{rejected_index:02d}_trajectory.json",
+                            rejected.trajectory,
+                        )
+            if record.backend_evidence is not None:
+                worker = dict(record.backend_evidence)
+                trajectory = worker.pop("trajectory", None)
+                _write_json(attempt_dir / "lift_worker.json", worker)
+                if trajectory is not None and not (
+                    record.extraction is not None
+                    and record.extraction.provenance.trajectory is not None
+                ):
+                    _write_json(attempt_dir / "lift_trajectory.json", trajectory)
     formal_attempt_dirs = [
         run_dir / f"attempt-{index:02d}"
         for index, attempt in enumerate(attempts, start=1)
@@ -914,8 +969,15 @@ def save_workload_failure(
                         "usage": dict(extraction.provenance.usage),
                         "attempts": extraction.provenance.attempts,
                         "elapsed_ms": extraction.provenance.elapsed_ms,
+                        "backend": extraction.provenance.backend,
+                        "termination_status": extraction.provenance.termination_status,
                     },
                 )
+                if extraction.provenance.trajectory is not None:
+                    _write_json(
+                        call_dir / "trajectory.json",
+                        extraction.provenance.trajectory,
+                    )
             else:
                 (call_dir / "rejection.txt").write_text(
                     (record.diagnostic or "Lift response rejected") + "\n",
@@ -927,6 +989,17 @@ def save_workload_failure(
                     (call_dir / f"response-{rejected_index:02d}.txt").write_text(
                         rejected.response_text, encoding="utf-8"
                     )
+                    if rejected.trajectory is not None:
+                        _write_json(
+                            call_dir / f"trajectory-{rejected_index:02d}.json",
+                            rejected.trajectory,
+                        )
+            if record.backend_evidence is not None:
+                worker = dict(record.backend_evidence)
+                trajectory = worker.pop("trajectory", None)
+                _write_json(call_dir / "worker.json", worker)
+                if trajectory is not None and not (call_dir / "trajectory.json").exists():
+                    _write_json(call_dir / "trajectory.json", trajectory)
         for writer_index, writer in enumerate(
             runtime.replay_writers, start=1
         ):

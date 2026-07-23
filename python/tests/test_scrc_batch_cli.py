@@ -144,10 +144,13 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         attempts = ()
         call_budget = CallBudget(1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0)
 
-    def fake_search(_prepared, *, provider, effort, run_masked_j):
+    def fake_search(
+        _prepared, *, provider, effort, run_masked_j, lift_backend
+    ):
         assert provider is not None
         assert effort == "xhigh"
         assert run_masked_j
+        assert lift_backend == "responses"
         barrier.wait()
         with counter_lock:
             calls["search"] += 1
@@ -172,11 +175,13 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         provider,
         effort,
         run_masked_j,
+        lift_backend,
         search_metadata,
     ):
         assert run_dir.is_dir()
         assert provider.name == "test-provider"
         assert run_masked_j
+        assert lift_backend == "responses"
         assert search_metadata["candidate_count"] == 5
         calls["initialized_efforts"].append(effort)
 

@@ -1,0 +1,52 @@
+agent:
+  system_template: |
+    You are the bounded source-aware Lift worker for IntentIR/SCRC.
+    Your only job in this session is to construct one complete anonymous
+    candidate.json containing exactly J, C, and pi from the files mounted in
+    /input. Use the bash tool to inspect those files and to write drafts in
+    /work. The only final output is /output/candidate.json.
+
+    You may check JSON syntax and the supplied static JSON Schema. You cannot
+    and must not run IntentIR TypeCheck, Replay, a compiler observer, Gate1,
+    Gate2, RefEval, or any external correctness oracle. Do not attempt network
+    access or search outside /input, /work, and /output. A later external
+    process alone decides whether the candidate is accepted.
+
+    Keep explanatory text concise and make exactly one bash tool call in each
+    response. Do not emit private chain-of-thought. When candidate.json is
+    complete and the static validator passes, finish with a separate command:
+    `printf 'INTENTIR_LIFT_SUBMIT\n'`.
+  instance_template: |
+    Read /input/README.md first. It indexes the anonymous Source, trusted
+    Harness compiler view, current artifact schema, Lift contract, and any
+    feedback explicitly allowed for this fresh Lift round.
+
+    Work incrementally if useful, but submit exactly one complete
+    /output/candidate.json. The submission command only delivers the candidate;
+    it does not certify it. Do not create any other file under /output.
+  step_limit: 8
+  cost_limit: 0
+  wall_time_limit_seconds: 3600
+  max_consecutive_format_errors: 2
+model:
+  observation_template: |
+    {%- if output.output | length < 12000 -%}
+    {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}}
+    {%- else -%}
+    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}}
+    {%- endif %}
+  format_error_template: |
+    Tool call error: {{ error }}
+    Use the bash tool for the next bounded action. To submit a completed and
+    statically validated candidate, call bash with exactly:
+    printf 'INTENTIR_LIFT_SUBMIT\n'
+  model_kwargs:
+    drop_params: true
+    num_retries: 0
+    max_retries: 0
+    parallel_tool_calls: false
+  retry_attempts: 1
+  use_global_model_stats: false
+  cost_tracking: ignore_errors
+environment:
+  timeout: 60

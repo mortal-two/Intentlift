@@ -30,6 +30,32 @@ round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实�
 认证谓词。上限耗尽可以结束为 `NO_CLOSURE`，但报告必须显示正式 Gate1 round 为 0，而不是伪造
 一次 Gate1 失败。
 
+### 有界 agent 实现
+
+Lift 可以由仓库内的有界 mini-swe agent 实现，但其 agent loop 只属于一次生成动作：
+
+```text
+一次 LiftAdapter 调用
+  = 一个全新 agent session
+  = 一个独立受限 workspace
+  = 最多提交一个完整 (J,C,pi)
+```
+
+该 session 内可以多次调用模型，按需读取匿名 Source、最小 Harness compiler view、闭合 JSON
+Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修改 candidate，并运行 JSON
+语法/静态 Schema 检查。这是普通文件上的轻量 retrieval；不需要 vector database，也不能按
+当前 Kernel、历史失败或 sibling candidate 动态选择知识库。
+
+session 内不得调用 canonical artifact parser 的依赖检查、TypeCheck、Replay、compiler observer、
+Gate1、Gate2 或 RefEval。提交 `candidate.json` 后 session 结束；任何 parser/TypeCheck/Gate1 反馈
+只能由 Runner 显式放入下一次全新 Lift 调用，不能恢复旧 conversation 或旧可写 workspace。
+因此 agent 内部多步不增加正式 Gate round，也不削弱门禁；报告必须分别记录外部 Lift invocation、
+agent model turns 与实际 provider calls。
+
+agent shell 必须 fail closed 地隔离：`/input` 只读、`/output` 只允许唯一 candidate、私有 `/work`
+可写、网络 namespace 隔离、宿主环境清空，且不挂载仓库、历史 evidence、Gate executable 或
+provider secret。隔离设施不可用时报告 infrastructure failure，不得降级到宿主 LocalEnvironment。
+
 ## Replay 前检查
 
 ```text

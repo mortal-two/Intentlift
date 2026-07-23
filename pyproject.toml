@@ -9,6 +9,15 @@ dependencies = []
 # Heavier deps (numpy for the reference interpreter, http client for the LLM
 # provider) are opt-in so the core model stays import-light.
 verify = ["numpy", "jsonschema>=3.2"]
+lift-agent = [
+    "jinja2>=3.1",
+    # Exact versions below are exercised by the local CPA /responses packet test.
+    "litellm==1.93.0",
+    "openai==2.47.0",
+    "pydantic>=2",
+    "PyYAML>=6",
+    "tenacity>=9",
+]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -16,6 +25,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["python"]
+
+[tool.setuptools.package-data]
+minisweagent = [
+    "py.typed",
+    "LICENSE.md",
+    "UPSTREAM.md",
+    "config/*.yaml",
+    "config/**/*.yaml",
+    "config/*.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

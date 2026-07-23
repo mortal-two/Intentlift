@@ -35,6 +35,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument(
+        "--lift-backend",
+        choices=("responses", "miniswe"),
+        default="responses",
+        help="candidate Lift implementation; Replay remains source-blind Responses",
+    )
+    parser.add_argument(
         "--candidates",
         type=int,
         default=1,
@@ -218,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
                 provider=provider,
                 effort=args.effort,
                 run_masked_j=not args.skip_masked_j,
+                lift_backend=args.lift_backend,
             )
             try:
                 execution = execute_prepared_workload(
@@ -225,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
                     provider=provider,
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
+                    lift_backend=args.lift_backend,
                 )
             except Exception as exc:
                 runtime = exc if isinstance(exc, WorkloadExecutionError) else None
@@ -280,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
                     provider=provider,
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
+                    lift_backend=args.lift_backend,
                     search_metadata={
                         "protocol": "intentir.scrc.candidate-fanout.v1",
                         "branch_id": branch_id,
@@ -301,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
                         provider=provider,
                         effort=args.effort,
                         run_masked_j=not args.skip_masked_j,
+                        lift_backend=args.lift_backend,
                     )
                 except Exception as exc:
                     runtime = (

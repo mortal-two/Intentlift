@@ -1,5 +1,10 @@
 """LLM lifters from real kernel source to IntentIR/SCRC artifacts."""
 
+from .miniswe import (
+    MINISWE_LIFT_BACKEND,
+    MINISWE_LIFT_KNOWLEDGE,
+    MiniSWELiftAdapter,
+)
 from .scrc import (
     ResponsesSCRCLiftAdapter,
     ResponsesSCRCRelifter,
@@ -12,6 +17,7 @@ from .scrc import (
     SCRCProvenance,
     SCRCReliftContext,
     SCRCReliftRecord,
+    decode_scrc_lift_artifact,
     extract_scrc_artifact,
     scrc_lift_prompt_sha256,
     scrc_relift_prompt_sha256,
@@ -22,6 +28,9 @@ from .scrc_schema import (
 )
 
 __all__ = [
+    "MINISWE_LIFT_BACKEND",
+    "MINISWE_LIFT_KNOWLEDGE",
+    "MiniSWELiftAdapter",
     "ResponsesSCRCRelifter",
     "ResponsesSCRCLiftAdapter",
     "SCRC_RELIFT_PROTOCOL",
@@ -33,6 +42,7 @@ __all__ = [
     "SCRCProvenance",
     "SCRCReliftContext",
     "SCRCReliftRecord",
+    "decode_scrc_lift_artifact",
     "extract_scrc_artifact",
     "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
