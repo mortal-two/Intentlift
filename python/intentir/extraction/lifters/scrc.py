@@ -168,6 +168,7 @@ class SCRCCompilerArgument:
     dtype: str
     shape: tuple[int, ...] = ()
     value: bool | int | float | None = None
+    mode: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
@@ -189,6 +190,18 @@ class SCRCCompilerArgument:
             raise ValueError("none compiler argument forbids shape/value")
         if self.kind == "opaque" and (shape or self.value is not None):
             raise ValueError("opaque compiler argument exposes only its public type")
+        if self.mode is not None:
+            allowed_modes = {
+                "tensor": {"input", "output", "inout"},
+                "scalar": {"value"},
+                "none": {"value"},
+                "opaque": {"value"},
+            }[self.kind]
+            if self.mode not in allowed_modes:
+                raise ValueError(
+                    f"compiler argument mode for {self.kind} must be one of "
+                    + ", ".join(sorted(allowed_modes))
+                )
         object.__setattr__(self, "shape", shape)
 
     def to_json(self) -> dict[str, Any]:
@@ -201,6 +214,8 @@ class SCRCCompilerArgument:
             result["shape"] = list(self.shape)
         elif self.kind == "scalar":
             result["value"] = self.value
+        if self.mode is not None:
+            result["mode"] = self.mode
         return result
 
 
@@ -628,6 +643,15 @@ use it in every affected J tensor shape, and set the scalar parameter's
 logical_ref to that x*. Symbolic dimensions are type/signature handles, not SSA
 values: never list x* in portable scope definitions/captures or storage.
 
+For every observable output, J.boundary.result_relations declares only the
+closed semantic comparison class; it never declares numeric thresholds. Use
+`exact` only when cross-backend equality is part of the logical contract (for
+example integer/boolean results or exactly specified copies). Floating
+transcendentals, floating reductions, and contracts that allow reassociation
+must use `tolerance`; the trusted external Gate2 policy Q supplies all atol,
+rtol, ULP, and NaN rules. Never place a Python comparator or a
+candidate-selected tolerance in J, C, or pi.
+
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
 
@@ -649,6 +673,12 @@ handle has multiple observable realization stages. Every anonymous J.signature
 or C handle materially used by address, transfer, synchronization, placement,
 or sharing realization must anchor an instance; dependencies then route only
 between the declared i* instance IDs.
+Every source program-coordinate occurrence must remain a distinct
+domain-anchored realization path entering an address_base instance, even when
+the current concrete grid extent on that axis is one. One logical domain may
+therefore have both a program-coordinate path into address_base and a separate
+lane-coordinate path into address_lane; never collapse the former into a loop
+or erase it as constant-degenerate topology.
 Preserve source event multiplicity, def-use routes, partial order, regions, and
 one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,
@@ -858,6 +888,9 @@ def _validate_compiler_view(
             raise ValueError("Lift changed a trusted compiler argument dtype")
         if argument["kind"] == "tensor" and parameter.rank != len(argument["shape"]):
             raise ValueError("Lift changed a trusted compiler argument rank")
+        expected_mode = argument.get("mode")
+        if expected_mode is not None and parameter.mode.value != expected_mode:
+            raise ValueError("Lift changed a trusted compiler argument mode")
     # Grid/source positions are Harness coordinates.  They are retained in the
     # extraction sidecar and deliberately absent from the proof artifact.
 

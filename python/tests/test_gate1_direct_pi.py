@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from direct_fixtures import make_reduce_artifact
+from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.model import IntentFunction
 from intentir.extraction.lifters import scrc
 from intentir.extraction.lifters.scrc import (
@@ -479,7 +479,27 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
     assert "map declaration-ordered stages" in contract
+    assert "from triton.language.extra.cuda import libdevice" in contract
+    assert "Directly importing a libdevice function is rejected" in contract
     assert_source_isolated_payload(payload)
+
+
+def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None:
+    instructions = scrc.build_scrc_lift_instructions()
+    normalized = " ".join(instructions.split())
+
+    assert "Floating transcendentals" in normalized
+    assert "must use `tolerance`" in normalized
+    assert "external Gate2 policy Q supplies all atol" in normalized
+    assert "Never place a Python comparator" in normalized
+
+
+def test_lift_preserves_degenerate_program_coordinate_topology() -> None:
+    normalized = " ".join(scrc.build_scrc_lift_instructions().split())
+
+    assert "program-coordinate occurrence" in normalized
+    assert "even when the current concrete grid extent on that axis is one" in normalized
+    assert "both a program-coordinate path into address_base" in normalized
 
 
 @pytest.mark.parametrize(
@@ -715,6 +735,31 @@ def test_compiler_view_rejects_bound_schedule_overlap() -> None:
             parameter_order=("N",),
             constexpr_parameters=("N",),
         )
+
+
+def test_compiler_view_mechanically_checks_harness_parameter_modes() -> None:
+    artifact = make_copy_artifact()
+    view = SCRCCompilerView(
+        schedule_values={"BLOCK": 1024},
+        arguments=(
+            SCRCCompilerArgument(
+                "X", "tensor", "f32", (1000,), mode="input"
+            ),
+            SCRCCompilerArgument(
+                "Y", "tensor", "f32", (1000,), mode="input"
+            ),
+            SCRCCompilerArgument(
+                "N", "scalar", "i32", value=1000, mode="value"
+            ),
+        ),
+        parameter_order=("X", "Y", "N", "BLOCK"),
+        constexpr_parameters=("BLOCK",),
+    )
+    mapping = {"X": "p0", "Y": "p1", "N": "p2", "BLOCK": "c0"}
+    anonymous_view = scrc._anonymous_compiler_view(view, mapping)
+
+    with pytest.raises(ValueError, match="argument mode"):
+        scrc._validate_compiler_view(artifact, anonymous_view)
 
 
 def test_lift_keeps_bound_constexpr_outside_c(monkeypatch) -> None:

@@ -79,6 +79,25 @@ for every x in T:
 每份 Gate2 记录必须包含 Q/protocol version、测试模式、D 或有限 T 的标识、实际 c0、三条边各自
 结果与失败原因；这些是审计 metadata，不是新的 proof artifact 或 Replay 输入。
 
+## 当前 RefEval 的标量与 logical-domain 支持边界
+
+runtime scalar 或 non-C semantic constexpr 若代表 J 的逻辑数据，可以锚定一个 rank-0 J input。
+Harness 给 Source/Replay 绑定前端标量，同时给 `RefEval(J,x)` 提供相同值的 rank-0 logical input；
+它不能因此被折叠成 C。只有表示 shape/domain extent 的 integral handle 才进入 dimension binding，
+不得同时冒充 J 的数据输入。
+
+当前 pure functional pointwise profile 可以机械消去物理 logical-domain tail mask，但只在以下条件
+同时成立时成立：
+
+- observable output 是直接、无 update/alias/inout 的 functional value；
+- memory access 与 J 的 logical tensor/domain 直接锚定，各轴 logical bound 与实际 shape 一致；
+- 额外 guard 是 rank-0 `i1` logical input，并真实出现在 J value dataflow 中；
+- direct singleton index `[0]` 只允许对应 logical extent 确为 1。
+
+masked reduction 继续走独立的窄 profile，不从 pointwise mask erasure 推导。update、alias/inout、
+不一致 bound、未锚定 guard 或其他 topology 必须明确返回 `REFERENCE_UNSUPPORTED`/fail closed，
+不能由 Harness adapter 写 per-kernel 数值公式补齐。
+
 ## 失败与认证
 
 Gate2 失败结束本次实验，不在同一实验中把结果反馈给 Lift/Replay 做局部修补。实验结束后可以

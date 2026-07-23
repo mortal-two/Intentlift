@@ -11,7 +11,11 @@ from intentir.verify.gate1.compiler import (
 )
 from intentir.verify.gate1.model import Gate1Artifact, Gate1Status
 from intentir.verify.gate1.orchestrate import Gate1Runner, _replay_case
-from intentir.verify.gate1.replay import StaticReplayWriter
+from intentir.verify.gate1.replay import (
+    ReplayAttempt,
+    ReplayGenerationError,
+    StaticReplayWriter,
+)
 
 
 GOOD_TTIR = """
@@ -145,6 +149,32 @@ def test_source_schedule_value_must_match_c_before_replay() -> None:
     assert "differs from C" in (result.normal.diagnostic or "")
 
 
+def test_rejected_replay_preserves_physical_provider_call_count() -> None:
+    class RejectWriter:
+        def generate(self, _artifact, *, masked=False):
+            del masked
+            raise ReplayGenerationError(
+                ReplayAttempt(
+                    "test-model",
+                    "invalid module",
+                    "bad response",
+                    attempts=2,
+                )
+            )
+
+    result = Gate1Runner(
+        compiler=FakeCompiler(), writer=RejectWriter()
+    ).run(
+        make_reduce_artifact(),
+        source=KernelSource.from_code("source", "kernel", trusted=True),
+        source_case=_case(),
+    )
+
+    assert result.status is Gate1Status.NO_CLOSURE
+    assert result.normal.physical_calls == 2
+    assert result.to_json()["normal"]["physical_calls"] == 2
+
+
 def test_bound_constexpr_binding_is_copied_from_harness_not_c() -> None:
     payload = make_reduce_artifact().to_json()
     payload["j"]["signature"]["parameters"].append(
@@ -179,3 +209,40 @@ def test_bound_constexpr_binding_is_copied_from_harness_not_c() -> None:
     replay_case = _replay_case(artifact, source_case, source_compile)
     assert replay_case.schedule == {"p3": 8, "c0": 128}
     assert artifact.c.values == {"c0": 128}
+
+
+def test_anonymous_interleaved_constexpr_ownership_uses_p_and_c_names() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "constexpr",
+            "mode": "value",
+            "dtype": "i32",
+            "rank": 0,
+            "logical_ref": "x1",
+        },
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    source_case = CompileCase(
+        arguments={
+            "p0": RuntimeArgument.tensor((4, 8), "float32"),
+            "p1": RuntimeArgument.tensor((4,), "float32"),
+            "p2": RuntimeArgument.scalar(8, "int32"),
+        },
+        grid=(1,),
+        schedule={"c0": 128, "p3": 8},
+    )
+    source_compile = CompileResult(
+        True,
+        ttir=GOOD_TTIR,
+        python_interface={
+            "arg_names": ["p0", "p1", "p2", "c0", "p3"],
+            "constexprs": ["c0", "p3"],
+            "constexpr_indices": [3, 4],
+        },
+    )
+
+    replay_case = _replay_case(artifact, source_case, source_compile)
+
+    assert replay_case.schedule == {"p3": 8, "c0": 128}

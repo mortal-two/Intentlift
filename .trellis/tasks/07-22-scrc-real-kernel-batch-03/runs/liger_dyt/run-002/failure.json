@@ -1,0 +1,5 @@
+{
+  "diagnostic": "Harness input bindings differ from accepted J inputs",
+  "failure_class": "ValueError",
+  "partial_evidence": {}
+}

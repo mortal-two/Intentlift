@@ -82,3 +82,8 @@ def test_batch_cli_rejects_unknown_tier_and_filtered_validation(capsys) -> None:
         ["--validate-manifest", "--tier", "representative"]
     ) == 2
     assert "always validates the complete 28-item projection" in capsys.readouterr().err
+
+
+def test_batch_cli_never_implicitly_runs_all_28(capsys) -> None:
+    assert scrc_batch.main(["--run"]) == 2
+    assert "does not implicitly run all 28" in capsys.readouterr().err

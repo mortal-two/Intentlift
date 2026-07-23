@@ -40,6 +40,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "tl.program_id(axis). A domain/C stage whose path enters address_lane "
             "is lane-varying and may use tl.arange. Do not vectorize a program "
             "coordinate or turn a lane coordinate into tl.program_id."
+            " The generated module must obey the audited public import ABI: use "
+            "`import triton`, `import triton.language as tl`, and, when a reviewed "
+            "libdevice function is required, exactly "
+            "`from triton.language.extra.cuda import libdevice` followed by "
+            "`libdevice.<function>(...)`. Directly importing a libdevice function "
+            "is rejected by the fixed module validator."
         ),
     },
     "cute": {

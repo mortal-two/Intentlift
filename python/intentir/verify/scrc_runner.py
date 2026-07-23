@@ -397,8 +397,17 @@ class SCRCGateRunner:
             replay_normal_calls += gate1.normal_calls
             replay_masked_calls += gate1.masked_j_calls
             for arm in (gate1.normal, gate1.masked_j):
-                if arm is not None and arm.generation is not None:
-                    replay_physical_calls += arm.generation.attempts
+                if arm is None:
+                    continue
+                replay_physical_calls += (
+                    arm.physical_calls
+                    if arm.physical_calls
+                    else (
+                        arm.generation.attempts
+                        if arm.generation is not None
+                        else 0
+                    )
+                )
             if gate1.status is Gate1Status.COMPILE_FAILED:
                 raise SCRCInfrastructureError(
                     "Gate1 source compilation failed; it is not a closure verdict",
@@ -449,7 +458,22 @@ class SCRCGateRunner:
                     lift_metadata=lift_result.metadata,
                 )
             )
-            gate2 = self.dependencies.gate2.execute(artifact, gate1, request)
+            try:
+                gate2 = self.dependencies.gate2.execute(
+                    artifact, gate1, request
+                )
+            except Exception as exc:
+                raise SCRCInfrastructureError(
+                    "Gate2 adapter failed after Gate1 closure: "
+                    f"{type(exc).__name__}: {exc}",
+                    evidence={
+                        "artifact": artifact.to_json(),
+                        "typecheck": report.to_json(),
+                        "gate1": gate1.to_json(),
+                        "attempts": [item.to_json() for item in attempts],
+                        "formal_round": formal_rounds,
+                    },
+                ) from exc
             if gate2.passed:
                 main_status = MainStatus.SCRC_CERTIFIED
             else:

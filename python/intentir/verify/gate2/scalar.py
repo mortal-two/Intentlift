@@ -16,6 +16,7 @@ from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     AccessKind,
     EffectKind,
+    ParameterKind,
     ParameterMode,
     SemanticArchive,
 )
@@ -27,10 +28,12 @@ SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v5"
 
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_DIRECT_INDEX_TOKEN = rf"(?:{_IDENTIFIER}|0)"
 _DIRECT_INDEX = re.compile(
-    rf"^\[\s*(?P<axes>(?:{_IDENTIFIER}(?:\s*,\s*{_IDENTIFIER})*)?)\s*\]$"
+    rf"^\[\s*(?P<axes>(?:{_DIRECT_INDEX_TOKEN}(?:\s*,\s*"
+    rf"{_DIRECT_INDEX_TOKEN})*)?)\s*\]$"
 )
-_BARE_DIRECT_INDEX = re.compile(rf"^(?P<axis>{_IDENTIFIER})$")
+_BARE_DIRECT_INDEX = re.compile(rf"^(?P<axis>{_DIRECT_INDEX_TOKEN})$")
 _FULL_DOMAIN_TERM = re.compile(
     rf"\s*0\s*<=\s*(?P<axis>{_IDENTIFIER})\s+and\s+"
     rf"(?P=axis)\s*<\s*(?P<extent>[0-9]+|{_IDENTIFIER})"
@@ -136,15 +139,31 @@ def _parse_direct_index(expression: str) -> tuple[str, ...]:
 
 def _parse_domain_predicate(
     expression: str,
-) -> tuple[frozenset[str], tuple[tuple[str, int | str], ...]]:
+    *,
+    logical_guards: frozenset[str] = frozenset(),
+) -> tuple[
+    frozenset[str],
+    frozenset[str],
+    tuple[tuple[str, int | str], ...],
+]:
     """Parse the closed logical-domain predicate subset used for mask erasure."""
 
     lower: set[str] = set()
+    guards: set[str] = set()
     upper: dict[str, int | str] = {}
     terms = re.split(r"\s+and\s+", expression.strip())
     if not terms or any(not term for term in terms):
         raise ValueError("E_J access predicate must not be empty")
     for term in terms:
+        normalized_term = term.strip()
+        guard_name = (
+            normalized_term.removeprefix("not ").strip()
+            if normalized_term.startswith("not ")
+            else normalized_term
+        )
+        if guard_name in logical_guards:
+            guards.add(guard_name)
+            continue
         lower_match = _PREDICATE_LOWER.fullmatch(term.strip())
         if lower_match is not None:
             lower.add(lower_match.group("axis"))
@@ -165,11 +184,35 @@ def _parse_domain_predicate(
                 f"E_J predicate axis {axis!r} has conflicting extents"
             )
         upper[axis] = extent
-    if not upper:
+    if not upper and not guards:
         raise NotImplementedError(
             "E_J mask erasure requires an upper logical-domain bound"
         )
-    return frozenset(lower), tuple(sorted(upper.items()))
+    return (
+        frozenset(guards),
+        frozenset(lower),
+        tuple(sorted(upper.items())),
+    )
+
+
+def _logical_scalar_inputs(j: SemanticArchive) -> frozenset[str]:
+    inputs = {item.name: item for item in j.intent.inputs}
+    return frozenset(
+        parameter.logical_ref
+        for parameter in j.signature.parameters
+        if parameter.kind in {ParameterKind.SCALAR, ParameterKind.CONSTEXPR}
+        and parameter.logical_ref in inputs
+        and not inputs[parameter.logical_ref].shape
+    )
+
+
+def _logical_boolean_guards(j: SemanticArchive) -> frozenset[str]:
+    inputs = {item.name: item for item in j.intent.inputs}
+    return frozenset(
+        name
+        for name in _logical_scalar_inputs(j)
+        if inputs[name].dtype == "i1"
+    )
 
 
 def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
@@ -182,8 +225,16 @@ def _parse_full_domains(j: SemanticArchive) -> dict[str, int | str]:
     """
 
     result: dict[str, int | str] = {}
+    logical_guards = _logical_boolean_guards(j)
     for domain_id, expression in j.boundary.domains.items():
         expression = expression.strip()
+        guard_name = (
+            expression.removeprefix("not ").strip()
+            if expression.startswith("not ")
+            else expression
+        )
+        if guard_name in logical_guards:
+            continue
         position = 0
         matched = False
         while position < len(expression):
@@ -226,7 +277,12 @@ def _validate_masked_sum_reduction(
     axes_by_access: Mapping[str, tuple[str, ...]],
     predicates_by_access: Mapping[
         str,
-        tuple[frozenset[str], tuple[tuple[str, int | str], ...]] | None,
+        tuple[
+            frozenset[str],
+            frozenset[str],
+            tuple[tuple[str, int | str], ...],
+        ]
+        | None,
     ],
 ) -> None:
     """Validate the narrow padded single-axis sum projection supported by E_J."""
@@ -321,7 +377,11 @@ def _validate_masked_sum_reduction(
     predicate = predicates_by_access[load.access_id]
     if predicate is None:
         raise NotImplementedError("E_J padded reduction requires a load predicate")
-    lower_axes, upper_bounds = predicate
+    guards, lower_axes, upper_bounds = predicate
+    if guards:
+        raise NotImplementedError(
+            "E_J padded reduction does not consume logical guard predicates"
+        )
     reduced_index = load_axes[reduced_axis]
     expected_bound = (reduced_index, input_tensor.shape[reduced_axis])
     if upper_bounds != (expected_bound,) or not lower_axes.issubset({reduced_index}):
@@ -499,10 +559,6 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         raise NotImplementedError(
             "E_J mask erasure does not implement update padding"
         )
-    if has_predicate_or_fill and not masked_reduction and j.intent.body:
-        raise NotImplementedError(
-            "E_J mask erasure currently requires a direct identity J"
-        )
     nodes = _node_table(j)
     tensors = {
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
@@ -510,37 +566,14 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     input_names = {item.name for item in j.intent.inputs}
     output_names = {item.name for item in j.intent.outputs}
     returns = {item.output: item.value for item in j.intent.returns}
-    if has_predicate_or_fill and not masked_reduction and any(
-        value not in input_names for value in returns.values()
-    ):
-        raise NotImplementedError(
-            "E_J mask erasure currently requires outputs to return J inputs"
-        )
-    if has_predicate_or_fill and not masked_reduction:
-        if (
-            len(input_names) != len(output_names)
-            or set(returns) != output_names
-            or set(returns.values()) != input_names
-            or len(set(returns.values())) != len(returns)
-        ):
-            raise NotImplementedError(
-                "E_J mask erasure requires a one-to-one input/output identity"
-            )
-        if any(len(tensor.shape) != 1 for tensor in tensors.values()):
-            raise NotImplementedError(
-                "E_J mask erasure currently supports rank-one tensors only"
-            )
-        for output_name, input_name in returns.items():
-            output = tensors[output_name]
-            input_tensor = tensors[input_name]
-            if (
-                output.dtype != input_tensor.dtype
-                or output.shape != input_tensor.shape
-            ):
-                raise ValueError(
-                    "E_J mask erasure requires identical input/output dtype and shape"
-                )
+    logical_scalar_inputs = _logical_scalar_inputs(j)
+    logical_guards = _logical_boolean_guards(j)
     mappings = {item.output: item for item in boundary.output_mappings}
+    for output, mapping in mappings.items():
+        if output in returns and mapping.value != returns[output]:
+            raise ValueError(
+                "E_J output mapping differs from the J return value"
+            )
     access_ids = [item.access_id for item in boundary.accesses]
     if len(access_ids) != len(set(access_ids)):
         raise ValueError("E_J dense functional boundary has duplicate access ids")
@@ -559,7 +592,12 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     inferred_axis_extents: dict[str, int | str] = dict(domains)
     predicate_contracts: dict[
         str,
-        tuple[frozenset[str], tuple[tuple[str, int | str], ...]] | None
+        tuple[
+            frozenset[str],
+            frozenset[str],
+            tuple[tuple[str, int | str], ...],
+        ]
+        | None
     ] = {}
     axes_by_access: dict[str, tuple[str, ...]] = {}
     loaded: set[str] = set()
@@ -591,6 +629,10 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 f"E_J access {access.access_id!r} rank differs from J tensor"
             )
         for axis, declared_extent in zip(axes, tensor.shape, strict=True):
+            if axis == "0" and declared_extent != 1:
+                raise ValueError(
+                    "E_J constant zero index is valid only for a singleton axis"
+                )
             # A direct axis over a typed J tensor is already bounded by that
             # tensor's logical shape.  When B also spells out a domain, consume
             # it and require exact agreement instead of treating it as an
@@ -606,17 +648,22 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 consumed_domain_axes.add(axis)
 
         predicate_contract = (
-            _parse_domain_predicate(access.predicate)
+            _parse_domain_predicate(
+                access.predicate, logical_guards=logical_guards
+            )
             if access.predicate is not None
             else None
         )
         predicate_contracts[access.access_id] = predicate_contract
         if predicate_contract is not None:
-            if not domains:
-                raise NotImplementedError(
-                    "E_J mask erasure requires an explicit full logical domain"
+            guards, lower_axes, upper_bounds = predicate_contract
+            graph_operands = {
+                operand for node in j.intent.body for operand in node.operands
+            }
+            if not guards.issubset(graph_operands):
+                raise ValueError(
+                    "E_J access guard is absent from J value dataflow"
                 )
-            lower_axes, upper_bounds = predicate_contract
             if not lower_axes.issubset(set(axes)):
                 raise ValueError("E_J predicate lower bound uses a non-index axis")
             for axis, extent in upper_bounds:
@@ -628,7 +675,11 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                     raise ValueError(
                         "E_J access predicate differs from the full logical domain"
                     )
-            if access.kind is AccessKind.LOAD and access.fill_value is None:
+            if (
+                upper_bounds
+                and access.kind is AccessKind.LOAD
+                and access.fill_value is None
+            ):
                 raise NotImplementedError(
                     "E_J mask erasure requires an explicit masked-load fill"
                 )
@@ -687,6 +738,14 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 raise ValueError(
                     f"E_J store {access.access_id!r} is not produced by its J node"
                 )
+            if has_predicate_or_fill and not masked_reduction and (
+                op.type is None
+                or op.type.get("dtype") != tensor.dtype
+                or op.type.get("shape") != tensor.shape
+            ):
+                raise ValueError(
+                    "E_J store producer type differs from the output tensor"
+                )
         elif (
             j.intent.body
             or mapping is None
@@ -699,7 +758,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
 
     if set(effects_by_access) != {item.access_id for item in boundary.accesses}:
         raise ValueError("E_J contains an effect for an unknown access")
-    if loaded != input_names:
+    if loaded != input_names - set(logical_scalar_inputs):
         raise NotImplementedError(
             "E_J dense functional boundary must cover every logical input"
         )
@@ -712,9 +771,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         raise NotImplementedError(
             "E_J dense functional boundary contains an unconsumed domain axis"
         )
-    concrete_predicates = [
-        item for item in predicate_contracts.values() if item is not None
-    ]
+    concrete_predicates = [item for item in predicate_contracts.values() if item]
     if masked_reduction:
         _validate_masked_sum_reduction(
             j,
@@ -723,14 +780,21 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             predicates_by_access=predicate_contracts,
         )
     elif concrete_predicates:
-        if len(concrete_predicates) != len(predicate_contracts):
-            raise NotImplementedError(
-                "E_J mask erasure requires the same predicate on every access"
-            )
-        if len(set(concrete_predicates)) != 1:
-            raise ValueError(
-                "E_J mask erasure requires identical logical-domain predicates"
-            )
+        masked_axes = {
+            axis
+            for _guards, _lower, upper in concrete_predicates
+            for axis, _extent in upper
+        }
+        for access in boundary.accesses:
+            axes = axes_by_access[access.access_id]
+            contract = predicate_contracts[access.access_id]
+            upper = dict(contract[2]) if contract is not None else {}
+            for axis in masked_axes.intersection(axes):
+                if upper.get(axis) != domains.get(axis):
+                    raise NotImplementedError(
+                        "E_J mask erasure requires the same predicate on every "
+                        "access of a masked axis"
+                    )
 
 
 def _validate_complete_boundary(j: SemanticArchive) -> str:

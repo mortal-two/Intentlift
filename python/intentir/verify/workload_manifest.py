@@ -181,6 +181,11 @@ class SCRCWorkloadEntry:
             representative_tier=_REPRESENTATIVE_TIERS.get(
                 capability.kernel_id, "catalog"
             ),
+            adapter_readiness=(
+                "declared"
+                if capability.kernel_id in _REPRESENTATIVE_TIERS
+                else "pending"
+            ),
         )
 
     def resolve_source(

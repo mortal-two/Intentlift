@@ -177,3 +177,35 @@ row reduction、softmax 组合或 contraction。达到门禁覆盖与达到性�
 
 Phase B 仍在执行：需要为六项建立真实 Harness adapter，并通过统一 SCRC 生命周期保存各自的
 terminal evidence 与真实调用预算。在六项纵切完成以前，本 Task 保持“执行中”。
+
+### Phase B：真实 Source/Harness 与统一生命周期（进行中）
+
+- 已新增声明式 Triton workload adapter 与 fixed-C AST source projection。六个 representative
+  case 均从现行 registry 解析真实 file/symbol，机械检查 runtime/constexpr ABI；需要的 imported
+  `@triton.jit` helper 由 source closure 解析，不通过导入带 native extension 的外部 Python package
+  获取。六项真实 CUDA/Triton frontend compile 检查均已通过。
+- compiler view 现记录机械 argument mode；Gate1 对 interleaved semantic/C constexpr 使用匿名
+  handle 分类而非位置猜测。Replay 的公共 Triton 合同统一使用 `libdevice` module access，没有
+  per-kernel prompt patch。
+- 统一 `SCRCGateRunner` 已接入真实 workload：Gate1 首次闭合后才构造隐藏有限输入；Gate2 绑定
+  Source/Replay/J 三腿与 external-Q 三边；rank-0 logical scalar、boolean guard 和受限 pure
+  pointwise logical-domain tail mask 已作为通用能力接入，masked reduction profile保持独立。
+- evidence 路径现在保存被 schema/validator 拒绝的 Lift/Replay provider response、receipt、实际
+  physical call 数、partial artifact、TypeCheck 与 Gate1 证据；批量分类可以区分 Lift/TypeCheck/
+  Replay response/compile/Harness/reference/Gate2/infrastructure 终态。
+
+### 首个真实 case 暴露的问题与处理
+
+`high_performance:liger_dyt` 已产生七个独立 run。`run-001`/`run-005` 是候选未闭合，`run-002`/
+`run-003` 暴露并复现了 Gate2 rank-0 logical scalar binding 缺口，`run-004`/`run-006`/`run-007`
+是外部 provider 502/408。上述 run 的原始 terminal verdict 不回写；历史记录的计数/证据限制与
+离线诊断分别写在各 run 的 `AUDIT.md`。
+
+对 `run-003` accepted Gate1 candidate 的离线只读诊断显示：Source/Replay exact，RefEval 三腿在
+通用 scalar/mask 支持补齐后均可执行，但 candidate 把浮点 tanh/乘加结果声明为 `exact`，两条
+J 比较边最大绝对差约 `2.98e-08`，因此仍不能认证。这个事实已用于收紧通用 Lift comparison-class
+提示；没有修改历史 artifact、Q 或 verdict。
+
+本阶段 checkpoint 前已再次验证：manifest `28/28 resolved`、六个 representative dry-run 均为
+`ready`，全量 Python 回归为 `793 passed, 4 skipped`。接下来用可用 provider 配置从全新 run
+继续六项顺序纵切。Task 03 在六项各自收敛为结构化 terminal evidence 前仍保持“执行中”。

@@ -22,6 +22,8 @@ from intentir.verify.gate2.scalar import (
     ScalarLoweringRunner,
     ScalarLoweringSpec,
     _validate_complete_boundary,
+    _parse_domain_predicate,
+    _parse_direct_index,
 )
 from intentir.verify.gate2.triton import (
     ArgumentRole,
@@ -313,10 +315,9 @@ def test_scalar_e_j_erases_full_logical_domain_mask_for_identity() -> None:
         ("predicate_extent", "differs from the full logical domain"),
         ("unmasked_store", "same predicate on every access"),
         ("missing_fill", "requires an explicit masked-load fill"),
-        ("non_identity", "requires a direct identity J"),
         ("affine_index", "requires one bare axis"),
-        ("dtype_change", "identical input/output dtype and shape"),
-        ("destination_change", "outputs to return J inputs"),
+        ("dtype_change", "does not match return value"),
+        ("destination_change", "output mapping differs from the J return"),
     ],
 )
 def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> None:
@@ -327,8 +328,6 @@ def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> No
         artifact.j.boundary.accesses[1].predicate = None
     elif mutation == "missing_fill":
         artifact.j.boundary.accesses[0].fill_value = None
-    elif mutation == "non_identity":
-        artifact.j.intent.body = make_copy_artifact().j.intent.body
     elif mutation == "affine_index":
         artifact.j.boundary.accesses[0].index_expression = "i0 + 1"
     elif mutation == "dtype_change":
@@ -350,6 +349,52 @@ def test_scalar_e_j_mask_erasure_mutations_fail_closed(mutation, expected) -> No
 
     assert not result.ok
     assert expected in (result.error or "")
+
+
+def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
+    artifact = _make_masked_identity_artifact()
+    operation = make_copy_artifact().j.intent.body[0]
+    operation.result = "v0"
+    operation.attrs["fn"] = "tanh"
+    operation.type = {"dtype": "f32", "shape": ["x0"]}
+    artifact.j.intent.body = [operation]
+    artifact.j.intent.returns = [IntentReturn("t1", "v0")]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    for access in artifact.j.boundary.accesses:
+        access.node_ref = "n0"
+    for effect in artifact.j.boundary.effects:
+        effect.node_ref = "n0"
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v0", "n0")
+    ]
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def test_mask_predicate_parser_separates_logical_guard_from_domain_bound() -> None:
+    guards, lower, upper = _parse_domain_predicate(
+        "flag and i0 < x0", logical_guards=frozenset({"flag"})
+    )
+
+    assert guards == {"flag"}
+    assert lower == set()
+    assert upper == (("i0", "x0"),)
+
+
+def test_direct_index_parser_accepts_only_zero_as_a_literal_projection() -> None:
+    assert _parse_direct_index("[0]") == ("0",)
+    with pytest.raises(NotImplementedError, match="one bare axis"):
+        _parse_direct_index("[1]")
 
 
 @pytest.mark.parametrize(

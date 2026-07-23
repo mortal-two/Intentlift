@@ -43,6 +43,7 @@ class Gate1ArmEvidence:
     fingerprint: TTIRFingerprint | None
     comparison: TTIRComparison | None
     diagnostic: str | None = None
+    physical_calls: int = 0
 
     @property
     def hard_closed(self) -> bool:
@@ -118,6 +119,7 @@ class Gate1ExecutionResult:
                     if value.comparison is not None else None
                 ),
                 "diagnostic": value.diagnostic,
+                "physical_calls": value.physical_calls,
             }
 
         return {
@@ -314,11 +316,27 @@ def _replay_case(
     slots = {slot.name: slot for slot in artifact.c.slots}
     if len(source_constexpr_names) != len(semantic_constexprs) + len(c_constexprs):
         raise ValueError("source constexpr bindings differ from artifact harness")
+    semantic_aliases = [
+        parameter_names[parameter.name] for parameter in semantic_constexprs
+    ]
+    c_aliases = [schedule_names[slot.name] for slot in c_constexprs]
+    if set(source_constexpr_names) == set(semantic_aliases) | set(c_aliases):
+        # Source-anonymized real kernels can interleave semantic constexprs and
+        # pure-C constexprs in their original ABI.  Their p*/c* names are
+        # authoritative, so do not recover ownership from source position.
+        semantic_source_names = semantic_aliases
+        c_source_names = c_aliases
+    else:
+        # Compatibility for trusted, non-anonymized source fixtures whose names
+        # predate the p*/c* compiler view.  Those fixtures use the historical
+        # semantic-then-C ordering contract.
+        semantic_source_names = source_constexpr_names[: len(semantic_constexprs)]
+        c_source_names = source_constexpr_names[len(semantic_constexprs):]
     schedule: dict[str, Any] = {}
     consumed_source_schedule: set[str] = set()
     for parameter, source_name in zip(
         semantic_constexprs,
-        source_constexpr_names[: len(semantic_constexprs)],
+        semantic_source_names,
         strict=True,
     ):
         if source_name not in source_case.schedule:
@@ -328,8 +346,6 @@ def _replay_case(
         expected = source_case.schedule[source_name]
         schedule[parameter_names[parameter.name]] = expected
         consumed_source_schedule.add(source_name)
-
-    c_source_names = source_constexpr_names[len(semantic_constexprs):]
     for slot, source_name in zip(c_constexprs, c_source_names, strict=True):
         if source_name not in source_case.schedule:
             raise ValueError(f"source C constexpr {source_name!r} is unbound")
@@ -400,9 +416,12 @@ class Gate1Runner:
         try:
             generation = self.writer.generate(artifact, masked=masked)
         except Exception as exc:
+            attempt = getattr(exc, "attempt", None)
+            physical_calls = getattr(attempt, "attempts", 0)
             return Gate1ArmEvidence(
                 mode, None, None, None, None,
                 f"generation failed: {type(exc).__name__}: {exc}",
+                physical_calls,
             )
         replay_source = KernelSource.from_replay(
             generation.code, generation.function_name
@@ -412,6 +431,7 @@ class Gate1Runner:
             return Gate1ArmEvidence(
                 mode, generation, compile_result, None, None,
                 compile_result.diagnostic or "replay compilation failed",
+                generation.attempts,
             )
         try:
             replay_fingerprint = fingerprint_ttir(
@@ -425,12 +445,18 @@ class Gate1Runner:
             return Gate1ArmEvidence(
                 mode, generation, compile_result, None, None,
                 f"replay observation failed: {type(exc).__name__}: {exc}",
+                generation.attempts,
             )
         comparison = self.comparator.compare(
             source_fingerprint, replay_fingerprint
         )
         return Gate1ArmEvidence(
-            mode, generation, compile_result, replay_fingerprint, comparison
+            mode,
+            generation,
+            compile_result,
+            replay_fingerprint,
+            comparison,
+            physical_calls=generation.attempts,
         )
 
     def run(

@@ -131,6 +131,13 @@ class ResponsesReplayWriter:
     provider: ProviderConfig | None = None
     effort: str | None = None
     frontend: Frontend = Frontend.TRITON
+    _records: list[ReplayGeneration | ReplayAttempt] = field(
+        default_factory=list, init=False, repr=False
+    )
+
+    @property
+    def records(self) -> tuple[ReplayGeneration | ReplayAttempt, ...]:
+        return tuple(self._records)
 
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
@@ -164,34 +171,34 @@ class ResponsesReplayWriter:
                 function_name=function_name,
             )
         except Exception as exc:
-            raise ReplayGenerationError(
-                ReplayAttempt(
-                    model=reply.model,
-                    diagnostic=f"{type(exc).__name__}: {exc}",
-                    response_text=reply.text,
-                    response_id=(
-                        reply.raw.get("id")
-                        if isinstance(reply.raw.get("id"), str)
-                        else None
-                    ),
-                    response_model=(
-                        reply.raw.get("model")
-                        if isinstance(reply.raw.get("model"), str)
-                        else None
-                    ),
-                    usage=_usage(reply.raw),
-                    request_sha256=reply.request_sha256,
-                    response_sha256=(
-                        reply.response_sha256
-                        or hashlib.sha256(reply.text.encode()).hexdigest()
-                    ),
-                    raw_response_sha256=reply.raw_response_sha256,
-                    raw_response=reply.raw_response,
-                    attempts=reply.attempts,
-                    elapsed_ms=reply.elapsed_ms,
-                )
-            ) from exc
-        return ReplayGeneration(
+            attempt = ReplayAttempt(
+                model=reply.model,
+                diagnostic=f"{type(exc).__name__}: {exc}",
+                response_text=reply.text,
+                response_id=(
+                    reply.raw.get("id")
+                    if isinstance(reply.raw.get("id"), str)
+                    else None
+                ),
+                response_model=(
+                    reply.raw.get("model")
+                    if isinstance(reply.raw.get("model"), str)
+                    else None
+                ),
+                usage=_usage(reply.raw),
+                request_sha256=reply.request_sha256,
+                response_sha256=(
+                    reply.response_sha256
+                    or hashlib.sha256(reply.text.encode()).hexdigest()
+                ),
+                raw_response_sha256=reply.raw_response_sha256,
+                raw_response=reply.raw_response,
+                attempts=reply.attempts,
+                elapsed_ms=reply.elapsed_ms,
+            )
+            self._records.append(attempt)
+            raise ReplayGenerationError(attempt) from exc
+        generation = ReplayGeneration(
             code=code,
             function_name=function_name,
             model=reply.model,
@@ -222,6 +229,8 @@ class ResponsesReplayWriter:
             attempts=reply.attempts,
             elapsed_ms=reply.elapsed_ms,
         )
+        self._records.append(generation)
+        return generation
 
 
 @dataclass
