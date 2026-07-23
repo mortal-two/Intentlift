@@ -2773,19 +2773,22 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
         if ref not in tensors and ref not in dimensions:
             raise SchemaError(
                 f"J.signature parameter {parameter.name!r} references unknown "
-                f"J logical handle {ref!r}"
+                f"J logical handle {ref!r}; logical_ref must name a declared "
+                "J input/output tensor or symbolic dimension, never a body SSA value"
             )
         if ref in tensors:
             tensor = tensors[ref]
             if parameter.dtype != tensor.dtype:
                 raise SchemaError(
-                    f"J.signature parameter {parameter.name!r} dtype differs "
-                    f"from logical tensor {ref!r}"
+                    f"J.signature parameter {parameter.name!r} dtype "
+                    f"{parameter.dtype!r} differs from logical tensor {ref!r} "
+                    f"dtype {tensor.dtype!r}"
                 )
             if parameter.rank != len(tensor.shape):
                 raise SchemaError(
-                    f"J.signature parameter {parameter.name!r} rank differs "
-                    f"from logical tensor {ref!r}"
+                    f"J.signature parameter {parameter.name!r} rank "
+                    f"{parameter.rank!r} differs from logical tensor {ref!r} "
+                    f"rank {len(tensor.shape)!r}"
                 )
             if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
                 raise SchemaError("input signature parameter must bind a J input")

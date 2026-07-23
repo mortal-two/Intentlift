@@ -327,8 +327,11 @@ def _signature_schema() -> dict[str, Any]:
         ("name", "kind", "mode"),
         description=(
             "One J-owned logical callable handle. logical_ref links a "
-            "pointer/tensor/scalar/semantic-constexpr handle to a J tensor, "
-            "value, or dimension. Every trusted "
+            "pointer/tensor/scalar/semantic-constexpr handle only to a "
+            "declared J input/output tensor or a symbolic J dimension; it "
+            "never names a v* SSA value. Logical scalar data and semantic "
+            "constexpr values use a dtype-matching rank-0 J input. Integral "
+            "extent-only handles instead bind a symbolic dimension. Every trusted "
             "compiler-view tensor argument, including one unused by the frozen "
             "specialization, keeps a logical_ref whose J tensor dtype, rank and "
             "shape exactly match that view. The inactive tensor remains a typed "

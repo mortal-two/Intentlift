@@ -217,3 +217,35 @@ wire 示例与全局 IntentIR operation reference，提供 `top/catalog/op/secti
 turn。预算小幅调整为 10 turn，新增内容不进入 artifact、Replay 或 certificate predicate。定向验证
 为 `21 passed`，全量 Python 回归为 `822 passed`，`compileall` 与 diff check 通过。下一步使用同一
 case 运行 run-002；只有单 worker 能稳定提交 candidate 后才恢复五分支 fan-out。
+
+## 2026-07-23 DYT implementation canary：run-002
+
+run-002 使用 `intentir.lift-knowledge.v2` 和 10-turn budget。与 run-001 相比：
+
+- 三个 fresh worker 全部在第 9 turn `Submitted`，submitted candidate 从 0/3 提升为 3/3；
+- physical provider calls 为 27；三个 worker 分别耗时 309.628、303.912、394.474 秒；
+- 三份 candidate 均通过 Agent 内静态 schema validator，并实际到达外部 canonical decoder；
+- attempt 1/2 被拒为 `p5.logical_ref=v0`，但 `v0` 是 body SSA value，不是 bindable signature handle；
+- attempt 3 把 `p5.logical_ref` 改为 `t4`，但 `t4` 是 f32 output，而 `p5` 是 input-side i1 semantic
+  constexpr，因此 direction/dtype 不相容；
+- canonical artifact 仍为 0，TypeCheck、Replay、Gate1、RefEval、Gate2 执行次数仍均为 0。
+
+这次结果证明 run-001 的 schema 翻页/无提交问题已解决，同时暴露一个真实合同冲突：静态 schema
+description 曾写 `logical_ref` 可指向 “J tensor, value, or dimension”，canonical parser 实际只允许
+声明的 J input/output tensor 或 symbolic dimension。候选第 5 turn 生成完整 15--17 KB JSON 时输出
+8.6k--10.8k tokens，单次 provider 生成耗时 155--196 秒；其余大多数请求为 2--29 秒。run-002
+约 16.8 分钟的主因不是 Lift+Replay 混入同一请求，也不是本地 shell，而是一个分支串行生成三份
+大候选；第二/第三次没有获得上一 rejected candidate，只能重新生成完整 artifact。
+
+knowledge-v3 因此做两项系统修正：
+
+1. schema description、Lift contract、preflight 与 canonical diagnostic 统一规定：logical data scalar /
+   semantic constexpr 使用 dtype 相容、shape `[]` 的 rank-0 J input 并进入 dataflow；extent-only integral
+   handle 才绑定 `x*`，`logical_ref` 不得指向 `v*` 或不相容 output；
+2. canonical parser rejection 后，仅把同 branch、紧邻、与 diagnostic 精确对应的有限 JSON object
+   送入下一次全新 worker。新 session/history/workspace 只做聚焦修正并重新提交完整三元组；不恢复
+   trajectory、不在同轮运行 parser/TypeCheck，也不把 rejected candidate 送入 Replay/证书。
+
+v3 定向回归为 `120 passed`，全量 Python 回归为 `827 passed`，`compileall` 与 diff check 通过。
+下一步 run-003 必须首先验证 canonical decode/TypeCheck 是否被真正到达；未达到前不扩大到五分支
+正式 fan-out。

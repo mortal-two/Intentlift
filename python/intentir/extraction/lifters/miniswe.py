@@ -32,7 +32,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v2"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v3"
 
 
 def _usage_and_response_identity(
@@ -147,7 +147,7 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
 - `feedback.json`: null on the first round, otherwise only the explicitly
-  allowed previous TypeCheck/Gate1 feedback and previous candidate.
+  allowed previous parser/TypeCheck/Gate1 feedback and previous candidate.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
@@ -169,6 +169,10 @@ Query exact `op NAME` or leaf `section NAME` only when needed. Useful leaf
 sections include `access`, `effect`, `result_relation`, `authorization`,
 `scope`, `c_slot`, `pi_instance`, `pi_route`, and `pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
+On a fresh retry where `feedback.json.previous_artifact` is an object, copy
+that complete candidate first and make only the focused external-diagnostic
+repair; do not rebuild it from Source. The repaired full object is still a new
+Lift submission and will be checked externally again.
 Write it to `/output/candidate.json`; then run:
 
 `python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`
@@ -218,21 +222,62 @@ class MiniSWELiftAdapter:
     def records(self) -> tuple[SCRCReliftRecord, ...]:
         return tuple(self._records)
 
+    def _latest_rejected_candidate(
+        self,
+        diagnostics: Mapping[str, Any] | None,
+    ) -> Mapping[str, Any] | None:
+        """Return only the adjacent JSON object named by parser feedback."""
+
+        if (
+            not self._records
+            or not isinstance(diagnostics, Mapping)
+            or diagnostics.get("failure_class") != "lift_response"
+        ):
+            return None
+        record = self._records[-1]
+        if (
+            record.relift_round != len(self._records)
+            or record.extraction is not None
+            or len(record.rejected_attempts) != 1
+        ):
+            return None
+        attempt = record.rejected_attempts[0]
+        if diagnostics.get("diagnostic") != attempt.diagnostic:
+            return None
+
+        def reject_nonfinite(token: str) -> None:
+            raise ValueError(f"non-finite JSON number: {token}")
+
+        try:
+            candidate = json.loads(
+                attempt.response_text,
+                parse_constant=reject_nonfinite,
+            )
+            if not isinstance(candidate, dict):
+                return None
+            json.dumps(candidate, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            return None
+        return candidate
+
     def _relift_context(self, feedback: Any) -> SCRCReliftContext | None:
         if feedback is None:
             return None
         kind = getattr(getattr(feedback, "kind", None), "value", None)
         diagnostics = getattr(feedback, "diagnostics", None)
         previous_artifact = getattr(feedback, "previous_artifact", None)
+        previous_candidate = (
+            self._latest_rejected_candidate(diagnostics)
+            if kind == "lift"
+            else None
+        )
+        if previous_candidate is None and hasattr(previous_artifact, "to_json"):
+            previous_candidate = previous_artifact.to_json()
         return SCRCReliftContext(
             max(1, len(self._records)),
             kind,
             diagnostics if isinstance(diagnostics, Mapping) else {},
-            (
-                previous_artifact.to_json()
-                if hasattr(previous_artifact, "to_json")
-                else None
-            ),
+            previous_candidate,
         )
 
     def lift(self, request: Any, feedback: Any) -> Any:

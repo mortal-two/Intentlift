@@ -1,0 +1,15 @@
+{
+  "attempts": 9,
+  "backend": "minisweagent.intentir-lift.v1",
+  "diagnostic": "SchemaError: J.signature parameter 'p5' references unknown J logical handle 'v0'",
+  "elapsed_ms": 303912.43587015197,
+  "model": "gpt-5.6-sol",
+  "response_id": "resp_bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVyOm9wZW5haTttb2RlbF9pZDpOb25lO3Jlc3BvbnNlX2lkOnJlc3BfMDY0ZDIzYjIzOTcyOWFiZTAxNmE2MWI3NWQxZWU4ODE5ODhiNzQ1ZmExMzgyODAwNDk=",
+  "response_model": "gpt-5.6-sol",
+  "termination_status": "Submitted",
+  "usage": {
+    "input_tokens": 145623,
+    "output_tokens": 14681,
+    "total_tokens": 160304
+  }
+}

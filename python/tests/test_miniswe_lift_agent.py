@@ -15,10 +15,15 @@ from intentir.extraction.lifters.miniswe import (
     MiniSWELiftAdapter,
     _input_files,
 )
-from intentir.extraction.lifters.scrc import prepare_scrc_lift
+from intentir.extraction.lifters.scrc import (
+    SCRCLiftAttempt,
+    SCRCReliftRecord,
+    prepare_scrc_lift,
+)
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.scrc_runner import (
+    CandidateLiftError,
     FeedbackKind,
     HarnessBindingInstance,
     LiftFeedback,
@@ -108,12 +113,15 @@ def source_copy(a, b, n, block: tl.constexpr):
 def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v2"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v3"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
     assert "map_binary" in files["knowledge/intent_ops.md"]
     assert "Do not page through the raw schema" in files["README.md"]
+    assert "never names a source/local or J-body v*" in (
+        files["knowledge/lift_contract.md"]
+    )
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
@@ -151,6 +159,8 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "ordinary operations: map_binary, map_unary" in output
     assert 'fn in' in output
     assert '"logical_ref"' in output
+    assert "rank-0 J input" in output
+    assert "never names a v* SSA value" in output
     assert '"access_id"' in output
     assert '"semantic_ref"' in output
     assert len(output.splitlines()) < 350
@@ -728,3 +738,128 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert "secret" not in json.dumps(
         adapter.records[0].extraction.provenance.trajectory
     )
+
+
+def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
+    monkeypatch,
+) -> None:
+    artifact = make_copy_artifact()
+    invalid = json.loads(
+        _real_lift_input_files()["knowledge/minimal_example.json"]
+    )
+    invalid["j"]["signature"]["parameters"][2]["logical_ref"] = "v0"
+    captured: list[tuple[Path, object]] = []
+
+    def fake_model(**kwargs):
+        del kwargs
+        return object()
+
+    def fake_run(*, model, workspace, config_overrides):
+        del model, config_overrides
+        feedback = json.loads(
+            (workspace.input_dir / "feedback.json").read_text()
+        )
+        captured.append((workspace.root, feedback))
+        candidate = invalid if len(captured) == 1 else artifact.to_json()
+        return IntentIRLiftRunResult(
+            json.dumps(candidate),
+            {"messages": []},
+            "Submitted",
+            2,
+            10.0,
+        )
+
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.create_intentir_lift_model", fake_model
+    )
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.run_intentir_lift", fake_run
+    )
+    adapter = MiniSWELiftAdapter(
+        provider=ProviderConfig(
+            "test", "http://provider.invalid/v1", "secret", "test-model",
+            reasoning_effort="xhigh",
+        )
+    )
+    request = _adapter_request()
+
+    with pytest.raises(CandidateLiftError) as rejected:
+        adapter.lift(request, None)
+    feedback = LiftFeedback(
+        FeedbackKind.LIFT,
+        rejected.value.diagnostics,
+        None,
+        artifact,
+    )
+    repaired = adapter.lift(request, feedback)
+
+    assert repaired.artifact.to_json() == artifact.to_json()
+    assert captured[0][1] is None
+    assert captured[1][1]["failure_kind"] == "lift"
+    assert captured[1][1]["previous_artifact"] == invalid
+    assert captured[0][0] != captured[1][0]
+    assert all(not root.exists() for root, _feedback in captured)
+
+
+@pytest.mark.parametrize(
+    "response_text",
+    ["[]", "{not-json", '{"value": NaN}'],
+)
+def test_non_object_rejection_is_not_reused_as_candidate(
+    response_text: str,
+) -> None:
+    diagnostic = "SchemaError: rejected"
+    adapter = MiniSWELiftAdapter()
+    adapter._records.append(
+        SCRCReliftRecord(
+            1,
+            diagnostic=diagnostic,
+            rejected_attempts=(
+                SCRCLiftAttempt("test", diagnostic, response_text),
+            ),
+        )
+    )
+    previous = make_copy_artifact()
+    context = adapter._relift_context(
+        LiftFeedback(
+            FeedbackKind.LIFT,
+            {
+                "failure_class": "lift_response",
+                "diagnostic": diagnostic,
+            },
+            None,
+            previous,
+        )
+    )
+
+    assert context is not None
+    assert context.previous_artifact == previous.to_json()
+
+
+def test_rejected_candidate_state_is_adapter_local_and_adjacent() -> None:
+    diagnostic = "SchemaError: rejected"
+    rejected = SCRCLiftAttempt("test", diagnostic, '{"candidate": 1}')
+    first = MiniSWELiftAdapter()
+    first._records.append(
+        SCRCReliftRecord(
+            1,
+            diagnostic=diagnostic,
+            rejected_attempts=(rejected,),
+        )
+    )
+    first._records.append(
+        SCRCReliftRecord(2, diagnostic="worker produced no candidate")
+    )
+    feedback = LiftFeedback(
+        FeedbackKind.LIFT,
+        {
+            "failure_class": "lift_response",
+            "diagnostic": diagnostic,
+        },
+    )
+
+    adjacent = first._relift_context(feedback)
+    separate = MiniSWELiftAdapter()._relift_context(feedback)
+
+    assert adjacent is not None and adjacent.previous_artifact is None
+    assert separate is not None and separate.previous_artifact is None

@@ -629,6 +629,15 @@ layout/address realization may be referenced only by pi. A source constexpr
 not listed there is pure scheduling, remains a c* parameter, and must have a
 matching pure-C constexpr slot.
 
+Every J.signature logical_ref names only a declared J input/output t* handle or
+a symbolic dimension x*; it never names a source/local or J-body v* SSA value.
+When a runtime scalar or bound semantic constexpr is logical data used in a
+predicate, operator, or result, declare a dtype-matching rank-0 J input tensor
+with shape [] and bind that p* parameter to its t* handle. This input participates
+in J dataflow. Only an integral extent-only parameter binds an x* dimension.
+Never bind a value parameter to an output tensor merely to satisfy handle
+existence; tensor dtype, rank, and input/output mode must agree exactly.
+
 A runtime scalar p* value in harness_compiler_view is only the current Harness
 binding, never permission to specialize J. If source uses that scalar in a
 logical extent, index, predicate, or result, create a symbolic x* dimension,

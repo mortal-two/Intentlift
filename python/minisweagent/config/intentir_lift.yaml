@@ -34,6 +34,9 @@ agent:
     Bounded workflow:
     1. Read README, Source, Harness view, feedback, contract, and preflight in
        one shell action.
+       If feedback contains `previous_artifact`, this is a fresh repair round:
+       copy that complete candidate to `/output/candidate.json` immediately,
+       apply the diagnostic as a focused correction, and do not regenerate it.
     2. Read the minimal example and run schema_query `top` + `catalog` in one
        shell action; query only exact operations and leaf sections needed by
        Source, combining those lookups in one shell action.

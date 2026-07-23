@@ -24,6 +24,12 @@ logical extent、index、predicate 或 result，J 必须保留 symbolic `x*` 并
 不得把当前 value 特化成 J 常量。`x*` 是 signature/type handle，不是 SSA value，不能进入 portable
 scope definitions/captures 或 storage。
 
+`J.signature.logical_ref` 只允许指向声明的 J input/output tensor 或 symbolic dimension，不能指向
+body 内部 `v*` SSA value。logical runtime scalar 或 non-C semantic constexpr 若作为 predicate、
+operator 或 result 的逻辑数据，必须声明 dtype 相容、shape `[]` 的 rank-0 J input，并让该输入实际
+进入 J dataflow；只有 integral extent-only handle 才绑定 `x*`。value 参数不能为了复用现成 ID 而
+绑定方向或 dtype 不相容的 output tensor。
+
 provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
 round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
 和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或
@@ -54,6 +60,12 @@ Gate1、Gate2 或 RefEval。提交 `candidate.json` 后 session 结束；任何 
 因此 agent 内部多步不增加正式 Gate round，也不削弱门禁；报告必须分别记录外部 Lift invocation、
 agent model turns 与实际 provider calls。
 
+若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
+和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应
+在完整对象上做聚焦修正并重新提交完整 `(J,C,pi)`；它不能恢复旧 trajectory，也不能只交 patch。
+rejected candidate 不是第四 artifact，不进入 Replay 或 certificate。没有提交对象、对象不是有限
+JSON、feedback 不匹配或中间隔着其他 invocation 时不得复用更早候选。
+
 agent shell 必须 fail closed 地隔离：`/input` 只读、`/output` 只允许唯一 candidate、私有 `/work`
 可写、网络 namespace 隔离、宿主环境清空，且不挂载仓库、历史 evidence、Gate executable 或
 provider secret。隔离设施不可用时报告 infrastructure failure，不得降级到宿主 LocalEnvironment。
@@ -62,6 +74,11 @@ provider secret。隔离设施不可用时报告 infrastructure failure，不得
 > invocation，每个达到 8 model turn，共 24 次物理 provider 调用；三次均在浏览 schema 时耗尽预算，
 > 未提交 candidate，因此 canonical decode、TypeCheck、Replay、Gate1 和 Gate2 均未执行。该记录
 > 只用于改进 Lift worker，不改变任何认证谓词；详细数据见 Task04 的 run-001。
+>
+> 第二次 DYT canary（run-002）使用 knowledge-v2：3 个 fresh worker 均在第 9 turn 提交完整
+> candidate，证明“只浏览、不生成”已解决；但三份 candidate 都在 canonical signature binding
+> 检查被拒，TypeCheck/Replay/Gate 仍为 0。该结果定位了 schema 中允许 `logical_ref` 指向任意
+> “value”的旧文字与 canonical parser 只接受 tensor/dimension 的冲突，详见 Task04。
 
 ## Replay 前检查
 

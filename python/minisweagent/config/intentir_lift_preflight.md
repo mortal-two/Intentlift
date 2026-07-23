@@ -12,18 +12,23 @@ the artifact schema or external TypeCheck.
 3. A symbolic `x*` is a signature/type handle. It may occur in shapes and
    logical index/domain expressions, but it is not an SSA operand or a scope
    capture/value.
-4. A body operand must already be in the current lexical scope. Do not use an
+4. Every `J.signature.logical_ref` names only a declared J input/output `t*`
+   or symbolic dimension `x*`, never a body/local `v*`. A scalar or semantic
+   constexpr used as logical data gets a dtype-matching rank-0 J input with
+   shape `[]`; only an integral extent-only handle binds an `x*`. Never bind a
+   value parameter to a J output just to reuse an existing handle.
+5. A body operand must already be in the current lexical scope. Do not use an
    output tensor handle as if it were an already-defined intermediate; use the
    producing node's declared value handle where the grammar requires one.
-5. Every sensitive pi refinement `auth_ref` names an actually declared J
+6. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-6. C contains only the exact trusted scheduling slots and values from
+7. C contains only the exact trusted scheduling slots and values from
    `harness_view.json`. It contains no operator, predicate, formula, strategy,
    source/API name, or semantic constant.
-7. Pi contains anonymous realization relations only. It contains no dtype,
+8. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-8. Run the supplied static schema validator. Passing it only means the JSON
+9. Run the supplied static schema validator. Passing it only means the JSON
    envelope is well formed; the external runner still performs canonical
    parsing, dependent TypeCheck, Replay, and Gates in a new phase.
