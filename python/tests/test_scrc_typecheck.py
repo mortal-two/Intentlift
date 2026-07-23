@@ -4,6 +4,7 @@ import pytest
 
 from direct_fixtures import make_reduce_artifact
 from intentir.verify.gate1.model import (
+    AccessKind,
     RealizationAuthorization,
     RefinementKind,
     SchemaError,
@@ -26,6 +27,37 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     assert report.passed
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def test_fill_requires_a_predicated_load_before_replay() -> None:
+    orphan = make_reduce_artifact()
+    orphan.j.boundary.accesses[0].predicate = None
+    orphan.j.boundary.accesses[0].fill_value = 0
+    report = type_check(orphan.j, orphan.c, orphan.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.INVALID_ACCESS_FILL
+    ]
+    assert len(matching) == 1
+    assert matching[0].ref == "a0"
+    assert "non-null access predicate" in matching[0].detail
+    with pytest.raises(SchemaError, match="invalid_access_fill"):
+        build_normal_rewriter_view(orphan)
+
+    non_load = make_reduce_artifact()
+    store = non_load.j.boundary.accesses[1]
+    assert store.kind is AccessKind.STORE and store.predicate is not None
+    store.fill_value = 0
+    report = type_check(non_load.j, non_load.c, non_load.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.INVALID_ACCESS_FILL
+    ]
+    assert len(matching) == 1
+    assert matching[0].ref == "a1"
+    assert "only on a load" in matching[0].detail
 
 
 def test_dangling_anchor_fails_and_cannot_enter_replay() -> None:

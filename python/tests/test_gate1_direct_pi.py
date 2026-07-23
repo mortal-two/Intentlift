@@ -4,6 +4,7 @@ import copy
 import json
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.model import IntentFunction
@@ -599,6 +600,29 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
     assert c_schema["properties"]["slots"]["items"]["properties"]["name"][
         "pattern"
     ] == "^c[0-9]+$"
+
+
+def test_lift_wire_schema_rejects_orphan_and_non_load_fill() -> None:
+    schema = scrc_lift_core_json_schema()
+    access_schema = (
+        schema["properties"]["j"]["properties"]["boundary"]["properties"]
+        ["accesses"]["items"]
+    )
+    validator = Draft202012Validator(access_schema)
+    accesses = make_reduce_artifact().to_json()["j"]["boundary"]["accesses"]
+    assert not list(validator.iter_errors(accesses[0]))
+
+    orphan = copy.deepcopy(accesses[0])
+    orphan.pop("predicate")
+    errors = list(validator.iter_errors(orphan))
+    assert errors
+    assert any("predicate" in error.message for error in errors)
+
+    non_load = copy.deepcopy(accesses[1])
+    non_load["fill_value"] = 0
+    errors = list(validator.iter_errors(non_load))
+    assert errors
+    assert any("load" in error.message for error in errors)
 
 
 def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> None:

@@ -149,9 +149,30 @@ def _boundary_schema() -> dict[str, Any]:
             "one bare axis such as k0; rank 0 or rank N uses [] or bracketed "
             "ordered axes such as [k1, k0]. An unbracketed comma list such as "
             "k1,k0 is not a direct index expression. General non-direct affine "
-            "relations may be represented but can be unsupported by RefEval."
+            "relations may be represented but can be unsupported by RefEval. "
+            "fill_value is legal only on a load with a non-null predicate. An "
+            "unconditional access uses the unique canonical spelling with both "
+            "predicate and fill_value absent/null; consumers reject rather than "
+            "silently erase an orphan fill_value."
         ),
     )
+    access["allOf"] = [
+        {
+            "if": {
+                "required": ["fill_value"],
+                "properties": {
+                    "fill_value": {"not": {"type": "null"}},
+                },
+            },
+            "then": {
+                "required": ["kind", "predicate"],
+                "properties": {
+                    "kind": {"const": "load"},
+                    "predicate": {"type": "string", "minLength": 1},
+                },
+            },
+        }
+    ]
     broadcast = _closed_object(
         {
             "node_ref": _STRING,

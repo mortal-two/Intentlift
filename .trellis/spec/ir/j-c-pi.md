@@ -15,6 +15,16 @@ dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
 任意可执行 comparator；外部验证政策 Q 根据 B 的封闭类别构造实际比较关系。
 
+J access 采用唯一的 canonical fill 合同：
+
+```text
+fill_value != null => kind = load and predicate != null
+```
+
+无条件 access 的 `predicate` 与 `fill_value` 均为空。parser/schema 可以提前报告该错误，但
+`TypeCheck(J,C,pi)` 必须权威拒绝 orphan fill；任何消费者都不得通过静默删除或猜测 predicate
+来归一化候选 J。
+
 ## C：一个 implementation-selection 对象
 
 C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind、value type、concrete
@@ -95,9 +105,9 @@ Sensitive(r)
 
 ## 最小 TypeCheck
 
-`TypeCheck(J,C,π)` 至少检查 refs、route slot/type、observable J anchor、语义/API/Source/C-value
-隔离以及 sensitive authorization。自闭合 `Parse(π)` 只能作为语法解析器，不能冒充 dependent
-TypeCheck。
+`TypeCheck(J,C,π)` 至少检查 J access 的 canonical fill 合同、refs、route slot/type、observable
+J anchor、语义/API/Source/C-value 隔离以及 sensitive authorization。自闭合 `Parse(π)` 只能作为
+语法解析器，不能冒充 dependent TypeCheck。
 
 TypeCheck 的结构化错误可以返回 source-aware Lift；检查结果和 sidecar 不得进入 Replay 作为
 新的信息通道。schema 为 closed-world：未知字段、未知 relation 与自由文本扩展均 fail closed。

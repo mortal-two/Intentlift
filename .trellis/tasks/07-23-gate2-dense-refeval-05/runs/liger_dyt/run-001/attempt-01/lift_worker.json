@@ -1,0 +1,10 @@
+{
+  "backend": "minisweagent.intentir-lift.v1",
+  "elapsed_ms": 377768.7337389216,
+  "exit_status": "Submitted",
+  "fresh_session": true,
+  "knowledge_profile": "intentir.lift-knowledge.v4",
+  "model_turns": 10,
+  "physical_provider_calls": 10,
+  "transport_retries": 0
+}

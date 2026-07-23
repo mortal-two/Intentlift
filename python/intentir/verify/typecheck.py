@@ -37,6 +37,7 @@ class TypeCheckErrorCode(str, Enum):
     INVALID_C_SLOT = "invalid_c_slot"
     C_REQUIRED_VALUE_MISSING = "c_required_value_missing"
     C_VALUE_TYPE_MISMATCH = "c_value_type_mismatch"
+    INVALID_ACCESS_FILL = "invalid_access_fill"
     UNRESOLVED_ANCHOR = "unresolved_anchor"
     ROUTE_CYCLE = "route_cycle"
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
@@ -342,6 +343,29 @@ def type_check(
         raise TypeError("type_check requires parsed RealizationWitness pi")
 
     diagnostics: list[TypeCheckDiagnostic] = []
+    for index, access in enumerate(j.boundary.accesses):
+        if access.fill_value is None:
+            continue
+        path = f"j.boundary.accesses[{index}].fill_value"
+        if access.kind.value != "load":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.INVALID_ACCESS_FILL,
+                    path,
+                    "fill_value is legal only on a load access",
+                    access.access_id,
+                )
+            )
+        if access.predicate is None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.INVALID_ACCESS_FILL,
+                    path,
+                    "fill_value requires a non-null access predicate",
+                    access.access_id,
+                )
+            )
+
     expected_c = [f"c{index}" for index in range(len(c.slots))]
     if [item.name for item in c.slots] != expected_c:
         diagnostics.append(

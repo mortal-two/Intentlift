@@ -664,7 +664,10 @@ the access; never attach an otherwise matching access to a different node.
 Use the closed portable spelling for direct dense index_expression: a rank-1
 tensor uses one bare logical axis such as k0; rank 0 or rank N uses [] or an
 ordered bracketed list such as [k1, k0]. Never emit an unbracketed comma list
-such as k1,k0. For a pure-functional boundary with any access predicate/fill,
+such as k1,k0. A fill_value is legal only on a load with a non-null predicate.
+For an unconditional access, omit both predicate and fill_value; never attach a
+redundant fill to an unconditional access. For a pure-functional boundary with
+any access predicate/fill,
 the observable store-producing op must carry an explicit type whose dtype and
 shape exactly match the J output. If that op directly produces the same output
 handle, boundary.output_mappings stays empty. Emit output_mappings only when an

@@ -90,4 +90,17 @@ Task04 run-003 已获得：
 - 新增二维 masked pointwise 正例，以及未括号化 index、缺 producer type、冗余 mapping 三个
   fail-closed 反例；定向回归 `67 passed`，全量 Python 回归 `831 passed`，`compileall` 与 diff
   check 通过；
-- 下一步提交本 checkpoint，再从 Source 启动新的 `liger_dyt` canary。
+- 随后从 Source 启动的 Task05 `run-001` 使用 knowledge-v4：3 次 fresh Lift 共 21 次物理 provider
+  call；第 1 次在 canonical C slot 拒绝，第 2、3 次通过 TypeCheck，formal Gate1 round 2 获得
+  normal Replay closure，masked-J mismatch 得到 `J_NECESSARY=PROVED`。Gate2 Source--Replay
+  继续以 `max_abs_error=0` 通过，但 accepted J 的三个 unpredicated load 带有 `fill_value=0`，因此
+  RefEval fail closed：`E_J unpredicated access must not declare fill`。
+- 对该 accepted J 仅在内存中删除三个 orphan fill 后，现有 RefEval 立即成功并识别为
+  `dense_functional_v1`。这证明没有新的 DYT operator/lowering 能力缺口，而是 static schema 与
+  TypeCheck 漏掉了全局 access invariant：`fill != null => kind=load and predicate != null`。
+- knowledge profile 已升级为 v5；Lift schema、canonical grammar、Responses prompt、MiniSWE
+  preflight、三份派生规范和 TypeCheck 已统一上述 invariant。TypeCheck 权威拒绝，schema 只提前
+  诊断，RefEval 不静默归一化。新增 orphan/non-load fill 正反例；聚焦回归 `136 passed`、全量
+  Python 回归 `833 passed`，`compileall` 与 diff check 通过。
+- `run-001` 已结束且 Gate2 结果不会回流；下一步提交本 checkpoint，再从 Source 启动全新 v5
+  canary。只有新的完整 artifact 自行通过 TypeCheck、Gate1 与 Gate2 三边才完成本任务。

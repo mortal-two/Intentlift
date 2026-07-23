@@ -23,19 +23,22 @@ the artifact schema or external TypeCheck.
 6. Direct dense `index_expression` uses one bare axis for rank 1, `[]` for
    rank 0, or an ordered bracketed list such as `[k1, k0]` for rank N. Never
    use an unbracketed comma list such as `k1,k0`.
-7. If a pure-functional boundary contains any predicate/fill, the observable
+7. `fill_value` is legal only on a load with a non-null `predicate`. An
+   unconditional access omits both fields (or leaves both null); never attach a
+   redundant fill to it. Consumers reject rather than normalize an orphan fill.
+8. If a pure-functional boundary contains any predicate/fill, the observable
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;
    declare a mapping only for a matching explicit function `returns` rebinding.
-8. Every sensitive pi refinement `auth_ref` names an actually declared J
+9. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-9. C contains only the exact trusted scheduling slots and values from
+10. C contains only the exact trusted scheduling slots and values from
    `harness_view.json`. It contains no operator, predicate, formula, strategy,
    source/API name, or semantic constant.
-10. Pi contains anonymous realization relations only. It contains no dtype,
+11. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-11. Run the supplied static schema validator. Passing it only means the JSON
+12. Run the supplied static schema validator. Passing it only means the JSON
    envelope is well formed; the external runner still performs canonical
    parsing, dependent TypeCheck, Replay, and Gates in a new phase.

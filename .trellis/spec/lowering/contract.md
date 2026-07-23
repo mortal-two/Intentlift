@@ -26,6 +26,9 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 
 当前 scalar RefEval 对显式内存边界实现三个保守投影：
 
+- 每个 access 满足 canonical fill 合同：`fill_value != null` 蕴含它是带非空 predicate 的 load；
+  无条件 access 的 predicate/fill 均为空。orphan fill 是非法 J，必须由 TypeCheck 及消费者 fail closed，
+  不得由 RefEval 静默删除或从 domain/index 猜测未声明 predicate；
 - `index_expression` 必须是 rank-1 bare axis 或与 J tensor rank 一致的直接 `[axis0, ...]`；tensor
   shape 本身定义完整 logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与
   shape 精确相同；

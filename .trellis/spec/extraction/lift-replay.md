@@ -34,7 +34,9 @@ operator 或 result 的逻辑数据，必须声明 dtype 相容、shape `[]` 的
 用 bare axis，rank-0/rank-N 用 `[]`/`[axis0, ...]`，不得用未括号化逗号列表。predicated pure
 functional boundary 的 observable store producer 必须声明与 output 一致的 result type。op 直接产生
 同名 output handle 时不声明冗余 `output_mappings`；只有显式 function `returns` 重绑定存在时 mapping
-才出现并与其完全一致。这些是全局 J wire/consumer 合同，不是 per-kernel Replay hint。
+才出现并与其完全一致。`fill_value` 只允许出现在带非空 predicate 的 load 上；无条件 access 的
+predicate/fill 均为空。static schema 可以提前报错，TypeCheck 仍必须权威拒绝 orphan fill，消费者
+不得静默删除。这些是全局 J wire/consumer 合同，不是 per-kernel Replay hint。
 
 provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
 round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
@@ -100,12 +102,13 @@ TypeCheck(J,C,pi)
 
 最小 TypeCheck 必须机械检查：
 
-1. 所有 J/C 引用存在；
-2. route operand slot 与类型兼容；
-3. observable instance 锚定 J-owned node/access/effect；
-4. π 不含语义原子、Source/API、C value 或可执行自由文本；
-5. sensitive refinement 引用 J/B authorization，或属于系统级安全白名单。
-6. 未知字段、未知 relation 与自由文本扩展 fail closed。
+1. J access 满足 `fill != null => load and predicate != null`；
+2. 所有 J/C 引用存在；
+3. route operand slot 与类型兼容；
+4. observable instance 锚定 J-owned node/access/effect；
+5. π 不含语义原子、Source/API、C value 或可执行自由文本；
+6. sensitive refinement 引用 J/B authorization，或属于系统级安全白名单；
+7. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
 TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时当前 artifact fail closed，
 不进入 Replay。它只支撑 `FreshLogicalSemDecl(C,pi | J)=empty` 的显式所有权结论，不证明 π
