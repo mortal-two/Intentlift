@@ -5,7 +5,9 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
-- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（执行中）
+- [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（执行中）
+- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](07-22-scrc-real-kernel-batch-03/task.md)（执行中；先完成 Task 04 的 Lift 生成能力替换）
+- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（已完成）
 - [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)（已完成）
 
 编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC 数学总述已经替换此前
