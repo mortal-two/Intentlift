@@ -17,8 +17,8 @@ Source 与 Replay 使用同一个 C 对象和实际 valuation `c0`。该证书�
 覆盖所有 admissible C。`RefEval` 的接口中不存在 C 或 π，也不读取
 Source/Replay。所有 output、inout、alias/writeback 与声明的 observable effect 都必须裁决。
 
-Gate2 不直接消费 Lift 的 surface J。`J_wire` 必须先由共享 `ElaborateJ` 变成 typed `CanonicalJ`；
-RefEval 与 production lowering 使用同一个 `CanonicalJ -> Intent MLIR` 入口。于是 `k1,k0` 与
+Gate2 不直接消费未接受的 Lift response。固定 Decode/Elaborate 成功后只产生一个 typed J；
+RefEval 与 production lowering 使用同一个 `J -> Intent MLIR` 入口。于是 `k1,k0` 与
 `[k1,k0]`、可唯一推导的 result type、冗余 identity output mapping 不会由 RefEval 再次解释或拒绝；
 general affine、缺 predicate/effect 或类型冲突仍在准确边界 fail closed。
 

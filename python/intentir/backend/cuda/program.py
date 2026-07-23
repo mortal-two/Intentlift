@@ -13,7 +13,7 @@ from intentir.backend.protocol import (
     ComparisonEvidence,
     LoweringRequest,
 )
-from intentir.frontend import emit_canonical_j_module
+from intentir.frontend import emit_j_module
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     DuplicatePolicy,
@@ -286,8 +286,8 @@ def lower_j_to_cuda(
             "CUDA cannot consume complete Layer B: "
             + ", ".join(consumption["unsupported"])
         )
-    mlir = emit_canonical_j_module(
-        request.canonical_j,
+    mlir = emit_j_module(
+        request.j,
         dict(concrete_extents),
         broadcast_axes=_broadcast_axes(request.j),
         proven_index_bounds=_index_bounds(request.j),

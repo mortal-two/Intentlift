@@ -1,4 +1,4 @@
-# Task 06：CanonicalJ 标准化与统一 lowering 消费边界
+# Task 06：J 构造标准化与统一 lowering 消费边界
 
 > 状态：已完成
 >
@@ -9,13 +9,13 @@
 建立唯一、确定性的标准化前端：
 
 ```text
-LLM Lift -> (J_wire,C_wire,pi_wire)
+LLM Lift -> response JSON
               |
               v
        Decode + Canonicalize/Elaborate
               |
               v
-       typed (CanonicalJ,C,pi)
+       typed (J,C,pi)
               |
               +-> TypeCheck -> Replay
               +-> RefEval -> Intent MLIR -> CPU reference
@@ -23,8 +23,8 @@ LLM Lift -> (J_wire,C_wire,pi_wire)
 ```
 
 开放世界的理解、语义提取与候选选择仍归 Lift LLM；封闭 IR 内可唯一决定的语法归一、类型推导、
-执行和裁决归固定代码。RefEval 与 production lowering 必须共享同一个 `CanonicalJ` 和同一段
-`CanonicalJ -> Intent MLIR` 前端，不得各自重新解释 J wire 字符串。
+执行和裁决归固定代码。接受后只存在一个 J；RefEval 与 production lowering 必须共享同一个
+`J -> Intent MLIR` 前端，不得各自重新解释 response 字符串。
 
 ## 为什么现在做
 
@@ -66,12 +66,12 @@ RefEval/production consumer 漂移。
 - Gate2 不等待 fanout drain，结果不回流任何 branch；
 - 不粗暴 kill provider call，不改变 SCRC 接受谓词。
 
-### Phase 1：定义 wire 与 canonical 类型
+### Phase 1：定义 response 与 typed J 构造边界
 
 - 清点 `BoundaryAccess.index_expression`、predicate/domain、output mapping、result type 在 parser、
   TypeCheck、Replay packet、RefEval 和 production lowering 的所有重复解释点；
-- 建立版本化 `CanonicalJ`/typed access 表示与单一 canonical serializer；
-- raw LLM response 只作为 proof-irrelevant sidecar 保存，证书和消费者绑定 canonical artifact。
+- 建立版本化 typed J access 表示与单一 canonical serializer；
+- raw LLM response 只作为 proof-irrelevant sidecar 保存，证书和消费者绑定唯一 J。
 
 ### Phase 2：确定性 elaboration
 
@@ -83,7 +83,7 @@ RefEval/production consumer 漂移。
 
 - Replay packet读取 canonical serialization；
 - RefEval 不再解析 wire index string；
-- `CanonicalJ -> Intent MLIR` 成为 RefEval 与 production lowering 的共享入口；
+- `J -> Intent MLIR` 成为 RefEval 与 production lowering 的共享入口；
 - 两条下游路径只在 reference execution 与 target/C lowering 处分叉。
 
 ## 验收
@@ -101,7 +101,7 @@ RefEval/production consumer 漂移。
 ## 非目标
 
 - 不新增 Agent、Gate、hash/commitment、per-kernel RuleCard 或前端 formal semantics；
-- 不把 CanonicalJ 变成第二份语义 artifact；它是 J wire 的唯一确定性内部形式；
+- 不创建 `J_wire/CanonicalJ` 双对象；Decode/Elaborate 成功后得到的 typed archive 就是 J；
 - 不让 canonicalizer读取 Source、Gate1/Gate2 结果、历史 candidate 或 sibling branch；
 - 不把 production optimization 放进 RefEval，也不让 C/π进入 `RefEval(J,logical_inputs)`。
 
@@ -116,7 +116,7 @@ RefEval/production consumer 漂移。
 - branch 状态新增 `SUPERSEDED` 与 `GATE1_CLOSED_NOT_SELECTED`，停止原因、winner id 与观察阶段进入
   evidence，不复用 `NO_CLOSURE`/infrastructure failure；
 - 聚焦回归仅运行 fanout、SCRC runner 与 CLI 三个相关文件：`27 passed`。未运行全量回归；
-- 下一步进入 Phase 1，清点并定义 J wire 与 typed CanonicalJ 的唯一边界。
+- 下一步进入 Phase 1，清点并定义 response 与 typed J 构造的唯一边界。
 
 ## 2026-07-23 Phase 1--3 completion checkpoint
 
@@ -129,8 +129,9 @@ RefEval/production consumer 漂移。
 - raw provider response/trajectory 继续作为 proof-irrelevant sidecar 保存；Runner 将 Lift result
   替换为 canonical artifact 后才执行 binding、TypeCheck、Replay，TypeCheck 升级为 v2 并包含
   `j_elaboration_failed`；Replay packet 只序列化 canonical J；
-- `ScalarLoweringSpec` 与 production `LoweringRequest` 持有同一个缓存 CanonicalJ view；新增唯一
-  `emit_canonical_j_module`，scalar CPU RefEval 与 CUDA production lower 均通过它进入现有 Intent
+- `ScalarLoweringSpec` 与 production `LoweringRequest` 持有同一个 J；私有 `JElaboration` 仅缓存
+  structured AST/type，不包含或序列化另一份 J。新增唯一 `emit_j_module`，scalar CPU RefEval 与
+  CUDA production lower 均通过它进入现有 Intent
   MLIR emitter；RefEval 的 dense/mask parser 已改为消费 structured indices/predicate AST，旧 helper
   只保留测试兼容，不再是 consumer 解释权威；
 - Lift schema/prompt 不再要求模型猜 `k1,k0` 是否加括号、重复填写唯一 result type或手工删除恒等
@@ -139,6 +140,10 @@ RefEval/production consumer 漂移。
   推导，`k1,k0 -> [k1,k0]`，`t5 -> t5` mapping 被消去；原先失败的 complete-boundary 与实际
   scalar CPU RefEval 均通过，输出 shape `[2,8]`、profile `logical_domain_mask_erasure_v1`。这不
   retroactively 改写历史 run-003 verdict，只作为新系统能力的真实回归输入；
-- 聚焦回归分两组执行：CanonicalJ/Gate2/backend/TypeCheck/runner `76 passed`；workload/canary/
+- 聚焦回归分两组执行：J elaboration/Gate2/backend/TypeCheck/runner `76 passed`；workload/canary/
   MiniSWE ingress `36 passed`。另有真实 DYT RefEval smoke 通过；按推进要求未运行全量回归，也未
   再消耗 provider 调用重做已经闭合的 Lift/Replay 搜索。
+- 对象命名最终收紧为 `response JSON -> Decode/Elaborate -> (J,C,pi)`：公共 `CanonicalJ` wrapper、
+  `LoweringRequest.canonical_j`、`ScalarLoweringSpec.canonical_j` 与 `emit_canonical_j_module` 已删除。
+  下游只持有同一个 `SemanticArchive` J；`JElaboration` 仅是挂在 J 上、不序列化且不包含 J 的
+  structured AST/type 缓存。收紧后上述 `76 + 36` 聚焦测试及真实 DYT RefEval smoke 继续通过。

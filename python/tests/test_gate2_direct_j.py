@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
-from intentir.ir.canonical_j import CanonicalJError
+from intentir.ir.canonical_j import CanonicalJError, j_elaboration
 from intentir.ir.model import IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
@@ -116,7 +116,7 @@ def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     assert result.source_replay is not None and result.source_replay.passed
     assert result.source_j is not None and result.source_j.passed
     assert result.replay_j is not None and result.replay_j.passed
-    assert spec.canonical_j.to_json() == spec.j.to_json()
+    assert j_elaboration(spec.j).value_type_by_name["t1"].dtype == "f32"
     assert result.reference.metadata["boundary_digest"]
     report = result.to_json()
     assert report["source_replay"]["passed"]
@@ -492,7 +492,7 @@ def test_scalar_e_j_2d_pointwise_elaborates_unique_surface_forms(
     assert result.ok, result.error
     if mutation == "unbracketed":
         assert spec.j.boundary.accesses[0].index_expression == "[i0, i1]"
-        assert spec.canonical_j.accesses[0].index.direct_axes == ("i0", "i1")
+        assert j_elaboration(spec.j).accesses[0].index.direct_axes == ("i0", "i1")
     elif mutation == "missing_type":
         assert spec.j.intent.body[0].type == {
             "dtype": "f32", "shape": ["x0", "x1"]

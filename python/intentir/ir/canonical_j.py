@@ -1,4 +1,4 @@
-"""Deterministic elaboration from the LLM-facing J wire form to ``CanonicalJ``.
+"""Deterministically decode and elaborate an LLM response into the one J.
 
 The Lift model is allowed to choose semantic structure.  It is not required to
 guess punctuation preferred by a particular evaluator or backend.  This module
@@ -6,9 +6,9 @@ is the single closed-world boundary that parses the bounded ContractExpr
 language, resolves index vectors, materializes uniquely inferable value types,
 and removes mechanically redundant output bindings.
 
-``CanonicalJ`` is an in-memory view of J, not a fourth artifact.  Its
-``archive`` member is the one canonical serialization supplied to TypeCheck,
-Replay, RefEval, and production lowering.
+The accepted :class:`SemanticArchive` is J.  ``JElaboration`` below is only its
+private parsed-expression/type cache, analogous to a compiler symbol table; it
+does not contain, serialize, or identify another J.
 """
 
 from __future__ import annotations
@@ -346,10 +346,9 @@ class CanonicalOutputBinding:
 
 
 @dataclass(frozen=True)
-class CanonicalJ:
-    """The unique typed in-memory view derived from one J wire object."""
+class JElaboration:
+    """Private structured facts cached on the one accepted J object."""
 
-    archive: Any
     domains: tuple[tuple[str, ContractExpr], ...]
     accesses: tuple[CanonicalBoundaryAccess, ...]
     value_types: tuple[tuple[str, CanonicalValueType], ...]
@@ -367,9 +366,6 @@ class CanonicalJ:
     @property
     def value_type_by_name(self) -> dict[str, CanonicalValueType]:
         return dict(self.value_types)
-
-    def to_json(self) -> dict[str, Any]:
-        return self.archive.to_json()
 
     def structured_boundary_json(self) -> dict[str, Any]:
         """Diagnostic typed view; it is not an additional persisted artifact."""
@@ -683,8 +679,8 @@ def _build_output_bindings(j: Any) -> tuple[CanonicalOutputBinding, ...]:
     return tuple(bindings)
 
 
-def elaborate_j(j: "SemanticArchive") -> CanonicalJ:
-    """Return the unique CanonicalJ view or fail before any consumer runs."""
+def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]:
+    """Construct the accepted J and its private parsed cache."""
 
     # Local import prevents the J wire dataclasses from depending on their
     # elaborated view while they are being defined.
@@ -694,17 +690,18 @@ def elaborate_j(j: "SemanticArchive") -> CanonicalJ:
         raise TypeError("elaborate_j requires SemanticArchive J")
     source_payload = j.to_json()
     source_snapshot = _snapshot(source_payload)
-    cached = getattr(j, "_intentir_canonical_j", None)
-    if isinstance(cached, CanonicalJ) and cached._snapshot == source_snapshot:
-        return cached
-    source_cached = getattr(j, "_intentir_canonical_j_source", None)
+    cached = getattr(j, "_intentir_j_elaboration", None)
+    if isinstance(cached, JElaboration) and cached._snapshot == source_snapshot:
+        return j, cached
+    source_cached = getattr(j, "_intentir_elaborated_source", None)
     if (
         isinstance(source_cached, tuple)
-        and len(source_cached) == 2
+        and len(source_cached) == 3
         and source_cached[0] == source_snapshot
-        and isinstance(source_cached[1], CanonicalJ)
+        and isinstance(source_cached[1], SemanticArchive)
+        and isinstance(source_cached[2], JElaboration)
     ):
-        return source_cached[1]
+        return source_cached[1], source_cached[2]
 
     payload = copy.deepcopy(source_payload)
     function = IntentFunction.from_json(payload["intent"])
@@ -774,22 +771,42 @@ def elaborate_j(j: "SemanticArchive") -> CanonicalJ:
     )
     typed_function = IntentFunction.from_json(canonical_archive.intent.to_json())
     value_types = tuple(sorted(_elaborate_function_types(typed_function).items()))
-    view = CanonicalJ(
-        canonical_archive,
+    record = JElaboration(
         domains,
         accesses,
         value_types,
         _build_output_bindings(canonical_archive),
         canonical_snapshot,
     )
-    setattr(canonical_archive, "_intentir_canonical_j", view)
+    setattr(canonical_archive, "_intentir_j_elaboration", record)
     if canonical_archive is not j:
-        setattr(j, "_intentir_canonical_j_source", (source_snapshot, view))
-    return view
+        setattr(
+            j,
+            "_intentir_elaborated_source",
+            (source_snapshot, canonical_archive, record),
+        )
+    return canonical_archive, record
+
+
+def elaborate_j(j: "SemanticArchive") -> "SemanticArchive":
+    """Decode/normalize a response-form archive into the one accepted J."""
+
+    return _elaborate_j(j)[0]
+
+
+def j_elaboration(j: "SemanticArchive") -> JElaboration:
+    """Return structured facts derived from J; never a second J object."""
+
+    accepted, record = _elaborate_j(j)
+    if accepted is not j:
+        raise ValueError(
+            "j_elaboration requires the accepted J returned by elaborate_j"
+        )
+    return record
 
 
 def canonicalize_semantic_archive(j: "SemanticArchive") -> "SemanticArchive":
-    return elaborate_j(j).archive
+    return elaborate_j(j)
 
 
 def canonicalize_gate1_artifact(artifact: "Gate1Artifact") -> "Gate1Artifact":
@@ -797,7 +814,7 @@ def canonicalize_gate1_artifact(artifact: "Gate1Artifact") -> "Gate1Artifact":
 
     if not isinstance(artifact, Gate1Artifact):
         raise TypeError("canonicalize_gate1_artifact requires Gate1Artifact")
-    archive = canonicalize_semantic_archive(artifact.j)
+    archive = elaborate_j(artifact.j)
     if archive is artifact.j:
         return artifact
     return Gate1Artifact(archive, artifact.c, artifact.pi)
@@ -806,15 +823,16 @@ def canonicalize_gate1_artifact(artifact: "Gate1Artifact") -> "Gate1Artifact":
 __all__ = [
     "CanonicalBoundaryAccess",
     "CanonicalIndex",
-    "CanonicalJ",
     "CanonicalJError",
     "CanonicalOutputBinding",
     "CanonicalValueType",
     "ContractExpr",
     "ContractSort",
+    "JElaboration",
     "canonicalize_gate1_artifact",
     "canonicalize_semantic_archive",
     "elaborate_j",
+    "j_elaboration",
     "parse_contract_expr",
     "parse_index_expression",
 ]

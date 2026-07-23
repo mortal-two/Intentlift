@@ -20,16 +20,19 @@ realization 与 Replay closure，不是目标 backend 的施工输入。
 两条路径在分叉前必须共享唯一标准化前端：
 
 ```text
-J_wire -> ElaborateJ -> CanonicalJ -> Intent MLIR
-                                      |          |
-                                      |          `-> target lowering(J,C,target)
-                                      `-> scalar CPU RefEval(J)
+response JSON -> Decode/Elaborate -> J
+                                    |
+                                    v
+                               Intent MLIR
+                                |       |
+                                |       `-> target lowering(J,C,target)
+                                `-> scalar CPU RefEval(J)
 ```
 
-`ElaborateJ` 将 access index、predicate/domain ContractExpr、唯一可推导 result type 与恒等 output
-binding 变成 typed canonical form。RefEval 和 production backend 均不得重新读取或各自解释 J wire
-字符串；`CanonicalJ -> Intent MLIR` 只有一个共享入口。CanonicalJ 是 J 的确定性内部形式，不增加
-artifact、Agent 或 Gate。
+Decode/Elaborate 将 access index、predicate/domain ContractExpr、唯一可推导 result type 与恒等 output
+binding 变成 typed canonical form。RefEval 和 production backend 均不得重新读取或各自解释响应中的
+字符串；`J -> Intent MLIR` 只有一个共享入口。未接受的响应 JSON 不进入 lowering，解析缓存也
+不是另一份 J，不增加 artifact、Agent 或 Gate。
 
 ## RefEval 要求
 
@@ -43,7 +46,7 @@ artifact、Agent 或 Gate。
 - 每个 access 满足 canonical fill 合同：`fill_value != null` 蕴含它是带非空 predicate 的 load；
   无条件 access 的 predicate/fill 均为空。orphan fill 是非法 J，必须由 TypeCheck 及消费者 fail closed，
   不得由 RefEval 静默删除或从 domain/index 猜测未声明 predicate；
-- CanonicalJ 中 structured index 必须是与 J tensor rank 一致的 direct ordered axes；wire 的 bare、
+- J 中 structured index 必须是与 J tensor rank 一致的 direct ordered axes；响应中的 bare、
   bracketed 与 unbracketed-comma surface 差异在此之前已经消失；tensor
   shape 本身定义完整 logical domain，若 B 额外声明 `0 <= axis and axis < extent`，extent 必须与
   shape 精确相同；

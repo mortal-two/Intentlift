@@ -92,18 +92,19 @@ provider secret。隔离设施不可用时报告 infrastructure failure，不得
 > 第三次 DYT canary（run-003）使用 knowledge-v3：3 份 candidate 均通过 canonical decode 与
 > TypeCheck，第 3 个 formal round 获得 normal Replay closure，masked-J mismatch 证明 J necessity。
 > Gate2 的 Source--Replay 腿通过且误差为 0，但当时 RefEval 因二维 dense access 使用未括号化
-> `k1,k0` 而 `REFERENCE_UNSUPPORTED`。Task06 随后把它确认为 wire-to-canonical elaboration 缺口：
+> `k1,k0` 而 `REFERENCE_UNSUPPORTED`。Task06 随后把它确认为 response decoding/elaboration 缺口：
 > 原 artifact 不经 relift即可规范为 `[k1,k0]`、物化唯一 result type、消去冗余 identity mapping，
 > 并通过同一 RefEval boundary。该后续系统修改不回写 run-003 的历史 verdict。
 
 ## Replay 前检查
 
 ```text
-J_wire -> ElaborateJ -> CanonicalJ
-TypeCheck(CanonicalJ,C,pi)
+response JSON -> Decode/Elaborate -> (J,C,pi)
+TypeCheck(J,C,pi)
 ```
 
-ElaborateJ 是 Replay 前固定代码的一部分，不是 Agent/Gate。它不读 Source/C/π，只处理唯一可判定的
+Decode/Elaborate 是 Replay 前固定代码的一部分，不是 Agent/Gate，也不产生第二份 J。它不读
+Source/C concrete values/Gate output，只处理唯一可判定的
 surface normalization、handle/type elaboration 和恒等表示消除；无唯一解时 fail closed。
 
 最小 TypeCheck 必须机械检查：

@@ -6,10 +6,11 @@ import pytest
 
 from direct_fixtures import make_copy_artifact
 from intentir.backend.protocol import BackendTarget, LoweringRequest
-from intentir.frontend.canonical_j import emit_canonical_j_module
+from intentir.frontend.canonical_j import emit_j_module
 from intentir.ir.canonical_j import (
     CanonicalJError,
     elaborate_j,
+    j_elaboration,
     parse_index_expression,
 )
 from intentir.verify.gate1.model import (
@@ -68,31 +69,32 @@ def _stable_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def test_equivalent_index_surface_forms_have_one_canonical_j() -> None:
+def test_equivalent_index_surface_forms_construct_one_j() -> None:
     comma = elaborate_j(_surface_j("i0,i1"))
     bracketed = elaborate_j(_surface_j(" [ i0, i1 ] "))
+    parsed = j_elaboration(comma)
 
-    assert comma.accesses[0].index.direct_axes == ("i0", "i1")
-    assert comma.accesses[0].index.to_json() == [
+    assert parsed.accesses[0].index.direct_axes == ("i0", "i1")
+    assert parsed.accesses[0].index.to_json() == [
         {"op": "ref", "sort": "unknown_ref", "value": "i0"},
         {"op": "ref", "sort": "unknown_ref", "value": "i1"},
     ]
     assert comma.to_json() == bracketed.to_json()
-    assert comma.archive.boundary.accesses[0].index_expression == "[i0, i1]"
-    assert comma.archive.intent.body[0].type == {
+    assert comma.boundary.accesses[0].index_expression == "[i0, i1]"
+    assert comma.intent.body[0].type == {
         "dtype": "f32",
         "shape": ["x0", "x1"],
     }
-    assert comma.archive.boundary.output_mappings == []
+    assert comma.boundary.output_mappings == []
 
 
-def test_canonical_j_is_idempotent_and_byte_stable() -> None:
+def test_j_elaboration_is_idempotent_and_byte_stable() -> None:
     first = elaborate_j(_surface_j("i0,i1"))
     second = elaborate_j(SemanticArchive.from_json(first.to_json()))
 
     assert first.to_json() == second.to_json()
     assert _stable_json(first.to_json()) == _stable_json(second.to_json())
-    assert elaborate_j(first.archive) is first
+    assert elaborate_j(first) is first
 
 
 def test_affine_contract_is_typed_but_not_misread_as_dense_axes() -> None:
@@ -133,10 +135,6 @@ def test_reference_and_production_requests_share_canonical_mlir_front() -> None:
         "generic",
     )
 
-    assert reference.canonical_j is production.canonical_j
-    expected = emit_canonical_j_module(
-        reference.canonical_j, {"x0": 2, "x1": 4}
-    )
-    assert expected == emit_canonical_j_module(
-        production.canonical_j, {"x0": 2, "x1": 4}
-    )
+    assert reference.j is production.j
+    expected = emit_j_module(reference.j, {"x0": 2, "x1": 4})
+    assert expected == emit_j_module(production.j, {"x0": 2, "x1": 4})

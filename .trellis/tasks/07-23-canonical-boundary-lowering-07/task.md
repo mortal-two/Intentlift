@@ -9,17 +9,17 @@
 Task06 已建立唯一：
 
 ```text
-J_wire -> ElaborateJ -> CanonicalJ -> Intent MLIR
+response JSON -> Decode/Elaborate -> J -> Intent MLIR
 ```
 
 但当前 complete Layer-B access/domain/effect 的消费证明仍私有地位于 `gate2/scalar.py`，CUDA
 production analyzer 看到任何显式 access/domain/effect 都直接 `unsupported`。因此两个入口虽然共用
-CanonicalJ/MLIR emitter，仍没有共用“哪些 B relation 已被完整消费”的确定性投影。
+J/MLIR emitter，仍没有共用“哪些 B relation 已被完整消费”的确定性投影。
 
 本任务建立：
 
 ```text
-CanonicalJ
+J
    -> ProjectFunctionalBoundary
       -> CanonicalBoundaryProjection | fail-closed capability reason
            |-> RefEval scalar execution
@@ -31,7 +31,7 @@ RefEval 与 production backend 只能消费该 typed projection，不能分别�
 
 ## 所有权边界
 
-- projection 只读取 CanonicalJ，不读取 Source、Replay、π、Gate result、Harness concrete value或 C；
+- projection 只读取 J，不读取 Source、Replay、π、Gate result、Harness concrete value或 C；
 - 它证明 B 可确定性投影到 J 的完整 logical tensor semantics，不改写 J，也不猜遗漏 predicate；
 - production lowerer仍单独读取 C/target 做实现选择；projection 本身不包含 schedule；
 - unsupported relation 明确拒绝，不能静默忽略 access/effect/alias/update；
@@ -41,7 +41,7 @@ RefEval 与 production backend 只能消费该 typed projection，不能分别�
 
 1. 从 `verify/gate2/scalar.py` 提取 canonical domain/predicate/direct-access/effect/output-binding 消费为
    backend-neutral `CanonicalBoundaryProjection`；删除 RefEval 私有 interpretation 权威。
-2. RefEval 先取得 projection，再执行同一个 `CanonicalJ -> Intent MLIR -> scalar CPU`。
+2. RefEval 先取得 projection，再执行同一个 `J -> Intent MLIR -> scalar CPU`。
 3. CUDA production analyzer 使用同一 projection；对已经证明等价于完整 logical tensor execution 的
    dense/mask/reduction profile，记录已消费 relation 后进入 Intent MLIR，不再把所有显式 B 一律拒绝。
 4. alias/inout、一般 mutable storage、partial/affine/gathered access、未支持 update 继续 fail closed；
@@ -51,7 +51,7 @@ RefEval 与 production backend 只能消费该 typed projection，不能分别�
 ## 验收
 
 1. RefEval 与 CUDA analyzer 不再各自解析 `index_expression`/predicate/domain wire string；
-2. 同一 CanonicalJ 在两条路径获得 byte-equivalent projection record；
+2. 同一 J 在两条路径获得 byte-equivalent projection record；
 3. direct full-domain、pointwise mask erasure、sum padding 正例可进入 production MLIR；
 4. affine-as-dense、predicate/domain mismatch、orphan fill、effect mismatch、alias/inout/update 反例在
    codegen 前 fail closed；

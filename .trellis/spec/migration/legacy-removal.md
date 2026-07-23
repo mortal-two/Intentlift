@@ -34,9 +34,10 @@
   J wire 不再携带 tolerance 数值。
 - 唯一 `SCRCGateRunner` 已统一完整 relift、fresh Replay factory、三轮 Gate1、terminal Gate2、同一
   `c0`、独立 masked-J 状态和真实调用预算；局部 frontend runner 不再拥有第二套候选生命周期。
-- 2026-07-23 已加入唯一 `J_wire -> ElaborateJ -> CanonicalJ` 边界：structured ContractExpr/index、
-  唯一 result type 与 identity output binding 在 Replay 前确定性归一；RefEval/production 共用
-  `CanonicalJ -> Intent MLIR`，不再要求 Lift 猜 Gate2 consumer 的字符串拼写。
+- 2026-07-23 已加入唯一 `response JSON -> Decode/Elaborate -> J` 构造边界：structured
+  ContractExpr/index、唯一 result type 与 identity output binding 在 Replay 前确定性归一；
+  RefEval/production 共用 `J -> Intent MLIR`，不再要求 Lift 猜 consumer 字符串拼写，也没有
+  `J_wire/CanonicalJ` 双对象。
 
 ## 已执行的首步重构顺序
 

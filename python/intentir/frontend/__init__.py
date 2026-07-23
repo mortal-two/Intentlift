@@ -8,12 +8,12 @@ instantiated at concrete shapes. The downstream ``-convert-intent-to-linalg``
 pass carries it to standard MLIR.
 """
 
-from intentir.frontend.canonical_j import emit_canonical_j_module
+from intentir.frontend.canonical_j import emit_j_module
 from intentir.frontend.emit_mlir import emit_body_function, emit_loop_module, emit_module
 
 __all__ = [
     "emit_body_function",
-    "emit_canonical_j_module",
+    "emit_j_module",
     "emit_loop_module",
     "emit_module",
 ]

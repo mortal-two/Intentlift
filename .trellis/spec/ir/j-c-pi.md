@@ -25,15 +25,16 @@ fill_value != null => kind = load and predicate != null
 `TypeCheck(J,C,pi)` 必须权威拒绝 orphan fill；任何消费者都不得通过静默删除或猜测 predicate
 来归一化候选 J。
 
-## J wire 与 CanonicalJ
+## J 的构造与标准化
 
-Lift 输出的是 J 的 closed surface encoding；任何消费者运行前必须经过同一个确定性 elaboration：
+模型先返回尚未接受的 response JSON；固定 decoder/elaborator 成功后才构造出 J：
 
 ```text
-J_wire -> ElaborateJ -> CanonicalJ | deterministic diagnostic
+response JSON -> Decode/Elaborate -> J | deterministic diagnostic
 ```
 
-`CanonicalJ` 是 J 的 typed 内存形式和唯一 canonical serialization，不是第四个 artifact。该阶段不读
+因此不存在 `J_wire` 与 `CanonicalJ` 两个对象。接受后的 typed archive 就是唯一 J；解析得到的
+ContractExpr AST/axes 只是 J 的私有派生缓存，不能单独序列化或拥有身份。该阶段不读
 Source、Harness concrete value、C、π、Gate diff/output 或模型历史，只能完成 closed grammar 中
 唯一、语义不变的推导：
 
@@ -44,15 +45,14 @@ Source、Harness concrete value、C、π、Gate diff/output 或模型历史，�
 
 canonicalizer 不得猜 operator、缺失 predicate/effect/alias/authorization，不得从 Source 修复 J，也
 不得把 general affine expression 偷换成 direct axes。语法无唯一解释、类型冲突或需要语义选择时
-fail closed。兼容 wire 目前仍以 `index_expression` 文本保存，但 canonical dump 只写 bracketed vector；
+fail closed。响应 schema 目前仍以 `index_expression` 文本保存，但 J 的 canonical dump 只写 bracketed vector；
 内部消费者读取 structured AST/axes。
 
-因此 wire 级检查准确写成：
+因此接受条件准确写成：
 
 ```text
-TC_wire(J_wire,C,pi)
-  iff exists unique CanonicalJ = ElaborateJ(J_wire)
-      and TypeCheck(CanonicalJ,C,pi)
+Decode/Elaborate(response) = (J,C,pi)
+and TypeCheck(J,C,pi)
 ```
 
 ## C：一个 implementation-selection 对象
@@ -141,7 +141,7 @@ Sensitive(r)
 
 ## 最小 TypeCheck
 
-`TypeCheck(J,C,π)` 接收 elaborated CanonicalJ，并至少检查 J access 的 canonical fill 合同、refs、route slot/type、observable
+`TypeCheck(J,C,π)` 接收已经构造完成的唯一 J，并至少检查 J access 的 canonical fill 合同、refs、route slot/type、observable
 J anchor、语义/API/Source/C-value 隔离以及 sensitive authorization。自闭合 `Parse(π)` 只能作为
 语法解析器，不能冒充 dependent TypeCheck。
 

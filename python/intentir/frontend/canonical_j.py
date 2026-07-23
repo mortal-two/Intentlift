@@ -1,17 +1,17 @@
-"""Shared ``CanonicalJ -> intent MLIR`` entry for reference and target paths."""
+"""Shared ``J -> intent MLIR`` entry for reference and target paths."""
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from typing import Mapping
 
-from intentir.ir.canonical_j import CanonicalJ, elaborate_j
+from intentir.ir.canonical_j import elaborate_j
 from intentir.verify.gate1.model import SemanticArchive
 
 from .emit_mlir import BroadcastAxes, IndexBoundsProjection, emit_module
 
 
-def emit_canonical_j_module(
-    j: CanonicalJ | SemanticArchive,
+def emit_j_module(
+    j: SemanticArchive,
     dims: Mapping[str, int],
     *,
     fold: int = 0,
@@ -21,9 +21,9 @@ def emit_canonical_j_module(
 ) -> str:
     """Emit MLIR only after the unique deterministic J elaboration boundary."""
 
-    canonical = j if isinstance(j, CanonicalJ) else elaborate_j(j)
+    j = elaborate_j(j)
     return emit_module(
-        canonical.archive.intent,
+        j.intent,
         dict(dims),
         fold=fold,
         func_name=func_name,
@@ -32,4 +32,4 @@ def emit_canonical_j_module(
     )
 
 
-__all__ = ["emit_canonical_j_module"]
+__all__ = ["emit_j_module"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -12,10 +12,10 @@ import numpy as np
 from intentir.backend.cpu.abi import CPUABIValidationError, CPUBackendUnsupportedError
 from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
 from intentir.ir.canonical_j import (
-    CanonicalJ,
     ContractExpr,
     ContractSort,
     elaborate_j,
+    j_elaboration,
     parse_contract_expr,
     parse_index_expression,
 )
@@ -31,7 +31,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "canonical_j_scalar_cpu_mlir_v6"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v7"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -234,13 +234,13 @@ def _logical_boolean_guards(j: SemanticArchive) -> frozenset[str]:
     )
 
 
-def _canonical_full_domains(canonical: CanonicalJ) -> dict[str, int | str]:
-    """Project CanonicalJ domains onto complete logical axis bounds."""
+def _canonical_full_domains(j: SemanticArchive) -> dict[str, int | str]:
+    """Project the one accepted J onto complete logical axis bounds."""
 
-    j = canonical.archive
+    elaboration = j_elaboration(j)
     result: dict[str, int | str] = {}
     logical_guards = _logical_boolean_guards(j)
-    for domain_id, expression in canonical.domains:
+    for domain_id, expression in elaboration.domains:
         try:
             guards, lower, upper = _domain_predicate_contract(
                 expression, logical_guards=logical_guards
@@ -526,7 +526,7 @@ def _validate_masked_sum_reduction(
             )
 
 
-def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
+def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     """Consume the dense access/effect projection represented by pure J values.
 
     ``IntentFunction`` evaluates complete logical tensors.  Therefore an
@@ -536,7 +536,7 @@ def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
     rejected rather than silently ignored.
     """
 
-    j = canonical.archive
+    elaboration = j_elaboration(j)
     boundary = j.boundary
     if any(
         parameter.mode is ParameterMode.INOUT or parameter.alias_of is not None
@@ -552,7 +552,7 @@ def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
             )
         return
 
-    domains = _canonical_full_domains(canonical)
+    domains = _canonical_full_domains(j)
     has_predicate_or_fill = any(
         access.predicate is not None or access.fill_value is not None
         for access in boundary.accesses
@@ -609,7 +609,7 @@ def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
         AccessKind.LOAD: EffectKind.READ,
         AccessKind.STORE: EffectKind.WRITE,
     }
-    canonical_accesses = canonical.access_by_id
+    canonical_accesses = elaboration.access_by_id
     for access in boundary.accesses:
         if access.kind is AccessKind.UPDATE:
             raise NotImplementedError(
@@ -807,13 +807,12 @@ def _validate_dense_functional_boundary(canonical: CanonicalJ) -> None:
                     )
 
 
-def _validate_complete_boundary(j: SemanticArchive | CanonicalJ) -> str:
+def _validate_complete_boundary(j: SemanticArchive) -> str:
     """Consume supported B and reject every relation E_J cannot implement."""
 
-    canonical = j if isinstance(j, CanonicalJ) else elaborate_j(j)
-    j = canonical.archive
+    j = elaborate_j(j)
     boundary = j.boundary
-    _validate_dense_functional_boundary(canonical)
+    _validate_dense_functional_boundary(j)
     if boundary.aliases:
         raise NotImplementedError("E_J does not implement alias relations")
     if any(item.mutability.value == "mutable" for item in j.storage):
@@ -935,14 +934,10 @@ class ScalarLoweringSpec:
     dims: tuple[tuple[str, int], ...]
     input_bindings: tuple[tuple[str, str], ...]
     output_bindings: tuple[tuple[str, str], ...]
-    canonical_j: CanonicalJ = field(init=False, repr=False)
-
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("scalar lowering requires canonical J")
-        canonical = elaborate_j(self.j)
-        object.__setattr__(self, "canonical_j", canonical)
-        object.__setattr__(self, "j", canonical.archive)
+        object.__setattr__(self, "j", elaborate_j(self.j))
         dims = dict(self.dims)
         inputs = dict(self.input_bindings)
         outputs = dict(self.output_bindings)
@@ -1008,14 +1003,10 @@ class ScalarLoweringUnavailable:
     j: SemanticArchive
     error: str
     failure_class: str = "j_lowering_setup"
-    canonical_j: CanonicalJ = field(init=False, repr=False)
-
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("unavailable RefEval request requires canonical J")
-        canonical = elaborate_j(self.j)
-        object.__setattr__(self, "canonical_j", canonical)
-        object.__setattr__(self, "j", canonical.archive)
+        object.__setattr__(self, "j", elaborate_j(self.j))
         if not self.error:
             raise ValueError("unavailable E_J request requires an error")
 
@@ -1063,7 +1054,7 @@ class ScalarLoweringRunner:
         except KeyError as exc:
             return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
-            boundary_digest = _validate_complete_boundary(spec.canonical_j)
+            boundary_digest = _validate_complete_boundary(spec.j)
             inputs_by_ref = {
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)
@@ -1071,7 +1062,7 @@ class ScalarLoweringRunner:
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = scalar_broadcast_axes(spec.j)
             execution = execute_on_cpu_outputs(
-                spec.canonical_j,
+                spec.j,
                 spec.dims_map,
                 inputs,
                 broadcast_axes=broadcast_axes,

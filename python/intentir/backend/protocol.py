@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
-from intentir.ir.canonical_j import CanonicalJ, elaborate_j
+from intentir.ir.canonical_j import elaborate_j
 from intentir.verify.gate1.model import ImplementationConfig, SemanticArchive
 
 
@@ -57,14 +57,11 @@ class LoweringRequest:
     target: BackendTarget
     variant: str
     c: ImplementationConfig | None = None
-    canonical_j: CanonicalJ = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
             raise BackendProtocolError("lowering request requires canonical J")
-        canonical = elaborate_j(self.j)
-        object.__setattr__(self, "canonical_j", canonical)
-        object.__setattr__(self, "j", canonical.archive)
+        object.__setattr__(self, "j", elaborate_j(self.j))
         if not isinstance(self.target, BackendTarget):
             raise BackendProtocolError("lowering request requires BackendTarget")
         object.__setattr__(self, "variant", _identifier(self.variant, "lowering variant"))

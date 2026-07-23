@@ -133,10 +133,10 @@ K_t = Lower_t(J,C)
 Gamma_(J,C) |- pi : RealizationWitness(J,C)
 ```
 
-这里的 J 是 `ElaborateJ(J_wire)` 得到的 typed CanonicalJ。elaboration 只做 closed grammar 的
-确定性消糖、handle/type resolution 与恒等表示消除，不读 π 来决定 J，也不根据 Source/Gate
-结果修补语义；无唯一解释时在 TypeCheck/Replay 前 fail closed。因此 `CanonicalJ` 不扩充
-`Ids(J)`、不改变 π 的数学身份，也不是新的 interface/artifact。
+这里的 J 是固定 Decode/Elaborate 从模型 response 中构造出的唯一 typed J。该步骤只做 closed
+grammar 的确定性消糖、handle/type resolution 与恒等表示消除，不读 π 来决定 J，也不根据
+Source/Gate 结果修补语义；无唯一解释时在 TypeCheck/Replay 前 fail closed。它不产生另一份 J，
+也不扩充 `Ids(J)` 或改变 π 的数学身份。
 
 π 不是独立 JSON 图；它只有在给定 J、C 的声明环境后才有类型和意义。这里
 `Ids(J)` 已经包括 J logical signature 中的 input、output、runtime scalar、destination 以及
@@ -921,7 +921,7 @@ Gate2：semantic soundness
 - route/order/sharing graph legality；
 - mechanism enum。
 
-当前活动系统已在 parser 之后运行 `TypeCheck(CanonicalJ,C,pi)`，机械验证：
+当前活动系统已在 Decode/Elaborate 之后运行 `TypeCheck(J,C,pi)`，机械验证：
 
 - anchor 是否真的存在于当前 J/C；
 - observable instance 是否由 J node/access/effect 授权；
@@ -955,8 +955,8 @@ TypeCheck(J,C,pi)
 6. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
 这些项目已有聚焦正反例和真实 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
-已经由系统机械保证。J wire 还会先经 `ElaborateJ` 形成 typed CanonicalJ，使 TypeCheck 不依赖
-consumer 私有字符串解析。
+已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
+consumer 私有字符串解析，也不增加第二个 J 对象。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 
