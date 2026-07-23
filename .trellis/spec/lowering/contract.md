@@ -34,6 +34,30 @@ binding 变成 typed canonical form。RefEval 和 production backend 均不得�
 字符串；`J -> Intent MLIR` 只有一个共享入口。未接受的响应 JSON 不进入 lowering，解析缓存也
 不是另一份 J，不增加 artifact、Agent 或 Gate。
 
+## 共享 Functional Boundary Projection
+
+RefEval 与 production lowerer在发射 Intent MLIR 前，共用同一个确定性内部分析：
+
+```text
+P_B(J) = ProjectFunctionalBoundary(J)
+```
+
+`P_B(J)` 只把唯一 J 中已经存在的 typed domain/access/effect/output/reduction relation 投影为 consumer
+可直接使用的 structured axes、predicate contract、broadcast axes 与 index-bounds handles。它不改写
+J，不读取 C/π/Source/Harness/Gate evidence，不补 predicate 或 operator，也不单独序列化；它是一次
+调用内的派生分析结果，不是 `CanonicalJ`、第四 artifact 或新 certificate。
+
+当前 `P_B` 只有在完整 B 可机械表示为 J 的完整 logical-tensor execution 时成功：pure value、dense
+functional、full-logical-domain pointwise mask erasure，以及文中定义的窄 sum-padding profile。任何
+affine-as-dense、predicate/domain mismatch、effect mismatch、alias/inout 或未实现的 mutable relation
+都在进入 codegen 前 fail closed。RefEval 与 CUDA analyzer 记录相同的 projection record，不能各自
+保留第二套 wire parser 或 B-consumption 判定。
+
+投影成功的准确含义只是：当前 logical Intent MLIR 可以完整代表这些 B relation；它不自动证明任意
+目标物理调度安全。若 target lowerer后来把精确 logical domain 扩张为 padded launch，必须在自己的
+lowering 中物化 bounds/mask，或给出等价的目标侧证明；不能仅凭 `logical_domain_mask_erasure_v1`
+删除可能越界的物理 load/store。最终 target correctness 仍由独立 backend conformance 裁决。
+
 ## RefEval 要求
 
 - 逐项消费 J logical signature、A semantics 与 B result relation；
@@ -78,6 +102,8 @@ relation，都必须同时增加其 denotation、正反例和真实 canary。
 ## Production 要求
 
 - C 的消费只能影响合法 implementation choice，不能改变 J denotation；
+- production analyzer 必须先成功取得同一个 `P_B(J)` 才能发射 logical Intent MLIR；projection
+  失败不得继续 codegen；
 - lowerer 不理解某个 C slot 时可以采用保守实现或显式 unsupported，但不能从 π/Source 猜测；
 - authorization、alias/effect、logical update 与 allowed-result obligation 必须实际实现或拒绝；
 - correctness 由独立 backend conformance 记录，不替代 Gate1/Gate2。

@@ -22,6 +22,11 @@ RefEval 与 production lowering 使用同一个 `J -> Intent MLIR` 入口。于�
 `[k1,k0]`、可唯一推导的 result type、冗余 identity output mapping 不会由 RefEval 再次解释或拒绝；
 general affine、缺 predicate/effect 或类型冲突仍在准确边界 fail closed。
 
+RefEval 在发射 MLIR 前调用共享的 `ProjectFunctionalBoundary(J)`，只消费其 ephemeral structured
+结果；CUDA production analyzer 调用同一函数。该投影不是新的 J/Gate/artifact，只负责证明完整 B
+可进入 logical-tensor evaluation，不改变 `RefEval(J,x)` 的函数类型，也不把 target conformance
+并入 Gate2。
+
 ## 比较关系
 
 ```text

@@ -654,6 +654,12 @@ K_t = Lower_t(J,C)
 
 production lowerer 是被验证对象，不能同时充当 J 的独立 semantic oracle。
 
+两条路径可以且应当共用 `ProjectFunctionalBoundary(J)` 这一确定性内部分析，用于把 J 中完整的
+domain/access/effect relation 投影为 logical-tensor consumer 所需的 structured view。该 view 不改写
+J、不读取 C/π/Source，不单独序列化，也不是第二个 J 或新的 proof artifact。投影成功只说明这些
+Layer-B relation 已被 logical Intent MLIR 完整表示；若目标 lowering 引入 padded physical execution，
+仍须自行物化 mask/bounds 或给出目标侧等价保证，不能把该投影冒充 production correctness 证明。
+
 若当前阶段验证 backend：
 
 ```text

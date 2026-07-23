@@ -48,6 +48,10 @@ canonicalizer 不得猜 operator、缺失 predicate/effect/alias/authorization�
 fail closed。响应 schema 目前仍以 `index_expression` 文本保存，但 J 的 canonical dump 只写 bracketed vector；
 内部消费者读取 structured AST/axes。
 
+RefEval 与 production lowering 还可以从这个唯一 J 确定性计算一次 ephemeral
+`FunctionalBoundaryProjection`，以共享 Layer-B consumption 判定。该值既不包含另一份 J，也不
+进入 `(J,C,π)`、Replay packet 或证书身份；任何缓存或诊断记录都不得反过来改写 J。
+
 因此接受条件准确写成：
 
 ```text

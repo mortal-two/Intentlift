@@ -214,7 +214,7 @@ def _gate2_case(j: SemanticArchive, values: dict[str, np.ndarray]) -> Gate2Case:
         ),
         (1,),
     )
-    return Gate2Case("case0", j, values, triton, spec, ("out",))
+    return Gate2Case("case0", spec.j, values, triton, spec, ("out",))
 
 
 def _run_fake_gate2(

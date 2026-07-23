@@ -14,6 +14,10 @@ from intentir.backend.protocol import (
     LoweringRequest,
 )
 from intentir.frontend import emit_j_module
+from intentir.ir.functional_boundary import (
+    FunctionalBoundaryProjection,
+    project_functional_boundary,
+)
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     DuplicatePolicy,
@@ -56,30 +60,18 @@ def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
     return result
 
 
-def _broadcast_axes(j: SemanticArchive) -> dict[str, dict[str, tuple[int, ...]]]:
-    nodes = _nodes(j)
-    result: dict[str, dict[str, tuple[int, ...]]] = {}
-    for item in j.boundary.broadcasts:
-        op = nodes.get(item.node_ref)
-        if op is None or not isinstance(op.result, str):
-            raise CudaJLoweringError("broadcast relation requires one result consumer")
-        if item.operand not in op.operands:
-            raise CudaJLoweringError("broadcast relation names a non-consumed operand")
-        if any(isinstance(axis, bool) or not isinstance(axis, int) for axis in item.axes):
-            raise CudaJLoweringError("CUDA emitter does not support symbolic broadcast axes")
-        axes = tuple(int(axis) for axis in item.axes)
-        previous = result.setdefault(op.result, {}).get(item.operand)
-        if previous is not None and previous != axes:
-            raise CudaJLoweringError("conflicting broadcast relations")
-        result[op.result][item.operand] = axes
-    return result
+def _functional_projection(
+    j: SemanticArchive,
+) -> FunctionalBoundaryProjection:
+    """Derive CUDA's ephemeral Layer-B view from the one accepted J."""
 
-
-def _index_bounds(j: SemanticArchive) -> frozenset[str]:
-    return frozenset(
-        j.node_ids.get(item.node_ref, item.node_ref)
-        for item in j.boundary.index_bounds
-    )
+    try:
+        return project_functional_boundary(j)
+    except (TypeError, ValueError, NotImplementedError) as exc:
+        raise CudaJLoweringError(
+            "functional boundary projection failed: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
@@ -89,12 +81,13 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
         raise CudaJLoweringError("CUDA analysis requires canonical J")
     unsupported: list[str] = []
     consumed: list[str] = []
-    if j.boundary.domains:
-        unsupported.append("explicit_domain_relation")
-    if j.boundary.accesses:
-        unsupported.append("explicit_access_relation")
-    if j.boundary.effects:
-        unsupported.append("explicit_effect_relation")
+    projection: FunctionalBoundaryProjection | None = None
+    try:
+        projection = _functional_projection(j)
+    except CudaJLoweringError as exc:
+        unsupported.append(str(exc))
+    else:
+        consumed.extend(projection.consumed)
     if j.boundary.aliases:
         unsupported.append("alias_relation")
     if any(item.mutability.value == "mutable" for item in j.storage):
@@ -202,25 +195,24 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
         unsupported.append("output_destination_relation")
     else:
         consumed.extend(f"output:{name}" for name in mappings)
-    try:
-        _broadcast_axes(j)
-    except CudaJLoweringError as exc:
-        unsupported.append(f"broadcast:{exc}")
-    else:
-        consumed.extend(
-            f"broadcast:{item.node_ref}:{item.operand}"
-            for item in j.boundary.broadcasts
-        )
     consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
-    return {
-        "supported": not unsupported,
-        "consumed": sorted(consumed),
-        "unsupported": sorted(set(unsupported)),
-        "boundary_sha256": hashlib.sha256(
+    boundary_digest = (
+        projection.boundary_digest
+        if projection is not None
+        else hashlib.sha256(
             json.dumps(
                 j.boundary.to_json(), sort_keys=True, separators=(",", ":")
             ).encode()
-        ).hexdigest(),
+        ).hexdigest()
+    )
+    return {
+        "supported": not unsupported,
+        "consumed": sorted(set(consumed)),
+        "unsupported": sorted(set(unsupported)),
+        "boundary_sha256": boundary_digest,
+        "boundary_projection": (
+            projection.to_json() if projection is not None else None
+        ),
     }
 
 
@@ -286,11 +278,12 @@ def lower_j_to_cuda(
             "CUDA cannot consume complete Layer B: "
             + ", ".join(consumption["unsupported"])
         )
+    projection = _functional_projection(request.j)
     mlir = emit_j_module(
         request.j,
         dict(concrete_extents),
-        broadcast_axes=_broadcast_axes(request.j),
-        proven_index_bounds=_index_bounds(request.j),
+        broadcast_axes=projection.emitter_broadcast_axes(),
+        proven_index_bounds=projection.proven_index_bounds,
     )
     target = LoweringTarget(
         backend="cuda",

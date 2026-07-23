@@ -19,6 +19,11 @@ from intentir.ir.canonical_j import (
     parse_contract_expr,
     parse_index_expression,
 )
+from intentir.ir.functional_boundary import (
+    parse_direct_axes,
+    project_functional_boundary,
+    project_predicate_text,
+)
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     AccessKind,
@@ -102,16 +107,9 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
 
 
 def _parse_direct_index(expression: str) -> tuple[str, ...]:
-    """Compatibility helper backed by the shared ContractExpr elaborator."""
+    """Compatibility helper; the shared projection owns interpretation."""
 
-    axes = parse_index_expression(expression).direct_axes
-    if axes is None:
-        raise NotImplementedError(
-            "E_J dense access requires a direct ordered axis vector"
-        )
-    if len(set(axes)) != len(axes):
-        raise ValueError("E_J dense access axes must be unique")
-    return axes
+    return parse_direct_axes(expression)
 
 
 def _flatten_conjunction(expression: ContractExpr) -> tuple[ContractExpr, ...]:
@@ -204,13 +202,14 @@ def _parse_domain_predicate(
     frozenset[str],
     tuple[tuple[str, int | str], ...],
 ]:
-    return _domain_predicate_contract(
-        parse_contract_expr(
-            expression,
-            expected=ContractSort.BOOLEAN,
-            context="E_J access predicate",
-        ),
+    projection = project_predicate_text(
+        expression,
         logical_guards=logical_guards,
+    )
+    return (
+        projection.guards,
+        projection.lower_axes,
+        projection.upper_bounds,
     )
 
 
@@ -808,77 +807,15 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
 
 
 def _validate_complete_boundary(j: SemanticArchive) -> str:
-    """Consume supported B and reject every relation E_J cannot implement."""
+    """Compatibility wrapper over the shared J boundary projection."""
 
-    j = elaborate_j(j)
-    boundary = j.boundary
-    _validate_dense_functional_boundary(j)
-    if boundary.aliases:
-        raise NotImplementedError("E_J does not implement alias relations")
-    if any(item.mutability.value == "mutable" for item in j.storage):
-        raise NotImplementedError("E_J does not implement general mutable storage")
-
-    nodes = _node_table(j)
-    reductions_by_ref = {item.node_ref: item for item in boundary.reductions}
-    for node_ref, contract in reductions_by_ref.items():
-        op = nodes.get(node_ref)
-        if op is None or op.op != "reduce":
-            raise ValueError("Layer-B reduction does not target a reduce node")
-        fn = op.attrs.get("fn")
-        neutral = {
-            "sum": 0,
-            "mean": 0,
-            "prod": 1,
-            "any": False,
-            "all": True,
-        }.get(fn)
-        declared_values = [
-            value
-            for value in (contract.identity, contract.masked_contribution)
-            if value is not None
-        ]
-        for declared in declared_values:
-            if fn in {"max", "min"}:
-                expected = "NEG_INF" if fn == "max" else "POS_INF"
-                if declared != expected:
-                    raise NotImplementedError(
-                        f"E_J requires {expected} padding for {fn}"
-                    )
-            elif neutral is not None and declared != neutral:
-                raise NotImplementedError(
-                    f"E_J cannot eliminate non-neutral {fn!r} boundary padding"
-                )
-
-    returns = {item.output: item.value for item in j.intent.returns}
-    mappings = {item.output: item.value for item in boundary.output_mappings}
-    if mappings and mappings != returns:
-        raise NotImplementedError("E_J output destination relation is incomplete")
-
-    # Typed bounds/update/result relations were already cross-validated against
-    # this exact J by SemanticArchive.  Bounds are checked against concrete
-    # inputs below; result relations are consumed by Gate2.  A typed update is
-    # recognized here, while the CPU capability preflight remains responsible
-    # for rejecting scatter until a real Intent->CPU lowering exists.
-    nodes = _node_table(j)
-    for item in boundary.index_bounds:
-        if nodes.get(item.node_ref) is None:
-            raise ValueError("E_J index bounds reference an unknown node")
-    for item in boundary.updates:
-        if nodes.get(item.node_ref) is None:
-            raise ValueError("E_J logical update references an unknown node")
-    outputs = {item.name for item in j.intent.outputs}
-    if any(item.output not in outputs for item in boundary.result_relations):
-        raise ValueError("E_J result relation references an unknown output")
-    return _digest(boundary.to_json())
+    return project_functional_boundary(j).boundary_digest
 
 
 def scalar_index_bounds(j: SemanticArchive) -> frozenset[str]:
     """Return the exact emitter projection authorized by canonical J."""
 
-    return frozenset(
-        j.node_ids.get(item.node_ref, item.node_ref)
-        for item in j.boundary.index_bounds
-    )
+    return project_functional_boundary(j).proven_index_bounds
 
 
 def validate_index_bounds_inputs(
@@ -908,22 +845,7 @@ def validate_index_bounds_inputs(
 def scalar_broadcast_axes(
     j: SemanticArchive,
 ) -> dict[str, dict[str, tuple[int, ...]]]:
-    nodes = _node_table(j)
-    result: dict[str, dict[str, tuple[int, ...]]] = {}
-    for projection in j.boundary.broadcasts:
-        op = nodes.get(projection.node_ref)
-        if op is None or not isinstance(op.result, str):
-            raise NotImplementedError("scalar broadcast requires one result consumer")
-        if projection.operand not in op.operands:
-            raise ValueError("scalar broadcast names a non-consumed operand")
-        if any(isinstance(axis, bool) or not isinstance(axis, int) for axis in projection.axes):
-            raise NotImplementedError("E_J does not implement symbolic broadcast axes")
-        axes = tuple(int(axis) for axis in projection.axes)
-        previous = result.setdefault(op.result, {}).get(projection.operand)
-        if previous is not None and previous != axes:
-            raise ValueError("conflicting scalar broadcast relations")
-        result[op.result][projection.operand] = axes
-    return result
+    return project_functional_boundary(j).emitter_broadcast_axes()
 
 
 @dataclass(frozen=True)
@@ -1054,19 +976,20 @@ class ScalarLoweringRunner:
         except KeyError as exc:
             return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
-            boundary_digest = _validate_complete_boundary(spec.j)
+            projection = project_functional_boundary(spec.j)
+            boundary_digest = projection.boundary_digest
             inputs_by_ref = {
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)
             }
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
-            broadcast_axes = scalar_broadcast_axes(spec.j)
+            broadcast_axes = projection.emitter_broadcast_axes()
             execution = execute_on_cpu_outputs(
                 spec.j,
                 spec.dims_map,
                 inputs,
                 broadcast_axes=broadcast_axes,
-                proven_index_bounds=scalar_index_bounds(spec.j),
+                proven_index_bounds=projection.proven_index_bounds,
             )
             output_bindings = spec.output_binding_map
             outputs = {
@@ -1086,37 +1009,13 @@ class ScalarLoweringRunner:
                     "j_digest": spec.j_digest,
                     "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
-                    "boundary_profile": (
-                        "logical_domain_reduction_padding_v1"
-                        if any(
-                            item.predicate is not None
-                            for item in spec.j.boundary.accesses
-                        )
-                        and spec.j.boundary.reductions
-                        else (
-                            "logical_domain_mask_erasure_v1"
-                            if any(
-                                item.predicate is not None
-                                for item in spec.j.boundary.accesses
-                            )
-                            else (
-                                "dense_functional_v1"
-                                if spec.j.boundary.accesses
-                                else "pure_value_v1"
-                            )
-                        )
-                    ),
+                    "boundary_profile": projection.profile,
+                    "boundary_projection": projection.to_json(),
                     "domain_relation_count": len(spec.j.boundary.domains),
                     "access_relation_count": len(spec.j.boundary.accesses),
                     "effect_relation_count": len(spec.j.boundary.effects),
-                    "predicated_access_count": sum(
-                        item.predicate is not None
-                        for item in spec.j.boundary.accesses
-                    ),
-                    "erased_fill_count": sum(
-                        item.fill_value is not None
-                        for item in spec.j.boundary.accesses
-                    ),
+                    "predicated_access_count": projection.predicated_access_count,
+                    "erased_fill_count": projection.erased_fill_count,
                     "broadcast_consumer_count": len(broadcast_axes),
                     "index_bounds_count": len(spec.j.boundary.index_bounds),
                     "result_relation_count": len(
