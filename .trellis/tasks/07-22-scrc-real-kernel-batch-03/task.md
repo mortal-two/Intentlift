@@ -158,8 +158,11 @@ Gate1 primary diff、Gate2 三边、RefEval profile/unsupported reason、真实 
 
 ## 后续
 
-Task 03 完成后，Task 04 依据六项结构化结果只选择一个可泛化语义能力扩展，例如 compositional
-row reduction、softmax 组合或 contraction。达到门禁覆盖与达到性能目标继续作为不同任务处理。
+Task 03 的首个五候选真实运行表明，当前一次性 Responses Lift 才是继续纵切前的系统瓶颈；因此
+Task 04 先把 mini-swe-agent 接成现有 Lift 的有界候选生成实现，外部 TypeCheck、Replay、Gate1、
+Gate2 与本任务的五分支控制面保持不变。Task 04 完成后从全新 dyt fan-out 恢复本任务；六项纵切
+全部完成后，后续任务再依据结构化结果选择可泛化语义能力扩展。达到门禁覆盖与达到性能目标继续
+作为不同任务处理。
 
 ## 执行记录
 
@@ -255,8 +258,23 @@ call budget。测试用五线程 barrier 证明 Lift branch 实际重叠执行�
 重构被人工停止；它不计 `NO_CLOSURE` 或 Gate 失败。重构完成后先回到 `liger_dyt`，使用
 `--candidates 5 --effort xhigh` 获得完整 Gate1 closure 与 winner Gate2 结果，再进入 swiglu。
 
+首次真实五候选运行 `liger_dyt/fanout-001` 已完成并留证：五个 branch 同时启动；branch 3 的首个
+provider 请求在约 301 秒后以 HTTP 408/stream disconnected 结束，归为
+`INFRASTRUCTURE_FAILED`；branch 1/2/4/5 各产生三份完整 provider response，但均在正式
+TypeCheck 前被严格 artifact parser 拒绝，终末诊断为 π refinement `auth_ref` 不是 J 的 `u*`
+authorization handle。总预算为 12 次 logical/physical Lift、0 次 TypeCheck、0 次 Replay、0 次
+Gate1/Gate2，winner 为空。四个正常耗尽分支是 branch-local `NO_CLOSURE`，但整个 fan-out 含一个
+基础设施失败，不能把它概括成五分支全部正常耗尽。
+
+该 run 从五分支目录初始化到汇总约 25 分 46 秒。当前 rejected-response evidence 保存了完整响应，
+但没有逐请求 usage/elapsed receipt，因此不能从仓库证据反推出每个并发调用的精确排队与推理时间；
+CPA 侧观测应与早期单链 receipt 分开解释。更重要的是，12 份高成本响应仍未交付可进入 TypeCheck
+的候选，说明继续堆叠 one-shot prompt 或放宽 parser 不是合适的系统改进。Task 04 据此把 Lift
+替换为一次一候选、可按需读取 schema/通用文档的有界 mini-swe worker；任何外部 TypeCheck/Gate1
+反馈仍严格开启下一轮 worker，不能藏在同一轮内部修正。
+
 本阶段 checkpoint 前已再次验证：manifest `28/28 resolved`、六个 representative dry-run 均为
 `ready`；Phase B checkpoint 的全量回归为 `793 passed, 4 skipped`，Phase C fan-out checkpoint
 更新为 `801 passed, 4 skipped`。接下来用可用 provider 配置从全新 run
 继续六项外层顺序纵切。Task 03 在 dyt 获得完整 closure、且六项各自收敛为结构化 evidence 前
-仍保持“执行中”。
+仍保持“执行中”；当前先执行 Task 04，完成后从新的 `fanout-002` 恢复。

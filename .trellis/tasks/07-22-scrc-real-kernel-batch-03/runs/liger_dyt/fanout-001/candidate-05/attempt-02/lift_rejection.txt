@@ -1,0 +1,1 @@
+SchemaError: SemanticArchive.intent.intent_function.body[0].operands reference value(s) outside the current scope: x2

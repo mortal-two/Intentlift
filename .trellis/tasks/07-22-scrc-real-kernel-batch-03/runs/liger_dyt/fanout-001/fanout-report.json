@@ -1,0 +1,150 @@
+{
+  "aggregate_call_budget": {
+    "formal_gate1_rounds": 0,
+    "gate2_cases": 0,
+    "lift_calls": 12,
+    "lift_physical_calls": 12,
+    "refeval_executions": 0,
+    "replay_executions": 0,
+    "replay_masked_calls": 0,
+    "replay_normal_calls": 0,
+    "replay_physical_calls": 0,
+    "source_executions": 0,
+    "typecheck_calls": 0
+  },
+  "branches": [
+    {
+      "branch_id": 1,
+      "call_budget": {
+        "formal_gate1_rounds": 0,
+        "gate2_cases": 0,
+        "lift_calls": 3,
+        "lift_physical_calls": 3,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 0,
+        "replay_normal_calls": 0,
+        "replay_physical_calls": 0,
+        "source_executions": 0,
+        "typecheck_calls": 0
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": null,
+        "attempt_stage_counts": {
+          "lift_response_rejected": 3
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-01",
+      "ordinal": 10,
+      "status": "no_closure"
+    },
+    {
+      "branch_id": 2,
+      "call_budget": {
+        "formal_gate1_rounds": 0,
+        "gate2_cases": 0,
+        "lift_calls": 3,
+        "lift_physical_calls": 3,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 0,
+        "replay_normal_calls": 0,
+        "replay_physical_calls": 0,
+        "source_executions": 0,
+        "typecheck_calls": 0
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": null,
+        "attempt_stage_counts": {
+          "lift_response_rejected": 3
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-02",
+      "ordinal": 10,
+      "status": "no_closure"
+    },
+    {
+      "branch_id": 3,
+      "call_budget": {},
+      "case_id": "high_performance:liger_dyt",
+      "details": {},
+      "diagnostic": "ProviderError: provider call failed after 1 tries: HTTP 408: {\"error\":{\"message\":\"stream error: stream disconnected before completion: stream closed before response.completed\",\"type\":\"invalid_request_error\"}}",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-03",
+      "ordinal": 10,
+      "status": "infrastructure_failed"
+    },
+    {
+      "branch_id": 4,
+      "call_budget": {
+        "formal_gate1_rounds": 0,
+        "gate2_cases": 0,
+        "lift_calls": 3,
+        "lift_physical_calls": 3,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 0,
+        "replay_normal_calls": 0,
+        "replay_physical_calls": 0,
+        "source_executions": 0,
+        "typecheck_calls": 0
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": null,
+        "attempt_stage_counts": {
+          "lift_response_rejected": 3
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-04",
+      "ordinal": 10,
+      "status": "no_closure"
+    },
+    {
+      "branch_id": 5,
+      "call_budget": {
+        "formal_gate1_rounds": 0,
+        "gate2_cases": 0,
+        "lift_calls": 3,
+        "lift_physical_calls": 3,
+        "refeval_executions": 0,
+        "replay_executions": 0,
+        "replay_masked_calls": 0,
+        "replay_normal_calls": 0,
+        "replay_physical_calls": 0,
+        "source_executions": 0,
+        "typecheck_calls": 0
+      },
+      "case_id": "high_performance:liger_dyt",
+      "details": {
+        "accepted_attempt": null,
+        "attempt_stage_counts": {
+          "lift_response_rejected": 3
+        },
+        "observer_profile": "triton_ttir_structural@triton-ttir-3.6-gate1-v3"
+      },
+      "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+      "evidence_path": "run-root://liger_dyt/fanout-001/candidate-05",
+      "ordinal": 10,
+      "status": "no_closure"
+    }
+  ],
+  "candidate_count": 5,
+  "case_id": "high_performance:liger_dyt",
+  "ordinal": 10,
+  "protocol": "intentir.scrc.candidate-fanout.v1",
+  "selection_rule": "lowest_branch_after_gate1_search_barrier.v1",
+  "status_counts": {
+    "infrastructure_failed": 1,
+    "no_closure": 4
+  },
+  "winner_branch_id": null,
+  "winner_result": null
+}

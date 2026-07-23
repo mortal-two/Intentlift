@@ -1,0 +1,74 @@
+{
+  "accepted_attempt": null,
+  "attempts": [
+    {
+      "artifact": null,
+      "feedback": {
+        "diagnostics": {
+          "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+          "failure_class": "lift_response"
+        },
+        "formal_round": null,
+        "kind": "lift",
+        "previous_artifact": null
+      },
+      "formal_round": null,
+      "gate1": null,
+      "lift_call": 1,
+      "lift_metadata": {},
+      "typecheck": null,
+      "typecheck_status": "not_run"
+    },
+    {
+      "artifact": null,
+      "feedback": {
+        "diagnostics": {
+          "diagnostic": "SchemaError: SemanticArchive.intent.intent_function.body[9].operands reference value(s) outside the current scope: t4",
+          "failure_class": "lift_response"
+        },
+        "formal_round": null,
+        "kind": "lift",
+        "previous_artifact": null
+      },
+      "formal_round": null,
+      "gate1": null,
+      "lift_call": 2,
+      "lift_metadata": {},
+      "typecheck": null,
+      "typecheck_status": "not_run"
+    },
+    {
+      "artifact": null,
+      "feedback": {
+        "diagnostics": {
+          "diagnostic": "SchemaError: pi refinement auth_ref must be a J authorization handle u*",
+          "failure_class": "lift_response"
+        },
+        "formal_round": null,
+        "kind": "lift",
+        "previous_artifact": null
+      },
+      "formal_round": null,
+      "gate1": null,
+      "lift_call": 3,
+      "lift_metadata": {},
+      "typecheck": null,
+      "typecheck_status": "not_run"
+    }
+  ],
+  "call_budget": {
+    "formal_gate1_rounds": 0,
+    "gate2_cases": 0,
+    "lift_calls": 3,
+    "lift_physical_calls": 3,
+    "refeval_executions": 0,
+    "replay_executions": 0,
+    "replay_masked_calls": 0,
+    "replay_normal_calls": 0,
+    "replay_physical_calls": 0,
+    "source_executions": 0,
+    "typecheck_calls": 0
+  },
+  "j_necessity_status": null,
+  "status": "NO_CLOSURE"
+}
