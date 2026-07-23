@@ -63,6 +63,7 @@ from intentir.verify.scrc_runner import (
     SCRCRunDependencies,
     SCRCRunRequest,
     SourceProgram,
+    _compact_gate1_observer_diff,
 )
 
 
@@ -143,6 +144,61 @@ def _gate2_suite(*, passed: bool) -> Gate2SuiteResult:
         ExecutionResult("j", True, {}),
     )
     return Gate2SuiteResult("suite0", (case,), (("c0", 128),))
+
+
+def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
+    class VerboseComparison:
+        def to_dict(self):
+            return {
+                "hard_pass": False,
+                "hard_passes": {"dataflow": False, "op_multiset": False},
+                "primary_difference_category": "op_multiset",
+                "score": 0.25,
+                "components": [{"duplicated": True}],
+                "differences": [
+                    {
+                        "category": "dataflow",
+                        "kind": "missing",
+                        "item": [
+                            "edge",
+                            f"tt.addptr[{index:020x}]",
+                            "operand[0]",
+                        ],
+                        "expected_count": 1,
+                        "actual_count": 0,
+                        "message": "not forwarded",
+                    }
+                    for index in range(12)
+                ]
+                + [
+                    {
+                        "category": "op_multiset",
+                        "kind": "missing",
+                        "item": "arith.extsi",
+                        "expected_count": 3,
+                        "actual_count": 0,
+                    }
+                ],
+            }
+
+    compact = _compact_gate1_observer_diff(VerboseComparison())
+
+    assert set(compact) == {
+        "hard_pass",
+        "hard_passes",
+        "primary_difference_category",
+        "categories",
+    }
+    dataflow = next(
+        item for item in compact["categories"] if item["category"] == "dataflow"
+    )
+    assert dataflow["difference_count"] == 12
+    assert len(dataflow["examples"]) == 8
+    assert dataflow["truncated_count"] == 4
+    assert "00000000000000000000" not in str(compact)
+    assert dataflow["examples"][0]["item"][1] == "tt.addptr[node]"
+    assert "score" not in compact
+    assert "components" not in compact
 
 
 class _Lift:

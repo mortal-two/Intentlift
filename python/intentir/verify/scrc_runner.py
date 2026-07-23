@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any, Callable, Mapping, Protocol
 
 from .gate1.model import Gate1Artifact, Gate1Status, JNecessityStatus
@@ -19,6 +20,69 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 
 MAX_GATE1_ROUNDS = 3
 MAX_PRE_REPLAY_REJECTIONS = 3
+MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
+_OBSERVER_NODE_FINGERPRINT = re.compile(r"\[[0-9a-f]{12,64}\]")
+
+
+def _feedback_item(value: Any) -> Any:
+    """Remove non-actionable observer node ids from relift-only diagnostics."""
+
+    if isinstance(value, str):
+        return _OBSERVER_NODE_FINGERPRINT.sub("[node]", value)
+    if isinstance(value, list):
+        return [_feedback_item(item) for item in value]
+    if isinstance(value, tuple):
+        return [_feedback_item(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _feedback_item(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    return value
+
+
+def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
+    """Keep full evidence on disk while sending Lift a bounded actionable diff."""
+
+    raw = comparison.to_dict()
+    differences = raw.get("differences")
+    if not isinstance(differences, list):
+        return _feedback_item(raw)
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for difference in differences:
+        if not isinstance(difference, Mapping):
+            continue
+        category = str(difference.get("category", "unknown"))
+        group = grouped.setdefault(
+            category,
+            {"category": category, "difference_count": 0, "examples": []},
+        )
+        group["difference_count"] += 1
+        examples = group["examples"]
+        if len(examples) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
+            continue
+        examples.append(
+            {
+                key: _feedback_item(difference[key])
+                for key in ("kind", "item", "expected_count", "actual_count")
+                if key in difference
+            }
+        )
+
+    categories = []
+    for category in sorted(grouped):
+        group = grouped[category]
+        group["truncated_count"] = max(
+            0, group["difference_count"] - len(group["examples"])
+        )
+        categories.append(group)
+    return {
+        "hard_pass": bool(raw.get("hard_pass", False)),
+        "hard_passes": _feedback_item(raw.get("hard_passes", {})),
+        "primary_difference_category": raw.get("primary_difference_category"),
+        "categories": categories,
+    }
 
 
 class MainStatus(str, Enum):
@@ -305,7 +369,9 @@ class SCRCGateRunner:
             "diagnostic": normal.diagnostic,
         }
         if normal.comparison is not None:
-            diagnostics["observer_diff"] = normal.comparison.to_dict()
+            diagnostics["observer_diff"] = _compact_gate1_observer_diff(
+                normal.comparison
+            )
         return LiftFeedback(
             FeedbackKind.GATE1,
             diagnostics,

@@ -104,9 +104,11 @@ def render_boundary_access_wire_grammar() -> str:
         "access requires a non-empty ordered logical index_expression, including "
         "scalar accesses. predicate, fill_value, and logical domains belong only "
         "to J when present in source semantics. Preserve every source logical "
-        "domain, access predicate, and masked-load fill even when the frozen "
-        "invocation makes a mask tautological. Do not move them to pi and do not "
-        "invent them when the source has none."
+        "domain, access predicate, and masked-load fill even when the current "
+        "bound invocation makes a mask tautological. Every access has exactly "
+        "one EffectSpec whose kind, target, node_ref (including null), and "
+        "access_ref exactly match that access. Do not move these facts to pi, "
+        "omit the matching effect, or invent them when the source has none."
     )
 
 

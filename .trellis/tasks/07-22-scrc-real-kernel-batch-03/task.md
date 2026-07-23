@@ -206,6 +206,34 @@ terminal evidence 与真实调用预算。在六项纵切完成以前，本 Task
 J 比较边最大绝对差约 `2.98e-08`，因此仍不能认证。这个事实已用于收紧通用 Lift comparison-class
 提示；没有修改历史 artifact、Q 或 verdict。
 
+后续 `liger_dyt` 正式记录如下：
+
+- `run-008` (`high`)：第一次 Lift HTTP 请求达到 600 秒客户端上限，自动重试开始后在总耗时超过
+  12 分钟时人工中断；未产生 candidate，归为 `INFRASTRUCTURE_FAILED`。
+- `run-009` (`medium`)：三次 Lift response 均在完整 artifact 解析阶段失败，分别为两次
+  `tolerance` 错带空 `update_node_ref`，以及一次 access/effect `node_ref` 不一致；正式结果为
+  `NO_CLOSURE / LIFT_RESPONSE_REJECTED`，0 次 TypeCheck/Gate1。
+- 结束 run-009 后只收紧通用 wire instruction，没有放宽 parser：`exact/tolerance` 必须完全省略
+  `update_node_ref`；access/effect 的 kind/target/node_ref/access_ref 必须 exact match。
+- `run-010` (`medium`)：4 个 logical Lift call 中 3 个完整 artifact 进入 TypeCheck 与正式 Gate1；
+  两个 Replay 编译成功但在 `op_multiset/dataflow/predicate_effect` hard mismatch，另一次 Replay
+  provider response rejected，最终为 `NO_CLOSURE`。具体差异是 Source 的 3 个 signed widening
+  在 π 中全部遗漏，且整数 coordinate 的 base/lane 组成被误写成额外 pointer address stages，
+  Replay 因而生成 0 个 `arith.extsi` 与 10 个 `tt.addptr`，Source 分别为 3 与 6。
+
+上述差异推动两项 source-neutral 系统改进：Lift 必须为每个 compiler-visible sensitive
+representation stage 建立 J authorization 与 π refinement，Replay 必须在对应 instance 消费；
+integer coordinate arithmetic 不因随后用作 offset 就自动成为 pointer address stage。Gate1
+observer、TypeCheck 与 strict parser 均未放宽。
+
+同时完成 prompt attention 收敛：Responses structured-output schema 继续承担完整字段/枚举/结构
+合同，Lift natural-language instructions 从 26,180 字符降为 6,294 字符；完整 Gate1 comparison
+继续落盘，relift 只接收每类至多 8 个代表差异的确定性 actionable view，不再重复发送低层节点
+fingerprint、components 与 score/rank。相关回归 `92 passed`。
+
+`liger_dyt` 已有正式 `NO_CLOSURE` 终态，不再为了调到 PASS 重复运行。Task03 下一项进入
+`high_performance:liger_swiglu`，优先使用 `xhigh`；provider 不可用时只记 infrastructure。
+
 本阶段 checkpoint 前已再次验证：manifest `28/28 resolved`、六个 representative dry-run 均为
 `ready`，全量 Python 回归为 `793 passed, 4 skipped`。接下来用可用 provider 配置从全新 run
 继续六项顺序纵切。Task 03 在六项各自收敛为结构化 terminal evidence 前仍保持“执行中”。

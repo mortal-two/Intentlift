@@ -1,0 +1,1083 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "constexpr",
+        "name": "c0",
+        "required": true,
+        "role": "schedule_value",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "j": {
+    "boundary": {
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[0]",
+          "kind": "load",
+          "node_ref": "n0",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a1",
+          "fill_value": 0.0,
+          "index_expression": "[i1]",
+          "kind": "load",
+          "node_ref": "n2",
+          "predicate": "i1 < x0",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a2",
+          "fill_value": 0.0,
+          "index_expression": "[i0,i1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "predicate": "i1 < x0",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a3",
+          "fill_value": 0.0,
+          "index_expression": "[i1]",
+          "kind": "load",
+          "node_ref": "n3",
+          "predicate": "t4 and i1 < x0",
+          "tensor": "t3"
+        },
+        {
+          "access_id": "a4",
+          "index_expression": "[i0,i1]",
+          "kind": "store",
+          "node_ref": "n4",
+          "predicate": "i1 < x0",
+          "tensor": "t5"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [
+        {
+          "axes": [
+            0,
+            1
+          ],
+          "node_ref": "n0",
+          "operand": "t1"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n2",
+          "operand": "t2"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n3",
+          "operand": "t3"
+        },
+        {
+          "axes": [
+            0,
+            1
+          ],
+          "node_ref": "n4",
+          "operand": "t4"
+        }
+      ],
+      "domains": {
+        "d0": "0 <= i0 and i0 < 2",
+        "d1": "0 <= i1 and i1 < x0"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "read",
+          "node_ref": "n2",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a2",
+          "effect_id": "e2",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a3",
+          "effect_id": "e3",
+          "kind": "read",
+          "node_ref": "n3",
+          "target": "t3"
+        },
+        {
+          "access_ref": "a4",
+          "effect_id": "e4",
+          "kind": "write",
+          "node_ref": "n4",
+          "target": "t5"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [
+        {
+          "node_ref": "n4",
+          "output": "t5",
+          "value": "v4"
+        }
+      ],
+      "realization_authorizations": [],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t5"
+        }
+      ],
+      "updates": []
+    },
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n0",
+            "op": "map_binary",
+            "operands": [
+              "t1",
+              "t0"
+            ],
+            "result": "v0",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "tanh"
+            },
+            "id": "n1",
+            "op": "map_unary",
+            "operands": [
+              "v0"
+            ],
+            "result": "v1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n2",
+            "op": "map_binary",
+            "operands": [
+              "v1",
+              "t2"
+            ],
+            "result": "v2",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "id": "n3",
+            "op": "map_binary",
+            "operands": [
+              "v2",
+              "t3"
+            ],
+            "result": "v3",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "id": "n4",
+            "op": "select",
+            "operands": [
+              "t4",
+              "v3",
+              "v2"
+            ],
+            "result": "v4",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              2,
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              1
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t2",
+            "shape": [
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t3",
+            "shape": [
+              "x0"
+            ]
+          },
+          {
+            "dtype": "i1",
+            "name": "t4",
+            "shape": []
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t5",
+            "shape": [
+              2,
+              "x0"
+            ]
+          }
+        ],
+        "returns": [
+          {
+            "output": "t5",
+            "value": "v4"
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n2": "body[2]",
+      "n3": "body[3]",
+      "n4": "body[4]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "v0",
+          "v1",
+          "v2",
+          "v3",
+          "v4"
+        ],
+        "effects": [
+          "e0",
+          "e1",
+          "e2",
+          "e3",
+          "e4"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t5",
+          "mode": "output",
+          "name": "p1",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "input",
+          "name": "p2",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p3",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t3",
+          "mode": "input",
+          "name": "p4",
+          "rank": 1
+        },
+        {
+          "dtype": "i1",
+          "kind": "constexpr",
+          "logical_ref": "t4",
+          "mode": "value",
+          "name": "p5",
+          "rank": 0
+        },
+        {
+          "dtype": "i64",
+          "kind": "constexpr",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p6",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [
+      {
+        "crosses_iteration": false,
+        "escapes": true,
+        "init_event": {
+          "kind": "access",
+          "ref": "a4"
+        },
+        "last_use_event": {
+          "kind": "scope_exit",
+          "ref": "q0"
+        },
+        "members": [
+          "t5"
+        ],
+        "mutability": "write_once",
+        "scope_id": "q0",
+        "storage_id": "b0"
+      }
+    ]
+  },
+  "pi": {
+    "instances": [
+      {
+        "id": "i0",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d1"
+      },
+      {
+        "id": "i1",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "c0"
+      },
+      {
+        "id": "i2",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "d1"
+      },
+      {
+        "id": "i3",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d1"
+      },
+      {
+        "id": "i4",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "d1"
+      },
+      {
+        "id": "i5",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d0"
+      },
+      {
+        "id": "i6",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p6"
+      },
+      {
+        "id": "i7",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p0"
+      },
+      {
+        "id": "i8",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a2"
+      },
+      {
+        "id": "i9",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a2"
+      },
+      {
+        "id": "i10",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a2"
+      },
+      {
+        "id": "i11",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a2"
+      },
+      {
+        "id": "i12",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p1"
+      },
+      {
+        "id": "i13",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a4"
+      },
+      {
+        "id": "i14",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a4"
+      },
+      {
+        "id": "i15",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a4"
+      },
+      {
+        "id": "i16",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a4"
+      },
+      {
+        "id": "i17",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p3"
+      },
+      {
+        "id": "i18",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i19",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i20",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i21",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p4"
+      },
+      {
+        "id": "i22",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a3"
+      },
+      {
+        "id": "i23",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a3"
+      },
+      {
+        "id": "i24",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a3"
+      },
+      {
+        "id": "i25",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p2"
+      },
+      {
+        "id": "i26",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i27",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p5"
+      },
+      {
+        "id": "i28",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n0"
+      },
+      {
+        "id": "i29",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n1"
+      },
+      {
+        "id": "i30",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n2"
+      },
+      {
+        "id": "i31",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n3"
+      },
+      {
+        "id": "i32",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n4"
+      }
+    ],
+    "order": [
+      {
+        "after": "i2",
+        "before": "i0"
+      },
+      {
+        "after": "i4",
+        "before": "i2"
+      },
+      {
+        "after": "i8",
+        "before": "i5"
+      },
+      {
+        "after": "i9",
+        "before": "i8"
+      },
+      {
+        "after": "i10",
+        "before": "i9"
+      },
+      {
+        "after": "i11",
+        "before": "i10"
+      },
+      {
+        "after": "i13",
+        "before": "i5"
+      },
+      {
+        "after": "i14",
+        "before": "i13"
+      },
+      {
+        "after": "i15",
+        "before": "i14"
+      },
+      {
+        "after": "i16",
+        "before": "i15"
+      },
+      {
+        "after": "i19",
+        "before": "i18"
+      },
+      {
+        "after": "i20",
+        "before": "i19"
+      },
+      {
+        "after": "i23",
+        "before": "i22"
+      },
+      {
+        "after": "i24",
+        "before": "i23"
+      },
+      {
+        "after": "i28",
+        "before": "i26"
+      },
+      {
+        "after": "i28",
+        "before": "i11"
+      },
+      {
+        "after": "i29",
+        "before": "i28"
+      },
+      {
+        "after": "i30",
+        "before": "i29"
+      },
+      {
+        "after": "i30",
+        "before": "i20"
+      },
+      {
+        "after": "i31",
+        "before": "i30"
+      },
+      {
+        "after": "i31",
+        "before": "i24"
+      },
+      {
+        "after": "i32",
+        "before": "i31"
+      },
+      {
+        "after": "i16",
+        "before": "i32"
+      }
+    ],
+    "refinements": [],
+    "regions": [
+      {
+        "id": "r0",
+        "parent": null,
+        "placement": "root"
+      },
+      {
+        "id": "r1",
+        "parent": "r0",
+        "placement": "program"
+      }
+    ],
+    "routes": [
+      {
+        "slots": [
+          0
+        ],
+        "source": "i0",
+        "target": "i2"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i1",
+        "target": "i2"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i4"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i4"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i7",
+        "target": "i8"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i8"
+      },
+      {
+        "slots": [
+          2
+        ],
+        "source": "i6",
+        "target": "i8"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i8",
+        "target": "i9"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i2",
+        "target": "i9"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i9",
+        "target": "i10"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i10"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i10",
+        "target": "i11"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i12",
+        "target": "i13"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i13"
+      },
+      {
+        "slots": [
+          2
+        ],
+        "source": "i6",
+        "target": "i13"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i13",
+        "target": "i14"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i2",
+        "target": "i14"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i14",
+        "target": "i15"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i15"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i15",
+        "target": "i16"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i17",
+        "target": "i18"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i2",
+        "target": "i18"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i18",
+        "target": "i19"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i19"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i19",
+        "target": "i20"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i21",
+        "target": "i22"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i2",
+        "target": "i22"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i22",
+        "target": "i23"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i23"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i27",
+        "target": "i24"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i23",
+        "target": "i24"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i25",
+        "target": "i26"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i26",
+        "target": "i28"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i28"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i28",
+        "target": "i29"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i29",
+        "target": "i30"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i20",
+        "target": "i30"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i30",
+        "target": "i31"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i24",
+        "target": "i31"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i27",
+        "target": "i32"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i31",
+        "target": "i32"
+      },
+      {
+        "slots": [
+          2
+        ],
+        "source": "i30",
+        "target": "i32"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i32",
+        "target": "i16"
+      }
+    ],
+    "sharing": [
+      {
+        "consumers": [
+          "i9",
+          "i14",
+          "i18",
+          "i22"
+        ],
+        "source": "i2"
+      },
+      {
+        "consumers": [
+          "i4",
+          "i10",
+          "i15",
+          "i19",
+          "i23"
+        ],
+        "source": "i3"
+      },
+      {
+        "consumers": [
+          "i8",
+          "i13"
+        ],
+        "source": "i5"
+      },
+      {
+        "consumers": [
+          "i8",
+          "i13"
+        ],
+        "source": "i6"
+      },
+      {
+        "consumers": [
+          "i24",
+          "i32"
+        ],
+        "source": "i27"
+      },
+      {
+        "consumers": [
+          "i31",
+          "i32"
+        ],
+        "source": "i30"
+      }
+    ]
+  },
+  "schema": "intentir.scrc.artifact.v1"
+}

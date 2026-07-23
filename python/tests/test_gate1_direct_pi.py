@@ -404,6 +404,8 @@ def test_pi_repeated_anchor_and_runtime_routes_survive_replay_packet() -> None:
     instructions, _user = build_normal_rewriter_prompt(artifact)
     assert "do not collapse their chain" in instructions
     assert "discard J/C dependencies" in instructions
+    assert "representation refinement" in instructions
+    assert "materialize it at the refined instance" in instructions
 
 
 def test_layernorm_mask_motion_changes_j_not_pi_semantics() -> None:
@@ -481,6 +483,8 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "map declaration-ordered stages" in contract
     assert "from triton.language.extra.cuda import libdevice" in contract
     assert "Directly importing a libdevice function is rejected" in contract
+    assert "Every pi.refinements entry is mandatory" in contract
+    assert "authorized target_dtype" in contract
     assert_source_isolated_payload(payload)
 
 
@@ -488,10 +492,18 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     instructions = scrc.build_scrc_lift_instructions()
     normalized = " ".join(instructions.split())
 
+    assert "supplied Responses schema is authoritative" in normalized
+    assert len(instructions) < 16_000
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized
     assert "Never place a Python comparator" in normalized
+    assert "omit `update_node_ref` entirely" in normalized
+    assert "empty string or null is invalid" in normalized
+    assert "Every J.boundary access must have exactly one matching effect" in normalized
+    assert "node_ref (including null)" in normalized
+    assert "compiler-visible sensitive representation event" in normalized
+    assert "distinct instances/refinements for distinct source stages" in normalized
 
 
 def test_lift_preserves_degenerate_program_coordinate_topology() -> None:
@@ -608,11 +620,12 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     replay_instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
 
     assert grammar in pi_schema["description"]
-    assert grammar in lift_instructions
     assert grammar in replay_instructions
     assert mechanism_grammar in pi_schema["description"]
-    assert mechanism_grammar in lift_instructions
     assert mechanism_grammar in replay_instructions
+    assert grammar not in lift_instructions
+    assert mechanism_grammar not in lift_instructions
+    assert "supplied Responses schema is authoritative" in lift_instructions
     assert "routing p0 to i1 is invalid" in grammar
     assert "placement='program' only scopes an instance" in mechanism_grammar
     assert "does not require an identity assignment" in mechanism_grammar
@@ -620,6 +633,8 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert "path enters address_base" in mechanism_grammar
     assert "entering address_lane is lane-varying" in mechanism_grammar
     assert "must not invent program_id" in mechanism_grammar
+    assert "Integer coordinate arithmetic is a realize stage" in mechanism_grammar
+    assert "must not invent an extra pointer address_base" in mechanism_grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"
     ]["pattern"] == "^i[0-9]+$"

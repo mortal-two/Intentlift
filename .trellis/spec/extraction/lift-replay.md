@@ -85,5 +85,11 @@ Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读�
 `(J,C,π)` 与累计 Gate1 diff，但必须重新输出完整新三元组。随后使用新三元组发起全新的盲
 Replay。
 
+runner 必须完整保存 observer comparison 作为审计 evidence；返回 Lift 的可以是该 comparison
+的确定性、有限、可行动诊断投影，例如 hard category、op-count 差异、关键 topology 差异与每类
+少量代表边。该投影不得改变 Gate1 verdict、隐藏失败类别或替 Lift 修改 artifact；低层节点
+fingerprint、重复 components、score/rank 等非行动信息不应占满 relift 上下文。完整 evidence 与
+relift diagnostic view 必须明确区分。
+
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 最多三轮正式候选；仍不闭合则 `NO_CLOSURE`。

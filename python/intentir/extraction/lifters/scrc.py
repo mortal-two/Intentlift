@@ -14,25 +14,14 @@ from typing import Any, Mapping
 
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
-from intentir.ir.intent_op_contract import render_intent_op_wire_grammar
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
     ParameterKind,
     ScheduleSlotKind,
-    render_boundary_access_wire_grammar,
-    render_gate1_artifact_envelope_grammar,
-)
-from intentir.verify.gate1.pi import (
-    render_realization_mechanism_grammar,
-    render_realization_witness_wire_grammar,
 )
 
-from .prompt import SCHEMA as INTENTIR_SCHEMA
-from .scrc_schema import (
-    render_semantic_archive_wire_grammar,
-    scrc_lift_core_text_format,
-)
+from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
@@ -597,9 +586,9 @@ def build_scrc_lift_instructions() -> str:
 Return one complete JSON object matching the supplied schema. You directly
 produce anonymous J=A+B, independent pure C, and the realization witness pi.
 There is no downstream composer and no rule catalog.
-
-Artifact envelope contract:
-{render_gate1_artifact_envelope_grammar()}
+The supplied Responses schema is authoritative for the closed envelope, field
+names, enums, optional fields, operation grammar, and structural descriptions.
+Do not duplicate, rename, or extend it with convenience fields.
 
 Naming is mandatory: kernel scrc_k0; tensors t0,t1,...; J nodes n0,n1,...;
 values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
@@ -616,9 +605,6 @@ The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
 node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
 body[i].body[j], never to v* results. boundary.domains maps each d* key directly
 to one portable boolean expression string; it is never an axes/members object.
-
-J boundary access contract:
-{render_boundary_access_wire_grammar()}
 
 The trusted harness_compiler_view is byte-authoritative plumbing. Move every
 logical p* handle into J.signature and every implementation-selection c*
@@ -651,6 +637,22 @@ transcendentals, floating reductions, and contracts that allow reassociation
 must use `tolerance`; the trusted external Gate2 policy Q supplies all atol,
 rtol, ULP, and NaN rules. Never place a Python comparator or a
 candidate-selected tolerance in J, C, or pi.
+For `exact` and `tolerance`, omit `update_node_ref` entirely: an empty string
+or null is invalid. Only `one_of_updates` carries one non-empty
+`update_node_ref` that names an existing logical update.
+
+Every J.boundary access must have exactly one matching effect. The effect's
+kind, target, node_ref (including null), and access_ref must agree exactly with
+the access; never attach an otherwise matching access to a different node.
+
+Preserve every compiler-visible sensitive representation event in the Source,
+including explicit or mandatory implicit integer widening, numeric cast,
+accumulation dtype, reassociation, and native/privatized update choice. J owns
+one typed realization_authorization for the logical carrier; pi attaches the
+corresponding refinement and auth_ref to the exact realization instance. Use
+distinct instances/refinements for distinct source stages. These events are
+not whole-tensor operators, but omitting them changes Gate1 realization
+closure; do not assume TypeCheck can infer an undeclared cast from source code.
 
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
@@ -660,12 +662,6 @@ regions, instances referring to J/C handles, routes with operand slots, partial
 order, sharing, placement, and the closed source-neutral mechanism tags in the
 schema. Never put an operator, combiner, predicate, value, dtype, shape,
 frontend API, source identifier, source fragment, prose, or rule identity in pi.
-
-Pi graph reference contract:
-{render_realization_witness_wire_grammar()}
-
-Pi mechanism contract:
-{render_realization_mechanism_grammar()}
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
@@ -686,15 +682,6 @@ and effects remain exclusively in J.
 
 The source is already alpha-renamed. Do not invent or recover original names.
 Output JSON only.
-
-IntentOp structural contract:
-{render_intent_op_wire_grammar()}
-
-Semantic archive cross-reference contract:
-{render_semantic_archive_wire_grammar()}
-
-Layer-A operation grammar:
-{INTENTIR_SCHEMA}
 """
 
 

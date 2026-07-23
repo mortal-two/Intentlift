@@ -251,7 +251,8 @@ def _boundary_schema() -> dict[str, Any]:
         description=(
             "Comparison class owned by J. Numeric tolerance values are forbidden "
             "and come only from external Gate2 policy Q. one_of_updates requires "
-            "update_node_ref; exact/tolerance carry no candidate threshold."
+            "one non-empty update_node_ref. exact/tolerance must omit the "
+            "update_node_ref field entirely; empty string or null is invalid."
         ),
     )
     authorization = _closed_object(
