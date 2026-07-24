@@ -48,6 +48,7 @@ class CudaCompileCase:
     schedule: Mapping[str, int | float | bool | str] = field(default_factory=dict)
     arch: str = "sm_80"
     compiler_options: tuple[str, ...] = ()
+    include_dirs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         parameters = tuple(
@@ -76,9 +77,13 @@ class CudaCompileCase:
         if any(not item.startswith(allowed) for item in options):
             raise ValueError("CUDA compiler option is outside the Gate1 profile")
         arch = _normalize_arch(self.arch)
+        include_dirs = tuple(
+            str(Path(item).expanduser().resolve()) for item in self.include_dirs
+        )
         object.__setattr__(self, "parameters", parameters)
         object.__setattr__(self, "schedule", schedule)
         object.__setattr__(self, "compiler_options", options)
+        object.__setattr__(self, "include_dirs", include_dirs)
         object.__setattr__(self, "arch", arch)
 
     @property
@@ -96,6 +101,7 @@ class CudaCompileCase:
             "schedule": dict(self.schedule),
             "arch": self.arch,
             "compiler_options": list(self.compiler_options),
+            "include_dirs": list(self.include_dirs),
         }
 
 
@@ -262,6 +268,11 @@ class CudaCompiler:
                 "-lineinfo",
                 f"-arch={case.arch}",
                 *case.compiler_options,
+                *(
+                    item
+                    for directory in case.include_dirs
+                    for item in ("-I", directory)
+                ),
                 str(source_path),
                 "-o",
                 str(ptx_path),

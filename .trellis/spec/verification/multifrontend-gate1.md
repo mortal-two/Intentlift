@@ -104,22 +104,35 @@ existing external-Q comparisons check Source↔Replay, Source↔J and Replay↔J
 
 Source datasets live outside the code repository. The default root is the peer
 `/home/kingdom/phdworks/Dataset`, overridable with `INTENTIR_DATASET_ROOT`.
-`TianchenIR-MultiFrontend/` contains 31 TileLang kernel factories and four
-standalone CUDA kernels curated from the clean reference implementation.
+`TianchenIR-MultiFrontend/` contains 31 TileLang kernel factories, four
+handwritten standalone CUDA kernels and 31 CUDA source/PTX snapshots exported
+from those TileLang factories. The export metadata records the origin case,
+compiler version, target, launch topology, parameter shapes/effects and content
+digests, so the generated CUDA corpus is traceable rather than counted as an
+independent handwritten corpus.
 
-The catalog stores only source evidence. PTX, CUDA exports, Replay source,
-certificates, compiler caches and run reports are generated artifacts and must
-not be written back into Dataset.
+The catalog stores source evidence plus the deliberately versioned CUDA/PTX
+compiler snapshots. Replay source, certificates, compiler caches, probe logs
+and run reports remain ephemeral artifacts and must not be written back into
+Dataset.
 
 Dataset membership is not itself a pass claim. A case is runnable only under a
 recorded compatible compiler profile and a complete Harness descriptor. This
 distinguishes frontend support from version-specific kernel readiness.
 
 `tools/frontend_dataset.py --probe-tilelang` and `--probe-cuda` perform the
-corresponding compile-only readiness audits. On the integration host, CUDA 12.8
-compiles 4/4 CUDA entries for `sm_120`, while the default factory profiles under
-TileLang 0.1.8 compile 17/31 entries. The remaining 14 fail inside TileLang
-layout/code generation (most report non-unit layout scale); they are retained
-as dataset cases rather than being falsely reported as frontend closure.
-Adjusted factory schedules make additional entries runnable, but such schedules
-must be recorded as Harness/C profiles before an SCRC result can claim them.
+corresponding compile-only readiness audits. The Dataset is pinned to TileLang
+0.1.8; no package upgrade is required. Fourteen factories were repaired at the
+Dataset boundary by capping invalid thread layouts, replacing unstable
+fragment-to-global copies with direct stores, using unambiguous serial loop
+variables and retaining semantics-first serial attention realizations where
+0.1.8 cannot lower the original parallel fragment schedule. The repaired
+attention kernels still implement causal masking and stable/online softmax;
+their parallel schedules remain future `C` choices rather than changes to `J`.
+
+On the integration host, all 31 TileLang factories compile under TileLang
+0.1.8. CUDA 12.8 then recompiles all 35 CUDA sources (31 traceable TileLang
+exports plus four handwritten kernels) for `sm_120`. Compile readiness is still
+not an SCRC closure claim: an individual Source↔Replay result additionally
+requires its accepted `J + C + pi`, Harness binding and strict Gate1/Gate2
+evidence.

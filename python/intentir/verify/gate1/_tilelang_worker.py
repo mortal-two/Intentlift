@@ -40,22 +40,68 @@ def _load(request: dict):
 
 def _interface(prim_func) -> dict:
     import tilelang  # noqa: F401
+    from tvm import tir
+
+    reads: set[str] = set()
+    writes: set[str] = set()
+    copy_destinations: set[str] = set()
+
+    def visit(node) -> None:
+        if isinstance(node, tir.BufferLoad):
+            reads.add(str(node.buffer.name))
+        elif isinstance(node, tir.BufferStore):
+            writes.add(str(node.buffer.name))
+        elif isinstance(node, tir.Call):
+            operation = str(getattr(getattr(node, "op", None), "name", ""))
+            if operation == "tl.tileop.copy" and len(node.args) >= 2:
+                destination = node.args[1]
+                if (
+                    isinstance(destination, tir.Call)
+                    and str(getattr(destination.op, "name", "")) == "tl.tileop.region"
+                    and destination.args
+                    and isinstance(destination.args[0], tir.BufferLoad)
+                ):
+                    name = str(destination.args[0].buffer.name)
+                    writes.add(name)
+                    copy_destinations.add(name)
+
+    tir.stmt_functor.post_order_visit(prim_func.body, visit)
+
+    def dimension(value):
+        if isinstance(value, tir.IntImm):
+            return int(value)
+        return str(value)
 
     parameters: list[dict] = []
     for parameter in list(prim_func.params):
         if parameter in prim_func.buffer_map:
             buffer = prim_func.buffer_map[parameter]
+            name = str(buffer.name)
+            # TileLang represents a copy destination region with BufferLoad,
+            # even though it is not a semantic read of the global buffer.
+            read = name in reads and name not in copy_destinations
+            write = name in writes
+            mode = "inout" if read and write else "output" if write else "input"
             parameters.append(
                 {
+                    "name": name,
                     "kind": "pointer",
                     "dtype": str(buffer.dtype),
                     "rank": len(buffer.shape),
+                    "shape": [dimension(item) for item in buffer.shape],
+                    "mode": mode,
                 }
             )
         else:
             dtype = str(getattr(parameter, "dtype", "handle"))
             parameters.append(
-                {"kind": "scalar", "dtype": dtype, "rank": 0}
+                {
+                    "name": str(getattr(parameter, "name", parameter)),
+                    "kind": "scalar",
+                    "dtype": dtype,
+                    "rank": 0,
+                    "mode": "value",
+                }
             )
     return {"parameters": parameters}
 

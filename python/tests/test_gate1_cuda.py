@@ -119,6 +119,17 @@ def _case() -> CudaCompileCase:
     )
 
 
+def test_cuda_compile_case_records_normalized_include_directories(tmp_path) -> None:
+    include = tmp_path / "headers"
+    include.mkdir()
+    case = CudaCompileCase(
+        (FrontendParameter("pointer", "f32", 1, "input"),),
+        include_dirs=(str(include),),
+    )
+    assert case.include_dirs == (str(include.resolve()),)
+    assert case.to_payload()["include_dirs"] == [str(include.resolve())]
+
+
 @dataclass
 class _Compiler:
     def compile(self, source: CudaKernelSource, case: CudaCompileCase) -> CudaCompileResult:
