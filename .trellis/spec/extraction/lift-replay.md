@@ -30,6 +30,28 @@ operator 或 result 的逻辑数据，必须声明 dtype 相容、shape `[]` 的
 进入 J dataflow；只有 integral extent-only handle 才绑定 `x*`。value 参数不能为了复用现成 ID 而
 绑定方向或 dtype 不相容的 output tensor。
 
+runtime scalar 若只用于 representation/address realization，则不是 logical data：Lift 声明
+`kind=scalar,mode=value,rank=0,logical_ref=null`，不创建 J input，π 可引用该 p* carrier。分类只能
+来自 Source use，不来自参数名/位置。任何以 `logical_ref=t*` 创建的 rank-0 input 必须进入
+observable output 的反向依赖，或由显式 boundary/shape semantic relation 使用；identity/direct-output
+与合法 boundary-only use 保留，dead node/π-only route 不算。`typecheck.v7` 只执行这一窄规则，
+拒绝但不自动解绑/删 input/重编号，也不臆测一般 tensor liveness。
+
+`logical_ref=null` 的 representation-only 形态只允许 runtime scalar。Harness 中的
+`bound_constexpr_values` 必须已有 J logical denotation：logical data/predicate/result 绑定
+dtype-compatible rank-0 J input，integral extent-only 绑定 declared `x*`；只影响 layout/tile/stage
+等 implementation selection 的 constexpr 必须归入 C。无法归入 J 或 C 的 constexpr 使 Harness/case
+invalid，Lift 不得把它留作 π-only carrier。
+
+同一 v7 只在无 logical guard 的 predicated direct load、完整零起点矩形 index/domain、predicate
+bound 与同轴 typed tensor extent 相等，且 masked axis 能经已建模 closed pointwise/broadcast 位置
+传播并被 `reduce(mean)` 消去时，以 `padded_mean_count_unproven` 拒绝：中性 fill 只闭合分子，当前
+J/B 没有 logical valid-count/denominator contract。dense/unpredicated mean、guard-bearing、
+cross-axis/general predicate、domain/extent 不闭合、无关非消去轴 mask 与 unknown-op 传播不触发
+TypeCheck；guard/cross-axis/unknown-op 由 consumer 明确 unsupported。Lift 必须按 Source 明示的阶段
+生成例如 `reduce(sum)` 后 explicit division；CandidateCheck/TypeCheck 不读取 Source/C/π，也不自动
+改写候选。
+
 对 ordinary dense logical access，Lift 只需使用 closed ContractExpr surface grammar。`k0`/`[k0]`
 与 `k1,k0`/`[k1,k0]` 分别由固定 elaborator 归一为相同 structured axes；这类标点差异不触发
 relift。predicated pure functional boundary 的 observable store producer 类型若能由 closed op
@@ -118,20 +140,34 @@ Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝�
 `explicit`/`submission` trigger 分别记录 calls/evaluations，并分别报告 shared allowance 与 reserve。
 submission `PASS` 仍非认证，外部 Runner 必须重跑 TypeCheck。
 
-当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v6 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v6
-继承 v5；v5 继承 v4 的
+当前 fresh worker 使用 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
+继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
 已在 `J.boundary.broadcasts` 中声明的 non-trailing relation，不推导或补写轴。v5 新增
 已知 `reduce` 与 binary `contraction` 的 canonical fail-early，拒绝别名、缺失/非法 canonical
 attrs 与可机械判定的 axis/rank/shape 矛盾；它还拒绝 absent
 `opaque(mode=value,dtype=none)` 成为 π instance semantic ref、realization authorization subject 或
-refinement carrier。v6 新增上述 functional-domain closure fail-early。checker 不翻译/补齐 attrs、
-生成 dummy carrier 或修复 artifact。既有 typecheck.v3/v4/v5 receipt 保留原 judgement，不由 v6
+refinement carrier。v6 新增上述 functional-domain closure fail-early；v7 新增上述 rank-0 liveness/
+representation carrier 合同及 `padded_mean_count_unproven` necessary condition。checker 不翻译/
+补齐 attrs、生成 dummy carrier、将 mean 改写成 sum/div 或修复 artifact。既有
+typecheck.v3/v4/v5/v6 receipt 保留原 judgement，不由 v7
 静默重判。
+`artifact.v3/decode.v3` 只新增 required `pi.iterations` closed relation。在 attachment 闭合的
+C-tiled structured J loop/slot pair 中，只有 role 为 `tile_extent|reduction_tile_extent` 的 pair
+在 relation 完全遗漏时触发 mechanical missing-totality；`extent_step` 表示 `[0,Trip)` 以 C tile 为
+step，`tile_ordinal` 表示 `[0,ceil_div(Trip,Tile))` 的 unit-step ordinal。显式 relation 可引用任意
+role 的 required positive-integer slot，只要 attachment 指向同一 loop/trip axis；axis ordinal `0` 与
+对应 `trip.axis=x*` 都合法。
+Lift 仍完整选择并生成该 relation；Decode/TypeCheck 只验证，不从 Source、op family、名字、concrete
+value 或 frontend 惯例补造。不同 physical loop region 可分别引用同一 pair；checker 不能发现被 Lift
+完全遗漏且没有 handle 的 Source region，也不能发现 custom/misclassified role 下完全遗漏的 relation；
+两者必须由 Gate1 topology 暴露。
+
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
-diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1` 历史对象不因
-此次激活而被静默重判。
+diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1/v2` 历史对象按
+原 wire 读取并禁止 `pi.iterations`，不能被静默升级到 v3。DYT 与 SwiGLU 的既有闭合 receipt 保留，
+不因 wire 升级重跑，也不冒充 fresh v3 evidence。
 
 若 worker 在预算内没有提交 candidate，只允许把其最后一次**实际执行**的 source-free checker
 诊断中最多 20 条 `rule_code/path` 摘要带入同一 branch 的下一 fresh Lift；没有 evaluation 就没有
@@ -197,8 +233,8 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v5`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v14`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v6`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
+`intentir.lift-knowledge.v15`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
 `U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败
@@ -234,6 +270,12 @@ Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 bind
 `J.boundary.reductions.tile_axis` 才是 Triton reduction call 使用的物理 tile axis。这里都是固定、
 source-neutral 的前端合同，不是 per-kernel hint。
 
+`pi.iterations` 是必须消费的 source-realization topology，不是可选 schedule hint。对
+`extent_step`，Replay 使用 J trip extent 为 upper、匹配 C tile 为 step；对 `tile_ordinal`，Replay
+使用 `ceil_div(J trip,C tile)` 为 upper 且 step 为 1。即使 induction value 未被 body 使用，也不得
+插入/删除 ceiling division 或互换 basis。所有 frontend 接收同一闭合 denotation，只有具体公开语法
+由各自 `U_f` 决定；Replay 不得从 Kernel 类型或习惯模板猜 basis。
+
 当前 packet 不携带任何 pad-discharge derived hint。若 J 写出 symbolic input extent、
 literal pad 与 static output extent，却没有闭合它们的 dependent equality，U_f 不能读取 Harness
 valuation 猜出等式，也不能授权 Replay 省略 pad。应由下一次 Source-aware Lift 给出可检查的 J
@@ -242,7 +284,8 @@ prover。
 
 对 canonical binary J contraction，若 per-program 两个 operand 与 result 都是 rank-2 floating
 tile、恰有一个 contracted label，且声明的 operand/result/accumulation dtype 均由 public
-`tl.dot` 支持，则一个锚定该 contraction node 的 `realize` instance 在当前 Triton `U_f v5` 中使用一个
+`tl.dot` 支持，则一个锚定该 contraction node 的 `realize` instance 在当前 Triton `U_f v6`（继承
+v5 direct-contraction 合同）中使用一个
 direct `tl.dot` realization。它不能被展开成 broadcasted outer-product multiply + `tl.sum`，因为
 后者制造了 artifact 未声明的 compiler-visible stages。该规则不适用于 outer product、batched 或
 其他 unsupported contraction/tile/dtype，也不覆盖 π 已显式声明多个 contraction-anchored stage 的
@@ -277,7 +320,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v6`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v7`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

@@ -122,7 +122,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v14"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v15"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -1011,7 +1011,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v6"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v7"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -1025,6 +1025,60 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
         "protocol": CANDIDATE_CHECK_PROTOCOL,
         "status": "pass",
         "diagnostics": [],
+    }
+
+    representation_only = artifact.to_json()
+    representation_intent = representation_only["j"]["intent"][
+        "intent_function"
+    ]
+    representation_intent["inputs"][0]["shape"] = [4]
+    representation_intent["outputs"][0]["shape"] = [4]
+    representation_parameter = representation_only["j"]["signature"][
+        "parameters"
+    ][2]
+    representation_parameter["rank"] = 0
+    representation_parameter.pop("logical_ref")
+    representation_only["pi"]["instances"].append(
+        {
+            "id": "i1",
+            "semantic_ref": "p2",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    assert check_scrc_lift_candidate(
+        json.dumps(representation_only), context
+    ) == {
+        "protocol": CANDIDATE_CHECK_PROTOCOL,
+        "status": "pass",
+        "diagnostics": [],
+    }
+
+    unused_scalar = artifact.to_json()
+    intent = unused_scalar["j"]["intent"]["intent_function"]
+    intent["inputs"][0]["shape"] = [4]
+    intent["inputs"].append({"name": "t1", "dtype": "i32", "shape": []})
+    intent["outputs"][0]["name"] = "t2"
+    intent["outputs"][0]["shape"] = [4]
+    intent["body"][0]["result"] = "t2"
+    parameters = unused_scalar["j"]["signature"]["parameters"]
+    parameters[1]["logical_ref"] = "t2"
+    parameters[1]["rank"] = 1
+    parameters[2]["logical_ref"] = "t1"
+    parameters[2]["rank"] = 0
+    unused_rejection = check_scrc_lift_candidate(
+        json.dumps(unused_scalar), context
+    )
+    assert unused_rejection == {
+        "protocol": CANDIDATE_CHECK_PROTOCOL,
+        "status": "fail",
+        "diagnostics": [
+            {
+                "rule_code": "logical_input_unused",
+                "path": "j.signature.parameters[2].logical_ref",
+                "observed_refs_or_types": ["t1"],
+            }
+        ],
     }
 
     malformed_reduce = make_reduce_artifact()
@@ -1382,9 +1436,9 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.artifact.to_json() == second.artifact.to_json()
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
-    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v6"
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v3"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v3"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v7"
     assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None

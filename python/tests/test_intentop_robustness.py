@@ -171,6 +171,7 @@ def test_atomic_async_and_barrier_remain_pi_realization_mechanisms() -> None:
                 {"before": "i1", "after": "i2"},
             ],
             "sharing": [],
+            "refinements": [],
         }
     )
     assert [item["mechanism"] for item in pi.instances] == [

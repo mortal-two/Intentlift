@@ -635,6 +635,9 @@ def main(argv: list[str] | None = None) -> int:
             CandidateBranchStatus,
             ConcurrentCandidateFanoutRunner,
         )
+        from intentir.verify.gate1.orchestrate import (
+            SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX,
+        )
         from intentir.verify.scrc_workload_run import (
             WorkloadExecution,
             classify_scrc_report,
@@ -901,10 +904,21 @@ def main(argv: list[str] | None = None) -> int:
                 for item in fanout.branches
                 if item.diagnostic
             ]
+            observer_unsupported = all(
+                bool(item.diagnostic)
+                and item.diagnostic.startswith(
+                    SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX
+                )
+                for item in fanout.branches
+            )
             return BatchCaseResult(
                 entry.case_id,
                 entry.ordinal,
-                BatchClassification.NO_CLOSURE,
+                (
+                    BatchClassification.OBSERVER_UNSUPPORTED
+                    if observer_unsupported
+                    else BatchClassification.NO_CLOSURE
+                ),
                 entry.representative_tier,
                 diagnostic="; ".join(diagnostics),
                 source_file=prepared.source_location,

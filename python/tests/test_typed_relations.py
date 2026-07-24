@@ -289,6 +289,7 @@ def test_typed_relations_are_opaque_and_masked_with_the_rest_of_j() -> None:
                 "routes": [],
                 "order": [],
                 "sharing": [],
+                "refinements": [],
             }
         ),
     )

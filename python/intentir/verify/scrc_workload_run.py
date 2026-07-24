@@ -30,6 +30,7 @@ from intentir.verify.gate1.orchestrate import (
     Gate1Config,
     Gate1ExecutionResult,
     Gate1Runner,
+    SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX,
     canonical_artifact_digest,
 )
 from intentir.verify.gate1.replay import (
@@ -387,6 +388,10 @@ def classify_scrc_report(report: SCRCRunReport) -> BatchClassification:
     if gate1 is None:
         return BatchClassification.NO_CLOSURE
     diagnostic = gate1.normal.diagnostic or ""
+    if diagnostic.startswith(
+        SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX
+    ):
+        return BatchClassification.OBSERVER_UNSUPPORTED
     if diagnostic.startswith("harness binding failed"):
         return BatchClassification.HARNESS_INVALID
     if gate1.normal.generation is None:
@@ -462,6 +467,14 @@ def scrc_attempt_stage_counts(
         gate1 = attempt.gate1
         if gate1 is None:
             stages["formal_gate1_missing"] += 1
+        elif (gate1.normal.diagnostic or "").startswith(
+            SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX
+        ):
+            stages["observer_unsupported"] += 1
+        elif (gate1.normal.diagnostic or "").startswith(
+            "harness binding failed"
+        ):
+            stages["harness_invalid"] += 1
         elif gate1.normal.generation is None:
             stages["replay_response_rejected"] += 1
         elif (

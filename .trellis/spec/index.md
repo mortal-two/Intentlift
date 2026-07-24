@@ -24,17 +24,33 @@ dependent typing 与 result-relation compatibility 已由 `artifact.v2 / decode.
 candidate-check.v1` 同步激活；随后 total graph typing 与显式 non-trailing broadcast 合同将
 TypeCheck 升为 `typecheck.v4`。v5 继承 v4 的 rank-0 closed signature、total typing 与显式
 broadcast 合同，并新增已知 `reduce`/binary `contraction` 的 canonical fail-early 以及 absent
-`opaque(mode=value,dtype=none)` 的语义引用拒绝。当前 fresh-run 的 `typecheck.v6` 再加入 J-only
+`opaque(mode=value,dtype=none)` 的语义引用拒绝。v6 再加入 J-only
 functional logical-domain closure：只对可识别的矩形 direct access/padding profile 检查
 index/predicate/domain/typed extent 一致性，不从 Source/C/π/hidden input 补造，也不把 general logical
-predicate 因 consumer 未实现而判为非法。fixed code 不翻译别名、补齐 attrs、生成 dummy carrier
-或修复 artifact。`artifact.v1` 仅保留历史读取能力；新 Lift response 必须使用 v2，新规则不得用于
-静默重判既有 receipt 或历史证书。
+predicate 因 consumer 未实现而判为非法。当前 fresh-run 的 `typecheck.v7` 又对 rank-0 logical input
+执行 output/boundary/shape liveness，并允许显式 `logical_ref=null` 的 rank-0 representation scalar
+只作为 π carrier；该 null form 仅限 runtime scalar，bound constexpr 必须属于 J logical semantics，
+纯 schedule constexpr 归 C，否则 Harness invalid。v7 还只在无 guard、完整零起点矩形 direct
+access/domain、bound 与 typed extent 同轴匹配，且 masked axis 可证明被 `reduce(mean)` 消去而 J 无
+valid-count contract 时返回 `padded_mean_count_unproven`；guard/cross-axis/unknown-op 是 consumer
+unsupported，不是 J illegal。上述规则都不按 Source 名称/位置判断、不自动解绑/改图，也不推广成
+一般 tensor liveness 或 mean blanket ban。fixed code 不翻译别名、补齐 attrs、生成 dummy carrier
+或修复 artifact。当前 wire/decode 已因 closed `pi.iterations` 物理 induction-basis relation 升为
+`artifact.v3 / decode.v3`；`tile_extent/reduction_tile_extent` 保留 role 只触发 relation 缺失的机械
+totality，显式 relation 的合法性不依赖 role，loop axis 可写 `0` 或对应 `x*`。Source 中被 Lift 整体
+遗漏的 physical region，以及 custom/misclassified role 下完全遗漏的 relation，仍由 Gate1 检出。
+`artifact.v1/v2` 只按
+原 wire 保留历史读取能力并禁止该新字段；新 Lift response 必须使用 v3，新规则不得用于静默重判
+既有 receipt 或历史证书，DYT/SwiGLU 也不因协议升级被重跑或冒充 fresh v3 evidence。
 
-同日激活的 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v4`；它只 NormalizeAway closed
-load/store cache-policy hint，其他 memory attributes 仍为 hard evidence。同 case fan-out 协议是
+当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v5`；它继承 v4 只 NormalizeAway closed
+load/store cache-policy hint，并展开 public entry 可达、静态、structured、acyclic 的 `tt.call`
+graph。未知/递归 call、reachable arbitrary multi-block CFG 与未支持 control/region fail closed；这
+只是当前 compiler contract，不是形式完备性证明。同 case fan-out 协议是
 `intentir.scrc.candidate-fanout.v3`，在 pre-Gate2 wave barrier 后按固定
 `(branch_id, formal_round)` 选择 winner，wall-clock 到达次序不参与选择。
+outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
+能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
 ## 导航
 

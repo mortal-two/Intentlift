@@ -53,7 +53,8 @@ J，不读取 C/π/Source/Harness/Gate evidence，不补 predicate 或 operator�
 
 当前 `P_B` 只有在全部影响 RefEval/target logical execution 的 functional B facts 可机械表示为 J 的
 完整 logical-tensor execution 时成功：pure value、dense
-functional、full-logical-domain pointwise mask erasure，以及文中定义的窄 sum-padding profile。任何
+functional、full-logical-domain mask erasure，以及由每个 reduction contract 闭合的通用 padded
+functional graph。任何
 affine-as-dense、predicate/domain mismatch、effect mismatch、alias/inout 或未实现的 mutable relation
 都在进入 codegen 前 fail closed。π 专用的 `realization_authorizations` 不属于该 functional
 projection。RefEval 与 CUDA analyzer 记录相同的 projection record，不能各自
@@ -88,23 +89,51 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
   必须是与 tensor rank 一致的 direct axes，所有被 mask 的 logical axes 在相关 load/store 上使用同一
   full-logical-domain predicate，predicate upper bound 与 domain/shape 精确一致，masked load 有显式
   fill，每个 output 独立 store 一次，且 observable store producer 的 elaborated result type 与 output
-  完全一致。该类型可以由 closed op signature 唯一物化，不要求 Lift 重复填写。logical scalar/guard
-  可以是 rank-0 J input，但 guard 必须真实进入 J dataflow。此时 fill 只
-  存在于 logical domain 外且没有可观察 store，RefEval 可以机械擦除 mask/fill；
-- `logical_domain_reduction_padding_v1` 只接收单 input、单 output、同 dtype、单轴 `sum`：一个 direct
-  load 覆盖完整输入 domain，一个无 predicate 的 direct store 覆盖删去 reduction axis 后的输出，且
-  access/effect/output mapping 均完整唯一；load predicate 只能约束被归约的 logical axis，masked-load
-  fill、reduction identity 与 `masked_contribution` 必须都是 typed zero，单一物理 tile axis 必须是 0。
-  J body 必须是 flat graph、以唯一 reduction 结束，所有前缀节点都进入 reduction slice。当前只接受
-  closed `identity`/`mul` pointwise 前缀，并用常量传播机械检查 padding fill 经完整前缀后仍为 sum
-  identity；不能证明 `h(fill)=identity` 时 fail closed；
-- 不能满足上述 full-domain relation 的一般 pointwise padding、非 sum 或多轴 reduction、update
-  padding、affine/gathered access、alias/inout 与一般 mutable storage 仍显式 unsupported。
+  完全一致。该类型可以由 closed op signature 唯一物化，不要求 Lift 重复填写。rank-0 logical
+  scalar/guard 仍可构成合法 J，但当前 projector 对任何 guard-bearing access predicate 都显式
+  unsupported：只记录 guard 名称会丢失 `flag`/`not flag` 极性，而“出现在某个 operand”也不能证明
+  guard 到 observable output 的控制语义，因此 fixed consumer 不擦除这种 mask；
+- `logical_domain_reduction_padding_v2` 不再把合法图限制为单 input、单 output、唯一单轴 `sum`。
+  每个带 physical predicate 的 direct access 必须为自身每个非常量 `0` 的 axis 显式声明完整零起点
+  logical domain；所有仍携带某个 masked axis 的 load/store 必须声明同一个 full-domain predicate，
+  predicated load 必须显式给出 fill，且 access/effect/output relation 仍完整唯一。被 reduction 消去的
+  axis 不要求出现在降秩 output store 上；仍存在于 output 的 masked axis 必须继续由 store predicate
+  保护；
+- padded graph 中每个 logical `reduce` 必须恰有一个 `ReductionBoundary`。`identity` 若存在必须是该
+  reducer 的代数单位元，`masked_contribution` 必须显式存在且为单位元；当前闭合集合包括
+  `sum/prod/max/min/any/all`，其中 max/min 接收封闭的 JSON-safe infinity sentinel。若 J-only
+  access/dataflow 能证明被 mask 的 axis 最终由 `mean` 消去，则因缺少 logical count contract 继续
+  unsupported。`masked_contribution` 按 J 的既有定义记录经过任意普通
+  pointwise/broadcast dataflow 后到达该 reduction 的有效 masked contribution，因此 projector 不从
+  Source、C、hidden input 或 Kernel 公式重新推导它；
+- 每个 pointwise operand 必须按 closed value type 满足普通 NumPy broadcast，或消费 J 中显式的
+  non-trailing `boundary.broadcasts` relation。于是 max → sub → exp → sum → div 等多 reduction 图和
+  普通 pointwise graph 走同一个规则，而不是 Softmax/named-op 分支；
+- masked-axis provenance 只沿当前显式建模的 unary/cast、binary/select、transpose 与 reduce 规则传播。
+  一旦已有 provenance 进入 contraction 或其他尚未建模的 executor op，projector 必须在该 op 处
+  consumer-unsupported，不能静默停止传播后让下游 `mean` 或 output 被当成无 mask；
+- 不能满足上述 full-domain/access/reduction/broadcast relation 的 incomplete padding、update padding、
+  affine/gathered access、alias/inout、一般 mutable storage与 padded mean 仍显式 unsupported。
 
 这不是忽略 access/effect 后直接运行 A：mask erasure 必须先证明所有被擦除 lane 位于 J logical
-domain 外且没有可观察写入；执行证据记录 predicated access/fill 数量。只有整个边界可机械投影到
+domain 外、没有未保护的可观察写入，且每个 reduction 的 masked contribution 为显式中性元素；
+执行证据记录 predicated access/fill 数量。只有整个边界可机械投影到
 完整逻辑张量求值时才进入 Intent CPU 路径，其他关系继续 fail closed。后续每扩展一种 boundary
 relation，都必须同时增加其 denotation、正反例和真实 canary。
+
+active `typecheck.v7` 已复用 J-only `functional_reduction_padding_issues(J)`，但只在下列 closed
+seed 上传播 padded provenance：predicated direct load 不含 logical guard；index/domain 是完整零起点
+矩形；predicate upper bound 与同轴 typed tensor extent 相等。只有该同轴 provenance 经已建模
+pointwise/broadcast 路径被 `mean` 消去时才映射为 `padded_mean_count_unproven`。该必要条件与
+consumer capability 仍分离：guard-bearing 与 cross-axis/general predicate 不成为 TypeCheck padding
+seed，未知 op 会停止 TypeCheck 的窄传播；v9 projector 对 guard/cross-axis 访问或 masked provenance
+进入未知 op 均显式 consumer-unsupported。fixed code 不补写 count、domain、predicate 或 reduction
+contract。
+
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v2`，scalar RefEval 为
+`j_scalar_cpu_mlir_v9`。v9 完整继承 v8 的唯一 node-less logical-input load 能力，只新增上述通用
+multi-reduction padding closure；旧 v8 Gate2 receipt 与 `logical_domain_reduction_padding_v1`
+记录保持历史解释，不由 v9 追认或重判。
 
 ## Production 要求
 

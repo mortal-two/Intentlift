@@ -23,6 +23,7 @@ from intentir.verify.gate1.model import (
     render_gate1_artifact_envelope_grammar,
 )
 from intentir.verify.gate1.pi import (
+    ITERATION_BASES,
     REALIZATION_MECHANISMS,
     REPRESENTATION_REFINEMENTS,
     render_realization_mechanism_grammar,
@@ -234,6 +235,13 @@ def _boundary_schema() -> dict[str, Any]:
             "masked_contribution": {},
         },
         ("node_ref", "tile_axis"),
+        description=(
+            "masked_contribution states the effective padded contribution to "
+            "the reducer, but it does not state a logical valid count. A "
+            "predicate-masked axis eliminated by reduce(mean) is therefore "
+            "not closed; preserve an explicit Source sum and division instead. "
+            "Dense mean and masks on unrelated non-reduced axes remain legal."
+        ),
     )
     index_bounds = _closed_object(
         {
@@ -366,7 +374,12 @@ def _signature_schema() -> dict[str, Any]:
             "pointer/tensor/scalar/semantic-constexpr handle only to a "
             "declared J input/output tensor or a symbolic J dimension; it "
             "never names a v* SSA value. Logical scalar data and semantic "
-            "constexpr values use a dtype-matching rank-0 J input. Integral "
+            "constexpr values use a dtype-matching rank-0 J input and must "
+            "contribute to an output dependency or explicit boundary/shape "
+            "semantics. A runtime scalar used only for representation/address "
+            "realization is kind=scalar, mode=value, rank=0, has public dtype "
+            "but no logical_ref/J input, and may be referenced only by pi. "
+            "Integral "
             "extent-only handles instead bind a symbolic dimension. Every trusted "
             "compiler-view tensor argument, including one unused by the frozen "
             "specialization, keeps a logical_ref whose J tensor dtype, rank and "
@@ -555,6 +568,36 @@ def _pi_schema() -> dict[str, Any]:
             "global-safe rule."
         ),
     )
+    iteration = _closed_object(
+        {
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "loop_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to the J structured loop realized by "
+                    "this physical loop region."
+                ),
+            },
+            "tile_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to the matching integer C tile slot."
+                ),
+            },
+            "induction_basis": {
+                "type": "string",
+                "enum": list(ITERATION_BASES),
+            },
+        },
+        ("region", "loop_instance", "tile_instance", "induction_basis"),
+        description=(
+            "A source-neutral physical induction-space relation. It contains "
+            "no bound expression, numeric value, operator, source text, or "
+            "frontend API."
+        ),
+    )
     return _closed_object(
         {
             "regions": _array(region),
@@ -563,8 +606,17 @@ def _pi_schema() -> dict[str, Any]:
             "order": _array(order),
             "sharing": _array(sharing),
             "refinements": _array(refinement),
+            "iterations": _array(iteration),
         },
-        ("regions", "instances", "routes", "order", "sharing", "refinements"),
+        (
+            "regions",
+            "instances",
+            "routes",
+            "order",
+            "sharing",
+            "refinements",
+            "iterations",
+        ),
         description=(
             render_realization_witness_wire_grammar()
             + " "

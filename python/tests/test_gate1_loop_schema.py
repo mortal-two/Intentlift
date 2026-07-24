@@ -9,6 +9,7 @@ import pytest
 
 from intentir.ir import IntentFunction, LoopStateBinding
 from intentir.verify.gate1 import Gate1Artifact, SchemaError, SemanticArchive
+from intentir.verify.typecheck import TypeCheckErrorCode, type_check
 
 
 def _loop_archive() -> dict:
@@ -160,6 +161,82 @@ def _loop_archive() -> dict:
     }
 
 
+def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
+    archive = _loop_archive()
+    archive["intent"]["intent_function"]["inputs"][0]["shape"] = ["x0"]
+    archive["intent"]["intent_function"]["body"][0]["trip"] = {
+        "axis": "x0"
+    }
+    archive["intent"]["intent_function"]["body"][0]["body"][0]["attrs"][
+        "assoc"
+    ] = "float_nondeterministic"
+    archive["signature"]["parameters"].append(
+        {
+            "name": "p2",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "i32",
+            "logical_ref": "x0",
+        }
+    )
+    archive["boundary"]["result_relations"] = [
+        {"output": "y", "kind": "tolerance"}
+    ]
+    return Gate1Artifact.from_json(
+        {
+            "schema": Gate1Artifact.SCHEMA,
+            "j": archive,
+            "c": {
+                "slots": [
+                    {
+                        "name": "c0",
+                        "kind": "constexpr",
+                        "role": "tile_extent",
+                        "value_type": "int",
+                        "required": True,
+                        "subject_ref": "n0",
+                        "axis_ref": "x0",
+                    }
+                ],
+                "values": {"c0": 32},
+            },
+            "pi": {
+                "regions": [
+                    {"id": "r0", "parent": None, "placement": "root"},
+                    {"id": "r1", "parent": "r0", "placement": "program"},
+                    {"id": "r2", "parent": "r1", "placement": "loop"},
+                ],
+                "instances": [
+                    {
+                        "id": "i0",
+                        "semantic_ref": "n0",
+                        "region": "r0",
+                        "mechanism": "realize",
+                    },
+                    {
+                        "id": "i1",
+                        "semantic_ref": "c0",
+                        "region": "r1",
+                        "mechanism": "realize",
+                    },
+                ],
+                "routes": [],
+                "order": [],
+                "sharing": [],
+                "refinements": [],
+                "iterations": [
+                    {
+                        "region": "r2",
+                        "loop_instance": "i0",
+                        "tile_instance": "i1",
+                        "induction_basis": basis,
+                    }
+                ],
+            },
+        }
+    )
+
+
 def test_closed_loop_state_round_trips_as_typed_intentir() -> None:
     archive = SemanticArchive.from_json(_loop_archive())
     loop = archive.intent.body[0]
@@ -172,6 +249,165 @@ def test_closed_loop_state_round_trips_as_typed_intentir() -> None:
     assert loop.carry[0].type is not None
     assert loop.carry[0].type.dtype == "f32"
     assert SemanticArchive.from_json(archive.to_json()).to_json() == archive.to_json()
+
+
+@pytest.mark.parametrize("axis_ref", [0, "x0"])
+@pytest.mark.parametrize("basis", ["extent_step", "tile_ordinal"])
+def test_tiled_loop_iteration_basis_is_typed_and_round_trips(
+    basis: str,
+    axis_ref: int | str,
+) -> None:
+    artifact = _tiled_loop_artifact(basis=basis)
+    artifact.c.slots[0].axis_ref = axis_ref
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not {
+        TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+        TypeCheckErrorCode.ITERATION_WITNESS_MISSING,
+    }.intersection(item.code for item in report.diagnostics)
+    assert artifact.to_json()["pi"]["iterations"][0]["induction_basis"] == basis
+    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
+
+
+def test_explicit_iteration_relation_does_not_depend_on_free_text_role() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.c.slots[0].role = "chunk_extent"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not {
+        TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+        TypeCheckErrorCode.ITERATION_WITNESS_MISSING,
+    }.intersection(item.code for item in report.diagnostics)
+
+
+def test_unreserved_role_does_not_claim_iteration_totality() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.c.slots[0].role = "chunk_extent"
+    artifact.pi.iterations = []
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.ITERATION_WITNESS_MISSING not in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_tiled_loop_without_iteration_basis_is_fail_closed() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.pi.iterations = []
+    artifact.wire_schema = "intentir.scrc.artifact.v2"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.ITERATION_WITNESS_MISSING
+    ]
+    assert [item.path for item in matching] == ["pi.iterations"]
+    assert matching[0].ref == "n0:c0"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("region", "r0"),
+        ("loop_instance", "i1"),
+        ("tile_instance", "i0"),
+    ],
+)
+def test_tiled_loop_iteration_relation_rejects_wrong_dependent_anchor(
+    field: str,
+    value: str,
+) -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.pi.iterations[0][field] = value
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.ITERATION_WITNESS_INVALID in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_tiled_loop_iteration_relation_requires_positive_integer_tile() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.c.values["c0"] = 0
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.ITERATION_WITNESS_INVALID in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_iteration_relation_rejects_an_anchor_from_a_sibling_region() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.pi.regions.append(
+        {"id": "r3", "parent": "r0", "placement": "program"}
+    )
+    artifact.pi.instances[1]["region"] = "r3"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.ITERATION_WITNESS_INVALID in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_one_tiled_j_loop_can_have_distinct_physical_loop_relations() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.pi.regions.append(
+        {"id": "r3", "parent": "r1", "placement": "loop"}
+    )
+    artifact.pi.iterations.append(
+        {
+            "region": "r3",
+            "loop_instance": "i0",
+            "tile_instance": "i1",
+            "induction_basis": "tile_ordinal",
+        }
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not {
+        TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+        TypeCheckErrorCode.ITERATION_WITNESS_MISSING,
+    }.intersection(item.code for item in report.diagnostics)
+
+
+def test_untiled_loop_does_not_require_iteration_relation() -> None:
+    artifact = _tiled_loop_artifact()
+    artifact.c.slots = []
+    artifact.c.values = {}
+    artifact.pi.instances = artifact.pi.instances[:1]
+    artifact.pi.iterations = []
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not {
+        TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+        TypeCheckErrorCode.ITERATION_WITNESS_MISSING,
+    }.intersection(item.code for item in report.diagnostics)
+
+
+def test_artifact_v3_requires_explicit_iterations_field() -> None:
+    payload = _tiled_loop_artifact().to_json()
+    del payload["pi"]["iterations"]
+
+    with pytest.raises(SchemaError, match="missing required field: iterations"):
+        Gate1Artifact.from_json(payload)
+
+
+def test_iteration_basis_is_a_closed_enum() -> None:
+    payload = _tiled_loop_artifact().to_json()
+    payload["pi"]["iterations"][0]["induction_basis"] = "source_range"
+
+    with pytest.raises(SchemaError, match="unsupported pi induction basis"):
+        Gate1Artifact.from_json(payload)
 
 
 @pytest.mark.parametrize("invalid_init", [{"value": 0.0}, [0.0]])
@@ -392,6 +628,8 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                 ],
                 "order": [{"before": "i0", "after": "i1"}],
                 "sharing": [],
+                "refinements": [],
+                "iterations": [],
             },
         }
     )

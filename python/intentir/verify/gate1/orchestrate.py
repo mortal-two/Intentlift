@@ -19,10 +19,13 @@ from .model import (
 )
 from .replay import ReplayGeneration, ReplayWriter
 from .profile import ObserverProfile, TRITON_OBSERVER_PROFILE
-from .ttir import TTIRFingerprint, fingerprint_ttir
+from .ttir import TTIRFingerprint, TTIRParseError, fingerprint_ttir
 
 
 GATE1_PROTOCOL = "llm_direct_pi_gate1_level2_v1"
+SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX = (
+    "observer unsupported: source TTIR"
+)
 
 
 @dataclass(frozen=True)
@@ -147,11 +150,9 @@ def canonical_artifact_digest(
 ) -> str:
     """Compute an audit identifier; it is not a verdict or protocol gate."""
 
+    encoded = artifact.to_json()
     payload = {
-        "schema": artifact.wire_schema,
-        "j": artifact.j.to_json(),
-        "c": artifact.c.to_json(),
-        "pi": artifact.pi.to_json(),
+        **encoded,
         "observer_level": observer_level,
         "protocol": GATE1_PROTOCOL,
     }
@@ -484,12 +485,44 @@ class Gate1Runner:
             )
         try:
             replay_case = _replay_case(artifact, source_case, source_compile)
+        except Exception as exc:
+            normal = Gate1ArmEvidence(
+                "normal", None, None, None, None,
+                f"harness binding failed: {type(exc).__name__}: {exc}",
+            )
+            return Gate1ExecutionResult(
+                Gate1Status.NO_CLOSURE,
+                digest,
+                source_compile,
+                None,
+                normal,
+                None,
+                0,
+                0,
+            )
+        try:
             source_fingerprint = fingerprint_ttir(
                 source_compile.ttir,
                 python_interface=_opaque_python_interface(
                     artifact, source_compile.python_interface
                 ),
                 schedule=artifact.c.values,
+            )
+        except TTIRParseError as exc:
+            normal = Gate1ArmEvidence(
+                "normal", None, None, None, None,
+                f"{SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX}: "
+                f"TTIRParseError: {exc}",
+            )
+            return Gate1ExecutionResult(
+                Gate1Status.NO_CLOSURE,
+                digest,
+                source_compile,
+                None,
+                normal,
+                None,
+                0,
+                0,
             )
         except Exception as exc:
             normal = Gate1ArmEvidence(
@@ -544,5 +577,7 @@ class Gate1Runner:
 
 __all__ = [
     "GATE1_PROTOCOL", "Gate1ArmEvidence", "Gate1Config",
-    "Gate1ExecutionResult", "Gate1Runner", "canonical_artifact_digest",
+    "Gate1ExecutionResult", "Gate1Runner",
+    "SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX",
+    "canonical_artifact_digest",
 ]

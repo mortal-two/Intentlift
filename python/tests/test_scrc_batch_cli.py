@@ -466,7 +466,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["protocol"] == "intentir.scrc.batch.v2"
+    assert payload["protocol"] == "intentir.scrc.batch.v3"
     assert payload["scheduling"] == {
         "case_workers": 1,
         "candidates": 5,
@@ -546,7 +546,7 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
     payload = json.loads(captured.out)
     progress_events = _progress_events(captured.err)
     assert maximum_active == 4
-    assert payload["protocol"] == "intentir.scrc.batch.v2"
+    assert payload["protocol"] == "intentir.scrc.batch.v3"
     assert payload["scheduling"] == {
         "case_workers": 2,
         "candidates": 2,
@@ -777,6 +777,112 @@ def test_batch_cli_complete_no_closure_fanout_is_not_infrastructure(
     assert case["main_status"] == "NO_CLOSURE"
     assert case["details"]["candidate_status_counts"] == {"no_closure": 2}
     assert case["evidence_path"].endswith("/fanout-001")
+
+
+def test_batch_cli_all_source_observer_gaps_get_dedicated_fanout_class(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_module
+
+    diagnostic = (
+        "observer unsupported: source TTIR: TTIRParseError: "
+        "multi-block CFG is not supported"
+    )
+
+    def fake_search(*_args, **_kwargs):
+        search = _no_closure_search()
+        search.report.test_diagnostic = diagnostic
+        return search
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "scrc_gate1_search_diagnostic",
+        lambda report: report.test_diagnostic,
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "high_performance:liger_dyt",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    case = payload["cases"][0]
+    assert payload["status_counts"] == {"observer_unsupported": 1}
+    assert case["classification"] == "observer_unsupported"
+    assert case["main_status"] == "NO_CLOSURE"
+    assert diagnostic in case["diagnostic"]
+    assert case["details"]["aggregate_call_budget_complete"]
+
+
+def test_batch_cli_mixed_source_observer_and_semantic_failures_stay_no_closure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_module
+
+    counter_lock = Lock()
+    calls = 0
+
+    def fake_search(*_args, **_kwargs):
+        nonlocal calls
+        with counter_lock:
+            calls += 1
+            diagnostic = (
+                "observer unsupported: source TTIR: TTIRParseError: "
+                "multi-block CFG is not supported"
+                if calls == 1
+                else "Gate1 hard mismatch: dataflow"
+            )
+        search = _no_closure_search()
+        search.report.test_diagnostic = diagnostic
+        return search
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "scrc_gate1_search_diagnostic",
+        lambda report: report.test_diagnostic,
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "high_performance:liger_dyt",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 2
+    case = json.loads(capsys.readouterr().out)["cases"][0]
+    assert case["classification"] == "no_closure"
+    assert "observer unsupported" in case["diagnostic"]
+    assert "Gate1 hard mismatch" in case["diagnostic"]
 
 
 def test_batch_cli_winner_with_infrastructure_sibling_has_partial_budget(

@@ -50,7 +50,7 @@ Harness-private 近似规则。
 budget，并按 `explicit`/`submission` trigger 记录 calls/evaluations。若 worker 没有提交 candidate，
 同一 branch 下一 fresh Lift 最多只接收最后一次实际 source-free evaluation 的 20 条
 `rule_code/path`；不得包含 observed value、patch、Source/Gate/hidden/sibling 信息。Harness 不应用
-摘要修补 artifact，submission `PASS` 也不能替代正式 Runner 的 `typecheck.v6`。
+摘要修补 artifact，submission `PASS` 也不能替代正式 Runner 的 `typecheck.v7`。
 
 ## Logical signature 与绑定
 
@@ -99,11 +99,18 @@ concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容�
 - source/schema 不一致记为 `MANIFEST_INVALID`，不得伪装成 Gate 失败；
 - list、validate 与 dry-run 不调用 Lift/Replay provider。
 
-live 批量入口使用 `intentir.scrc.batch.v2` outer batch protocol。设同时运行的独立 case lifecycle
+live 批量入口使用 `intentir.scrc.batch.v3` outer batch protocol。设同时运行的独立 case lifecycle
 数为 `W`，每个 case 的候选 branch 数为 `B`，全局 branch/provider/Gate1 in-flight 上限为 `G`，
 hidden Gate2 设备并发上限为 `G2`；必须满足 `W >= 1`、`1 <= B <= 5`、`G >= 1`、`G2 >= 1` 与
 `W*B <= G`。`W/B/G/G2` 只作为 proof-irrelevant audit metadata 报告，不进入 TypeCheck、Gate1、
 Gate2、winner 或 certificate predicate。
+
+v3 相对 v2 只新增 `observer_unsupported` batch classification。它只表示 Source 在当前 observer
+profile 下无法产生可比较 observation；不是候选非法、模型失败、Gate1 hard mismatch 或
+`NO_CLOSURE`。单生命周期只在 Source observer closed failure 时使用该类；fan-out 只有所有完整
+branch 都因同一 Source-observer capability boundary 停止才聚合为该类，混合分支仍走既有分类。
+Replay observation/compile failure 不能冒充 Source observer 缺口。历史 `intentir.scrc.batch.v2`
+report 保持原 protocol、分类与 verdict，不由 v3 重判。
 
 live CLI 必须由重复的显式 case 集或 `--tier` 选择运行范围，不能无选择地隐式启动 28 项；默认
 evidence root 是仓库外的 `/tmp/intentir-scrc-task11`，也允许调用方显式覆盖。批量入口的逻辑顺序
@@ -205,8 +212,17 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 自动删除这些字段或补造 artifact。一次生成的 fixture 必须由 Source、Replay 与 RefEval 三腿共享，
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
-可见构造合同，fresh MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v14`；v14 另加入
-generic functional logical-domain closure 与上述有界诊断反馈合同。旧 v11/v12/v13 receipt 不被
+可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
+MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v15`，再加入 runtime scalar 的
+logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
+`logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
+替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：
+logical data/predicate/result 绑定 rank-0 J input，integral extent-only 绑定 `x*`。纯 schedule constexpr
+进入 C；representation-only bound constexpr 不得留成 π-only carrier，无法归入 J/C 时 Harness
+invalid。v15 同时要求：若 Source 明示 masked sum 后再除 logical count，保持
+`reduce(sum) + explicit div` 两阶段；当前 boundary 不能用中性 fill 为 padded `mean` 补出 denominator。
+TypeCheck 只在无 guard、完整零起点矩形 direct access/domain、同轴 bound/typed extent 闭合且 masked
+axis 被 mean 消去时拒绝；guard/cross-axis/unknown-op 是 consumer unsupported。旧 v11/v12/v13/v14 receipt 不被
 静默改写。
 
 Source 投影不能因当前 `c0` 恰好让某个 grid axis 的 extent 为 1，就删除该 axis 的
@@ -222,10 +238,15 @@ scalar/constexpr 的归属按以下机械边界处理：
 
 | 调用事实 | 归属/锚点 | 三方执行 |
 |---|---|---|
-| logical runtime scalar 或 semantic constexpr | `J.signature` 的 rank-0 handle | Source/Replay 按 ABI 接收 scalar；RefEval 接收同值 rank-0 input |
+| logical runtime scalar 或 bound semantic constexpr data | `J.signature` 的 rank-0 handle | Source/Replay 按 ABI 接收 scalar/constexpr；RefEval 接收同值 rank-0 input |
 | logical dimension/extent | J 的 dimension handle | 只绑定 shape/domain，不伪装成 rank-0 data tensor |
+| representation/address-only runtime scalar | `J.signature` 中 rank-0 `logical_ref=null` carrier | Source/Replay 按 ABI 接收；RefEval 无 logical input，π 可引用 p* |
 | schedule constexpr | C slot | Harness 绑定实际 `c0`；Replay 只读取 `MaskC(C)` |
 | absent runtime `None` | `J.signature` 的 `opaque(dtype=none)` handle | Source/Replay 原样接收 `None`；RefEval 无输入且 J/π 无语义节点 |
+
+不存在 representation-only bound constexpr 这一第五类：如果 constexpr 只有 implementation-selection
+后果，它就是 schedule constexpr/C；否则必须有 J logical denotation。两者都不满足时 manifest/Harness
+invalid，不能借 π-only `logical_ref=null` 形态延后决定。
 
 当前 `intentir.scrc.triton-workload-adapter.v3` 在现行 28 项 registry 上声明全部 28 项 Harness 配置视图：
 原六项 DYT、SwiGLU、Softmax、RMSNorm、attention row reduction、linear contraction；full

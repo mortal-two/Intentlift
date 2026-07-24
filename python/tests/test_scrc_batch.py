@@ -72,7 +72,7 @@ def test_batch_report_is_json_safe_and_aggregates_only_existing_facts() -> None:
 
     assert payload["total"] == 1
     assert payload["status_counts"] == {"ready": 1}
-    assert payload["protocol"] == "intentir.scrc.batch.v2"
+    assert payload["protocol"] == "intentir.scrc.batch.v3"
     assert payload["protocol"] == SCRC_BATCH_PROTOCOL
     assert payload["scheduling"] == {}
     assert "source_code" not in encoded

@@ -19,6 +19,20 @@ TypeCheck 与共享同一 source-free core 的 CandidateCheck 对三种引用分
 不补造 dummy value，也不改写 artifact。该规则只由 `kind=opaque && dtype=none` 触发，其他 public
 dtype 的普通 opaque handle 仍可按其明确合同参与 realization。
 
+public-dtype runtime scalar 还可显式表示 representation-only ABI carrier，但唯一 wire form 是
+`kind=scalar, mode=value, rank=0, logical_ref=null`：它不创建 J input，不得出现在 J
+output/boundary/shape semantics，却可由 π 以 p* handle 引用来保留 address/representation realization。
+这不是 C slot；C 仍只承载 implementation selection。Lift 必须按 Source use 自行分类，fixed code
+不得按参数名/位置猜测或自动解绑。该 null form 只允许 runtime scalar；bound constexpr 若是
+logical data/predicate/result 必须绑定 dtype-compatible rank-0 J input，若是 integral extent-only
+必须绑定 declared `x*`。只影响 implementation selection 的 constexpr 进入 C；无法归入 J/C 的
+bound constexpr 是 Harness invalid，不得留成 representation-only π carrier。
+
+反之，scalar 一旦以 `logical_ref=t*` 创建 rank-0 J input，`typecheck.v7` 要求该 t* 到达 observable
+output 的反向 value dependency，或出现在显式 J-owned boundary/shape semantic relation。direct
+identity、function `returns`、`output_mapping` 以及合法 boundary-only use 都算贡献；dead A node、
+signature 声明本身和 π route 都不算。v7 只检查 rank-0，不声称完成一般 tensor liveness proof。
+
 B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
 任意可执行 comparator；外部验证政策 Q 根据 B 的封闭类别构造实际比较关系。
 
@@ -47,6 +61,15 @@ fill_value != null => kind = load and predicate != null
 “显然含义”都不能补一个缺失/不同的 domain；checker 也不能删除 predicate/fill/effect 来让它通过。
 该 rule 不把 general affine/交叉轴 logical predicate 一概禁止；当前 RefEval 未实现的能力仍是
 consumer capability，不被偷换成 J 语义非法。
+
+`typecheck.v7` 还对 padded `mean` 执行一条独立、窄的必要条件。只有 direct load predicate 不含
+logical guard、index/domain 构成完整零起点矩形、predicate bound 与对应 typed tensor extent 相等，
+且同一 masked axis 经已建模 closed pointwise/broadcast 位置传播后被 `reduce(mean)` 消去时，当前
+`ReductionBoundary.masked_contribution` 才只能证明分子中性、不能证明 logical valid count 作为
+除数，因而以 `padded_mean_count_unproven` 拒绝。dense/unpredicated mean、guard-bearing 或
+cross-axis/general predicate、domain/extent 不闭合、mask 位于未消去轴或未知 op 阻断传播时不触发
+TypeCheck；guard/cross-axis/unknown-op 由 functional consumer 明确 unsupported。checker 不读取
+Source/C/π，也不把 mean 自动重写为 sum/div。
 
 ## J 的构造与标准化
 
@@ -88,8 +111,8 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-当前 `artifact.v2` slot 的字段为 `name/kind/role/value_type/required`，其中 `role` 必填，并增加
-两个可选 attachment：
+`artifact.v2` 引入、当前 `artifact.v3` 保留的 slot 字段为
+`name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
 subject_ref in CSubject_v1(J)
@@ -103,7 +126,7 @@ axis_ref in AxisRefs_v1(J, subject_ref)
 ```
 
 `AxisRefs_v1` 是 closed dependent domain：reduce node 使用其显式 reduction input-axis ordinals；loop
-node 使用 trip-axis ordinal `0` 及其显式 `trip.axis=x*`；domain 使用 canonical ContractExpr ordered
+node 使用 trip-axis ordinal `0` 及其显式 `trip.axis=x*`，两种 spelling 都指向同一 trip axis；domain 使用 canonical ContractExpr ordered
 axis ordinals，并只在显式绑定 declared `x*` 时接受该符号；access 使用 canonical structured-index
 axis ordinals，并只在对应 extent 显式为 declared `x*` 时接受该符号；scope/storage 的集合为空；
 其他 node 只有 closed A op contract 显式声明 axes 时才非空。不得从 shape、role、Source、π 或唯一
@@ -115,6 +138,12 @@ Decode/Elaborate、CandidateCheck 与 TypeCheck 不得推断或补造。TypeChec
 局部 prior 缺失、含混或 consumer 不支持时必须安全忽略，不能读取 Source/π 猜测。具体 legal
 domain 属于 implementation family/target capability，不在 C 中增加
 `legal_domain/strength/retunable/fixed`。
+
+`tile_extent` 与 `reduction_tile_extent` 是触发 iteration missing-totality 的保留 role。它们只让
+TypeCheck 能够在 attachment-closed J-loop/slot pair 完全缺 relation 时机械拒绝，不是显式
+`pi.iterations` relation 的 hidden validity tag；custom-role slot 只要满足同一 dependent type 也可
+被显式引用。custom/misclassified role 导致 relation 整体遗漏时，固定 checker 无法从 role 推断，
+仍由 Gate1 topology 检出。
 
 ```text
 MaskC(C) = erase(concrete values, private provenance)
@@ -187,6 +216,41 @@ loop-carried recurrence，J 必须用现有 structured `loop` 完整声明 trip/
 以及对应 next/yield/result；contraction 的 canonical subscripts 与 result-axis orientation 必须和
 update 实际消费的值一致。π 只记录这些 J carrier 的 placement/multiplicity/routes，不能携带或让
 Replay 猜 initialization、update formula、yield 或 transpose/orientation。
+
+### 物理迭代基底
+
+J structured `loop` 拥有逻辑 trip/scan/carry 语义，C tile slot 只拥有 implementation-selection
+数值；二者仍不能区分 Source 的物理 induction variable 是“逻辑 extent 坐标”还是“tile 序号”。
+例如下列两种 source realization 可共享同一 J loop 与同一 C tile，却产生不同 compiler topology：
+
+```text
+extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
+tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
+```
+
+因此当前 `artifact.v3` 要求 π 包含 closed `iterations` 数组。每项只有：
+
+```text
+{region, loop_instance, tile_instance, induction_basis}
+induction_basis in {extent_step, tile_ordinal}
+```
+
+`loop_instance` 必须锚定 structured J loop，`tile_instance` 必须锚定 attachment 指向同一 loop/trip
+axis 的 required positive-integer C slot，axis 可写 canonical ordinal `0` 或对应 `trip.axis=x*`；显式
+relation 的合法性不依赖该 slot role。二者在该 loop region 或其 lexical ancestor 可见。wire
+不得携带 lower/upper/step 公式、concrete tile、Source 片段、operator 或 frontend API；两种 basis
+的上述全局 denotation 由协议固定，各 frontend 的 `U_f` 只能忠实映射。
+
+parser 对一个 declared physical region 最多接受一条 relation；同一 `(J loop,C tile)` 若在 Source
+中确有多个不同 physical loop region，可以由多个 region 分别引用。`typecheck.v7` 的可判定 totality
+边界是：每个 attachment 闭合且 role 为 `tile_extent|reduction_tile_extent` 的 C-tiled
+J-loop/slot pair 至少存在一条合法 relation；untiled J loop 不被迫制造 relation。固定 checker 无法
+从 `(J,C,π)` 发现 custom/misclassified role 下完全遗漏的 relation，也无法发现 Lift 完全遗漏、因而
+没有任何 handle 的 Source physical region，所以 Source topology completeness 仍由 Lift 完整提出并
+由 Gate1 对 Source observer 检出；不得把局部 missing-totality 夸写成“每 Source region 完整”。
+
+该 relation 只消除 Replay 的 source-realization 欠定，不给 production backend 增加输入：SCRC 后
+production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不得读取 π 来选择 loop basis。
 
 ## Authorization 与 parametricity
 
@@ -266,12 +330,14 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由 `typecheck.v4` 建立；canonical reduce/
 contraction fail-early 与 absent `opaque(mode=value,dtype=none)` semantic-use rejection 形成 v5；
-functional logical-domain closure 的 source-free fail-early 使 fresh-run 活动合同窄升为
-`artifact.v2 / decode.v2 / typecheck.v6`。`candidate-check.v1` 的 closed envelope 本来就
+functional logical-domain closure 的 source-free fail-early 形成 v6；rank-0 logical-input liveness 与
+representation-only scalar 合同并入 `typecheck.v7`；物理迭代基底 relation 使 fresh-run wire/decode
+合同窄升为 `artifact.v3 / decode.v3`。`candidate-check.v1` 的 closed envelope 本来就
 允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经
 判定出的独立机械错误按稳定顺序返回，统一最多 20 项且每段文本最多 2048 字符；checker 不为继续
 检查而修补 artifact，也不在前置对象解析失败时猜测 dependent error。`candidate-check.v1` 共享
 正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
-这些版本；`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，v3/v4/v5 历史证书也不由新
-规则静默重判。
+这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
+也不能携带 v2 引入的 C attachment。旧 receipt/证书不由 v3 静默重写或追认；已闭合的 DYT 与 SwiGLU
+保留其原版本证据，无需仅因 wire 升级重跑，也不得被表述成 fresh v3 认证。

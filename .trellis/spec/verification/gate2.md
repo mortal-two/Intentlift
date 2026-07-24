@@ -104,27 +104,69 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v8`。v8 相对 v7 只扩展一个通用消费能力：
-non-identity graph 可以拥有唯一的 node-less logical-input boundary load，但该 tensor 必须真实进入
-Layer-A value dataflow；同一 tensor 的重复/混合 load 声明仍按歧义 fail closed。v7 的
-`REFERENCE_UNSUPPORTED` 历史结果保持原解释，不由 v8 追认或覆盖。
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v9`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v2`。v8 相对 v7 扩展唯一 node-less logical-input boundary load；v9
+完整继承该能力，并把旧的单 input/单 output/唯一 sum padding profile 提升为 source-neutral 的
+multi-reduction functional closure。旧 v7/v8 的 `REFERENCE_UNSUPPORTED` 与 Gate2 verdict 保持原
+解释，不由 v9 追认或覆盖。
 
-runtime scalar 或 non-C semantic constexpr 若代表 J 的逻辑数据，可以锚定一个 rank-0 J input。
+runtime scalar 或 bound semantic constexpr 若代表 J 的逻辑数据，可以锚定一个 rank-0 J input。
 Harness 给 Source/Replay 绑定前端标量，同时给 `RefEval(J,x)` 提供相同值的 rank-0 logical input；
 它不能因此被折叠成 C。只有表示 shape/domain extent 的 integral handle 才进入 dimension binding，
 不得同时冒充 J 的数据输入。
 
-当前 pure functional pointwise profile 可以机械消去物理 logical-domain tail mask，但只在以下条件
-同时成立时成立：
+`typecheck.v7` 在 RefEval 前检查 rank-0 logical input 是否到达 observable output dependency，或由
+显式 boundary/shape semantics 使用；direct identity 与 boundary-only 合法路径保留。仅服务
+representation/address 的 runtime scalar 不属于 RefEval logical inputs，必须显式为 rank-0
+`logical_ref=null` carrier，并只可由 π realization 引用。checker 不读取 Source 名称/位置、不自动
+解绑，也不把该窄规则冒充一般 tensor liveness proof；该 TypeCheck judgement 与 RefEval v9 的消费
+能力仍彼此独立。
+
+这个 null-carrier 例外不适用于 bound constexpr：只有 implementation-selection 后果的 constexpr
+属于 C，其他 bound constexpr 必须有 rank-0 logical-data 或 `x*` extent denotation；两者都不满足时
+Harness invalid，不能让 RefEval 忽略、让 π 单独消费。
+
+但只有在 J 自身已经足以机械证明“无 logical guard 的 predicated direct load 具有完整零起点矩形
+index/domain、predicate bound 与同轴 typed tensor extent 相等，且该 masked axis 经已建模 closed
+pointwise/broadcast 传播后被 `reduce(mean)` 消去”时，`typecheck.v7` 才会在 RefEval 前以
+`padded_mean_count_unproven` 拒绝：`masked_contribution` 只闭合分子，当前 boundary 不表达 logical
+valid denominator。dense/unpredicated mean、guard-bearing 或 cross-axis/general predicate、
+domain/extent 不闭合、mask 位于该 reduction 未消去轴或未知 op 阻断传播时不触发 TypeCheck。
+guard/cross-axis/unknown-op 保持 consumer unsupported。此 rule 不读取 Source/C/π，不把一般 RefEval
+unsupported 偷换成 J 非法，也不自动改图。
+
+当前 pure functional pointwise 与 reduction graph 可以机械消去物理 logical-domain tail mask，但只在
+以下条件同时成立时成立：
 
 - observable output 是直接、无 update/alias/inout 的 functional value；
-- memory access 与 J 的 logical tensor/domain 直接锚定，各轴 logical bound 与实际 shape 一致；
-- 额外 guard 是 rank-0 `i1` logical input，并真实出现在 J value dataflow 中；
-- direct singleton index `[0]` 只允许对应 logical extent 确为 1。
+- memory access 与 J 的 logical tensor/domain 直接锚定；每个 predicated direct access 为全部非
+  常量 `0` axis 显式声明完整零起点 logical domain，各 bound 与 typed shape 一致；
+- rank-0 `i1` guard 可以是合法 J input，但当前 functional consumer 对任何 guard-bearing access
+  predicate 都显式 unsupported；operand membership 不能区分 `flag`/`not flag`，也不能替代 observable
+  control-dependency proof；
+- direct singleton index `[0]` 只允许对应 logical extent 确为 1；
+- 所有仍携带某个 masked axis 的 access 使用同一个 full-domain predicate；predicated load 有显式
+  fill，output store 若已由 reduction 删除该 axis 则不需要伪造 predicate；
+- padded graph 的每个 logical reduction 恰有一个 J-owned `ReductionBoundary`，显式
+  `masked_contribution` 与可选 `identity` 都是 reducer 的中性元素；`sum/prod/max/min/any/all` 进入
+  当前闭合集合；若上述窄 rectangular access/dataflow provenance 能证明 masked axis 由 `mean` 消去，因缺少 logical count
+  contract 继续 unsupported；
+- 普通 trailing broadcast 由 closed value type 决定，non-trailing broadcast 只能消费 J 中显式的
+  `boundary.broadcasts`，缺失、错轴或未消费 relation 均在执行前 fail closed。
+- masked provenance 若进入 contraction 或其他当前 provenance analysis 未建模的 executor op，必须在
+  该 op 处 `REFERENCE_UNSUPPORTED`；不能静默丢弃 provenance 后放行下游 `mean`。
 
-masked reduction 继续走独立的窄 profile，不从 pointwise mask erasure 推导。update、alias/inout、
-不一致 bound、未锚定 guard 或其他 topology 必须明确返回 `REFERENCE_UNSUPPORTED`/fail closed，
-不能由 Harness adapter 写 per-kernel 数值公式补齐。
+因此 `logical_domain_reduction_padding_v2` 可以消费任意由上述通用构造组成的 pointwise/broadcast/
+multi-reduce DAG，例如 max → sub → exp → sum → div；实现不检查 Kernel 名称，也不含 Softmax
+公式。`masked_contribution` 是 J 中已有的有效贡献合同，projector 只验证它与 reducer neutral 一致，
+不从 Source、C、π、runtime/hidden input 或 named op 重新推导。update、alias/inout、不一致 bound、
+未锚定 guard、padded mean 或其他未闭合 topology 必须明确返回 `REFERENCE_UNSUPPORTED`/fail closed。
+
+active `typecheck.v7` 已复用 J-only `functional_reduction_padding_issues(J)`，用于精确报告上述窄
+rectangular seed 下已建模 provenance 的 masked-axis → `mean` 缺口。它不把 guard-bearing、
+cross-axis/general access 或未知-op consumer capability blanket 判成非法 J；v9 projector 对这些
+无法声度擦除的 topology 明确拒绝，并在 masked provenance 首次进入未知 op 时拒绝。
+CandidateCheck 不另写一套规则，fixed code 也不补造 count contract。
 
 ## 失败与认证
 

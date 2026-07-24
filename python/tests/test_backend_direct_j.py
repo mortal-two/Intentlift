@@ -194,7 +194,7 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
         (
             _make_masked_sum_artifact,
             {"x0": 2, "x1": 4},
-            "logical_domain_reduction_padding_v1",
+            "logical_domain_reduction_padding_v2",
             "intent.reduce",
         ),
     ],

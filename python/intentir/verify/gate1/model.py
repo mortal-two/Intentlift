@@ -2698,18 +2698,28 @@ class SignatureParameter(StrictJSONMixin):
                         _SchemaIssue(f"SignatureParameter.{field_name}", detail)
                     )
         if self.kind in {ParameterKind.SCALAR, ParameterKind.CONSTEXPR}:
-            detail = (
-                "logical scalar/constexpr signature parameters require dtype "
-                "and a J logical_ref; implementation-selection values belong to C"
-            )
-            for field_name, field_value in (
-                ("dtype", self.dtype),
-                ("logical_ref", self.logical_ref),
-            ):
-                if field_value is None:
-                    issues.append(
-                        _SchemaIssue(f"SignatureParameter.{field_name}", detail)
+            if self.dtype is None:
+                issues.append(
+                    _SchemaIssue(
+                        "SignatureParameter.dtype",
+                        "scalar/constexpr signature parameters require dtype",
                     )
+                )
+            if self.logical_ref is None and not (
+                self.kind is ParameterKind.SCALAR
+                and self.mode is ParameterMode.VALUE
+                and self.rank == 0
+                and self.alias_of is None
+            ):
+                issues.append(
+                    _SchemaIssue(
+                        "SignatureParameter.logical_ref",
+                        "a scalar without J logical_ref is legal only as an "
+                        "explicit rank-0, mode=value, non-alias "
+                        "representation-only ABI carrier; logical data must "
+                        "bind J and implementation-selection values belong to C",
+                    )
+                )
         if issues:
             raise SchemaError.from_issues(issues)
 
@@ -3325,9 +3335,9 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v2"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v3"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
-        {"intentir.scrc.artifact.v1"}
+        {"intentir.scrc.artifact.v1", "intentir.scrc.artifact.v2"}
     )
 
     j: SemanticArchive
@@ -3349,12 +3359,16 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 f"unsupported Gate1 artifact schema {self.wire_schema!r}"
             )
-        if self.wire_schema in self.LEGACY_SCHEMAS and any(
+        if self.wire_schema == "intentir.scrc.artifact.v1" and any(
             slot.subject_ref is not None or slot.axis_ref is not None
             for slot in self.c.slots
         ):
             raise SchemaError(
                 "legacy Gate1 artifact schemas do not contain C attachments"
+            )
+        if self.wire_schema in self.LEGACY_SCHEMAS and self.pi.iterations:
+            raise SchemaError(
+                "legacy Gate1 artifact schemas do not contain pi iterations"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -3398,6 +3412,26 @@ class Gate1Artifact(StrictJSONMixin):
                 f"unsupported Gate1 artifact schema {data['schema']!r}; "
                 f"expected {cls.SCHEMA!r} or a supported legacy schema"
             )
+        if isinstance(data["pi"], dict) and "refinements" not in data["pi"]:
+            raise SchemaError(
+                "Gate1Artifact.pi is missing required field: refinements"
+            )
+        if (
+            data["schema"] == cls.SCHEMA
+            and isinstance(data["pi"], dict)
+            and "iterations" not in data["pi"]
+        ):
+            raise SchemaError(
+                "Gate1Artifact.pi is missing required field: iterations"
+            )
+        if (
+            data["schema"] in cls.LEGACY_SCHEMAS
+            and isinstance(data["pi"], dict)
+            and "iterations" in data["pi"]
+        ):
+            raise SchemaError(
+                "legacy Gate1 artifact schemas do not contain pi iterations"
+            )
         try:
             pi = RealizationWitness.from_json(data["pi"])
         except RealizationWitnessError as exc:
@@ -3414,7 +3448,9 @@ class Gate1Artifact(StrictJSONMixin):
             "schema": self.wire_schema,
             "j": self.j.to_json(),
             "c": self.c.to_json(),
-            "pi": self.pi.to_json(),
+            "pi": self.pi.to_json(
+                include_iterations=self.wire_schema == self.SCHEMA
+            ),
         }
 
     def rewriter_view(self, *, masked: bool = False) -> dict[str, Any]:

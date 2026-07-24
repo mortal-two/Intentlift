@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -19,6 +20,7 @@ from intentir.extraction.lifters.scrc import (
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 from intentir.verify.gate1.model import (
+    Frontend,
     Gate1Artifact,
     ParameterKind,
     ScheduleSlot,
@@ -56,14 +58,56 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v2_activates_c_attachments_without_rewriting_v1() -> None:
+def test_artifact_v3_preserves_v2_and_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v2"
+    assert current["schema"] == "intentir.scrc.artifact.v3"
 
-    legacy = copy.deepcopy(current)
+    legacy_v2 = copy.deepcopy(current)
+    legacy_v2["schema"] = "intentir.scrc.artifact.v2"
+    del legacy_v2["pi"]["iterations"]
+    parsed_v2 = Gate1Artifact.from_json(legacy_v2)
+    assert parsed_v2.to_json() == legacy_v2
+    expected_payload = {
+        **legacy_v2,
+        "observer_level": 2,
+        "protocol": "llm_direct_pi_gate1_level2_v1",
+    }
+    expected_digest = hashlib.sha256(
+        json.dumps(
+            expected_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    assert canonical_artifact_digest(parsed_v2) == expected_digest
+
+    for legacy_schema in (
+        "intentir.scrc.artifact.v1",
+        "intentir.scrc.artifact.v2",
+    ):
+        mislabeled_legacy = copy.deepcopy(legacy_v2)
+        mislabeled_legacy["schema"] = legacy_schema
+        mislabeled_legacy["pi"]["iterations"] = []
+        with pytest.raises(SchemaError, match="do not contain pi iterations"):
+            Gate1Artifact.from_json(mislabeled_legacy)
+
+    legacy = copy.deepcopy(legacy_v2)
     legacy["schema"] = "intentir.scrc.artifact.v1"
     parsed = Gate1Artifact.from_json(legacy)
-    assert parsed.to_json()["schema"] == "intentir.scrc.artifact.v1"
+    assert parsed.to_json() == legacy
+    expected_legacy_payload = {
+        **legacy,
+        "observer_level": 2,
+        "protocol": "llm_direct_pi_gate1_level2_v1",
+    }
+    expected_legacy_digest = hashlib.sha256(
+        json.dumps(
+            expected_legacy_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    assert canonical_artifact_digest(parsed) == expected_legacy_digest
     assert canonical_artifact_digest(parsed) != canonical_artifact_digest(
         make_reduce_artifact()
     )
@@ -71,6 +115,41 @@ def test_artifact_v2_activates_c_attachments_without_rewriting_v1() -> None:
     legacy["c"]["slots"][0]["subject_ref"] = "n0"
     with pytest.raises(SchemaError, match="do not contain C attachments"):
         Gate1Artifact.from_json(legacy)
+
+
+@pytest.mark.parametrize(
+    "wire_schema",
+    [
+        "intentir.scrc.artifact.v1",
+        "intentir.scrc.artifact.v2",
+        "intentir.scrc.artifact.v3",
+    ],
+)
+def test_every_artifact_wire_version_requires_explicit_pi_refinements(
+    wire_schema: str,
+) -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["schema"] = wire_schema
+    if wire_schema != Gate1Artifact.SCHEMA:
+        del payload["pi"]["iterations"]
+    del payload["pi"]["refinements"]
+
+    with pytest.raises(
+        SchemaError,
+        match="Gate1Artifact.pi is missing required field: refinements",
+    ):
+        Gate1Artifact.from_json(payload)
+
+
+def test_standalone_pi_decoder_requires_explicit_refinements() -> None:
+    payload = make_reduce_artifact().pi.to_json()
+    del payload["refinements"]
+
+    with pytest.raises(
+        RealizationWitnessError,
+        match=r"pi is missing fields: \['refinements'\]",
+    ):
+        RealizationWitness.from_json(payload)
 
 
 @pytest.mark.parametrize(
@@ -241,6 +320,7 @@ def _row_stride_pi() -> RealizationWitness:
             ],
             "order": [],
             "sharing": [{"source": "i2", "consumers": ["i3", "i5"]}],
+            "refinements": [],
         }
     )
 
@@ -259,6 +339,7 @@ def _flat_pi() -> RealizationWitness:
             "routes": [],
             "order": [],
             "sharing": [],
+            "refinements": [],
         }
     )
 
@@ -326,6 +407,7 @@ def _address_pi(*, staged: bool) -> RealizationWitness:
             "routes": routes,
             "order": [],
             "sharing": [],
+            "refinements": [],
         }
     )
 
@@ -386,6 +468,7 @@ def _integer_merge_address_pi() -> RealizationWitness:
             ],
             "order": [],
             "sharing": [],
+            "refinements": [],
         }
     )
 
@@ -579,7 +662,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v5"
+    assert context["context_policy"] == "public_frontend_context_v6"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -609,6 +692,10 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "does not apply to outer products" in contract
     assert "unsupported tile/dtype contracts" in contract
     assert "pi chain that explicitly declares multiple" in contract
+    assert "Every pi.iterations entry is mandatory" in contract
+    assert "induction_basis=extent_step" in contract
+    assert "induction_basis=tile_ordinal" in contract
+    assert "never insert or remove the trip-count ceiling division" in contract
     assert "from triton.language.extra.cuda import libdevice" in contract
     assert "Directly importing a libdevice function is rejected" in contract
     assert "tanh/tan/atan/atan2 as libdevice calls" in contract
@@ -617,6 +704,21 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "Every pi.refinements entry is mandatory" in contract
     assert "authorized target_dtype" in contract
     assert_source_isolated_payload(payload)
+
+
+@pytest.mark.parametrize("frontend", list(Frontend))
+def test_every_frontend_receives_the_same_closed_iteration_denotation(
+    frontend: Frontend,
+) -> None:
+    instructions, _ = build_normal_rewriter_prompt(
+        make_reduce_artifact(), frontend=frontend
+    )
+
+    assert "extent_step means lower zero" in instructions
+    assert "upper equal to the J loop trip extent" in instructions
+    assert "step equal to the matching C tile" in instructions
+    assert "tile_ordinal means lower zero" in instructions
+    assert "ceil_div of that J trip extent by that matching C tile" in instructions
 
 
 
@@ -788,6 +890,15 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
     schema = scrc_lift_core_json_schema()
     properties = schema["properties"]
     assert set(properties) == {"schema", "j", "c", "pi"}
+    assert set(properties["pi"]["required"]) == {
+        "regions",
+        "instances",
+        "routes",
+        "order",
+        "sharing",
+        "refinements",
+        "iterations",
+    }
     function_properties = (
         properties["j"]["properties"]["intent"]["properties"]
         ["intent_function"]["properties"]
@@ -806,9 +917,10 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
     assert domains["propertyNames"]["pattern"] == "^d[0-9]+$"
     assert domains["additionalProperties"]["type"] == "string"
     signature = j["properties"]["signature"]
-    assert signature["properties"]["parameters"]["items"]["properties"][
-        "name"
-    ]["pattern"] == "^p[0-9]+$"
+    parameter_schema = signature["properties"]["parameters"]["items"]
+    assert parameter_schema["properties"]["name"]["pattern"] == "^p[0-9]+$"
+    assert "representation/address realization" in parameter_schema["description"]
+    assert "may be referenced only by pi" in parameter_schema["description"]
     c_schema = schema["properties"]["c"]
     slot = c_schema["properties"]["slots"]["items"]["properties"]
     assert slot["name"]["pattern"] == "^c[0-9]+$"
@@ -850,6 +962,25 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "use it in every affected J tensor shape" in instructions
     assert "not SSA values" in instructions
     assert "never list x* in portable scope definitions/captures" in instructions
+
+
+def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:
+    instructions = " ".join(scrc.build_scrc_lift_instructions().split())
+
+    assert "They already have logical semantic ownership" in instructions
+    assert (
+        "Never serialize a bound constexpr as a representation-only pi carrier"
+        in instructions
+    )
+    assert "runtime-scalar logical_ref=null form" in instructions
+    assert "matching pure-C constexpr slot" in instructions
+
+    payload = make_reduce_artifact().to_json()
+    parameter = payload["j"]["signature"]["parameters"][2]
+    parameter["kind"] = "constexpr"
+    parameter["logical_ref"] = None
+    with pytest.raises(SchemaError, match="logical_ref"):
+        Gate1Artifact.from_json(payload)
 
 
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:

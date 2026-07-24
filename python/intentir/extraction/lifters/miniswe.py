@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v14"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v15"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -233,7 +233,8 @@ then use the example plus one compact query such as:
 
 Query exact `op NAME` or leaf `section NAME` only when needed. Useful leaf
 sections include `access`, `effect`, `result_relation`, `authorization`,
-`scope`, `c_slot`, `pi_instance`, `pi_route`, and `pi_refinement`. Create the
+`scope`, `c_slot`, `pi_instance`, `pi_route`, `pi_iteration`, and
+`pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
 On a fresh retry where `feedback.json.previous_artifact` is an object, copy
 that complete candidate first and make only the focused external-diagnostic

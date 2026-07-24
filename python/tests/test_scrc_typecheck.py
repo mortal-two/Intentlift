@@ -4,7 +4,7 @@ import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.functional_boundary import project_functional_boundary
-from intentir.ir.model import IntentOp, Tensor
+from intentir.ir.model import IntentOp, IntentReturn, Tensor
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
@@ -41,9 +41,164 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v6"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v7"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def _rank_zero_input_artifact(*, dtype: str = "i64"):
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [4]
+    artifact.j.intent.inputs.append(Tensor("t1", dtype, []))
+    artifact.j.intent.outputs[0].name = "t2"
+    artifact.j.intent.outputs[0].shape = [4]
+    artifact.j.intent.body[0].result = "t2"
+    artifact.j.signature.parameters[0].rank = 1
+    artifact.j.signature.parameters[1].logical_ref = "t2"
+    artifact.j.signature.parameters[1].rank = 1
+    scalar = artifact.j.signature.parameters[2]
+    scalar.dtype = dtype
+    scalar.rank = 0
+    scalar.logical_ref = "t1"
+    return artifact
+
+
+def test_typecheck_v7_rejects_dead_rank_zero_logical_input() -> None:
+    artifact = _rank_zero_input_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.LOGICAL_INPUT_UNUSED
+    ]
+
+    assert not report.passed
+    assert [item.path for item in matching] == [
+        "j.signature.parameters[2].logical_ref"
+    ]
+    assert matching[0].ref == "t1"
+
+
+def test_typecheck_v7_does_not_count_a_dead_node_as_output_liveness() -> None:
+    artifact = _rank_zero_input_artifact()
+    artifact.j.intent.body.append(
+        IntentOp.from_json(
+            {
+                "id": "n1",
+                "op": "map_unary",
+                "result": "v0",
+                "operands": ["t1"],
+                "attrs": {"fn": "identity"},
+            }
+        )
+    )
+    artifact.j.node_ids["n1"] = "body[1]"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.LOGICAL_INPUT_UNUSED in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_typecheck_v7_accepts_rank_zero_output_dependency() -> None:
+    artifact = _rank_zero_input_artifact(dtype="f32")
+    operation = artifact.j.intent.body[0]
+    operation.op = "map_binary"
+    operation.operands = ["t0", "t1"]
+    operation.attrs = {"fn": "add"}
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v7_accepts_direct_rank_zero_identity_output() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = []
+    artifact.j.intent.outputs[0].shape = []
+    artifact.j.intent.body = []
+    artifact.j.intent.returns = [IntentReturn("t1", "t0")]
+    artifact.j.node_ids = {}
+    artifact.j.signature.parameters[0].rank = 0
+    artifact.j.signature.parameters[1].rank = 0
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.pi = RealizationWitness.from_json(
+        {
+            "regions": [{"id": "r0", "parent": None, "placement": "root"}],
+            "instances": [],
+            "routes": [],
+            "order": [],
+            "sharing": [],
+            "refinements": [],
+        }
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v7_accepts_explicit_boundary_only_rank_zero_use() -> None:
+    artifact = _rank_zero_input_artifact(dtype="i1")
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0",
+            AccessKind.LOAD,
+            "t0",
+            predicate="t1",
+            fill_value=0.0,
+            node_ref="n0",
+            index_expression="[i0]",
+        ),
+        BoundaryAccess(
+            "a1",
+            AccessKind.STORE,
+            "t2",
+            predicate="t1",
+            node_ref="n0",
+            index_expression="[i0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t2", "n0", "e1", "a1"),
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v7_accepts_representation_only_scalar_without_logical_ref() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [4]
+    artifact.j.intent.outputs[0].shape = [4]
+    representation = artifact.j.signature.parameters[2]
+    representation.dtype = "i64"
+    representation.rank = 0
+    representation.logical_ref = None
+    payload = artifact.pi.to_json()
+    payload["instances"].append(
+        {
+            "id": "i1",
+            "semantic_ref": "p2",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi = RealizationWitness.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+    artifact.j.boundary.domains = {"d0": "p2"}
+    rejected = type_check(artifact.j, artifact.c, artifact.pi)
+    assert TypeCheckErrorCode.REPRESENTATION_CARRIER_J_USE_FORBIDDEN in {
+        item.code for item in rejected.diagnostics
+    }
 
 
 def _functional_masked_copy_artifact():
@@ -121,6 +276,130 @@ def test_functional_boundary_v6_accepts_masked_and_padded_effect_contracts() -> 
     # physical guard/fill or manufactures/rebinds an effect relation.
     assert masked.j.boundary.to_json()["effects"] == masked_effects
     assert padded.j.boundary.to_json()["effects"] == padded_effects
+
+
+@pytest.mark.parametrize(
+    "guard",
+    ["flag", "not flag"],
+)
+def test_typecheck_v7_does_not_ban_guard_bearing_access(guard) -> None:
+    artifact = _functional_masked_copy_artifact()
+    artifact.j.intent.inputs.append(Tensor("flag", "i1", []))
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i1",
+            0,
+            logical_ref="flag",
+        )
+    )
+    for access in artifact.j.boundary.accesses:
+        access.predicate = f"{guard} and i0 < x0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v7_rejects_padded_mean_without_logical_count() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.PADDED_MEAN_COUNT_UNPROVEN
+    ]
+
+    assert not report.passed
+    assert [item.path for item in matching] == [
+        "j.intent.intent_function.body[1].attrs.fn"
+    ]
+    assert matching[0].ref == "n1"
+    assert "logical valid count" in matching[0].detail
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    ["flag and i1 < x1", "not flag and i1 < x1"],
+)
+def test_typecheck_v7_does_not_reclassify_guarded_mean_as_padding(
+    predicate: str,
+) -> None:
+    artifact = _functional_padded_reduction_artifact()
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.intent.inputs.append(Tensor("flag", "i1", []))
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i1",
+            0,
+            logical_ref="flag",
+        )
+    )
+    artifact.j.boundary.accesses[0].predicate = predicate
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="guard-bearing"):
+        project_functional_boundary(artifact.j)
+
+
+def test_typecheck_v7_does_not_reclassify_cross_axis_mean_as_padding() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.accesses[0].predicate = "i1 < i0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="cross-axis"):
+        project_functional_boundary(artifact.j)
+
+
+def test_typecheck_v7_accepts_dense_mean() -> None:
+    artifact = make_reduce_artifact(explicit_accesses=False)
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v7_does_not_blanket_ban_mean_with_unrelated_mask() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.accesses[0].predicate = "i0 < x0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert TypeCheckErrorCode.PADDED_MEAN_COUNT_UNPROVEN not in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_typecheck_v7_does_not_guess_padding_through_contraction() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    contraction = artifact.j.intent.body[0]
+    contraction.op = "contraction"
+    contraction.operands = ["t0", "t0"]
+    contraction.attrs = {"subscripts": "mk,nk->mn"}
+    contraction.type = {"dtype": "f32", "shape": ["x0", "x0"]}
+    artifact.j.intent.body[1].attrs["fn"] = "mean"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert TypeCheckErrorCode.PADDED_MEAN_COUNT_UNPROVEN not in {
+        item.code for item in report.diagnostics
+    }
 
 
 @pytest.mark.parametrize(

@@ -634,13 +634,9 @@ def test_scf_for_carried_pointer_arity_mismatch_fails_closed(
         fingerprint_ttir(malformed)
 
 
-def test_non_loop_region_block_arg_does_not_invent_argument_provenance() -> None:
-    fingerprint = fingerprint_ttir(NON_LOOP_REGION_POINTER_LEAF_TTIR)
-
-    assert [argument.access for argument in fingerprint.interface.arguments] == [
-        "unused",
-        "output",
-    ]
+def test_side_effecting_reduce_region_fails_closed() -> None:
+    with pytest.raises(TTIRParseError, match="tt.load inside tt.reduce"):
+        fingerprint_ttir(NON_LOOP_REGION_POINTER_LEAF_TTIR)
 
 
 def test_sibling_regions_may_reuse_ssa_names_without_cross_scope_capture() -> None:
@@ -807,3 +803,548 @@ def test_rank_tuple_prefers_a_closer_failed_candidate():
 
     assert fill_only.rank_tuple > deleted_reduce.rank_tuple
     assert fill_only.to_dict()["rank_tuple"] == list(fill_only.rank_tuple)
+
+
+OUTLINED_VOID_HELPER_IN_LOOP = r'''
+module {
+  tt.func public @outlined(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      tt.call @copy_one(%x, %out, %iv) : (!tt.ptr<f32>, !tt.ptr<f32>, i32) -> ()
+      scf.yield
+    }
+    tt.return
+  }
+  tt.func private @copy_one(%source: !tt.ptr<f32>, %destination: !tt.ptr<f32>, %index: i32) {
+    %source_at = tt.addptr %source, %index : !tt.ptr<f32>, i32
+    %value = tt.load %source_at : !tt.ptr<f32>
+    %destination_at = tt.addptr %destination, %index : !tt.ptr<f32>, i32
+    tt.store %destination_at, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+INLINED_VOID_HELPER_IN_LOOP = r'''
+module {
+  tt.func public @inlined(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32) {
+    %lower = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    scf.for %iteration = %lower to %arg2 step %step : i32 {
+      %read_at = tt.addptr %arg0, %iteration : !tt.ptr<f32>, i32
+      %loaded = tt.load %read_at : !tt.ptr<f32>
+      %write_at = tt.addptr %arg1, %iteration : !tt.ptr<f32>, i32
+      tt.store %write_at, %loaded : !tt.ptr<f32>
+      scf.yield
+    }
+    tt.return
+  }
+}
+'''
+
+
+OUTLINED_NESTED_VALUE_HELPERS = r'''
+module {
+  tt.func public @outlined_value(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
+    %value = tt.load %x : !tt.ptr<f32>
+    %answer = tt.call @add_after_scale(%value) : (f32) -> f32
+    tt.store %out, %answer : !tt.ptr<f32>
+    tt.return
+  }
+  tt.func private @add_after_scale(%value: f32) -> f32 {
+    %scaled = tt.call @scale(%value) : (f32) -> f32
+    %one = arith.constant 1.000000e+00 : f32
+    %answer = arith.addf %scaled, %one : f32
+    tt.return %answer : f32
+  }
+  tt.func private @scale(%value: f32) -> f32 {
+    %two = arith.constant 2.000000e+00 : f32
+    %answer = arith.mulf %value, %two : f32
+    tt.return %answer : f32
+  }
+}
+'''
+
+
+INLINED_NESTED_VALUE_HELPERS = r'''
+module {
+  tt.func public @inlined_value(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>) {
+    %input = tt.load %arg0 : !tt.ptr<f32>
+    %factor = arith.constant 2.000000e+00 : f32
+    %scaled = arith.mulf %input, %factor : f32
+    %unit = arith.constant 1.000000e+00 : f32
+    %result = arith.addf %scaled, %unit : f32
+    tt.store %arg1, %result : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
+    verdict = compare_ttir(
+        OUTLINED_VOID_HELPER_IN_LOOP,
+        INLINED_VOID_HELPER_IN_LOOP,
+    )
+
+    assert verdict.hard_pass, verdict.to_dict()
+    fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v5"
+    assert "tt.call" not in dict(fingerprint.op_multiset)
+    assert dict(fingerprint.loops[0].body_op_multiset) == {
+        "tt.addptr": 2,
+        "tt.load": 1,
+        "tt.store": 1,
+    }
+    assert fingerprint.loops[0].body_effects == (("read", 1), ("write", 1))
+
+
+def test_nested_private_ssa_returns_match_equivalent_inline_graph() -> None:
+    verdict = compare_ttir(
+        OUTLINED_NESTED_VALUE_HELPERS,
+        INLINED_NESTED_VALUE_HELPERS,
+    )
+
+    assert verdict.hard_pass, verdict.to_dict()
+    assert "tt.call" not in dict(
+        fingerprint_ttir(OUTLINED_NESTED_VALUE_HELPERS).op_multiset
+    )
+
+
+def test_reachable_private_helper_body_change_changes_hard_fingerprint() -> None:
+    changed = OUTLINED_NESTED_VALUE_HELPERS.replace(
+        "%answer = arith.mulf %value, %two : f32",
+        "%answer = arith.subf %value, %two : f32",
+    )
+
+    assert not compare_ttir(OUTLINED_NESTED_VALUE_HELPERS, changed).hard_pass
+
+
+def test_unreachable_private_helpers_do_not_affect_fingerprint() -> None:
+    unused = r'''
+  tt.func private @never_called(%value: f32) -> f32 {
+    %huge = arith.constant 999.000000e+00 : f32
+    %changed = arith.mulf %value, %huge : f32
+    tt.return %changed : f32
+  }
+'''
+    with_unused = INLINED_NESTED_VALUE_HELPERS.replace("\n}", unused + "\n}")
+
+    assert fingerprint_ttir(with_unused) == fingerprint_ttir(
+        INLINED_NESTED_VALUE_HELPERS
+    )
+
+
+@pytest.mark.parametrize(
+    ("malformed", "message"),
+    [
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "@add_after_scale(%value)", "@missing(%value)", 1
+            ),
+            "unknown callee @missing",
+        ),
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "%scaled = tt.call @scale(%value) : (f32) -> f32",
+                "%scaled = tt.call @add_after_scale(%value) : (f32) -> f32",
+            ),
+            "recursive tt.call graph",
+        ),
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "@add_after_scale(%value) : (f32) -> f32",
+                "@add_after_scale(%value) : (i32) -> f32",
+                1,
+            ),
+            "actual SSA type f32.*explicit call type i32",
+        ),
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "@add_after_scale(%value) : (f32) -> f32",
+                "@add_after_scale() : () -> f32",
+                1,
+            ),
+            "argument arity does not match",
+        ),
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "@add_after_scale(%value) : (f32) -> f32",
+                "@add_after_scale(%value) : (f32) -> i32",
+                1,
+            ),
+            "result types do not match",
+        ),
+        (
+            OUTLINED_NESTED_VALUE_HELPERS.replace(
+                "@add_after_scale(%value) : (f32) -> f32",
+                "@add_after_scale(%value) : (f32) -> ()",
+                1,
+            ),
+            "result SSA/type arity mismatch",
+        ),
+    ],
+)
+def test_reachable_call_contract_errors_fail_closed(
+    malformed: str,
+    message: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match=message):
+        fingerprint_ttir(malformed)
+
+
+def test_reachable_helper_with_unknown_region_fails_closed() -> None:
+    unsupported = OUTLINED_NESTED_VALUE_HELPERS.replace(
+        "    %two = arith.constant 2.000000e+00 : f32\n"
+        "    %answer = arith.mulf %value, %two : f32",
+        "    %condition = arith.constant true\n"
+        "    %answer = scf.if %condition -> (f32) {\n"
+        "      scf.yield %value : f32\n"
+        "    } else {\n"
+        "      scf.yield %value : f32\n"
+        "    }",
+    )
+
+    with pytest.raises(TTIRParseError, match="unsupported region-bearing"):
+        fingerprint_ttir(unsupported)
+
+
+def test_reachable_multiblock_helper_is_explicitly_observer_unsupported() -> None:
+    multiblock = OUTLINED_VOID_HELPER_IN_LOOP.replace(
+        "    %source_at = tt.addptr %source, %index : !tt.ptr<f32>, i32",
+        "    %condition = arith.constant true\n"
+        "    cf.cond_br %condition, ^bb1, ^bb2\n"
+        "  ^bb1:\n"
+        "    %source_at = tt.addptr %source, %index : !tt.ptr<f32>, i32",
+    )
+
+    with pytest.raises(TTIRParseError, match="multi-block CFG"):
+        fingerprint_ttir(multiblock)
+
+
+def test_public_multiblock_function_is_explicitly_observer_unsupported() -> None:
+    multiblock = r'''
+module {
+  tt.func public @branch(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
+    %condition = arith.constant true
+    cf.cond_br %condition, ^bb1, ^bb2
+  ^bb1:
+    %value = tt.load %x : !tt.ptr<f32>
+    cf.br ^bb2
+  ^bb2:
+    tt.store %out, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+    with pytest.raises(TTIRParseError, match="reachable tt.func @branch.*multi-block CFG"):
+        fingerprint_ttir(multiblock)
+
+
+@pytest.mark.parametrize(
+    "with_top_level_block",
+    [
+        r'''
+module {
+  tt.func public @public_block(%x: f32) {
+  ^bb0:
+    tt.return
+  }
+}
+''',
+        OUTLINED_NESTED_VALUE_HELPERS.replace(
+            "  tt.func private @scale(%value: f32) -> f32 {\n",
+            "  tt.func private @scale(%value: f32) -> f32 {\n  ^bb7:\n",
+        ),
+    ],
+)
+def test_reachable_top_level_block_label_without_cf_op_fails_closed(
+    with_top_level_block: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match="top-level block label"):
+        fingerprint_ttir(with_top_level_block)
+
+
+def test_structured_reduce_block_label_remains_supported() -> None:
+    assert fingerprint_ttir(REDUCE_TTIR).reductions[0].combiner == "arith.addf"
+
+
+@pytest.mark.parametrize(
+    "operation_after_return",
+    [
+        r'''
+module {
+  tt.func public @void_return_then_op(%x: f32) {
+    tt.return
+    %unreachable = arith.addf %x, %x : f32
+  }
+}
+''',
+        OUTLINED_NESTED_VALUE_HELPERS.replace(
+            "    tt.return %answer : f32\n  }\n}",
+            "    tt.return %answer : f32\n"
+            "    %unreachable = arith.addf %answer, %answer : f32\n"
+            "  }\n}",
+        ),
+    ],
+)
+def test_operation_after_void_or_ssa_return_fails_closed(
+    operation_after_return: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match="operation after.*tt.return"):
+        fingerprint_ttir(operation_after_return)
+
+
+def test_duplicate_top_level_return_fails_closed() -> None:
+    duplicate = INLINED_NESTED_VALUE_HELPERS.replace(
+        "    tt.return\n",
+        "    tt.return\n    tt.return\n",
+    )
+
+    with pytest.raises(TTIRParseError, match="more than one.*tt.return"):
+        fingerprint_ttir(duplicate)
+
+
+def test_second_block_in_structured_reduce_region_fails_closed() -> None:
+    multiblock_reduce = REDUCE_TTIR.replace(
+        "      tt.reduce.return %combined : f32\n",
+        "      tt.reduce.return %combined : f32\n"
+        "    ^bb1(%other_lhs: f32, %other_rhs: f32):\n"
+        "      %other = arith.mulf %other_lhs, %other_rhs : f32\n"
+        "      tt.reduce.return %other : f32\n",
+    )
+
+    with pytest.raises(TTIRParseError, match="more than one block"):
+        fingerprint_ttir(multiblock_reduce)
+
+
+OUTLINED_ORDERED_WRITES = r'''
+module {
+  tt.func public @ordered(%out: !tt.ptr<f32>, %first: f32, %second: f32) {
+    tt.call @write(%out, %first) : (!tt.ptr<f32>, f32) -> ()
+    tt.call @write(%out, %second) : (!tt.ptr<f32>, f32) -> ()
+    tt.return
+  }
+  tt.func private @write(%destination: !tt.ptr<f32>, %value: f32) {
+    tt.store %destination, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+INLINED_ORDERED_WRITES = r'''
+module {
+  tt.func public @ordered_inline(%arg0: !tt.ptr<f32>, %arg1: f32, %arg2: f32) {
+    tt.store %arg0, %arg1 : !tt.ptr<f32>
+    tt.store %arg0, %arg2 : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+def test_ordered_outlined_effects_match_equivalent_inline_effects() -> None:
+    verdict = compare_ttir(OUTLINED_ORDERED_WRITES, INLINED_ORDERED_WRITES)
+
+    assert verdict.hard_pass, verdict.to_dict()
+
+
+def test_swapping_same_callee_store_calls_changes_hard_effect_trace() -> None:
+    swapped = OUTLINED_ORDERED_WRITES.replace(
+        "    tt.call @write(%out, %first) : (!tt.ptr<f32>, f32) -> ()\n"
+        "    tt.call @write(%out, %second) : (!tt.ptr<f32>, f32) -> ()",
+        "    tt.call @write(%out, %second) : (!tt.ptr<f32>, f32) -> ()\n"
+        "    tt.call @write(%out, %first) : (!tt.ptr<f32>, f32) -> ()",
+    )
+    verdict = compare_ttir(OUTLINED_ORDERED_WRITES, swapped)
+
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]
+
+
+NONISOMORPHIC_LOOP_TREE_A = r'''
+module {
+  tt.func public @tree_a(%out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %root = %c0 to %n step %c1 : i32 {
+      tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+      scf.for %fork = %c0 to %n step %c1 : i32 {
+        tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+        scf.for %fork_left = %c0 to %n step %c1 : i32 {
+          tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+          scf.yield
+        }
+        scf.for %fork_right = %c0 to %n step %c1 : i32 {
+          tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+          scf.yield
+        }
+        scf.yield
+      }
+      scf.for %chain = %c0 to %n step %c1 : i32 {
+        tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+        scf.for %chain_leaf = %c0 to %n step %c1 : i32 {
+          tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+          scf.yield
+        }
+        scf.yield
+      }
+      scf.yield
+    }
+    tt.return
+  }
+  tt.func private @bump(%out: !tt.ptr<f32>) {
+    %one = arith.constant 1.000000e+00 : f32
+    %prior = tt.atomic_rmw add, %out, %one : (!tt.ptr<f32>, f32) -> f32
+    tt.return
+  }
+}
+'''
+
+
+NONISOMORPHIC_LOOP_TREE_B = r'''
+module {
+  tt.func public @tree_b(%out: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %root = %c0 to %n step %c1 : i32 {
+      tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+      scf.for %deep0 = %c0 to %n step %c1 : i32 {
+        tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+        scf.for %deep1 = %c0 to %n step %c1 : i32 {
+          tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+          scf.for %deep2 = %c0 to %n step %c1 : i32 {
+            tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+            scf.yield
+          }
+          scf.yield
+        }
+        scf.yield
+      }
+      scf.for %leaf0 = %c0 to %n step %c1 : i32 {
+        tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+        scf.yield
+      }
+      scf.for %leaf1 = %c0 to %n step %c1 : i32 {
+        tt.call @bump(%out) : (!tt.ptr<f32>) -> ()
+        scf.yield
+      }
+      scf.yield
+    }
+    tt.return
+  }
+  tt.func private @bump(%out: !tt.ptr<f32>) {
+    %one = arith.constant 1.000000e+00 : f32
+    %prior = tt.atomic_rmw add, %out, %one : (!tt.ptr<f32>, f32) -> f32
+    tt.return
+  }
+}
+'''
+
+
+def test_nonisomorphic_nested_loop_trees_change_hard_region_topology() -> None:
+    left = fingerprint_ttir(NONISOMORPHIC_LOOP_TREE_A)
+    right = fingerprint_ttir(NONISOMORPHIC_LOOP_TREE_B)
+    verdict = compare_fingerprints(left, right)
+
+    assert len(left.loops) == len(right.loops) == 6
+    assert dict(left.op_multiset) == dict(right.op_multiset)
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]
+
+
+def test_call_explicit_type_cannot_lie_about_actual_ssa_producer_type() -> None:
+    malformed = r'''
+module {
+  tt.func public @caller(%out: !tt.ptr<f32>) {
+    %wrong = arith.constant 7 : i32
+    %answer = tt.call @identity(%wrong) : (f32) -> f32
+    tt.store %out, %answer : !tt.ptr<f32>
+    tt.return
+  }
+  tt.func private @identity(%value: f32) -> f32 {
+    tt.return %value : f32
+  }
+}
+'''
+
+    with pytest.raises(TTIRParseError, match="actual SSA type i32.*call type f32"):
+        fingerprint_ttir(malformed)
+
+
+def test_return_explicit_type_cannot_lie_about_actual_ssa_producer_type() -> None:
+    malformed = r'''
+module {
+  tt.func public @caller(%out: !tt.ptr<f32>) {
+    %answer = tt.call @bad_return() : () -> f32
+    tt.store %out, %answer : !tt.ptr<f32>
+    tt.return
+  }
+  tt.func private @bad_return() -> f32 {
+    %wrong = arith.constant 7 : i32
+    tt.return %wrong : f32
+  }
+}
+'''
+
+    with pytest.raises(TTIRParseError, match="actual SSA type i32.*return type f32"):
+        fingerprint_ttir(malformed)
+
+
+def test_private_noinline_boolean_is_the_only_erased_function_hint() -> None:
+    with_hint = OUTLINED_NESTED_VALUE_HELPERS.replace(
+        "tt.func private @scale(%value: f32) -> f32 {",
+        "tt.func private @scale(%value: f32) -> f32 "
+        "attributes {noinline = false} {",
+    )
+
+    assert compare_ttir(OUTLINED_NESTED_VALUE_HELPERS, with_hint).hard_pass
+
+    public_with_hint = DATAFLOW_TTIR.replace(
+        "tt.func public @dataflow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {",
+        "tt.func public @dataflow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) "
+        "attributes {noinline = true} {",
+    )
+    assert compare_ttir(DATAFLOW_TTIR, public_with_hint).hard_pass
+
+
+@pytest.mark.parametrize(
+    "unsupported_private_metadata",
+    [
+        OUTLINED_NESTED_VALUE_HELPERS.replace(
+            "tt.func private @scale(%value: f32)",
+            "tt.func private @scale(%value: f32 "
+            "{tt.divisibility = 16 : i32})",
+        ),
+        OUTLINED_NESTED_VALUE_HELPERS.replace(
+            "tt.func private @scale(%value: f32)",
+            "tt.func private @scale(%value: f32 {mystery = true})",
+        ),
+        OUTLINED_NESTED_VALUE_HELPERS.replace(
+            "tt.func private @scale(%value: f32) -> f32 {",
+            "tt.func private @scale(%value: f32) -> f32 "
+            "attributes {semantic_mode = fast} {",
+        ),
+    ],
+)
+def test_reachable_private_metadata_outside_closed_allowlist_fails_closed(
+    unsupported_private_metadata: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match="unsupported"):
+        fingerprint_ttir(unsupported_private_metadata)
+
+
+@pytest.mark.parametrize("name", ["semantic_mode", "tt.num_warps"])
+def test_unknown_public_function_attribute_fails_closed(name: str) -> None:
+    unsupported = DATAFLOW_TTIR.replace(
+        "tt.func public @dataflow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {",
+        "tt.func public @dataflow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) "
+        f"attributes {{{name} = 8 : i32}} {{",
+    )
+
+    with pytest.raises(TTIRParseError, match="unsupported function attribute"):
+        fingerprint_ttir(unsupported)

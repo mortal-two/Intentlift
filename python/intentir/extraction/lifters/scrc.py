@@ -28,7 +28,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v2"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v3"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -719,11 +719,14 @@ do not turn compiler roles into inferred strategy names.
 
 bound_constexpr_values are non-C invocation bindings. Their p* parameters
 remain semantic constexpr handles in J.signature and never become C slots or
-values. Lift must classify their source use: any consequence that changes
-logical extent/value/predicate/result belongs only to J; representation-only
-layout/address realization may be referenced only by pi. A source constexpr
-not listed there is pure scheduling, remains a c* parameter, and must have a
-matching pure-C constexpr slot.
+values. They already have logical semantic ownership: bind logical
+value/predicate/result use to a dtype-compatible rank-0 J input, or bind an
+integral extent-only use to a declared x* dimension. Never serialize a bound
+constexpr as a representation-only pi carrier or give it the runtime-scalar
+logical_ref=null form. A source constexpr not listed there is pure scheduling,
+remains a c* parameter, and must have a matching pure-C constexpr slot. A
+constexpr that fits neither logical J nor pure C is a Harness-invalid case, not
+an ambiguity for Lift to repair.
 
 Every J.signature logical_ref names only a declared J input/output t* handle or
 a symbolic dimension x*; it never names a source/local or J-body v* SSA value.
@@ -733,6 +736,13 @@ with shape [] and bind that p* parameter to its t* handle. This input participat
 in J dataflow. Only an integral extent-only parameter binds an x* dimension.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
+Conversely, a runtime scalar used only for representation/address realization
+is not logical data: declare it as a rank-0 scalar, mode value, with public
+dtype and no logical_ref or J input tensor; pi may reference its p* carrier.
+Classify this only from the Source use, never from parameter spelling or
+position. Every rank-0 tensor that you do bind through logical_ref must reach an
+observable J output dependency or an explicit J-owned boundary/shape semantic
+relation. TypeCheck rejects a dead logical input and never auto-unbinds it.
 Every trusted compiler-view argument with kind `none` is an absent runtime
 carrier: declare that p* exactly once as kind `opaque`, mode `value`, dtype
 `none`, with null rank/alias_of/logical_ref. It contributes no J tensor, node,
@@ -773,6 +783,16 @@ shape, Source fact, C value, pi route, or runtime value never fills a missing or
 different domain relation. General logical predicates remain legal J; do not
 delete them merely to satisfy this rectangular profile. A fill_value is legal
 only on a load with a non-null predicate.
+If a guard-free direct padding predicate and a complete zero-based rectangular
+domain use the same-axis bound as the typed tensor extent, and that masked axis
+is later eliminated by `reduce(fn=mean)`, a neutral zero fill closes only the
+numerator: the current boundary schema has no valid-count/denominator contract.
+Do not collapse such a Source program to padded `mean`. Preserve its
+compiler-visible logical stages, for example `reduce(fn=sum)` followed by an
+explicit logical division when that is what Source computes. Dense/unpredicated
+mean, guard-bearing or cross-axis predicates, unrelated non-reduced masks, and
+unknown-op propagation are not this TypeCheck error; consumers still fail
+closed when they cannot project those boundaries.
 For an unconditional access, omit both predicate and fill_value; never attach a
 redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,
@@ -819,6 +839,22 @@ regions, instances referring to J/C handles, routes with operand slots, partial
 order, sharing, placement, and the closed source-neutral mechanism tags in the
 schema. Never put an operator, combiner, predicate, value, dtype, shape,
 frontend API, source identifier, source fragment, prose, or rule identity in pi.
+
+For every physical loop region that realizes a structured J `loop` through a
+matching C tile slot, emit exactly one pi.iterations relation. The loop_instance
+must anchor that J loop and the tile_instance must anchor that C slot. Use
+`extent_step` when the physical induction space is zero-to-logical-extent with
+the C tile as its step. Use `tile_ordinal` when it is a zero-based unit-step tile
+ordinal whose trip count is the ceiling-divided logical extent. Preserve the
+source realization distinction even when the induction variable is unused.
+An explicit relation may use any role when its C slot is required,
+positive-integer, and attached to the same loop/trip axis; axis ordinal 0 and
+that loop's declared trip.axis x* are equivalent. The reserved roles
+tile_extent and reduction_tile_extent only make a wholly missing relation
+mechanically detectable. A custom or misclassified role does not invalidate
+an explicit relation, but complete omission remains detectable only by Gate1.
+This closed tag never contains a bound expression, numeric value, operator,
+source spelling, or frontend API; do not encode untiled loops or invent a tile.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared

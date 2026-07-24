@@ -12,8 +12,13 @@ import pytest
 from direct_fixtures import make_copy_artifact
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
-from intentir.verify.gate1.model import Gate1Artifact
-from intentir.verify.gate1.orchestrate import canonical_artifact_digest
+from intentir.verify.gate1.compiler import CompileResult
+from intentir.verify.gate1.model import Gate1Artifact, Gate1Status
+from intentir.verify.gate1.orchestrate import (
+    Gate1ArmEvidence,
+    Gate1ExecutionResult,
+    canonical_artifact_digest,
+)
 from intentir.verify.gate1.replay import ReplayGeneration
 from intentir.verify.gate2.model import (
     ExecutionResult,
@@ -648,3 +653,101 @@ def test_terminal_pre_replay_rejection_keeps_stage_and_diagnostic() -> None:
     assert classify_scrc_report(report) is BatchClassification.LIFT_RESPONSE_REJECTED
     assert scrc_attempt_stage_counts(report) == {"lift_response_rejected": 1}
     assert scrc_report_diagnostic(report) == "artifact schema rejected"
+
+
+def _gate1_diagnostic_report(diagnostic: str) -> SCRCRunReport:
+    source_compile = CompileResult(True, ttir="module {}")
+    gate1 = Gate1ExecutionResult(
+        Gate1Status.NO_CLOSURE,
+        "artifact-digest",
+        source_compile,
+        None,
+        Gate1ArmEvidence(
+            "normal", None, None, None, None, diagnostic
+        ),
+        None,
+        0,
+        0,
+    )
+    attempt = CandidateAttemptReport(
+        lift_call=1,
+        formal_round=1,
+        typecheck_status=TypeCheckStatus.PASS,
+        gate1=gate1,
+    )
+    return SCRCRunReport(
+        MainStatus.NO_CLOSURE,
+        (attempt,),
+        None,
+        None,
+        None,
+        _budget(),
+    )
+
+
+def test_source_observer_gap_has_dedicated_batch_and_stage_classification() -> None:
+    report = _gate1_diagnostic_report(
+        "observer unsupported: source TTIR: TTIRParseError: "
+        "multi-block CFG is not supported"
+    )
+
+    assert (
+        classify_scrc_report(report)
+        is BatchClassification.OBSERVER_UNSUPPORTED
+    )
+    assert scrc_attempt_stage_counts(report) == {"observer_unsupported": 1}
+
+
+def test_harness_value_error_remains_harness_invalid() -> None:
+    report = _gate1_diagnostic_report(
+        "harness binding failed: ValueError: schedule differs from C"
+    )
+
+    assert classify_scrc_report(report) is BatchClassification.HARNESS_INVALID
+    assert scrc_attempt_stage_counts(report) == {"harness_invalid": 1}
+
+
+def test_replay_observation_failure_is_not_source_observer_unsupported() -> None:
+    source_compile = CompileResult(True, ttir="module {}")
+    generation = ReplayGeneration(
+        code="replay",
+        function_name="scrc_k0",
+        model="test-model",
+        response_id=None,
+        packet_digest="packet",
+        prompt_digest="prompt",
+    )
+    gate1 = Gate1ExecutionResult(
+        Gate1Status.NO_CLOSURE,
+        "artifact-digest",
+        source_compile,
+        None,
+        Gate1ArmEvidence(
+            "normal",
+            generation,
+            source_compile,
+            None,
+            None,
+            "replay observation failed: TTIRParseError: unsupported region",
+        ),
+        None,
+        1,
+        0,
+    )
+    attempt = CandidateAttemptReport(
+        lift_call=1,
+        formal_round=1,
+        typecheck_status=TypeCheckStatus.PASS,
+        gate1=gate1,
+    )
+    report = SCRCRunReport(
+        MainStatus.NO_CLOSURE,
+        (attempt,),
+        None,
+        None,
+        None,
+        _budget(),
+    )
+
+    assert classify_scrc_report(report) is BatchClassification.NO_CLOSURE
+    assert scrc_attempt_stage_counts(report) == {"gate1_hard_mismatch": 1}

@@ -354,7 +354,7 @@ direct routed use 满足，不要求额外的 identity assignment。若同一 ha
 
 相同原则适用于 structured operator realization。对 canonical binary contraction，在 rank-2、单一
 contracted label、floating tile/dtype/accumulation 均由 public `tl.dot` 支持时，一个锚定该 node 的
-`realize` instance 由当前 `U_f v5` 映射为一个 direct `tl.dot`；不得以 outer-product multiply +
+`realize` instance 由当前 `U_f v6`（继承 v5 的 direct-contraction 合同）映射为一个 direct `tl.dot`；不得以 outer-product multiply +
 `tl.sum` 扩成未声明 stages。若 Source 确有多个 compiler-visible decomposition stage，Lift 应把
 它们完整声明为同一 node 上的多个有序 instances；若不满足 direct `tl.dot` support 条件，`U_f`
 不能强迫该 spelling。这里没有新增 J op、π mechanism 或 Source-specific rule。
@@ -375,6 +375,50 @@ update formula、yield 或 transpose/orientation。把 recurrence 压成最终 g
 之间的 dependent equality，π/U_f 都不能读取 Harness 的冻结 valuation 补出该关系，Replay packet
 也不应携带 per-candidate pad-discharge fact。当前 `replay-input.v1` 不提供这种旁路；应由
 下一次 Lift 修正 J，而不是在 Replay consumer 中建立小型 theorem prover。
+
+### 4.3.1 物理迭代基底 relation
+
+Linear 反例表明，structured J loop 与 attached C tile 仍不足以唯一决定 Source realization：
+
+```text
+extent_step:  lower=0, upper=Trip(J.loop),                 step=Tile(C.slot)
+tile_ordinal: lower=0, upper=ceil_div(Trip(J.loop),Tile), step=1
+```
+
+两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。旧 π 没有该
+区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。当前 `artifact.v3` 因此要求：
+
+```text
+pi.iterations[*] = {
+  region,
+  loop_instance,
+  tile_instance,
+  induction_basis: extent_step | tile_ordinal
+}
+```
+
+entry 只引用已声明 region/instance。`loop_instance` 锚定 J structured loop；`tile_instance` 锚定
+required positive-integer C tile slot，且该 slot 的 `subject_ref/axis_ref` 必须指向同一 loop/trip axis。
+这里 axis 可以写成该 loop 的 canonical ordinal `0`，也可以写成显式 `trip.axis=x*`；二者都是
+`AxisRefs_v1` 对同一 trip axis 的 closed spelling。显式 iteration relation 的合法性不依赖 C slot
+role：custom role 只要满足同一 dependent type 也可被引用。
+两个 instance 必须在 relation region 或其 lexical ancestor 可见，relation region 必须
+`placement=loop`。wire 不包含 lower/upper/step 字段、公式、concrete tile、Source 文本、operator 或
+frontend API；上述两种 basis 的 denotation 是全局协议，而非 Triton 私有约定。各 `U_f` 只能把同一
+relation 映射到自己的公开构造。
+
+parser 对每个 declared physical region 至多一条 relation。若 Source 确有多个 physical loop region
+复用同一 logical loop/tile pair，Lift 可以声明多个 region 与多条 relation。`tile_extent` 与
+`reduction_tile_extent` 是两个触发机械 missing-totality 的保留 role：只有 attachment 闭合且使用这
+两个 role 的 C-tiled J-loop/slot pair，`typecheck.v7` 才能在 relation 完全缺失时要求至少一条合法
+relation；没有 C tile 的 loop 不必制造 relation。custom role 不使已经显式写出的 relation 非法，但
+若 Lift 误标 role 并完全遗漏 relation，fixed checker 没有 missing-totality trigger。一个 Source
+region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 handle。这两类 completeness 缺口仍
+由 Lift 的完整性责任与 Gate1 的 Source/Replay topology comparison 检出，不能把局部 totality 写成
+对所有 Source physical regions 的形式证明。
+
+该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
+`pi.iterations` 限制或选择自己的 `Impl(J)` lowering/search。
 
 ### 4.4 对 semantic labels 参数化
 
@@ -708,15 +752,21 @@ Replay LLM 应遵守以下过程合同：
 5. 按 routes 和 operand slots 连接 producer/consumer；
 6. 按 sharing 复用 producer，不得擅自复制或折叠；
 7. 按 order 保留必要偏序；
-8. 按 representation refinements 保留 source materialization/placement；
-9. 遇到 J semantic ref 时从 J 查询当前语义 label；
-10. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-11. 输出完整、参数化、source-blind frontend source；
-12. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+8. 按 `iterations` 保留每个已声明 physical loop region 的 induction basis；
+9. 按 representation refinements 保留 source materialization/placement；
+10. 遇到 J semantic ref 时从 J 查询当前语义 label；
+11. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
+12. 输出完整、参数化、source-blind frontend source；
+13. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v5` 与 `intentir.lift-knowledge.v14`；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v6` 与 `intentir.lift-knowledge.v15`；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
+
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v3 / intentir.scrc.decode.v3`；v3 相对 v2 只把
+上述 `pi.iterations` 变为 required closed field。v1/v2 历史 artifact 保持原始序列化与 digest，禁止
+静默附加空数组或重标 v3。DYT 与 SwiGLU 的既有闭合证据继续按原 receipt 成立，不因版本升级重跑，
+也不得被描述为 fresh v3 证书。
 
 固定代码仍只做：
 
@@ -757,9 +807,17 @@ feature belongs to
 当前 Triton observer 将 `tt.load` 的 closed `cacheModifier {ca,cg,cv}` 与 `tt.store` 的
 `{wb,cg,cs,wt}` 归为 `NormalizeAway`：这些值是 target cache-policy hint，不改变 J
 denotation、memory effect、predicate/fill、address/dataflow 或 transfer topology，且 J/C/π 都不拥有
-frontend cache spelling。该规则统一属于 `triton-ttir-3.6-gate1-v4`；未知或 load/store 方向不合法的 policy、eviction、
+frontend cache spelling。该规则自 `triton-ttir-3.6-gate1-v4` 起成立；未知或 load/store 方向不合法的 policy、eviction、
 mask、fill、type 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend
 API mechanism，也不把 cache hint 当作 J 语义。
+
+当前 active `triton-ttir-3.6-gate1-v5` 再把 public entry 可达、静态已知、structured 且无环的
+`tt.call` graph 展开到同一 observation：formal-to-actual、helper return SSA、op/def-use、effect 与
+已支持的 structured region 都继续成为 hard evidence，π 仍不保存 helper 名或 frontend call API。
+动态/未知 callee、递归 cycle、call signature/return 不一致、reachable arbitrary multi-block CFG 或
+未支持 control/region 形态使 observer fail closed；Source 侧缺口由 batch v3 报
+`observer_unsupported`，不能伪装成 π 缺字段、Gate1 hard mismatch 或有界 `NO_CLOSURE`。这只是当前
+compiler observer 的实现合同，不是 call graph/TTIR observer 完备性的形式证明。
 
 完整性目标是：
 
@@ -1077,7 +1135,7 @@ evaluation 的 20 条 `rule_code/path`；observed value、候选 patch、Source/
 numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
 生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+活动 fresh-run 使用 `typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A value typing total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
 才能被消费。v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行
 canonical fail-early，拒绝别名、缺失/非法 canonical attrs 及可机械判定的 axis/rank/shape
@@ -1086,9 +1144,41 @@ realization authorization subject 或 refinement carrier。v6 又对可识别的
 logical-domain profile 机械检查 direct access index、padding predicate、`boundary.domains` 与 typed
 tensor extent 的闭合；只读 checker 不从 π topology、C、Source、runtime/hidden input 或 shape
 补缺失 relation，也不把 general affine/交叉轴 logical predicate 因 RefEval 能力不足而判为非法。
-这些拒绝不会给 π、CandidateCheck 或
-elaborator 增加 artifact 构造权。Gate2 scalar consumer 的新增能力独立标为
-`j_scalar_cpu_mlir_v8`，既有 typecheck.v3/v4/v5、`j_scalar_cpu_mlir_v7` receipt 与 Softmax/RMS verdict 均不追认。
+v7 又只对 rank-0 signature logical input 增加 source-free liveness：绑定 J input 的 `logical_ref`
+必须进入 observable output dependency，或被显式 boundary/shape semantics 使用；identity/direct-output
+和合法 boundary-only 路径保留，dead node 或 π route 不冒充 logical contribution。仅用于
+representation/address 的 runtime scalar 必须显式取 `logical_ref=null`，不创建 J input、不进入 J
+semantics，但其 p* carrier 可以由 π realization 引用。checker 不从名称/位置推断，不自动解绑或
+修补；一般 tensor liveness 也不在 v7 中臆测。对应 Lift knowledge 为 v15。上述拒绝不会给 π、CandidateCheck 或
+elaborator 增加 artifact 构造权。
+
+上述 null-carrier 只允许 runtime scalar。`bound_constexpr_values` 必须是逻辑语义 constexpr：logical
+data/predicate/result 绑定 dtype-compatible rank-0 J input，integral extent-only 绑定 declared `x*`；
+只影响 layout/tile/stage 的 constexpr 归入 C。representation-only bound constexpr 不允许以
+`logical_ref=null` 留成 π-only carrier；无法归入 J 或 C 的 case 是 Harness invalid，而不是由 π
+补语义。
+
+v7 同时把 `padded_mean_count_unproven` 作为与 π 无关的 J-only necessary condition，但只在以下
+closed profile 触发：direct load predicate 不含 logical guard；index/domain 是完整零起点矩形；每个
+predicate bound 与同轴 typed tensor extent 相等；该 masked-axis provenance 经已建模 closed
+pointwise/broadcast 位置传播后被 `reduce(mean)` 实际消去。`masked_contribution=0` 只闭合分子，
+当前 J/B 没有 logical valid-count/denominator contract；π route 也不能补这个语义。dense/no-predicate
+mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位于未消去轴或未知 op 阻断
+证明时不触发 TypeCheck；guard/cross-axis/unknown-op 由 functional consumer 明确 unsupported。
+checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
+`reduce(sum)` 与 explicit division。
+
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v9`，共享
+`intentir.j-functional-boundary.v2`：v9 继承 v8 的 node-less input load，并按 J 自身的完整
+logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
+relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
+logical input，也不读取 Source、C、runtime/hidden input；缺失 relation，以及上述窄 rectangular
+provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract 时继续
+unsupported。既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8` receipt 与 Softmax/RMS verdict
+均不追认。
+对 guard-bearing access，consumer 当前不尝试从 guard 名称恢复极性或由 operand membership 推断控制
+依赖，而是一律 unsupported；已有 masked provenance 进入 contraction/其他未建模 op 时也在入口
+fail closed。这些是 Gate2/后端 projection 能力边界，不由 π 补证，也不扩大 TypeCheck legality。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

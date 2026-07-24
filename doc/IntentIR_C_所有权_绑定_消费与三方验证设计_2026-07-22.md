@@ -211,7 +211,7 @@ CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也
 CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
-当前新 fresh-run 合同使用 `typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+当前新 fresh-run 合同使用 `typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
 具有 closed total type，`map_binary` 默认严格服从 NumPy broadcast，非 trailing 轴只能消费
 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation。v5 新增已知 `reduce` 与 binary
@@ -229,9 +229,47 @@ value 或 hidden input 补造缺失 domain。该 rule 只拒绝此封闭 profile
 affine/交叉轴 logical predicate 仍是合法 J，不因当前 RefEval 尚未实现就被 TypeCheck 一概禁止。
 合法 masked/padded access 的 predicate、fill 与一一对应 effect 保持原样，checker 不删除、不改写。
 
-Gate2 scalar RefEval
-仍以 `j_scalar_cpu_mlir_v8` 标识唯一 node-less logical-input load 消费能力。既有 typecheck.v3/v4、
-v5、`j_scalar_cpu_mlir_v7` receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
+v7 再收紧一个可机械决定且 source-free 的 rank-0 logical-input liveness 合同。凡 signature 通过
+`logical_ref=t*` 声明的 rank-0 J input，必须进入某个 observable output 的反向 value-dependency
+闭包，或被 J 自身的显式 boundary/shape semantic relation 使用；direct identity/`returns`/
+`output_mapping` 路径与合法 boundary-only guard 均计为使用，dead A node 或仅在 π 中 route 不计。
+当前规则刻意不推广到一般 tensor liveness，以免把尚未证明的全图性质变成拒绝条件。
+
+同一 v7 还加入独立的 `padded_mean_count_unproven` 必要条件，但只在无 logical guard 的 predicated
+direct load、完整零起点矩形 index/domain、predicate bound 与同轴 typed tensor extent 相等，且该
+masked axis 经已建模 closed pointwise/broadcast 位置传播后确由 `reduce(mean)` 消去时拒绝。零
+`masked_contribution` 只能闭合分子，当前 B 没有 logical valid-count/denominator contract，因而不能
+证明 mean 的除数。dense/unpredicated mean、guard-bearing 或 cross-axis/general predicate、
+domain/extent 不闭合、掩码位于该 mean 未消去轴或传播进入未知 op 而无法证明者不触发 TypeCheck；
+guard/cross-axis/unknown-op 留在 consumer boundary 并明确 unsupported。checker 不读取 Source/C/π、
+不把 `mean` 改写成别的图；若 Source 本来是 masked sum 后显式除以逻辑计数，Lift 必须仍完整生成
+`reduce(sum) + explicit div` 两阶段。
+
+只有明确的 `kind=scalar, mode=value, rank=0, logical_ref=null` 才表示 public-dtype
+representation-only ABI carrier：它不创建 J input，不得参与 J output/boundary/shape semantics，但可由
+π 引用以保留 address/representation realization。分类由 Lift 根据 Source use 完整提出，checker
+不读参数名/位置，不从 Source 猜分类，也不自动清空 `logical_ref`、删除 input 或重编号 tensor。
+因此 v6/v14 及更早 receipt 仍保持原 verdict，必须以 v7/v15 fresh run 得到新结论。
+
+该 wire form 只允许 runtime scalar；`bound_constexpr_values` 不是另一种 representation-only carrier。
+bound constexpr 必须具有 J logical denotation：logical data/predicate/result 绑定 dtype-compatible
+rank-0 J input，integral extent-only 绑定 declared `x*`。只影响 layout/tile/stage 等 implementation
+selection 的 constexpr 应由 Harness 分类为 C slot；既无 J denotation、又不能合法归入 C 的 case
+是 Harness invalid，不能把 constexpr 以 `logical_ref=null` 留在 π-only topology 中。
+
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v9`，shared functional projection 使用
+`intentir.j-functional-boundary.v2`。v9 完整继承 v8 的唯一 node-less logical-input load 能力，并新增
+严格 J-only 的通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
+每个 logical reduction 的唯一中性 `masked_contribution` contract，以及 pointwise operand 的 closed
+broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
+不再被旧 single-sum topology 人为拒绝。projector 不读取 Source、C、π、runtime/hidden input，也不
+生成 padding 公式；上述窄 rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract、
+缺 domain/fill/reduction/broadcast、update/alias 等继续 fail closed。
+此外，guard-bearing access 当前一律属于 consumer unsupported（避免折叠 `flag`/`not flag` 或把 dead
+operand membership 当控制证明）；masked provenance 进入 contraction/其他未建模 op 时也在该 op
+处拒绝，不能静默丢弃后放行下游 mean。这两项不把合法 J 改判为 TypeCheck 非法。
+既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8` receipt 及 Softmax/RMS 历史 verdict 保持原
+解释，不由 v9 追认或重判。
 
 ### 2.6 显式语义所有权投影
 
@@ -350,7 +388,7 @@ name, kind, role, value_type, required
 artifact 已出现两个 `role=tile_extent` 对应不同结构位置的情况；production backend 又不能读取
 Source/π，因此 role-only 不能一般性消歧。
 
-下一 artifact/schema version 在上述五个字段之外增加两个可选 closed attachment：
+`artifact.v2` 已在上述五个字段之外增加两个可选 closed attachment，当前 `artifact.v3` 原样保留：
 
 ```text
 subject_ref : optional member of CSubject_v1(J)
@@ -369,10 +407,18 @@ axis。它们不允许引用 π/C/source handle、realization authorization 或�
 也不授权某个 implementation family、参数值或 transformation。全局 compiler prior 可以省略
 subject；局部 prior 缺失或含混时 backend 必须安全忽略，不能从 Source/π 猜测。
 
+`tile_extent` 与 `reduction_tile_extent` 是当前 closed role vocabulary 中用于 physical-loop
+missing-totality 的两个保留值；它们不是判断一个已经显式声明的 `pi.iterations` relation 是否合法
+的 hidden type tag。显式 relation 可以引用 custom-role slot，只要该 slot 是 required positive
+integer、attachment 指向同一 structured J loop/trip axis 且满足其他 dependent checks。反过来，
+TypeCheck 只有在保留 role 的 attachment-closed pair 完全缺 relation 时才能机械报 missing；custom
+role 的误标/遗漏仍靠 Gate1 topology 暴露。
+
 `AxisRefs_v1` 是 closed dependent domain，不由 consumer 自行解释：
 
 - `reduce n*`：该 A node 的显式 reduction input-axis ordinals；
-- `loop n*`：其唯一 trip axis 的 ordinal `0`，以及显式 `trip.axis=x*`；
+- `loop n*`：其唯一 trip axis 的 ordinal `0`，以及显式 `trip.axis=x*`；两种 spelling 等价地指向
+  同一 trip axis，均可供 C attachment 与 iteration dependent check 使用；
 - `domain d*`：canonical ContractExpr parser 给出的 ordered logical-axis ordinals；若某一轴显式绑定
   declared symbolic dimension `x*`，该 `x*` 也是同一轴的合法 ref；
 - `access a*`：canonical structured index vector 的 axis ordinals；若对应 logical extent 显式为
@@ -384,7 +430,15 @@ subject；局部 prior 缺失或含混时 backend 必须安全忽略，不能从
 typed relation 显式关联，不能从 shape、role、Source、π 或“唯一可能轴”猜测。TypeCheck judgement
 因此精确写成 `axis_ref in AxisRefs_v1(J,subject_ref)`；集合为空、越界或无法唯一解析均拒绝。
 
-下一版本示意（假设 `n3` 是显式 `axes=[3]` 的 reduce node）：
+物理 loop 的 induction basis 不属于 C。即使一个 `tile_extent/reduction_tile_extent` slot 已通过
+`subject_ref/axis_ref` 无歧义地绑定到 structured J loop，C 仍只回答 tile 选择，不回答 Source 是
+`[0,Trip)`、step=Tile 的 extent loop，还是 `[0,ceil_div(Trip,Tile))`、step=1 的 ordinal loop。
+该 source-realization 差异由 `artifact.v3` 的 `pi.iterations` 以 closed
+`extent_step|tile_ordinal` relation 表达；C 不增加 basis、bound、formula 或 frontend 字段。
+production backend 仍只消费 J+C，并在 `Impl(J)` 内自行选择合法 lowering；它不得读取 π 来复刻
+Source basis。因而这次扩展没有污染 C，也没有把 SCRC fidelity constraint 变成 production strategy。
+
+当前 wire 示意（假设 `n3` 是显式 `axes=[3]` 的 reduce node）：
 
 ```json
 {

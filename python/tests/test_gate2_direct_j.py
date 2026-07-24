@@ -7,15 +7,20 @@ import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.canonical_j import CanonicalJError, j_elaboration
-from intentir.ir.model import IntentReturn
+from intentir.ir.functional_boundary import functional_reduction_padding_issues
+from intentir.ir.model import IntentFunction, IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
+    BroadcastSpec,
     EffectKind,
     EffectSpec,
     OutputMapping,
+    ParameterKind,
     ParameterMode,
+    ReductionBoundary,
+    SignatureParameter,
 )
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Runner
@@ -135,7 +140,7 @@ def test_extrema_boundary_uses_json_safe_infinity_sentinel() -> None:
     assert _validate_complete_boundary(artifact.j)
 
     reduction.identity = -1.0
-    with pytest.raises(NotImplementedError, match="NEG_INF"):
+    with pytest.raises(NotImplementedError, match="neutral 'max' identity"):
         _validate_complete_boundary(artifact.j)
 
 
@@ -184,6 +189,52 @@ def _make_masked_sum_reduction_artifact():
     return artifact
 
 
+def _add_logical_guard(artifact, *, predicate: str, live: bool) -> None:
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"].append({"name": "flag", "dtype": "i1", "shape": []})
+    if live:
+        payload["body"].append(
+            {
+                "id": "n2",
+                "op": "select",
+                "result": "v2",
+                "operands": ["flag", "v1", "v1"],
+                "attrs": {},
+                "type": {"dtype": "f32", "shape": ["x0"]},
+            }
+        )
+        payload["returns"] = [{"output": "t1", "value": "v2"}]
+        artifact.j.boundary.accesses[1].node_ref = "n2"
+        artifact.j.boundary.effects[1].node_ref = "n2"
+        artifact.j.boundary.output_mappings = [
+            OutputMapping("t1", "v2", "n2")
+        ]
+    else:
+        payload["body"].append(
+            {
+                "id": "n2",
+                "op": "map_unary",
+                "result": "dead_guard",
+                "operands": ["flag"],
+                "attrs": {"fn": "identity"},
+                "type": {"dtype": "i1", "shape": []},
+            }
+        )
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.node_ids["n2"] = "body[2]"
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i1",
+            0,
+            logical_ref="flag",
+        )
+    )
+    artifact.j.boundary.accesses[0].predicate = predicate
+
+
 def test_scalar_e_j_consumes_masked_sum_reduction_padding() -> None:
     artifact = _make_masked_sum_reduction_artifact()
     spec = ScalarLoweringSpec.create(
@@ -202,35 +253,67 @@ def test_scalar_e_j_consumes_masked_sum_reduction_padding() -> None:
     )
     assert (
         result.metadata["boundary_profile"]
-        == "logical_domain_reduction_padding_v1"
+        == "logical_domain_reduction_padding_v2"
     )
     assert result.metadata["predicated_access_count"] == 1
     assert result.metadata["erased_fill_count"] == 1
 
 
 @pytest.mark.parametrize(
+    "predicate",
+    ["flag and i1 < x1", "not flag and i1 < x1"],
+)
+def test_scalar_e_j_rejects_guard_bearing_access_predicate(predicate) -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    _add_logical_guard(artifact, predicate=predicate, live=True)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="does not implement guard-bearing access predicates",
+    ):
+        _validate_complete_boundary(artifact.j)
+
+
+def test_scalar_e_j_rejects_guard_with_only_dead_dataflow_membership() -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    _add_logical_guard(
+        artifact,
+        predicate="flag and i1 < x1",
+        live=False,
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="does not implement guard-bearing access predicates",
+    ):
+        _validate_complete_boundary(artifact.j)
+
+
+@pytest.mark.parametrize(
     ("mutation", "expected"),
     [
-        ("missing_outer_domain", "full domain for every input axis"),
-        ("nonzero_fill", "explicit zero masked-load fill"),
-        ("wrong_predicate_axis", "does not bind the reduced axis"),
-        ("predicated_store", "unpredicated output store"),
+        ("missing_outer_domain", "complete logical domain"),
+        ("missing_fill", "explicit masked-load fill"),
+        ("wrong_predicate_axis", "same predicate"),
+        ("predicated_store", "same predicate"),
         ("wrong_store_axis", "differs from J tensor extent"),
-        ("nonzero_identity", "explicit neutral identity=0"),
-        ("nonzero_masked_contribution", "explicit neutral masked_contribution=0"),
-        ("wrong_tile_axis", "single physical tile axis 0"),
-        ("non_sum", "currently supports sum only"),
-        ("dead_prefix", "every prefix node to feed reduction"),
-        ("non_zero_stable_prefix", "zero-stable identity/mul prefix"),
-        ("missing_output_mapping", "explicit reduction output mapping"),
+        ("nonzero_identity", "neutral 'sum' identity"),
+        (
+            "nonzero_masked_contribution",
+            "neutral 'sum' masked_contribution",
+        ),
+        ("non_sum", "neutral 'max' identity"),
+        ("padded_mean", "physical denominator"),
+        ("missing_output_mapping", "destination relation is incomplete"),
+        ("missing_reduction_contract", "contract for every logical reduction"),
     ],
 )
 def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None:
     artifact = _make_masked_sum_reduction_artifact()
     if mutation == "missing_outer_domain":
         del artifact.j.boundary.domains["d0"]
-    elif mutation == "nonzero_fill":
-        artifact.j.boundary.accesses[0].fill_value = 1.0
+    elif mutation == "missing_fill":
+        artifact.j.boundary.accesses[0].fill_value = None
     elif mutation == "wrong_predicate_axis":
         artifact.j.boundary.accesses[0].predicate = "i0 < x0"
     elif mutation == "predicated_store":
@@ -241,16 +324,14 @@ def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None
         artifact.j.boundary.reductions[0].identity = 1.0
     elif mutation == "nonzero_masked_contribution":
         artifact.j.boundary.reductions[0].masked_contribution = 1.0
-    elif mutation == "wrong_tile_axis":
-        artifact.j.boundary.reductions[0].tile_axis = 1
     elif mutation == "non_sum":
         artifact.j.intent.body[1].attrs["fn"] = "max"
-    elif mutation == "dead_prefix":
-        artifact.j.intent.body[1].operands = ["t0"]
-    elif mutation == "non_zero_stable_prefix":
-        artifact.j.intent.body[0].attrs["fn"] = "add"
+    elif mutation == "padded_mean":
+        artifact.j.intent.body[1].attrs["fn"] = "mean"
     elif mutation == "missing_output_mapping":
         artifact.j.boundary.output_mappings = []
+    elif mutation == "missing_reduction_contract":
+        artifact.j.boundary.reductions = []
     else:  # pragma: no cover - parametrization is closed above
         raise AssertionError(mutation)
     spec = ScalarLoweringSpec.create(
@@ -262,6 +343,242 @@ def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None
 
     result = ScalarLoweringRunner().run(
         spec, {"input": np.ones((2, 4), dtype=np.float32)}
+    )
+
+    assert not result.ok
+    assert expected in (result.error or "")
+
+
+def test_padded_mean_issue_is_j_only_and_does_not_ban_dense_mean() -> None:
+    padded = _make_masked_sum_reduction_artifact()
+    padded.j.intent.body[1].attrs["fn"] = "mean"
+
+    issues = functional_reduction_padding_issues(padded.j)
+
+    assert len(issues) == 1
+    assert issues[0].path == "j.intent.intent_function.body[1].attrs.fn"
+    assert issues[0].ref == "n1"
+    assert "logical valid count" in issues[0].detail
+
+    dense = make_reduce_artifact(explicit_accesses=False)
+    dense.j.intent.body[1].attrs["fn"] = "mean"
+    assert functional_reduction_padding_issues(dense.j) == ()
+
+
+def test_scalar_e_j_rejects_masked_provenance_at_unmodeled_contraction() -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    contraction = artifact.j.intent.body[0]
+    contraction.op = "contraction"
+    contraction.operands = ["t0", "t0"]
+    contraction.attrs = {"subscripts": "mk,nk->mn"}
+    contraction.type = {"dtype": "f32", "shape": ["x0", "x0"]}
+    mean = artifact.j.intent.body[1]
+    mean.attrs["fn"] = "mean"
+
+    # TypeCheck's narrow necessary condition does not guess through an
+    # unmodeled op, while the functional consumer must fail at that boundary.
+    assert functional_reduction_padding_issues(artifact.j) == ()
+    with pytest.raises(
+        NotImplementedError,
+        match="masked padding provenance through unmodeled op 'contraction'",
+    ):
+        _validate_complete_boundary(artifact.j)
+
+
+def _make_masked_softmax_artifact():
+    artifact = make_reduce_artifact(explicit_accesses=False)
+    artifact.j.intent = IntentFunction.from_json(
+        {
+            "name": "scrc_j0",
+            "inputs": [
+                {"name": "t0", "dtype": "f32", "shape": [2, "x0"]},
+            ],
+            "outputs": [
+                {"name": "t1", "dtype": "f32", "shape": [2, "x0"]},
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "reduce",
+                    "result": "v0",
+                    "operands": ["t0"],
+                    "attrs": {
+                        "fn": "max",
+                        "axes": [1],
+                        "assoc": "float_nondeterministic",
+                    },
+                    "type": {"dtype": "f32", "shape": [2]},
+                },
+                {
+                    "id": "n1",
+                    "op": "map_binary",
+                    "result": "v1",
+                    "operands": ["t0", "v0"],
+                    "attrs": {"fn": "sub"},
+                    "type": {"dtype": "f32", "shape": [2, "x0"]},
+                },
+                {
+                    "id": "n2",
+                    "op": "map_unary",
+                    "result": "v2",
+                    "operands": ["v1"],
+                    "attrs": {"fn": "exp"},
+                    "type": {"dtype": "f32", "shape": [2, "x0"]},
+                },
+                {
+                    "id": "n3",
+                    "op": "reduce",
+                    "result": "v3",
+                    "operands": ["v2"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [1],
+                        "assoc": "float_nondeterministic",
+                    },
+                    "type": {"dtype": "f32", "shape": [2]},
+                },
+                {
+                    "id": "n4",
+                    "op": "map_binary",
+                    "result": "t1",
+                    "operands": ["v2", "v3"],
+                    "attrs": {"fn": "div"},
+                    "type": {"dtype": "f32", "shape": [2, "x0"]},
+                },
+            ],
+        }
+    )
+    artifact.j.node_ids = {
+        "n0": "body[0]",
+        "n1": "body[1]",
+        "n2": "body[2]",
+        "n3": "body[3]",
+        "n4": "body[4]",
+    }
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.signature.parameters[2].logical_ref = "x0"
+    artifact.j.boundary.domains = {
+        "d0": "0 <= i0 and i0 < 2",
+        "d1": "0 <= i1 and i1 < x0",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0",
+            AccessKind.LOAD,
+            "t0",
+            predicate="i1 < x0",
+            fill_value="-inf",
+            index_expression="[i0, i1]",
+        ),
+        BoundaryAccess(
+            "a1",
+            AccessKind.STORE,
+            "t1",
+            predicate="i1 < x0",
+            node_ref="n4",
+            index_expression="[i0, i1]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", effect_id="e0", access_ref="a0"),
+        EffectSpec(
+            EffectKind.WRITE,
+            "t1",
+            "n4",
+            "e1",
+            "a1",
+        ),
+    ]
+    artifact.j.boundary.broadcasts = [
+        BroadcastSpec("n1", "v0", [1]),
+        BroadcastSpec("n4", "v3", [1]),
+    ]
+    artifact.j.boundary.reductions = [
+        ReductionBoundary("n0", 0, "-inf", "-inf"),
+        ReductionBoundary("n3", 0, 0, 0),
+    ]
+    artifact.j.boundary.output_mappings = []
+    return artifact
+
+
+def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
+    artifact = _make_masked_softmax_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.asarray(
+        [[1.0, 2.0, -1.0, 0.5], [0.0, 3.0, 1.5, -2.0]],
+        dtype=np.float32,
+    )
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    shifted = value - np.max(value, axis=1, keepdims=True)
+    expected = np.exp(shifted)
+    expected /= np.sum(expected, axis=1, keepdims=True)
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v9"
+    assert (
+        result.metadata["boundary_profile"]
+        == "logical_domain_reduction_padding_v2"
+    )
+    assert result.metadata["predicated_access_count"] == 2
+    assert result.metadata["erased_fill_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing_domain", "differs from the full logical domain"),
+        ("missing_fill", "explicit masked-load fill"),
+        ("missing_broadcast", "incompatible NumPy broadcast shapes"),
+        ("wrong_broadcast", "cannot align with consumer shape"),
+        ("missing_reduction", "contract for every logical reduction"),
+        ("nonneutral_max", "neutral 'max' masked_contribution"),
+    ],
+)
+def test_scalar_e_j_masked_softmax_graph_mutations_fail_closed(
+    mutation: str,
+    expected: str,
+) -> None:
+    artifact = _make_masked_softmax_artifact()
+    if mutation == "missing_domain":
+        del artifact.j.boundary.domains["d1"]
+    elif mutation == "missing_fill":
+        artifact.j.boundary.accesses[0].fill_value = None
+    elif mutation == "missing_broadcast":
+        artifact.j.boundary.broadcasts.pop(0)
+    elif mutation == "wrong_broadcast":
+        artifact.j.boundary.broadcasts[0].axes = [0]
+    elif mutation == "missing_reduction":
+        artifact.j.boundary.reductions.pop()
+    elif mutation == "nonneutral_max":
+        artifact.j.boundary.reductions[0].masked_contribution = 0
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+    if mutation in {"missing_broadcast", "wrong_broadcast"}:
+        with pytest.raises(CanonicalJError, match=expected):
+            ScalarLoweringSpec.create(
+                artifact.j,
+                dims={"x0": 4},
+                input_bindings={"t0": "input"},
+                output_bindings={"t1": "output"},
+            )
+        return
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"input": np.ones((2, 4), dtype=np.float32)},
     )
 
     assert not result.ok
@@ -390,7 +707,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v8"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v9"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 

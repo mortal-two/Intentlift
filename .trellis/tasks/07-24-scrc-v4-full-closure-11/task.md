@@ -9,10 +9,11 @@
 
 ## 目标
 
-使用 `artifact.v2 / decode.v2 / typecheck.v6 / candidate-check.v1`、
-`j_scalar_cpu_mlir_v8` 与 Gate1 observer v4，对 active registry 的 28 个 Kernel 建立各自独立的
-fresh accepted `(J,C,π)`、Replay、Gate1、Gate2 与预算证据。执行必须真正支持多个语义族
-wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
+使用 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1`、
+`j_scalar_cpu_mlir_v9` 与 Gate1 observer v5，为尚未认证的 26 个 Kernel 建立各自独立的 fresh
+accepted `(J,C,π)`、Replay、Gate1、Gate2 与预算证据；active registry 的最终 28/28 覆盖由这 26 份
+Task 11 evidence 加上 DYT、SwiGLU 两份原版本独立证书组成，后二者不冒充 fresh v3。执行必须真正
+支持多个语义族 wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
 
 稳定 J corpus 完成后，production backend B0/B1 作为独立任务消费这些 J；本任务不要求每闭合一个
 Kernel 就紧邻实现其 backend。
@@ -26,13 +27,17 @@ Kernel 就紧邻实现其 backend。
    valuation、hidden Gate2 input 和 Harness mutable state 都是 case-local。
 3. 横向覆盖优先于围绕一个 Kernel 无限重试。每个执行波至少覆盖多个语义族；通用缺口修复后才
    fresh rerun 受影响的 case。
-4. 历史 v3/v7 artifact 只作诊断输入；v4/v8 不静默追认或重判旧 verdict。
+4. 所有历史 artifact/receipt 只按其落盘版本解释；后续 wire、TypeCheck、RefEval 或 observer 升级
+   不静默追认、改写或重判旧 verdict。
 5. 一个 case 的 infrastructure failure、NO_CLOSURE 或 unsupported 不取消其他 case，也不改变其他
    case 的证书状态。
 
 ## 并发合同
 
-当前 outer batch protocol 为 `intentir.scrc.batch.v2`。
+当前 outer batch protocol 为 `intentir.scrc.batch.v3`。v3 只新增
+`observer_unsupported` terminal classification，使固定 Source observer 的能力缺口不再被误记为
+`harness_invalid`、Replay failure 或一般 `no_closure`；调度、winner、Gate2 barrier 与 evidence
+隔离合同不变。历史 batch.v2 report 保持原 protocol/verdict。
 
 设：
 
@@ -91,7 +96,9 @@ heartbeat 异常都不能改变 verdict；`--no-progress` 只关闭旁路。
 
 ### P0 当前实现/测试 checkpoint（2026-07-24；不是 Task 11 完成标记）
 
-- batch report 已使用 `intentir.scrc.batch.v2`，并携带 `case_workers/candidates/max_branch_workers/gate2_workers`；
+- 该 2026-07-24 checkpoint 当时使用 `intentir.scrc.batch.v2`，并携带
+  `case_workers/candidates/max_branch_workers/gate2_workers`；当前 live protocol 已按前述窄升 v3，
+  历史 report 不回写；
 - live CLI 已有显式重复 `--case`/`--tier` 选择、仓库外默认 evidence root、`W*B<=G` fail-closed
   校验、case-level bounded worker pool 与独立 Gate2 semaphore；
 - case/branch evidence 已使用原子目录分配，worker 异常收敛为 case-local
@@ -104,8 +111,8 @@ heartbeat 异常都不能改变 verdict；`--no-progress` 只关闭旁路。
 - P0 定向回归命令
   `pytest -q python/tests/test_scrc_batch.py python/tests/test_scrc_batch_cli.py python/tests/test_scrc_workload_run.py`
   当前结果为 `42 passed`；
-- 该 checkpoint 尚未产生 Task 11 的 28/28 fresh `SCRC_CERTIFIED` evidence，因此 Task 11 继续保持
-  活跃，不能归档或标记完成。
+- 该 checkpoint 尚未产生 Task 11 所需的 26 份 fresh `SCRC_CERTIFIED` evidence，也不能与 DYT、
+  SwiGLU 两份原版本证书合成最终 28/28 覆盖，因此 Task 11 继续保持活跃，不能归档或标记完成。
 
 ## Phase P1：横向 canary 与 B1 terminal checkpoint
 
@@ -164,7 +171,7 @@ pointer-carrier dataflow 丢失。通用修复已形成 `public_frontend_context
 
 B1 使用六个显式 `--case`、`W=6,B=1,G=6,G2=1`、MiniSWE xhigh 与 `--skip-masked-j`。该进程在
 `typecheck.v4 / RefEval v8 / public_frontend_context_v3 / intentir.lift-knowledge.v11` receipt 下启动，
-不是当前 `typecheck.v6 / U_f v5 / replay-input.v1 / lift-knowledge.v14` 结果。六个 case-local run 均已
+不是当前 `typecheck.v7 / U_f v6 / replay-input.v1 / lift-knowledge.v15` 结果。六个 case-local run 均已
 写出 terminal `report.json` 与 `SUMMARY.md`；outer CLI 正常终止并写出 aggregate report
 `/tmp/intentir-scrc-task11/wave-20260724-six-v4-v8-ufv3-xhigh-01-report.json`（进程 exit 2 只反映该批次
 存在非通过分类，不表示 evidence 中断）。`B=1` 的失败只表示本次诊断宽度，不能写成
@@ -182,8 +189,8 @@ B1 使用六个显式 `--case`、`W=6,B=1,G=6,G2=1`、MiniSWE xhigh 与 `--skip-
 | 21 `high_performance:flash_attn.flash_attn_triton._bwd_kernel` | `lift_response_rejected` | 3 个 Lift invocation 均未提交可接受 artifact；TypeCheck/Replay/Gate1/Gate2 均 0，`flash_attn_flash_attn_triton_bwd_kernel/run-001/report.json` |
 | 22 `high_performance:flash_attn.flash_attn_triton._bwd_preprocess_do_o_dot` | `no_closure` | 1 次 pre-Replay rejection 后 3 个 TypeCheck PASS formal rounds，`flash_attn_flash_attn_triton_bwd_preprocess_do_o_dot/run-001/report.json` |
 
-因此 B1 只回答旧 receipt 下的横向 failure classes。凡要对当前 `typecheck.v6 / U_f v5` 作结论，必须
-使用 v14 knowledge 重新 fresh Lift/Replay；不得用 fixed recheck 或新 checker 追认 B1 artifact。
+因此 B1 只回答旧 receipt 下的横向 failure classes。凡要对当前 `typecheck.v7 / U_f v6` 作结论，必须
+使用 v15 knowledge 重新 fresh Lift/Replay；不得用 fixed recheck 或新 checker 追认 B1 artifact。
 
 两个固定 artifact 的 diagnostic recheck 另行保留，但都不改变上表：
 
@@ -257,6 +264,115 @@ elaboration、artifact patch 或 Kernel 专用 prompt。
   的最多 20 条 `rule_code/path` 带给同 branch 下一 fresh Lift，不带 observed value、patch、
   Source/Gate/hidden/sibling 信息；submission `PASS` 仍由外部 Runner 以 v6 重检。
 
+### v6/v14 Softmax fresh slice / v7 response（2026-07-25）
+
+- fresh evidence 位于
+  `/tmp/intentir-scrc-task11/wave-20260725-b3-v6-v14-frontier5-xhigh-01/liger_softmax/fanout-001`。
+  三个 branch 再次全部 Gate1 closure，固定 winner 为 branch 1/formal round 3；Source–Replay 在唯一
+  Gate2 case 上通过且误差为 0，但 J leg 以
+  `functional padded reduction requires one input, output, and contract` 返回
+  `REFERENCE_UNSUPPORTED`。该 v6/v14 run、winner 与 verdict 保持 immutable；
+- winner 完整 J 把两个只服务 address realization 的 public `i64` runtime scalar p1/p3 分别绑定成
+  rank-0 logical inputs t0/t2，但 t0/t2 不在任何 J body/output dependency、boundary predicate/index/
+  effect 或 shape relation 中；它们只由 π realization route 消费。这扩大了 RefEval logical-input
+  ABI，且不是 RefEval 应从 Source 名称/参数位置猜测并忽略的字段；
+- TypeCheck 因接受语义再次收紧窄升 v7。v7 只对 rank-0 signature logical input 做 source-free
+  liveness：必须到达 observable output dependency，或有显式 boundary/shape semantic use；direct
+  identity、`returns`/`output_mapping` 与 boundary-only 正例均保留，一般 tensor liveness 不作 claim。
+  对固定 winner bytes 的只读检查稳定返回两条 `logical_input_unused`，路径正是
+  `j.signature.parameters[1].logical_ref` 与 `[3].logical_ref`；
+- representation-only runtime scalar 的合法显式形态是
+  `kind=scalar,mode=value,rank=0,logical_ref=null`：不创建 J input、不进入 J semantics，但 p* 可继续
+  由 π 引用。Lift 必须根据 Source use 写出该分类，fixed code 不自动解绑、不删 input、不重编号
+  tensor。一次仅用于正例验证的内存中完整 J 修订（移除死 inputs、显式清空 p1/p3 logical_ref，并由
+  作者同步重编号所有 J handles）通过 v7；它不写回或追认旧 run；
+- prompt/preflight 因构造合同改变升为 `intentir.lift-knowledge.v15`。旧 v6/v14 receipt 不被 v7/v15
+  静默重判；Softmax 必须 fresh Lift/Replay/Gates。
+
+### v6/v14 Softmax immutable Gate2 / RefEval v9 response（2026-07-25）
+
+- 上述 v6/v14 Softmax winner 的唯一 Gate2 保持 `REFERENCE_UNSUPPORTED`：Source 与 Replay 都执行
+  成功，Source–Replay 在外部 tolerance relation 下误差为 0；J leg 在读取任何 hidden input 数值前由
+  旧 projector 以 `functional padded reduction requires one input, output, and contract` 拒绝。该 run、
+  winner、v8 receipt 与 verdict 不回写；
+- winner J 已显式声明两个完整零起点 logical domains、同一 tail predicate 的 load/store、`-inf`
+  fill、max/sum 两个中性 reduction contracts，以及两条非尾随 broadcast。J-only 审查证明真正缺口是
+  RefEval 仍把任意带 predicate 的 reduction graph 强行送入旧 single-input/single-output/single-sum
+  profile，而不是 J 缺 op、Q tolerance、Source/Replay 数值或 Softmax 专用语义；
+- shared projection 升为 `intentir.j-functional-boundary.v2`，scalar consumer 升为
+  `j_scalar_cpu_mlir_v9`。v9 不按 Kernel 名称或固定 Softmax 公式匹配，而要求：每个 predicated direct
+  access 的全部 axis 有完整 logical domain；仍携带 masked axis 的 access 使用相同 full-domain
+  predicate且 load 有显式 fill；每个 logical reduce 恰有一个中性 `masked_contribution` contract；
+  每个 pointwise operand 的普通 trailing 或显式 non-trailing broadcast 闭合。满足这些条件后，唯一 J
+  直接交给既有 Intent MLIR scalar executor，因此通用支持 max+sum、多 reduction 与普通
+  pointwise/broadcast DAG；
+- J-only access/dataflow 若证明 masked axis 由 `mean` 消去，因当前 boundary 没有 logical count
+  contract 继续 unsupported；缺 domain/fill/reduction/
+  broadcast、非中性 contribution、update/alias/mutable relation 继续 fail closed。projector 不读取
+  Source、C、π、runtime/hidden input，不补造字段，也不改 Q；
+- active `typecheck.v7` 显式复用 `functional_reduction_padding_issues(J)`，把上述可机械证明的欠约束
+  映射为独立 `padded_mean_count_unproven`。dense mean、无关轴 mask 与未知-op 传播不 blanket 拒绝；
+  checker 不改图，v15 guidance 要求 Lift 将 Source 已有的 masked sum + explicit division 保持为
+  两阶段。新增 padded-mean 拒绝、dense mean 正例与无关 mask 正例均进入 TypeCheck 定向回归；
+- v9 soundness 复查补上两个 consumer-only fail-closed 边界：任何 guard-bearing access predicate 都
+  unsupported，避免把 `flag` 与 `not flag` 折叠后仅凭 dead operand membership 擦除 mask；已有 masked
+  provenance 一旦进入 contraction 或其他未建模 op，也在该 op 处 unsupported，不能静默停止传播后
+  放行下游 mean。两者都不扩大 TypeCheck 的 J legality，不增加 Kernel 特判或 fixed artifact 修复；
+- 当前固定 winner J 仅以公开自造数组做 J-only replay，既有 scalar MLIR 路径成功执行，和独立 NumPy
+  max/sub/exp/sum/div 组合的最大误差为 `5.960464477539063e-08`。新增稳定通用 Softmax 正例及
+  domain/fill/broadcast/reduction neutral 负例；这只是 v9 consumer 回归，不是对旧 Gate2 的追认。
+  Softmax 的当前 SCRC 结论仍需 v7/v15/v9 fresh Lift/Replay/Gates。
+
+### frontier-five B3 immutable terminal checkpoint / iteration response（2026-07-25）
+
+本轮不是单 B：五个显式 case 均使用 `B=3`，evidence root 为
+`/tmp/intentir-scrc-task11/wave-20260725-b3-v6-v14-frontier5-xhigh-01`，全部 branch 已终止且当前无
+provider 进程。该 run 以 `artifact.v2/decode.v2/typecheck.v6/public_frontend_context_v5/
+lift-knowledge.v14/j_scalar_cpu_mlir_v8` 启动，以下对象、winner 与 verdict 均保持 immutable：
+
+| case | B=3 终态 | 一手边界 |
+|---|---|---|
+| `liger_rms_norm` | branch 2 / round 2 Gate1 closure；Gate2 `REFERENCE_UNSUPPORTED`；Lift/physical=`8/118`，TC/Replay/Gate1=`8/8/8`，Gate2=`1` | Source–Replay 两个 output 均误差 0；旧 J projector 把多 input/output、mean→rsqrt→affine 图错误限制为 single padded reduction，J 两腿未执行 |
+| `liger_softmax` | 三 branch 均 Gate1 closure，winner branch 1 / round 3；Gate2 `REFERENCE_UNSUPPORTED`；Lift/physical=`6/103`，TC/Replay/Gate1=`6/6/6`，Gate2=`1` | Source–Replay 误差 0；旧 projector 同样在 J execution 前拒绝 max+sum/broadcast DAG |
+| `linear.kernel_fwd` | 三 branch `NO_CLOSURE`；Lift/physical=`10/224`，TC/Replay/Gate1=`3/3/3`，Gate2=`0` | 最佳 branch 的 Source/Replay 只差物理 loop：Source 为 `[0,K)` step `BLOCK_K`，Replay 为 `[0,ceil_div(K,BLOCK_K))` step 1；旧 `(J,C,π)` 对 induction basis 欠定 |
+| `_bwd_preprocess_do_o_dot` | branch 3 / round 2 Gate1 closure；outer `INFRASTRUCTURE_FAILED`；Lift/physical=`9/137`，TC/Replay/Gate1=`8/8/8`，Gate2 case=`0` | winner 选定后的 Gate2 adapter binding 发现 J 把 input seq extent 与 padded Delta output extent 错绑同一 `x1`，并把 rounded extent 当 rank-0 data；没有执行 Gate2 case，这不是 Q/数值或 provider 基础设施 |
+| full `_bwd_kernel` | 三 branch `NO_CLOSURE`；Lift/physical=`12/266`，TC/Replay/Gate1=`6/6/6`，Gate2=`0` | 旧 observer v4 报告 broad interface/op/dataflow/predicate diff；后续审计证明其只观察 public `tt.call`、漏掉 private helper body，因此这些 diff 不能作为精确归因，旧 NO_CLOSURE verdict 仍保持 |
+
+RMS/Softmax 的 shared RefEval v9 与 rank-0 TypeCheck v7 响应已在上节落地，不回写本 run。Linear
+反例则揭示独立的表达缺口：J 拥有 logical loop，C 拥有 tile value，但旧 π 没有声明 source physical
+induction variable 的单位。当前 wire 因此窄升 `artifact.v3/decode.v3`，加入 required closed：
+
+```text
+pi.iterations[*] = {region, loop_instance, tile_instance, induction_basis}
+induction_basis = extent_step | tile_ordinal
+```
+
+前者全局表示 `[0,Trip(J.loop))` 以匹配 C tile 为 step；后者表示
+`[0,ceil_div(Trip,Tile))`、step 1。entry 不携带公式、concrete value、Source/API 或 operator；Lift 完整
+选择，CandidateCheck/TypeCheck 只验证，所有 frontend 由 `public_frontend_context_v6` 对同一 denotation
+作公开语法映射。每个 C-tiled J-loop/slot pair 至少一条 relation；同 pair 的多个真实 physical region
+可各有一条，完全被 Lift 遗漏的 Source region 仍只能由 Gate1 检出。因此这不是 typed skeleton、自动
+构造或 fixed patch，也不改变 production 只读 J+C、禁止读取 π 的边界。
+
+`artifact.v1/v2` parser/to-json/digest 保持历史 wire，不接受或暗加空 `iterations`；已闭合的 DYT 与
+SwiGLU receipt 原样保留，不因 v3 升级重跑，也不得被称为 fresh v3。Replay packet envelope 与 Gate1
+report 未增加字段，仍分别是 `replay-input.v1` 与既有 report version；当前合并版本为
+`artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1 / public_frontend_context_v6 /
+lift-knowledge.v15 / j_scalar_cpu_mlir_v9 / Gate1 observer v5 / batch.v3`。
+
+Gate1 observer 因上述 full-bwd 反例从 `triton-ttir-3.6-gate1-v4` 窄升 v5。v5 对 Source 与 Replay
+执行相同的 source-neutral interprocedural fingerprint：reachable acyclic structured `tt.call` DAG
+按 formal→actual 与返回值关系展开，private helper 名称/是否 outline 不进入证据，而 helper 的 op、
+dataflow、递归 region topology、caller region 归属以及 load/store/atomic/barrier/assert 的 lexical
+effect order 必须进入 hard evidence。unknown callee、递归、签名/实际 SSA 类型不闭合、structured
+region 内副作用、未知 function/private-argument attr 和当前未建模的 multi-block CFG 均 fail closed；
+function attr 只闭合允许布尔 `noinline` 这一组织 hint。Source capability failure 以 batch.v3
+`observer_unsupported` 终止，在首个完整 TypeCheck/Gate1 attempt 后停止 relift，并且该 attempt 的
+`feedback=null`、不调用 feedback 构造器；ordinary hard diff 中的 node/region/effect digest 也必须先
+清洗再进入同 branch 的 bounded feedback。真实 full `_bwd_kernel` 的 helper 含 early-return
+`cf.cond_br`，当前因此准确标记 observer unsupported；尚未闭合，不能把旧 v4 的 289 条假差异或新
+unsupported 当作 SCRC 进展。普通 `noinline=false` helper 组织不进入 π，production 仍只消费 J+C。
+
 DYT 与 SwiGLU 的既有通过证据不属于 B1，也未在 B1 重跑。
 
 P1 的 adapter readiness 以本节上方 checkpoint 的 declared=28/pending=0 为准。Backward 被移除的
@@ -273,16 +389,19 @@ FlashAttention 或其他 Kernel 专用 prompt、Replay、J/C/π 构造或 Intent
   Gate2 失败不 fallback；
 - 每轮汇总 TypeCheck rule、Gate1 hard category、Gate2 三边、J-necessity 与真实物理调用预算，按通用
   failure class 决定下一横向修正；
-- 最终每个 registry item 都必须有自己的 `SCRC_CERTIFIED` evidence，aggregate 不能替代单项证书。
+- 最终每个 registry item 都必须有自己的独立 `SCRC_CERTIFIED` evidence，aggregate 不能替代单项
+  证书；其中 DYT/SwiGLU 沿用原 receipt，其余 26 项由 Task 11 fresh 产生。
 
 ## 验收
 
 1. outer case-level bounded parallel 有实现、正反例、异常隔离和稳定 ordinal 测试；
 2. `W/B/G/G2` 合同 fail closed，实际测试证明多个不同 case lifecycle 确实重叠；
 3. same-case v3 barrier winner 与唯一 Gate2 规则不回退；
-4. B1/B3 的旧 receipt terminal evidence 保持不可变；受影响项若要形成当前 v6/v5/v14 结论，必须分别
+4. B1/B3/v6-v14 slice 的旧 receipt terminal evidence 保持不可变；受影响项若要形成当前
+   artifact.v3/decode.v3/typecheck.v7/context.v6/knowledge.v15/RefEval.v9/observer.v5 结论，必须分别
    fresh rerun，且问题归因不复用旧 verdict 或 diagnostic recheck；
-5. 28/28 各自形成 fresh `SCRC_CERTIFIED` artifact 与完整 evidence；
+5. 28/28 各自具有独立 `SCRC_CERTIFIED` artifact 与完整 evidence：DYT/SwiGLU 为原版本证书，其余
+   26 项为 Task 11 fresh evidence；
 6. 全量回归通过，活动 task 唯一，完成后本 Task 直接迁入 archive，工作区提交且干净。
 
 ## 非目标

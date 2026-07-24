@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from threading import Event
 
 import numpy as np
@@ -67,6 +68,7 @@ from intentir.verify.scrc_runner import (
     SourceProgram,
     _compact_gate1_observer_diff,
 )
+from intentir.verify.typecheck import TypeCheckStatus
 
 
 @dataclass(frozen=True)
@@ -163,8 +165,16 @@ def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
                         "kind": "missing",
                         "item": [
                             "edge",
-                            f"tt.addptr[{index:020x}]",
-                            "operand[0]",
+                            (
+                                f"region[scf.for:{index:020x}]"
+                                if index == 0
+                                else f"tt.addptr[{index:020x}]"
+                            ),
+                            (
+                                f"effect.trace[{index + 1:020x}]"
+                                if index == 0
+                                else "operand[0]"
+                            ),
                         ],
                         "expected_count": 1,
                         "actual_count": 0,
@@ -198,7 +208,9 @@ def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
     assert len(dataflow["examples"]) == 8
     assert dataflow["truncated_count"] == 4
     assert "00000000000000000000" not in str(compact)
-    assert dataflow["examples"][0]["item"][1] == "tt.addptr[node]"
+    assert dataflow["examples"][0]["item"][1] == "region[scf.for:node]"
+    assert dataflow["examples"][0]["item"][2] == "effect.trace[node]"
+    assert re.search(r"[0-9a-f]{12,}", str(compact)) is None
     assert "score" not in compact
     assert "components" not in compact
 
@@ -347,9 +359,9 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     relifted = adapter.lift(request, feedback)
 
     assert initial.physical_calls == relifted.physical_calls == 2
-    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
-    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v6"
+    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v3"
+    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v3"
+    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v7"
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
@@ -427,6 +439,67 @@ def test_three_gate1_failures_end_as_no_closure_without_gate2() -> None:
     assert report.main_status is MainStatus.NO_CLOSURE
     assert report.call_budget.formal_gate1_rounds == 3
     assert report.accepted_attempt is None
+    assert gate2.calls == 0
+
+
+def test_source_observer_gap_stops_branch_without_misleading_relift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lift = _Lift([make_reduce_artifact(), make_reduce_artifact()])
+    source_compile = CompileResult(True, ttir="module {}")
+    observer_failure = Gate1ExecutionResult(
+        Gate1Status.NO_CLOSURE,
+        "trace-only",
+        source_compile,
+        None,
+        Gate1ArmEvidence(
+            "normal",
+            None,
+            None,
+            None,
+            None,
+            (
+                "observer unsupported: source TTIR: TTIRParseError: "
+                "multi-block CFG is not supported"
+            ),
+        ),
+        None,
+        0,
+        0,
+    )
+    factory = _Gate1Factory(
+        [
+            observer_failure,
+            _gate1_result(closed=True),
+        ]
+    )
+    gate2 = _Gate2()
+
+    def forbidden_feedback(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("source observer unsupported must not construct relift feedback")
+
+    monkeypatch.setattr(SCRCGateRunner, "_gate1_feedback", forbidden_feedback)
+
+    search = _runner(lift, factory, gate2).search_gate1(_request())
+
+    assert search.status is Gate1SearchStatus.NO_CLOSURE
+    assert search.stop_reason == "observer_unsupported"
+    assert search.stop_observed_at == "after_gate1"
+    assert len(search.attempts) == 1
+    attempt = search.attempts[0]
+    assert attempt.artifact is not None
+    assert attempt.typecheck is not None and attempt.typecheck.passed
+    assert attempt.gate1 is observer_failure
+    assert attempt.feedback is None
+    assert attempt.typecheck_status is TypeCheckStatus.PASS
+    assert search.call_budget.lift_calls == 1
+    assert search.call_budget.typecheck_calls == 1
+    assert search.call_budget.formal_gate1_rounds == 1
+    assert search.call_budget.replay_normal_calls == 0
+    assert search.call_budget.replay_physical_calls == 0
+    assert lift.feedbacks == [None]
+    assert factory.rounds == [1]
     assert gate2.calls == 0
 
 

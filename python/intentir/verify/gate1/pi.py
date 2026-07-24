@@ -30,6 +30,11 @@ REALIZATION_MECHANISMS: tuple[str, ...] = (
     "synchronize",
 )
 
+ITERATION_BASES: tuple[str, ...] = (
+    "extent_step",
+    "tile_ordinal",
+)
+
 REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
     "identity_materialization",
     "signed_widen",
@@ -131,7 +136,18 @@ def render_realization_witness_wire_grammar() -> str:
         "i1 anchored by a0, then route i0 to i1; routing p0 to i1 is invalid. "
         "Multiple instances may share one semantic_ref when the source has "
         "multiple compiler-visible stages. Route slots are distinct, "
-        "non-negative, target-local opaque input ordinals."
+        "non-negative, target-local opaque input ordinals. Each iterations "
+        "entry relates one loop region to one instance anchored by its J loop "
+        "and one instance anchored by the matching C tile slot. Its closed "
+        "induction_basis records only whether the physical induction variable "
+        "is measured in logical extent units or tile ordinals. The global "
+        "source-neutral denotation is closed: extent_step means lower zero, "
+        "upper equal to the J loop trip extent, and step equal to the matching "
+        "C tile; tile_ordinal means lower zero, upper equal to ceil_div of that "
+        "J trip extent by that matching C tile, and unit step. Every frontend "
+        "maps this same relation to its public constructs. The wire entry never "
+        "carries a bound expression, value, operator, source fragment, or "
+        "frontend API."
     )
 
 
@@ -220,7 +236,7 @@ def _require_acyclic(
 
 @dataclass
 class RealizationWitness:
-    """Minimal direct-pi schema: region/instance/route/slot/order/share."""
+    """Minimal direct-pi schema for source-realization relations."""
 
     regions: list[dict[str, JsonValue]] = field(default_factory=list)
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -228,11 +244,13 @@ class RealizationWitness:
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
     refinements: list[dict[str, JsonValue]] = field(default_factory=list)
+    iterations: list[dict[str, JsonValue]] = field(default_factory=list)
 
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
     )
     MECHANISMS: ClassVar[frozenset[str]] = frozenset(REALIZATION_MECHANISMS)
+    ITERATION_BASES: ClassVar[frozenset[str]] = frozenset(ITERATION_BASES)
 
     def __post_init__(self) -> None:
         checked_regions: list[dict[str, JsonValue]] = []
@@ -310,6 +328,62 @@ class RealizationWitness:
         if len(instance_ids) != len(set(instance_ids)):
             raise RealizationWitnessError("pi instance ids must be unique")
         known_instances = set(instance_ids)
+
+        checked_iterations: list[dict[str, JsonValue]] = []
+        iteration_regions: set[str] = set()
+        for index, raw in enumerate(self.iterations):
+            item = _record(
+                raw,
+                path=f"pi.iterations[{index}]",
+                required=frozenset(
+                    {
+                        "region",
+                        "loop_instance",
+                        "tile_instance",
+                        "induction_basis",
+                    }
+                ),
+            )
+            region = _name(item["region"], f"pi.iterations[{index}].region")
+            if region not in known_regions:
+                raise RealizationWitnessError(
+                    "pi iteration relation names an unknown region"
+                )
+            if region in iteration_regions:
+                raise RealizationWitnessError(
+                    "pi iteration regions may have at most one relation"
+                )
+            iteration_regions.add(region)
+            loop_instance = _declared_instance_ref(
+                item["loop_instance"],
+                path=f"pi.iterations[{index}].loop_instance",
+                known_instances=known_instances,
+            )
+            tile_instance = _declared_instance_ref(
+                item["tile_instance"],
+                path=f"pi.iterations[{index}].tile_instance",
+                known_instances=known_instances,
+            )
+            if loop_instance == tile_instance:
+                raise RealizationWitnessError(
+                    "pi iteration loop and tile instances must be distinct"
+                )
+            induction_basis = _name(
+                item["induction_basis"],
+                f"pi.iterations[{index}].induction_basis",
+            )
+            if induction_basis not in self.ITERATION_BASES:
+                raise RealizationWitnessError(
+                    f"unsupported pi induction basis {induction_basis!r}"
+                )
+            checked_iterations.append(
+                {
+                    "region": region,
+                    "loop_instance": loop_instance,
+                    "tile_instance": tile_instance,
+                    "induction_basis": induction_basis,
+                }
+            )
 
         checked_routes: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.routes):
@@ -439,19 +513,43 @@ class RealizationWitness:
         self.order = checked_order
         self.sharing = checked_sharing
         self.refinements = checked_refinements
+        self.iterations = checked_iterations
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
         data = _record(
             value,
             path="pi",
-            required=frozenset({"regions", "instances", "routes", "order", "sharing"}),
+            required=frozenset(
+                {
+                    "regions",
+                    "instances",
+                    "routes",
+                    "order",
+                    "sharing",
+                    "refinements",
+                }
+            ),
             allowed=frozenset(
-                {"regions", "instances", "routes", "order", "sharing", "refinements"}
+                {
+                    "regions",
+                    "instances",
+                    "routes",
+                    "order",
+                    "sharing",
+                    "refinements",
+                    "iterations",
+                }
             ),
         )
         for key in (
-            "regions", "instances", "routes", "order", "sharing", "refinements"
+            "regions",
+            "instances",
+            "routes",
+            "order",
+            "sharing",
+            "refinements",
+            "iterations",
         ):
             if key in data and not isinstance(data[key], list):
                 raise RealizationWitnessError(f"pi.{key} must be an array")
@@ -461,11 +559,12 @@ class RealizationWitness:
             routes=copy.deepcopy(data["routes"]),
             order=copy.deepcopy(data["order"]),
             sharing=copy.deepcopy(data["sharing"]),
-            refinements=copy.deepcopy(data.get("refinements", [])),
+            refinements=copy.deepcopy(data["refinements"]),
+            iterations=copy.deepcopy(data.get("iterations", [])),
         )
 
-    def to_json(self) -> dict[str, Any]:
-        return {
+    def to_json(self, *, include_iterations: bool = True) -> dict[str, Any]:
+        result = {
             "regions": copy.deepcopy(self.regions),
             "instances": copy.deepcopy(self.instances),
             "routes": copy.deepcopy(self.routes),
@@ -473,12 +572,16 @@ class RealizationWitness:
             "sharing": copy.deepcopy(self.sharing),
             "refinements": copy.deepcopy(self.refinements),
         }
+        if include_iterations:
+            result["iterations"] = copy.deepcopy(self.iterations)
+        return result
 
 
 __all__ = [
     "RealizationWitness",
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",
+    "ITERATION_BASES",
     "REPRESENTATION_REFINEMENTS",
     "render_realization_mechanism_grammar",
     "render_realization_witness_wire_grammar",

@@ -14,7 +14,10 @@ from typing import Any, Callable, Mapping, Protocol
 
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .gate1.model import Gate1Artifact, Gate1Status, JNecessityStatus
-from .gate1.orchestrate import Gate1ExecutionResult
+from .gate1.orchestrate import (
+    Gate1ExecutionResult,
+    SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX,
+)
 from .gate2.model import Gate2SuiteResult
 from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 
@@ -22,7 +25,9 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 MAX_GATE1_ROUNDS = 3
 MAX_PRE_REPLAY_REJECTIONS = 3
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
-_OBSERVER_NODE_FINGERPRINT = re.compile(r"\[[0-9a-f]{12,64}\]")
+_OBSERVER_NODE_FINGERPRINT = re.compile(
+    r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
+)
 
 SCRCProgressCallback = Callable[
     [str, int | None, int | None, str],
@@ -53,7 +58,7 @@ def _feedback_item(value: Any) -> Any:
     """Remove non-actionable observer node ids from relift-only diagnostics."""
 
     if isinstance(value, str):
-        return _OBSERVER_NODE_FINGERPRINT.sub("[node]", value)
+        return _OBSERVER_NODE_FINGERPRINT.sub("node", value)
     if isinstance(value, list):
         return [_feedback_item(item) for item in value]
     if isinstance(value, tuple):
@@ -675,9 +680,36 @@ class SCRCGateRunner:
                     },
                 )
             if gate1.status is not Gate1Status.REPLAY_CLOSED:
-                feedback = self._gate1_feedback(
-                    gate1, formal_rounds, artifact
-                )
+                source_observer_unsupported = (
+                    gate1.normal.diagnostic or ""
+                ).startswith(SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX)
+                if source_observer_unsupported:
+                    attempts.append(
+                        CandidateAttemptReport(
+                            lift_call=lift_calls,
+                            formal_round=formal_rounds,
+                            typecheck_status=TypeCheckStatus.PASS,
+                            artifact=artifact,
+                            typecheck=report,
+                            gate1=gate1,
+                            feedback=None,
+                            lift_metadata=lift_result.metadata,
+                        )
+                    )
+                    stopped = superseded("after_gate1")
+                    if stopped is not None:
+                        return stopped
+                    return SCRCGate1SearchReport(
+                        status=Gate1SearchStatus.NO_CLOSURE,
+                        attempts=tuple(attempts),
+                        accepted_attempt=None,
+                        j_necessity_status=None,
+                        call_budget=budget(),
+                        stop_reason="observer_unsupported",
+                        stop_observed_at="after_gate1",
+                    )
+
+                feedback = self._gate1_feedback(gate1, formal_rounds, artifact)
                 attempts.append(
                     CandidateAttemptReport(
                         lift_call=lift_calls,

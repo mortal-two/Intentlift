@@ -14,7 +14,10 @@ import re
 from typing import Any, Iterable, Mapping
 
 from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
-from intentir.ir.functional_boundary import functional_boundary_closure_issues
+from intentir.ir.functional_boundary import (
+    functional_boundary_closure_issues,
+    functional_reduction_padding_issues,
+)
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     ParameterKind,
@@ -26,7 +29,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v6"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v7"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -56,12 +59,19 @@ class TypeCheckErrorCode(str, Enum):
     C_AXIS_INVALID = "c_axis_invalid"
     INVALID_ACCESS_FILL = "invalid_access_fill"
     FUNCTIONAL_BOUNDARY_INCOMPLETE = "functional_boundary_incomplete"
+    PADDED_MEAN_COUNT_UNPROVEN = "padded_mean_count_unproven"
+    LOGICAL_INPUT_UNUSED = "logical_input_unused"
+    REPRESENTATION_CARRIER_J_USE_FORBIDDEN = (
+        "representation_carrier_j_use_forbidden"
+    )
     RESULT_RELATION_INCOMPATIBLE = "result_relation_incompatible"
     UNRESOLVED_ANCHOR = "unresolved_anchor"
     ROUTE_CYCLE = "route_cycle"
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     INVALID_SHARING = "invalid_sharing"
+    ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
+    ITERATION_WITNESS_MISSING = "iteration_witness_missing"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
     ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN = (
@@ -690,6 +700,169 @@ def _output_dependency(
     return refs, dependency_ops
 
 
+def _semantic_value_dependency_closure(
+    j: SemanticArchive,
+    seeds: Iterable[str],
+) -> set[str]:
+    """Return values contributing to explicit J semantic roots.
+
+    This is ordinary finite graph reachability over the already typed J.  It
+    does not inspect Source, C, pi, parameter names, or runtime values.
+    """
+
+    intent = j.intent.to_json()["intent_function"]
+    producers: dict[str, Mapping[str, Any]] = {}
+    for _path, operation in _walk_operations(intent.get("body", [])):
+        for result in _operation_results(operation.get("result")):
+            producers[result] = operation
+
+    live: set[str] = set()
+    pending = list(seeds)
+    while pending:
+        value = pending.pop()
+        if value in live:
+            continue
+        live.add(value)
+        producer = producers.get(value)
+        if producer is not None:
+            pending.extend(_operation_dependencies(producer))
+    return live
+
+
+def _rank_zero_semantic_live_values(j: SemanticArchive) -> set[str]:
+    """Collect J-owned roots that can make a rank-0 logical input meaningful."""
+
+    elaboration = j_elaboration(j)
+    semantic_refs: set[str] = {
+        binding.value for binding in elaboration.output_bindings
+    }
+    node_seed_refs: set[str] = set()
+
+    intent = j.intent.to_json()["intent_function"]
+    operations = dict(_walk_operations(intent.get("body", [])))
+    path_to_node = {path: node for node, path in j.node_ids.items()}
+    nodes: dict[str, Mapping[str, Any]] = dict(operations)
+    for path, operation in operations.items():
+        node = path_to_node.get(path)
+        if node is not None:
+            nodes[node] = operation
+
+    def add_expression_refs(expression: Any) -> None:
+        semantic_refs.update(_ordered_expression_refs(expression))
+
+    for _domain_id, expression in elaboration.domains:
+        add_expression_refs(expression)
+    accesses = elaboration.access_by_id
+    for access in j.boundary.accesses:
+        semantic_refs.add(access.tensor)
+        parsed = accesses.get(access.access_id)
+        if parsed is not None:
+            for component in parsed.index.components:
+                add_expression_refs(component)
+            if parsed.predicate is not None:
+                add_expression_refs(parsed.predicate)
+        if access.node_ref is not None:
+            node_seed_refs.add(access.node_ref)
+    for effect in j.boundary.effects:
+        semantic_refs.add(effect.target)
+        if effect.node_ref is not None:
+            node_seed_refs.add(effect.node_ref)
+    for item in j.boundary.broadcasts:
+        semantic_refs.add(item.operand)
+        node_seed_refs.add(item.node_ref)
+    for item in j.boundary.aliases:
+        semantic_refs.update({item.left, item.right})
+    for item in j.boundary.output_mappings:
+        semantic_refs.add(item.value)
+        if item.node_ref is not None:
+            node_seed_refs.add(item.node_ref)
+    for item in j.boundary.reductions:
+        if isinstance(item.tile_axis, str):
+            semantic_refs.add(item.tile_axis)
+        node_seed_refs.add(item.node_ref)
+    for item in j.boundary.index_bounds:
+        semantic_refs.update({item.data, item.indices})
+        node_seed_refs.add(item.node_ref)
+    for item in j.boundary.updates:
+        semantic_refs.update({item.base, item.indices, item.values})
+        node_seed_refs.add(item.node_ref)
+    for tensor in [*j.intent.inputs, *j.intent.outputs]:
+        semantic_refs.update(
+            dimension
+            for dimension in tensor.shape
+            if isinstance(dimension, str)
+        )
+
+    for node_ref in node_seed_refs:
+        operation = nodes.get(node_ref)
+        if operation is not None:
+            semantic_refs.update(_operation_results(operation.get("result")))
+    return _semantic_value_dependency_closure(j, semantic_refs)
+
+
+def _check_rank_zero_logical_input_liveness(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Reject only mechanically dead rank-0 signature logical inputs.
+
+    General tensor liveness is deliberately out of scope for v7.  A rank-0 J
+    input is accepted when it reaches an observable output dependency or is
+    explicitly used by a J-owned boundary/shape relation.  Merely routing its
+    ABI parameter through pi is representation use and does not make it a
+    logical input.
+    """
+
+    rank_zero_inputs = {
+        tensor.name
+        for tensor in j.intent.inputs
+        if not tensor.shape
+    }
+    has_representation_scalar = any(
+        parameter.kind is ParameterKind.SCALAR
+        and parameter.logical_ref is None
+        for parameter in j.signature.parameters
+    )
+    if not rank_zero_inputs and not has_representation_scalar:
+        return
+    live = _rank_zero_semantic_live_values(j)
+    representation_j_uses = set(live)
+    intent = j.intent.to_json()["intent_function"]
+    for _path, operation in _walk_operations(intent.get("body", [])):
+        representation_j_uses.update(_operation_dependencies(operation))
+    for index, parameter in enumerate(j.signature.parameters):
+        logical_ref = parameter.logical_ref
+        if (
+            parameter.kind is ParameterKind.SCALAR
+            and logical_ref is None
+            and parameter.name in representation_j_uses
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.REPRESENTATION_CARRIER_J_USE_FORBIDDEN,
+                    f"j.signature.parameters[{index}].logical_ref",
+                    "representation-only scalar without logical_ref cannot "
+                    "participate in J output, boundary, or shape semantics; "
+                    "it may be referenced only by pi realization topology",
+                    parameter.name,
+                )
+            )
+            continue
+        if logical_ref not in rank_zero_inputs or logical_ref in live:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.LOGICAL_INPUT_UNUSED,
+                f"j.signature.parameters[{index}].logical_ref",
+                "rank-0 logical input does not contribute to any J output "
+                "dependency or explicit boundary/shape semantic relation; "
+                "a representation-only ABI parameter must use "
+                "logical_ref=null and may be realized only through pi",
+                logical_ref,
+            )
+        )
+
+
 def _check_result_relations(
     j: SemanticArchive,
     diagnostics: list[TypeCheckDiagnostic],
@@ -905,6 +1078,157 @@ def _check_total_j_value_typing(
             )
 
 
+_ITERATION_TILE_ROLES = frozenset(
+    {"tile_extent", "reduction_tile_extent"}
+)
+
+
+def _iteration_axis_matches(axis_ref: int | str | None, trip_axis: str) -> bool:
+    """Recognize the two AxisRefs_v1 spellings of one loop trip axis."""
+
+    return axis_ref == 0 or axis_ref == trip_axis
+
+
+def _check_iteration_witness(
+    j: SemanticArchive,
+    c: ImplementationConfig,
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Close the physical induction basis of every C-tiled J loop."""
+
+    loop_axes: dict[str, str] = {}
+    for node_ref, operation in node_operations.items():
+        if not re.fullmatch(r"n[0-9]+", node_ref):
+            continue
+        if operation.get("op") != "loop":
+            continue
+        trip = operation.get("trip")
+        axis = trip.get("axis") if isinstance(trip, Mapping) else None
+        if isinstance(axis, str):
+            loop_axes[node_ref] = axis
+
+    all_slots = {slot.name: slot for slot in c.slots}
+    tile_slots = {
+        slot.name: slot
+        for slot in c.slots
+        if slot.role in _ITERATION_TILE_ROLES
+        and slot.subject_ref in loop_axes
+        and _iteration_axis_matches(
+            slot.axis_ref, loop_axes[str(slot.subject_ref)]
+        )
+    }
+    required_pairs = {
+        (str(slot.subject_ref), slot.name) for slot in tile_slots.values()
+    }
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+
+    def visible_from(instance_region: str, relation_region: str) -> bool:
+        current: str | None = relation_region
+        while current is not None:
+            if current == instance_region:
+                return True
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
+    witnessed_pairs: set[tuple[str, str]] = set()
+
+    for index, relation in enumerate(pi.iterations):
+        path = f"pi.iterations[{index}]"
+        region_ref = str(relation["region"])
+        region = regions.get(region_ref)
+        if region is None or region["placement"] != "loop":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+                    f"{path}.region",
+                    "iteration relation requires a placement=loop region",
+                    region_ref,
+                )
+            )
+
+        loop_instance_ref = str(relation["loop_instance"])
+        loop_instance = instances.get(loop_instance_ref)
+        loop_ref = (
+            str(loop_instance["semantic_ref"])
+            if loop_instance is not None
+            else ""
+        )
+        valid_loop = (
+            loop_ref in loop_axes
+            and loop_instance is not None
+            and visible_from(str(loop_instance["region"]), region_ref)
+        )
+        if not valid_loop:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+                    f"{path}.loop_instance",
+                    "loop_instance must anchor a structured J loop in the "
+                    "relation region or one of its lexical ancestors",
+                    loop_instance_ref,
+                )
+            )
+
+        tile_instance_ref = str(relation["tile_instance"])
+        tile_instance = instances.get(tile_instance_ref)
+        tile_ref = (
+            str(tile_instance["semantic_ref"])
+            if tile_instance is not None
+            else ""
+        )
+        # An explicit iteration relation itself identifies the referenced C
+        # value as the physical tile.  The reserved tile roles are used only
+        # to make omission mechanically detectable; they are not a hidden
+        # validity condition on an otherwise closed relation.
+        slot = all_slots.get(tile_ref)
+        value = c.values.get(tile_ref)
+        valid_tile = (
+            slot is not None
+            and slot.subject_ref == loop_ref
+            and loop_ref in loop_axes
+            and _iteration_axis_matches(
+                slot.axis_ref, loop_axes[loop_ref]
+            )
+            and tile_instance is not None
+            and visible_from(str(tile_instance["region"]), region_ref)
+            and slot.required
+            and slot.value_type.casefold() in {"int", "integer", "i32", "i64", "u32", "u64"}
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+        )
+        if not valid_tile:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ITERATION_WITNESS_INVALID,
+                    f"{path}.tile_instance",
+                    "tile_instance must anchor one required positive-integer C "
+                    "tile slot attached to the same J loop and trip axis, with "
+                    "its instance visible from the relation region",
+                    tile_instance_ref,
+                )
+            )
+
+        pair = (loop_ref, tile_ref)
+        if valid_loop and valid_tile and region is not None:
+            witnessed_pairs.add(pair)
+
+    for loop_ref, tile_ref in sorted(required_pairs - witnessed_pairs):
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.ITERATION_WITNESS_MISSING,
+                "pi.iterations",
+                "C-tiled structured J loop requires at least one physical "
+                "induction-basis relation",
+                f"{loop_ref}:{tile_ref}",
+            )
+        )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -946,6 +1270,7 @@ def type_check(
 
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_total_j_value_typing(j, diagnostics)
+    _check_rank_zero_logical_input_liveness(j, diagnostics)
     diagnostics.extend(
         TypeCheckDiagnostic(
             TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,
@@ -954,6 +1279,15 @@ def type_check(
             issue.ref,
         )
         for issue in functional_boundary_closure_issues(j)
+    )
+    diagnostics.extend(
+        TypeCheckDiagnostic(
+            TypeCheckErrorCode.PADDED_MEAN_COUNT_UNPROVEN,
+            issue.path,
+            issue.detail,
+            issue.ref,
+        )
+        for issue in functional_reduction_padding_issues(j)
     )
     for index, access in enumerate(j.boundary.accesses):
         if access.fill_value is None:
@@ -1082,6 +1416,8 @@ def type_check(
             )
             continue
         instance_anchors[str(item["id"])] = anchor
+
+    _check_iteration_witness(j, c, pi, node_operations, diagnostics)
 
     route_edges = {
         (str(item["source"]), str(item["target"])) for item in pi.routes

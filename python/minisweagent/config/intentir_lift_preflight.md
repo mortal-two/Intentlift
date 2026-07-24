@@ -20,6 +20,18 @@ the artifact schema or external TypeCheck.
    argument with `kind=none` is exactly `kind=opaque`, `mode=value`,
    `dtype=none`, with no rank, alias, logical ref, J tensor/node/effect, or pi
    instance; never substitute a dummy pointer or scalar.
+   A runtime scalar used only for representation/address realization is a
+   rank-0 `mode=value` scalar with public dtype but no `logical_ref` or J input;
+   pi may reference its p* carrier. Decide from Source use, never name/position.
+   This null-carrier form is runtime-scalar-only. Every
+   `bound_constexpr_values` entry is logical: bind logical data to a
+   dtype-matching rank-0 J input or an integral extent-only value to `x*`.
+   A pure schedule constexpr belongs to C; never leave a bound constexpr as a
+   representation-only pi carrier. If it is neither logical nor pure schedule,
+   the Harness case is invalid rather than something the artifact can repair.
+   Every rank-0 tensor bound by `logical_ref` must contribute to an observable
+   J output dependency or an explicit boundary/shape semantic relation;
+   CandidateCheck rejects rather than auto-unbinding a dead logical input.
 5. A body operand must already be in the current lexical scope. Do not use an
    output tensor handle as if it were an already-defined intermediate; use the
    producing node's declared value handle where the grammar requires one.
@@ -34,6 +46,16 @@ the artifact schema or external TypeCheck.
 7. `fill_value` is legal only on a load with a non-null `predicate`. An
    unconditional access omits both fields (or leaves both null); never attach a
    redundant fill to it. Consumers reject rather than normalize an orphan fill.
+   If a guard-free direct padding predicate and a complete zero-based
+   rectangular domain use the same-axis bound as the typed tensor extent, and
+   that masked axis is eliminated by `reduce(mean)`, zero fill proves only the
+   numerator, not the logical valid denominator. The current boundary schema
+   has no valid-count contract: preserve Source's explicit logical stages (for
+   example `reduce(sum)` followed by explicit division) instead of collapsing
+   them to padded `mean`. Dense/unpredicated mean, guard-bearing or cross-axis
+   predicates, unrelated non-reduced masks, and unknown-op propagation are not
+   this TypeCheck error; consumers still fail closed when they cannot project
+   those boundaries.
 8. If a pure-functional boundary contains any predicate/fill, the observable
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;
@@ -70,28 +92,42 @@ the artifact schema or external TypeCheck.
    the recurrence with an algebraically equivalent global formula and expect pi or
    Replay to recover it. Pi has topology/routes only and cannot carry or infer an
    initialization, update formula, yield, or contraction orientation.
-12. Every sensitive pi refinement `auth_ref` names an actually declared J
+12. Every C-tiled physical region realizing a structured J `loop` has exactly
+   one `pi.iterations` relation. Its `loop_instance` anchors that J loop and its
+   `tile_instance` anchors the matching C tile slot. Use `extent_step` for a
+   zero-to-logical-extent induction space stepped by the tile; use
+   `tile_ordinal` for a zero-based unit-step tile ordinal. Preserve the basis
+   even when the induction variable is unused. Never place bounds, values,
+   formulas, Source spelling, or frontend APIs in this relation, and do not
+   invent it for an untiled loop.
+   An explicit relation may use any slot role when the slot is required,
+   positive-integer, and attached to the same loop/trip axis; axis ordinal `0`
+   and that loop's declared `trip.axis=x*` are equivalent. The reserved roles
+   `tile_extent` and `reduction_tile_extent` only let TypeCheck detect a wholly
+   missing relation. A custom/misclassified role does not invalidate an
+   explicit relation, but complete omission remains visible only to Gate1.
+13. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-13. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
+14. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
    `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
    and only when that subject declares the referenced non-negative logical axis
    or `x*`; do not guess either attachment.
-14. C otherwise contains only the exact trusted scheduling slots and values
+15. C otherwise contains only the exact trusted scheduling slots and values
    from `harness_view.json`. It contains no operator, predicate, formula,
    strategy, source/API name, or semantic constant.
-15. For `numeric_cast`, authorization `subject_ref` names the explicit unary
+16. For `numeric_cast`, authorization `subject_ref` names the explicit unary
    cast node; `source_dtype` equals its operand dtype and `target_dtype` equals
    its result dtype. The matching pi instance uses that same semantic ref and
    at most one refinement may target an instance.
-16. A floating output depending on a transcendental op, floating reduction, or
+17. A floating output depending on a transcendental op, floating reduction, or
    reassociation declares `result_relation.kind=tolerance`, never default or
    explicit `exact`. J declares only the class; numeric thresholds remain in
    external Q.
-17. Pi contains anonymous realization relations only. It contains no dtype,
+18. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-18. Run the supplied static schema validator and then
+19. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still
    repeats canonical Decode and dependent TypeCheck before Replay and Gates.

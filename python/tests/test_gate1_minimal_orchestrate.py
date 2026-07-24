@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import intentir.verify.gate1.orchestrate as gate1_orchestrate
 from direct_fixtures import make_reduce_artifact
 from intentir.verify.gate1.compiler import (
     CompileCase,
@@ -16,6 +17,7 @@ from intentir.verify.gate1.replay import (
     ReplayGenerationError,
     StaticReplayWriter,
 )
+from intentir.verify.gate1.ttir import TTIRParseError
 
 
 GOOD_TTIR = """
@@ -146,7 +148,38 @@ def test_source_schedule_value_must_match_c_before_replay() -> None:
     assert result.status is Gate1Status.NO_CLOSURE
     assert result.normal_calls == 0
     assert writer.calls == []
+    assert (result.normal.diagnostic or "").startswith(
+        "harness binding failed: ValueError:"
+    )
     assert "differs from C" in (result.normal.diagnostic or "")
+
+
+def test_source_ttir_parse_gap_is_reported_as_observer_unsupported(
+    monkeypatch,
+) -> None:
+    writer = StaticReplayWriter(REPLAY)
+
+    def reject_source_observation(*_args, **_kwargs):
+        raise TTIRParseError("multi-block CFG is not supported")
+
+    monkeypatch.setattr(
+        gate1_orchestrate, "fingerprint_ttir", reject_source_observation
+    )
+    result = Gate1Runner(compiler=FakeCompiler(), writer=writer).run(
+        make_reduce_artifact(),
+        source=KernelSource.from_code("source", "kernel", trusted=True),
+        source_case=_case(),
+    )
+
+    assert result.status is Gate1Status.NO_CLOSURE
+    assert result.source_fingerprint is None
+    assert result.normal.generation is None
+    assert result.normal_calls == 0
+    assert writer.calls == []
+    assert result.normal.diagnostic == (
+        "observer unsupported: source TTIR: TTIRParseError: "
+        "multi-block CFG is not supported"
+    )
 
 
 def test_rejected_replay_preserves_physical_provider_call_count() -> None:

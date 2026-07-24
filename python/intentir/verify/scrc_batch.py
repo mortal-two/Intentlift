@@ -15,7 +15,7 @@ from .workload_manifest import (
 )
 
 
-SCRC_BATCH_PROTOCOL = "intentir.scrc.batch.v2"
+SCRC_BATCH_PROTOCOL = "intentir.scrc.batch.v3"
 MAX_CASE_WORKERS = 32
 
 _SCHEDULING_KEYS = (
@@ -31,6 +31,7 @@ class BatchClassification(str, Enum):
     MANIFEST_INVALID = "manifest_invalid"
     CASE_UNAVAILABLE = "case_unavailable"
     HARNESS_INVALID = "harness_invalid"
+    OBSERVER_UNSUPPORTED = "observer_unsupported"
     LIFT_RESPONSE_REJECTED = "lift_response_rejected"
     TYPECHECK_FAILED = "typecheck_failed"
     REPLAY_RESPONSE_REJECTED = "replay_response_rejected"

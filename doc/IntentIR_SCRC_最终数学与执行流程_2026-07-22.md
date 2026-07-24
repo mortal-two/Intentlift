@@ -278,6 +278,7 @@ C 不能显式声明：
 - sharing / recomputation；
 - placement；
 - materialization；
+- physical loop induction-basis relation；
 - 受约束 representation refinement；
 - C slot use-site。
 
@@ -344,6 +345,12 @@ I(\pi;\operatorname{Sem}(S))=0.
 `SpecProj(J,C,π)=J` 和上述 TypeCheck 结论也都只是 artifact grammar 上的所有权性质，不能推出
 Replay 已正确实现 J，或所有 admissible C 都保持 J 行为。
 
+其中 physical loop relation 的 closed 形态为
+`{region,loop_instance,tile_instance,induction_basis}`，basis 仅取
+`extent_step|tile_ordinal`。前者表示 `[0,Trip(J.loop))` 以 matching C tile 为 step，后者表示
+`[0,ceil_div(Trip,Tile))` 的 unit-step ordinal；wire 不携带公式、concrete value、Source/API 或
+operator。它只区分同一 J loop/C tile 下不同的 Source realization，不向 J 或 C 增加语义。
+
 ---
 
 # 4. TypeCheck 的准确职责
@@ -376,7 +383,7 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 - slot 匿名且唯一；
 - binding kind 与 value type 合法；
 - concrete value 来自 Harness 已有坐标；
-- 下一 schema version 的可选 `subject_ref` 属于 closed `CSubject_v1(J)`；可选 `axis_ref` 满足
+- 当前 v2+ schema 的可选 `subject_ref` 属于 closed `CSubject_v1(J)`；可选 `axis_ref` 满足
   `axis_ref in AxisRefs_v1(J,subject_ref)`，且 `axis_ref => subject_ref`；
 - 不包含 predicate、formula、logical result 等 J 语义。
 
@@ -387,6 +394,8 @@ transformation permission，也不改变 `Reach_t(J)`。
 
 - 所有 ref 存在于 J/C 声明环境；
 - instance、region、route、order、sharing 闭合；
+- iteration region 为 loop placement，loop/tile instances 分别锚定同一 structured J loop 与 attached
+  required positive-integer C tile；显式 relation 不要求该 slot 使用特定 role；
 - route operand slot 与 J carrier 相容；
 - observable instance 锚定 J；
 - 不新增 operator、predicate、fill、effect 或 semantic constant；
@@ -399,7 +408,22 @@ type `Ts` 与 result type `Tt`；不能把二者都与 node result carrier 比�
 显式提出，固定核只检查其与 instance/refinement 的 kind、`auth_ref`、`semantic_ref` 和类型一致性。
 每个 instance 至多一个 refinement。
 
+同一 pair 可以因多个 declared physical regions 出现多条 iteration relations；parser 每个 region
+最多一条。slot attachment 的 loop axis 可以用 canonical ordinal `0`，也可以用该 loop 显式
+`trip.axis=x*`。`tile_extent` 与 `reduction_tile_extent` 是触发机械 missing-totality 的保留 role：
+只有这些 role 对应的 attachment-closed J-loop/slot pair 在完全缺 relation 时由 TypeCheck 报
+`iteration_witness_missing`；custom role 不使一个已经显式写出的 relation 非法。若 role 被误标且
+relation 完全遗漏，或 Lift 完全遗漏 Source region、因而无 handle，fixed checker 都没有可量化对象；
+该 completeness 由 source-aware Lift 提出、Gate1 observer 比较检查。这个边界必须保留，不能把局部
+dependent checking 夸写成 Source topology 的形式证明。
+
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
+
+当前合并协议为 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1`；Replay packet envelope
+仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v6`，Lift knowledge 为 v15。
+v1/v2 artifact 保持原 wire bytes/digest 并禁止 `pi.iterations`，不得静默升级。DYT 与 SwiGLU 的既有
+证书继续按原 receipt 成立，无需仅因 v3 重跑，也不得被重新标成 fresh v3。SCRC 后 π 停止，
+production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
 ## 4.4 Lift 内的非认证 CandidateCheck
 
@@ -447,7 +471,7 @@ value、patch、Source/Gate/hidden/sibling 信息。该摘要与 submission `PAS
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+当前 fresh-run 取 `v_TC = typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
 rank-0/普通 result type，缺失的 broadcast axis relation 必须拒绝，不能由 checker 猜测。
 v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行 canonical fail-early，
@@ -458,10 +482,42 @@ realization authorization subject 或 refinement carrier；它没有 logical den
 可识别的零起点矩形 functional logical-domain profile 增加同源必要条件：direct access index、padding
 predicate、`boundary.domains` 与 typed tensor extent 必须显式闭合，CandidateCheck/TypeCheck 不从
 Source、C、π、shape、runtime/hidden input 补造 relation。general affine/交叉轴 logical predicate
-不因当前 RefEval 未实现而被一概拒绝，合法 predicate/fill/effect 也不被删除或改写。Scalar RefEval
-能力边界另升为 `j_scalar_cpu_mlir_v8`，仅新增唯一 node-less logical-input load 的确定性消费。
-所有既有 typecheck.v3/v4/v5、`j_scalar_cpu_mlir_v7` evidence 以及 Softmax/RMS 历史运行保持原
-verdict，新协议只用于 fresh run。
+不因当前 RefEval 未实现而被一概拒绝，合法 predicate/fill/effect 也不被删除或改写。v7 对 rank-0
+signature logical input 做窄的 J-graph liveness：它必须到达 observable output dependency，或被显式
+boundary/shape semantics 使用；identity/direct-output 与 boundary-only 合法使用不丢失，dead node 和
+π-only route 不计。representation/address-only runtime scalar 由 Lift 显式声明为
+`kind=scalar,mode=value,rank=0,logical_ref=null`，不创建 J input、只可作为 π carrier；fixed checker
+不看 Source 名称/位置、不自动解绑，也不把规则推广成未证明的一般 tensor liveness。
+
+这个 null-carrier 例外仅限 runtime scalar。`bound_constexpr_values` 必须已有逻辑语义归属：logical
+data/predicate/result 使用 dtype-compatible rank-0 J input，integral extent-only 使用 declared `x*`；
+只影响 implementation selection 的 constexpr 必须进入 C。representation-only bound constexpr
+不能以 `logical_ref=null` 留成 π-only carrier；既不属于 J、也不能合法归入 C 时应在 Harness
+准备阶段判 case invalid，而不是交给 Lift 猜分类。
+
+v7 还独立检查 `padded_mean_count_unproven`，但只在一个窄 closed profile 内：predicated direct load
+不含 logical guard；index/domain 是完整零起点矩形；predicate upper bound 与对应 typed tensor extent
+相等；同一 masked axis 经已建模的 closed pointwise/broadcast 位置传播后被 `reduce(mean)` 消去。
+此时当前 J 的中性 `masked_contribution` 只证明分子，不能证明 logical valid count 作为除数，故在
+Replay 前拒绝。dense/unpredicated mean、guard-bearing 或 cross-axis/general predicate、domain/extent
+未闭合、mask 位于该 mean 未消去轴、或未知 op 阻断传播证明时不触发 TypeCheck；这些未闭合
+consumer topology 由 functional consumer 明确 unsupported。该判定只读 J，不读取 Source/C/π，也不
+将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
+`reduce(sum) + explicit div`。
+
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v9`，shared projection 为
+`intentir.j-functional-boundary.v2`。v9 继承 v8 的唯一 node-less logical-input load，并把 padded
+reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：每个 predicated direct access 必须
+覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
+恰有一个中性 `masked_contribution` contract；pointwise 的 trailing/显式 non-trailing broadcast 必须
+由 closed type/J relation 决定。满足这些条件的 max → pointwise → sum 等多 reduction DAG 直接交给
+既有 Intent MLIR scalar executor，不读取 Source、C、π 或 hidden input，也没有 Softmax/Kernel 分支。
+上述窄 rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract，以及缺
+domain/fill/reduction/broadcast 等继续 unsupported。所有既有 typecheck.v3/v4/v5/v6、
+`j_scalar_cpu_mlir_v7/v8` evidence 以及 Softmax/RMS 历史运行保持原 verdict，新协议只用于 fresh run。
+guard-bearing access 当前由 RefEval consumer 一律 fail closed；已有 masked provenance 进入
+contraction/其他未建模 op 时也必须在该 op 处拒绝，不能靠 guard 名称 membership 或静默停止传播来
+证明 mask erasure。两者是 consumer 能力边界，不新增 TypeCheck 非法 J 条件。
 
 ---
 
@@ -656,6 +712,16 @@ G_1^{\Phi_1}=1.
 每份证书的外部记录至少要包含 `frontend`、observer profile/version、compiler/dump stage 与
 canonicalization version。mutation test 可以评估 observer 的经验敏感性，但不构成 observer
 完备性定理，也不进入主认证谓词。
+
+当前 Triton active profile 是 `triton-ttir-3.6-gate1-v5`。它继承 v4 对 closed load/store cache-policy
+hint 的 NormalizeAway，并把从 public entry 可达、静态已知、structured 且无环的 `tt.call` graph
+interprocedurally 展开：formal-to-actual、helper return SSA、op/def-use、effect 与已支持 structured
+region 都进入同一 observation。未知/动态 callee、递归/cyclic call graph、signature/return 不一致、
+reachable arbitrary multi-block CFG 与未支持 control/region 形态一律 fail closed。若 Source 侧因此
+无法形成 `F_source`，`intentir.scrc.batch.v3` 报 `observer_unsupported`；它表示 observer 能力缺口，
+不是候选非法、Gate1 mismatch 或 `NO_CLOSURE`。Replay 侧失败不能冒充 Source observer 缺口；历史
+batch v2 report 也不由 v3 重判。上述 profile 只是当前实现与测试覆盖的 compiler contract，不是 TTIR
+observer 完备性的形式证明。
 
 ---
 
@@ -1102,6 +1168,11 @@ time-to-first-closure、logical/physical Lift、normal/masked Replay、transport
 - Gate2 失败后本次实验结束，不再 relift。
 
 实验结束后才修改系统，并重新开始一场新实验。
+
+多个独立 case 可以由 `intentir.scrc.batch.v3` 在 `W/B/G/G2` 有界资源下并行运行；这些调度量只进
+proof-irrelevant audit metadata。v3 新增的 `observer_unsupported` 只用于 Source observer 无法产生
+可比较 observation 的能力缺口：fan-out 只有所有完整 branch 均因此停止才聚合为该类，混合结果仍
+按既有 `NO_CLOSURE` 等分类收敛。它不进入上述认证公式，也不改变任何 batch v2 历史 verdict。
 
 ---
 

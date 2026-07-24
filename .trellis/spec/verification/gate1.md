@@ -23,11 +23,19 @@ presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打�
 删除会改变必要 realization closure 的 op、def-use、predicate/fill、effect、region、order、
 sharing、placement 或 representation topology。
 
-`triton-ttir-3.6-gate1-v4` 有一条全局、窄而 closed 的例外：对 `tt.load` 只归一
+自 `triton-ttir-3.6-gate1-v4` 起有一条全局、窄而 closed 的例外：对 `tt.load` 只归一
 `cacheModifier in {ca,cg,cv}`，对 `tt.store` 只归一 `{wb,cg,cs,wt}`。它们是不由
 J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation、memory effect、
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
+
+当前 active profile 是 `triton-ttir-3.6-gate1-v5`。v5 继承上述 canonicalization，并将从 public
+entry 可达、callee 静态已知且 call graph 无环的 structured `tt.call` 展开到同一 SSA observation：
+formal-to-actual、helper returns、op/def-use、effect 与当前支持的 structured region 都参与 hard
+comparison；public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。未知或动态 callee、
+递归/cyclic call、signature/return 不一致、reachable arbitrary multi-block CFG 与未支持的
+control/region 形态 fail closed。该范围是当前 compiler contract 与测试边界，不是 observer 或 TTIR
+语义完备性的形式证明。
 
 ## Observer 能力
 
@@ -38,7 +46,10 @@ frontend adapter 必须声明其实际 observer 能力，例如：
 - Level 2：规范化中层 def-use、predicate/fill/effect 与 realization topology。
 
 较弱 observer 的通过只能形成相应强度的 Gate1 claim，不能冒充 Level 2。observer 未实现或
-证据不完整时 fail closed 或明确 inconclusive，不能自动 PASS。
+证据不完整时 fail closed 或明确 inconclusive，不能自动 PASS。Source 在当前 profile 下无法形成
+observation 时，outer batch v3 使用 `observer_unsupported`：它只标记 Source observer 能力缺口，
+不是 TypeCheck/Gate1 失败、候选非法或 `NO_CLOSURE`。Replay 侧失败不能改写为该类；历史 batch v2
+报告也不由 v3 重判。
 
 ## 失败与 relift
 

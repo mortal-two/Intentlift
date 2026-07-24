@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v4"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v5"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -378,32 +378,56 @@ class _Operation:
     region_results: list[str] = field(default_factory=list)
     region_block_args: list[str] = field(default_factory=list)
     constant_value: float | None = None
+    callee: str | None = None
+    call_operand_types: tuple[str, ...] = ()
+    call_result_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class _FunctionParts:
+    name: str
+    visibility: str
     arguments: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]
     results: tuple[str, ...]
     body: str
+    attributes: tuple[tuple[str, str], ...] = ()
 
 
-def _parse_function(text: str) -> _FunctionParts:
-    matches = list(re.finditer(r"\btt\.func\s+public\s+@[A-Za-z0-9_.$-]+\s*\(", text))
-    if len(matches) != 1:
-        raise TTIRParseError(
-            f"expected exactly one public tt.func, found {len(matches)}"
-        )
-    start = matches[0].start()
-    args_open = text.find("(", start)
+_FUNCTION_RE = re.compile(
+    r"^\s*tt\.func\s+(?:(?P<visibility>public|private)\s+)?@"
+    r'(?P<name>"(?:\\.|[^"\\])*"|[A-Za-z0-9_.$-]+)\s*\(',
+    flags=re.MULTILINE,
+)
+_SYMBOL_RE = r'"(?:\\.|[^"\\])*"|[A-Za-z0-9_.$-]+'
+
+
+def _symbol_value(token: str) -> str:
+    if not token.startswith('"'):
+        return token
+    try:
+        value = json.loads(token)
+    except json.JSONDecodeError as error:
+        raise TTIRParseError(f"invalid quoted MLIR symbol {token!r}") from error
+    if not isinstance(value, str):
+        raise TTIRParseError(f"invalid quoted MLIR symbol {token!r}")
+    return value
+
+
+def _parse_function_definition(text: str, match: re.Match[str]) -> _FunctionParts:
+    args_open = match.end() - 1
     args_close = _balanced_end(text, args_open, "(", ")")
     args_text = text[args_open + 1 : args_close]
 
     arguments: list[tuple[str, str, tuple[tuple[str, str], ...]]] = []
     for item in _split_top_level(args_text):
-        match = re.match(r"(?P<name>%[A-Za-z0-9_.$-]+)\s*:\s*(?P<rest>.*)", item, re.S)
-        if match is None:
+        argument_match = re.match(
+            r"(?P<name>%[A-Za-z0-9_.$-]+)\s*:\s*(?P<rest>.*)",
+            item,
+            re.S,
+        )
+        if argument_match is None:
             raise TTIRParseError(f"cannot parse function argument: {item!r}")
-        rest = match.group("rest").strip()
+        rest = argument_match.group("rest").strip()
         attr_start = _find_top_level_char(rest, "{")
         if attr_start is None:
             type_text, attrs = rest, ()
@@ -411,30 +435,29 @@ def _parse_function(text: str) -> _FunctionParts:
             attr_end = _balanced_end(rest, attr_start, "{", "}")
             type_text = rest[:attr_start]
             attrs = _canonical_attrs(rest[attr_start : attr_end + 1])
-        arguments.append((match.group("name"), _normalize_space(type_text), attrs))
+        arguments.append(
+            (argument_match.group("name"), _normalize_space(type_text), attrs)
+        )
 
-    cursor = args_close + 1
-    remainder = text[cursor:]
-    attr_match = re.match(r"\s*attributes\s*", remainder)
-    if attr_match:
-        attr_open = cursor + attr_match.end()
-        while attr_open < len(text) and text[attr_open].isspace():
-            attr_open += 1
-        attr_close = _balanced_end(text, attr_open, "{", "}")
-        between = text[args_close + 1 : cursor + attr_match.start()]
-        cursor = attr_close + 1
-    else:
-        between = text[args_close + 1 : cursor]
-
-    body_open = cursor
-    while body_open < len(text) and text[body_open].isspace():
-        body_open += 1
-    if body_open >= len(text) or text[body_open] != "{":
-        # A result type can appear before attributes/body.  Locate the next
-        # top-level body brace after the argument list.
-        body_open = _next_body_brace(text, args_close + 1)
-        between = text[args_close + 1 : body_open]
-        between = re.sub(r"\battributes\s*\{.*?\}\s*$", "", between, flags=re.S)
+    # The first brace after the argument list can be the function attribute
+    # dictionary.  ``_next_body_brace`` skips it and returns the actual body.
+    body_open = _next_body_brace(text, args_close + 1)
+    between = text[args_close + 1 : body_open]
+    attribute_marker = re.search(r"\battributes\s*\{", between)
+    function_attributes: tuple[tuple[str, str], ...] = ()
+    if attribute_marker is not None:
+        attribute_open = between.find("{", attribute_marker.start())
+        attribute_close = _balanced_end(
+            between, attribute_open, "{", "}"
+        )
+        if between[attribute_close + 1 :].strip():
+            raise TTIRParseError(
+                "unexpected syntax after tt.func attribute dictionary"
+            )
+        function_attributes = _canonical_attrs(
+            between[attribute_open : attribute_close + 1]
+        )
+        between = between[: attribute_marker.start()]
     body_close = _balanced_end(text, body_open, "{", "}")
 
     result_text = between.strip()
@@ -449,7 +472,65 @@ def _parse_function(text: str) -> _FunctionParts:
             results = (_normalize_space(result_text),)
     else:
         results = ()
-    return _FunctionParts(tuple(arguments), results, text[body_open + 1 : body_close])
+    return _FunctionParts(
+        name=_symbol_value(match.group("name")),
+        visibility=match.group("visibility") or "private",
+        arguments=tuple(arguments),
+        results=results,
+        body=text[body_open + 1 : body_close],
+        attributes=function_attributes,
+    )
+
+
+def _parse_functions(text: str) -> dict[str, _FunctionParts]:
+    functions: dict[str, _FunctionParts] = {}
+    for match in _FUNCTION_RE.finditer(text):
+        function = _parse_function_definition(text, match)
+        if function.name in functions:
+            raise TTIRParseError(f"duplicate tt.func symbol @{function.name}")
+        functions[function.name] = function
+    public = [
+        function
+        for function in functions.values()
+        if function.visibility == "public"
+    ]
+    if len(public) != 1:
+        raise TTIRParseError(
+            f"expected exactly one public tt.func, found {len(public)}"
+        )
+    return functions
+
+
+def _parse_function(text: str) -> _FunctionParts:
+    functions = _parse_functions(text)
+    return next(
+        function for function in functions.values() if function.visibility == "public"
+    )
+
+
+def _validate_function_metadata_boundary(function: _FunctionParts) -> None:
+    """Validate the closed function-metadata boundary for TTIR v5."""
+
+    if function.visibility != "public":
+        for position, (_, _, attributes) in enumerate(function.arguments):
+            if attributes:
+                raise TTIRParseError(
+                    f"reachable private tt.func @{function.name} argument "
+                    f"{position} has unsupported attributes"
+                )
+    seen: set[str] = set()
+    for name, value in function.attributes:
+        if name in seen:
+            raise TTIRParseError(
+                f"reachable tt.func @{function.name} repeats "
+                f"attribute {name!r}"
+            )
+        seen.add(name)
+        if name != "noinline" or value not in {"false", "true"}:
+            raise TTIRParseError(
+                f"reachable tt.func @{function.name} has unsupported "
+                f"function attribute {name!r}={value!r}"
+            )
 
 
 def _find_top_level_char(text: str, wanted: str) -> int | None:
@@ -520,6 +601,246 @@ def _operation_head(line: str) -> tuple[tuple[str, ...], str, str] | None:
     if "." not in name:
         return None
     return lhs, name, tail[match.end() :].strip()
+
+
+def _parse_call_contract(
+    tail: str,
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Parse a Triton ``tt.call`` target and its explicit function type.
+
+    Triton 3.6 normally emits custom assembly, ``tt.call @callee(...) :
+    (...) -> (...)``.  The quoted generic spelling is accepted only when it
+    carries the same explicit ``callee = @...`` attribute.  Gate1 does not
+    infer missing call contracts from a callee: that would turn malformed or
+    version-skewed TTIR into weaker evidence.
+    """
+
+    custom = re.match(rf"@(?P<name>{_SYMBOL_RE})\s*\(", tail)
+    if custom is not None:
+        callee = _symbol_value(custom.group("name"))
+        args_open = custom.end() - 1
+    else:
+        generic = re.search(rf"\bcallee\s*=\s*@(?P<name>{_SYMBOL_RE})", tail)
+        if generic is None:
+            raise TTIRParseError("tt.call is missing a statically known callee")
+        callee = _symbol_value(generic.group("name"))
+        stripped = tail.lstrip()
+        if not stripped.startswith("("):
+            raise TTIRParseError("generic tt.call is missing its operand list")
+        args_open = len(tail) - len(stripped)
+
+    args_close = _balanced_end(tail, args_open, "(", ")")
+    signature_colon = tail.find(":", args_close + 1)
+    if signature_colon < 0:
+        raise TTIRParseError(f"tt.call @{callee} is missing its explicit type")
+    signature = tail[signature_colon + 1 :].strip()
+    if not signature.startswith("("):
+        raise TTIRParseError(f"tt.call @{callee} has an invalid operand type list")
+    input_close = _balanced_end(signature, 0, "(", ")")
+    operand_types = tuple(
+        _normalize_space(item)
+        for item in _split_top_level(signature[1:input_close])
+    )
+    remainder = signature[input_close + 1 :].strip()
+    if not remainder.startswith("->"):
+        raise TTIRParseError(f"tt.call @{callee} is missing its result type")
+    result_text = remainder[2:].strip()
+    if result_text == "()":
+        result_types: tuple[str, ...] = ()
+    elif result_text.startswith("("):
+        result_close = _balanced_end(result_text, 0, "(", ")")
+        if result_text[result_close + 1 :].strip():
+            raise TTIRParseError(f"tt.call @{callee} has trailing type syntax")
+        result_types = tuple(
+            _normalize_space(item)
+            for item in _split_top_level(result_text[1:result_close])
+        )
+    else:
+        result_types = (_normalize_space(result_text),)
+    return callee, operand_types, result_types
+
+
+def _find_top_level_token(text: str, token: str, *, last: bool = False) -> int | None:
+    """Find a token outside MLIR delimiters and quoted strings."""
+
+    stack: list[str] = []
+    quote: str | None = None
+    escaped = False
+    pairs = {"(": ")", "[": "]", "{": "}", "<": ">"}
+    found: int | None = None
+    index = 0
+    while index <= len(text) - len(token):
+        char = text[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            index += 1
+            continue
+        if char in pairs:
+            stack.append(pairs[char])
+            index += 1
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            index += 1
+            continue
+        if not stack and text.startswith(token, index):
+            found = index
+            if not last:
+                return found
+            index += len(token)
+            continue
+        index += 1
+    return found
+
+
+def _declared_types(text: str) -> tuple[str, ...]:
+    text = text.strip()
+    if not text or text == "()":
+        return ()
+    if text.startswith("("):
+        closing = _balanced_end(text, 0, "(", ")")
+        if text[closing + 1 :].strip():
+            raise TTIRParseError(f"trailing syntax after type list {text!r}")
+        text = text[1:closing]
+    return tuple(_normalize_space(item) for item in _split_top_level(text))
+
+
+def _trailing_type_signature(tail: str) -> str | None:
+    colon = _find_top_level_token(tail, ":", last=True)
+    if colon is None:
+        return None
+    signature = tail[colon + 1 :].strip()
+    return signature or None
+
+
+def _loaded_value_type(pointer_type: str | None) -> str | None:
+    if pointer_type is None:
+        return None
+    pointer_type = _normalize_space(pointer_type)
+    if pointer_type.startswith("!tt.ptr<"):
+        opening = pointer_type.find("<")
+        closing = _balanced_end(pointer_type, opening, "<", ">")
+        if pointer_type[closing + 1 :].strip():
+            return None
+        parts = _split_top_level(pointer_type[opening + 1 : closing])
+        return _normalize_space(parts[0]) if parts else None
+    marker = pointer_type.find("!tt.ptr<")
+    if marker < 0 or not pointer_type.startswith("tensor<"):
+        return None
+    opening = pointer_type.find("<", marker)
+    closing = _balanced_end(pointer_type, opening, "<", ">")
+    parts = _split_top_level(pointer_type[opening + 1 : closing])
+    if not parts:
+        return None
+    return _normalize_space(
+        pointer_type[:marker] + parts[0] + pointer_type[closing + 1 :]
+    )
+
+
+def _comparison_result_type(operand_type: str | None) -> str | None:
+    if operand_type is None:
+        return None
+    operand_type = _normalize_space(operand_type)
+    if not operand_type.startswith("tensor<"):
+        return "i1"
+    body = operand_type[len("tensor<") : -1] if operand_type.endswith(">") else ""
+    if not body:
+        return None
+    pieces = _split_top_level(body)
+    shape_and_element = pieces[0]
+    separator = shape_and_element.rfind("x")
+    if separator < 0:
+        return None
+    pieces[0] = shape_and_element[: separator + 1] + "i1"
+    return _normalize_space(f"tensor<{','.join(pieces)}>")
+
+
+def _operation_result_types(
+    name: str,
+    tail: str,
+    result_count: int,
+    operand_types: Sequence[str | None],
+    *,
+    call_result_types: tuple[str, ...] = (),
+) -> tuple[str | None, ...]:
+    """Infer only result types exposed explicitly by Triton custom assembly.
+
+    This is intentionally not a general MLIR type checker.  Unknown result
+    forms remain ``None`` and are rejected only if they cross a ``tt.call`` or
+    ``tt.return`` boundary where Gate1 must prove the actual SSA type.
+    """
+
+    if result_count == 0:
+        return ()
+    if name == "tt.call":
+        if len(call_result_types) != result_count:
+            raise TTIRParseError("tt.call result SSA/type arity mismatch")
+        return tuple(call_result_types)
+    if name == "scf.for":
+        arrow = _find_top_level_token(tail, "->", last=True)
+        if arrow is None:
+            return (None,) * result_count
+        result_text = tail[arrow + 2 :].lstrip()
+        if not result_text.startswith("("):
+            return (None,) * result_count
+        closing = _balanced_end(result_text, 0, "(", ")")
+        inferred = _declared_types(result_text[: closing + 1])
+        return (
+            tuple(inferred)
+            if len(inferred) == result_count
+            else (None,) * result_count
+        )
+    if name == "tt.addptr":
+        inferred = operand_types[0] if operand_types else None
+        return (inferred,) if result_count == 1 else (None,) * result_count
+    if name == "tt.load" or name.startswith("tt.atomic"):
+        inferred = _loaded_value_type(operand_types[0] if operand_types else None)
+        return (inferred,) if result_count == 1 else (None,) * result_count
+    if name in {"arith.cmpi", "arith.cmpf"}:
+        inferred = _comparison_result_type(
+            operand_types[0] if operand_types else None
+        )
+        return (inferred,) if result_count == 1 else (None,) * result_count
+
+    signature = _trailing_type_signature(tail)
+    if signature is None:
+        return (None,) * result_count
+    arrow = _find_top_level_token(signature, "->", last=True)
+    if arrow is not None:
+        inferred = _declared_types(signature[arrow + 2 :])
+    else:
+        conversion = _find_top_level_token(signature, " to ", last=True)
+        inferred = (
+            _declared_types(signature[conversion + 4 :])
+            if conversion is not None
+            else _declared_types(signature)
+        )
+    if len(inferred) != result_count:
+        return (None,) * result_count
+    return tuple(inferred)
+
+
+def _return_contract_types(tail: str, operand_count: int) -> tuple[str, ...]:
+    if operand_count == 0:
+        if _trailing_type_signature(tail) is not None:
+            raise TTIRParseError("void tt.return unexpectedly carries a type")
+        return ()
+    signature = _trailing_type_signature(tail)
+    if signature is None:
+        raise TTIRParseError("value tt.return is missing its explicit type")
+    result = _declared_types(signature)
+    if len(result) != operand_count:
+        raise TTIRParseError("tt.return SSA/type arity mismatch")
+    return result
 
 
 def _scalar_constant(tail: str) -> float | None:
@@ -769,17 +1090,55 @@ def _parse_for_header(tail: str) -> tuple[list[str], list[str]]:
     return operands, block_args
 
 
-def _parse_block_args(line: str) -> list[str]:
-    match = re.match(r"\s*\^[A-Za-z0-9_.$-]+\s*\((?P<args>.*)\)\s*:\s*$", line)
+_BLOCK_HEADER_RE = re.compile(
+    r"\s*\^(?P<label>[A-Za-z0-9_.$-]+)"
+    r"(?:\s*\((?P<args>.*)\))?\s*:\s*(?://.*)?$"
+)
+
+
+def _parse_block_header(line: str) -> tuple[str, tuple[tuple[str, str], ...]] | None:
+    match = _BLOCK_HEADER_RE.fullmatch(line)
     if match is None:
-        return []
-    names: list[str] = []
-    for item in _split_top_level(match.group("args")):
-        arg = re.match(r"(?P<name>%[A-Za-z0-9_.$-]+)\s*:", item)
-        if arg is None:
+        return None
+    arguments: list[tuple[str, str]] = []
+    for item in _split_top_level(match.group("args") or ""):
+        argument = re.fullmatch(
+            r"(?P<name>%[A-Za-z0-9_.$-]+)\s*:\s*(?P<type>.+)",
+            item,
+        )
+        if argument is None:
             raise TTIRParseError(f"cannot parse region block argument: {item!r}")
-        names.append(arg.group("name"))
-    return names
+        arguments.append(
+            (
+                argument.group("name"),
+                _normalize_space(argument.group("type")),
+            )
+        )
+    return match.group("label"), tuple(arguments)
+
+
+def _parse_block_args(line: str) -> list[str]:
+    header = _parse_block_header(line)
+    if header is None:
+        return []
+    return [name for name, _ in header[1]]
+
+
+def _operation_has_effect(operation: _Operation) -> bool:
+    """Return whether an operation participates in lexical effect order."""
+
+    return (
+        operation.name in {
+            "tt.load",
+            "tt.store",
+            "tt.assert",
+            "tt.device_assert",
+            "gpu.wait",
+            "tt.async_wait",
+        }
+        or operation.name.startswith("tt.atomic")
+        or "barrier" in operation.name
+    )
 
 
 def _canonical_python_interface(
@@ -838,8 +1197,13 @@ class TTIRParser:
         schedule: Mapping[str, Any] | None = None,
     ) -> TTIRFingerprint:
         cleaned = _strip_locations(text)
-        function = _parse_function(cleaned)
-        operations, result_to_node, leaf_labels = self._parse_operations(function)
+        functions = _parse_functions(cleaned)
+        function = next(
+            item for item in functions.values() if item.visibility == "public"
+        )
+        operations, result_to_node, leaf_labels = self._expand_reachable_calls(
+            function, functions
+        )
         operations, result_to_node = _bounded_normalize_operations(
             operations, result_to_node
         )
@@ -861,7 +1225,11 @@ class TTIRParser:
             name: f"arg[{index}]:{type_text}"
             for index, (name, type_text, _) in enumerate(function.arguments)
         }
+        value_types: dict[str, str | None] = {
+            name: type_text for name, type_text, _ in function.arguments
+        }
         region_stack: list[tuple[int, int]] = []
+        region_block_counts: dict[int, int] = {}
         # One lexical binding map for the function and one for every active
         # operation region.  MLIR SSA names need only be unique within their
         # region; sibling scf.for/tt.reduce bodies may legally reuse spellings
@@ -918,17 +1286,33 @@ class TTIRParser:
                     scope_bindings.pop()
                 continue
 
-            block_args = _parse_block_args(line)
-            if block_args:
+            block_header = _parse_block_header(line)
+            if block_header is not None:
                 if not region_stack:
                     raise TTIRParseError(
-                        f"line {line_number}: block arguments outside a region"
+                        f"line {line_number}: top-level block label "
+                        f"^{block_header[0]} is unsupported; Gate1 TTIR v5 "
+                        "cannot soundly flatten a function CFG"
                     )
-                parent = operations[region_stack[-1][0]]
+                block_args = [name for name, _ in block_header[1]]
+                block_arg_types = [type_text for _, type_text in block_header[1]]
+                parent_id = region_stack[-1][0]
+                parent = operations[parent_id]
+                if region_block_counts.get(parent_id, 0) >= 1:
+                    raise TTIRParseError(
+                        f"line {line_number}: structured region "
+                        f"{parent.name} has more than one block; Gate1 TTIR "
+                        "v5 supports only single-block structured regions"
+                    )
+                region_block_counts[parent_id] = 1
                 qualified_args = [
                     define(name, line_number=line_number)
                     for name in block_args
                 ]
+                for name, type_text in zip(
+                    qualified_args, block_arg_types, strict=True
+                ):
+                    value_types[name] = type_text
                 parent.region_block_args.extend(qualified_args)
                 path = "/".join(operations[node].name for node, _ in region_stack)
                 for index, name in enumerate(qualified_args):
@@ -952,10 +1336,67 @@ class TTIRParser:
             raw_block_args: list[str] = []
             if name == "scf.for":
                 raw_operands, raw_block_args = _parse_for_header(tail)
+            callee: str | None = None
+            call_operand_types: tuple[str, ...] = ()
+            call_result_types: tuple[str, ...] = ()
+            if name == "tt.call":
+                callee, call_operand_types, call_result_types = (
+                    _parse_call_contract(tail)
+                )
             operands = [resolve(operand) for operand in raw_operands]
+            operand_types = tuple(value_types.get(operand) for operand in operands)
+            if name == "tt.call":
+                if len(operand_types) != len(call_operand_types):
+                    raise TTIRParseError("tt.call operand SSA/type arity mismatch")
+                for index, (actual, declared) in enumerate(
+                    zip(operand_types, call_operand_types, strict=True)
+                ):
+                    if actual is None:
+                        raise TTIRParseError(
+                            f"tt.call operand {index} actual SSA type cannot "
+                            "be established"
+                        )
+                    if actual != declared:
+                        raise TTIRParseError(
+                            f"tt.call operand {index} actual SSA type {actual} "
+                            f"does not match its explicit call type {declared}"
+                        )
+            if name == "tt.return":
+                declared_returns = _return_contract_types(tail, len(operands))
+                if declared_returns != function.results:
+                    raise TTIRParseError(
+                        f"tt.return explicit types {declared_returns} do not "
+                        f"match tt.func @{function.name} results "
+                        f"{function.results}"
+                    )
+                for index, (actual, declared) in enumerate(
+                    zip(operand_types, declared_returns, strict=True)
+                ):
+                    if actual is None:
+                        raise TTIRParseError(
+                            f"tt.return operand {index} actual SSA type cannot "
+                            "be established"
+                        )
+                    if actual != declared:
+                        raise TTIRParseError(
+                            f"tt.return operand {index} actual SSA type "
+                            f"{actual} does not match its explicit return "
+                            f"type {declared}"
+                        )
             qualified_results = tuple(
                 define(result, line_number=line_number) for result in results
             )
+            inferred_result_types = _operation_result_types(
+                name,
+                tail,
+                len(qualified_results),
+                operand_types,
+                call_result_types=call_result_types,
+            )
+            for result, type_text in zip(
+                qualified_results, inferred_result_types, strict=True
+            ):
+                value_types[result] = type_text
             axis_match = re.search(r"\baxis\s*=\s*(-?[0-9]+)", tail)
             operation = _Operation(
                 node_id=len(operations),
@@ -974,6 +1415,9 @@ class TTIRParser:
                     if name == "arith.constant"
                     else None
                 ),
+                callee=callee,
+                call_operand_types=call_operand_types,
+                call_result_types=call_result_types,
             )
             operations.append(operation)
             for result in qualified_results:
@@ -1001,11 +1445,33 @@ class TTIRParser:
                     )
                     for block_name in raw_block_args
                 ]
+                raw_block_arg_types = (
+                    [
+                        operand_types[0] if operand_types else None,
+                        *operand_types[3:],
+                    ]
+                    if name == "scf.for"
+                    else []
+                )
+                if len(raw_block_arg_types) != len(qualified_block_args):
+                    raise TTIRParseError(
+                        "scf.for block argument/type arity mismatch"
+                    )
+                for block_name, type_text in zip(
+                    qualified_block_args, raw_block_arg_types, strict=True
+                ):
+                    value_types[block_name] = type_text
                 operation.region_block_args.extend(qualified_block_args)
                 for index, block_name in enumerate(qualified_block_args):
                     leaf_labels[block_name] = f"region[{path}].arg[{index}]"
                 region_stack.append((operation.node_id, indent))
                 scope_bindings.append(child_bindings)
+                # Custom ``scf.for`` assembly declares its one body block via
+                # the induction variable/iter_args in the operation header.
+                # ``tt.reduce`` declares its block on the following ^bb line.
+                region_block_counts[operation.node_id] = (
+                    1 if raw_block_args else 0
+                )
 
         if region_stack:
             raise TTIRParseError("unterminated operation region")
@@ -1016,6 +1482,306 @@ class TTIRParser:
                         f"unresolved SSA value {operand!r} used by {operation.name}"
                     )
         return operations, result_to_node, leaf_labels
+
+    def _expand_reachable_calls(
+        self,
+        public: _FunctionParts,
+        functions: Mapping[str, _FunctionParts],
+    ) -> tuple[list[_Operation], dict[str, int], dict[str, str]]:
+        """Inline the reachable acyclic ``tt.call`` graph into one SSA graph.
+
+        This is a fingerprint-layer canonicalization, not a compiler rewrite:
+        both Source and Replay pass through it and the public function ABI is
+        kept verbatim.  Private function names, private argument attributes,
+        and the frontend's choice to outline or inline are therefore erased,
+        while every reachable operation and memory effect remains observable.
+
+        The current TTIR observer models structured ``scf.for``/``tt.reduce``
+        regions.  It does not yet model arbitrary multi-block CFG dominance or
+        phi/block arguments.  A reachable function containing CF branches is
+        rejected explicitly instead of flattening mutually exclusive blocks
+        into a false proof.  Unreachable helpers are deliberately never
+        parsed and cannot perturb the fingerprint.
+        """
+
+        parsed: dict[
+            str,
+            tuple[list[_Operation], dict[str, int], dict[str, str]],
+        ] = {}
+        expanded: list[_Operation] = []
+        expanded_results: dict[str, int] = {}
+        leaf_labels = {
+            name: f"arg[{index}]:{type_text}"
+            for index, (name, type_text, _) in enumerate(public.arguments)
+        }
+        value_serial = 0
+
+        def fresh_value() -> str:
+            nonlocal value_serial
+            value = f"%__gate1_ip{value_serial}"
+            value_serial += 1
+            return value
+
+        def parse_reachable(
+            function: _FunctionParts,
+        ) -> tuple[list[_Operation], dict[str, int], dict[str, str]]:
+            cached = parsed.get(function.name)
+            if cached is not None:
+                return cached
+            _validate_function_metadata_boundary(function)
+            if re.search(
+                r'^\s*(?:"cf\.(?:br|cond_br|switch)"|'
+                r"cf\.(?:br|cond_br|switch)\b)",
+                function.body,
+                flags=re.MULTILINE,
+            ):
+                raise TTIRParseError(
+                    "reachable tt.func "
+                    f"@{function.name} uses a multi-block CFG; "
+                    "Gate1 TTIR v5 cannot soundly canonicalize that helper"
+                )
+            cached = self._parse_operations(function)
+            parsed[function.name] = cached
+            return cached
+
+        def mapped_value(value_map: Mapping[str, str], value: str) -> str:
+            try:
+                return value_map[value]
+            except KeyError as error:
+                raise TTIRParseError(
+                    f"interprocedural expansion lost SSA value {value!r}"
+                ) from error
+
+        def validate_call(
+            operation: _Operation,
+            caller: _FunctionParts,
+        ) -> _FunctionParts:
+            if operation.callee is None:
+                raise TTIRParseError(
+                    f"tt.call in @{caller.name} has no statically known callee"
+                )
+            callee = functions.get(operation.callee)
+            if callee is None:
+                raise TTIRParseError(
+                    f"tt.call in @{caller.name} references unknown callee "
+                    f"@{operation.callee}"
+                )
+            declared_operands = tuple(
+                type_text for _, type_text, _ in callee.arguments
+            )
+            if len(operation.operands) != len(operation.call_operand_types):
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} operand SSA/type arity mismatch: "
+                    f"{len(operation.operands)} versus "
+                    f"{len(operation.call_operand_types)}"
+                )
+            if len(operation.call_operand_types) != len(declared_operands):
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} argument arity does not match its "
+                    "tt.func signature"
+                )
+            if operation.call_operand_types != declared_operands:
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} operand types do not match its "
+                    "tt.func signature"
+                )
+            if len(operation.result_names) != len(operation.call_result_types):
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} result SSA/type arity mismatch: "
+                    f"{len(operation.result_names)} versus "
+                    f"{len(operation.call_result_types)}"
+                )
+            if len(operation.call_result_types) != len(callee.results):
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} result arity does not match its "
+                    "tt.func signature"
+                )
+            if operation.call_result_types != callee.results:
+                raise TTIRParseError(
+                    f"tt.call @{callee.name} result types do not match its "
+                    "tt.func signature"
+                )
+            return callee
+
+        def emit_function(
+            function: _FunctionParts,
+            actual_arguments: tuple[str, ...],
+            context_prefix: tuple[int, ...],
+            stack: tuple[str, ...],
+            *,
+            preserve_return: bool,
+        ) -> tuple[str, ...]:
+            if function.name in stack:
+                cycle = " -> ".join((*stack, function.name))
+                raise TTIRParseError(
+                    f"recursive tt.call graph is unsupported: {cycle}"
+                )
+            if len(actual_arguments) != len(function.arguments):
+                raise TTIRParseError(
+                    f"tt.func @{function.name} argument arity mismatch: "
+                    f"expected {len(function.arguments)}, got "
+                    f"{len(actual_arguments)}"
+                )
+
+            local_operations, _, _ = parse_reachable(function)
+            value_map = {
+                name: actual
+                for (name, _, _), actual in zip(
+                    function.arguments, actual_arguments, strict=True
+                )
+            }
+            context_map: dict[int, int] = {}
+            deferred_region_results: list[tuple[_Operation, tuple[str, ...]]] = []
+            returned_values: list[tuple[str, ...]] = []
+            saw_top_level_return = False
+
+            for operation in local_operations:
+                if saw_top_level_return:
+                    if operation.name == "tt.return":
+                        raise TTIRParseError(
+                            f"tt.func @{function.name} has more than one "
+                            "top-level tt.return"
+                        )
+                    raise TTIRParseError(
+                        f"tt.func @{function.name} has an operation after its "
+                        "top-level tt.return"
+                    )
+                try:
+                    mapped_context = context_prefix + tuple(
+                        context_map[parent] for parent in operation.context
+                    )
+                except KeyError as error:
+                    raise TTIRParseError(
+                        f"tt.func @{function.name} has a region whose owner "
+                        "does not dominate it"
+                    ) from error
+
+                if operation.name == "tt.call":
+                    callee = validate_call(operation, function)
+                    actuals = tuple(
+                        mapped_value(value_map, operand)
+                        for operand in operation.operands
+                    )
+                    returned = emit_function(
+                        callee,
+                        actuals,
+                        mapped_context,
+                        (*stack, function.name),
+                        preserve_return=False,
+                    )
+                    if len(returned) != len(operation.result_names):
+                        raise TTIRParseError(
+                            f"tt.call @{callee.name} returned {len(returned)} "
+                            f"values for {len(operation.result_names)} results"
+                        )
+                    value_map.update(
+                        zip(operation.result_names, returned, strict=True)
+                    )
+                    continue
+
+                mapped_operands = [
+                    mapped_value(value_map, operand)
+                    for operand in operation.operands
+                ]
+                if operation.name == "tt.return":
+                    if operation.context:
+                        raise TTIRParseError(
+                            f"tt.return in @{function.name} appears inside a "
+                            "structured operation region"
+                        )
+                    if len(mapped_operands) != len(function.results):
+                        raise TTIRParseError(
+                            f"tt.return in @{function.name} has "
+                            f"{len(mapped_operands)} values, expected "
+                            f"{len(function.results)}"
+                        )
+                    returned_values.append(tuple(mapped_operands))
+                    saw_top_level_return = True
+                    if not preserve_return:
+                        continue
+
+                new_results = tuple(fresh_value() for _ in operation.result_names)
+                new_block_args = [
+                    fresh_value() for _ in operation.region_block_args
+                ]
+                clone = _Operation(
+                    node_id=len(expanded),
+                    name=operation.name,
+                    result_names=new_results,
+                    operands=mapped_operands,
+                    local_signature=operation.local_signature,
+                    context=mapped_context,
+                    axis=operation.axis,
+                    cmp_predicate=operation.cmp_predicate,
+                    cmp_flipped=operation.cmp_flipped,
+                    header_operand_count=operation.header_operand_count,
+                    region_results=[],
+                    region_block_args=new_block_args,
+                    constant_value=operation.constant_value,
+                    callee=None,
+                )
+                expanded.append(clone)
+                context_map[operation.node_id] = clone.node_id
+                for old, new in zip(
+                    operation.result_names, new_results, strict=True
+                ):
+                    value_map[old] = new
+                    expanded_results[new] = clone.node_id
+                for old, new in zip(
+                    operation.region_block_args, new_block_args, strict=True
+                ):
+                    value_map[old] = new
+                deferred_region_results.append(
+                    (clone, tuple(operation.region_results))
+                )
+
+            for clone, local_results in deferred_region_results:
+                clone.region_results.extend(
+                    mapped_value(value_map, value) for value in local_results
+                )
+
+            if not returned_values:
+                raise TTIRParseError(f"tt.func @{function.name} has no tt.return")
+            if function.results:
+                first = returned_values[0]
+                if any(values != first for values in returned_values[1:]):
+                    raise TTIRParseError(
+                        f"tt.func @{function.name} has multiple non-identical "
+                        "SSA returns; CFG result merging is unsupported"
+                    )
+                return first
+            return ()
+
+        public_arguments = tuple(name for name, _, _ in public.arguments)
+        emit_function(
+            public,
+            public_arguments,
+            (),
+            (),
+            preserve_return=True,
+        )
+
+        # Reconstruct region leaves from the expanded graph so an outlined
+        # helper called inside ``scf.for`` gets exactly the same structural
+        # path as the equivalent inline operations.
+        for operation in expanded:
+            path = "/".join(
+                [
+                    *(expanded[parent].name for parent in operation.context),
+                    operation.name,
+                ]
+            )
+            for index, name in enumerate(operation.region_block_args):
+                leaf_labels[name] = f"region[{path}].arg[{index}]"
+
+        for operation in expanded:
+            for operand in [*operation.operands, *operation.region_results]:
+                if operand not in expanded_results and operand not in leaf_labels:
+                    raise TTIRParseError(
+                        f"unresolved expanded SSA value {operand!r} used by "
+                        f"{operation.name}"
+                    )
+        return expanded, expanded_results, leaf_labels
 
     def _fingerprint(
         self,
@@ -1093,6 +1859,120 @@ class TTIRParser:
                 else:
                     role = f"region_result[{index - operation.header_operand_count}]"
                 edges.append((producer, consumer, role))
+
+        # Region ownership is hard evidence.  A global operation multiset plus
+        # descendant counts cannot distinguish non-isomorphic loop trees, and
+        # sorting memory effects loses the order of writes to the same address.
+        # Build a recursive, content-sensitive region identity without using
+        # SSA names, source function names, or numeric node ids.  Direct member
+        # edges bind every operation/effect to its parent; the ordered effect
+        # trace retains lexical happens-before for reads, writes, atomics,
+        # barriers, and assertions.  Outlined calls have already been expanded,
+        # so outlined and equivalent inline programs traverse this same graph.
+        region_ids = {
+            operation.node_id
+            for operation in operations
+            if operation.name in {"scf.for", "tt.reduce"}
+        }
+        direct_children: dict[int | None, list[int]] = {}
+        direct_members: dict[int | None, list[_Operation]] = {}
+        direct_sequence: dict[int | None, list[_Operation]] = {}
+        for operation in operations:
+            parent = operation.context[-1] if operation.context else None
+            if parent is not None and parent not in region_ids:
+                raise TTIRParseError(
+                    f"operation {operation.name} has a non-region parent"
+                )
+            direct_sequence.setdefault(parent, []).append(operation)
+            if operation.node_id in region_ids:
+                direct_children.setdefault(parent, []).append(operation.node_id)
+            elif operation.name not in _TERMINATORS:
+                direct_members.setdefault(parent, []).append(operation)
+
+            if _operation_has_effect(operation) and any(
+                node_by_id[ancestor].name == "tt.reduce"
+                for ancestor in operation.context
+            ):
+                raise TTIRParseError(
+                    f"side-effecting operation {operation.name} inside "
+                    "tt.reduce is unsupported"
+                )
+
+        effectful_cache: dict[int, bool] = {}
+
+        def region_has_effect(region_id: int) -> bool:
+            cached = effectful_cache.get(region_id)
+            if cached is not None:
+                return cached
+            value = any(
+                _operation_has_effect(operation)
+                for operation in direct_members.get(region_id, ())
+            ) or any(
+                region_has_effect(child)
+                for child in direct_children.get(region_id, ())
+            )
+            effectful_cache[region_id] = value
+            return value
+
+        region_ref_cache: dict[int, str] = {}
+
+        def direct_effect_events(parent: int | None) -> list[str]:
+            events: list[str] = []
+            for operation in direct_sequence.get(parent, ()):
+                if operation.node_id in region_ids:
+                    if region_has_effect(operation.node_id):
+                        events.append(f"region:{region_ref(operation.node_id)}")
+                elif _operation_has_effect(operation):
+                    events.append(
+                        f"{operation.name}:"
+                        f"{node_ref(operation.node_id, semantic=True)}"
+                    )
+            return events
+
+        def region_ref(region_id: int) -> str:
+            cached = region_ref_cache.get(region_id)
+            if cached is not None:
+                return cached
+            operation = node_by_id[region_id]
+            child_refs = sorted(
+                region_ref(child)
+                for child in direct_children.get(region_id, ())
+            )
+            member_refs = sorted(
+                node_ref(member.node_id, semantic=True)
+                for member in direct_members.get(region_id, ())
+            )
+            payload = {
+                "owner": node_ref(region_id, semantic=True),
+                "children": child_refs,
+                "members": member_refs,
+                "effect_order": direct_effect_events(region_id),
+            }
+            cached = f"region[{operation.name}:{_digest(payload)[:20]}]"
+            region_ref_cache[region_id] = cached
+            return cached
+
+        for parent in [None, *sorted(region_ids)]:
+            parent_ref = "region[root]" if parent is None else region_ref(parent)
+            for child in direct_children.get(parent, ()):
+                edges.append((parent_ref, region_ref(child), "region.child"))
+            for member in direct_members.get(parent, ()):
+                edges.append(
+                    (
+                        parent_ref,
+                        node_ref(member.node_id, semantic=True),
+                        "region.member",
+                    )
+                )
+            effect_events = direct_effect_events(parent)
+            if effect_events:
+                edges.append(
+                    (
+                        parent_ref,
+                        f"effect.trace[{_digest(effect_events)[:20]}]",
+                        "effect.order",
+                    )
+                )
 
         reductions: list[ReductionFingerprint] = []
         for operation in operations:

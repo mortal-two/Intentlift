@@ -127,6 +127,7 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_route": _array_item(pi["routes"]),
         "pi_order": _array_item(pi["order"]),
         "pi_sharing": _array_item(pi["sharing"]),
+        "pi_iteration": _array_item(pi["iterations"]),
         "pi_refinement": _array_item(pi["refinements"]),
     }
 

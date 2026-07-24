@@ -128,6 +128,7 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
             {"before": "i2", "after": "i3"},
         ],
         "sharing": [{"source": "i0", "consumers": ["i1"]}],
+        "refinements": [],
     }
     if not explicit_accesses:
         pi_payload.update(
@@ -207,6 +208,7 @@ def make_copy_artifact() -> Gate1Artifact:
                 "routes": [],
                 "order": [],
                 "sharing": [],
+                "refinements": [],
             }
         ),
     )

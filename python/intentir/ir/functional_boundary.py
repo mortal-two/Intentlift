@@ -25,7 +25,7 @@ from intentir.ir.canonical_j import (
 from intentir.ir.model import IntentOp
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v1"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v2"
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,7 @@ def project_predicate_text(
         logical_guards=logical_guards,
     )
 
+
 def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -165,6 +166,14 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
     if isinstance(op.result, list):
         return tuple(item for item in op.result if isinstance(item, str))
     return ()
+
+
+def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
+    result: list[IntentOp] = []
+    for op in body:
+        result.append(op)
+        result.extend(_walk_ops(op.body))
+    return tuple(result)
 
 
 def _node_table(j: Any) -> dict[str, IntentOp]:
@@ -470,233 +479,564 @@ def _broadcast_axes(j: Any) -> dict[str, dict[str, tuple[int, ...]]]:
     return result
 
 
-def _validate_masked_sum_reduction(
+def _numpy_broadcast_positions(
+    source: Sequence[int | str],
+    target: Sequence[int | str],
+) -> tuple[int, ...] | None:
+    if len(source) > len(target):
+        return None
+    offset = len(target) - len(source)
+    if not all(
+        source_extent == 1 or source_extent == target[offset + index]
+        for index, source_extent in enumerate(source)
+    ):
+        return None
+    return tuple(range(offset, len(target)))
+
+
+def _shape_can_numpy_broadcast(
+    source: Sequence[int | str],
+    target: Sequence[int | str],
+) -> bool:
+    return _numpy_broadcast_positions(source, target) is not None
+
+
+def _axis_broadcast_positions(
+    source: Sequence[int | str],
+    target: Sequence[int | str],
+    axes: Sequence[int],
+) -> tuple[int, ...] | None:
+    """Mirror the emitter's closed rank-insertion broadcast proof."""
+
+    target_rank = len(target)
+    normalized: list[int] = []
+    for raw_axis in axes:
+        axis = raw_axis if raw_axis >= 0 else raw_axis + target_rank
+        if axis < 0 or axis >= target_rank:
+            return None
+        normalized.append(axis)
+    if len(set(normalized)) != len(normalized):
+        return None
+    if not source:
+        return ()
+    axis_set = set(normalized)
+    memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
+
+    def align(source_index: int, target_index: int) -> tuple[int, ...] | None:
+        key = (source_index, target_index)
+        if key in memo:
+            return memo[key]
+        if target_index == target_rank:
+            result = () if source_index == len(source) else None
+            memo[key] = result
+            return result
+        if target_index in axis_set:
+            if (
+                source_index < len(source)
+                and source[source_index] == 1
+            ):
+                suffix = align(source_index + 1, target_index + 1)
+                if suffix is not None:
+                    result = (target_index, *suffix)
+                    memo[key] = result
+                    return result
+            suffix = align(source_index, target_index + 1)
+            if suffix is not None:
+                memo[key] = suffix
+                return suffix
+        elif (
+            source_index < len(source)
+            and source[source_index] == target[target_index]
+        ):
+            suffix = align(source_index + 1, target_index + 1)
+            if suffix is not None:
+                result = (target_index, *suffix)
+                memo[key] = result
+                return result
+        memo[key] = None
+        return None
+
+    return align(0, 0)
+
+
+def _shape_can_broadcast_on_axes(
+    source: Sequence[int | str],
+    target: Sequence[int | str],
+    axes: Sequence[int],
+) -> bool:
+    return _axis_broadcast_positions(source, target, axes) is not None
+
+
+def _validate_broadcast_closure(
+    j: Any,
+    broadcasts: Mapping[str, Mapping[str, tuple[int, ...]]],
+) -> None:
+    """Prove every pointwise operand reaches its declared result shape."""
+
+    value_types = j_elaboration(j).value_type_by_name
+    operations = _walk_ops(j.intent.body)
+    consumers = {
+        op.result: op
+        for op in operations
+        if isinstance(op.result, str)
+    }
+    for result, operands in broadcasts.items():
+        consumer = consumers.get(result)
+        if consumer is None or consumer.op not in {"map_binary", "select"}:
+            raise NotImplementedError(
+                "functional broadcast relation requires a pointwise consumer"
+            )
+        if any(operand not in consumer.operands for operand in operands):
+            raise ValueError(
+                "functional broadcast relation names a non-consumed operand"
+            )
+
+    for op in operations:
+        if op.op not in {"map_binary", "select"} or not isinstance(op.result, str):
+            continue
+        result_type = value_types.get(op.result)
+        if result_type is None:
+            raise ValueError("functional pointwise result has no closed type")
+        target_shape = result_type.shape
+        declared = broadcasts.get(op.result, {})
+        for operand in op.operands:
+            operand_type = value_types.get(operand)
+            if operand_type is None:
+                raise ValueError("functional pointwise operand has no closed type")
+            axes = declared.get(operand)
+            if axes is None:
+                closed = _shape_can_numpy_broadcast(
+                    operand_type.shape,
+                    target_shape,
+                )
+            else:
+                closed = _shape_can_broadcast_on_axes(
+                    operand_type.shape,
+                    target_shape,
+                    axes,
+                )
+            if not closed:
+                raise NotImplementedError(
+                    "functional broadcast relation is incomplete for a "
+                    "pointwise operand"
+                )
+
+
+def _reduction_padding_analysis(
+    j: Any,
+) -> tuple[
+    tuple[FunctionalBoundaryClosureIssue, ...],
+    tuple[FunctionalBoundaryClosureIssue, ...],
+]:
+    j = elaborate_j(j)
+    elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
+    broadcasts = _broadcast_axes(j)
+    logical_guards = _logical_boolean_guards(j)
+    try:
+        full_domains = _full_domains(j)
+    except (NotImplementedError, ValueError):
+        # The TypeCheck-facing analysis is intentionally only the closed
+        # zero-based rectangular profile.  General logical predicates remain
+        # valid J and are handled as a consumer capability boundary.
+        full_domains = {}
+    tensors = {
+        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+    }
+
+    padding_positions: dict[str, frozenset[int]] = {
+        item.name: frozenset() for item in j.intent.inputs
+    }
+    for access in j.boundary.accesses:
+        if access.kind.value != "load":
+            continue
+        parsed = elaboration.access_by_id.get(access.access_id)
+        if parsed is None or parsed.index.direct_axes is None:
+            continue
+        axes = parsed.index.direct_axes
+        if parsed.predicate is None:
+            continue
+        tensor = tensors.get(access.tensor)
+        if tensor is None or len(axes) != len(tensor.shape):
+            continue
+        try:
+            predicate = _predicate_projection(
+                parsed.predicate,
+                logical_guards=logical_guards,
+            )
+        except (NotImplementedError, ValueError):
+            continue
+        if predicate.guards or not predicate.upper_bounds:
+            continue
+        # Seed physical-padding provenance only when J itself proves a full
+        # rectangular logical domain and the predicate bound agrees with the
+        # typed tensor extent.  A guard or cross-axis/logical predicate is not
+        # silently reclassified as padding by TypeCheck.
+        if any(
+            axis not in axes
+            or full_domains.get(axis) != extent
+            or tensor.shape[axes.index(axis)] != extent
+            for axis, extent in predicate.upper_bounds
+        ):
+            continue
+        masked = {
+            axes.index(axis)
+            for axis, _extent in predicate.upper_bounds
+            if axis in axes
+        }
+        if masked:
+            padding_positions[access.tensor] = frozenset(
+                set(padding_positions.get(access.tensor, frozenset())) | masked
+            )
+
+    path_by_marker: dict[int, str] = {}
+
+    def record_paths(body: Sequence[IntentOp], prefix: str = "body") -> None:
+        for index, op in enumerate(body):
+            path = f"{prefix}[{index}]"
+            path_by_marker[id(op)] = path
+            record_paths(op.body, f"{path}.body")
+
+    record_paths(j.intent.body)
+    ref_by_path = {path: node_ref for node_ref, path in j.node_ids.items()}
+    mean_issues: list[FunctionalBoundaryClosureIssue] = []
+    consumer_issues: list[FunctionalBoundaryClosureIssue] = []
+
+    for op in _walk_ops(j.intent.body):
+        path = path_by_marker.get(id(op), "body")
+        node_ref = ref_by_path.get(path)
+        padded_operands = tuple(
+            operand
+            for operand in op.operands
+            if padding_positions.get(operand, frozenset())
+        )
+        if not isinstance(op.result, str):
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.op",
+                        "functional projection cannot erase masked padding "
+                        f"provenance through unmodeled op {op.op!r}",
+                        node_ref,
+                    )
+                )
+            continue
+        result_type = value_types.get(op.result)
+        if result_type is None:
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.type",
+                        "functional projection cannot propagate masked padding "
+                        "provenance without a closed result type",
+                        node_ref,
+                    )
+                )
+            continue
+        if op.op in {"map_unary", "cast"}:
+            if len(op.operands) != 1:
+                if padded_operands:
+                    consumer_issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            f"j.intent.intent_function.{path}.operands",
+                            "functional projection cannot propagate masked "
+                            f"padding provenance through malformed {op.op!r}",
+                            node_ref,
+                        )
+                    )
+                continue
+            padding_positions[op.result] = padding_positions.get(
+                op.operands[0], frozenset()
+            )
+            continue
+        if op.op in {"map_binary", "select"}:
+            projected: set[int] = set()
+            declared = broadcasts.get(op.result, {})
+            for operand in op.operands:
+                operand_type = value_types.get(operand)
+                if operand_type is None:
+                    continue
+                axes = declared.get(operand)
+                positions = (
+                    _numpy_broadcast_positions(
+                        operand_type.shape,
+                        result_type.shape,
+                    )
+                    if axes is None
+                    else _axis_broadcast_positions(
+                        operand_type.shape,
+                        result_type.shape,
+                        axes,
+                    )
+                )
+                if positions is None:
+                    if padding_positions.get(operand, frozenset()):
+                        consumer_issues.append(
+                            FunctionalBoundaryClosureIssue(
+                                f"j.intent.intent_function.{path}.op",
+                                "functional projection cannot propagate masked "
+                                "padding provenance through an incomplete "
+                                "broadcast relation",
+                                node_ref,
+                            )
+                        )
+                    continue
+                projected.update(
+                    positions[index]
+                    for index in padding_positions.get(operand, frozenset())
+                    if index < len(positions)
+                )
+            padding_positions[op.result] = frozenset(projected)
+            continue
+        if op.op == "transpose":
+            if len(op.operands) != 1:
+                if padded_operands:
+                    consumer_issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            f"j.intent.intent_function.{path}.operands",
+                            "functional projection cannot propagate masked "
+                            "padding provenance through malformed transpose",
+                            node_ref,
+                        )
+                    )
+                continue
+            raw_perm = op.attrs.get("perm")
+            if not isinstance(raw_perm, list) or any(
+                isinstance(axis, bool) or not isinstance(axis, int)
+                for axis in raw_perm
+            ):
+                if padded_operands:
+                    consumer_issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            f"j.intent.intent_function.{path}.attrs.perm",
+                            "functional projection cannot propagate masked "
+                            "padding provenance through an unclosed transpose",
+                            node_ref,
+                        )
+                    )
+                continue
+            perm = tuple(raw_perm)
+            source_padding = padding_positions.get(
+                op.operands[0], frozenset()
+            )
+            if sorted(perm) == list(range(len(perm))):
+                padding_positions[op.result] = frozenset(
+                    perm.index(axis) for axis in source_padding
+                )
+            elif source_padding:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.attrs.perm",
+                        "functional projection cannot propagate masked padding "
+                        "provenance through an unclosed transpose",
+                        node_ref,
+                    )
+                )
+            continue
+        if op.op != "reduce":
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.op",
+                        "functional projection cannot erase masked padding "
+                        f"provenance through unmodeled op {op.op!r}",
+                        node_ref,
+                    )
+                )
+            continue
+        if len(op.operands) != 1:
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.operands",
+                        "functional projection cannot propagate masked padding "
+                        "provenance through malformed reduce",
+                        node_ref,
+                    )
+                )
+            continue
+
+        operand_type = value_types.get(op.operands[0])
+        raw_axes = op.attrs.get("axes")
+        if operand_type is None or not isinstance(raw_axes, list):
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.attrs.axes",
+                        "functional projection cannot propagate masked padding "
+                        "provenance through an unclosed reduction",
+                        node_ref,
+                    )
+                )
+            continue
+        rank = len(operand_type.shape)
+        reduced: set[int] = set()
+        for raw_axis in raw_axes:
+            if isinstance(raw_axis, bool) or not isinstance(raw_axis, int):
+                reduced.clear()
+                break
+            axis = raw_axis if raw_axis >= 0 else raw_axis + rank
+            if axis < 0 or axis >= rank:
+                reduced.clear()
+                break
+            reduced.add(axis)
+        source_padding = padding_positions.get(op.operands[0], frozenset())
+        if raw_axes and not reduced:
+            if source_padding:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.attrs.axes",
+                        "functional projection cannot propagate masked padding "
+                        "provenance through an unclosed reduction",
+                        node_ref,
+                    )
+                )
+            continue
+        if op.attrs.get("fn") == "mean" and reduced.intersection(source_padding):
+            mean_issues.append(
+                FunctionalBoundaryClosureIssue(
+                    f"j.intent.intent_function.{path}.attrs.fn",
+                    "padded mean cannot prove that the physical denominator "
+                    "uses the logical valid count; ReductionBoundary has no "
+                    "count/denominator contract",
+                    node_ref,
+                )
+            )
+
+        if len(result_type.shape) == rank:
+            padding_positions[op.result] = frozenset(
+                axis for axis in source_padding if axis not in reduced
+            )
+        else:
+            padding_positions[op.result] = frozenset(
+                axis - sum(item < axis for item in reduced)
+                for axis in source_padding
+                if axis not in reduced
+            )
+
+    return tuple(mean_issues), tuple(consumer_issues)
+
+
+def functional_reduction_padding_issues(
+    j: Any,
+) -> tuple[FunctionalBoundaryClosureIssue, ...]:
+    """Return the versioned TypeCheck's narrow padded-mean omissions.
+
+    ``typecheck.v7`` consumes this J-only necessary condition.  It reports only
+    cases where modeled direct-access and pointwise/broadcast provenance proves
+    that a masked axis is eliminated by ``reduce(mean)`` without a logical
+    count contract.  Unsupported graph operators deliberately stop this
+    TypeCheck propagation; the functional consumer separately rejects masked
+    provenance at that unsupported operation instead of silently erasing it.
+    """
+
+    mean_issues, _consumer_issues = _reduction_padding_analysis(j)
+    return mean_issues
+
+
+def _is_reduction_neutral(fn: str, value: Any) -> bool:
+    if fn in {"sum", "mean"}:
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 0.0
+        ) or value == "ZERO"
+    if fn == "prod":
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 1.0
+        ) or value == "ONE"
+    if fn == "max":
+        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
+    if fn == "min":
+        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
+    if fn == "any":
+        return value is False or value == "false"
+    if fn == "all":
+        return value is True or value == "true"
+    return False
+
+
+def _validate_reduction_padding_closure(
     j: Any,
     *,
-    domains: Mapping[str, int | str],
-    axes_by_access: Mapping[str, tuple[str, ...]],
-    predicates_by_access: Mapping[str, PredicateProjection | None],
+    has_physical_padding: bool,
 ) -> None:
-    boundary = j.boundary
-    if (
-        len(j.intent.inputs) != 1
-        or len(j.intent.outputs) != 1
-        or len(boundary.reductions) != 1
-    ):
-        raise NotImplementedError(
-            "functional padded reduction requires one input, output, and contract"
-        )
-    if (
-        boundary.aliases
-        or boundary.broadcasts
-        or boundary.index_bounds
-        or boundary.updates
-    ):
-        raise NotImplementedError(
-            "functional padded reduction has unsupported auxiliary relations"
-        )
-    loads = [item for item in boundary.accesses if item.kind.value == "load"]
-    stores = [item for item in boundary.accesses if item.kind.value == "store"]
-    if len(loads) != 1 or len(stores) != 1:
-        raise NotImplementedError(
-            "functional padded reduction requires one load and one store"
-        )
-    load, store = loads[0], stores[0]
-    if load.tensor != j.intent.inputs[0].name or store.tensor != j.intent.outputs[0].name:
-        raise ValueError("functional padded reduction access differs from J ABI")
-    if (
-        isinstance(load.fill_value, bool)
-        or not isinstance(load.fill_value, (int, float))
-        or float(load.fill_value) != 0.0
-    ):
-        raise NotImplementedError(
-            "functional padded sum requires an explicit zero masked-load fill"
-        )
-    if store.predicate is not None or store.fill_value is not None:
-        raise NotImplementedError(
-            "functional padded reduction requires an unpredicated output store"
-        )
+    """Consume reduction B facts without constraining the Layer-A graph shape.
+
+    A predicated physical realization may disappear from logical-tensor
+    RefEval only when every logical reduction has one explicit boundary
+    contract and its effective masked contribution is the reducer's neutral
+    element.  The contract is the J-owned fact connecting arbitrary intervening
+    pointwise/broadcast dataflow to that reduction; RefEval neither reconstructs
+    it from Source nor invents a per-kernel padding formula.
+    """
+
+    if has_physical_padding:
+        padding_issues, consumer_issues = _reduction_padding_analysis(j)
+        if consumer_issues:
+            raise NotImplementedError(consumer_issues[0].detail)
+        if padding_issues:
+            raise NotImplementedError(padding_issues[0].detail)
 
     nodes = _node_table(j)
-    contract = boundary.reductions[0]
-    reduction = nodes.get(contract.node_ref)
-    if reduction is None or reduction.op != "reduce":
-        raise ValueError("functional reduction contract does not target reduce")
-    if reduction.attrs.get("fn") != "sum":
-        raise NotImplementedError(
-            "functional padded reduction currently supports sum only"
-        )
-    reduction_axes = reduction.attrs.get("axes")
-    if (
-        not isinstance(reduction_axes, list)
-        or len(reduction_axes) != 1
-        or isinstance(reduction_axes[0], bool)
-        or not isinstance(reduction_axes[0], int)
-    ):
-        raise NotImplementedError(
-            "functional padded reduction requires one integer axis"
-        )
-    reduced_axis = reduction_axes[0]
-    input_tensor = j.intent.inputs[0]
-    output_tensor = j.intent.outputs[0]
-    if input_tensor.dtype != output_tensor.dtype:
-        raise NotImplementedError(
-            "functional padded sum requires equal input/output dtype"
-        )
-    if reduced_axis < 0 or reduced_axis >= len(input_tensor.shape):
-        raise ValueError("functional reduction axis is outside input rank")
-    expected_output_shape = [
-        extent
-        for index, extent in enumerate(input_tensor.shape)
-        if index != reduced_axis
-    ]
-    if output_tensor.shape != expected_output_shape:
-        raise ValueError("functional reduction output is not axis removal")
+    reductions = tuple(op for op in _walk_ops(j.intent.body) if op.op == "reduce")
+    contract_by_reduction: dict[int, Any] = {}
+    for contract in j.boundary.reductions:
+        reduction = nodes.get(contract.node_ref)
+        if reduction is None or reduction.op != "reduce":
+            raise ValueError("Layer-B reduction does not target reduce")
+        marker = id(reduction)
+        if marker in contract_by_reduction:
+            raise ValueError(
+                "functional reduction has duplicate boundary contracts"
+            )
+        contract_by_reduction[marker] = contract
 
-    load_axes = axes_by_access[load.access_id]
-    store_axes = axes_by_access[store.access_id]
-    if set(domains) != set(load_axes):
+    if has_physical_padding and {
+        id(op) for op in reductions
+    } != set(contract_by_reduction):
         raise NotImplementedError(
-            "functional reduction requires a full domain for every input axis"
-        )
-    expected_store_axes = tuple(
-        axis for index, axis in enumerate(load_axes) if index != reduced_axis
-    )
-    if store_axes != expected_store_axes:
-        raise ValueError("functional reduction store indices are not axis removal")
-    predicate = predicates_by_access[load.access_id]
-    if predicate is None:
-        raise NotImplementedError("functional reduction requires a load predicate")
-    if predicate.guards:
-        raise NotImplementedError(
-            "functional reduction does not consume logical guard predicates"
-        )
-    reduced_index = load_axes[reduced_axis]
-    expected_bound = (reduced_index, input_tensor.shape[reduced_axis])
-    if (
-        predicate.upper_bounds != (expected_bound,)
-        or not predicate.lower_axes.issubset({reduced_index})
-    ):
-        raise ValueError(
-            "functional reduction predicate does not bind the reduced axis"
-        )
-    if predicates_by_access[store.access_id] is not None:
-        raise NotImplementedError("functional reduction store must be unpredicated")
-    if store.node_ref is None or nodes.get(store.node_ref) is not reduction:
-        raise ValueError("functional reduction store does not target result")
-    if not isinstance(reduction.result, str):
-        raise NotImplementedError("functional reduction requires one result")
-    returns = {item.output: item.value for item in j.intent.returns}
-    if returns != {output_tensor.name: reduction.result}:
-        raise ValueError("functional reduction result is not the J output")
-    if (
-        len(boundary.output_mappings) != 1
-        or boundary.output_mappings[0].output != output_tensor.name
-        or boundary.output_mappings[0].value != reduction.result
-        or boundary.output_mappings[0].node_ref != contract.node_ref
-    ):
-        raise ValueError(
-            "functional reduction requires an explicit reduction output mapping"
+            "functional padded graph requires exactly one contract for every "
+            "logical reduction"
         )
 
-    body = j.intent.body
-    if not body or body[-1] is not reduction or any(op.body for op in body):
-        raise NotImplementedError(
-            "functional reduction requires one flat graph ending in reduction"
-        )
-    if sum(op.op == "reduce" for op in body) != 1:
-        raise NotImplementedError("functional reduction requires exactly one reduce")
-    if len(reduction.operands) != 1:
-        raise NotImplementedError("functional reduction requires one operand")
-    producers: dict[str, IntentOp] = {}
-    for op in body:
-        results = _result_names(op)
-        if len(results) != 1:
+    for reduction in reductions:
+        contract = contract_by_reduction.get(id(reduction))
+        if contract is None:
+            continue
+        fn = reduction.attrs.get("fn")
+        if not isinstance(fn, str) or fn not in {
+            "sum", "mean", "prod", "max", "min", "any", "all"
+        }:
             raise NotImplementedError(
-                "functional reduction requires single-result value nodes"
+                "functional projection has no closed reduction neutral element"
             )
-        producers[results[0]] = op
-    required_prefix: set[int] = set()
-    pending = list(reduction.operands)
-    while pending:
-        value = pending.pop()
-        producer = producers.get(value)
-        if producer is None:
-            if value != input_tensor.name:
-                raise ValueError("functional reduction has a non-input leaf")
-            continue
-        if producer is reduction:
-            raise ValueError("functional reduction dataflow is cyclic")
-        marker = id(producer)
-        if marker in required_prefix:
-            continue
-        required_prefix.add(marker)
-        pending.extend(producer.operands)
-    if required_prefix != {id(op) for op in body[:-1]}:
-        raise NotImplementedError(
-            "functional reduction requires every prefix node to feed reduction"
-        )
-    load_owner = nodes.get(load.node_ref) if load.node_ref is not None else None
-    if load_owner is not reduction and id(load_owner) not in required_prefix:
-        raise ValueError("functional reduction load does not feed reduction")
-    for op in body[:-1]:
-        if (
-            op.type is None
-            or op.type.get("dtype") != input_tensor.dtype
-            or op.type.get("shape") != input_tensor.shape
+        if contract.identity is not None and not _is_reduction_neutral(
+            fn, contract.identity
         ):
             raise NotImplementedError(
-                "functional reduction prefix must preserve input type"
+                f"functional projection requires neutral {fn!r} identity"
             )
-    padded_values: dict[str, float] = {input_tensor.name: float(load.fill_value)}
-    for op in body[:-1]:
-        operands = [padded_values.get(value) for value in op.operands]
-        if any(value is None for value in operands):
-            raise NotImplementedError(
-                "functional reduction cannot prove padded contribution"
-            )
-        if (
-            op.op == "map_binary"
-            and op.attrs.get("fn") == "mul"
-            and len(operands) == 2
-        ):
-            padded_result = float(operands[0]) * float(operands[1])
+        if has_physical_padding:
+            if contract.masked_contribution is None:
+                raise NotImplementedError(
+                    "functional padded reduction requires an explicit neutral "
+                    "masked_contribution"
+                )
+            if not _is_reduction_neutral(fn, contract.masked_contribution):
+                raise NotImplementedError(
+                    f"functional projection requires neutral {fn!r} "
+                    "masked_contribution"
+                )
         elif (
-            op.op == "map_unary"
-            and op.attrs.get("fn") == "identity"
-            and len(operands) == 1
-        ):
-            padded_result = float(operands[0])
-        else:
-            raise NotImplementedError(
-                "functional reduction supports zero-stable identity/mul prefix"
-            )
-        padded_values[_result_names(op)[0]] = padded_result
-    if padded_values.get(reduction.operands[0]) != 0.0:
-        raise NotImplementedError(
-            "functional reduction prefix does not preserve sum identity"
-        )
-    if (
-        reduction.type is None
-        or reduction.type.get("dtype") != output_tensor.dtype
-        or reduction.type.get("shape") != output_tensor.shape
-    ):
-        raise ValueError("functional reduction result type differs from output")
-    if contract.tile_axis != 0:
-        raise NotImplementedError(
-            "functional reduction requires a single physical tile axis 0"
-        )
-    for name, value in (
-        ("identity", contract.identity),
-        ("masked_contribution", contract.masked_contribution),
-    ):
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or float(value) != 0.0
+            contract.masked_contribution is not None
+            and not _is_reduction_neutral(fn, contract.masked_contribution)
         ):
             raise NotImplementedError(
-                f"functional padded sum requires explicit neutral {name}=0"
+                f"functional projection requires neutral {fn!r} "
+                "masked_contribution"
             )
 
 
@@ -734,7 +1074,6 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
         access.predicate is not None or access.fill_value is not None
         for access in boundary.accesses
     )
-    masked_reduction = has_predicate_or_fill and bool(boundary.reductions)
     if has_predicate_or_fill and boundary.updates:
         raise NotImplementedError(
             "functional mask projection does not implement update padding"
@@ -783,6 +1122,12 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     store_counts = {name: 0 for name in output_names}
     logical_scalar_inputs = _logical_scalar_inputs(j)
     logical_guards = _logical_boolean_guards(j)
+    declared_dimensions = {
+        dimension
+        for tensor in tensors.values()
+        for dimension in tensor.shape
+        if isinstance(dimension, str)
+    }
     parsed_accesses = j_elaboration(j).access_by_id
     expected_effect = {"load": "read", "store": "write"}
     for access in boundary.accesses:
@@ -834,11 +1179,20 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
         )
         predicates[access.access_id] = predicate
         if predicate is not None:
-            graph_operands = {
-                operand for node in j.intent.body for operand in node.operands
-            }
-            if not predicate.guards.issubset(graph_operands):
-                raise ValueError("functional access guard is absent from J dataflow")
+            if predicate.guards:
+                raise NotImplementedError(
+                    "functional mask projection does not implement "
+                    "guard-bearing access predicates"
+                )
+            if any(
+                not isinstance(extent, int)
+                and extent not in declared_dimensions
+                for _axis, extent in predicate.upper_bounds
+            ):
+                raise NotImplementedError(
+                    "functional mask projection does not implement "
+                    "cross-axis logical access predicates"
+                )
             if not predicate.lower_axes.issubset(set(axes)):
                 raise ValueError("functional predicate lower bound is not an axis")
             for axis, extent in predicate.upper_bounds:
@@ -849,6 +1203,15 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
                 if domains.get(axis) != extent:
                     raise ValueError(
                         "functional predicate differs from the full logical domain"
+                    )
+            if predicate.upper_bounds:
+                missing_domains = sorted(
+                    axis for axis in axes if axis != "0" and axis not in domains
+                )
+                if missing_domains:
+                    raise NotImplementedError(
+                        "functional mask projection requires a complete logical "
+                        "domain for every predicated access axis"
                     )
             if (
                 predicate.upper_bounds
@@ -914,7 +1277,7 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
         if op is not None:
             if observable_value not in _result_names(op):
                 raise ValueError("functional store is not produced by its J node")
-            if has_predicate_or_fill and not masked_reduction and (
+            if has_predicate_or_fill and (
                 op.type is None
                 or op.type.get("dtype") != tensor.dtype
                 or op.type.get("shape") != tensor.shape
@@ -943,14 +1306,7 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
             "functional boundary has an unconsumed domain axis"
         )
     concrete_predicates = [item for item in predicates.values() if item is not None]
-    if masked_reduction:
-        _validate_masked_sum_reduction(
-            j,
-            domains=domains,
-            axes_by_access=axes_by_access,
-            predicates_by_access=predicates,
-        )
-    elif concrete_predicates:
+    if concrete_predicates:
         masked_axes = {
             axis
             for predicate in concrete_predicates
@@ -967,40 +1323,15 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
                         "on every access of a masked axis"
                     )
 
-    for node_ref, contract in {
-        item.node_ref: item for item in boundary.reductions
-    }.items():
-        op = nodes.get(node_ref)
-        if op is None or op.op != "reduce":
-            raise ValueError("Layer-B reduction does not target reduce")
-        fn = op.attrs.get("fn")
-        neutral = {
-            "sum": 0,
-            "mean": 0,
-            "prod": 1,
-            "any": False,
-            "all": True,
-        }.get(fn)
-        for declared in (
-            value
-            for value in (contract.identity, contract.masked_contribution)
-            if value is not None
-        ):
-            if fn in {"max", "min"}:
-                expected = "NEG_INF" if fn == "max" else "POS_INF"
-                if declared != expected:
-                    raise NotImplementedError(
-                        f"functional projection requires {expected} padding"
-                    )
-            elif neutral is not None and declared != neutral:
-                raise NotImplementedError(
-                    f"functional projection cannot erase non-neutral {fn!r} padding"
-                )
+    broadcast_axes = _broadcast_axes(j)
+    _validate_broadcast_closure(j, broadcast_axes)
+    _validate_reduction_padding_closure(
+        j,
+        has_physical_padding=has_predicate_or_fill,
+    )
 
-    mapping_values = {
-        item.output: item.value for item in boundary.output_mappings
-    }
-    if mapping_values and mapping_values != returns:
+    mapping_values = {item.output: item.value for item in boundary.output_mappings}
+    if (returns or mapping_values) and mapping_values != returns:
         raise NotImplementedError(
             "functional output destination relation is incomplete"
         )
@@ -1014,13 +1345,12 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     if any(item.output not in outputs for item in boundary.result_relations):
         raise ValueError("functional result relation references unknown output")
 
-    broadcast_axes = _broadcast_axes(j)
     proven_bounds = frozenset(
         j.node_ids.get(item.node_ref, item.node_ref)
         for item in boundary.index_bounds
     )
     profile = (
-        "logical_domain_reduction_padding_v1"
+        "logical_domain_reduction_padding_v2"
         if concrete_predicates and boundary.reductions
         else (
             "logical_domain_mask_erasure_v1"
@@ -1067,6 +1397,7 @@ __all__ = [
     "FunctionalBoundaryProjection",
     "PredicateProjection",
     "functional_boundary_closure_issues",
+    "functional_reduction_padding_issues",
     "parse_direct_axes",
     "project_predicate_text",
     "project_functional_boundary",

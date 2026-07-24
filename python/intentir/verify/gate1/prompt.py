@@ -19,7 +19,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v5",
+        "context_policy": "public_frontend_context_v6",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -70,6 +70,17 @@ PUBLIC_FRONTEND_CONTEXT = {
             "otherwise unsupported contractions, unsupported tile/dtype contracts, "
             "or a pi chain that explicitly declares multiple contraction-anchored "
             "realize stages; never force tl.dot by changing J or dropping pi stages."
+            " Every pi.iterations entry is mandatory realization topology. "
+            "Resolve loop_instance to its J structured loop and tile_instance "
+            "to the matching C tile slot. For induction_basis=extent_step, "
+            "materialize a zero-based loop whose upper bound is the J trip extent "
+            "and whose step is the C tile. For induction_basis=tile_ordinal, "
+            "materialize a zero-based unit-step loop whose upper bound is the "
+            "trip extent ceiling-divided by the matching C tile. Preserve this "
+            "distinction even when "
+            "the induction variable itself is unused: never insert or remove the "
+            "trip-count ceiling division, and never choose a basis from an op "
+            "family, concrete value, name, or frontend convention."
             " Every pi.refinements entry is mandatory realization topology. "
             "Resolve its auth_ref in J.boundary.realization_authorizations and "
             "materialize the authorized kind at that exact instance before its "
@@ -159,7 +170,15 @@ _REPLAY_COMPONENT_KEYS = {
     ),
     "c": frozenset({"slots"}),
     "pi": frozenset(
-        {"regions", "instances", "routes", "order", "sharing", "refinements"}
+        {
+            "regions",
+            "instances",
+            "routes",
+            "order",
+            "sharing",
+            "refinements",
+            "iterations",
+        }
     ),
 }
 _U_F_KEYS = frozenset(
@@ -391,7 +410,7 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, representation refinement and region placement as required "
+        "relation, iteration relation, representation refinement and region placement as required "
         "realization topology. Resolve each refinement auth_ref only through the "
         "matching J realization_authorization, materialize it at the refined "
         "instance before routed consumers, and never infer, omit, or move a "
