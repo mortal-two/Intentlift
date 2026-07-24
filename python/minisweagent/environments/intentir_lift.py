@@ -144,7 +144,8 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
-    candidate_check_limit: int = 4
+    candidate_check_limit: int = 7
+    candidate_submission_check_limit: int = 1
     executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
     env: dict[str, str] = {
         "HOME": "/tmp",
@@ -167,9 +168,23 @@ class IntentIRLiftEnvironment:
         self.config = config_class(**kwargs)
         if self.config.candidate_check_limit < 0:
             raise ValueError("candidate_check_limit must be non-negative")
+        if self.config.candidate_submission_check_limit < 0:
+            raise ValueError(
+                "candidate_submission_check_limit must be non-negative"
+            )
         self._candidate_checker = candidate_checker
         self._candidate_check_calls = 0
         self._candidate_check_evaluations = 0
+        self._candidate_check_calls_by_trigger = {
+            "explicit": 0,
+            "submission": 0,
+        }
+        self._candidate_check_evaluations_by_trigger = {
+            "explicit": 0,
+            "submission": 0,
+        }
+        self._candidate_check_shared_evaluations = 0
+        self._candidate_check_submission_reserved_evaluations = 0
         self._candidate_check_audit: list[dict[str, Any]] = []
         self._candidate_check_passed_bytes: bytes | None = None
         self._validate_paths()
@@ -184,23 +199,14 @@ class IntentIRLiftEnvironment:
         if trigger not in {"explicit", "submission"}:
             raise ValueError("unsupported CandidateCheck trigger")
         self._candidate_check_calls += 1
+        self._candidate_check_calls_by_trigger[trigger] += 1
         candidate_bytes: bytes | None = None
-        if self._candidate_check_calls > self.config.candidate_check_limit:
-            result: Mapping[str, Any] = {
-                "protocol": CANDIDATE_CHECK_PROTOCOL,
-                "status": "fail",
-                "diagnostics": [
-                    {
-                        "rule_code": "check_budget_exhausted",
-                        "path": "<candidate>",
-                        "observed_refs_or_types": [],
-                    }
-                ],
-            }
-        elif len(arguments) != 2 or arguments[1] not in {
+        budget_pool: str | None = None
+        checker_evaluated = False
+        if len(arguments) != 2 or arguments[1] not in {
             "/work/candidate.json", "/output/candidate.json",
         }:
-            result = {
+            result: Mapping[str, Any] = {
                 "protocol": CANDIDATE_CHECK_PROTOCOL,
                 "status": "fail",
                 "diagnostics": [
@@ -239,8 +245,6 @@ class IntentIRLiftEnvironment:
                 if len(candidate_bytes) != size:
                     raise ValueError("candidate changed while being read")
                 candidate_text = candidate_bytes.decode("utf-8")
-                self._candidate_check_evaluations += 1
-                result = self._candidate_checker(candidate_text)
             except Exception as exc:
                 result = {
                     "protocol": CANDIDATE_CHECK_PROTOCOL,
@@ -253,6 +257,52 @@ class IntentIRLiftEnvironment:
                         }
                     ],
                 }
+            else:
+                if (
+                    self._candidate_check_shared_evaluations
+                    < self.config.candidate_check_limit
+                ):
+                    self._candidate_check_shared_evaluations += 1
+                    budget_pool = "shared"
+                elif (
+                    trigger == "submission"
+                    and self._candidate_check_submission_reserved_evaluations
+                    < self.config.candidate_submission_check_limit
+                ):
+                    self._candidate_check_submission_reserved_evaluations += 1
+                    budget_pool = "submission_reserve"
+                if budget_pool is None:
+                    result = {
+                        "protocol": CANDIDATE_CHECK_PROTOCOL,
+                        "status": "fail",
+                        "diagnostics": [
+                            {
+                                "rule_code": "check_budget_exhausted",
+                                "path": "<candidate>",
+                                "observed_refs_or_types": [],
+                            }
+                        ],
+                    }
+                else:
+                    checker_evaluated = True
+                    self._candidate_check_evaluations += 1
+                    self._candidate_check_evaluations_by_trigger[trigger] += 1
+                    try:
+                        result = self._candidate_checker(candidate_text)
+                    except Exception as exc:
+                        result = {
+                            "protocol": CANDIDATE_CHECK_PROTOCOL,
+                            "status": "fail",
+                            "diagnostics": [
+                                {
+                                    "rule_code": "candidate_check_failed",
+                                    "path": "<candidate>",
+                                    "observed_refs_or_types": [
+                                        type(exc).__name__
+                                    ],
+                                }
+                            ],
+                        }
         protocol = result.get("protocol")
         status = result.get("status")
         diagnostics = result.get("diagnostics")
@@ -298,17 +348,32 @@ class IntentIRLiftEnvironment:
                 "protocol": protocol,
                 "status": status,
                 "trigger": trigger,
+                "budget_pool": budget_pool,
+                "evaluated": checker_evaluated,
                 "rule_codes": [
                     item.get("rule_code")
                     for item in diagnostics
                     if isinstance(item, Mapping)
                     and isinstance(item.get("rule_code"), str)
                 ],
+                "rule_paths": [
+                    {
+                        "rule_code": item.get("rule_code"),
+                        "path": item.get("path"),
+                    }
+                    for item in diagnostics
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("rule_code"), str)
+                    and isinstance(item.get("path"), str)
+                ],
             }
         )
-        if status == "pass" and candidate_bytes is not None:
+        if status == "pass" and checker_evaluated and candidate_bytes is not None:
             self._candidate_check_passed_bytes = candidate_bytes
-        elif candidate_bytes == self._candidate_check_passed_bytes:
+        elif (
+            checker_evaluated
+            and candidate_bytes == self._candidate_check_passed_bytes
+        ):
             self._candidate_check_passed_bytes = None
         return {
             "output": json.dumps(result, sort_keys=True) + "\n",
@@ -676,7 +741,12 @@ class IntentIRLiftEnvironment:
                         "input": "read-only",
                         "output": "candidate-only",
                         "command_timeout_seconds": self.config.timeout,
-                        "candidate_check_limit": self.config.candidate_check_limit,
+                        "candidate_check_shared_limit": (
+                            self.config.candidate_check_limit
+                        ),
+                        "candidate_check_submission_reserve": (
+                            self.config.candidate_submission_check_limit
+                        ),
                     },
                     "environment_type": (
                         f"{self.__class__.__module__}.{self.__class__.__name__}"
@@ -686,7 +756,40 @@ class IntentIRLiftEnvironment:
                     "calls": self._candidate_check_calls,
                     "attempts": self._candidate_check_calls,
                     "evaluations": self._candidate_check_evaluations,
-                    "limit": self.config.candidate_check_limit,
+                    "limit": (
+                        self.config.candidate_check_limit
+                        + self.config.candidate_submission_check_limit
+                    ),
+                    "explicit": {
+                        "calls": self._candidate_check_calls_by_trigger[
+                            "explicit"
+                        ],
+                        "evaluations": (
+                            self._candidate_check_evaluations_by_trigger[
+                                "explicit"
+                            ]
+                        ),
+                    },
+                    "submission": {
+                        "calls": self._candidate_check_calls_by_trigger[
+                            "submission"
+                        ],
+                        "evaluations": (
+                            self._candidate_check_evaluations_by_trigger[
+                                "submission"
+                            ]
+                        ),
+                    },
+                    "shared_budget": {
+                        "used": self._candidate_check_shared_evaluations,
+                        "limit": self.config.candidate_check_limit,
+                    },
+                    "submission_reserve": {
+                        "used": (
+                            self._candidate_check_submission_reserved_evaluations
+                        ),
+                        "limit": self.config.candidate_submission_check_limit,
+                    },
                     "results": list(self._candidate_check_audit),
                 },
             }

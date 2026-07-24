@@ -39,6 +39,12 @@ signature 与 J graph 唯一确定，可以省略；显式类型必须一致。d
 predicate/fill 均为空。static schema 可以提前报错，TypeCheck 仍必须权威拒绝 orphan fill，消费者
 不得静默删除。这些是全局 J wire/consumer 合同，不是 per-kernel Replay hint。
 
+对可识别的零起点矩形 functional-domain profile，`typecheck.v6` 进一步要求 direct access index、
+padding predicate、`boundary.domains` 与 typed tensor extent 显式闭合。形如 `k0 < x0` 的 predicate
+必须直接索引 `k0`，并有匹配的 `0 <= k0 and k0 < x0` domain；Source、C、π、shape、runtime/hidden
+input 都不能补缺失 relation。该检查只覆盖这个可机械决定的 profile，不把 general affine/交叉轴
+logical predicate 因当前 RefEval 未实现而判成非法，也不删除合法 predicate/fill/effect。
+
 provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
 round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
 和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或
@@ -106,18 +112,31 @@ agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱�
 Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v5 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v5 继承 v4 的
+当前 fresh worker 最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：7 次
+`shared_budget` 可由显式调用或提前 submission preflight 消费，另有 1 次
+`submission_reserve` 仅允许 submission 使用；任何顺序都不能超过 8。receipt 按
+`explicit`/`submission` trigger 分别记录 calls/evaluations，并分别报告 shared allowance 与 reserve。
+submission `PASS` 仍非认证，外部 Runner 必须重跑 TypeCheck。
+
+当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v6 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v6
+继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
 已在 `J.boundary.broadcasts` 中声明的 non-trailing relation，不推导或补写轴。v5 新增
 已知 `reduce` 与 binary `contraction` 的 canonical fail-early，拒绝别名、缺失/非法 canonical
 attrs 与可机械判定的 axis/rank/shape 矛盾；它还拒绝 absent
 `opaque(mode=value,dtype=none)` 成为 π instance semantic ref、realization authorization subject 或
-refinement carrier。checker 不翻译/补齐 attrs、生成 dummy carrier 或修复 artifact。既有
-typecheck.v3/v4 receipt 保留原 judgement，不由 v5 静默重判。
+refinement carrier。v6 新增上述 functional-domain closure fail-early。checker 不翻译/补齐 attrs、
+生成 dummy carrier 或修复 artifact。既有 typecheck.v3/v4/v5 receipt 保留原 judgement，不由 v6
+静默重判。
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
 diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1` 历史对象不因
 此次激活而被静默重判。
+
+若 worker 在预算内没有提交 candidate，只允许把其最后一次**实际执行**的 source-free checker
+诊断中最多 20 条 `rule_code/path` 摘要带入同一 branch 的下一 fresh Lift；没有 evaluation 就没有
+摘要。observed value、候选修复、Source/Gate/hidden input、conversation 与 sibling 信息不得跨越。
+新 worker 仍从完整对象构造开始，固定 runner 不把该摘要应用成 patch。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
 和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应
@@ -179,7 +198,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v5`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v13`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v14`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
 `U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败
@@ -258,7 +277,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v5`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v6`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

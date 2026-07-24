@@ -25,7 +25,12 @@ the artifact schema or external TypeCheck.
    producing node's declared value handle where the grammar requires one.
 6. Direct dense `index_expression` uses one bare axis for rank 1, `[]` for
    rank 0, or an ordered bracketed list such as `[k1, k0]` for rank N. Never
-   use an unbracketed comma list such as `k1,k0`.
+   use an unbracketed comma list such as `k1,k0`. In the rectangular functional
+   profile, declare every logical axis bound explicitly in `boundary.domains`.
+   A padding predicate `k0 < x0` must index `k0` directly and have a matching
+   domain `0 <= k0 and k0 < x0`; tensor shape, C, pi, Source, and runtime values
+   never fill a missing/different domain. Preserve general logical predicates
+   rather than deleting them to force this profile.
 7. `fill_value` is legal only on a load with a non-null `predicate`. An
    unconditional access omits both fields (or leaves both null); never attach a
    redundant fill to it. Consumers reject rather than normalize an orphan fill.

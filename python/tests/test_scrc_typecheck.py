@@ -3,10 +3,14 @@ from __future__ import annotations
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
+from intentir.ir.functional_boundary import project_functional_boundary
 from intentir.ir.model import IntentOp, Tensor
 from intentir.verify.gate1.model import (
     AccessKind,
+    BoundaryAccess,
     BroadcastSpec,
+    EffectKind,
+    EffectSpec,
     ParameterKind,
     ParameterMode,
     RealizationAuthorization,
@@ -37,9 +41,146 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v5"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v6"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def _functional_masked_copy_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.boundary.domains = {"d0": "0 <= i0 and i0 < x0"}
+    artifact.j.boundary.accesses = [
+        # This predicate is a physical padding guard over the complete logical
+        # extent, not a request to drop predicate semantics.
+        BoundaryAccess(
+            "a0",
+            AccessKind.LOAD,
+            "t0",
+            predicate="i0 < x0",
+            fill_value=0.0,
+            node_ref="n0",
+            index_expression="[i0]",
+        ),
+        BoundaryAccess(
+            "a1",
+            AccessKind.STORE,
+            "t1",
+            predicate="i0 < x0",
+            node_ref="n0",
+            index_expression="[i0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+    return artifact
+
+
+def _functional_padded_reduction_artifact():
+    artifact = make_reduce_artifact(explicit_accesses=False)
+    artifact.j.boundary.domains = {
+        "d0": "0 <= i0 and i0 < x0",
+        "d1": "0 <= i1 and i1 < x1",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0",
+            AccessKind.LOAD,
+            "t0",
+            predicate="i1 < x1",
+            fill_value=0.0,
+            node_ref="n0",
+            index_expression="[i0, i1]",
+        ),
+        BoundaryAccess(
+            "a1",
+            AccessKind.STORE,
+            "t1",
+            node_ref="n1",
+            index_expression="[i0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
+    ]
+    artifact.j.boundary.reductions[0].tile_axis = 0
+    return artifact
+
+
+def test_functional_boundary_v6_accepts_masked_and_padded_effect_contracts() -> None:
+    masked = _functional_masked_copy_artifact()
+    padded = _functional_padded_reduction_artifact()
+    masked_effects = masked.j.boundary.to_json()["effects"]
+    padded_effects = padded.j.boundary.to_json()["effects"]
+
+    assert type_check(masked.j, masked.c, masked.pi).passed
+    assert type_check(padded.j, padded.c, padded.pi).passed
+    # TypeCheck validates the complete model-authored J; it never erases the
+    # physical guard/fill or manufactures/rebinds an effect relation.
+    assert masked.j.boundary.to_json()["effects"] == masked_effects
+    assert padded.j.boundary.to_json()["effects"] == padded_effects
+
+
+@pytest.mark.parametrize(
+    ("mutation", "path_suffix"),
+    [
+        ("missing_domain", ".predicate"),
+        ("wrong_extent", ".predicate"),
+        ("predicate_axis_not_indexed", ".predicate"),
+    ],
+)
+def test_functional_boundary_v6_rejects_recognized_domain_contradictions(
+    mutation, path_suffix
+) -> None:
+    artifact = _functional_padded_reduction_artifact()
+    if mutation == "missing_domain":
+        del artifact.j.boundary.domains["d1"]
+    elif mutation == "wrong_extent":
+        artifact.j.boundary.accesses[0].predicate = "i1 < 7"
+    elif mutation == "predicate_axis_not_indexed":
+        artifact.j.boundary.accesses[0].index_expression = "[i0, j0]"
+    else:  # pragma: no cover - closed parametrization
+        raise AssertionError(mutation)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE
+    ]
+
+    assert not report.passed
+    assert matching
+    assert all(item.path.endswith(path_suffix) for item in matching)
+    assert all(item.ref == "a0" for item in matching)
+
+    if mutation == "missing_domain":
+        with pytest.raises(ValueError, match=matching[0].detail):
+            project_functional_boundary(artifact.j)
+
+
+def test_functional_boundary_v6_does_not_ban_general_logical_predicates() -> None:
+    artifact = _functional_masked_copy_artifact()
+    artifact.j.intent.inputs[0].shape = ["x0", "x1"]
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    for access in artifact.j.boundary.accesses:
+        access.index_expression = "[i0, i1]"
+        access.predicate = "i0 < i1"
+    artifact.j.boundary.domains = {
+        "d0": "0 <= i0 and i0 < x0",
+        "d1": "0 <= i1 and i1 < x1",
+    }
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE not in {
+        item.code for item in report.diagnostics
+    }
 
 
 def test_reduce_contract_rejects_kind_alias_and_missing_canonical_attrs() -> None:

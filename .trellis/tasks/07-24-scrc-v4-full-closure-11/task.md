@@ -9,7 +9,7 @@
 
 ## 目标
 
-使用 `artifact.v2 / decode.v2 / typecheck.v5 / candidate-check.v1`、
+使用 `artifact.v2 / decode.v2 / typecheck.v6 / candidate-check.v1`、
 `j_scalar_cpu_mlir_v8` 与 Gate1 observer v4，对 active registry 的 28 个 Kernel 建立各自独立的
 fresh accepted `(J,C,π)`、Replay、Gate1、Gate2 与预算证据。执行必须真正支持多个语义族
 wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
@@ -164,7 +164,7 @@ pointer-carrier dataflow 丢失。通用修复已形成 `public_frontend_context
 
 B1 使用六个显式 `--case`、`W=6,B=1,G=6,G2=1`、MiniSWE xhigh 与 `--skip-masked-j`。该进程在
 `typecheck.v4 / RefEval v8 / public_frontend_context_v3 / intentir.lift-knowledge.v11` receipt 下启动，
-不是当前 `typecheck.v5 / U_f v5 / replay-input.v1 / lift-knowledge.v13` 结果。六个 case-local run 均已
+不是当前 `typecheck.v6 / U_f v5 / replay-input.v1 / lift-knowledge.v14` 结果。六个 case-local run 均已
 写出 terminal `report.json` 与 `SUMMARY.md`；outer CLI 正常终止并写出 aggregate report
 `/tmp/intentir-scrc-task11/wave-20260724-six-v4-v8-ufv3-xhigh-01-report.json`（进程 exit 2 只反映该批次
 存在非通过分类，不表示 evidence 中断）。`B=1` 的失败只表示本次诊断宽度，不能写成
@@ -182,8 +182,8 @@ B1 使用六个显式 `--case`、`W=6,B=1,G=6,G2=1`、MiniSWE xhigh 与 `--skip-
 | 21 `high_performance:flash_attn.flash_attn_triton._bwd_kernel` | `lift_response_rejected` | 3 个 Lift invocation 均未提交可接受 artifact；TypeCheck/Replay/Gate1/Gate2 均 0，`flash_attn_flash_attn_triton_bwd_kernel/run-001/report.json` |
 | 22 `high_performance:flash_attn.flash_attn_triton._bwd_preprocess_do_o_dot` | `no_closure` | 1 次 pre-Replay rejection 后 3 个 TypeCheck PASS formal rounds，`flash_attn_flash_attn_triton_bwd_preprocess_do_o_dot/run-001/report.json` |
 
-因此 B1 只回答旧 receipt 下的横向 failure classes。凡要对当前 `typecheck.v5 / U_f v5` 作结论，必须
-使用 v13 knowledge 重新 fresh Lift/Replay；不得用 fixed recheck 或新 checker 追认 B1 artifact。
+因此 B1 只回答旧 receipt 下的横向 failure classes。凡要对当前 `typecheck.v6 / U_f v5` 作结论，必须
+使用 v14 knowledge 重新 fresh Lift/Replay；不得用 fixed recheck 或新 checker 追认 B1 artifact。
 
 两个固定 artifact 的 diagnostic recheck 另行保留，但都不改变上表：
 
@@ -204,6 +204,58 @@ B1 使用六个显式 `--case`、`W=6,B=1,G=6,G2=1`、MiniSWE xhigh 与 `--skip-
 
 两项 recheck 都明确 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`，不得作为当前协议的 SCRC verdict。
+
+### B3 immutable terminal checkpoint / v6+v14 response（2026-07-25）
+
+B3 使用三个显式 case、`W=3,B=3,G=9,G2=1`、MiniSWE xhigh 与
+`--skip-masked-j`，并已完整终止。aggregate report 为
+`/tmp/intentir-scrc-task11/wave-20260725-b3-softmax-linear-fullbwd-v5-ufv5-kv13-xhigh-01-report.json`，
+统一 evidence root 为同名去掉 `-report.json` 的目录。该进程以
+`typecheck.v5 / public_frontend_context_v5 / lift-knowledge.v13` 启动；以下 verdict 与预算均保持
+immutable，后续 v6/v14 只能通过 fresh run 产生新结论，不能回写本批次。
+
+| ordinal / case | immutable classification | 本批次完整预算与终态 |
+|---|---|---|
+| 8 `high_performance:liger_softmax` | `gate2_failed` | 3 个 branch 均获 Gate1 closure；合计 6 Lift / 74 physical / 6 TypeCheck / 6 Replay / 6 Gate1，唯一 winner Gate2 执行 1 次并在 J functional leg 失败 |
+| 18 `high_performance:flash_attn.ops.triton.linear.kernel_fwd` | `no_closure` | 3 个 branch 均 `no_closure`；合计 9 Lift / 144 physical，TypeCheck、Replay、Gate1、Gate2 全部 0 次 |
+| 21 `high_performance:flash_attn.flash_attn_triton._bwd_kernel` | `no_closure` | 3 个 branch 均 `no_closure`；合计 9 Lift / 144 physical，TypeCheck、Replay、Gate1、Gate2 全部 0 次 |
+
+Linear 与 full-bwd 的 `B=3` 失败都发生在 worker 内，不是 contraction op、Replay、U_f 或 observer
+失败。18 个复杂 Lift episode 全部恰好使用旧上限 16 turns。Linear 的最后可见机械层依次覆盖
+loop-state storage、scope capture/definition、symbolic dimension 连续性、rank 与 J body producer
+result type；full-bwd 的最后可见层覆盖 logical tensor handle 完整声明、Harness handle 保持、C slot
+纯 scheduling role、symbolic dimension 连续性与 op carrier type 冲突。多个 episode 已从首次最多
+20 条 closed diagnostics 收敛到最后 1–2 条，但随即达到 4-check/16-turn 边界；其中有候选在最后
+修正后才提交，却因 ordinary CandidateCheck 预算已经耗尽而只得到 `check_budget_exhausted`。
+
+因此此处先修复通用 bounded episode，而不直接把相同截断复制成 B5：B 增加的是独立候选宽度，
+不能替代单个候选跨 dependent construction 层的诊断深度。v14 将 episode 改为下述 24 turns、
+7 shared + 1 submission reserve，并保留 source-free rule/path 跨相邻 fresh attempt 摘要；完成该通用
+修正后，再对未闭合 case 使用 `B<=5` 才是在增加生成多样性。这里没有 typed skeleton、自动
+elaboration、artifact patch 或 Kernel 专用 prompt。
+
+- B3 的 Softmax fanout 在
+  `/tmp/intentir-scrc-task11/wave-20260725-b3-softmax-linear-fullbwd-v5-ufv5-kv13-xhigh-01/liger_softmax/fanout-001`
+  以 `typecheck.v5 / public_frontend_context_v5 / lift-knowledge.v13` 启动。三个 branch 都得到
+  Gate1 closure，固定 winner 是 branch 1/formal round 1；唯一 Gate2 的 J leg 随后以
+  `ValueError: functional predicate differs from the full logical domain` 失败。该 v5 fanout、winner 与
+  `GATE2_FAILED` 保持不可变，不能用新 checker 追认；
+- winner J 的 direct accesses 都是 `[k0,k1]`，padding predicate 都是 `k1 < x0`，但
+  `boundary.domains` 只声明 `0 <= k0 and k0 < 2`，没有声明 `k1` 的 logical domain。这不是让
+  RefEval 从 tensor shape/C/runtime 补一个 domain 的许可，而是完整 J 内部已经可机械判断的
+  functional-boundary 缺口；
+- fresh TypeCheck 因接受集合收紧窄升为 v6，并与 CandidateCheck 共享同一个 J-only closure core。
+  对上述固定 artifact 的只读回放稳定返回两条 `functional_boundary_incomplete`，路径分别为
+  `j.boundary.accesses[0].predicate` 与 `[1].predicate`；因此下一 fresh run 会在 Replay/Gate1/Gate2 前
+  fail early，由 Lift LLM 完整修订 J。fixed code 不增补 domain、不改 predicate、不碰 Q/RefEval/emitter；
+- v6 只覆盖可识别的零起点矩形 logical-domain/direct-access/padding profile；general affine/交叉轴
+  logical predicate 不会因为当前 RefEval 未实现而被判为 J 非法。合法 masked/padded
+  predicate/fill/effect 正例仍通过；
+- fresh MiniSWE receipt 合并升为 `intentir.lift-knowledge.v14`。worker 最多 24 model turns；
+  CandidateCheck 使用 7 次普通 shared allowance（显式调用与提前 submission 共用）和 1 次仅
+  submission 可用的 reserve，总 evaluation 不超过 8。无 candidate worker 只把最后一次实际 checker
+  的最多 20 条 `rule_code/path` 带给同 branch 下一 fresh Lift，不带 observed value、patch、
+  Source/Gate/hidden/sibling 信息；submission `PASS` 仍由外部 Runner 以 v6 重检。
 
 DYT 与 SwiGLU 的既有通过证据不属于 B1，也未在 B1 重跑。
 
@@ -228,7 +280,7 @@ FlashAttention 或其他 Kernel 专用 prompt、Replay、J/C/π 构造或 Intent
 1. outer case-level bounded parallel 有实现、正反例、异常隔离和稳定 ordinal 测试；
 2. `W/B/G/G2` 合同 fail closed，实际测试证明多个不同 case lifecycle 确实重叠；
 3. same-case v3 barrier winner 与唯一 Gate2 规则不回退；
-4. B1 六份旧 receipt terminal evidence 保持不可变；六项若要形成当前 v5/v5/v13 结论，必须分别
+4. B1/B3 的旧 receipt terminal evidence 保持不可变；受影响项若要形成当前 v6/v5/v14 结论，必须分别
    fresh rerun，且问题归因不复用旧 verdict 或 diagnostic recheck；
 5. 28/28 各自形成 fresh `SCRC_CERTIFIED` artifact 与完整 evidence；
 6. 全量回归通过，活动 task 唯一，完成后本 Task 直接迁入 archive，工作区提交且干净。

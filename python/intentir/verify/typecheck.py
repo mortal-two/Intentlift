@@ -14,6 +14,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
+from intentir.ir.functional_boundary import functional_boundary_closure_issues
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     ParameterKind,
@@ -25,7 +26,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v5"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v6"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -54,6 +55,7 @@ class TypeCheckErrorCode(str, Enum):
     C_SUBJECT_UNKNOWN = "c_subject_unknown"
     C_AXIS_INVALID = "c_axis_invalid"
     INVALID_ACCESS_FILL = "invalid_access_fill"
+    FUNCTIONAL_BOUNDARY_INCOMPLETE = "functional_boundary_incomplete"
     RESULT_RELATION_INCOMPATIBLE = "result_relation_incompatible"
     UNRESOLVED_ANCHOR = "unresolved_anchor"
     ROUTE_CYCLE = "route_cycle"
@@ -944,6 +946,15 @@ def type_check(
 
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_total_j_value_typing(j, diagnostics)
+    diagnostics.extend(
+        TypeCheckDiagnostic(
+            TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,
+            issue.path,
+            issue.detail,
+            issue.ref,
+        )
+        for issue in functional_boundary_closure_issues(j)
+    )
     for index, access in enumerate(j.boundary.accesses):
         if access.fill_value is None:
             continue

@@ -438,8 +438,17 @@ audit 记录；tool `PASS` 不构成正式 TypeCheck，提交后 Runner 必须�
 FAIL 只返回上述 closed diagnostics 而不提交或修补；只有与某次 `PASS` 对应的精确 bytes 完全
 相同时才可复用，任何不同 bytes 都必须重新检查。该前置
 调用与 worker 显式调用共享同一有界预算，PASS 仍只是当前 episode 的诊断结果。当前 fresh
-worker 使用 16 个 model turn 与最多 4 次实际 checker evaluation；这些是可报告的工程预算，
-不进入 certificate predicate。
+worker 使用最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：普通共享 allowance
+为 7，agent 的显式调用与提前 submission preflight 都从中消费；另有 1 次仅 submission 可消费的
+reserve，因此典型 7 次显式 evaluation 后仍可检查最终提交，但任何顺序都不能超过 8 次。receipt
+分别记录 `shared_budget`、`submission_reserve`，并按 `explicit`/`submission` trigger 记录 calls 与
+实际 evaluations。这些是可报告的工程预算，不进入 certificate predicate。
+
+若 worker 在预算内没有提交候选，runner 只可把该 worker 最后一次**实际执行**的 source-free
+checker 返回的最多 20 条 `rule_code/path` 摘要带入同一 branch 的下一次 fresh Lift。没有实际
+evaluation 就没有摘要；不得携带 observed value、候选修复、Source/Gate/hidden input、conversation
+或 sibling 信息。下一 worker 仍完整生成 `(J,C,π)`，固定代码不应用 patch。submission preflight
+`PASS` 也不认证 candidate，外部 Runner 必须照常重跑权威 TypeCheck。
 
 该能力只把原本发生在相邻 fresh Lift invocation 之间的机械反馈移入一次有界 Lift episode，不增加
 Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round 的定义。
@@ -463,8 +472,8 @@ Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round �
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v5`。它保留 v4 的 rank-0 closed signature、Layer-A total typing 与
-显式 non-trailing broadcast 合同，并新增已知 `reduce` 与 binary `contraction` 的 canonical
+当前 fresh-run 版本为 `typecheck.v6`。它完整继承 v5；v5 保留 v4 的 rank-0 closed signature、
+Layer-A total typing 与显式 non-trailing broadcast 合同，并新增已知 `reduce` 与 binary `contraction` 的 canonical
 fail-early：reduce 必须显式给出合法 `fn + axes + assoc`；`kind` 别名、缺失/冲突字段、非法
 reducer/axis/associativity 均在进入 RefEval/emitter 前拒绝。contraction 必须只给出 canonical
 `subscripts`；`lhs_contract_axes/rhs_contract_axes` 不会被翻译，并在已有 typed J 可机械决定的范围内
@@ -473,9 +482,17 @@ result type/shape 的 keep/collapse 校验不回退。fixed code 对两类 op �
 v5 同时将 `opaque(mode=value,dtype=none)` 作为 absent ABI carrier 处理，拒绝它成为 π instance
 semantic ref、realization authorization subject 或 refinement carrier；checker 不删除这些引用、
 不生成 dummy carrier，也不修复 artifact。
+
+v6 进一步共享并前移 J-only functional logical-domain closure：当 J 自身使用可识别的零起点矩形
+domain 与 direct access/padding predicate 时，index axis、predicate extent、`boundary.domains` 和
+typed tensor extent 必须显式闭合；缺失或不同的 domain 在 CandidateCheck/TypeCheck 直接拒绝，
+不得从 Source、C、π、runtime/hidden input 或 shape 猜测补齐。该 necessary condition 不把 RefEval
+尚未实现的 general affine/交叉轴 logical predicate 泛化成 J 语义非法，也不删除合法 masked/padded
+predicate、fill 或 effect。fixed code 仍然只诊断，完整修订由 Lift LLM 完成。
+
 `j_scalar_cpu_mlir_v8` 只扩展固定 RefEval 对唯一
 node-less logical-input load 的通用消费。旧 v3/v4/v7 evidence 以及已落盘的 Softmax/RMS run-008
-不被新版本静默改成 PASS，必须 fresh relift/fresh run。
+与 v5 receipt 不被新版本静默改成 PASS，必须 fresh relift/fresh run。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式
@@ -522,7 +539,7 @@ Replay 不得：
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
 `public_frontend_context_v5` 与 source-aware MiniSWE
-`intentir.lift-knowledge.v13`；fresh evidence 必须保存实际 receipt，旧版本 run 不能被新组合追认。
+`intentir.lift-knowledge.v14`；fresh evidence 必须保存实际 receipt，旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
@@ -666,7 +683,7 @@ TypeCheck
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v5`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v6`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把
@@ -935,7 +952,8 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，fresh MiniSWE Lift knowledge 当前升为
-`intentir.lift-knowledge.v13`。全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
+`intentir.lift-knowledge.v14`。v14 在继承 v13 的上述合同上增加 generic functional logical-domain
+闭合提示与有界 CandidateCheck 预算/跨 fresh Lift 机械摘要；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
 `declared` 只表示 Harness/source ABI 有闭合配置，不构成 TypeCheck、Gate 或 SCRC 终态。
 
 对上述 absent carrier，TypeCheck 分别拒绝其成为 π instance 的 `semantic_ref`、J/B realization

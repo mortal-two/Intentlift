@@ -40,6 +40,14 @@ fill_value != null => kind = load and predicate != null
 `TypeCheck(J,C,pi)` 必须权威拒绝 orphan fill；任何消费者都不得通过静默删除或猜测 predicate
 来归一化候选 J。
 
+`typecheck.v6` 还复用 `FunctionalBoundaryProjection` 的 J-only necessary condition。对于 checker
+可识别的零起点矩形 logical-domain profile，direct access index、padding predicate、
+`boundary.domains` 与 typed tensor extent 必须闭合：`k0 < x0` 必须直接索引 `k0`，且 J 显式包含
+同 extent 的 `0 <= k0 and k0 < x0` domain。Source、C、π、runtime/hidden input 或 tensor shape 的
+“显然含义”都不能补一个缺失/不同的 domain；checker 也不能删除 predicate/fill/effect 来让它通过。
+该 rule 不把 general affine/交叉轴 logical predicate 一概禁止；当前 RefEval 未实现的能力仍是
+consumer capability，不被偷换成 J 语义非法。
+
 ## J 的构造与标准化
 
 模型先返回尚未接受的 response JSON；固定 decoder/elaborator 成功后才构造出 J：
@@ -257,12 +265,13 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由 `typecheck.v4` 建立；canonical reduce/
-contraction fail-early 与 absent `opaque(mode=value,dtype=none)` semantic-use rejection 使 fresh-run 活动
-合同窄升为 `artifact.v2 / decode.v2 / typecheck.v5`。`candidate-check.v1` 的 closed envelope 本来就
+contraction fail-early 与 absent `opaque(mode=value,dtype=none)` semantic-use rejection 形成 v5；
+functional logical-domain closure 的 source-free fail-early 使 fresh-run 活动合同窄升为
+`artifact.v2 / decode.v2 / typecheck.v6`。`candidate-check.v1` 的 closed envelope 本来就
 允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经
 判定出的独立机械错误按稳定顺序返回，统一最多 20 项且每段文本最多 2048 字符；checker 不为继续
 检查而修补 artifact，也不在前置对象解析失败时猜测 dependent error。`candidate-check.v1` 共享
 正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
-这些版本；`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，v3/历史证书也不由新
+这些版本；`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，v3/v4/v5 历史证书也不由新
 规则静默重判。

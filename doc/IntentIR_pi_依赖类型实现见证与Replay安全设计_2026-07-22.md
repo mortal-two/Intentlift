@@ -715,7 +715,7 @@ Replay LLM 应遵守以下过程合同：
 12. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v5` 与 `intentir.lift-knowledge.v13`；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v5` 与 `intentir.lift-knowledge.v14`；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
 固定代码仍只做：
@@ -1067,17 +1067,28 @@ TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic sc
 任何不同 bytes 都必须重检；提交后的外部 TypeCheck 仍
 必须重跑。这个提交前诊断边界没有获得任何 π 构造权。
 
+当前 fresh worker 最多 24 个 model turns。CandidateCheck 采用总上限 8 的有界池：7 次普通共享
+allowance 由显式调用与提前 submission preflight 共同消费，另有 1 次只允许 submission 使用的
+reserve；receipt 分别记录 `shared_budget`/`submission_reserve` 以及每种 trigger 的 calls/evaluations。
+若 worker 未提交候选，跨到同一 branch 下一 fresh Lift 的内容最多是最后一次实际 source-free
+evaluation 的 20 条 `rule_code/path`；observed value、候选 patch、Source/Gate/hidden/sibling 信息均
+不得携带。该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。
+
 numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
 生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v5`。v5 继承 v4 的 rank-0 closed signature、Layer-A value typing
-total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
+活动 fresh-run 使用 `typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+Layer-A value typing total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
 才能被消费。v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行
 canonical fail-early，拒绝别名、缺失/非法 canonical attrs 及可机械判定的 axis/rank/shape
 矛盾；它同时拒绝 absent `opaque(mode=value,dtype=none)` 成为 π instance semantic ref、
-realization authorization subject 或 refinement carrier。这些拒绝不会给 π、CandidateCheck 或
+realization authorization subject 或 refinement carrier。v6 又对可识别的零起点矩形 functional
+logical-domain profile 机械检查 direct access index、padding predicate、`boundary.domains` 与 typed
+tensor extent 的闭合；只读 checker 不从 π topology、C、Source、runtime/hidden input 或 shape
+补缺失 relation，也不把 general affine/交叉轴 logical predicate 因 RefEval 能力不足而判为非法。
+这些拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。Gate2 scalar consumer 的新增能力独立标为
-`j_scalar_cpu_mlir_v8`，既有 typecheck.v3/v4、`j_scalar_cpu_mlir_v7` receipt 与 Softmax/RMS verdict 均不追认。
+`j_scalar_cpu_mlir_v8`，既有 typecheck.v3/v4/v5、`j_scalar_cpu_mlir_v7` receipt 与 Softmax/RMS verdict 均不追认。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

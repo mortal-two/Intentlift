@@ -765,8 +765,14 @@ index_expression uses the closed ContractExpr syntax. For a direct dense
 projection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and
 [k1, k0] are equivalent ordered two-axis forms; deterministic J elaboration
 normalizes them before TypeCheck and Replay. Do not encode frontend APIs or
-free prose as an index expression. A fill_value is legal only on a load with a
-non-null predicate.
+free prose as an index expression. For the rectangular functional-domain
+profile, explicitly declare every logical axis bound in boundary.domains. If an
+access uses a physical padding predicate such as k0 < x0, its direct index must
+contain k0 and one domain must declare exactly 0 <= k0 and k0 < x0. A tensor
+shape, Source fact, C value, pi route, or runtime value never fills a missing or
+different domain relation. General logical predicates remain legal J; do not
+delete them merely to satisfy this rectangular profile. A fill_value is legal
+only on a load with a non-null predicate.
 For an unconditional access, omit both predicate and fill_value; never attach a
 redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,

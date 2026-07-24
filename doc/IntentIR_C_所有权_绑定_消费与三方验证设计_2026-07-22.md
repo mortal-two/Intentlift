@@ -193,6 +193,17 @@ diagnostics 并留在当前 worker 中，不提交也不修改 artifact；只有
 完全相同时才可复用，任何不同 bytes 都必须重检。
 该前置检查与显式调用共享同一有界预算，且不取消提交后 Runner 的独立重检。
 
+当前 fresh worker 的工程预算为最多 24 个 model turns；CandidateCheck 总 evaluation 上限为 8。
+普通共享 allowance 为 7，agent 显式调用与提前 submission preflight 都从中消费；另有 1 次仅
+submission 可消费的 reserve，因此典型 7 次显式 evaluation 后仍可检查最终提交，但任何调用顺序
+都不能超过 8 次。receipt 分别记录 `shared_budget`、`submission_reserve`，并按
+`explicit`/`submission` trigger 记录 calls 与实际 evaluations。submission preflight 的 `PASS` 仍
+非认证，正式 Runner 必须重跑 TypeCheck。
+若一次 worker 在预算内没有提交候选，只允许把最后一次**实际执行**的 source-free checker 诊断中
+最多 20 条 `rule_code/path` 摘要传给同一 branch 的下一次 fresh Lift；不得携带 observed value、
+候选修复、Source/Gate/hidden input、conversation 或 sibling 信息。这个有界反馈只是延续已有机械
+拒绝，不给 Harness/runner 生成 J/C/π 的权限。
+
 `ctx` 精确等于该 agent 原本已经获准读取的匿名机械 Harness compiler view 与公共协议版本；
 CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也不增加新的 source-conditioned
 信息通道。
@@ -200,16 +211,27 @@ CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也
 CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
-当前新 fresh-run 合同使用 `typecheck.v5`。v5 继承 v4 的 rank-0 closed signature、Layer-A
-total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
+当前新 fresh-run 合同使用 `typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+Layer-A total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
 具有 closed total type，`map_binary` 默认严格服从 NumPy broadcast，非 trailing 轴只能消费
 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation。v5 新增已知 `reduce` 与 binary
 `contraction` 的 canonical fail-early；别名、缺失/非法 attrs 以及可机械判定的
 axis/rank/shape 矛盾直接拒绝，fixed code 不猜测、翻译或补齐。v5 还拒绝将
 `opaque(mode=value,dtype=none)` absent ABI carrier 用作 π instance semantic ref、realization
-authorization subject 或 refinement carrier，不赋予它 logical denotation。Gate2 scalar RefEval
+authorization subject 或 refinement carrier，不赋予它 logical denotation。
+
+v6 将 RefEval/production 已共享的 `FunctionalBoundaryProjection` 中一个严格 J-only 必要条件前移到
+同一 TypeCheck/CandidateCheck core：对可识别的零起点矩形 logical-domain profile，direct access
+index、padding predicate、`boundary.domains` 与 typed tensor extent 必须显式一致。形如
+`k0 < x0` 的 padding predicate 必须直接索引 `k0`，并由 J 自身声明匹配的
+`0 <= k0 and k0 < x0` domain；checker 不得从 Source、C、π、tensor shape 的“显然含义”、runtime
+value 或 hidden input 补造缺失 domain。该 rule 只拒绝此封闭 profile 内的机械矛盾；general
+affine/交叉轴 logical predicate 仍是合法 J，不因当前 RefEval 尚未实现就被 TypeCheck 一概禁止。
+合法 masked/padded access 的 predicate、fill 与一一对应 effect 保持原样，checker 不删除、不改写。
+
+Gate2 scalar RefEval
 仍以 `j_scalar_cpu_mlir_v8` 标识唯一 node-less logical-input load 消费能力。既有 typecheck.v3/v4、
-`j_scalar_cpu_mlir_v7` receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
+v5、`j_scalar_cpu_mlir_v7` receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
 
 ### 2.6 显式语义所有权投影
 

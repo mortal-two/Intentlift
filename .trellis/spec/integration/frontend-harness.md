@@ -44,6 +44,14 @@ Harness-private 近似规则。
 填默认值、改别名、删除冲突项或构造 repaired artifact。若 JSON、父对象或某个参数本身尚不能
 合法解析，依赖该前提的后续检查必须留到修正后的下一次 evaluation，不能猜测修复结果后提前报错。
 
+当前 fresh worker 最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：7 次普通
+`shared_budget` 同时供显式调用与提前 submission preflight 消费，另有 1 次
+`submission_reserve` 只允许 submission 使用；任何顺序均不得超过 8。Harness/receipt 分别记录两类
+budget，并按 `explicit`/`submission` trigger 记录 calls/evaluations。若 worker 没有提交 candidate，
+同一 branch 下一 fresh Lift 最多只接收最后一次实际 source-free evaluation 的 20 条
+`rule_code/path`；不得包含 observed value、patch、Source/Gate/hidden/sibling 信息。Harness 不应用
+摘要修补 artifact，submission `PASS` 也不能替代正式 Runner 的 `typecheck.v6`。
+
 ## Logical signature 与绑定
 
 input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical
@@ -197,8 +205,9 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 自动删除这些字段或补造 artifact。一次生成的 fixture 必须由 Source、Replay 与 RefEval 三腿共享，
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
-可见构造合同，fresh MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v13`；旧
-v11/v12 receipt 不被静默改写。
+可见构造合同，fresh MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v14`；v14 另加入
+generic functional logical-domain closure 与上述有界诊断反馈合同。旧 v11/v12/v13 receipt 不被
+静默改写。
 
 Source 投影不能因当前 `c0` 恰好让某个 grid axis 的 extent 为 1，就删除该 axis 的
 `program_id`、address-base 或其他 compiler-visible realization topology；Gate1 比较的是本次真实

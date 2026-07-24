@@ -41,16 +41,21 @@ agent:
        If feedback contains `previous_artifact`, this is a fresh repair round:
        copy that complete candidate to `/output/candidate.json` immediately,
        apply the diagnostic as a focused correction, and do not regenerate it.
+       If no previous artifact exists but `candidate_check_feedback` is present,
+       use only its bounded rule/path list to focus the new construction; it is
+       not a patch and you must still construct the complete candidate yourself.
     2. Read the minimal example and run schema_query `top` + `catalog` in one
        shell action; query only exact operations and leaf sections needed by
        Source, combining those lookups in one shell action.
     3. Write the complete first candidate by turn 5.
     4. Run the static validator, then CandidateCheck. Repair only the reported
-       fields yourself, rerun within its four-call allowance if needed, and
-       submit before the model-turn budget. Submission itself runs the same
-       read-only preflight when the exact current bytes have no prior PASS;
-       a failure returns diagnostics and does not deliver the candidate.
-  step_limit: 16
+       fields yourself, rerun within its seven-call ordinary allowance if
+       needed, and submit before the model-turn budget. Submission itself runs
+       the same read-only preflight when the exact current bytes have no prior
+       PASS; one separately reserved submission evaluation remains available
+       after the ordinary allowance is exhausted. A failure returns diagnostics
+       and does not deliver the candidate.
+  step_limit: 24
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 2
@@ -76,3 +81,5 @@ model:
   cost_tracking: ignore_errors
 environment:
   timeout: 60
+  candidate_check_limit: 7
+  candidate_submission_check_limit: 1

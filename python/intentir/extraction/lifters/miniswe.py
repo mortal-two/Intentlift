@@ -18,6 +18,7 @@ from intentir.extraction.providers.provider import (
 )
 
 from .scrc import (
+    CANDIDATE_CHECK_PROTOCOL,
     SCRCExtraction,
     SCRCLiftAttempt,
     SCRCLiftRequest,
@@ -34,7 +35,9 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v13"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v14"
+MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
+MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
 
 def _usage_and_response_identity(
@@ -130,6 +133,53 @@ def _worker_evidence(
     }
 
 
+def _last_candidate_check_feedback(
+    evidence: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return only the last evaluated source-free rule/path summary."""
+
+    candidate_check = evidence.get("candidate_check")
+    if not isinstance(candidate_check, Mapping):
+        return None
+    results = candidate_check.get("results")
+    if not isinstance(results, list):
+        return None
+    for result in reversed(results):
+        if (
+            not isinstance(result, Mapping)
+            or result.get("status") != "fail"
+            or result.get("evaluated") is not True
+        ):
+            continue
+        protocol = result.get("protocol")
+        rule_paths = result.get("rule_paths")
+        if protocol != CANDIDATE_CHECK_PROTOCOL or not isinstance(
+            rule_paths, list
+        ):
+            continue
+        summary: list[dict[str, str]] = []
+        for item in rule_paths[:MAX_RELIFT_CHECK_FEEDBACK_ITEMS]:
+            if not isinstance(item, Mapping):
+                continue
+            rule_code = item.get("rule_code")
+            path = item.get("path")
+            if (
+                not isinstance(rule_code, str)
+                or not isinstance(path, str)
+                or rule_code == "check_budget_exhausted"
+            ):
+                continue
+            summary.append(
+                {
+                    "rule_code": rule_code[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
+                    "path": path[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
+                }
+            )
+        if summary:
+            return {"protocol": protocol, "diagnostics": summary}
+    return None
+
+
 def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
     packet = json.loads(request.user_input)
     anonymous_source = packet.get("anonymous_source")
@@ -158,7 +208,8 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
 - `feedback.json`: null on the first round, otherwise only the explicitly
-  allowed previous parser/TypeCheck/Gate1 feedback and previous candidate.
+  allowed previous parser/TypeCheck/Gate1 feedback, previous candidate, or the
+  last worker's bounded source-free CandidateCheck rule/path summary.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
@@ -167,8 +218,8 @@ This directory is the complete allowlisted input for one fresh Lift round.
   replace all semantics, handles, shapes, values, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: bounded, read-only
-  Decode/TypeCheck diagnostics for the complete candidate (at most four
-  checker evaluations total across explicit calls and submission preflight);
+  Decode/TypeCheck diagnostics for the complete candidate (a seven-evaluation
+  ordinary allowance plus one separately reserved submission preflight);
   it never repairs or certifies the artifact.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
@@ -399,11 +450,17 @@ class MiniSWELiftAdapter:
                 ) from exc
             from intentir.verify.scrc_runner import CandidateLiftError
 
+            rejected_diagnostics: dict[str, Any] = {
+                "diagnostic": diagnostic,
+                "failure_class": "lift_worker_no_candidate",
+            }
+            candidate_check_feedback = _last_candidate_check_feedback(evidence)
+            if candidate_check_feedback is not None:
+                rejected_diagnostics["candidate_check_feedback"] = (
+                    candidate_check_feedback
+                )
             raise CandidateLiftError(
-                {
-                    "diagnostic": diagnostic,
-                    "failure_class": "lift_worker_no_candidate",
-                },
+                rejected_diagnostics,
                 physical_calls=result.model_calls,
             ) from exc
         except Exception as exc:

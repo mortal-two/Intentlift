@@ -122,7 +122,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v13"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v14"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -136,6 +136,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
         files["README.md"]
     )
     readme = " ".join(files["README.md"].split())
+    assert "seven-evaluation ordinary allowance" in readme
+    assert "separately reserved submission preflight" in readme
+    assert "bounded source-free CandidateCheck rule/path summary" in readme
     assert "must be the entire shell action exactly as shown" in readme
     assert "Do not prepend `set`" in readme
     assert "never names a source/local or J-body v*" in (
@@ -243,7 +246,7 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
 
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
-    assert load_intentir_lift_config()["agent"]["step_limit"] == 16
+    assert load_intentir_lift_config()["agent"]["step_limit"] == 24
     model = create_intentir_lift_model(
         model_name="test",
         api_base="http://provider.invalid/v1",
@@ -261,11 +264,15 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 8, "step_limit": 16},
+        {"n_model_calls": 16, "step_limit": 24},
     )[0]
     rendered = json.loads(observation["output"])
 
-    assert rendered["turn_budget"] == {"used": 8, "limit": 16, "remaining": 8}
+    assert rendered["turn_budget"] == {
+        "used": 16,
+        "limit": 24,
+        "remaining": 8,
+    }
     assert rendered["directive"].startswith("Stop browsing")
 
 
@@ -335,7 +342,13 @@ def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
     assert evidence["calls"] == 3
     assert evidence["attempts"] == 3
     assert evidence["evaluations"] == 2
-    assert evidence["limit"] == 2
+    assert evidence["limit"] == 3
+    assert evidence["shared_budget"] == {"used": 2, "limit": 2}
+    assert evidence["submission_reserve"] == {"used": 0, "limit": 1}
+    assert evidence["explicit"] == {"calls": 3, "evaluations": 2}
+    assert evidence["submission"] == {"calls": 0, "evaluations": 0}
+    assert evidence["results"][-1]["budget_pool"] is None
+    assert evidence["results"][-1]["evaluated"] is False
     assert [item["status"] for item in evidence["results"]] == [
         "pass", "pass", "fail"
     ]
@@ -378,7 +391,12 @@ def test_agent_can_use_candidate_check_before_independent_submission() -> None:
     assert check_evidence["calls"] == 1
     assert check_evidence["attempts"] == 1
     assert check_evidence["evaluations"] == 1
-    assert check_evidence["limit"] == 4
+    assert check_evidence["limit"] == 8
+    assert check_evidence["shared_budget"] == {"used": 1, "limit": 7}
+    assert check_evidence["submission_reserve"] == {
+        "used": 0,
+        "limit": 1,
+    }
     assert check_evidence["results"][0]["status"] == "pass"
     assert check_evidence["results"][0]["trigger"] == "explicit"
 
@@ -432,6 +450,66 @@ def test_submission_preflight_returns_diagnostics_then_accepts_repair() -> None:
     assert [item["status"] for item in evidence["results"]] == ["fail", "pass"]
     assert [item["trigger"] for item in evidence["results"]] == [
         "submission", "submission"
+    ]
+
+
+def test_submission_has_one_check_after_ordinary_budget_is_exhausted() -> None:
+    workspace = _workspace()
+    rejected = '{"valid": false}'
+    accepted = '{"valid": true}'
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{rejected}' > /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json",
+            f"printf '%s\\n' '{accepted}' > /output/candidate.json",
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+        ]
+    )
+
+    def checker(candidate_text: str) -> dict:
+        valid = json.loads(candidate_text).get("valid") is True
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass" if valid else "fail",
+            "diagnostics": [] if valid else [
+                {
+                    "rule_code": "candidate_invalid",
+                    "path": "j.intent_function",
+                    "observed_refs_or_types": [],
+                }
+            ],
+        }
+
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+            config_overrides={
+                "environment": {
+                    "candidate_check_limit": 2,
+                    "candidate_submission_check_limit": 1,
+                }
+            },
+        )
+    finally:
+        workspace.cleanup()
+
+    assert json.loads(result.candidate_text or "") == {"valid": True}
+    evidence = result.trajectory["info"]["candidate_check"]
+    assert evidence["evaluations"] == 3
+    assert evidence["shared_budget"] == {"used": 2, "limit": 2}
+    assert evidence["submission_reserve"] == {"used": 1, "limit": 1}
+    assert [item["budget_pool"] for item in evidence["results"]] == [
+        "shared",
+        "shared",
+        "submission_reserve",
+    ]
+    assert [item["trigger"] for item in evidence["results"]] == [
+        "explicit",
+        "explicit",
+        "submission",
     ]
 
 
@@ -933,7 +1011,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v5"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v6"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -993,6 +1071,62 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
         "j.intent.intent_function.body[0].attrs.rhs_contract_axes",
         "j.intent.intent_function.body[0].attrs.subscripts",
     }
+
+    incomplete_boundary = artifact.to_json()
+    intent = incomplete_boundary["j"]["intent"]["intent_function"]
+    intent["inputs"][0]["shape"] = [2, "x0"]
+    intent["outputs"][0]["shape"] = [2, "x0"]
+    incomplete_boundary["j"]["signature"]["parameters"][0]["rank"] = 2
+    incomplete_boundary["j"]["signature"]["parameters"][1]["rank"] = 2
+    incomplete_boundary["j"]["boundary"]["domains"] = {
+        "d0": "0 <= k0 and k0 < 2"
+    }
+    incomplete_boundary["j"]["boundary"]["accesses"] = [
+        {
+            "access_id": "a0",
+            "kind": "load",
+            "tensor": "t0",
+            "predicate": "k1 < x0",
+            "fill_value": 0.0,
+            "node_ref": "n0",
+            "index_expression": "[k0, k1]",
+        },
+        {
+            "access_id": "a1",
+            "kind": "store",
+            "tensor": "t1",
+            "predicate": "k1 < x0",
+            "node_ref": "n0",
+            "index_expression": "[k0, k1]",
+        },
+    ]
+    incomplete_boundary["j"]["boundary"]["effects"] = [
+        {
+            "effect_id": "e0",
+            "kind": "read",
+            "target": "t0",
+            "node_ref": "n0",
+            "access_ref": "a0",
+        },
+        {
+            "effect_id": "e1",
+            "kind": "write",
+            "target": "t1",
+            "node_ref": "n0",
+            "access_ref": "a1",
+        },
+    ]
+    boundary_rejection = check_scrc_lift_candidate(
+        json.dumps(incomplete_boundary), context
+    )
+    assert boundary_rejection["status"] == "fail"
+    assert [
+        item["rule_code"] for item in boundary_rejection["diagnostics"]
+    ] == ["functional_boundary_incomplete", "functional_boundary_incomplete"]
+    assert [item["path"] for item in boundary_rejection["diagnostics"]] == [
+        "j.boundary.accesses[0].predicate",
+        "j.boundary.accesses[1].predicate",
+    ]
 
     stale = SCRCCandidateCheckContext(
         context.expected_parameters,
@@ -1250,7 +1384,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v5"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v6"
     assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None
@@ -1263,6 +1397,134 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert "secret" not in json.dumps(
         adapter.records[0].extraction.provenance.trajectory
     )
+
+
+def test_worker_limit_carries_only_last_rule_paths_to_next_fresh_lift(
+    monkeypatch,
+) -> None:
+    artifact = make_copy_artifact()
+    captured_feedback: list[object] = []
+    runs = 0
+
+    def fake_model(**kwargs):
+        del kwargs
+        return object()
+
+    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+        nonlocal runs
+        del model, config_overrides, candidate_checker
+        runs += 1
+        captured_feedback.append(
+            json.loads((workspace.input_dir / "feedback.json").read_text())
+        )
+        if runs == 1:
+            trajectory = {
+                "messages": [],
+                "info": {
+                    "candidate_check": {
+                        "calls": 8,
+                        "evaluations": 7,
+                        "limit": 8,
+                        "results": [
+                            {
+                                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                                "status": "fail",
+                                "trigger": "explicit",
+                                "budget_pool": "shared",
+                                "evaluated": True,
+                                "rule_codes": ["dependent_type_rejected"],
+                                "rule_paths": [
+                                    {
+                                        "rule_code": "dependent_type_rejected",
+                                        "path": "pi.instances[4].semantic_ref",
+                                    }
+                                ],
+                            },
+                            {
+                                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                                "status": "fail",
+                                "trigger": "explicit",
+                                "budget_pool": None,
+                                "evaluated": False,
+                                "rule_codes": ["check_budget_exhausted"],
+                                "rule_paths": [
+                                    {
+                                        "rule_code": "check_budget_exhausted",
+                                        "path": "<candidate>",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                },
+            }
+            result = IntentIRLiftRunResult(
+                None,
+                trajectory,
+                "LimitsExceeded",
+                24,
+                20.0,
+            )
+            raise IntentIRLiftRunError(
+                "worker exhausted its bounded episode",
+                result=result,
+            )
+        return IntentIRLiftRunResult(
+            json.dumps(artifact.to_json()),
+            {"messages": []},
+            "Submitted",
+            2,
+            10.0,
+        )
+
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.create_intentir_lift_model", fake_model
+    )
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.run_intentir_lift", fake_run
+    )
+    adapter = MiniSWELiftAdapter(
+        provider=ProviderConfig(
+            "test",
+            "http://provider.invalid/v1",
+            "secret",
+            "test-model",
+            reasoning_effort="xhigh",
+        )
+    )
+    request = _adapter_request()
+
+    with pytest.raises(CandidateLiftError) as rejected:
+        adapter.lift(request, None)
+    diagnostics = rejected.value.diagnostics
+    repaired = adapter.lift(
+        request,
+        LiftFeedback(FeedbackKind.LIFT, diagnostics),
+    )
+
+    assert repaired.artifact.to_json() == canonicalize_gate1_artifact(
+        artifact
+    ).to_json()
+    assert captured_feedback[0] is None
+    assert captured_feedback[1] == {
+        "relift_round": 1,
+        "failure_kind": "lift",
+        "diagnostics": {
+            "diagnostic": "worker exhausted its bounded episode",
+            "failure_class": "lift_worker_no_candidate",
+            "candidate_check_feedback": {
+                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                "diagnostics": [
+                    {
+                        "rule_code": "dependent_type_rejected",
+                        "path": "pi.instances[4].semantic_ref",
+                    }
+                ],
+            },
+        },
+        "previous_artifact": None,
+    }
+    assert "observed_refs_or_types" not in json.dumps(captured_feedback[1])
 
 
 def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(

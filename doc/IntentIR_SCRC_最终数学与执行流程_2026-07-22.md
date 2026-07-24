@@ -428,6 +428,14 @@ CandidateCheck。FAIL 只把 closed diagnostics 返回 worker，不提交、修�
 调用共享有界预算，PASS 仍不进入证书，正式 Runner 仍
 重跑 Decode/TypeCheck。
 
+当前 fresh worker 最多 24 个 model turns。CandidateCheck 最多实际执行 8 次：普通共享 allowance
+为 7，显式调用与提前 submission preflight 都消费该 allowance；额外 1 次 reserve 只能由
+submission 使用。receipt 分开记录 `shared_budget`、`submission_reserve` 以及
+`explicit`/`submission` trigger 的 calls/evaluations。若 worker 未提交候选，同一 branch 下一次 fresh
+Lift 最多只接收最后一次实际 source-free evaluation 的 20 条 `rule_code/path` 摘要；没有 observed
+value、patch、Source/Gate/hidden/sibling 信息。该摘要与 submission `PASS` 都不进入证书，也不授权
+固定代码修补 `(J,C,π)`。
+
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：
 
 \[
@@ -439,16 +447,20 @@ CandidateCheck。FAIL 只把 closed diagnostics 返回 worker，不提交、修�
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v5`。v5 继承 v4 的 rank-0 closed signature、Layer-A graph
-total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
+当前 fresh-run 取 `v_TC = typecheck.v6`。v6 完整继承 v5；v5 继承 v4 的 rank-0 closed signature、
+Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
 rank-0/普通 result type，缺失的 broadcast axis relation 必须拒绝，不能由 checker 猜测。
 v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行 canonical fail-early，
 拒绝 `kind`/contract-axis 别名、缺失或非法的 canonical attrs 以及与已有 typed J 矛盾的
 axis/rank/shape；fixed code 不翻译、补齐或修复这些字段。同一 v5 judgement 还拒绝将
 `opaque(mode=value,dtype=none)` 这一 absent ABI carrier 用作 π instance 的 semantic ref、
-realization authorization subject 或 refinement carrier；它没有 logical denotation。Scalar RefEval
+realization authorization subject 或 refinement carrier；它没有 logical denotation。v6 对 J 自身
+可识别的零起点矩形 functional logical-domain profile 增加同源必要条件：direct access index、padding
+predicate、`boundary.domains` 与 typed tensor extent 必须显式闭合，CandidateCheck/TypeCheck 不从
+Source、C、π、shape、runtime/hidden input 补造 relation。general affine/交叉轴 logical predicate
+不因当前 RefEval 未实现而被一概拒绝，合法 predicate/fill/effect 也不被删除或改写。Scalar RefEval
 能力边界另升为 `j_scalar_cpu_mlir_v8`，仅新增唯一 node-less logical-input load 的确定性消费。
-所有既有 typecheck.v3/v4、`j_scalar_cpu_mlir_v7` evidence 以及 Softmax/RMS 历史运行保持原
+所有既有 typecheck.v3/v4/v5、`j_scalar_cpu_mlir_v7` evidence 以及 Softmax/RMS 历史运行保持原
 verdict，新协议只用于 fresh run。
 
 ---

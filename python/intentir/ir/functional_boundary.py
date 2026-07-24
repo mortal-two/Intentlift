@@ -99,6 +99,22 @@ class FunctionalBoundaryProjection:
         }
 
 
+@dataclass(frozen=True)
+class FunctionalBoundaryClosureIssue:
+    """One J-only inconsistency in the projectable logical-domain profile.
+
+    This is deliberately narrower than ``FunctionalBoundaryProjection``.  It
+    records only contradictions that can be decided from J's own typed tensor
+    shapes, direct access vectors, predicates, and explicit domains.  An empty
+    issue list does not claim that every valid J feature is implemented by the
+    current RefEval/backend projection.
+    """
+
+    path: str
+    detail: str
+    ref: str | None = None
+
+
 def parse_direct_axes(expression: str) -> tuple[str, ...]:
     """Return the unique closed direct-axis interpretation of a wire form."""
 
@@ -288,6 +304,144 @@ def _full_domains(j: Any) -> dict[str, int | str]:
                 )
             result[axis] = extent
     return result
+
+
+def functional_boundary_closure_issues(
+    j: Any,
+) -> tuple[FunctionalBoundaryClosureIssue, ...]:
+    """Check the shared, source-free logical-domain closure subset.
+
+    The checker intentionally recognizes only the same zero-based rectangular
+    logical-domain profile that the functional projection can erase into
+    complete logical tensors.  Unsupported affine/logical predicates remain a
+    consumer capability question; they are not made semantically illegal by
+    TypeCheck.  Once an access predicate is in the recognized profile, however,
+    its direct index axis and extent must agree with ``boundary.domains`` and
+    the typed tensor shape.  Neither Source, C, pi, nor runtime values are
+    consulted to fill a missing relation.
+    """
+
+    j = elaborate_j(j)
+    boundary = j.boundary
+    if not boundary.accesses:
+        return ()
+
+    # A non-rectangular or otherwise unsupported domain may still be a valid J
+    # contract.  RefEval can report that capability boundary later; v6 must not
+    # turn it into semantic illegality merely because the current projection
+    # cannot consume it.
+    try:
+        domains = _full_domains(j)
+    except NotImplementedError:
+        return ()
+    except ValueError as exc:
+        return (
+            FunctionalBoundaryClosureIssue(
+                "j.boundary.domains",
+                str(exc),
+            ),
+        )
+
+    dimensions = {
+        dimension
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in tensor.shape
+        if isinstance(dimension, str)
+    }
+    tensors = {
+        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+    }
+    logical_guards = _logical_boolean_guards(j)
+    parsed_accesses = j_elaboration(j).access_by_id
+    issues: list[FunctionalBoundaryClosureIssue] = []
+
+    for index, access in enumerate(boundary.accesses):
+        parsed_access = parsed_accesses.get(access.access_id)
+        tensor = tensors.get(access.tensor)
+        if parsed_access is None or tensor is None:
+            # Canonical elaboration/ordinary reference checking owns these
+            # errors.  Do not duplicate them under the closure rule.
+            continue
+        axes = parsed_access.index.direct_axes
+        if axes is None or len(set(axes)) != len(axes):
+            # General affine/diagonal accesses are outside this projection
+            # profile, not automatically invalid J.
+            continue
+
+        index_path = f"j.boundary.accesses[{index}].index_expression"
+        if len(axes) != len(tensor.shape):
+            issues.append(
+                FunctionalBoundaryClosureIssue(
+                    index_path,
+                    "functional direct access rank differs from its J tensor",
+                    access.access_id,
+                )
+            )
+            continue
+        for axis, declared_extent in zip(axes, tensor.shape, strict=True):
+            domain_extent = domains.get(axis)
+            if domain_extent is not None and domain_extent != declared_extent:
+                issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        index_path,
+                        f"functional axis {axis!r} extent {domain_extent!r} "
+                        f"differs from J tensor extent {declared_extent!r}",
+                        access.access_id,
+                    )
+                )
+
+        parsed_predicate = parsed_access.predicate
+        if parsed_predicate is None:
+            continue
+        try:
+            predicate = _predicate_projection(
+                parsed_predicate,
+                logical_guards=logical_guards,
+            )
+        except NotImplementedError:
+            # Logical predicates outside the rectangular mask-erasure profile
+            # remain valid J and must not be blanket-rejected by TypeCheck.
+            continue
+        except ValueError as exc:
+            issues.append(
+                FunctionalBoundaryClosureIssue(
+                    f"j.boundary.accesses[{index}].predicate",
+                    str(exc),
+                    access.access_id,
+                )
+            )
+            continue
+
+        # ``i < j`` is a logical cross-axis predicate, not a rectangular
+        # physical padding bound.  Only integer constants and declared J shape
+        # dimensions identify the shared functional-domain profile.
+        if any(
+            not isinstance(extent, int) and extent not in dimensions
+            for _axis, extent in predicate.upper_bounds
+        ):
+            continue
+        predicate_path = f"j.boundary.accesses[{index}].predicate"
+        for axis, extent in predicate.upper_bounds:
+            if axis not in axes:
+                issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        predicate_path,
+                        "functional predicate upper bound is not an access axis",
+                        access.access_id,
+                    )
+                )
+                continue
+            if domains.get(axis) != extent:
+                issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        predicate_path,
+                        "functional predicate differs from the full logical "
+                        "domain declared by boundary.domains",
+                        access.access_id,
+                    )
+                )
+
+    return tuple(issues)
 
 
 def _broadcast_axes(j: Any) -> dict[str, dict[str, tuple[int, ...]]]:
@@ -550,6 +704,12 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     """Prove that complete Layer B can use J's logical tensor execution."""
 
     j = elaborate_j(j)
+    closure_issues = functional_boundary_closure_issues(j)
+    if closure_issues:
+        # RefEval/backend projection and TypeCheck share this exact J-only
+        # necessary condition.  The detailed path is retained by TypeCheck;
+        # consumers preserve their established exception surface.
+        raise ValueError(closure_issues[0].detail)
     boundary = j.boundary
     if any(
         parameter.mode.value == "inout" or parameter.alias_of is not None
@@ -903,8 +1063,10 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
 
 __all__ = [
     "FUNCTIONAL_BOUNDARY_PROTOCOL",
+    "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
     "PredicateProjection",
+    "functional_boundary_closure_issues",
     "parse_direct_axes",
     "project_predicate_text",
     "project_functional_boundary",
