@@ -16,7 +16,10 @@ the artifact schema or external TypeCheck.
    or symbolic dimension `x*`, never a body/local `v*`. A scalar or semantic
    constexpr used as logical data gets a dtype-matching rank-0 J input with
    shape `[]`; only an integral extent-only handle binds an `x*`. Never bind a
-   value parameter to a J output just to reuse an existing handle.
+   value parameter to a J output just to reuse an existing handle. A Harness
+   argument with `kind=none` is exactly `kind=opaque`, `mode=value`,
+   `dtype=none`, with no rank, alias, logical ref, J tensor/node/effect, or pi
+   instance; never substitute a dummy pointer or scalar.
 5. A body operand must already be in the current lexical scope. Do not use an
    output tensor handle as if it were an already-defined intermediate; use the
    producing node's declared value handle where the grammar requires one.
@@ -33,31 +36,57 @@ the artifact schema or external TypeCheck.
 9. Preserve every Source program/grid-coordinate occurrence as a distinct
    domain-anchored `realize` path in a program region, even when its current grid
    extent is one. Its program-uniform path enters `address_base`; the lane/C path
-   enters `address_lane`. If the two integer contributions merge before one
-   pointer addition, keep both roles and their route without inventing a second
-   pointer add. Never replace the program path with constant zero.
-10. Every sensitive pi refinement `auth_ref` names an actually declared J
+   enters `address_lane`. If the pointer/tensor `p*` is applied at the base and
+   that pointer result then receives the lane, route `p*` directly into
+   `address_base` and preserve the second lane pointer/address stage. If base and
+   lane merge as integers before the only pointer application, route only the
+   integer/domain/C contributions through `address_base`; the pointer `p*`
+   bypasses it and enters `address_lane` or the final address stage. Never decide
+   from the base-to-lane edge alone. Never replace the program path with constant
+   zero. Repeated occurrences anchored to the same `d*` are repeated realizations
+   of the same program-axis identity, not evidence for another axis. Use a distinct
+   J domain anchor only when Source really contains a distinct program coordinate.
+   If one Source SSA coordinate/address intermediate is defined once and reused by
+   several accesses, emit one producer with routed consumers and one-producer
+   sharing; syntactic uses do not create repeated producer instances. Repeat a
+   semantic ref only for distinct compiler-visible Source definitions/stages.
+10. A J `contraction` uses only canonical `attrs.subscripts`; never emit
+   `lhs_contract_axes`/`rhs_contract_axes`. A direct Source contraction primitive
+   represented by one canonical J `contraction` node gets one
+   contraction-anchored `realize` instance. If Source
+   instead has separately compiler-visible outer-product/multiply/reduction stages,
+   preserve them as multiple ordered instances anchored to that node. Never collapse
+   the latter topology or invent the latter stages for a direct primitive.
+11. If Source has a compiler-visible semantic recurrence, encode it with the
+   existing structured J `loop`: declare trip/scan, every carry and initial value,
+   the ordered body update, and matching next/yield/result values. Preserve the
+   canonical contraction subscripts and result-axis orientation consumed by the
+   update; add a transpose only for a real logical transformation. Never replace
+   the recurrence with an algebraically equivalent global formula and expect pi or
+   Replay to recover it. Pi has topology/routes only and cannot carry or infer an
+   initialization, update formula, yield, or contraction orientation.
+12. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-11. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
+13. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
    `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
    and only when that subject declares the referenced non-negative logical axis
    or `x*`; do not guess either attachment.
-12. C otherwise contains only the exact trusted scheduling slots and values
+14. C otherwise contains only the exact trusted scheduling slots and values
    from `harness_view.json`. It contains no operator, predicate, formula,
    strategy, source/API name, or semantic constant.
-13. For `numeric_cast`, authorization `subject_ref` names the explicit unary
+15. For `numeric_cast`, authorization `subject_ref` names the explicit unary
    cast node; `source_dtype` equals its operand dtype and `target_dtype` equals
    its result dtype. The matching pi instance uses that same semantic ref and
    at most one refinement may target an instance.
-14. A floating output depending on a transcendental op, floating reduction, or
+16. A floating output depending on a transcendental op, floating reduction, or
    reassociation declares `result_relation.kind=tolerance`, never default or
    explicit `exact`. J declares only the class; numeric thresholds remain in
    external Q.
-15. Pi contains anonymous realization relations only. It contains no dtype,
+17. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-16. Run the supplied static schema validator and then
+18. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still
    repeats canonical Decode and dependent TypeCheck before Replay and Gates.

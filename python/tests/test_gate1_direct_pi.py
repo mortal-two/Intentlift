@@ -18,7 +18,12 @@ from intentir.extraction.lifters.scrc import (
 )
 from intentir.extraction.providers.client import LLMReply
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
-from intentir.verify.gate1.model import Gate1Artifact, ScheduleSlot, SchemaError
+from intentir.verify.gate1.model import (
+    Gate1Artifact,
+    ParameterKind,
+    ScheduleSlot,
+    SchemaError,
+)
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
@@ -35,6 +40,8 @@ from intentir.verify.gate1.prompt import (
     build_normal_rewriter_view,
     build_rewriter_packet,
 )
+
+
 
 
 def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
@@ -323,6 +330,66 @@ def _address_pi(*, staged: bool) -> RealizationWitness:
     )
 
 
+def _integer_merge_address_pi() -> RealizationWitness:
+    """Pointer bypasses integer base and enters the lane/final address stage."""
+
+    return RealizationWitness.from_json(
+        {
+            "regions": [
+                {"id": "r0", "parent": None, "placement": "root"},
+                {"id": "r1", "parent": "r0", "placement": "program"},
+            ],
+            "instances": [
+                {
+                    "id": "i0",
+                    "semantic_ref": "p0",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i1",
+                    "semantic_ref": "d0",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i2",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_base",
+                },
+                {
+                    "id": "i3",
+                    "semantic_ref": "c0",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i4",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_lane",
+                },
+                {
+                    "id": "i5",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "transfer_direct",
+                },
+            ],
+            "routes": [
+                {"source": "i1", "target": "i2", "slots": [0]},
+                {"source": "i2", "target": "i4", "slots": [0]},
+                {"source": "i3", "target": "i4", "slots": [1]},
+                {"source": "i0", "target": "i4", "slots": [2]},
+                {"source": "i4", "target": "i5", "slots": [0]},
+            ],
+            "order": [],
+            "sharing": [],
+        }
+    )
+
+
 def test_existing_pi_distinguishes_runtime_row_base_from_flat_access() -> None:
     row = _row_stride_pi()
     flat = _flat_pi()
@@ -348,6 +415,28 @@ def test_address_mechanisms_distinguish_staged_base_from_flat_lane() -> None:
         "source": "i1", "target": "i2", "slots": [0]
     }
     assert RealizationWitness.from_json(staged.to_json()) == staged
+
+
+def test_pointer_base_and_integer_merge_have_distinct_carrier_routes() -> None:
+    pointer_base = _address_pi(staged=True)
+    integer_merge = _integer_merge_address_pi()
+
+    assert pointer_base.routes[0] == {
+        "source": "i0",
+        "target": "i1",
+        "slots": [0],
+    }
+    assert {"source": "i0", "target": "i2", "slots": [0]} not in (
+        integer_merge.routes
+    )
+    assert {"source": "i0", "target": "i4", "slots": [2]} in (
+        integer_merge.routes
+    )
+    assert pointer_base.to_json() != integer_merge.to_json()
+    for witness in (pointer_base, integer_merge):
+        artifact = make_reduce_artifact()
+        artifact.pi = witness
+        assert build_normal_rewriter_view(artifact)["pi"] == witness.to_json()
 
 
 @pytest.mark.parametrize(
@@ -481,6 +570,7 @@ def test_replay_packet_is_source_isolated() -> None:
     assert "provenance" not in encoded
     assert set(payload["c"]) == {"slots"}
     assert "values" not in payload["c"]
+    assert payload["u_f"]["protocol"] == "intentir.scrc.replay-input.v1"
     assert_source_isolated_payload(payload)
 
 
@@ -489,7 +579,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v2"
+    assert context["context_policy"] == "public_frontend_context_v5"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -500,10 +590,25 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "placement='program' alone never authorizes tl.program_id" in contract
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
-    assert "map declaration-ordered stages" in contract
-    assert "combined before that pointer addition" in contract
+    assert "first declaration of each distinct J domain semantic_ref" in contract
+    assert "same d* remain" in contract
+    assert "never allocate another axis" in contract
+    assert "Only a distinct domain anchor may allocate the next" in contract
     assert "even if its grid extent is one" in contract
-    assert "second serial pointer addition" in contract
+    assert "pointer/tensor p* carrier directly enters address_base" in contract
+    assert "requires a second pointer/address operation" in contract
+    assert "carrier bypasses address_base" in contract
+    assert "before exactly one pointer/address operation" in contract
+    assert "edge alone" in contract
+    assert "never infer from Source names, paths, or text" in contract
+    assert "canonical binary J contraction" in contract
+    assert "one pi realize instance" in contract
+    assert "maps to one direct tl.dot realization" in contract
+    assert "Do not replace that single stage" in contract
+    assert "broadcasted outer-product multiplication plus tl.sum" in contract
+    assert "does not apply to outer products" in contract
+    assert "unsupported tile/dtype contracts" in contract
+    assert "pi chain that explicitly declares multiple" in contract
     assert "from triton.language.extra.cuda import libdevice" in contract
     assert "Directly importing a libdevice function is rejected" in contract
     assert "tanh/tan/atan/atan2 as libdevice calls" in contract
@@ -514,15 +619,42 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert_source_isolated_payload(payload)
 
 
-def test_replay_prompt_closes_access_masks_and_integer_address_merge() -> None:
+
+
+def test_replay_prompt_distinguishes_pointer_base_from_integer_merge() -> None:
     instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
 
     assert "A boundary access with no predicate is unconditional" in instructions
     assert "never derive a redundant mask from domains" in instructions
-    assert "preserve and combine those integer stages" in instructions
-    assert "never turn the route into serial extra pointer/address operations" in (
-        instructions
+    assert "pointer/tensor J.signature carrier directly enters address_base" in instructions
+    assert "a second lane pointer/address operation" in instructions
+    assert "carrier bypasses address_base" in instructions
+    assert "before exactly one pointer/address operation" in instructions
+    assert "base-to-lane edge alone" in instructions
+    assert "never from Source names, paths, text" in instructions
+    assert "axis identity belongs to the J domain anchor" in instructions
+    assert "same axis, never as a new axis" in instructions
+    assert "use one direct tl.dot" in instructions
+    assert "do not expand it into outer-product multiply plus tl.sum" in instructions
+    assert "Do not apply this spelling outside those support conditions" in instructions
+    assert "pi explicitly declares multiple contraction stages" in instructions
+
+
+@pytest.mark.parametrize("frontend", ["cuda", "cute", "tilelang"])
+def test_non_triton_replay_prompt_excludes_triton_contraction_spelling(
+    frontend: str,
+) -> None:
+    instructions, _ = build_normal_rewriter_prompt(
+        make_reduce_artifact(), frontend=frontend
     )
+
+    assert "tl.dot" not in instructions
+    assert "tl.sum" not in instructions
+    assert "pointer/tensor J.signature carrier directly enters" not in instructions
+    assert "axis identity belongs to the J domain anchor" not in instructions
+    assert "base-to-lane edge alone" not in instructions
+    assert "Consume J, pure C and pi directly" in instructions
+    assert "pi is topology, not semantic authority" in instructions
 
 
 def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None:
@@ -549,8 +681,28 @@ def test_lift_preserves_degenerate_program_coordinate_topology() -> None:
     assert "program-coordinate occurrence" in normalized
     assert "even when the current concrete grid extent on that axis is one" in normalized
     assert "both a program-coordinate path into address_base" in normalized
-    assert "merges them before one pointer addition" in normalized
-    assert "do not invent a second pointer addition" in normalized
+    assert "route its p* instance directly into address_base" in normalized
+    assert "two source pointer/address operations" in normalized
+    assert "pointer p* bypasses address_base" in normalized
+    assert "base-to-lane edge alone" in normalized
+    assert "defined once and reused by several accesses" in normalized
+    assert "one producer instance with routed consumers" in normalized
+    assert "Multiple syntactic uses never justify" in normalized
+    assert "not once per consumer" in normalized
+
+
+def test_lift_requires_complete_semantic_recurrence_in_j() -> None:
+    normalized = " ".join(scrc.build_scrc_lift_instructions().split())
+
+    assert "compiler-visible semantic recurrence" in normalized
+    assert "existing structured `loop` operation" in normalized
+    assert "every carried state and initial value" in normalized
+    assert "matching next/yield/result values" in normalized
+    assert "contraction's canonical subscripts" in normalized
+    assert "result-axis orientation" in normalized
+    assert "transpose only when it is a real logical transformation" in normalized
+    assert "ask Replay to rediscover the missing update algorithm" in normalized
+    assert "cannot carry, repair, or infer" in normalized
 
 
 @pytest.mark.parametrize(
@@ -578,6 +730,29 @@ def test_replay_packet_rejects_candidate_selected_frontend_context() -> None:
     payload = build_normal_rewriter_view(make_reduce_artifact())
     payload["u_f"]["custom_context"] = "source-derived hint"
     with pytest.raises(SchemaError, match="unknown field"):
+        ReplayPacket(
+            payload["j"], payload["c"], payload["pi"], payload["u_f"]
+        )
+
+
+@pytest.mark.parametrize(
+    "stale_policy",
+    ["public_frontend_context_v3", "public_frontend_context_v4"],
+)
+def test_replay_packet_rejects_stale_or_modified_public_context(
+    stale_policy,
+) -> None:
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    payload["u_f"]["context_policy"] = stale_policy
+
+    with pytest.raises(SchemaError, match="fixed public frontend context"):
+        ReplayPacket(
+            payload["j"], payload["c"], payload["pi"], payload["u_f"]
+        )
+
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    payload["u_f"]["compile_entry_contract"] += " source-derived suffix"
+    with pytest.raises(SchemaError, match="fixed public frontend context"):
         ReplayPacket(
             payload["j"], payload["c"], payload["pi"], payload["u_f"]
         )
@@ -700,7 +875,13 @@ def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
     assert "entering address_lane is lane-varying" in mechanism_grammar
     assert "must not invent program_id" in mechanism_grammar
     assert "Integer coordinate arithmetic is a realize stage" in mechanism_grammar
-    assert "does not require a second pointer addition" in mechanism_grammar
+    assert "source-neutral carrier routing" in mechanism_grammar
+    assert "requires a second pointer/address operation" in mechanism_grammar
+    assert "carrier bypasses address_base" in mechanism_grammar
+    assert "edge alone never decides" in mechanism_grammar
+    assert "Program-axis identity follows the J domain semantic_ref" in mechanism_grammar
+    assert "distinct stages of the same axis" in mechanism_grammar
+    assert "only a distinct domain anchor may allocate another axis" in mechanism_grammar
     assert "no separable program-uniform contribution" in mechanism_grammar
     assert pi_schema["properties"]["routes"]["items"]["properties"][
         "source"
@@ -768,6 +949,67 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     assert mapping["BLOCK_SIZE"] == "c0"
     assert "def scrc_k0(p0, p1, p2, c0: tl.constexpr)" in anonymous
     assert "selected_kernel" not in anonymous
+
+
+def test_anonymization_renames_only_statically_local_call_keywords() -> None:
+    source = """import triton
+import triton.language as tl
+
+@triton.jit
+def helper_left(value, axis: tl.constexpr):
+    return tl.sum(value, axis=axis)
+
+@triton.jit
+def helper_right(value, axis: tl.constexpr):
+    return tl.max(value, axis=axis)
+
+@triton.jit
+def selected_kernel(X, Y, LEFT: tl.constexpr, RIGHT: tl.constexpr):
+    left = helper_left(X, axis=LEFT)
+    right = helper_right(X, axis=RIGHT)
+    library = tl.sum(X, axis=0)
+    attribute = external.module_call(X, axis=0)
+    dynamic = callback(X, axis=0)
+    tl.store(Y, left + right + library + attribute + dynamic)
+"""
+
+    anonymous, _binding, mapping = anonymize_source(
+        source, source_symbol="selected_kernel"
+    )
+
+    local_axis = mapping["axis"]
+    assert f"scrc_k1(p0, {local_axis}=c0)" in anonymous
+    assert f"scrc_k2(p0, {local_axis}=c1)" in anonymous
+    # The two helpers share the same private formal spelling, but keyword
+    # renaming is selected independently at each statically local call.
+    assert "tl.sum(p0, axis=0)" in anonymous
+    assert ".module_call(p0, axis=0)" in anonymous
+    assert "axis=0" in anonymous
+    assert anonymous.count("axis=0") == 3
+
+
+def test_anonymization_preserves_string_data_for_plain_local_helper() -> None:
+    source = """import triton
+import triton.language as tl
+
+def resolve_public_api(name):
+    return getattr(tl.extra.libdevice, name)
+
+resolved_op = resolve_public_api("resolved_op")
+
+@triton.jit
+def selected_kernel(X, Y):
+    tl.store(Y, resolved_op(tl.load(X)))
+"""
+
+    anonymous, _binding, mapping = anonymize_source(
+        source, source_symbol="selected_kernel"
+    )
+
+    assert mapping["resolved_op"].startswith("v")
+    assert "resolve_public_api" not in anonymous
+    assert f"scrc_k1('resolved_op')" in anonymous
+    assert f"scrc_k1('{mapping['resolved_op']}')" not in anonymous
 
 
 def test_bound_constexpr_is_anonymous_p_and_never_pure_c() -> None:
@@ -841,6 +1083,46 @@ def test_compiler_view_mechanically_checks_harness_parameter_modes() -> None:
     anonymous_view = scrc._anonymous_compiler_view(view, mapping)
 
     with pytest.raises(ValueError, match="argument mode"):
+        scrc._validate_compiler_view(artifact, anonymous_view)
+
+
+def test_compiler_view_none_requires_exact_opaque_signature_handle() -> None:
+    payload = make_copy_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "opaque",
+            "mode": "value",
+            "dtype": "none",
+            "rank": None,
+            "alias_of": None,
+            "logical_ref": None,
+        }
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    view = SCRCCompilerView(
+        schedule_values={"BLOCK": 1024},
+        arguments=(
+            SCRCCompilerArgument("X", "tensor", "f32", (1000,), mode="input"),
+            SCRCCompilerArgument("Y", "tensor", "f32", (1000,), mode="output"),
+            SCRCCompilerArgument("N", "scalar", "i32", value=1000, mode="value"),
+            SCRCCompilerArgument("OPTIONAL", "none", "none", mode="value"),
+        ),
+        parameter_order=("X", "Y", "N", "OPTIONAL", "BLOCK"),
+        constexpr_parameters=("BLOCK",),
+    )
+    mapping = {
+        "X": "p0",
+        "Y": "p1",
+        "N": "p2",
+        "OPTIONAL": "p3",
+        "BLOCK": "c0",
+    }
+    anonymous_view = scrc._anonymous_compiler_view(view, mapping)
+
+    scrc._validate_compiler_view(artifact, anonymous_view)
+    artifact.j.signature.parameters[-1].kind = ParameterKind.SCALAR
+    with pytest.raises(ValueError, match="argument kind"):
         scrc._validate_compiler_view(artifact, anonymous_view)
 
 

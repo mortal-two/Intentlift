@@ -61,7 +61,10 @@ Atomic ops (each is one JSON object in a "body" list):
      {"op":"iota","result":R,"attrs":{"n":<int-or-symbol>,"dtype":"i32"|"i64"}}
   const      : a literal value, splat over an optional shape (default scalar []).
      {"op":"const","result":R,"attrs":{"value":<number>,"dtype":"f32","shape":[]}}
-  contraction: einsum. attrs.subscripts is a numpy einsum string.
+  contraction: binary einsum. attrs.subscripts is the canonical explicit
+               "lhs,rhs->out" label string (no ellipsis); exactly two operands.
+               Repeated input labels are allowed when their typed extents agree;
+               output labels are unique and must occur in an input.
      {"op":"contraction","result":R,"operands":[A,B],"attrs":{"subscripts":S}}
   select     : elementwise where(cond, x, y).
      {"op":"select","result":R,"operands":[COND,X,Y]}

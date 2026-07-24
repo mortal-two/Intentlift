@@ -20,6 +20,7 @@ from intentir.verify.gate1.model import (
     Gate1Artifact,
     ParameterKind,
     ScheduleSlotKind,
+    SchemaError,
 )
 from intentir.verify.typecheck import TYPECHECK_PROTOCOL, type_check
 
@@ -29,6 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
 SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v2"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
+_CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 _DTYPE_ALIASES = {
@@ -448,14 +450,6 @@ def anonymize_source(
         primary = functions[0]
         ordered_functions = functions
     primary_source_name = primary.name
-    primary_parameter_names = {
-        argument.arg
-        for argument in [
-            *primary.args.posonlyargs,
-            *primary.args.args,
-            *primary.args.kwonlyargs,
-        ]
-    }
     mapping: dict[str, str] = {}
     for index, function in enumerate(ordered_functions):
         mapping.setdefault(function.name, f"scrc_k{index}")
@@ -521,6 +515,31 @@ def anonymize_source(
         if node.id not in mapping:
             mapping[node.id] = f"v{sum(name.startswith('v') for name in mapping.values())}"
 
+    # Keyword names are identifiers only for the statically selected local
+    # callee; they are not ordinary Name nodes.  Record each local function's
+    # own formal mapping so calls can be renamed without touching tl.*, library,
+    # attribute, dynamic, or unresolved call keywords.
+    local_call_keyword_mappings: dict[str, dict[str, str]] = {}
+    plain_local_functions = {
+        function.name
+        for function in functions
+        if not function.decorator_list
+    }
+    for function in functions:
+        parameters = (
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        )
+        for argument in parameters:
+            if argument.arg not in mapping:
+                mapping[argument.arg] = (
+                    f"v{sum(name.startswith('v') for name in mapping.values())}"
+                )
+        local_call_keyword_mappings[function.name] = {
+            argument.arg: mapping[argument.arg] for argument in parameters
+        }
+
     class _AlphaRenamer(ast.NodeTransformer):
         def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
             node.name = mapping.get(node.name, node.name)
@@ -542,9 +561,42 @@ def anonymize_source(
             node.id = mapping.get(node.id, node.id)
             return node
 
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            plain_callee = (
+                isinstance(node.func, ast.Name)
+                and node.func.id in plain_local_functions
+            )
+            formal_mapping = (
+                local_call_keyword_mappings.get(node.func.id)
+                if isinstance(node.func, ast.Name)
+                else None
+            )
+            if formal_mapping is None:
+                return self.generic_visit(node)
+            node.func = self.visit(node.func)
+            node.args = [
+                argument
+                if plain_callee
+                and isinstance(argument, ast.Constant)
+                and isinstance(argument.value, str)
+                else self.visit(argument)
+                for argument in node.args
+            ]
+            for item in node.keywords:
+                if item.arg is not None:
+                    item.arg = formal_mapping.get(item.arg, item.arg)
+                if not (
+                    plain_callee
+                    and isinstance(item.value, ast.Constant)
+                    and isinstance(item.value.value, str)
+                ):
+                    item.value = self.visit(item.value)
+            return node
+
         def visit_keyword(self, node: ast.keyword) -> ast.AST:
-            if node.arg in primary_parameter_names:
-                node.arg = mapping.get(node.arg, node.arg)
+            # Unknown and attribute/library call keyword spellings are public
+            # API, not source identifiers. Local calls are handled by
+            # visit_Call with their statically resolved callee formal map.
             return self.generic_visit(node)
 
         def visit_Global(self, node: ast.Global) -> ast.AST:
@@ -681,6 +733,10 @@ with shape [] and bind that p* parameter to its t* handle. This input participat
 in J dataflow. Only an integral extent-only parameter binds an x* dimension.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
+Every trusted compiler-view argument with kind `none` is an absent runtime
+carrier: declare that p* exactly once as kind `opaque`, mode `value`, dtype
+`none`, with null rank/alias_of/logical_ref. It contributes no J tensor, node,
+access, effect, or pi instance; never replace it with a pointer or scalar.
 
 A runtime scalar p* value in harness_compiler_view is only the current Harness
 binding, never permission to specialize J. If source uses that scalar in a
@@ -722,6 +778,18 @@ elaboration produces one omission form. Emit a non-identity output_mapping only
 when an explicit IntentFunction.returns binding maps an output to a different
 value, and make the two relations exactly identical.
 
+When Source contains a compiler-visible semantic recurrence, J must state that
+recurrence rather than only an algebraically equivalent final tensor formula.
+Use the existing structured `loop` operation to declare the logical trip/scan,
+every carried state and initial value, the ordered body update dataflow, and the
+matching next/yield/result values. Keep each contraction's canonical subscripts
+and result-axis orientation consistent with the values consumed by that update;
+insert a transpose only when it is a real logical transformation. Do not replace
+an online or loop-carried recurrence with a global contraction/reduction and ask
+Replay to rediscover the missing update algorithm. Pi records only realization
+topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
+an omitted initialization, update formula, yield, or contraction orientation.
+
 Preserve every compiler-visible sensitive representation event in the Source,
 including explicit or mandatory implicit integer widening, numeric cast,
 accumulation dtype, reassociation, and native/privatized update choice. J owns
@@ -752,17 +820,28 @@ handle has multiple observable realization stages. Every anonymous J.signature
 or C handle materially used by address, transfer, synchronization, placement,
 or sharing realization must anchor an instance; dependencies then route only
 between the declared i* instance IDs.
+One Source SSA coordinate or address intermediate that is defined once and
+reused by several accesses remains one producer instance with routed consumers
+and an explicit one-producer sharing relation. Multiple syntactic uses never
+justify recomputing or duplicating that producer. Repeat a semantic_ref instance
+only for distinct compiler-visible definitions/stages in Source, not once per
+consumer and not to restate an already routed coordinate algebraically.
 Every source program-coordinate occurrence must remain a distinct
 domain-anchored realization path entering an address_base instance, even when
 the current concrete grid extent on that axis is one. One logical domain may
 therefore have both a program-coordinate path into address_base and a separate
 lane-coordinate path into address_lane; never collapse the former into a loop
-or erase it as constant-degenerate topology. When Source forms a separable
-program-uniform integer base and lane offset and merges them before one pointer
-addition, address_base/address_lane classify those two address contributions:
-preserve both integer stages and their route, but do not invent a second pointer
-addition. A lone address_lane is legal only when Source has no separable
-program-uniform contribution.
+or erase it as constant-degenerate topology. Encode the pointer-carrier boundary
+without adding fields: when a Source pointer/tensor carrier is applied at the
+program-uniform base stage and that pointer result then receives the lane
+contribution, route its p* instance directly into address_base and route
+address_base to address_lane; this denotes two source pointer/address operations.
+When Source instead forms program-uniform base and lane contributions as integers,
+merges them, and only then applies the pointer carrier once, route the integer/
+domain/C paths through address_base to address_lane while the pointer p* bypasses
+address_base and enters address_lane or the final address stage. Do not choose
+between these encodings from a base-to-lane edge alone. A lone address_lane is
+legal only when Source has no separable program-uniform contribution.
 Preserve source event multiplicity, def-use routes, partial order, regions, and
 one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,
@@ -958,17 +1037,7 @@ def check_scrc_lift_candidate(
         return {
             "protocol": CANDIDATE_CHECK_PROTOCOL,
             "status": "fail",
-            "diagnostics": [
-                {
-                    "rule_code": "decode_rejected",
-                    "path": "<candidate>",
-                    "observed_refs_or_types": [
-                        _bounded_candidate_diagnostic_text(
-                            f"{type(exc).__name__}: {exc}"
-                        )
-                    ],
-                }
-            ],
+            "diagnostics": _candidate_decode_diagnostics(exc),
         }
 
     # This is the same callable used by the formal Runner.  CandidateCheck does
@@ -988,9 +1057,46 @@ def check_scrc_lift_candidate(
                     else []
                 ),
             }
-            for item in report.diagnostics[:20]
+            for item in report.diagnostics[:_CANDIDATE_DIAGNOSTIC_LIMIT]
         ],
     }
+
+
+def _candidate_decode_diagnostics(exc: Exception) -> list[dict[str, Any]]:
+    """Expose only independent errors already found by the strict decoder."""
+
+    if not isinstance(exc, SchemaError) or not exc.issues:
+        return [
+            {
+                "rule_code": "decode_rejected",
+                "path": "<candidate>",
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                ],
+            }
+        ]
+
+    diagnostics: list[dict[str, Any]] = []
+    for issue in exc.issues[:_CANDIDATE_DIAGNOSTIC_LIMIT]:
+        path = issue.path
+        if path == "LogicalSignature" or path.startswith("LogicalSignature."):
+            path = "j.signature" + path.removeprefix("LogicalSignature")
+        elif path == "SemanticArchive" or path.startswith("SemanticArchive."):
+            path = "j" + path.removeprefix("SemanticArchive")
+        diagnostics.append(
+            {
+                "rule_code": "decode_rejected",
+                "path": _bounded_candidate_diagnostic_text(path),
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(
+                        f"SchemaError: {issue.detail}"
+                    )
+                ],
+            }
+        )
+    return diagnostics
 
 
 def _bounded_candidate_diagnostic_text(value: Any) -> str:
@@ -1088,12 +1194,12 @@ def _validate_compiler_view(
             "tensor": ParameterKind.POINTER,
             "scalar": ParameterKind.SCALAR,
             "opaque": ParameterKind.OPAQUE,
-            "none": ParameterKind.SCALAR,
+            "none": ParameterKind.OPAQUE,
         }[argument["kind"]]
         allowed_kinds = {expected_kind}
         if expected_kind is ParameterKind.POINTER:
             allowed_kinds.add(ParameterKind.TENSOR)
-        if argument["kind"] != "none" and parameter.kind not in allowed_kinds:
+        if parameter.kind not in allowed_kinds:
             raise ValueError("Lift changed a trusted compiler argument kind")
         if _canonical_dtype(parameter.dtype) != _canonical_dtype(argument["dtype"]):
             raise ValueError("Lift changed a trusted compiler argument dtype")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from io import StringIO
 import json
 import os
 from pathlib import Path
@@ -23,12 +24,180 @@ sys.modules[_SPEC.name] = scrc_batch
 _SPEC.loader.exec_module(scrc_batch)
 
 
+_SEARCH_BUDGET = CallBudget(1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0)
+_CERTIFIED_BUDGET = CallBudget(1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1)
+_PROGRESS_FIELDS = {
+    "protocol",
+    "event",
+    "case_id",
+    "ordinal",
+    "branch_id",
+    "stage",
+    "attempt",
+    "formal_round",
+    "elapsed",
+    "status",
+}
+
+
+def _progress_events(raw: str) -> list[dict]:
+    return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+
+def _closed_search():
+    report = SimpleNamespace(
+        closed=True,
+        superseded=False,
+        accepted_attempt=1,
+        attempts=(),
+        stop_reason=None,
+        winner_branch_id=None,
+        stop_observed_at=None,
+        j_necessity_status=None,
+        call_budget=_SEARCH_BUDGET,
+    )
+    return SimpleNamespace(report=report, lift=object(), replay_writers=())
+
+
+def _no_closure_search():
+    report = SimpleNamespace(
+        closed=False,
+        superseded=False,
+        accepted_attempt=None,
+        attempts=(),
+        stop_reason=None,
+        winner_branch_id=None,
+        stop_observed_at=None,
+        j_necessity_status=None,
+        call_budget=_SEARCH_BUDGET,
+    )
+    return SimpleNamespace(report=report, lift=object(), replay_writers=())
+
+
+def _certified_execution():
+    report = SimpleNamespace(
+        main_status=MainStatus.SCRC_CERTIFIED,
+        attempts=(),
+        accepted_attempt=1,
+        gate2=SimpleNamespace(status_counts={"pass": 1}),
+        j_necessity_status=None,
+        call_budget=_CERTIFIED_BUDGET,
+    )
+    return SimpleNamespace(report=report)
+
+
+def _install_live_batch_fakes(monkeypatch, *, search, complete):
+    import intentir.extraction.providers.provider as provider_module
+    import intentir.verify.scrc_workload_run as workload_module
+    import intentir.verify.workload_adapters as adapters_module
+
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
+    )
+    entries = scrc_batch.build_workload_manifest().select(tier="representative")
+    for entry in entries:
+        monkeypatch.setitem(
+            adapters_module.TRITON_WORKLOAD_ADAPTERS,
+            entry.case_id,
+            entry.case_id,
+        )
+
+    monkeypatch.setattr(provider_module, "get_provider", lambda _name: provider)
+    monkeypatch.setattr(
+        adapters_module,
+        "prepare_triton_workload",
+        lambda adapter, **_kwargs: SimpleNamespace(
+            case_id=adapter,
+            source_location=f"module://{adapter}",
+        ),
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "initialize_workload_evidence",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(workload_module, "search_prepared_workload_gate1", search)
+    monkeypatch.setattr(workload_module, "complete_prepared_workload_gate2", complete)
+    monkeypatch.setattr(
+        workload_module,
+        "save_workload_execution",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "save_workload_failure",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "save_workload_gate1_search",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "save_candidate_fanout_report",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        workload_module,
+        "classify_scrc_report",
+        lambda _r: BatchClassification.SCRC_CERTIFIED,
+    )
+    monkeypatch.setattr(workload_module, "scrc_report_diagnostic", lambda _r: "")
+    monkeypatch.setattr(
+        workload_module,
+        "scrc_gate1_search_diagnostic",
+        lambda _r: "",
+    )
+    monkeypatch.setattr(workload_module, "scrc_attempt_stage_counts", lambda _r: {})
+    return entries
+
+
 def test_batch_cli_lists_six_representatives_without_provider(capsys) -> None:
     assert scrc_batch.main(["--list", "--tier", "representative", "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["total"] == 6
     assert len(payload["entries"]) == 6
+
+
+def test_batch_cli_repeated_cases_form_registry_ordered_explicit_set(
+    capsys,
+) -> None:
+    entries = scrc_batch.build_workload_manifest().entries[:2]
+
+    assert scrc_batch.main(
+        [
+            "--list",
+            "--case",
+            entries[1].case_id,
+            "--case",
+            entries[0].case_id,
+            "--json",
+        ]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["case_id"] for entry in payload["entries"]] == [
+        entries[0].case_id,
+        entries[1].case_id,
+    ]
+
+
+def test_batch_cli_rejects_duplicate_or_mixed_explicit_case_selection(
+    capsys,
+) -> None:
+    case_id = scrc_batch.build_workload_manifest().entries[0].case_id
+
+    assert scrc_batch.main(
+        ["--list", "--case", case_id, "--case", case_id]
+    ) == 2
+    assert "duplicate --case" in capsys.readouterr().err
+
+    assert scrc_batch.main(
+        ["--list", "--case", case_id, "--tier", "representative"]
+    ) == 2
+    assert "mutually exclusive" in capsys.readouterr().err
 
 
 def test_batch_cli_validates_current_28_source_manifest(capsys) -> None:
@@ -63,6 +232,19 @@ def test_batch_cli_dry_run_writes_machine_readable_report(tmp_path) -> None:
     )
 
 
+def test_non_live_cli_modes_never_emit_progress(capsys) -> None:
+    commands = (
+        ["--list", "--tier", "representative", "--json"],
+        ["--validate-manifest", "--json"],
+        ["--dry-run", "--tier", "representative", "--json"],
+    )
+    for command in commands:
+        assert scrc_batch.main(command) == 0
+        captured = capsys.readouterr()
+        json.loads(captured.out)
+        assert captured.err == ""
+
+
 def test_batch_cli_runs_from_repo_without_pythonpath() -> None:
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
@@ -95,27 +277,76 @@ def test_batch_cli_never_implicitly_runs_all_28(capsys) -> None:
     assert "does not implicitly run all 28" in capsys.readouterr().err
 
 
-def test_batch_cli_candidate_fanout_requires_one_live_case(capsys) -> None:
+def test_batch_cli_candidate_fanout_requires_live_run(capsys) -> None:
     assert scrc_batch.main(["--list", "--candidates", "5"]) == 2
     assert "only valid with --run" in capsys.readouterr().err
 
-    assert scrc_batch.main(
-        ["--run", "--tier", "representative", "--candidates", "5"]
-    ) == 2
-    assert "one explicit --case" in capsys.readouterr().err
+
+def test_batch_cli_defaults_live_evidence_outside_repository() -> None:
+    args = scrc_batch._parser().parse_args(
+        ["--run", "--case", "high_performance:liger_dyt"]
+    )
+
+    assert args.run_root == Path("/tmp/intentir-scrc-task11")
+    assert _ROOT not in args.run_root.parents
 
 
 def test_batch_cli_candidate_width_fails_closed(capsys) -> None:
+    for candidates in ("0", "6"):
+        assert scrc_batch.main(
+            [
+                "--run",
+                "--case",
+                "high_performance:liger_dyt",
+                "--candidates",
+                candidates,
+            ]
+        ) == 2
+        assert "must be in [1, 5]" in capsys.readouterr().err
+
+
+def test_batch_cli_parallel_controls_are_live_only_and_globally_bounded(
+    tmp_path, capsys
+) -> None:
+    assert scrc_batch.main(
+        ["--list", "--tier", "representative", "--case-workers", "2"]
+    ) == 2
+    assert "only valid with --run" in capsys.readouterr().err
+
     assert scrc_batch.main(
         [
             "--run",
-            "--case",
-            "high_performance:liger_dyt",
+            "--tier",
+            "representative",
+            "--case-workers",
+            "3",
             "--candidates",
-            "0",
+            "3",
+            "--max-branch-workers",
+            "8",
+            "--run-root",
+            str(tmp_path / "runs"),
         ]
     ) == 2
-    assert "must be in [1, 32]" in capsys.readouterr().err
+    assert (
+        "case_workers * candidates <= max_branch_workers"
+        in capsys.readouterr().err
+    )
+
+    assert scrc_batch.main(
+        [
+            "--run",
+            "--tier",
+            "representative",
+            "--case-workers",
+            "2",
+            "--gate2-workers",
+            "3",
+            "--run-root",
+            str(tmp_path / "runs"),
+        ]
+    ) == 2
+    assert "must be <= --case-workers" in capsys.readouterr().err
 
 
 def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
@@ -150,13 +381,14 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        stop_requested=None,
+        stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
         assert effort == "xhigh"
         assert run_masked_j
         assert lift_backend == "responses"
         assert stop_requested is None
+        assert progress_callback is not None
         barrier.wait()
         with counter_lock:
             calls["search"] += 1
@@ -234,17 +466,465 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["candidate_count"] == 5
-    assert payload["winner_branch_id"] == 1
-    assert payload["winner_formal_round"] == 1
-    assert payload["status_counts"] == {
+    assert payload["protocol"] == "intentir.scrc.batch.v2"
+    assert payload["scheduling"] == {
+        "case_workers": 1,
+        "candidates": 5,
+        "max_branch_workers": 8,
+        "gate2_workers": 1,
+    }
+    assert payload["status_counts"] == {"scrc_certified": 1}
+    assert len(payload["cases"]) == 1
+    result_payload = payload["cases"][0]
+    details = result_payload["details"]
+    assert details["candidate_count"] == 5
+    assert details["winner_branch_id"] == 1
+    assert details["winner_formal_round"] == 1
+    assert details["candidate_status_counts"] == {
         "gate1_closed": 1,
         "gate1_closed_not_selected": 4,
     }
-    assert payload["winner_result"]["main_status"] == "SCRC_CERTIFIED"
+    assert result_payload["main_status"] == "SCRC_CERTIFIED"
     assert calls == {
         "search": 5,
         "gate2": 1,
         "saved_search": 4,
         "initialized_efforts": ["xhigh"] * 5,
     }
+
+
+def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    search_barrier = Barrier(4, timeout=2.0)
+    counter_lock = Lock()
+    active = 0
+    maximum_active = 0
+
+    def fake_search(_prepared, **_kwargs):
+        nonlocal active, maximum_active
+        with counter_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        search_barrier.wait()
+        with counter_lock:
+            active -= 1
+        return _closed_search()
+
+    entries = _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    selected_entries = entries[:2]
+    explicit_cases = [
+        token
+        for entry in reversed(selected_entries)
+        for token in ("--case", entry.case_id)
+    ]
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            *explicit_cases,
+            "--case-workers",
+            "2",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "4",
+            "--gate2-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    progress_events = _progress_events(captured.err)
+    assert maximum_active == 4
+    assert payload["protocol"] == "intentir.scrc.batch.v2"
+    assert payload["scheduling"] == {
+        "case_workers": 2,
+        "candidates": 2,
+        "max_branch_workers": 4,
+        "gate2_workers": 2,
+    }
+    assert [case["ordinal"] for case in payload["cases"]] == sorted(
+        entry.ordinal for entry in selected_entries
+    )
+    assert payload["status_counts"] == {
+        "scrc_certified": len(selected_entries)
+    }
+    assert "intentir.scrc.progress.v1" not in captured.out
+    assert progress_events
+    assert all(
+        event["protocol"] == "intentir.scrc.progress.v1"
+        and set(event) <= _PROGRESS_FIELDS
+        for event in progress_events
+    )
+    case_started = [
+        index
+        for index, event in enumerate(progress_events)
+        if event["event"] == "case_started"
+    ]
+    case_finished = [
+        index
+        for index, event in enumerate(progress_events)
+        if event["event"] == "case_finished"
+    ]
+    assert len(case_started) == len(selected_entries)
+    assert len(case_finished) == len(selected_entries)
+    assert max(case_started) < min(case_finished)
+    assert sum(
+        event["event"] == "gate2_started" for event in progress_events
+    ) == len(selected_entries)
+    assert sum(
+        event["event"] == "gate2_finished" for event in progress_events
+    ) == len(selected_entries)
+
+
+def test_batch_cli_bounds_shared_gate2_concurrency(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    gate2_barrier = Barrier(2, timeout=2.0)
+    counter_lock = Lock()
+    active = 0
+    maximum_active = 0
+
+    def fake_complete(_prepared, _search):
+        nonlocal active, maximum_active
+        with counter_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        gate2_barrier.wait()
+        with counter_lock:
+            active -= 1
+        return _certified_execution()
+
+    entries = _install_live_batch_fakes(
+        monkeypatch,
+        search=lambda *_a, **_k: _closed_search(),
+        complete=fake_complete,
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--tier",
+            "representative",
+            "--case-workers",
+            "4",
+            "--max-branch-workers",
+            "4",
+            "--gate2-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert maximum_active == 2
+    assert payload["status_counts"] == {"scrc_certified": len(entries)}
+
+
+def test_batch_cli_one_case_failure_does_not_cancel_parallel_peers(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls: list[str] = []
+    counter_lock = Lock()
+
+    def fake_search(prepared, **_kwargs):
+        with counter_lock:
+            calls.append(prepared.case_id)
+        if prepared.case_id == failing_case:
+            raise RuntimeError("isolated case failure")
+        return _closed_search()
+
+    entries = scrc_batch.build_workload_manifest().select(tier="representative")
+    failing_case = entries[1].case_id
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--tier",
+            "representative",
+            "--case-workers",
+            "3",
+            "--max-branch-workers",
+            "3",
+            "--gate2-workers",
+            "1",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert sorted(calls) == sorted(entry.case_id for entry in entries)
+    assert payload["status_counts"] == {
+        "infrastructure_failed": 1,
+        "scrc_certified": len(entries) - 1,
+    }
+    failed = next(
+        case for case in payload["cases"] if case["case_id"] == failing_case
+    )
+    assert "isolated case failure" in failed["diagnostic"]
+
+
+def test_batch_cli_mixed_incomplete_fanout_fails_as_infrastructure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    counter_lock = Lock()
+    calls = 0
+
+    def fake_search(_prepared, **_kwargs):
+        nonlocal calls
+        with counter_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            raise RuntimeError("one branch failed")
+        return _no_closure_search()
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "high_performance:liger_dyt",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    case = payload["cases"][0]
+    assert case["classification"] == "infrastructure_failed"
+    assert case["main_status"] is None
+    assert case["call_budget"] == {}
+    assert not case["details"]["candidate_call_budget_complete"]
+    assert not case["details"]["aggregate_call_budget_complete"]
+    assert case["details"]["candidate_observed_call_budget"]
+    assert case["details"]["candidate_status_counts"] == {
+        "infrastructure_failed": 1,
+        "no_closure": 1,
+    }
+    assert case["evidence_path"].endswith("/fanout-001")
+    assert "one branch failed" in case["diagnostic"]
+
+
+def test_batch_cli_complete_no_closure_fanout_is_not_infrastructure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    gate2_calls = 0
+
+    def fake_complete(_prepared, _search):
+        nonlocal gate2_calls
+        gate2_calls += 1
+        return _certified_execution()
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=lambda *_a, **_k: _no_closure_search(),
+        complete=fake_complete,
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "high_performance:liger_dyt",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    case = payload["cases"][0]
+    assert gate2_calls == 0
+    assert case["classification"] == "no_closure"
+    assert case["main_status"] == "NO_CLOSURE"
+    assert case["details"]["candidate_status_counts"] == {"no_closure": 2}
+    assert case["evidence_path"].endswith("/fanout-001")
+
+
+def test_batch_cli_winner_with_infrastructure_sibling_has_partial_budget(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    counter_lock = Lock()
+    calls = 0
+
+    def fake_search(_prepared, **_kwargs):
+        nonlocal calls
+        with counter_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            raise RuntimeError("one sibling failed")
+        return _closed_search()
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=fake_search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "high_performance:liger_dyt",
+            "--candidates",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    case = json.loads(capsys.readouterr().out)["cases"][0]
+    assert case["classification"] == "scrc_certified"
+    assert case["call_budget"] == {}
+    assert not case["details"]["candidate_call_budget_complete"]
+    assert not case["details"]["aggregate_call_budget_complete"]
+    assert case["details"]["candidate_status_counts"] == {
+        "gate1_closed": 1,
+        "infrastructure_failed": 1,
+    }
+
+
+def test_live_progress_can_be_disabled_without_changing_final_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    entries = _install_live_batch_fakes(
+        monkeypatch,
+        search=lambda *_a, **_k: _closed_search(),
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            entries[0].case_id,
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--no-progress",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.err == ""
+    assert json.loads(captured.out)["status_counts"] == {"scrc_certified": 1}
+
+
+def test_progress_heartbeat_reports_each_active_case_with_closed_fields() -> None:
+    stream = StringIO()
+    emitter = scrc_batch._LiveProgressEmitter(
+        enabled=True,
+        stream=stream,
+        heartbeat_interval=60.0,
+        clock=lambda: 10.0,
+    )
+    emitter.start()
+    emitter.case_started("case-a", 2)
+    emitter.stage_transition(
+        "case-a",
+        2,
+        branch_id=1,
+        stage="lift",
+        attempt=2,
+        status="started",
+    )
+    emitter.case_started("case-b", 5)
+    emitter.stage_transition(
+        "case-b",
+        5,
+        branch_id=3,
+        stage="gate1",
+        formal_round=1,
+        status="started",
+    )
+    emitter.emit_heartbeat()
+    emitter.case_finished("case-a", 2, status="no_closure")
+    emitter.case_finished("case-b", 5, status="scrc_certified")
+    emitter.close()
+
+    events = _progress_events(stream.getvalue())
+    heartbeats = [event for event in events if event["event"] == "heartbeat"]
+    assert [(event["case_id"], event["stage"]) for event in heartbeats] == [
+        ("case-a", "lift"),
+        ("case-b", "gate1"),
+    ]
+    assert heartbeats[0]["attempt"] == 2
+    assert heartbeats[1]["formal_round"] == 1
+    assert all(set(event) <= _PROGRESS_FIELDS for event in events)
+    encoded = stream.getvalue()
+    assert "source" not in encoded
+    assert "artifact" not in encoded
+    assert "diagnostic" not in encoded
+    assert "provider" not in encoded
+    assert "hidden" not in encoded
+
+
+def test_broken_progress_stream_is_non_fatal() -> None:
+    class BrokenStream:
+        def write(self, _value):
+            raise OSError("stderr is closed")
+
+        def flush(self):
+            raise OSError("stderr is closed")
+
+    emitter = scrc_batch._LiveProgressEmitter(
+        enabled=True,
+        stream=BrokenStream(),
+        heartbeat_interval=60.0,
+    )
+    emitter.start()
+    emitter.case_started("case-a", 1)
+    emitter.stage_transition(
+        "case-a",
+        1,
+        branch_id=1,
+        stage="lift",
+        attempt=1,
+        status="started",
+    )
+    emitter.case_finished("case-a", 1, status="infrastructure_failed")
+    emitter.close()

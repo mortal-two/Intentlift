@@ -12,6 +12,13 @@ J 拥有 logical values/state relation、domain、predicate、fill、logical ind
 result relation 以及 logical signature。signature 中的 input、output、runtime scalar、destination、
 dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
+`opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
+`None`，没有 logical denotation。Lift 必须显式生成这个 signature handle，并且不得把它作为 π
+instance 的 `semantic_ref`、realization authorization 的 `subject_ref`，或 refinement 的 carrier；
+TypeCheck 与共享同一 source-free core 的 CandidateCheck 对三种引用分别拒绝并报告，不删除引用、
+不补造 dummy value，也不改写 artifact。该规则只由 `kind=opaque && dtype=none` 触发，其他 public
+dtype 的普通 opaque handle 仍可按其明确合同参与 realization。
+
 B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
 任意可执行 comparator；外部验证政策 Q 根据 B 的封闭类别构造实际比较关系。
 
@@ -136,6 +143,11 @@ mu : Instances -> Ids(J) union Ids(C)
 所有 observable realization instance 必须锚定 J-owned node/access/effect。representation-only
 scaffolding 折叠后，π 不得增加、删除或改写 J carrier 的逻辑边。
 
+一个 Source SSA coordinate/address intermediate 若只定义一次并被多个 access 使用，π 必须用一个
+producer instance、多个 routed consumers 与 one-producer sharing 表达。多个语法 use 不是多个
+producer；只有不同 compiler-visible definition/stage 才能重复同一 semantic ref。反过来，若 Source
+确有多个 stage，也不能为了减少 Replay 工作而把它们折叠成一次。
+
 `region.placement=program` 只说明 instance 位于单个 program 的 region 中，不表示 Source 读取了
 program/grid coordinate。若 Source 的确存在 `program_id`、grid offset 等 compiler-visible stage，
 Lift 必须用一个独立 `realize` instance 及 routes 记录；无需新增 mechanism enum。没有该独立
@@ -148,16 +160,25 @@ scalar dependency path 先进入 `address_base` 再进入 transfer，表示 prog
 区分，`U_f` 再把它映射到公共前端 API。该规则不在 π 中保存 `program_id`、axis 公式或前端文本，
 也不增加 mechanism enum。
 
-`address_base/address_lane` 标记 address contribution 角色，不等价于两次 pointer addition。Source
-若先形成可分离的 program-uniform integer base 与 lane offset，再合并后执行一次 pointer add，
-program path 仍进入 `address_base` 并 route 到 `address_lane`；Replay 保留两个 integer stage 和
-唯一 pointer add，不能因当前 grid extent 为 1 将 program path 常量化。只有不存在可分离
-program-uniform contribution 时才允许 lone `address_lane`。
+`address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
+`J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
+`p*` instance 直接进入 `address_base`，该 base 已经是一次 pointer/address operation；其 pointer
+结果再 route 到 `address_lane` 时，Replay 必须保留第二次 lane pointer/address operation。若
+`address_base` 只接收 integer/domain/C contribution，而 pointer carrier 绕过 base、直到
+`address_lane` 或最终 address stage 才进入，则 Replay 保留两个 integer stage、先合并 base/lane，
+再执行唯一 pointer add。两种情况都不能因当前 grid extent 为 1 将 program path 常量化；只有不
+存在可分离 program-uniform contribution 时才允许 lone `address_lane`。
 
 单个直接锚定 J signature handle 或 C slot 的 `realize` instance，可以由对应参数 binding 及其直接
 routed use 满足，不要求为了“显式 materialize”增加恒等赋值。尤其 `c*` 为 constexpr 时，前端
 合同可以要求直接 use 以保留编译期类型。若同一 handle 有多个 instance，它们仍必须对应不同的
 routed use-site/stage，不能据此全部折叠。
+
+π 不能补足 J 中缺失的 semantic recurrence。若 Source 的 compiler-visible value dataflow 是
+loop-carried recurrence，J 必须用现有 structured `loop` 完整声明 trip/scan、carry/init、body update
+以及对应 next/yield/result；contraction 的 canonical subscripts 与 result-axis orientation 必须和
+update 实际消费的值一致。π 只记录这些 J carrier 的 placement/multiplicity/routes，不能携带或让
+Replay 猜 initialization、update formula、yield 或 transpose/orientation。
 
 ## Authorization 与 parametricity
 
@@ -215,6 +236,16 @@ J anchor、语义/API/Source/C-value 隔离以及 sensitive authorization。自�
 TypeCheck 的结构化错误可以返回 source-aware Lift；检查结果和 sidecar 不得进入 Replay 作为
 新的信息通道。schema 为 closed-world：未知字段、未知 relation 与自由文本扩展均 fail closed。
 
+`typecheck.v5` 对已知 `reduce` 与 `contraction` 在进入 RefEval/emitter 前执行 canonical fail-early
+contract。`reduce` attrs 必须
+使用 `fn + axes + assoc`，其中 `fn` 只允许 `sum|mean|max|min|prod|any|all`，`axes` 是非空整数数组且
+归一化后不重复、不越过 operand rank，`assoc` 只允许 `associative|float_nondeterministic`。可选
+`keepdims` 若存在必须为 boolean；它不取代 result type/shape，declared result 与 keep/collapse shape
+仍由既有 elaboration/type logic 核对。`kind` 不是 `fn` 的别名；无论单独出现还是与 `fn` 冲突都必须
+拒绝，fixed checker/emitter 不得翻译、补齐或修复 `fn/assoc/axes`。`contraction` 只接受 canonical
+`subscripts`，并按显式 operand/result rank 校验其输入项、reduction labels 与输出 orientation；
+`lhs_contract_axes`、`rhs_contract_axes` 等别名不能由 fixed code 翻译成 `subscripts`。
+
 准确的 TypeCheck claim 是：
 
 ```text
@@ -224,10 +255,13 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
 线索，也不证明 J 或 realization 的行为正确。
 
-上述 C attachment、numeric-cast 与 result-relation compatibility 已在
-`artifact.v2 / decode.v2 / typecheck.v4` 中成为 fresh run 的活动合同；v4 同时要求 Layer-A
-value typing total，并按 NumPy broadcast 合同拒绝未由 J 显式声明的 non-trailing broadcast。
-`candidate-check.v1` 共享
+上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
+typing 与显式 non-trailing broadcast 合同已由 `typecheck.v4` 建立；canonical reduce/
+contraction fail-early 与 absent `opaque(mode=value,dtype=none)` semantic-use rejection 使 fresh-run 活动
+合同窄升为 `artifact.v2 / decode.v2 / typecheck.v5`。`candidate-check.v1` 的 closed envelope 本来就
+允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经
+判定出的独立机械错误按稳定顺序返回，统一最多 20 项且每段文本最多 2048 字符；checker 不为继续
+检查而修补 artifact，也不在前置对象解析失败时猜测 dependent error。`candidate-check.v1` 共享
 正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，v3/历史证书也不由新

@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import copy
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import json
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
 
 from direct_fixtures import make_copy_artifact
+from intentir.extraction.providers.provider import ProviderConfig
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.orchestrate import canonical_artifact_digest
+from intentir.verify.gate1.replay import ReplayGeneration
 from intentir.verify.gate2.model import (
     ExecutionResult,
     Gate2Result,
@@ -20,21 +31,352 @@ from intentir.verify.scrc_runner import (
     SCRCRunReport,
 )
 from intentir.verify.scrc_workload_run import (
+    GATE1_DIAGNOSTIC_RECHECK_PROTOCOL,
     build_workload_gate2_suite,
     classify_scrc_report,
+    initialize_workload_gate1_recheck_evidence,
+    next_candidate_fanout_dir,
+    next_gate1_recheck_dir,
+    next_workload_run_dir,
+    recheck_prepared_workload_gate1,
+    save_workload_gate1_recheck,
     scrc_attempt_stage_counts,
     scrc_report_diagnostic,
+    validate_workload_gate1_recheck_parent,
 )
 from intentir.verify.typecheck import TypeCheckStatus
 from intentir.verify.workload_adapters import (
     BufferBinding,
+    BufferInitializer,
     BufferRole,
+    NoneBinding,
     PreparedTritonWorkload,
     ScalarBinding,
     TRITON_WORKLOAD_ADAPTERS,
     TritonWorkloadAdapter,
     prepare_triton_workload,
 )
+
+
+def test_evidence_directory_allocation_is_atomic_for_one_case(tmp_path) -> None:
+    case_id = "high_performance:allocation_race"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        run_dirs = tuple(
+            pool.map(
+                lambda _index: next_workload_run_dir(tmp_path, case_id),
+                range(8),
+            )
+        )
+        fanout_dirs = tuple(
+            pool.map(
+                lambda _index: next_candidate_fanout_dir(tmp_path, case_id),
+                range(8),
+            )
+        )
+        recheck_dirs = tuple(
+            pool.map(
+                lambda _index: next_gate1_recheck_dir(tmp_path, case_id),
+                range(8),
+            )
+        )
+
+    assert sorted(path.name for path in run_dirs) == [
+        f"run-{index:03d}" for index in range(1, 9)
+    ]
+    assert sorted(path.name for path in fanout_dirs) == [
+        f"fanout-{index:03d}" for index in range(1, 9)
+    ]
+    assert sorted(path.name for path in recheck_dirs) == [
+        f"recheck-{index:03d}" for index in range(1, 9)
+    ]
+    assert len(set(run_dirs)) == len(run_dirs)
+    assert len(set(fanout_dirs)) == len(fanout_dirs)
+    assert len(set(recheck_dirs)) == len(recheck_dirs)
+
+
+def _write_recheck_parent_lineage(
+    tmp_path, prepared: PreparedTritonWorkload, artifact: Gate1Artifact
+):
+    run_dir = tmp_path / "old-run"
+    parent = run_dir / "attempt-03"
+    parent.mkdir(parents=True)
+    (run_dir / "source.py").write_text(
+        prepared.source_slice.code, encoding="utf-8"
+    )
+    (run_dir / "source_projection.json").write_text(
+        json.dumps(
+            {
+                **prepared.source_slice.to_json(),
+                "source_location": prepared.source_location,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "request.json").write_text(
+        json.dumps(
+            {
+                "case_id": prepared.entry.case_id,
+                "frontend": prepared.entry.frontend,
+                "c0": prepared.request.binding.values,
+                "grid": list(prepared.adapter.grid),
+                "source_to_opaque": dict(prepared.source_to_opaque),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (parent / "gate1.json").write_text(
+        json.dumps({"artifact_digest": canonical_artifact_digest(artifact)}),
+        encoding="utf-8",
+    )
+    return run_dir, parent
+
+
+def test_gate1_recheck_parent_lineage_binds_case_source_and_artifact(
+    tmp_path,
+) -> None:
+    prepared = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    artifact = make_copy_artifact()
+    artifact.c.values = dict(prepared.request.binding.values)
+    artifact = canonicalize_gate1_artifact(artifact)
+    run_dir, parent = _write_recheck_parent_lineage(
+        tmp_path, prepared, artifact
+    )
+
+    assert validate_workload_gate1_recheck_parent(
+        parent, prepared, artifact
+    ) == run_dir.resolve()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("cross_case", "request differs from selected workload"),
+        ("wrong_artifact", "artifact digest differs"),
+        ("wrong_source", "source differs from selected workload"),
+        ("wrong_projection", "source projection differs"),
+        ("missing_request_field", "request lacks lineage field"),
+    ],
+)
+def test_gate1_recheck_parent_lineage_rejects_mismatch(
+    tmp_path, mutation: str, message: str
+) -> None:
+    prepared = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    artifact = make_copy_artifact()
+    artifact.c.values = dict(prepared.request.binding.values)
+    artifact = canonicalize_gate1_artifact(artifact)
+    run_dir, parent = _write_recheck_parent_lineage(
+        tmp_path, prepared, artifact
+    )
+    selected_artifact = artifact
+    if mutation == "cross_case":
+        request = json.loads((run_dir / "request.json").read_text())
+        request["case_id"] = "high_performance:another_case"
+        (run_dir / "request.json").write_text(json.dumps(request))
+    elif mutation == "wrong_artifact":
+        selected_artifact = copy.deepcopy(artifact)
+        selected_artifact.j.kernel_id = "scrc_wrong_parent_artifact"
+    elif mutation == "wrong_source":
+        (run_dir / "source.py").write_text("# different source\n")
+    elif mutation == "wrong_projection":
+        projection = json.loads(
+            (run_dir / "source_projection.json").read_text()
+        )
+        projection["function"] = "different_entry"
+        (run_dir / "source_projection.json").write_text(
+            json.dumps(projection)
+        )
+    elif mutation == "missing_request_field":
+        request = json.loads((run_dir / "request.json").read_text())
+        request.pop("source_to_opaque")
+        (run_dir / "request.json").write_text(json.dumps(request))
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+
+    with pytest.raises(ValueError, match=message):
+        validate_workload_gate1_recheck_parent(
+            parent, prepared, selected_artifact
+        )
+
+
+def test_fixed_artifact_recheck_canonicalizes_typechecks_and_runs_normal_only(
+    monkeypatch,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    artifact = make_copy_artifact()
+    prepared = SimpleNamespace(request=object())
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
+    )
+    generation = ReplayGeneration(
+        code="replay",
+        function_name="scrc_k0",
+        model="test-model",
+        response_id="response-1",
+        packet_digest="packet",
+        prompt_digest="prompt",
+        request_sha256="request",
+        response_sha256="response",
+    )
+    calls: dict[str, object] = {}
+
+    class FakeWriter:
+        def __init__(self, *, provider, effort):
+            calls["provider"] = provider
+            calls["effort"] = effort
+            self.records = (generation,)
+
+    class FakeRunner:
+        def __init__(self, *, compiler, writer, config):
+            calls["compiler"] = compiler
+            calls["writer"] = writer
+            calls["config"] = config
+
+        def run(self, candidate, *, source, source_case):
+            calls["artifact"] = candidate
+            calls["source"] = source
+            calls["source_case"] = source_case
+            return SimpleNamespace(
+                artifact_digest=canonical_artifact_digest(candidate),
+                status=SimpleNamespace(value="replay_closed"),
+                passed=True,
+                normal=SimpleNamespace(generation=generation, diagnostic=None),
+                masked_j=None,
+                masked_j_calls=0,
+                to_json=lambda: {"status": "replay_closed"},
+            )
+
+    monkeypatch.setattr(workload_run, "ResponsesReplayWriter", FakeWriter)
+    monkeypatch.setattr(workload_run, "TritonCompiler", lambda **_kwargs: object())
+    monkeypatch.setattr(workload_run, "Gate1Runner", FakeRunner)
+    prepared.request = SimpleNamespace(
+        source=SimpleNamespace(gate_source="trusted-source"),
+        binding=SimpleNamespace(gate1_case="c0-case"),
+    )
+
+    result = recheck_prepared_workload_gate1(
+        prepared,
+        artifact,
+        provider=provider,
+        effort="xhigh",
+    )
+
+    assert result.protocol == GATE1_DIAGNOSTIC_RECHECK_PROTOCOL
+    assert result.diagnostic_only
+    assert result.typecheck.passed
+    assert result.gate1 is not None and result.gate1.passed
+    assert result.artifact_digest == canonical_artifact_digest(result.artifact)
+    assert result.artifact.to_json() == canonicalize_gate1_artifact(artifact).to_json()
+    assert calls["config"].run_masked_j is False
+    assert calls["source"] == "trusted-source"
+    assert calls["source_case"] == "c0-case"
+    assert calls["effort"] == "xhigh"
+
+
+def test_fixed_artifact_recheck_stops_at_same_typecheck_before_provider(
+    monkeypatch,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    artifact = make_copy_artifact()
+    artifact.j.intent.body[0].attrs["fn"] = "tanh"
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
+    )
+
+    def forbidden_writer(**_kwargs):
+        pytest.fail("TypeCheck failure must not create a Replay writer")
+
+    monkeypatch.setattr(workload_run, "ResponsesReplayWriter", forbidden_writer)
+
+    result = recheck_prepared_workload_gate1(
+        SimpleNamespace(request=object()),
+        artifact,
+        provider=provider,
+        effort="xhigh",
+    )
+
+    assert result.diagnostic_only
+    assert not result.typecheck.passed
+    assert result.gate1 is None
+    assert result.replay_writer is None
+
+
+def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
+    tmp_path,
+) -> None:
+    prepared = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
+    )
+    artifact = canonicalize_gate1_artifact(make_copy_artifact())
+    typecheck = __import__(
+        "intentir.verify.typecheck", fromlist=["type_check"]
+    ).type_check(artifact.j, artifact.c, artifact.pi)
+    generation = ReplayGeneration(
+        code="import triton\n",
+        function_name="scrc_k0",
+        model="test-model",
+        response_id="response-1",
+        packet_digest="packet",
+        prompt_digest="prompt",
+        request_sha256="request",
+        response_sha256="response",
+    )
+    gate1 = SimpleNamespace(
+        protocol="llm_direct_pi_gate1_level2_v1",
+        status=SimpleNamespace(value="replay_closed"),
+        passed=True,
+        normal=SimpleNamespace(generation=generation, diagnostic=None),
+        masked_j=None,
+        masked_j_calls=0,
+        to_json=lambda: {"status": "replay_closed", "masked_j": None},
+    )
+    result = SimpleNamespace(
+        protocol=GATE1_DIAGNOSTIC_RECHECK_PROTOCOL,
+        diagnostic_only=True,
+        artifact=artifact,
+        artifact_digest=canonical_artifact_digest(artifact),
+        typecheck=typecheck,
+        gate1=gate1,
+        replay_writer=SimpleNamespace(records=(generation,)),
+        passed=True,
+    )
+    parent = tmp_path / "old-run" / "attempt-03"
+    parent.mkdir(parents=True)
+    recheck_dir = next_gate1_recheck_dir(tmp_path, prepared.entry.case_id)
+
+    initialize_workload_gate1_recheck_evidence(
+        recheck_dir,
+        prepared,
+        provider=provider,
+        effort="xhigh",
+        parent_evidence=parent,
+    )
+    save_workload_gate1_recheck(recheck_dir, prepared, result)
+
+    metadata = __import__("json").loads(
+        (recheck_dir / "recheck.json").read_text()
+    )
+    assert metadata["protocol"] == GATE1_DIAGNOSTIC_RECHECK_PROTOCOL
+    assert metadata["diagnostic_only"] is True
+    assert metadata["enters_gate2"] is False
+    assert metadata["changes_prior_verdict"] is False
+    assert metadata["parent_evidence"] == str(parent.resolve())
+    assert metadata["artifact_digest"] == result.artifact_digest
+    assert (recheck_dir / "artifact.json").is_file()
+    assert (recheck_dir / "typecheck.json").is_file()
+    assert (recheck_dir / "gate1.json").is_file()
+    assert (recheck_dir / "replay.py").is_file()
+    assert (recheck_dir / "replay_receipt.json").is_file()
+    assert not (parent / "gate1.json").exists()
 
 
 def _budget() -> CallBudget:
@@ -83,6 +425,105 @@ def test_gate2_suite_binds_adapter_roles_to_accepted_j() -> None:
     assert case.triton.arguments[0].name == "p0"
     assert case.triton.arguments[1].name == "p1"
     assert case.triton.arguments[2].name == "p2"
+
+
+def test_gate2_suite_shares_explicit_zero_fixture_across_all_three_legs() -> None:
+    base = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    adapter = TritonWorkloadAdapter(
+        base.adapter.case_id,
+        buffers=(
+            BufferBinding(
+                "X",
+                BufferRole.INPUT,
+                "f32",
+                (1000,),
+                initializer=BufferInitializer.ZEROS,
+            ),
+            BufferBinding("Y", BufferRole.OUTPUT, "f32", (1000,), "output"),
+        ),
+        scalars=(ScalarBinding("N", "i32", 1000),),
+        semantic_constexprs=(),
+        c_values=(("BLOCK", 1024),),
+        grid=(1,),
+        grid_contract=("1",),
+        seed=23,
+    )
+    prepared = replace(
+        base,
+        adapter=adapter,
+        request=replace(
+            base.request,
+            binding=replace(base.request.binding, c_values=(("c0", 1024),)),
+        ),
+        source_to_opaque={"X": "p0", "Y": "p1", "N": "p2", "BLOCK": "c0"},
+    )
+
+    case = build_workload_gate2_suite(
+        prepared, make_copy_artifact()
+    ).cases[0]
+
+    assert np.array_equal(case.values["input_p0"], np.zeros(1000, dtype=np.float32))
+    # Source and Replay consume the same Triton spec/value key; RefEval binds
+    # that identical key rather than regenerating an independent fixture.
+    assert case.triton.arguments[0].value_key == "input_p0"
+    assert case.refeval.input_binding_map["t0"] == "input_p0"
+
+
+def test_gate2_suite_passes_none_as_opaque_without_logical_binding() -> None:
+    base = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    adapter = TritonWorkloadAdapter(
+        base.adapter.case_id,
+        buffers=(
+            BufferBinding("X", BufferRole.INPUT, "f32", (1000,)),
+            BufferBinding("Y", BufferRole.OUTPUT, "f32", (1000,), "output"),
+        ),
+        scalars=(ScalarBinding("N", "i32", 1000),),
+        semantic_constexprs=(),
+        c_values=(("BLOCK", 1024),),
+        grid=(1,),
+        grid_contract=("1",),
+        seed=29,
+        none_arguments=(NoneBinding("OPTIONAL"),),
+    )
+    prepared = replace(
+        base,
+        adapter=adapter,
+        request=replace(
+            base.request,
+            binding=replace(base.request.binding, c_values=(("c0", 1024),)),
+        ),
+        source_to_opaque={
+            "X": "p0",
+            "Y": "p1",
+            "N": "p2",
+            "OPTIONAL": "p3",
+            "BLOCK": "c0",
+        },
+    )
+    payload = make_copy_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "opaque",
+            "mode": "value",
+            "dtype": "none",
+            "rank": None,
+            "alias_of": None,
+            "logical_ref": None,
+        }
+    )
+
+    case = build_workload_gate2_suite(
+        prepared, Gate1Artifact.from_json(payload)
+    ).cases[0]
+
+    assert case.triton.arguments[-1].name == "p3"
+    assert case.triton.arguments[-1].role.value == "none"
+    assert "p3" not in case.values
 
 
 def test_report_classification_preserves_reference_unsupported() -> None:

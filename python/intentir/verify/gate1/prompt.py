@@ -19,7 +19,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v2",
+        "context_policy": "public_frontend_context_v5",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -40,16 +40,36 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Region placement='program' alone never authorizes "
             "tl.program_id. A domain-anchored realize stage in a program region "
             "whose scalar dependency path enters address_base is a program "
-            "coordinate; map declaration-ordered stages of that form to "
+            "coordinate. Assign axes by first declaration of each distinct J "
+            "domain semantic_ref: distinct stages anchored to the same d* remain "
+            "distinct materializations of the same program axis and never allocate "
+            "another axis. Only a distinct domain anchor may allocate the next "
             "tl.program_id(axis). A domain/C stage whose path enters address_lane "
             "is lane-varying and may use tl.arange. Do not vectorize a program "
-            "coordinate or turn a lane coordinate into tl.program_id. When a "
-            "program-uniform integer base and lane offset merge before one pointer "
-            "addition, an address_base -> address_lane route requires both integer "
-            "stages to be preserved and combined before that pointer addition, "
-            "including the program_id even if its grid extent is one. The route "
-            "never authorizes applying the base to a pointer and then applying the "
-            "lane through a second serial pointer addition."
+            "coordinate or turn a lane coordinate into tl.program_id. Preserve "
+            "every address_base -> address_lane route, then determine pointer "
+            "operation count only from J.signature carrier kind plus pi routes. "
+            "If a pointer/tensor p* carrier directly enters address_base, the base "
+            "is already a pointer/address operation; its route to address_lane "
+            "requires a second pointer/address operation for the lane contribution. "
+            "If that carrier bypasses address_base and enters address_lane or the "
+            "final address stage, while address_base receives only integer/domain/C "
+            "contributions, preserve and merge the integer base and lane stages "
+            "before exactly one pointer/address operation. In both cases preserve "
+            "the program_id even if its grid extent is one. Never choose from the "
+            "address_base -> address_lane edge alone, and never infer from Source "
+            "names, paths, or text."
+            " For a canonical binary J contraction whose per-program operands and "
+            "result are rank-2 floating tiles with exactly one contracted label, "
+            "and whose declared operand/result dtypes are accepted by public "
+            "tl.dot, one pi realize instance anchored to that contraction node "
+            "maps to one direct tl.dot realization (using the declared accumulation "
+            "dtype). Do not replace that single stage with broadcasted outer-product "
+            "multiplication plus tl.sum: those are additional compiler-visible "
+            "stages. This direct rule does not apply to outer products, batched or "
+            "otherwise unsupported contractions, unsupported tile/dtype contracts, "
+            "or a pi chain that explicitly declares multiple contraction-anchored "
+            "realize stages; never force tl.dot by changing J or dropping pi stages."
             " Every pi.refinements entry is mandatory realization topology. "
             "Resolve its auth_ref in J.boundary.realization_authorizations and "
             "materialize the authorized kind at that exact instance before its "
@@ -199,11 +219,25 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
     if u_f["protocol"] != REPLAY_PACKET_SCHEMA:
         raise SchemaError("Replay payload u_f uses an unsupported protocol")
     try:
-        Frontend(u_f["frontend"])
+        frontend = Frontend(u_f["frontend"])
     except (TypeError, ValueError) as exc:
         raise SchemaError("Replay payload u_f has an unsupported frontend") from exc
     if u_f["replay_function"] != "scrc_k0":
         raise SchemaError("Replay payload u_f must use canonical replay_function")
+    fixed_context = PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {})
+    missing_context = sorted(set(fixed_context) - set(u_f))
+    if missing_context:
+        raise SchemaError(
+            f"Replay payload u_f is missing fixed context field(s): {missing_context}"
+        )
+    modified_context = sorted(
+        key for key, value in fixed_context.items() if u_f.get(key) != value
+    )
+    if modified_context:
+        raise SchemaError(
+            "Replay payload u_f does not match the fixed public frontend "
+            f"context field(s): {modified_context}"
+        )
     for path, value in _walk(dict(payload)):
         if isinstance(value, dict):
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
@@ -249,6 +283,8 @@ class ReplayPacket:
         if validate:
             assert_source_isolated_payload(payload)
         return payload
+
+
 
 
 def build_rewriter_packet(
@@ -330,6 +366,26 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         if frontend is Frontend.CUDA
         else "Return Python source only."
     )
+    frontend_realization_clause = (
+        "Preserve every address_base -> address_lane route. If a pointer/tensor "
+        "J.signature carrier directly enters address_base, materialize one base "
+        "pointer/address operation and a second lane pointer/address operation. "
+        "If the carrier bypasses address_base and enters address_lane or the final "
+        "address stage while the base has only integer/domain/C inputs, merge the "
+        "integer contributions before exactly one pointer/address operation. Decide "
+        "only from J.signature kinds and pi carrier routes, never from Source names, "
+        "paths, text, or the base-to-lane edge alone. Program axis identity belongs "
+        "to the J domain anchor, not instance multiplicity: materialize repeated "
+        "program-coordinate instances on one d* as distinct occurrences of the "
+        "same axis, never as a new axis. For one pi realize instance anchored to a "
+        "canonical, public-tl.dot-supported rank-2 floating J contraction with one "
+        "contracted label, use one direct tl.dot with the declared accumulation "
+        "dtype; do not expand it into outer-product multiply plus tl.sum. Do not "
+        "apply this spelling outside those support conditions or when pi explicitly "
+        "declares multiple contraction stages. "
+        if frontend is Frontend.TRITON
+        else ""
+    )
     return (
         "You are the source-blind Replay LLM. Generate one complete, self-contained "
         f"{frontend.value} public-frontend kernel module. You never see "
@@ -347,10 +403,9 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "logical operators, predicates, fills, constants, index relations and "
         "effects only from J. A boundary access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
-        "safety. For an address_base -> address_lane route that joins integer base "
-        "and lane contributions, preserve and combine those integer stages before "
-        "their pointer/address operation; never turn the route into serial extra "
-        "pointer/address operations. Do not output "
+        "safety. "
+        + frontend_realization_clause
+        + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "
         "frontend APIs and the canonical opaque handles in J.signature/MaskC(C). "
         "Pi graph "

@@ -56,6 +56,54 @@ _REPRESENTATIVES = (
     ),
 )
 _REPRESENTATIVE_TIERS = dict(_REPRESENTATIVES)
+_DECLARED_ADAPTER_IDS = frozenset(
+    {
+        *_REPRESENTATIVE_TIERS,
+        "high_performance:flash_attn.flash_attn_triton._fwd_kernel",
+        "high_performance:flash_attn.flash_attn_triton._bwd_kernel",
+        "high_performance:liger_fused_add_rms_norm",
+        "high_performance:liger_sparsemax",
+        "high_performance:liger_qwen2vl_mrope",
+        "high_performance:liger_group_norm",
+        "high_performance:liger_jsd",
+        "high_performance:liger_cross_entropy",
+        "high_performance:liger_geglu",
+        "high_performance:liger_poly_norm",
+        "high_performance:liger_llama4_rope",
+        "high_performance:liger_rope",
+        "high_performance:liger_layer_norm",
+        "high_performance:liger_kl_div",
+        "high_performance:liger_tvd",
+        (
+            "high_performance:xformers.ops._triton.rmsnorm_kernels."
+            "_rms_norm_kernel"
+        ),
+        (
+            "high_performance:xformers.ops._triton.rmsnorm_kernels."
+            "_rms_norm_add_kernel"
+        ),
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_fwd_kernel_splitK"
+        ),
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_splitK_reduce_varargs"
+        ),
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_splitK_reduce_varargs_backward"
+        ),
+        (
+            "high_performance:flash_attn.ops.triton.layer_norm."
+            "_layer_norm_fwd_1pass_kernel"
+        ),
+        (
+            "high_performance:flash_attn.flash_attn_triton."
+            "_bwd_kernel_one_col_block"
+        ),
+    }
+)
 _REPRESENTATIVE_ORDER = {
     case_id: index for index, (case_id, _tier) in enumerate(_REPRESENTATIVES)
 }
@@ -183,7 +231,7 @@ class SCRCWorkloadEntry:
             ),
             adapter_readiness=(
                 "declared"
-                if capability.kernel_id in _REPRESENTATIVE_TIERS
+                if capability.kernel_id in _DECLARED_ADAPTER_IDS
                 else "pending"
             ),
         )

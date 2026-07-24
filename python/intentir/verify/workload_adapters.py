@@ -29,7 +29,9 @@ from intentir.verify.scrc_runner import (
 from intentir.verify.triton_source_slice import (
     TritonSourceSlice,
     build_triton_source_slice,
+    expand_triton_varargs,
     inline_imported_triton_helpers,
+    requires_triton_vararg_expansion,
 )
 from intentir.verify.workload_manifest import (
     SCRCWorkloadEntry,
@@ -37,13 +39,18 @@ from intentir.verify.workload_manifest import (
 )
 
 
-TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v1"
+TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v3"
 
 
 class BufferRole(str, Enum):
     INPUT = "input"
     OUTPUT = "output"
     INOUT = "inout"
+
+
+class BufferInitializer(str, Enum):
+    RANDOM = "random"
+    ZEROS = "zeros"
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,7 @@ class BufferBinding:
     dtype: str
     shape: tuple[int, ...]
     output_key: str | None = None
+    initializer: BufferInitializer | None = None
 
     def __post_init__(self) -> None:
         if not self.formal.isidentifier():
@@ -69,6 +77,15 @@ class BufferBinding:
             raise ValueError("input-only buffer cannot declare an output key")
         if self.role is not BufferRole.INPUT and self.output_key is None:
             object.__setattr__(self, "output_key", self.formal.casefold())
+        if self.role is BufferRole.OUTPUT:
+            if self.initializer is not None:
+                raise ValueError("output-only buffer cannot declare an initializer")
+        elif self.initializer is None:
+            object.__setattr__(self, "initializer", BufferInitializer.RANDOM)
+        elif not isinstance(self.initializer, BufferInitializer):
+            object.__setattr__(
+                self, "initializer", BufferInitializer(self.initializer)
+            )
 
 
 @dataclass(frozen=True)
@@ -84,6 +101,18 @@ class ScalarBinding:
             raise ValueError("scalar dtype must be non-empty")
         if not isinstance(self.value, (bool, int, float)):
             raise TypeError("runtime scalar value must be bool/int/float")
+
+
+@dataclass(frozen=True)
+class NoneBinding:
+    formal: str
+    dtype: str = "none"
+
+    def __post_init__(self) -> None:
+        if not self.formal.isidentifier():
+            raise ValueError("None formal must be a Python identifier")
+        if self.dtype != "none":
+            raise ValueError("None binding dtype must be exactly 'none'")
 
 
 @dataclass(frozen=True)
@@ -121,6 +150,8 @@ class TritonWorkloadAdapter:
     grid: tuple[int, ...]
     grid_contract: tuple[str, ...]
     seed: int
+    none_arguments: tuple[NoneBinding, ...] = ()
+    vararg_arity: int | None = None
     protocol: str = TRITON_WORKLOAD_ADAPTER_PROTOCOL
 
     def __post_init__(self) -> None:
@@ -134,8 +165,13 @@ class TritonWorkloadAdapter:
             item if isinstance(item, ScalarBinding) else ScalarBinding(*item)
             for item in self.scalars
         )
+        none_arguments = tuple(
+            item if isinstance(item, NoneBinding) else NoneBinding(*item)
+            for item in self.none_arguments
+        )
         object.__setattr__(self, "buffers", buffers)
         object.__setattr__(self, "scalars", scalars)
+        object.__setattr__(self, "none_arguments", none_arguments)
         semantics = _pairs(
             self.semantic_constexprs, label="semantic constexpr"
         )
@@ -144,7 +180,9 @@ class TritonWorkloadAdapter:
         object.__setattr__(self, "c_values", c_values)
         names = [item.formal for item in buffers] + [
             item.formal for item in scalars
-        ] + [name for name, _ in semantics] + [name for name, _ in c_values]
+        ] + [item.formal for item in none_arguments] + [
+            name for name, _ in semantics
+        ] + [name for name, _ in c_values]
         if len(names) != len(set(names)):
             raise ValueError("adapter formals must be globally unique")
         grid = tuple(int(dim) for dim in self.grid)
@@ -157,6 +195,12 @@ class TritonWorkloadAdapter:
         object.__setattr__(self, "grid_contract", contracts)
         if not isinstance(self.seed, int) or self.seed < 0:
             raise ValueError("adapter seed must be a non-negative integer")
+        if self.vararg_arity is not None and (
+            isinstance(self.vararg_arity, bool)
+            or not isinstance(self.vararg_arity, int)
+            or not 1 <= self.vararg_arity <= 64
+        ):
+            raise ValueError("adapter vararg arity must be in [1, 64]")
         output_keys = [
             item.output_key
             for item in buffers
@@ -190,6 +234,17 @@ class TritonWorkloadAdapter:
                     mode="value",
                 )
                 for item in self.scalars
+            }
+        )
+        runtime.update(
+            {
+                item.formal: SCRCCompilerArgument(
+                    item.formal,
+                    "none",
+                    item.dtype,
+                    mode="value",
+                )
+                for item in self.none_arguments
             }
         )
         expected_runtime = tuple(
@@ -226,6 +281,11 @@ class TritonWorkloadAdapter:
                     "dtype": item.dtype,
                     "shape": list(item.shape),
                     "output_key": item.output_key,
+                    "initializer": (
+                        item.initializer.value
+                        if item.initializer is not None
+                        else None
+                    ),
                 }
                 for item in self.buffers
             ],
@@ -237,11 +297,16 @@ class TritonWorkloadAdapter:
                 }
                 for item in self.scalars
             ],
+            "none_arguments": [
+                {"formal": item.formal, "dtype": item.dtype}
+                for item in self.none_arguments
+            ],
             "semantic_constexprs": dict(self.semantic_constexprs),
             "c_values": dict(self.c_values),
             "grid": list(self.grid),
             "grid_contract": list(self.grid_contract),
             "seed": self.seed,
+            "vararg_arity": self.vararg_arity,
         }
 
 
@@ -263,7 +328,9 @@ def _runtime_argument(argument: SCRCCompilerArgument) -> RuntimeArgument:
     if argument.kind == "scalar":
         assert argument.value is not None
         return RuntimeArgument.scalar(argument.value, dtype)
-    raise ValueError("real workload adapter supports tensor/scalar runtime ABI")
+    if argument.kind == "none":
+        return RuntimeArgument.none(dtype)
+    raise ValueError("real workload adapter supports tensor/scalar/none runtime ABI")
 
 
 def prepare_triton_workload(
@@ -290,6 +357,16 @@ def prepare_triton_workload(
     source_slice = inline_imported_triton_helpers(
         source_slice, search_roots=(module_root,)
     )
+    requires_varargs = requires_triton_vararg_expansion(source_slice)
+    if requires_varargs != (adapter.vararg_arity is not None):
+        raise ValueError(
+            "adapter vararg arity must be present exactly when Source declares "
+            "VAR_ARGS_ARRAY"
+        )
+    if adapter.vararg_arity is not None:
+        source_slice = expand_triton_varargs(
+            source_slice, arity=adapter.vararg_arity
+        )
     view = adapter.compiler_view(
         source_slice.parameters, source_slice.constexpr_parameters
     )
@@ -352,8 +429,11 @@ def _buffer(
     dtype: str,
     shape: tuple[int, ...],
     output_key: str | None = None,
+    initializer: BufferInitializer | None = None,
 ) -> BufferBinding:
-    return BufferBinding(formal, role, dtype, shape, output_key)
+    return BufferBinding(
+        formal, role, dtype, shape, output_key, initializer
+    )
 
 
 def _scalar(formal: str, dtype: str, value: Any) -> ScalarBinding:
@@ -513,12 +593,946 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         grid_contract=("ceil_div(M,BLOCK_M)*ceil_div(N,BLOCK_N)",),
         seed=127,
     ),
+    (
+        "high_performance:flash_attn.flash_attn_triton._fwd_kernel"
+    ): TritonWorkloadAdapter(
+        "high_performance:flash_attn.flash_attn_triton._fwd_kernel",
+        buffers=(
+            _buffer("Q", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer("K", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer("V", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            # BIAS_TYPE=none makes this ABI carrier intentionally unread.
+            _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
+            _buffer(
+                "Out", BufferRole.OUTPUT, "f16", (1, 128, 1, 64), "out"
+            ),
+            _buffer("Lse", BufferRole.OUTPUT, "f32", (1, 1, 128), "lse"),
+            # TMP is explicit source-ABI scratch storage. The captured symbol
+            # writes it, so the fixed invocation must supply writable storage.
+            _buffer("TMP", BufferRole.OUTPUT, "f32", (1, 1, 128), "tmp"),
+        ),
+        scalars=(
+            _scalar("softmax_scale", "f32", 0.125),
+            _scalar("stride_qb", "i64", 8192),
+            _scalar("stride_qh", "i64", 64),
+            _scalar("stride_qm", "i64", 64),
+            _scalar("stride_kb", "i64", 8192),
+            _scalar("stride_kh", "i64", 64),
+            _scalar("stride_kn", "i64", 64),
+            _scalar("stride_vb", "i64", 8192),
+            _scalar("stride_vh", "i64", 64),
+            _scalar("stride_vn", "i64", 64),
+            _scalar("stride_bb", "i64", 0),
+            _scalar("stride_bh", "i64", 0),
+            _scalar("stride_bm", "i64", 0),
+            _scalar("stride_ob", "i64", 8192),
+            _scalar("stride_oh", "i64", 64),
+            _scalar("stride_om", "i64", 64),
+            _scalar("nheads", "i32", 1),
+            _scalar("seqlen_q", "i32", 128),
+            _scalar("seqlen_k", "i32", 128),
+            _scalar("seqlen_q_rounded", "i32", 128),
+            _scalar("headdim", "i32", 64),
+            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
+            _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
+        ),
+        semantic_constexprs=(
+            ("BIAS_TYPE", "none"),
+            ("IS_CAUSAL", False),
+        ),
+        c_values=(
+            ("BLOCK_HEADDIM", 64),
+            ("EVEN_M", True),
+            ("EVEN_N", True),
+            ("EVEN_HEADDIM", True),
+            ("BLOCK_M", 128),
+            ("BLOCK_N", 128),
+        ),
+        grid=(1, 1),
+        grid_contract=("ceil_div(seqlen_q,BLOCK_M)", "batch*nheads"),
+        seed=131,
+    ),
+    (
+        "high_performance:flash_attn.flash_attn_triton._bwd_kernel"
+    ): TritonWorkloadAdapter(
+        "high_performance:flash_attn.flash_attn_triton._bwd_kernel",
+        buffers=(
+            _buffer("Q", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer("K", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer("V", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            # BIAS_TYPE=none makes this ABI carrier intentionally unread.
+            _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
+            _buffer("DO", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer(
+                "DQ",
+                BufferRole.INOUT,
+                "f32",
+                (1, 128, 1, 64),
+                "dq",
+                BufferInitializer.ZEROS,
+            ),
+            _buffer("DK", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dk"),
+            _buffer("DV", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dv"),
+            _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 128)),
+            _buffer("D", BufferRole.INPUT, "f32", (1, 1, 128)),
+        ),
+        scalars=(
+            _scalar("softmax_scale", "f32", 0.125),
+            _scalar("stride_qb", "i64", 8192),
+            _scalar("stride_qh", "i64", 64),
+            _scalar("stride_qm", "i64", 64),
+            _scalar("stride_kb", "i64", 8192),
+            _scalar("stride_kh", "i64", 64),
+            _scalar("stride_kn", "i64", 64),
+            _scalar("stride_vb", "i64", 8192),
+            _scalar("stride_vh", "i64", 64),
+            _scalar("stride_vn", "i64", 64),
+            _scalar("stride_bb", "i64", 0),
+            _scalar("stride_bh", "i64", 0),
+            _scalar("stride_bm", "i64", 0),
+            _scalar("stride_dob", "i64", 8192),
+            _scalar("stride_doh", "i64", 64),
+            _scalar("stride_dom", "i64", 64),
+            _scalar("stride_dqb", "i64", 8192),
+            _scalar("stride_dqh", "i64", 64),
+            _scalar("stride_dqm", "i64", 64),
+            _scalar("stride_dkb", "i64", 8192),
+            _scalar("stride_dkh", "i64", 64),
+            _scalar("stride_dkn", "i64", 64),
+            _scalar("stride_dvb", "i64", 8192),
+            _scalar("stride_dvh", "i64", 64),
+            _scalar("stride_dvn", "i64", 64),
+            _scalar("nheads", "i32", 1),
+            _scalar("seqlen_q", "i32", 128),
+            _scalar("seqlen_k", "i32", 128),
+            _scalar("seqlen_q_rounded", "i32", 128),
+            _scalar("headdim", "i32", 64),
+            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
+            _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
+        ),
+        semantic_constexprs=(
+            ("BIAS_TYPE", "none"),
+            ("IS_CAUSAL", False),
+        ),
+        c_values=(
+            ("BLOCK_HEADDIM", 64),
+            ("SEQUENCE_PARALLEL", False),
+            ("EVEN_M", True),
+            ("EVEN_N", True),
+            ("EVEN_HEADDIM", True),
+            ("BLOCK_M", 128),
+            ("BLOCK_N", 128),
+        ),
+        grid=(1, 1),
+        grid_contract=("1", "batch*nheads"),
+        seed=137,
+    ),
+    "high_performance:liger_fused_add_rms_norm": TritonWorkloadAdapter(
+        "high_performance:liger_fused_add_rms_norm",
+        buffers=(
+            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
+            _buffer("S_ptr", BufferRole.OUTPUT, "f32", (2, 127), "s"),
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("R_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("W_ptr", BufferRole.INPUT, "f32", (127,)),
+            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+        ),
+        scalars=(
+            _scalar("Y_row_stride", "i64", 127),
+            _scalar("S_row_stride", "i64", 127),
+            _scalar("X_row_stride", "i64", 127),
+            _scalar("R_row_stride", "i64", 127),
+            _scalar("W_row_stride", "i64", 127),
+            _scalar("RSTD_row_stride", "i64", 1),
+            _scalar("n_cols", "i32", 127),
+            _scalar("eps", "f32", 1.0e-6),
+            _scalar("offset", "f32", 0.0),
+        ),
+        semantic_constexprs=(("casting_mode", -1),),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=139,
+    ),
+    "high_performance:liger_sparsemax": TritonWorkloadAdapter(
+        "high_performance:liger_sparsemax",
+        buffers=(
+            _buffer("x_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("sorted_x_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("o_ptr", BufferRole.OUTPUT, "f32", (2, 127), "o"),
+        ),
+        scalars=(
+            _scalar("x_stride_row", "i64", 127),
+            _scalar("sorted_x_stride_row", "i64", 127),
+            _scalar("o_stride_row", "i64", 127),
+            _scalar("n_cols", "i32", 127),
+        ),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 128), ("num_warps", 4)),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=149,
+    ),
+    (
+        "high_performance:flash_attn.flash_attn_triton."
+        "_bwd_kernel_one_col_block"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:flash_attn.flash_attn_triton."
+            "_bwd_kernel_one_col_block"
+        ),
+        buffers=(
+            _buffer("Q", BufferRole.INPUT, "f16", (128, 64)),
+            _buffer("K", BufferRole.INPUT, "f16", (64, 64)),
+            _buffer("V", BufferRole.INPUT, "f16", (64, 64)),
+            _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
+            _buffer("DO", BufferRole.INPUT, "f16", (128, 64)),
+            _buffer(
+                "DQ",
+                BufferRole.INOUT,
+                "f32",
+                (128, 64),
+                "dq",
+                BufferInitializer.ZEROS,
+            ),
+            _buffer("DK", BufferRole.OUTPUT, "f32", (64, 64), "dk"),
+            _buffer("DV", BufferRole.OUTPUT, "f32", (64, 64), "dv"),
+            _buffer("LSE", BufferRole.INPUT, "f32", (128,)),
+            _buffer("D", BufferRole.INPUT, "f32", (128,)),
+        ),
+        scalars=(
+            _scalar("start_n", "i32", 0),
+            _scalar("softmax_scale", "f32", 0.125),
+            _scalar("stride_qm", "i64", 64),
+            _scalar("stride_kn", "i64", 64),
+            _scalar("stride_vn", "i64", 64),
+            _scalar("stride_bm", "i64", 0),
+            _scalar("stride_dom", "i64", 64),
+            _scalar("stride_dqm", "i64", 64),
+            _scalar("stride_dkn", "i64", 64),
+            _scalar("stride_dvn", "i64", 64),
+            _scalar("seqlen_q", "i32", 128),
+            _scalar("seqlen_k", "i32", 64),
+            _scalar("headdim", "i32", 64),
+        ),
+        semantic_constexprs=(
+            ("BIAS_TYPE", "none"),
+            ("IS_CAUSAL", False),
+        ),
+        c_values=(
+            ("ATOMIC_ADD", False),
+            ("BLOCK_HEADDIM", 64),
+            ("EVEN_M", True),
+            ("EVEN_N", True),
+            ("EVEN_HEADDIM", True),
+            ("BLOCK_M", 128),
+            ("BLOCK_N", 64),
+        ),
+        grid=(1,),
+        grid_contract=("1",),
+        seed=151,
+    ),
+    "high_performance:liger_qwen2vl_mrope": TritonWorkloadAdapter(
+        "high_performance:liger_qwen2vl_mrope",
+        buffers=(
+            _buffer(
+                "q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q"
+            ),
+            _buffer(
+                "k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k"
+            ),
+            _buffer("cos", BufferRole.INPUT, "f16", (3, 1, 4, 16)),
+            _buffer("sin", BufferRole.INPUT, "f16", (3, 1, 4, 16)),
+        ),
+        scalars=(_scalar("sl", "i32", 4),),
+        semantic_constexprs=(
+            ("bs", 1),
+            ("n_qh", 2),
+            ("n_kh", 1),
+            ("hd", 16),
+            ("mrope_section_t", 3),
+            ("mrope_section_h", 3),
+            ("BACKWARD_PASS", False),
+        ),
+        c_values=(
+            ("pad_n_qh", 2),
+            ("pad_n_kh", 1),
+            ("pad_hd", 16),
+            ("BLOCK_SIZE", 2),
+        ),
+        grid=(4,),
+        grid_contract=("bs*sl",),
+        seed=157,
+    ),
+    "high_performance:liger_group_norm": TritonWorkloadAdapter(
+        "high_performance:liger_group_norm",
+        buffers=(
+            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 2, 32), "y"),
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 2, 32)),
+            _buffer("Mean_ptr", BufferRole.OUTPUT, "f32", (2, 2), "mean"),
+            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 2), "rstd"),
+            _buffer("W_ptr", BufferRole.INPUT, "f32", (4,)),
+            _buffer("B_ptr", BufferRole.INPUT, "f32", (4,)),
+        ),
+        scalars=(
+            _scalar("Y_row_stride", "i64", 64),
+            _scalar("Y_col_stride", "i64", 32),
+            _scalar("X_row_stride", "i64", 64),
+            _scalar("X_col_stride", "i64", 32),
+            _scalar("Mean_row_stride", "i64", 2),
+            _scalar("Mean_col_stride", "i64", 1),
+            _scalar("RSTD_row_stride", "i64", 2),
+            _scalar("RSTD_col_stride", "i64", 1),
+            _scalar("hidden_size", "i32", 32),
+            _scalar("channels_per_group", "i32", 2),
+            _scalar("eps", "f32", 1.0e-6),
+        ),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 32),),
+        grid=(2, 2),
+        grid_contract=("batch", "groups"),
+        seed=163,
+    ),
+    "high_performance:liger_jsd": TritonWorkloadAdapter(
+        "high_performance:liger_jsd",
+        buffers=(
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("Y_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss"),
+            _buffer("dX_ptr", BufferRole.OUTPUT, "f32", (2, 64), "dx"),
+            # HAS_LABEL=false makes this required ABI carrier unread.
+            _buffer("label_ptr", BufferRole.INPUT, "i64", (2,)),
+        ),
+        scalars=(
+            _scalar("X_stride", "i64", 64),
+            _scalar("Y_stride", "i64", 64),
+            _scalar("loss_stride", "i64", 64),
+            _scalar("dX_stride", "i64", 64),
+            _scalar("n_non_ignore", "i32", 2),
+            _scalar("n_cols", "i32", 64),
+        ),
+        semantic_constexprs=(
+            ("beta", 0.5),
+            ("ignore_index", -100),
+            ("HAS_LABEL", False),
+        ),
+        c_values=(("BLOCK_SIZE", 64),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=167,
+    ),
+    "high_performance:liger_cross_entropy": TritonWorkloadAdapter(
+        "high_performance:liger_cross_entropy",
+        buffers=(
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer(
+                "Y_ptr",
+                BufferRole.INPUT,
+                "i64",
+                (2,),
+                initializer=BufferInitializer.ZEROS,
+            ),
+            # HAS_WEIGHT=false makes this required ABI carrier unread.
+            _buffer("weight_ptr", BufferRole.INPUT, "f32", (64,)),
+            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss"),
+            # The three RETURN_* flags below are false, so these ABI carriers
+            # are deliberately inputs rather than observable uninitialized
+            # outputs.
+            _buffer("z_loss_ptr", BufferRole.INPUT, "f32", (2,)),
+            _buffer("token_accuracy_ptr", BufferRole.INPUT, "f32", (2,)),
+            _buffer("predicted_tokens_ptr", BufferRole.INPUT, "i64", (2,)),
+        ),
+        scalars=(
+            _scalar("X_stride", "i64", 64),
+            _scalar("Y_stride", "i64", 1),
+            _scalar("loss_stride", "i64", 1),
+            _scalar("token_accuracy_stride", "i64", 0),
+            _scalar("predicted_tokens_stride", "i64", 0),
+            _scalar("n_cols", "i32", 64),
+            _scalar("n_non_ignore", "f32", 2.0),
+            _scalar("sum_non_ignore_weight", "f32", 2.0),
+            _scalar("weight_sum", "f32", 0.0),
+            _scalar("ignore_index", "i64", -100),
+            _scalar("softcap", "f32", 0.0),
+        ),
+        semantic_constexprs=(
+            ("lse_square_scale", 0.0),
+            ("label_smoothing", 0.0),
+            ("reduction", "mean"),
+            ("RETURN_Z_LOSS", False),
+            ("RETURN_TOKEN_ACCURACY", False),
+            ("RETURN_PREDICTED_TOKENS", False),
+            ("HAS_WEIGHT", False),
+            ("HAS_SOFTCAPPING", False),
+            ("HAS_GRADIENTS", False),
+        ),
+        c_values=(("BLOCK_SIZE", 64),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=173,
+    ),
+    "high_performance:liger_geglu": TritonWorkloadAdapter(
+        "high_performance:liger_geglu",
+        buffers=(
+            _buffer("a", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("b", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("c", BufferRole.OUTPUT, "f32", (2, 127), "c"),
+        ),
+        scalars=(_scalar("stride", "i64", 127),),
+        semantic_constexprs=(("n_cols", 127),),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=179,
+    ),
+    "high_performance:liger_poly_norm": TritonWorkloadAdapter(
+        "high_performance:liger_poly_norm",
+        buffers=(
+            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("W_ptr", BufferRole.INPUT, "f32", (3,)),
+            _buffer("B_ptr", BufferRole.INPUT, "f32", (1,)),
+            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 3), "rstd"),
+        ),
+        scalars=(
+            _scalar("Y_row_stride", "i64", 127),
+            _scalar("X_row_stride", "i64", 127),
+            _scalar("RSTD_row_stride", "i64", 3),
+            _scalar("n_cols", "i32", 127),
+            _scalar("eps", "f32", 1.0e-6),
+        ),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=181,
+    ),
+    "high_performance:liger_llama4_rope": TritonWorkloadAdapter(
+        "high_performance:liger_llama4_rope",
+        buffers=(
+            _buffer("q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 32), "q"),
+            _buffer("k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 32), "k"),
+            _buffer(
+                "freqs_complex_ptr", BufferRole.INPUT, "f16", (4, 16, 2)
+            ),
+        ),
+        scalars=(
+            _scalar("q_row_stride", "i64", 64),
+            _scalar("k_row_stride", "i64", 32),
+            _scalar("q_head_stride", "i64", 32),
+            _scalar("k_head_stride", "i64", 32),
+            _scalar("freqs_row_stride", "i64", 32),
+            _scalar("seq_len", "i32", 4),
+            _scalar("batch_size", "i32", 1),
+            _scalar("imag_sign", "f32", 1.0),
+        ),
+        semantic_constexprs=(
+            ("head_dim_half", 16),
+            ("n_q_heads", 2),
+            ("n_k_heads", 1),
+        ),
+        c_values=(("BLOCK_SIZE", 16),),
+        grid=(4, 2),
+        grid_contract=("batch_size*seq_len", "max(n_q_heads,n_k_heads)"),
+        seed=191,
+    ),
+    (
+        "high_performance:flash_attn.ops.triton.layer_norm."
+        "_layer_norm_fwd_1pass_kernel"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:flash_attn.ops.triton.layer_norm."
+            "_layer_norm_fwd_1pass_kernel"
+        ),
+        buffers=(
+            _buffer("X", BufferRole.INPUT, "f16", (2, 127)),
+            _buffer("Y", BufferRole.OUTPUT, "f16", (2, 127), "y"),
+            _buffer("W", BufferRole.INPUT, "f16", (127,)),
+            _buffer("B", BufferRole.INPUT, "f16", (127,)),
+            _buffer("RESIDUAL", BufferRole.INPUT, "f16", (2, 127)),
+            _buffer("X1", BufferRole.INPUT, "f16", (2, 127)),
+            _buffer("W1", BufferRole.INPUT, "f16", (127,)),
+            _buffer("B1", BufferRole.INPUT, "f16", (127,)),
+            _buffer("Y1", BufferRole.OUTPUT, "f16", (2, 127), "y1"),
+            _buffer(
+                "RESIDUAL_OUT",
+                BufferRole.OUTPUT,
+                "f16",
+                (2, 127),
+                "residual_out",
+            ),
+            # The fixed flags make these four required ABI carriers unread.
+            _buffer("ROWSCALE", BufferRole.INPUT, "f32", (2,)),
+            _buffer("SEEDS", BufferRole.INPUT, "i64", (2,)),
+            _buffer("DROPOUT_MASK", BufferRole.INPUT, "i1", (2, 127)),
+            _buffer("DROPOUT_MASK1", BufferRole.INPUT, "i1", (2, 127)),
+            _buffer("Mean", BufferRole.OUTPUT, "f32", (2,), "mean"),
+            _buffer("Rstd", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+        ),
+        scalars=(
+            _scalar("stride_x_row", "i64", 127),
+            _scalar("stride_y_row", "i64", 127),
+            _scalar("stride_res_row", "i64", 127),
+            _scalar("stride_res_out_row", "i64", 127),
+            _scalar("stride_x1_row", "i64", 127),
+            _scalar("stride_y1_row", "i64", 127),
+            _scalar("M", "i32", 2),
+            _scalar("N", "i32", 127),
+            _scalar("eps", "f32", 1.0e-6),
+            _scalar("dropout_p", "f32", 0.0),
+            _scalar("zero_centered_weight", "i1", False),
+        ),
+        semantic_constexprs=(
+            ("IS_RMS_NORM", False),
+            ("HAS_RESIDUAL", True),
+            ("STORE_RESIDUAL_OUT", True),
+            ("HAS_BIAS", True),
+            ("HAS_DROPOUT", False),
+            ("STORE_DROPOUT_MASK", False),
+            ("HAS_ROWSCALE", False),
+            ("HAS_X1", True),
+            ("HAS_W1", True),
+            ("HAS_B1", True),
+        ),
+        c_values=(("BLOCK_N", 128),),
+        grid=(2,),
+        grid_contract=("M",),
+        seed=193,
+    ),
+    "high_performance:liger_rope": TritonWorkloadAdapter(
+        "high_performance:liger_rope",
+        buffers=(
+            _buffer("q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q"),
+            _buffer("k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k"),
+            _buffer("cos", BufferRole.INPUT, "f16", (1, 4, 16)),
+            _buffer("sin", BufferRole.INPUT, "f16", (1, 4, 16)),
+        ),
+        scalars=(
+            _scalar("q_row_stride", "i64", 32),
+            _scalar("k_row_stride", "i64", 16),
+            _scalar("cos_row_stride", "i64", 16),
+            _scalar("sin_row_stride", "i64", 16),
+            _scalar("sl", "i32", 4),
+        ),
+        semantic_constexprs=(
+            ("bs", 1),
+            ("cos_bs", 1),
+            ("n_qh", 2),
+            ("n_kh", 1),
+            ("hd", 16),
+            ("BACKWARD_PASS", False),
+        ),
+        c_values=(
+            ("pad_n_qh", 2),
+            ("pad_n_kh", 1),
+            ("pad_hd", 16),
+            ("BLOCK_SIZE", 2),
+        ),
+        grid=(4,),
+        grid_contract=("bs*sl",),
+        seed=197,
+    ),
+    "high_performance:liger_layer_norm": TritonWorkloadAdapter(
+        "high_performance:liger_layer_norm",
+        buffers=(
+            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
+            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("W_ptr", BufferRole.INPUT, "f32", (127,)),
+            _buffer("B_ptr", BufferRole.INPUT, "f32", (127,)),
+            _buffer("Mean_ptr", BufferRole.OUTPUT, "f32", (2,), "mean"),
+            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+        ),
+        scalars=(
+            _scalar("Y_row_stride", "i64", 127),
+            _scalar("X_row_stride", "i64", 127),
+            _scalar("W_row_stride", "i64", 127),
+            _scalar("B_row_stride", "i64", 127),
+            _scalar("Mean_row_stride", "i64", 1),
+            _scalar("RSTD_row_stride", "i64", 1),
+            _scalar("n_cols", "i32", 127),
+            _scalar("eps", "f32", 1.0e-6),
+        ),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=199,
+    ),
+    "high_performance:liger_kl_div": TritonWorkloadAdapter(
+        "high_performance:liger_kl_div",
+        buffers=(
+            _buffer("y_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("gt_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss"),
+        ),
+        scalars=(
+            _scalar("y_stride", "i64", 64),
+            _scalar("gt_stride", "i64", 64),
+            _scalar("loss_stride", "i64", 1),
+            _scalar("n_cols", "i32", 64),
+            _scalar("eps", "f32", 1.0e-6),
+        ),
+        semantic_constexprs=(
+            ("log_target", True),
+            ("reduction", 3),
+        ),
+        c_values=(("BLOCK_SIZE", 64),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=211,
+    ),
+    "high_performance:liger_tvd": TritonWorkloadAdapter(
+        "high_performance:liger_tvd",
+        buffers=(
+            _buffer("p_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("q_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss"),
+            _buffer("grads_ptr", BufferRole.OUTPUT, "f32", (2, 64), "grads"),
+            # HAS_LABEL=false makes this required ABI carrier unread.
+            _buffer("label_ptr", BufferRole.INPUT, "i64", (2,)),
+        ),
+        scalars=(
+            _scalar("p_stride", "i64", 64),
+            _scalar("q_stride", "i64", 64),
+            _scalar("loss_stride", "i64", 64),
+            _scalar("grads_stride", "i64", 64),
+            _scalar("n_cols", "i32", 64),
+            _scalar("scale", "f32", 1.0),
+        ),
+        semantic_constexprs=(
+            ("ignore_index", -100),
+            ("HAS_LABEL", False),
+            ("reduction", 0),
+        ),
+        c_values=(("BLOCK_SIZE", 64),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=223,
+    ),
+    (
+        "high_performance:xformers.ops._triton.rmsnorm_kernels."
+        "_rms_norm_kernel"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:xformers.ops._triton.rmsnorm_kernels."
+            "_rms_norm_kernel"
+        ),
+        buffers=(
+            _buffer("x_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1"),
+            _buffer("w_ptr", BufferRole.INPUT, "f32", (127,)),
+        ),
+        scalars=(
+            _scalar("eps", "f32", 1.0e-6),
+            _scalar("stride", "i64", 127),
+        ),
+        semantic_constexprs=(
+            ("N_COLS", 127),
+            ("INCLUDE_WEIGHT", True),
+        ),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=227,
+    ),
+    (
+        "high_performance:xformers.ops._triton.rmsnorm_kernels."
+        "_rms_norm_add_kernel"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:xformers.ops._triton.rmsnorm_kernels."
+            "_rms_norm_add_kernel"
+        ),
+        buffers=(
+            _buffer("x_ptr", BufferRole.INOUT, "f32", (2, 127), "x"),
+            _buffer("y_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer("h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1"),
+            _buffer("w_ptr", BufferRole.INPUT, "f32", (127,)),
+        ),
+        scalars=(
+            _scalar("eps", "f32", 1.0e-6),
+            _scalar("stride", "i64", 127),
+        ),
+        semantic_constexprs=(
+            ("N_COLS", 127),
+            ("INCLUDE_WEIGHT", True),
+        ),
+        c_values=(("BLOCK_SIZE", 128),),
+        grid=(2,),
+        grid_contract=("rows",),
+        seed=229,
+    ),
+    (
+        "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+        "_fwd_kernel_splitK"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_fwd_kernel_splitK"
+        ),
+        buffers=(
+            _buffer("Q", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
+            _buffer("K", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
+            _buffer("V", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
+            _buffer(
+                "Out_splitK",
+                BufferRole.OUTPUT,
+                "f32",
+                (1, 1, 1, 2, 16, 16),
+                "out_splitk",
+            ),
+            _buffer(
+                "LSE_splitk",
+                BufferRole.OUTPUT,
+                "f32",
+                (1, 1, 1, 2, 16),
+                "lse_splitk",
+            ),
+        ),
+        scalars=(
+            _scalar("sm_scale", "f32", 0.25),
+            *(
+                _scalar(name, "i64", value)
+                for name, value in (
+                    ("stride_qz", 256),
+                    ("stride_qm", 16),
+                    ("stride_qg", 16),
+                    ("stride_qh", 16),
+                    ("stride_qk", 1),
+                    ("stride_kz", 256),
+                    ("stride_kn", 16),
+                    ("stride_kg", 16),
+                    ("stride_kh", 16),
+                    ("stride_kk", 1),
+                    ("stride_vz", 256),
+                    ("stride_vn", 16),
+                    ("stride_vg", 16),
+                    ("stride_vh", 16),
+                    ("stride_vk", 1),
+                    ("stride_osk_z", 512),
+                    ("stride_osk_g", 512),
+                    ("stride_osk_h", 512),
+                    ("stride_osk_s", 256),
+                    ("stride_osk_m", 16),
+                    ("stride_osk_k", 1),
+                    ("stride_lsek_z", 32),
+                    ("stride_lsek_g", 32),
+                    ("stride_lsek_h", 32),
+                    ("stride_lsek_s", 16),
+                    ("stride_lsek_m", 1),
+                    ("stride_blocktablesz", 0),
+                    ("stride_blocktablesl", 0),
+                    ("stride_bias_b", 0),
+                    ("stride_bias_g", 0),
+                    ("stride_bias_h", 0),
+                    ("stride_bias_qm", 0),
+                    ("stride_bias_km", 0),
+                )
+            ),
+        ),
+        semantic_constexprs=(
+            ("Z", 1),
+            ("N_CTX_Q", 16),
+            ("N_CTX_K", 16),
+            ("BLOCK_N_PER_SPLIT", 8),
+            ("H", 1),
+            ("G", 1),
+            ("BLOCK_DMODEL", 16),
+            ("USE_SEQ_LEN", False),
+            ("PACKED_PER_VAL", 1),
+            ("N_GROUPS", 1),
+            ("IS_SPLITK", True),
+            ("SPLIT_K_EARLY_EXIT", False),
+            ("IS_CAUSAL", False),
+            ("IS_LOCAL", False),
+            ("NUM_QUERIES_CAUSAL", 16),
+            ("USE_PAGED_ATTENTION", False),
+            ("PAGE_SIZE", 0),
+            ("WINDOW_LEFT", -1),
+            ("WINDOW_RIGHT", -1),
+            ("WRITE_LSE", True),
+            ("HAS_ADDITIVE_BIAS", False),
+        ),
+        c_values=(
+            ("stride_k_fp8_scale_shift_z", 0),
+            ("stride_k_fp8_scale_shift_n", 0),
+            ("stride_k_fp8_scale_shift_g", 0),
+            ("stride_k_fp8_scale_shift_h", 0),
+            ("stride_v_fp8_scale_shift_z", 0),
+            ("stride_v_fp8_scale_shift_n", 0),
+            ("stride_v_fp8_scale_shift_g", 0),
+            ("stride_v_fp8_scale_shift_h", 0),
+            ("kv_cache_blocks_per_row", 0),
+            ("BOUNDS_CHECKS_N", True),
+            ("BLOCK_M", 16),
+            ("BLOCK_N", 16),
+            ("NUM_PROGRAMS_DIM2_CONST", 2),
+            ("IS_HIP", False),
+        ),
+        grid=(1, 1, 2),
+        grid_contract=("ceil_div(N_CTX_Q,BLOCK_M)", "Z*G*H", "split_k"),
+        seed=241,
+        none_arguments=tuple(
+            NoneBinding(name)
+            for name in (
+                "block_tables",
+                "Seq_len",
+                "Seq_starts_k",
+                "Seq_starts_q",
+                "Seq_starts_q_multiplier",
+                "additive_bias",
+                "K_fp8_scale_shift",
+                "V_fp8_scale_shift",
+            )
+        ),
+        vararg_arity=1,
+    ),
+    (
+        "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+        "_splitK_reduce_varargs"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_splitK_reduce_varargs"
+        ),
+        buffers=(
+            _buffer("Out_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
+            _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
+            _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 2, 1, 1, 16), "out"),
+            _buffer("LSE", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "lse"),
+        ),
+        scalars=tuple(
+            _scalar(name, "i64", value)
+            for name, value in (
+                ("stride_osk_z0", 32),
+                ("stride_osk_z1", 32),
+                ("stride_osk_g0", 32),
+                ("stride_osk_g1", 32),
+                ("stride_osk_h0", 32),
+                ("stride_osk_h1", 32),
+                ("stride_osk_m0", 16),
+                ("stride_osk_m1", 16),
+                ("stride_osk_k0", 1),
+                ("stride_osk_k1", 1),
+                ("stride_lsek_z0", 2),
+                ("stride_lsek_z1", 2),
+                ("stride_lsek_g0", 2),
+                ("stride_lsek_g1", 2),
+                ("stride_lsek_h0", 2),
+                ("stride_lsek_h1", 2),
+                ("stride_lsek_m0", 1),
+                ("stride_lsek_m1", 1),
+                ("stride_oz", 32),
+                ("stride_og", 16),
+                ("stride_oh", 16),
+                ("stride_om", 16),
+                ("stride_ok", 1),
+                ("stride_lse_z", 2),
+                ("stride_lse_g", 2),
+                ("stride_lse_h", 2),
+                ("stride_lse_m", 1),
+            )
+        ),
+        semantic_constexprs=(
+            ("head_dim", 16),
+            ("H", 1),
+            ("G", 1),
+            ("WRITE_LSE", True),
+        ),
+        c_values=(("head_dim_pow_2", 16),),
+        grid=(2, 1, 1),
+        grid_contract=("M", "B*G*H", "1"),
+        seed=233,
+        vararg_arity=2,
+    ),
+    (
+        "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+        "_splitK_reduce_varargs_backward"
+    ): TritonWorkloadAdapter(
+        (
+            "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+            "_splitK_reduce_varargs_backward"
+        ),
+        buffers=(
+            _buffer("Out_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
+            _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
+            _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer(
+                "Dout_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "dout0"
+            ),
+            _buffer(
+                "Dout_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "dout1"
+            ),
+            _buffer("DLSE_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse0"),
+            _buffer("DLSE_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse1"),
+            _buffer("Out", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer("DOut", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("DLSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+        ),
+        scalars=tuple(
+            _scalar(name, "i64", value)
+            for name, value in (
+                ("stride_osk_z0", 32),
+                ("stride_osk_z1", 32),
+                ("stride_osk_g0", 32),
+                ("stride_osk_g1", 32),
+                ("stride_osk_h0", 32),
+                ("stride_osk_h1", 32),
+                ("stride_osk_m0", 16),
+                ("stride_osk_m1", 16),
+                ("stride_osk_k0", 1),
+                ("stride_osk_k1", 1),
+                ("stride_lsek_z0", 2),
+                ("stride_lsek_z1", 2),
+                ("stride_lsek_g0", 2),
+                ("stride_lsek_g1", 2),
+                ("stride_lsek_h0", 2),
+                ("stride_lsek_h1", 2),
+                ("stride_lsek_m0", 1),
+                ("stride_lsek_m1", 1),
+                ("stride_oz", 32),
+                ("stride_og", 16),
+                ("stride_oh", 16),
+                ("stride_om", 16),
+                ("stride_ok", 1),
+                ("stride_lse_z", 2),
+                ("stride_lse_g", 2),
+                ("stride_lse_h", 2),
+                ("stride_lse_m", 1),
+                ("stride_doz", 32),
+                ("stride_dog", 16),
+                ("stride_doh", 16),
+                ("stride_dom", 16),
+                ("stride_dok", 1),
+                ("stride_dlse_z", 2),
+                ("stride_dlse_g", 2),
+                ("stride_dlse_h", 2),
+                ("stride_dlse_m", 1),
+            )
+        ),
+        semantic_constexprs=(
+            ("BLOCK_SIZE", 16),
+            ("H", 1),
+            ("G", 1),
+        ),
+        c_values=(),
+        grid=(2, 1, 1),
+        grid_contract=("M", "B*G*H", "1"),
+        seed=239,
+        vararg_arity=2,
+    ),
 }
 
 
 __all__ = [
     "BufferBinding",
+    "BufferInitializer",
     "BufferRole",
+    "NoneBinding",
     "PreparedTritonWorkload",
     "TRITON_WORKLOAD_ADAPTER_PROTOCOL",
     "TRITON_WORKLOAD_ADAPTERS",

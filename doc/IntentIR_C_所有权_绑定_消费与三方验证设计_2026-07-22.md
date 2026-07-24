@@ -200,11 +200,16 @@ CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也
 CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
-2026-07-24 起的新 fresh-run 合同使用 `typecheck.v4`：canonical graph 的每个 Layer-A result 都必须
-具有 closed total type；`map_binary` 默认严格服从既有 NumPy broadcast，non-trailing broadcast
-只能消费 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation，checker 不从 shape 或算子名称
-猜轴。Gate2 scalar RefEval 同步以 `j_scalar_cpu_mlir_v8` 标识新增的唯一 node-less logical-input
-load 消费能力。v3/v7 receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
+当前新 fresh-run 合同使用 `typecheck.v5`。v5 继承 v4 的 rank-0 closed signature、Layer-A
+total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
+具有 closed total type，`map_binary` 默认严格服从 NumPy broadcast，非 trailing 轴只能消费
+Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation。v5 新增已知 `reduce` 与 binary
+`contraction` 的 canonical fail-early；别名、缺失/非法 attrs 以及可机械判定的
+axis/rank/shape 矛盾直接拒绝，fixed code 不猜测、翻译或补齐。v5 还拒绝将
+`opaque(mode=value,dtype=none)` absent ABI carrier 用作 π instance semantic ref、realization
+authorization subject 或 refinement carrier，不赋予它 logical denotation。Gate2 scalar RefEval
+仍以 `j_scalar_cpu_mlir_v8` 标识唯一 node-less logical-input load 消费能力。既有 typecheck.v3/v4、
+`j_scalar_cpu_mlir_v7` receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
 
 ### 2.6 显式语义所有权投影
 

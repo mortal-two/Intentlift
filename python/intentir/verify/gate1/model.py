@@ -125,6 +125,31 @@ def render_boundary_access_wire_grammar() -> str:
 class SchemaError(ValueError):
     """Raised when a Gate1 JSON object does not match its strict schema."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        issues: list["_SchemaIssue"] | tuple["_SchemaIssue", ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.issues = tuple(issues)
+
+    @classmethod
+    def from_issues(
+        cls, issues: list["_SchemaIssue"] | tuple["_SchemaIssue", ...]
+    ) -> "SchemaError":
+        if not issues:
+            raise ValueError("SchemaError.from_issues requires at least one issue")
+        return cls(issues[0].detail, issues=issues)
+
+
+@dataclass(frozen=True)
+class _SchemaIssue:
+    """One independently decidable failure from the strict Gate1 decoder."""
+
+    path: str
+    detail: str
+
 
 T = TypeVar("T", bound="StrictJSONMixin")
 
@@ -2642,29 +2667,51 @@ class SignatureParameter(StrictJSONMixin):
             self.logical_ref = _string(
                 self.logical_ref, "SignatureParameter.logical_ref"
             )
-        if self.kind is ParameterKind.OPAQUE and (
-            self.mode is not ParameterMode.VALUE
-            or self.dtype is None
-            or self.rank is not None
-            or self.alias_of is not None
-            or self.logical_ref is not None
-        ):
-            raise SchemaError(
+        issues: list[_SchemaIssue] = []
+        if self.kind is ParameterKind.OPAQUE:
+            detail = (
                 "opaque signature parameters expose only a handle and public dtype"
             )
+            for field_name, invalid in (
+                ("mode", self.mode is not ParameterMode.VALUE),
+                ("dtype", self.dtype is None),
+                ("rank", self.rank is not None),
+                ("alias_of", self.alias_of is not None),
+                ("logical_ref", self.logical_ref is not None),
+            ):
+                if invalid:
+                    issues.append(
+                        _SchemaIssue(f"SignatureParameter.{field_name}", detail)
+                    )
         if self.kind in {ParameterKind.TENSOR, ParameterKind.POINTER}:
-            if self.dtype is None or self.rank is None or self.logical_ref is None:
-                raise SchemaError(
-                    "tensor/pointer signature parameters require dtype, rank, "
-                    "and a J logical_ref"
-                )
-        if self.kind in {ParameterKind.SCALAR, ParameterKind.CONSTEXPR} and (
-            self.dtype is None or self.logical_ref is None
-        ):
-            raise SchemaError(
+            detail = (
+                "tensor/pointer signature parameters require dtype, rank, "
+                "and a J logical_ref"
+            )
+            for field_name, field_value in (
+                ("dtype", self.dtype),
+                ("rank", self.rank),
+                ("logical_ref", self.logical_ref),
+            ):
+                if field_value is None:
+                    issues.append(
+                        _SchemaIssue(f"SignatureParameter.{field_name}", detail)
+                    )
+        if self.kind in {ParameterKind.SCALAR, ParameterKind.CONSTEXPR}:
+            detail = (
                 "logical scalar/constexpr signature parameters require dtype "
                 "and a J logical_ref; implementation-selection values belong to C"
             )
+            for field_name, field_value in (
+                ("dtype", self.dtype),
+                ("logical_ref", self.logical_ref),
+            ):
+                if field_value is None:
+                    issues.append(
+                        _SchemaIssue(f"SignatureParameter.{field_name}", detail)
+                    )
+        if issues:
+            raise SchemaError.from_issues(issues)
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "SignatureParameter":
@@ -2750,11 +2797,31 @@ class LogicalSignature(StrictJSONMixin):
         )
         if not isinstance(data["parameters"], list):
             raise SchemaError("LogicalSignature.parameters must be an array")
-        return cls(
-            parameters=[
-                SignatureParameter.from_json(item) for item in data["parameters"]
-            ]
-        )
+        parameters: list[SignatureParameter] = []
+        issues: list[_SchemaIssue] = []
+        for index, item in enumerate(data["parameters"]):
+            try:
+                parameters.append(SignatureParameter.from_json(item))
+            except SchemaError as exc:
+                if exc.issues:
+                    for issue in exc.issues:
+                        issues.append(
+                            _SchemaIssue(
+                                f"LogicalSignature.parameters[{index}]"
+                                + issue.path.removeprefix("SignatureParameter"),
+                                issue.detail,
+                            )
+                        )
+                else:
+                    issues.append(
+                        _SchemaIssue(
+                            f"LogicalSignature.parameters[{index}]",
+                            str(exc),
+                        )
+                    )
+        if issues:
+            raise SchemaError.from_issues(issues)
+        return cls(parameters=parameters)
 
     def to_json(self) -> dict[str, Any]:
         return {"parameters": [item.to_json() for item in self.parameters]}
@@ -2776,47 +2843,79 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
     input_refs = {tensor.name for tensor in archive.intent.inputs}
     output_refs = {tensor.name for tensor in archive.intent.outputs}
     seen_logical: set[str] = set()
-    for parameter in archive.signature.parameters:
+    issues: list[_SchemaIssue] = []
+    for index, parameter in enumerate(archive.signature.parameters):
+        base = f"SemanticArchive.signature.parameters[{index}]"
         ref = parameter.logical_ref
         if ref is None:
             continue
         if ref not in tensors and ref not in dimensions:
-            raise SchemaError(
-                f"J.signature parameter {parameter.name!r} references unknown "
-                f"J logical handle {ref!r}; logical_ref must name a declared "
-                "J input/output tensor or symbolic dimension, never a body SSA value"
+            issues.append(
+                _SchemaIssue(
+                    f"{base}.logical_ref",
+                    f"J.signature parameter {parameter.name!r} references unknown "
+                    f"J logical handle {ref!r}; logical_ref must name a declared "
+                    "J input/output tensor or symbolic dimension, never a body "
+                    "SSA value",
+                )
             )
+            continue
         if ref in tensors:
             tensor = tensors[ref]
             if parameter.dtype != tensor.dtype:
-                raise SchemaError(
-                    f"J.signature parameter {parameter.name!r} dtype "
-                    f"{parameter.dtype!r} differs from logical tensor {ref!r} "
-                    f"dtype {tensor.dtype!r}"
+                issues.append(
+                    _SchemaIssue(
+                        f"{base}.dtype",
+                        f"J.signature parameter {parameter.name!r} dtype "
+                        f"{parameter.dtype!r} differs from logical tensor {ref!r} "
+                        f"dtype {tensor.dtype!r}",
+                    )
                 )
             if parameter.rank != len(tensor.shape):
-                raise SchemaError(
-                    f"J.signature parameter {parameter.name!r} rank "
-                    f"{parameter.rank!r} differs from logical tensor {ref!r} "
-                    f"rank {len(tensor.shape)!r}"
+                issues.append(
+                    _SchemaIssue(
+                        f"{base}.rank",
+                        f"J.signature parameter {parameter.name!r} rank "
+                        f"{parameter.rank!r} differs from logical tensor {ref!r} "
+                        f"rank {len(tensor.shape)!r}",
+                    )
                 )
             if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
-                raise SchemaError("input signature parameter must bind a J input")
+                issues.append(
+                    _SchemaIssue(
+                        f"{base}.mode",
+                        "input signature parameter must bind a J input",
+                    )
+                )
             if parameter.mode is ParameterMode.OUTPUT and ref not in output_refs:
-                raise SchemaError("output signature parameter must bind a J output")
+                issues.append(
+                    _SchemaIssue(
+                        f"{base}.mode",
+                        "output signature parameter must bind a J output",
+                    )
+                )
             seen_logical.add(ref)
         elif parameter.kind not in {
             ParameterKind.SCALAR,
             ParameterKind.CONSTEXPR,
         }:
-            raise SchemaError(
-                "only scalar/constexpr signature parameters may bind a J dimension"
+            issues.append(
+                _SchemaIssue(
+                    f"{base}.kind",
+                    "only scalar/constexpr signature parameters may bind a J "
+                    "dimension",
+                )
             )
     missing = sorted((input_refs | output_refs) - seen_logical)
     if missing:
-        raise SchemaError(
-            "J.signature does not bind logical tensor(s): " + ", ".join(missing)
+        issues.append(
+            _SchemaIssue(
+                "SemanticArchive.signature.parameters",
+                "J.signature does not bind logical tensor(s): " + ", ".join(missing),
+            )
         )
+    if issues:
+        raise SchemaError.from_issues(issues)
 
 
 @dataclass

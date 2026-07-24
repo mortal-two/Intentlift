@@ -147,6 +147,67 @@ module {
 '''
 
 
+LOOP_CARRIED_POINTER_ACCESS_TTIR = r'''
+module {
+  tt.func public @loop_pointer_access(%source: !tt.ptr<f16>, %destination: !tt.ptr<f16>, %inout: !tt.ptr<f16>, %unused: !tt.ptr<f16>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %step = tt.splat %c1 : i32 -> tensor<8xi32>
+    %source_tile = tt.splat %source : !tt.ptr<f16> -> tensor<8x!tt.ptr<f16>>
+    %destination_tile = tt.splat %destination : !tt.ptr<f16> -> tensor<8x!tt.ptr<f16>>
+    %inout_tile = tt.splat %inout : !tt.ptr<f16> -> tensor<8x!tt.ptr<f16>>
+    %unused_tile = tt.splat %unused : !tt.ptr<f16> -> tensor<8x!tt.ptr<f16>>
+    %final:3 = scf.for %iv = %c0 to %n step %c1 iter_args(%read_ptr = %source_tile, %write_ptr = %destination_tile, %inout_ptr = %inout_tile) -> (tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>) : i32 {
+      %value = tt.load %read_ptr : tensor<8x!tt.ptr<f16>>
+      tt.store %write_ptr, %value : tensor<8x!tt.ptr<f16>>
+      %prior = tt.load %inout_ptr : tensor<8x!tt.ptr<f16>>
+      tt.store %inout_ptr, %prior : tensor<8x!tt.ptr<f16>>
+      %next_read = tt.addptr %read_ptr, %step : tensor<8x!tt.ptr<f16>>, tensor<8xi32>
+      %next_write = tt.addptr %write_ptr, %step : tensor<8x!tt.ptr<f16>>, tensor<8xi32>
+      %next_inout = tt.addptr %inout_ptr, %step : tensor<8x!tt.ptr<f16>>, tensor<8xi32>
+      scf.yield %next_read, %next_write, %next_inout : tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>
+    }
+    %final_value = tt.load %final#0 : tensor<8x!tt.ptr<f16>>
+    tt.store %final#1, %final_value : tensor<8x!tt.ptr<f16>>
+    tt.return
+  }
+}
+'''
+
+
+LOOP_CARRIED_POINTER_REPLACEMENT_TTIR = r'''
+module {
+  tt.func public @loop_pointer_replacement(%initial: !tt.ptr<f16>, %replacement: !tt.ptr<f16>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %final = scf.for %iv = %c0 to %n step %c1 iter_args(%ptr = %initial) -> (!tt.ptr<f16>) : i32 {
+      %value = tt.load %ptr : !tt.ptr<f16>
+      scf.yield %replacement : !tt.ptr<f16>
+    }
+    tt.return
+  }
+}
+'''
+
+
+NON_LOOP_REGION_POINTER_LEAF_TTIR = r'''
+module {
+  tt.func public @non_loop_region(%unrelated: !tt.ptr<f16>, %out: !tt.ptr<f16>) {
+    %zero = arith.constant 0 : i32
+    %seed = arith.constant dense<0> : tensor<8xi32>
+    %result = "tt.reduce"(%seed) <{axis = 0 : i32}> ({
+    ^bb0(%lhs: !tt.ptr<f16>, %rhs: !tt.ptr<f16>):
+      %value = tt.load %lhs : !tt.ptr<f16>
+      %next = tt.addptr %lhs, %zero : !tt.ptr<f16>, i32
+      tt.reduce.return %next : !tt.ptr<f16>
+    }) : (tensor<8xi32>) -> !tt.ptr<f16>
+    tt.store %out, %zero : !tt.ptr<f16>
+    tt.return
+  }
+}
+'''
+
+
 SIBLING_REGION_SSA_REUSE_TTIR = r'''
 module {
   tt.func public @sibling_reuse(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) {
@@ -527,6 +588,59 @@ def test_scf_for_dot_and_effects_are_fingerprinted():
         "tt.dot": 1,
         "tt.load": 2,
     }
+
+
+def test_scf_for_carried_pointer_provenance_drives_exact_interface_modes() -> None:
+    fingerprint = fingerprint_ttir(LOOP_CARRIED_POINTER_ACCESS_TTIR)
+
+    assert [argument.access for argument in fingerprint.interface.arguments] == [
+        "input",
+        "output",
+        "inout",
+        "unused",
+        "value",
+    ]
+    assert fingerprint.loops[0].block_argument_count == 4
+    assert fingerprint.loops[0].carried_argument_use_counts == (2, 2, 3)
+
+
+def test_scf_for_yield_can_introduce_another_pointer_dependency() -> None:
+    fingerprint = fingerprint_ttir(LOOP_CARRIED_POINTER_REPLACEMENT_TTIR)
+
+    assert [argument.access for argument in fingerprint.interface.arguments] == [
+        "input",
+        "input",
+        "value",
+    ]
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        LOOP_CARRIED_POINTER_ACCESS_TTIR.replace(
+            "%final:3 = scf.for", "%final:2 = scf.for", 1
+        ),
+        LOOP_CARRIED_POINTER_ACCESS_TTIR.replace(
+            "scf.yield %next_read, %next_write, %next_inout :",
+            "scf.yield %next_read, %next_write :",
+            1,
+        ),
+    ],
+)
+def test_scf_for_carried_pointer_arity_mismatch_fails_closed(
+    malformed: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match="identical arity"):
+        fingerprint_ttir(malformed)
+
+
+def test_non_loop_region_block_arg_does_not_invent_argument_provenance() -> None:
+    fingerprint = fingerprint_ttir(NON_LOOP_REGION_POINTER_LEAF_TTIR)
+
+    assert [argument.access for argument in fingerprint.interface.arguments] == [
+        "unused",
+        "output",
+    ]
 
 
 def test_sibling_regions_may_reuse_ssa_names_without_cross_scope_capture() -> None:

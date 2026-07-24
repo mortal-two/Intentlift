@@ -5,9 +5,12 @@ from pathlib import Path
 import pytest
 
 from intentir.verify.triton_source_slice import (
+    TRITON_SOURCE_SLICE_PROTOCOL,
     TritonSourceSliceError,
     build_triton_source_slice,
+    expand_triton_varargs,
     inline_imported_triton_helpers,
+    requires_triton_vararg_expansion,
 )
 from intentir.verify.workload_manifest import build_workload_manifest
 
@@ -150,6 +153,265 @@ def target(X, Y):
     assert "def helper" in result.code
     assert "SCALE = 2.0" in result.code
     assert result.inlined_imports == ("fake_pkg.helpers:helper",)
+
+
+def test_indirect_plain_initializer_helper_forms_a_closed_source_projection(
+    tmp_path,
+) -> None:
+    helper = tmp_path / "fake_pkg" / "resolver.py"
+    helper.parent.mkdir()
+    helper.write_text(
+        """import math
+PREFIXES = ("math",)
+def choose(name):
+    if not PREFIXES:
+        raise RuntimeError("unreachable")
+    return getattr(math, name)
+""",
+        encoding="utf-8",
+    )
+    source = """import triton
+import triton.language as tl
+from fake_pkg.resolver import choose
+resolved = choose("sqrt")
+@triton.jit
+def target(X, Y):
+    tl.store(Y, resolved(tl.load(X)))
+"""
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    result = inline_imported_triton_helpers(
+        selected, search_roots=(tmp_path,)
+    )
+
+    assert result.protocol == TRITON_SOURCE_SLICE_PROTOCOL
+    assert result.protocol == "intentir.triton.fixed-c-source-slice.v3"
+    assert "from fake_pkg.resolver import choose" not in result.code
+    assert "import math" in result.code
+    assert "PREFIXES = ('math',)" in result.code
+    assert "def choose" in result.code
+    assert 'resolved = choose("sqrt")' not in result.code
+    assert "resolved = choose('sqrt')" in result.code
+    assert result.included_functions == ("choose", "target")
+    assert result.inlined_imports == ("fake_pkg.resolver:choose",)
+
+
+@pytest.mark.parametrize(
+    "helper_source",
+    (
+        """VALUE = factory()
+def choose(name):
+    return VALUE
+""",
+        """STATE = 0
+def choose(name):
+    global STATE
+    STATE += 1
+    return name
+""",
+        """@wrapper
+def choose(name):
+    return name
+""",
+        """from untrusted_runtime import lookup
+def choose(name):
+    return lookup(name)
+""",
+    ),
+)
+def test_plain_imported_helper_rejects_open_or_effectful_closure(
+    tmp_path, helper_source
+) -> None:
+    helper = tmp_path / "fake_pkg" / "resolver.py"
+    helper.parent.mkdir()
+    helper.write_text(helper_source, encoding="utf-8")
+    source = """import triton
+from fake_pkg.resolver import choose
+resolved = choose("sqrt")
+@triton.jit
+def target(X):
+    return resolved(X)
+"""
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    with pytest.raises(TritonSourceSliceError, match="plain imported helper"):
+        inline_imported_triton_helpers(selected, search_roots=(tmp_path,))
+
+
+def test_plain_imported_helper_rejects_conflicting_module_binding(tmp_path) -> None:
+    helper = tmp_path / "fake_pkg" / "resolver.py"
+    helper.parent.mkdir()
+    helper.write_text(
+        """import math as triton
+def choose(name):
+    return getattr(triton, name)
+""",
+        encoding="utf-8",
+    )
+    source = """import triton
+from fake_pkg.resolver import choose
+resolved = choose("sqrt")
+@triton.jit
+def target(X):
+    return resolved(X)
+"""
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    with pytest.raises(TritonSourceSliceError, match="conflicting definitions"):
+        inline_imported_triton_helpers(selected, search_roots=(tmp_path,))
+
+
+def test_closed_vararg_expansion_uses_source_markers_and_explicit_arity() -> None:
+    source = """import triton
+import triton.language as tl
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", SCALE: "VAR_ARGS_ARRAY", Out):
+    temporary: "VAR_ARGS_ARRAY"
+    for i in range(len(A)):
+        temporary[i] = A[i] * SCALE[i]
+    for j in range(len(temporary)):
+        tl.store(Out + j, temporary[j])
+"""
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    result = expand_triton_varargs(selected, arity=2)
+
+    assert result.protocol == "intentir.triton.fixed-c-source-slice.v3"
+    assert result.vararg_arity == 2
+    assert result.parameters == ("A0", "A1", "SCALE0", "SCALE1", "Out")
+    assert "VAR_ARGS_ARRAY" not in result.code
+    assert "len(A)" not in result.code
+    assert "temporary0 = A0 * SCALE0" in result.code
+    assert "temporary1 = A1 * SCALE1" in result.code
+    assert "tl.store(Out + 0, temporary0)" in result.code
+    assert "tl.store(Out + 1, temporary1)" in result.code
+
+
+def test_closed_vararg_expansion_preserves_unrelated_nested_scope_and_defaults(
+) -> None:
+    source = '''import triton
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", Out=None):
+    def local_identity(value):
+        return value
+    for i in range(len(A)):
+        Out[i] = local_identity(A[i])
+'''
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    assert requires_triton_vararg_expansion(selected)
+    result = expand_triton_varargs(selected, arity=2)
+
+    assert result.parameters == ("A0", "A1", "Out")
+    assert "def target(A0, A1, Out=None):" in result.code
+    assert "def local_identity(value):" in result.code
+    assert "Out[0] = local_identity(A0)" in result.code
+    assert "Out[1] = local_identity(A1)" in result.code
+
+
+@pytest.mark.parametrize(
+    ("source", "diagnostic"),
+    (
+        (
+            '''import triton
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", Out):
+    def nested(B: "VAR_ARGS_ARRAY"):
+        return B[0]
+    for i in range(len(A)):
+        Out[i] = A[i]
+''',
+            "outside the selected top-level entry lexical scope",
+        ),
+        (
+            '''import triton
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", Out):
+    def nested():
+        return A[0]
+    for i in range(len(A)):
+        Out[i] = nested() + A[i]
+''',
+            "left dynamic marker/reference",
+        ),
+        (
+            '''import triton
+@triton.jit
+def target(Out, A: "VAR_ARGS_ARRAY"=None):
+    for i in range(len(A)):
+        Out[i] = A[i]
+''',
+            "positional parameters with defaults",
+        ),
+        (
+            '''import triton
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", Out):
+    for i in range(len(A)):
+        read = lambda: A[i]
+        Out[i] = read()
+''',
+            "cannot rewrite across a nested lexical scope",
+        ),
+    ),
+)
+def test_closed_vararg_expansion_rejects_nested_scope_or_marker_default(
+    source: str,
+    diagnostic: str,
+) -> None:
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    with pytest.raises(TritonSourceSliceError, match=diagnostic):
+        expand_triton_varargs(selected, arity=2)
+
+
+def test_nested_marker_alone_is_not_promoted_to_entry_marker() -> None:
+    source = '''import triton
+@triton.jit
+def target(X):
+    def nested(A: "VAR_ARGS_ARRAY"):
+        return A[0]
+    return nested(X)
+'''
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    with pytest.raises(
+        TritonSourceSliceError,
+        match="outside the selected top-level entry lexical scope",
+    ):
+        requires_triton_vararg_expansion(selected)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        """import triton
+@triton.jit
+def target(A: "VAR_ARGS_ARRAY", index):
+    return A[index]
+""",
+        """import triton
+@triton.jit
+def helper(A: "VAR_ARGS_ARRAY"):
+    return A[0]
+@triton.jit
+def target(X):
+    return helper(X)
+""",
+        """import triton
+@triton.jit
+def target(X):
+    return X
+""",
+    ),
+)
+def test_closed_vararg_expansion_rejects_dynamic_foreign_or_absent_marker(
+    source,
+) -> None:
+    selected = build_triton_source_slice(source, source_symbol="target")
+
+    with pytest.raises(TritonSourceSliceError, match="VAR_ARGS_ARRAY|vararg"):
+        expand_triton_varargs(selected, arity=2)
 
 
 @pytest.mark.parametrize(

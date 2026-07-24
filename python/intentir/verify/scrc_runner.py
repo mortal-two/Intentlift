@@ -24,6 +24,30 @@ MAX_PRE_REPLAY_REJECTIONS = 3
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 _OBSERVER_NODE_FINGERPRINT = re.compile(r"\[[0-9a-f]{12,64}\]")
 
+SCRCProgressCallback = Callable[
+    [str, int | None, int | None, str],
+    None,
+]
+
+
+def _notify_progress(
+    callback: SCRCProgressCallback | None,
+    stage: str,
+    attempt: int | None,
+    formal_round: int | None,
+    status: str,
+) -> None:
+    """Best-effort runtime observation that can never alter a gate verdict."""
+
+    if callback is None:
+        return
+    try:
+        callback(stage, attempt, formal_round, status)
+    except Exception:
+        # Progress is deliberately outside the certificate and evidence TCB.
+        # Broken output streams or observers cannot reject or accept a case.
+        return
+
 
 def _feedback_item(value: Any) -> Any:
     """Remove non-actionable observer node ids from relift-only diagnostics."""
@@ -428,6 +452,7 @@ class SCRCGateRunner:
         request: SCRCRunRequest,
         *,
         stop_requested: Callable[[], int | None] | None = None,
+        progress_callback: SCRCProgressCallback | None = None,
     ) -> SCRCGate1SearchReport:
         """Search one isolated branch through TypeCheck and Gate1 only."""
 
@@ -479,11 +504,25 @@ class SCRCGateRunner:
             if stopped is not None:
                 return stopped
             lift_calls += 1
+            _notify_progress(
+                progress_callback,
+                "lift",
+                lift_calls,
+                None,
+                "started",
+            )
             try:
                 lift_result = self.dependencies.lift.lift(request, feedback)
             except CandidateLiftError as exc:
                 lift_physical_calls += exc.physical_calls
                 pre_replay_rejections += 1
+                _notify_progress(
+                    progress_callback,
+                    "lift",
+                    lift_calls,
+                    None,
+                    "rejected",
+                )
                 feedback = LiftFeedback(
                     FeedbackKind.LIFT,
                     exc.diagnostics,
@@ -509,6 +548,13 @@ class SCRCGateRunner:
                     "Lift adapter must return LiftCallResult"
                 )
             lift_physical_calls += lift_result.physical_calls
+            _notify_progress(
+                progress_callback,
+                "lift",
+                lift_calls,
+                None,
+                "finished",
+            )
             artifact = canonicalize_gate1_artifact(lift_result.artifact)
             last_artifact = artifact
             stopped = superseded("after_lift")
@@ -525,8 +571,22 @@ class SCRCGateRunner:
                 return superseded("after_lift") or stopped
             request.binding.validate_artifact(artifact)
             typecheck_calls += 1
+            _notify_progress(
+                progress_callback,
+                "typecheck",
+                lift_calls,
+                None,
+                "started",
+            )
             report = self.dependencies.type_checker(
                 artifact.j, artifact.c, artifact.pi
+            )
+            _notify_progress(
+                progress_callback,
+                "typecheck",
+                lift_calls,
+                None,
+                report.status.value,
             )
             if not report.passed:
                 pre_replay_rejections += 1
@@ -569,6 +629,13 @@ class SCRCGateRunner:
                 return superseded("before_replay") or stopped
 
             formal_rounds += 1
+            _notify_progress(
+                progress_callback,
+                "gate1",
+                None,
+                formal_rounds,
+                "started",
+            )
             gate1_adapter = self.dependencies.gate1_factory(formal_rounds)
             if any(gate1_adapter is previous for previous in gate1_adapters):
                 raise SCRCInfrastructureError(
@@ -576,6 +643,13 @@ class SCRCGateRunner:
                 )
             gate1_adapters.append(gate1_adapter)
             gate1 = gate1_adapter.run(artifact, request)
+            _notify_progress(
+                progress_callback,
+                "gate1",
+                None,
+                formal_rounds,
+                gate1.status.value,
+            )
             replay_normal_calls += gate1.normal_calls
             replay_masked_calls += gate1.masked_j_calls
             for arm in (gate1.normal, gate1.masked_j):
@@ -745,8 +819,16 @@ class SCRCGateRunner:
             ),
         )
 
-    def run(self, request: SCRCRunRequest) -> SCRCRunReport:
-        search = self.search_gate1(request)
+    def run(
+        self,
+        request: SCRCRunRequest,
+        *,
+        progress_callback: SCRCProgressCallback | None = None,
+    ) -> SCRCRunReport:
+        search = self.search_gate1(
+            request,
+            progress_callback=progress_callback,
+        )
         if search.closed:
             return self.complete_gate2(request, search)
         return SCRCRunReport(
@@ -777,6 +859,7 @@ __all__ = [
     "SCRCGateRunner",
     "SCRCGate1SearchReport",
     "SCRCInfrastructureError",
+    "SCRCProgressCallback",
     "SCRCRunDependencies",
     "SCRCRunReport",
     "SCRCRunRequest",

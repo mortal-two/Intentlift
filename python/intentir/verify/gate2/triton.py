@@ -24,6 +24,7 @@ class ArgumentRole(str, Enum):
     OUTPUT = "output"
     INOUT = "inout"
     SCALAR = "scalar"
+    NONE = "none"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,17 @@ class TritonArgument:
                 object.__setattr__(self, "output_key", self.name)
         if self.role is ArgumentRole.SCALAR and self.value_key is None and self.value is None:
             raise ValueError("scalar argument requires value_key or fixed value")
+        if self.role is ArgumentRole.NONE and any(
+            item is not None
+            for item in (
+                self.value_key,
+                self.dtype,
+                self.shape,
+                self.value,
+                self.output_key,
+            )
+        ):
+            raise ValueError("none argument forbids value/dtype/shape/output fields")
 
 
 @dataclass(frozen=True)
@@ -201,6 +213,9 @@ class TritonRunner:
                     launch_args: dict[str, Any] = {}
                     outputs: dict[str, Any] = {}
                     for argument in spec.arguments:
+                        if argument.role is ArgumentRole.NONE:
+                            launch_args[argument.name] = None
+                            continue
                         if argument.role is ArgumentRole.SCALAR:
                             scalar = (
                                 values[argument.value_key]

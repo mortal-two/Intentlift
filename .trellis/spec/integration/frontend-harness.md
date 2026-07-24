@@ -38,6 +38,12 @@ Lift 生成 `logical_ref`、C `subject_ref/axis_ref`、J/C 分类或任何 artif
 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。不得维护
 Harness-private 近似规则。
 
+同一权威 Decode/TypeCheck 调用若已经机械判定出多个互不依赖的错误，CandidateCheck 可以按
+声明/字段的稳定顺序一次返回多个 closed diagnostics；当前统一上限为 20 项，每个 path/observed
+文本上限为 2048 字符。它只能展开权威 checker 已经得到的错误，不得为了继续检查而给缺失字段
+填默认值、改别名、删除冲突项或构造 repaired artifact。若 JSON、父对象或某个参数本身尚不能
+合法解析，依赖该前提的后续检查必须留到修正后的下一次 evaluation，不能猜测修复结果后提前报错。
+
 ## Logical signature 与绑定
 
 input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical
@@ -85,28 +91,67 @@ concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容�
 - source/schema 不一致记为 `MANIFEST_INVALID`，不得伪装成 Gate 失败；
 - list、validate 与 dry-run 不调用 Lift/Replay provider。
 
-批量入口的逻辑顺序由 registry ordinal 唯一决定；实际执行可以串行，也可以在明示资源上限内对
-多个 case 做有界并行。无论调度方式如何，每个 case 都必须使用独立的 fresh Lift/Replay 生命周期和
-独立 evidence 目录。单个 case 的准备、编译或认证异常必须收敛为该 case 的结构化结果，不得
-取消、污染或改写其他 case 的结果。汇总层最终按 registry ordinal 稳定排序，只统计既有
-TypeCheck、Gate1、Gate2、main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
+live 批量入口使用 `intentir.scrc.batch.v2` outer batch protocol。设同时运行的独立 case lifecycle
+数为 `W`，每个 case 的候选 branch 数为 `B`，全局 branch/provider/Gate1 in-flight 上限为 `G`，
+hidden Gate2 设备并发上限为 `G2`；必须满足 `W >= 1`、`1 <= B <= 5`、`G >= 1`、`G2 >= 1` 与
+`W*B <= G`。`W/B/G/G2` 只作为 proof-irrelevant audit metadata 报告，不进入 TypeCheck、Gate1、
+Gate2、winner 或 certificate predicate。
 
-跨 case 并行的最小隔离单位是完整 case lifecycle：每个 case 分别新建 Harness 可变执行状态、Lift
-session、provider session、Replay writer、TypeCheck/Gate runner、relift history、输出 buffer 与 evidence
-目录。只读 registry、source file 和不含 case 状态的 adapter 定义可以共享；candidate artifact、provider
-response/conversation、Replay、diff、winner、C valuation 和任何可变 Harness 状态不得跨 case 共享。
-资源争用或 provider 限流必须记为相应 case 的执行证据，不得通过交换候选或压缩隔离边界
-规避。
+live CLI 必须由重复的显式 case 集或 `--tier` 选择运行范围，不能无选择地隐式启动 28 项；默认
+evidence root 是仓库外的 `/tmp/intentir-scrc-task11`，也允许调用方显式覆盖。批量入口的逻辑顺序
+由 registry ordinal 唯一决定；实际执行可以串行，也可以在上述资源上限内对多个 case 做有界并行。
+case evidence 目录必须以原子、无冲突方式分配，不能使用跨 worker 的 `max(existing)+1` 读改写
+竞态。单个 case 的准备、编译或认证异常必须收敛为该 case 的结构化结果，不得取消、污染或改写
+其他 case 的结果。汇总层最终按 registry ordinal 稳定排序，只统计既有 TypeCheck、Gate1、Gate2、
+main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
+
+live run 默认在 stderr 输出 `intentir.scrc.progress.v1` JSONL 旁路，用于 proof-irrelevant
+observability；stdout 的最终 batch JSON 与 evidence 不依赖该旁路。除固定 protocol/event envelope
+外，closed payload 只能包含 case identity、branch、stage、attempt、formal round、elapsed 与 closed
+status（实现字段为 `case_id/ordinal/branch_id/stage/attempt/formal_round/elapsed/status`），并约每 60 秒
+为仍活跃的 case/branch 输出 heartbeat。它绝不能包含 Source、artifact、diff、diagnostic、provider
+response/conversation 或 hidden Gate2 input；写入、flush、heartbeat 或 stderr 异常必须被隔离，不能
+改变任何 case verdict。调用方可用 `--no-progress` 完全关闭该旁路。
+
+跨 case 并行的最小隔离单位是完整 case lifecycle：每个 case/branch 分别新建 Harness 可变执行状态、
+provider conversation/session、Lift/Replay runner、Replay writer、TypeCheck/Gate runner、relift history、
+输入输出 buffer 与 evidence state/目录。只读 `ProviderConfig`、registry、source file 和不含 case 状态
+的 adapter 定义可以共享；candidate artifact、provider response/conversation、Replay、diff、winner、
+C valuation 和任何可变 Harness 状态不得跨 case 或 branch 共享。资源争用或 provider 限流必须记为
+相应 case/branch 的执行证据，不得通过交换候选或压缩隔离边界规避。
 
 同一 case 内的候选 fan-out 仍按同一 Source、同一 Harness 合同与同一 `c0` 建立 `B` 个互不
-重叠的 branch evidence 目录。每个 branch 新建独立 Lift、Replay writer、TypeCheck/Gate1 runner 与
-relift history；Source slice 和只读 adapter 描述可以共享，但 candidate、provider response、Replay、
-diff 与输出 buffer 不得在 branch 间共享。
+重叠的 branch evidence 目录。`B=1` 主要用于横向诊断 canary：若该 branch 通过全部门禁，其
+`SCRC_CERTIFIED` 仍然有效；只有失败结论不能声称标准五分支 `NO_CLOSURE_(5,K)`。最终未闭合项的
+搜索可以在全局 `G` 内升到 `B=5`。就 artifact 构造而言，每个 branch
+都由 LLM 完整生成 `(J,C,pi)`；固定代码只做 closed Decode/Elaborate、dependent checking、拒绝与
+diagnostics，绝不从 Source、Gate、其他 branch 或历史 evidence 推断、合成或自动补写 artifact。
 
 Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out 的
 pre-Gate2 wave barrier 完成后，由受信任 runner 只依据 TypeCheck/Gate1 evidence，按固定
-`(branch_id, formal_round)` 顺序选择一个 winner，再由 Harness 为该 winner 生成隐藏 Gate2 输入；
-wall-clock 完成先后不参与选择，其余 branch 不读取这些输入。
+lexicographic `(branch_id, formal_round)` 顺序选择一个 winner，再由 Harness 为该 winner 生成隐藏
+Gate2 输入，并在独立 `G2` semaphore 下只执行一次 Gate2；wall-clock 完成先后不参与选择，其余
+branch 不读取这些输入，Gate2 失败也不 fallback 到 sibling。若没有 winner，只有全部 `B` 个 branch
+都带完整 evidence 终止为 `NO_CLOSURE` 时，case aggregate 才能报告 `NO_CLOSURE_(B,K)`；只要混有
+infrastructure-failed、superseded 或 incomplete branch，aggregate 必须是 `infrastructure_failed`，并
+保留全部 branch statuses 与 evidence 指针。
+
+对已经落盘的 parent attempt，Harness 还可运行独立的
+`intentir.scrc.gate1-diagnostic-recheck.v1`：先确认 artifact 位于 parent evidence 内并保持其
+bytes/digest 不变，再使用当前 TypeCheck、一个 fresh normal Replay 与 Gate1 写入独立原子
+`recheck-NNN` 目录。该路径明确 `diagnostic_only=true`、`enters_gate2=false`、
+`changes_prior_verdict=false`；它不调用 Lift、masked-J、Gate2 或 winner logic，不能将旧 candidate
+升级为当前协议结果。调用 provider 和分配新 evidence 前，必须核对 parent request 的 case/frontend/
+c0/grid/anonymous binding、parent source projection 与 source bytes，并要求 parent Gate1
+`artifact_digest` 等于输入 artifact；任何缺失或错配都 fail closed。协议/context/knowledge 改变后的
+正式结论仍必须 fresh rerun。
+
+Task 11 的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、attention
+row reduction 与 linear contraction 均终止为 `NO_CLOSURE_(1,K)`；所有正式 candidate 均已通过
+TypeCheck。RMSNorm、Softmax 与 attention row reduction 的共同证据进一步确认：pointer carrier 已在
+π 中直接进入 `address_base`，但 v2 Replay 错把 base/lane 先合并为整数 offset，破坏了后续 pointer
+carrier dataflow。这是通用 Replay consumer/U_f 问题，已通过 `public_frontend_context_v3` 与
+`intentir.lift-knowledge.v11` 修正并要求 fresh rerun；旧 verdict 保持原样，不被新协议静默追认。
 
 ## 真实 Triton Source 投影与声明式 adapter
 
@@ -114,13 +159,46 @@ wall-clock 完成先后不参与选择，其余 branch 不读取这些输入。
 Source 投影。该投影只允许：
 
 - 选择 registry 指定且唯一的顶层 Triton entry；
-- 保留其必要 import、模块常量与同模块/可解析 imported `@triton.jit` helper 闭包；
+- 保留其必要 import、模块常量与同模块/可解析 imported helper 闭包；
 - 去除只负责搜索 C valuation 的 autotune/heuristics decorator；
 - 对 source AST 的参数顺序、runtime/constexpr 分类和 adapter formals 做 exact ABI 校验。
 
 它不得改写 Kernel body、预先解释 operator/predicate/formula，也不得把搜索 decorator 的配置变成
 新的 artifact。若 helper、decorator 或 ABI 不能机械收敛，case 必须报告 `HARNESS_INVALID` 或
 `CASE_UNAVAILABLE`，不能带着猜测进入 Lift/Gate。
+
+`intentir.triton.fixed-c-source-slice.v3` 对跨模块 plain-helper closure 使用 closed audit boundary：
+只从调用方显式给出的 source roots 解析实际被投影引用的 import；目标必须唯一解析为模块顶层、
+无 decorator 的同步 source helper，并只递归纳入其实际依赖闭包。这里的 closed 只表示词法依赖可
+封闭审计，不额外宣称 helper 无副作用。闭包只允许 stdlib/Triton absolute
+imports、同样受审计的 undecorated helper 与 static literal；第三方依赖、dynamic initializer、
+`global/nonlocal`、helper 内 local import、decorator、`async/await`、`yield`、多重/冲突/未解析 binding
+均 fail closed。实现直接读取显式 root 下的 source file，不 import package 或执行 `__init__`，也没有
+xFormers、`libdevice_find`、`rsqrt` 或其他 symbol/family 特判。
+
+v3 还支持 Source 以精确字符串 annotation `VAR_ARGS_ARRAY` 声明的编译前 fixed-arity ABI 展开。arity
+必须作为 Harness 调用事实显式给出且限制在 `[1,64]`；投影只展开普通 positional 参数、bare local
+array 声明与精确 `for i in range(len(array))`，按 Source 声明次序形成 `name0,name1,...`。marker 位于
+非 entry helper 或 selected top-level entry 的任意 nested lexical scope、动态下标/循环、残留
+marker/reference、缺失或无 marker 的 arity 均 fail closed；expander 不进入 nested function/class/lambda
+改写同名或捕获变量。被展开的 positional marker 参数自身若带 default 也必须拒绝，因为复制后无法
+无歧义保持 Python ABI；未标 marker 的合法 trailing defaults 原样保留。
+该变换不调用外部 `unroll_varargs`，不执行 `exec`、linecache monkey patch 或 package initializer，也
+不读取 Kernel 名称、参数位置或语义公式。
+
+若被移除的 decorator 带有改变调用初态的机械 `pre_hook`（例如把一个 `inout` buffer 清零），fixed-C
+Harness 必须用 closed、通用的 adapter initializer 显式保留该调用事实；不能按 Kernel 名称在 runner
+中补行为。当前 `intentir.scrc.triton-workload-adapter.v3` 只允许 `random|zeros` 输入初始化，纯 output
+没有 initializer；另可声明真实 runtime `None` 与上述 bounded vararg arity。`None` 必须贯穿 compile、
+Source/Replay launch 与 Gate2 为真正的 absent carrier，在 J.signature 中只能是
+`opaque(mode=value,dtype=none)`，无 logical_ref/J tensor/node/effect/π instance，绝不能换成 dummy
+pointer 或 scalar。TypeCheck 还必须分别拒绝它成为 π instance anchor、authorization subject 或
+refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker，只给出拒绝诊断，不得
+自动删除这些字段或补造 artifact。一次生成的 fixture 必须由 Source、Replay 与 RefEval 三腿共享，
+不能分别重采样。
+由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
+可见构造合同，fresh MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v13`；旧
+v11/v12 receipt 不被静默改写。
 
 Source 投影不能因当前 `c0` 恰好让某个 grid axis 的 extent 为 1，就删除该 axis 的
 `program_id`、address-base 或其他 compiler-visible realization topology；Gate1 比较的是本次真实
@@ -138,7 +216,16 @@ scalar/constexpr 的归属按以下机械边界处理：
 | logical runtime scalar 或 semantic constexpr | `J.signature` 的 rank-0 handle | Source/Replay 按 ABI 接收 scalar；RefEval 接收同值 rank-0 input |
 | logical dimension/extent | J 的 dimension handle | 只绑定 shape/domain，不伪装成 rank-0 data tensor |
 | schedule constexpr | C slot | Harness 绑定实际 `c0`；Replay 只读取 `MaskC(C)` |
+| absent runtime `None` | `J.signature` 的 `opaque(dtype=none)` handle | Source/Replay 原样接收 `None`；RefEval 无输入且 J/π 无语义节点 |
 
-六个代表项 adapter 只是现行 28 项 registry 上的 Harness 配置视图；它们不得演化成另一份 Kernel
-清单。每次准备仍须重新解析 registry source、检查 entry/ABI，并在真实 CUDA/Triton frontend 上
-使用同一份 Source 投影与实际 `c0`。
+当前 `intentir.scrc.triton-workload-adapter.v3` 在现行 28 项 registry 上声明全部 28 项 Harness 配置视图：
+原六项 DYT、SwiGLU、Softmax、RMSNorm、attention row reduction、linear contraction；full
+FlashAttention forward/backward、fused-add RMSNorm、Sparsemax、one-column-block backward；以及
+Qwen2-VL MRoPE、GroupNorm、JSD、CrossEntropy、GEGLU、PolyNorm、Llama4 RoPE、FlashAttention
+LayerNorm、RoPE、LayerNorm、KLDiv、TVD、xFormers RMSNorm/RMSNorm-add，以及三个 SplitK entry。
+ordinal 24/25 由上述通用 plain-helper closure 形成无 package import 的投影；ordinal 26 forward 使用
+8 个真实 `None` carrier、arity 1 local-array expansion 与非退化 split grid，ordinal 27/28 使用 arity 2
+并分别形成 38/51 参数的 expanded ABI。28 项 static prepare 与真实 Triton CUDA frontend compile
+均通过；`declared` 只表示 Harness/source ABI 已有闭合配置，不是 SCRC 终态。adapter 集不得演化成
+第二份 Kernel 清单；每次准备仍须重新解析 registry source、检查 entry/ABI，并在真实 CUDA/Triton
+frontend 上使用同一份 Source 投影与实际 `c0`。

@@ -106,11 +106,15 @@ agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱�
 Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v4 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。
-`typecheck.v4` 还要求 Layer-A graph value typing total，并按既有 NumPy broadcast 合同拒绝缺少
-显式 `J.boundary.broadcasts` 的 non-trailing broadcast；它只消费 Lift 已声明的 broadcast relation，
-不推导或补写轴。`typecheck.v3` receipt 保留旧 judgement，不由 v4 静默重判。
+当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v5 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v5 继承 v4 的
+rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
+已在 `J.boundary.broadcasts` 中声明的 non-trailing relation，不推导或补写轴。v5 新增
+已知 `reduce` 与 binary `contraction` 的 canonical fail-early，拒绝别名、缺失/非法 canonical
+attrs 与可机械判定的 axis/rank/shape 矛盾；它还拒绝 absent
+`opaque(mode=value,dtype=none)` 成为 π instance semantic ref、realization authorization subject 或
+refinement carrier。checker 不翻译/补齐 attrs、生成 dummy carrier 或修复 artifact。既有
+typecheck.v3/v4 receipt 保留原 judgement，不由 v5 静默重判。
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
 diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1` 历史对象不因
 此次激活而被静默重判。
@@ -173,6 +177,11 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
+当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
+`public_frontend_context_v5`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
+`intentir.lift-knowledge.v13`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+evidence 不因实现升级而被重判。
+
 `U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败
 样本选择。Replay 看不到 Source、Harness、C values、source parameter name/position、真实
 BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选、旧 Replay、Gate1 diff、
@@ -182,6 +191,12 @@ BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选�
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。
 
+Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
+合同。`tl.dot`、`tl.sum`、Triton program-axis 以及 base/lane 到具体 pointer operation 的拼写，只能在
+`frontend=triton` 时由 Triton `U_f`/instruction clause 给出；CUDA、CuTe、TileLang prompt 不得收到
+这些 Triton 实现话术。π 的 source-neutral mechanism grammar 仍对所有前端共享，它只定义 artifact
+tag 的意义，不指定某个前端 API。
+
 π region placement 不是隐式代码生成指令：`placement=program` 不等于存在 `program_id`。只有 π
 中另有一个表示 compiler-visible program/grid coordinate 的独立 `realize` instance 与 routes 时，
 Replay 才能生成对应 stage；不得按常见 kernel 模板从 placement、grid 惯例或 C 猜出额外 grid
@@ -189,13 +204,38 @@ offset、整数乘加或 affine address。
 
 现有关系的机械解释是：锚定 J domain、位于 program region 且 scalar dependency path 进入
 `address_base` 的 `realize` stage 是 program coordinate；进入 `address_lane` 的 domain/C path 是
-lane coordinate。Triton `U_f` 按声明顺序把前者映射为 `tl.program_id(axis)`，后者才使用
-`tl.arange` 等 lane realization；placement 单独出现时两者都不能推断。Triton 的 `tl.arange` 等
+lane coordinate。Triton `U_f` 按 distinct J domain `semantic_ref` 的首次声明顺序分配
+`tl.program_id(axis)`；锚定同一 `d*` 的多个 instance 仍分别 materialize，但共享同一 program-axis
+identity，instance multiplicity 绝不自动产生下一条 axis。只有 distinct domain anchor 才能分配
+下一条 axis。lane path 才使用 `tl.arange` 等 lane realization；placement 单独出现时两者都不能
+推断。Triton 的 `tl.arange` 等
 compile-time-only API 必须直接读取仍带 `tl.constexpr` 注解的匿名 `c*` 参数，不得先复制到普通
 Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 binding 和直接 routed use 即可
 满足，不要求恒等 alias。`IntentFunction.reduce.axes` 是 logical axes；匹配的
 `J.boundary.reductions.tile_axis` 才是 Triton reduction call 使用的物理 tile axis。这里都是固定、
 source-neutral 的前端合同，不是 per-kernel hint。
+
+当前 packet 不携带任何 pad-discharge derived hint。若 J 写出 symbolic input extent、
+literal pad 与 static output extent，却没有闭合它们的 dependent equality，U_f 不能读取 Harness
+valuation 猜出等式，也不能授权 Replay 省略 pad。应由下一次 Source-aware Lift 给出可检查的 J
+relation（或不生成该冗余 pad）；固定 Replay consumer 不在 packet 内建立临时 shape/slot theorem
+prover。
+
+对 canonical binary J contraction，若 per-program 两个 operand 与 result 都是 rank-2 floating
+tile、恰有一个 contracted label，且声明的 operand/result/accumulation dtype 均由 public
+`tl.dot` 支持，则一个锚定该 contraction node 的 `realize` instance 在当前 Triton `U_f v5` 中使用一个
+direct `tl.dot` realization。它不能被展开成 broadcasted outer-product multiply + `tl.sum`，因为
+后者制造了 artifact 未声明的 compiler-visible stages。该规则不适用于 outer product、batched 或
+其他 unsupported contraction/tile/dtype，也不覆盖 π 已显式声明多个 contraction-anchored stage 的
+情况；Replay 不得为了强用 `tl.dot` 修改 J 或删除 π stage。若 Source 本来就是多个显式 stage，下一次
+Lift 必须用完整 π multiplicity/order 表达；若 Source 是一次 direct primitive，则只能声明对应的一次
+stage。
+
+若 Source 中一个 SSA coordinate/address intermediate 只定义一次却被多个 access 使用，Lift 必须
+声明一个 producer、把 consumers/routes 与 one-producer sharing 闭合；多个语法 use 不等于多个
+producer instance。只有 Source 中确有不同 compiler-visible definition/stage 时，才可重复同一
+semantic ref。Replay 不得通过 `base + (coordinate - base)` 一类代数恒等式伪造额外
+materialization 来满足错误 multiplicity。
 
 base/lane 是 address contribution 角色而不是 pointer-add 计数。Source 若形成可分离的
 program-uniform integer base 与 lane offset，并在一次 pointer add 前合并，π 仍保留 program path
@@ -217,12 +257,21 @@ relift diagnostic view 必须明确区分。
 
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
-当前同一 case 使用 `B=5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
+协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v5`、一个 fresh normal Replay
+与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
+candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
+observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared
+request、source projection 与 source bytes 对上 parent run receipts，并要求 parent Gate1 记录的
+artifact digest 精确等于输入 artifact；错 case、错 artifact、错 Source 或缺少旧 lineage 字段均
+fail closed。
+
+当前同一 case 使用 `1 <= B <= 5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
 Gate1 round，`K` 包含首次候选。每个 branch 的 previous artifact、Gate1 diff、Lift conversation、
 Replay writer 与调用预算完全隔离；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
 artifact。Runner 等待当前 search wave 的所有 branch 到达 pre-Gate2 barrier，再仅依据完整
 TypeCheck/Gate1 evidence，按固定 `(branch_id, formal_round)` 顺序选择第一个 Gate1-closed 候选。
 未选但已闭合的 branch 记录为 `GATE1_CLOSED_NOT_SELECTED`；只有固定 winner 随后获得隐藏 Gate2
 输入并执行一次 Gate2，Gate2 失败不得 fallback 到 sibling。没有 Gate1-closed 候选时才报告
-`NO_CLOSURE_(5,3)`；infrastructure-incomplete branch 必须单独报告。wall-clock 完成先后不进入
+`NO_CLOSURE_(B,3)`；infrastructure-incomplete branch 必须单独报告。wall-clock 完成先后不进入
 winner 函数。

@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from direct_fixtures import make_copy_artifact
+from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.model import IntentOp
 from intentir.extraction.lifters.miniswe import (
@@ -122,11 +122,15 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v10"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v13"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
     assert "map_binary" in files["knowledge/intent_ops.md"]
+    assert "contraction: binary einsum" in files["knowledge/intent_ops.md"]
+    assert '"lhs,rhs->out" label string (no ellipsis)' in (
+        files["knowledge/intent_ops.md"]
+    )
     assert "Do not page through the raw schema" in files["README.md"]
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
@@ -137,9 +141,27 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "never names a source/local or J-body v*" in (
         files["knowledge/lift_contract.md"]
     )
-    assert "Never replace the program path with constant zero" in (
-        files["knowledge/preflight.md"]
-    )
+    preflight = " ".join(files["knowledge/preflight.md"].split())
+    assert "Never replace the program path with constant zero" in preflight
+    assert "route `p*` directly into `address_base`" in preflight
+    assert "pointer `p*` bypasses it" in preflight
+    assert "Never decide from the base-to-lane edge alone" in preflight
+    assert "same program-axis identity, not evidence for another axis" in preflight
+    assert "defined once and reused by several accesses" in preflight
+    assert "one producer with routed consumers" in preflight
+    assert "syntactic uses do not create repeated producer instances" in preflight
+    assert "uses only canonical `attrs.subscripts`" in preflight
+    assert "never emit `lhs_contract_axes`/`rhs_contract_axes`" in preflight
+    assert "direct Source contraction primitive" in preflight
+    assert "one contraction-anchored `realize` instance" in preflight
+    assert "separately compiler-visible outer-product/multiply/reduction" in preflight
+    assert "compiler-visible semantic recurrence" in preflight
+    assert "existing structured J `loop`" in preflight
+    assert "every carry and initial value" in preflight
+    assert "matching next/yield/result values" in preflight
+    assert "result-axis orientation" in preflight
+    assert "expect pi or Replay to recover it" in preflight
+    assert "cannot carry or infer an initialization" in preflight
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
@@ -911,7 +933,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v4"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v5"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -927,12 +949,57 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
         "diagnostics": [],
     }
 
+    malformed_reduce = make_reduce_artifact()
+    malformed_reduce.j.intent.body[1].attrs = {
+        "kind": "sum",
+        "axes": [1],
+        "keepdims": False,
+    }
+    shared_core_rejection = check_scrc_lift_candidate(
+        json.dumps(malformed_reduce.to_json()), context
+    )
+    assert shared_core_rejection["status"] == "fail"
+    assert {
+        item["rule_code"] for item in shared_core_rejection["diagnostics"]
+    } == {"known_op_contract_invalid"}
+    assert {
+        item["path"] for item in shared_core_rejection["diagnostics"]
+    } == {
+        "j.intent.intent_function.body[1].attrs.assoc",
+        "j.intent.intent_function.body[1].attrs.fn",
+        "j.intent.intent_function.body[1].attrs.kind",
+    }
+
+    malformed_contraction = make_copy_artifact()
+    contraction = malformed_contraction.j.intent.body[0]
+    contraction.op = "contraction"
+    contraction.operands = ["t0", "t0"]
+    contraction.attrs = {
+        "lhs_contract_axes": [0],
+        "rhs_contract_axes": [0],
+    }
+    contraction.type = {"dtype": "f32", "shape": ["x0"]}
+    contraction_rejection = check_scrc_lift_candidate(
+        json.dumps(malformed_contraction.to_json()), context
+    )
+    assert contraction_rejection["status"] == "fail"
+    assert {
+        item["rule_code"] for item in contraction_rejection["diagnostics"]
+    } == {"known_op_contract_invalid"}
+    assert {
+        item["path"] for item in contraction_rejection["diagnostics"]
+    } == {
+        "j.intent.intent_function.body[0].attrs.lhs_contract_axes",
+        "j.intent.intent_function.body[0].attrs.rhs_contract_axes",
+        "j.intent.intent_function.body[0].attrs.subscripts",
+    }
+
     stale = SCRCCandidateCheckContext(
         context.expected_parameters,
         context.anonymous_compiler_view,
         context.schema_version,
         context.decode_protocol,
-        "intentir.scrc.typecheck.v3",
+        "intentir.scrc.typecheck.v4",
     )
     mismatch = check_scrc_lift_candidate(
         json.dumps(artifact.to_json()), stale
@@ -979,6 +1046,145 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     assert bounded["diagnostics"][0]["rule_code"] == "decode_rejected"
     assert len(observed) <= 2048
     assert observed.endswith("...<truncated>")
+
+
+def test_candidate_check_rejects_semantics_on_absent_none_carrier() -> None:
+    context = SCRCCandidateCheckContext(("p0", "p1", "p2", "p3"))
+    candidate = make_copy_artifact().to_json()
+    candidate["j"]["signature"]["parameters"].append(
+        {"name": "p3", "kind": "opaque", "mode": "value", "dtype": "none"}
+    )
+    candidate["j"]["boundary"]["realization_authorizations"] = [
+        {
+            "auth_id": "u0",
+            "kind": "reassociation",
+            "subject_ref": "p3",
+        }
+    ]
+    candidate["pi"]["instances"].append(
+        {
+            "id": "i1",
+            "semantic_ref": "p3",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    candidate["pi"]["refinements"] = [
+        {"instance": "i1", "kind": "reassociation", "auth_ref": "u0"}
+    ]
+
+    rejected = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert rejected["status"] == "fail"
+    assert [item["rule_code"] for item in rejected["diagnostics"]] == [
+        "absent_carrier_semantic_use_forbidden",
+        "absent_carrier_semantic_use_forbidden",
+        "absent_carrier_semantic_use_forbidden",
+    ]
+    assert [item["path"] for item in rejected["diagnostics"]] == [
+        "j.boundary.realization_authorizations[0].subject_ref",
+        "pi.instances[1].semantic_ref",
+        "pi.refinements[0].instance",
+    ]
+
+
+def test_candidate_check_aggregates_independent_signature_decode_errors() -> None:
+    context = scrc_candidate_check_context(
+        prepare_scrc_lift(_adapter_request().source.text)
+    )
+    candidate = make_copy_artifact().to_json()
+    parameters = candidate["j"]["signature"]["parameters"]
+    del parameters[0]["rank"]
+    del parameters[0]["logical_ref"]
+    del parameters[1]["dtype"]
+    original = json.dumps(candidate, sort_keys=True)
+
+    rejected = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert json.dumps(candidate, sort_keys=True) == original
+    assert rejected["protocol"] == CANDIDATE_CHECK_PROTOCOL
+    assert rejected["status"] == "fail"
+    assert [item["rule_code"] for item in rejected["diagnostics"]] == [
+        "decode_rejected",
+        "decode_rejected",
+        "decode_rejected",
+    ]
+    assert [item["path"] for item in rejected["diagnostics"]] == [
+        "j.signature.parameters[0].rank",
+        "j.signature.parameters[0].logical_ref",
+        "j.signature.parameters[1].dtype",
+    ]
+    assert all(
+        item["observed_refs_or_types"]
+        == [
+            "SchemaError: tensor/pointer signature parameters require dtype, "
+            "rank, and a J logical_ref"
+        ]
+        for item in rejected["diagnostics"]
+    )
+
+
+def test_candidate_check_aggregates_dependent_signature_errors_stably() -> None:
+    context = scrc_candidate_check_context(
+        prepare_scrc_lift(_adapter_request().source.text)
+    )
+    candidate = make_copy_artifact().to_json()
+    parameters = candidate["j"]["signature"]["parameters"]
+    parameters[0]["dtype"] = "f16"
+    parameters[0]["rank"] = 0
+    parameters[1]["logical_ref"] = "t0"
+
+    rejected = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert rejected["status"] == "fail"
+    assert [item["path"] for item in rejected["diagnostics"]] == [
+        "j.signature.parameters[0].dtype",
+        "j.signature.parameters[0].rank",
+        "j.signature.parameters[1].mode",
+        "j.signature.parameters",
+    ]
+    assert all(
+        item["rule_code"] == "decode_rejected"
+        for item in rejected["diagnostics"]
+    )
+    assert "does not bind logical tensor(s): t1" in rejected["diagnostics"][-1][
+        "observed_refs_or_types"
+    ][0]
+
+
+def test_candidate_check_decode_aggregation_is_bounded_and_non_speculative() -> None:
+    context = scrc_candidate_check_context(
+        prepare_scrc_lift(_adapter_request().source.text)
+    )
+    candidate = make_copy_artifact().to_json()
+    candidate["j"]["signature"]["parameters"] = [
+        {
+            "name": f"p{index}",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "i32",
+        }
+        for index in range(25)
+    ]
+
+    bounded = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert len(bounded["diagnostics"]) == 20
+    assert [item["path"] for item in bounded["diagnostics"]] == [
+        f"j.signature.parameters[{index}].logical_ref" for index in range(20)
+    ]
+
+    blocked = make_copy_artifact().to_json()
+    del blocked["j"]["signature"]["parameters"][0]["logical_ref"]
+    blocked_result = check_scrc_lift_candidate(json.dumps(blocked), context)
+    assert [item["path"] for item in blocked_result["diagnostics"]] == [
+        "j.signature.parameters[0].logical_ref"
+    ]
+    assert all(
+        "does not bind logical tensor" not in observed
+        for item in blocked_result["diagnostics"]
+        for observed in item["observed_refs_or_types"]
+    )
 
 
 def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> None:
@@ -1044,7 +1250,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v4"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v5"
     assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None

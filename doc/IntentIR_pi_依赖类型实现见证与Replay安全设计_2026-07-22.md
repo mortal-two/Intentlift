@@ -153,6 +153,8 @@ node/access/effect/value handles。
 - C use 只能引用 `MaskC(C)` 中存在的 slot；
 - sensitive representation refinement 必须引用 J/B 中已经存在的显式 authorization，或者属于
   系统安全白名单；
+- `J.signature` 中精确的 `opaque(mode=value,dtype=none)` 只表示缺席 ABI carrier，不能成为 π
+  instance anchor、authorization subject 或 refinement carrier；该限制不泛化到其他 opaque dtype；
 - 删除 J/C 后，π 不能获得独立 denotation。
 
 π schema 是 closed-world 的：未知字段、未知 relation、可执行自由文本和未声明的 semantic
@@ -322,17 +324,57 @@ program-coordinate stage；若 domain/C dependency path 进入 `address_lane`，
 stage。Replay 保持该拓扑区分，公共前端上下文 (U_f) 再决定使用何种公开 API。π 本身仍不保存
 `program_id`、axis 公式、前端文本或新的 mechanism tag。
 
-这里的 `address_base/address_lane` 是 address contribution 的角色边界，不要求 Source 已经执行
-两次 pointer addition。若 Source 先形成可分离的 program-uniform integer base（例如 grid
-coordinate 与 tile extent 的组合）和 lane offset，再把两者合并后只执行一次 pointer addition，
-program path 仍必须进入 `address_base` 并 route 到 `address_lane`。Replay 保留两个 integer stage 与
-唯一的 pointer addition；它不能因为当前 grid extent 为 1 把 program path 改成常量。只有 Source
-根本不存在可分离的 program-uniform contribution 时，才使用单独的 `address_lane`。
+program axis 的 identity 来自 J domain anchor，不来自 instance 数量。公共 Triton `U_f` 按 distinct
+domain `semantic_ref` 的首次声明顺序分配 axis；同一 `d*` 上的多个 realization instance 仍是多个
+compiler-visible stage，必须分别 materialize，但都读取同一 program axis，不能把第二个 instance
+擅自解释为 `program_id(1)`。只有 distinct domain anchor 才能分配下一条 axis。这个规则不合并
+instance，也不替 Lift 修复错误 multiplicity；若 Source 只有一次 coordinate stage，下一轮 Lift 仍
+必须只声明一次并将其共享到全部消费者。
+
+更一般地，一个 Source SSA coordinate/address intermediate 只定义一次、被多个 access 使用时，π
+必须声明一个 producer、多个 routed consumers 与 one-producer sharing。多个语法 use 不构成多个
+producer instance；重复同一 semantic ref 只表示不同 compiler-visible definition/stage。Replay 不得
+为满足错误 multiplicity 而构造 `base + (coordinate - base)` 一类代数恒等式；Lift 也不能把真实的
+多个 stage 反向折叠成一个。
+
+这里的 `address_base/address_lane` 是 address contribution 的角色边界；pointer/address operation
+次数必须由 `J.signature` 的 carrier kind 与 π route 联合决定，不能从 base-to-lane edge 单独猜测。
+若 pointer/tensor `p*` instance 直接进入 `address_base`，该 base 本身就是一次 pointer/address
+operation；其 pointer 结果再 route 到 `address_lane` 时，Replay 必须保留第二次 lane
+pointer/address operation。若 `address_base` 只接收 integer/domain/C contribution，而 pointer
+carrier 绕过 base、直到 `address_lane` 或最终 address stage 才进入，则 Replay 保留两个 integer
+stage、先合并 base/lane，再执行唯一 pointer addition。两种情况都不能因为当前 grid extent 为 1
+把 program path 改成常量。只有 Source 根本不存在可分离的 program-uniform contribution 时，才
+使用单独的 `address_lane`。
 
 一个直接锚定 J signature handle 或 C slot 的单独 `realize` instance，可以由对应参数 binding 与
 direct routed use 满足，不要求额外的 identity assignment。若同一 handle 声明多个 instance，
 它们仍表示多个 compiler-visible use-site/stage，不能折叠。这个区分对 constexpr 尤其重要：公共
 前端合同可以要求直接使用参数来保留编译期类型，而不是为了形式上的 materialization 破坏类型。
+
+相同原则适用于 structured operator realization。对 canonical binary contraction，在 rank-2、单一
+contracted label、floating tile/dtype/accumulation 均由 public `tl.dot` 支持时，一个锚定该 node 的
+`realize` instance 由当前 `U_f v5` 映射为一个 direct `tl.dot`；不得以 outer-product multiply +
+`tl.sum` 扩成未声明 stages。若 Source 确有多个 compiler-visible decomposition stage，Lift 应把
+它们完整声明为同一 node 上的多个有序 instances；若不满足 direct `tl.dot` support 条件，`U_f`
+不能强迫该 spelling。这里没有新增 J op、π mechanism 或 Source-specific rule。
+
+这里的 `tl.dot`、program-axis 与具体 pointer/address 拼写都只属于 Triton `U_f`。Replay prompt 的
+公共部分只保留 frontend-neutral ownership/topology 合同；CUDA、CuTe 与 TileLang 不接收 Triton
+话术，各自只能由其版本化 `U_f` 决定公开 API。共享的 π mechanism grammar 仍可描述
+`address_base/address_lane` 等 source-neutral tag，但不能借此指定 `tl.*` 实现。
+
+π 同样不能填补 J 中缺失的 semantic recurrence。若 Source 的 compiler-visible value dataflow 是
+loop-carried recurrence，J 必须用已有 structured `loop` 完整声明 trip/scan、carry/init、body update
+与对应 next/yield/result；contraction 的 canonical subscripts 与 result-axis orientation 必须和 update
+消费一致。π 只锚定这些 J carrier 的 realization topology，不能保存或让 Replay 推断 initialization、
+update formula、yield 或 transpose/orientation。把 recurrence 压成最终 global formula 会使 Replay
+欠定，不能靠增加 π 自由文本补救。
+
+同一边界也适用于 pad。若 J/π 没有证明 symbolic input extent、literal pad 与 static output extent
+之间的 dependent equality，π/U_f 都不能读取 Harness 的冻结 valuation 补出该关系，Replay packet
+也不应携带 per-candidate pad-discharge fact。当前 `replay-input.v1` 不提供这种旁路；应由
+下一次 Lift 修正 J，而不是在 Replay consumer 中建立小型 theorem prover。
 
 ### 4.4 对 semantic labels 参数化
 
@@ -671,6 +713,10 @@ Replay LLM 应遵守以下过程合同：
 10. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
 11. 输出完整、参数化、source-blind frontend source；
 12. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+
+当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
+`public_frontend_context_v5` 与 `intentir.lift-knowledge.v13`；旧 receipt 保持其原 verdict，不能由
+当前 Replay consumer 或 Lift knowledge 静默升级。
 
 固定代码仍只做：
 
@@ -1024,10 +1070,14 @@ TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic sc
 numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
 生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run `typecheck.v4` 进一步要求 Layer-A value typing total，并严格检查 NumPy broadcast
-compatibility。只有 J 中显式存在的 non-trailing broadcast relation 才能被消费；这不会给 π、
-CandidateCheck 或 elaborator 增加 artifact 构造权。Gate2 scalar consumer 的新增能力独立标为
-`j_scalar_cpu_mlir_v8`，v3/v7 的历史 receipt 与 Softmax/RMS verdict 均不追认。
+活动 fresh-run 使用 `typecheck.v5`。v5 继承 v4 的 rank-0 closed signature、Layer-A value typing
+total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
+才能被消费。v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行
+canonical fail-early，拒绝别名、缺失/非法 canonical attrs 及可机械判定的 axis/rank/shape
+矛盾；它同时拒绝 absent `opaque(mode=value,dtype=none)` 成为 π instance semantic ref、
+realization authorization subject 或 refinement carrier。这些拒绝不会给 π、CandidateCheck 或
+elaborator 增加 artifact 构造权。Gate2 scalar consumer 的新增能力独立标为
+`j_scalar_cpu_mlir_v8`，既有 typecheck.v3/v4、`j_scalar_cpu_mlir_v7` receipt 与 Softmax/RMS verdict 均不追认。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

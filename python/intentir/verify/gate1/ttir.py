@@ -1338,25 +1338,107 @@ class TTIRParser:
         arg_position = {
             name: index for index, (name, _, _) in enumerate(function.arguments)
         }
-        dependency_cache: dict[str, frozenset[int]] = {}
+        value_sources: dict[str, tuple[str, ...]] = {}
 
-        def dependencies(name: str, active: frozenset[int] = frozenset()) -> frozenset[int]:
-            if name in dependency_cache:
-                return dependency_cache[name]
-            if name in arg_position:
-                result = frozenset({arg_position[name]})
-            elif name in leaf_labels:
-                result = frozenset()
-            else:
-                node_id = result_to_node[name]
-                if node_id in active:
-                    raise TTIRParseError("cyclic SSA dependency while inferring interface")
-                operation = node_by_id[node_id]
-                result = frozenset().union(
-                    *(dependencies(operand, active | {node_id}) for operand in operation.operands)
+        for operation in operations:
+            if operation.name != "scf.for":
+                sources = tuple(operation.operands)
+                for result_name in operation.result_names:
+                    value_sources[result_name] = sources
+                continue
+
+            # scf.for has three control operands followed by one init value per
+            # iter_arg.  Its first region block argument is the induction
+            # variable; the remaining block arguments, operation results, and
+            # scf.yield operands correspond positionally.  A carried value may
+            # depend both on its initial value and on values captured by the
+            # yielded update.  Keep those equations per slot: joining all
+            # iter_args would incorrectly turn unrelated input/output pointers
+            # into inout arguments.
+            carried_block_args = tuple(operation.region_block_args[1:])
+            init_values = tuple(operation.operands[3:])
+            yielded_values = tuple(operation.region_results)
+            result_names = tuple(operation.result_names)
+            arities = {
+                len(carried_block_args),
+                len(init_values),
+                len(yielded_values),
+                len(result_names),
+            }
+            if len(arities) != 1:
+                raise TTIRParseError(
+                    "scf.for iter_args, results, block arguments, and yield "
+                    "values must have identical arity"
                 )
-            dependency_cache[name] = result
-            return result
+            if not operation.region_block_args:
+                raise TTIRParseError(
+                    "scf.for is missing its induction block argument"
+                )
+
+            value_sources[operation.region_block_args[0]] = tuple(
+                operation.operands[:3]
+            )
+            for block_arg, result_name, initial, yielded in zip(
+                carried_block_args,
+                result_names,
+                init_values,
+                yielded_values,
+                strict=True,
+            ):
+                sources = (initial, yielded)
+                value_sources[block_arg] = sources
+                value_sources[result_name] = sources
+
+        # Region-carried SSA contains intentional cycles: a yielded pointer is
+        # commonly computed from the corresponding iter_arg.  Recursive DFS
+        # either drops that dependency at a region leaf or rejects the valid
+        # cycle.  Compute the least fixed point of function-argument provenance
+        # instead.  The lattice is finite (sets of argument positions), so this
+        # terminates deterministically and also captures a different pointer
+        # introduced by a yielded update.
+        dependencies: dict[str, set[int]] = {
+            name: {position} for name, position in arg_position.items()
+        }
+        for name in leaf_labels:
+            dependencies.setdefault(name, set())
+        for name in result_to_node:
+            dependencies.setdefault(name, set())
+
+        changed = True
+        while changed:
+            changed = False
+            for name, sources in value_sources.items():
+                inferred = (
+                    set().union(
+                        *(dependencies[source] for source in sources)
+                    )
+                    if sources
+                    else set()
+                )
+                if not inferred.issubset(dependencies[name]):
+                    dependencies[name].update(inferred)
+                    changed = True
+
+        # Preserve the pre-existing rejection of an ordinary cyclic SSA
+        # producer graph.  Valid loop-carried cycles pass through region block
+        # arguments (leaves in this structural walk) and are handled only by
+        # the fixed-point equations above.
+        acyclic: set[str] = set()
+
+        def validate_acyclic(
+            name: str,
+            active: frozenset[int] = frozenset(),
+        ) -> None:
+            if name in acyclic or name in leaf_labels:
+                return
+            node_id = result_to_node[name]
+            if node_id in active:
+                raise TTIRParseError(
+                    "cyclic SSA dependency while inferring interface"
+                )
+            for operand in node_by_id[node_id].operands:
+                validate_acyclic(operand, active | {node_id})
+            acyclic.add(name)
 
         modes: dict[int, set[str]] = {}
         for operation in operations:
@@ -1370,7 +1452,8 @@ class TTIRParser:
                 mode = "readwrite"
             else:
                 continue
-            for position in dependencies(operation.operands[0]):
+            validate_acyclic(operation.operands[0])
+            for position in dependencies[operation.operands[0]]:
                 modes.setdefault(position, set()).add(mode)
         access: dict[int, str] = {}
         for position, seen in modes.items():

@@ -46,6 +46,19 @@ ResultRelation(output,
 公开前端 reduction call 使用后者，RefEval 用前者解释 J 的逻辑函数。`tile_axis` 不是 tile extent、
 C valuation 或任意公式；identity 与 masked contribution 仍由同一个 B reduction contract 约束。
 
+当前 canonical binary `contraction` 只使用 `attrs.subscripts` 保存 NumPy-style 二元 einsum 关系；
+`lhs_contract_axes/rhs_contract_axes` 不是别名，也不会被 fixed code 翻译。TypeCheck 在已有 typed J
+能够机械决定的范围内检查两个 operand rank、label extent 与 result shape；不从 Source、π 或 C
+补出 subscripts。frontend 能否把一个合法 contraction 直接拼写为 `tl.dot` 是版本化 `U_f` 与 π
+stage multiplicity 的消费问题，不改变这个 J denotation。
+
+`semantic recurrence` 不是“最终结果看起来等价”即可省略的提示。若 Lift 观察到 compiler-visible
+loop-carried value dataflow，它必须使用现有 structured `loop` 明确给出 trip/scan、每个 carry 与
+init、body 内有序 update，以及一一对应的 next/yield/result。loop body 内 contraction 的 canonical
+subscripts 和 result-axis orientation 必须直接匹配 update 消费；只有真实 logical transformation
+才能插入 transpose。π 没有公式所有权，不能把缺失的 recurrence、init/yield 或 contraction
+orientation留给 Replay 恢复。
+
 这些关系必须由 RefEval、comparator 或 production backend 实际消费。缺少必要 boundary、consumer
 不支持、关系参数非法或 authorization 不完整时必须 fail closed，不能退回 case-specific Python
 oracle 或旁路 metadata。

@@ -1,8 +1,9 @@
-"""Small sequential batch shell around independent SCRC workload cases."""
+"""Bounded batch shells around independent SCRC workload cases."""
 
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -14,7 +15,15 @@ from .workload_manifest import (
 )
 
 
-SCRC_BATCH_PROTOCOL = "intentir.scrc.sequential-batch.v1"
+SCRC_BATCH_PROTOCOL = "intentir.scrc.batch.v2"
+MAX_CASE_WORKERS = 32
+
+_SCHEDULING_KEYS = (
+    "case_workers",
+    "candidates",
+    "max_branch_workers",
+    "gate2_workers",
+)
 
 
 class BatchClassification(str, Enum):
@@ -67,6 +76,14 @@ class BatchCaseResult:
 class BatchReport:
     mode: str
     cases: tuple[BatchCaseResult, ...]
+    scheduling: Mapping[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        scheduling = _validate_scheduling(self.scheduling)
+        # Keep an owned plain dict: callers cannot mutate the report through
+        # their input mapping, while standard dataclass consumers such as
+        # dataclasses.asdict remain supported.
+        object.__setattr__(self, "scheduling", scheduling)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -79,6 +96,7 @@ class BatchReport:
             "mode": self.mode,
             "total": len(self.cases),
             "status_counts": self.counts,
+            "scheduling": dict(self.scheduling),
             "cases": [item.to_json() for item in self.cases],
         }
 
@@ -86,8 +104,82 @@ class BatchReport:
 CaseExecutor = Callable[[SCRCWorkloadEntry], BatchCaseResult]
 
 
-class SequentialSCRCBatchRunner:
-    """Execute cases in declaration order and isolate case-local failures."""
+def _validate_case_workers(case_workers: int) -> int:
+    if type(case_workers) is not int or not 1 <= case_workers <= MAX_CASE_WORKERS:
+        raise ValueError(
+            f"case_workers must be an integer in [1, {MAX_CASE_WORKERS}]"
+        )
+    return case_workers
+
+
+def _validate_scheduling(
+    scheduling: Mapping[str, int] | None,
+) -> dict[str, int]:
+    if scheduling is None:
+        return {}
+    if not isinstance(scheduling, Mapping):
+        raise ValueError("scheduling must be a mapping")
+    if not scheduling:
+        return {}
+    supplied = set(scheduling)
+    expected = set(_SCHEDULING_KEYS)
+    if supplied != expected:
+        missing = sorted(expected - supplied)
+        extra = sorted(supplied - expected)
+        raise ValueError(
+            "scheduling must contain exactly "
+            f"{list(_SCHEDULING_KEYS)!r}; missing={missing!r}, extra={extra!r}"
+        )
+    normalized: dict[str, int] = {}
+    for key in _SCHEDULING_KEYS:
+        value = scheduling[key]
+        if type(value) is not int or value < 1:
+            raise ValueError(f"scheduling.{key} must be a positive integer")
+        normalized[key] = value
+    if (
+        normalized["case_workers"] * normalized["candidates"]
+        > normalized["max_branch_workers"]
+    ):
+        raise ValueError(
+            "scheduling requires case_workers * candidates <= "
+            "max_branch_workers"
+        )
+    return normalized
+
+
+def _infrastructure_failure(
+    entry: SCRCWorkloadEntry,
+    exc: Exception,
+) -> BatchCaseResult:
+    return BatchCaseResult(
+        entry.case_id,
+        entry.ordinal,
+        BatchClassification.INFRASTRUCTURE_FAILED,
+        entry.representative_tier,
+        diagnostic=f"{type(exc).__name__}: {exc}",
+    )
+
+
+def _validated_case_result(
+    entry: SCRCWorkloadEntry,
+    executor: CaseExecutor,
+) -> BatchCaseResult:
+    try:
+        result = executor(entry)
+        if not isinstance(result, BatchCaseResult):
+            raise TypeError("batch executor must return BatchCaseResult")
+        if result.case_id != entry.case_id or result.ordinal != entry.ordinal:
+            raise ValueError("batch executor returned a result for another case")
+        return result
+    except Exception as exc:  # case-local isolation is part of the contract
+        return _infrastructure_failure(entry, exc)
+
+
+class ConcurrentSCRCBatchRunner:
+    """Run independent case lifecycles with a bounded outer worker pool."""
+
+    def __init__(self, *, case_workers: int) -> None:
+        self.case_workers = _validate_case_workers(case_workers)
 
     def run(
         self,
@@ -95,23 +187,73 @@ class SequentialSCRCBatchRunner:
         executor: CaseExecutor,
         *,
         mode: str,
+        scheduling: Mapping[str, int] | None = None,
     ) -> BatchReport:
-        results: list[BatchCaseResult] = []
-        for entry in entries:
-            try:
-                result = executor(entry)
-                if result.case_id != entry.case_id or result.ordinal != entry.ordinal:
-                    raise ValueError("batch executor returned a result for another case")
-            except Exception as exc:  # case isolation is the point of this shell
-                result = BatchCaseResult(
-                    entry.case_id,
-                    entry.ordinal,
-                    BatchClassification.INFRASTRUCTURE_FAILED,
-                    entry.representative_tier,
-                    diagnostic=f"{type(exc).__name__}: {exc}",
-                )
-            results.append(result)
-        return BatchReport(mode, tuple(results))
+        scheduling_values = _validate_scheduling(scheduling)
+        if scheduling_values and (
+            scheduling_values["case_workers"] != self.case_workers
+        ):
+            raise ValueError(
+                "scheduling.case_workers must equal runner case_workers"
+            )
+        indexed_entries = tuple(enumerate(entries))
+        if not indexed_entries:
+            return BatchReport(mode, (), scheduling_values)
+
+        completed: dict[int, BatchCaseResult] = {}
+        with ThreadPoolExecutor(
+            max_workers=min(self.case_workers, len(indexed_entries)),
+            thread_name_prefix="scrc-case",
+        ) as pool:
+            future_to_index = {
+                pool.submit(_validated_case_result, entry, executor): index
+                for index, entry in indexed_entries
+            }
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                # _validated_case_result contains the case-local exception
+                # boundary.  This fallback covers executor-level failures such
+                # as a broken Future implementation without cancelling peers.
+                try:
+                    completed[index] = future.result()
+                except Exception as exc:  # pragma: no cover - defensive only
+                    completed[index] = _infrastructure_failure(
+                        indexed_entries[index][1], exc
+                    )
+
+        # Completion order is proof-irrelevant.  Registry ordinals determine
+        # the aggregate order; declaration position only breaks malformed ties
+        # deterministically without changing a valid registry.
+        ordered = tuple(
+            result
+            for _index, result in sorted(
+                completed.items(),
+                key=lambda item: (
+                    indexed_entries[item[0]][1].ordinal,
+                    item[0],
+                ),
+            )
+        )
+        return BatchReport(mode, ordered, scheduling_values)
+
+
+class SequentialSCRCBatchRunner:
+    """Compatibility shell for the bounded runner with ``case_workers=1``."""
+
+    def run(
+        self,
+        entries: Sequence[SCRCWorkloadEntry],
+        executor: CaseExecutor,
+        *,
+        mode: str,
+        scheduling: Mapping[str, int] | None = None,
+    ) -> BatchReport:
+        return ConcurrentSCRCBatchRunner(case_workers=1).run(
+            entries,
+            executor,
+            mode=mode,
+            scheduling=scheduling,
+        )
 
 
 def dry_run_executor(
@@ -153,6 +295,8 @@ __all__ = [
     "BatchCaseResult",
     "BatchClassification",
     "BatchReport",
+    "ConcurrentSCRCBatchRunner",
+    "MAX_CASE_WORKERS",
     "SCRC_BATCH_PROTOCOL",
     "SequentialSCRCBatchRunner",
     "dry_run_executor",

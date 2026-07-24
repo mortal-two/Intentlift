@@ -100,6 +100,37 @@ def test_triton_execution_spec_rejects_argument_schedule_overlap() -> None:
         )
 
 
+def test_none_argument_is_closed_and_name_keyed() -> None:
+    argument = TritonArgument("optional", ArgumentRole.NONE)
+    assert argument.role is ArgumentRole.NONE
+    with pytest.raises(ValueError, match="none argument forbids"):
+        TritonArgument(
+            "optional", ArgumentRole.NONE, value_key="dummy"
+        )
+
+    class OptionalKernel:
+        arg_names = ("input_ptr", "optional", "output_ptr")
+
+        def __init__(self):
+            self.kwargs = None
+
+        def __getitem__(self, _grid):
+            def launch(**kwargs):
+                self.kwargs = kwargs
+
+            return launch
+
+    kernel = OptionalKernel()
+    _launch_by_name(
+        kernel,
+        (1,),
+        {"input_ptr": object(), "optional": None, "output_ptr": object()},
+        {},
+    )
+    assert kernel.kwargs is not None
+    assert kernel.kwargs["optional"] is None
+
+
 def _cuda_available() -> bool:
     try:
         import torch

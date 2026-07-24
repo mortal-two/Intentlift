@@ -11,12 +11,14 @@ from __future__ import annotations
 import ast
 import builtins
 import copy
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 
-TRITON_SOURCE_SLICE_PROTOCOL = "intentir.triton.fixed-c-source-slice.v1"
+TRITON_SOURCE_SLICE_PROTOCOL = "intentir.triton.fixed-c-source-slice.v3"
+_VARARG_ARRAY_ANNOTATION = "VAR_ARGS_ARRAY"
 
 
 class TritonSourceSliceError(ValueError):
@@ -147,6 +149,7 @@ class TritonSourceSlice:
     removed_decorators: tuple[str, ...]
     inlined_imports: tuple[str, ...] = ()
     protocol: str = TRITON_SOURCE_SLICE_PROTOCOL
+    vararg_arity: int | None = None
 
     def validate_abi(
         self,
@@ -177,6 +180,7 @@ class TritonSourceSlice:
             "included_functions": list(self.included_functions),
             "removed_decorators": list(self.removed_decorators),
             "inlined_imports": list(self.inlined_imports),
+            "vararg_arity": self.vararg_arity,
         }
 
 
@@ -306,6 +310,412 @@ def build_triton_source_slice(
     )
 
 
+def _is_vararg_array_annotation(annotation: ast.expr | None) -> bool:
+    return (
+        isinstance(annotation, ast.Constant)
+        and annotation.value == _VARARG_ARRAY_ANNOTATION
+    )
+
+
+def _function_parameter_nodes(function: ast.FunctionDef) -> tuple[ast.arg, ...]:
+    parameters: list[ast.arg] = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ]
+    if function.args.vararg is not None:
+        parameters.append(function.args.vararg)
+    if function.args.kwarg is not None:
+        parameters.append(function.args.kwarg)
+    return tuple(parameters)
+
+
+class _LexicalVarargMarkerCollector(ast.NodeVisitor):
+    """Collect local markers without entering a nested lexical scope."""
+
+    def __init__(self) -> None:
+        self.markers: list[ast.AnnAssign] = []
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if _is_vararg_array_annotation(node.annotation):
+            self.markers.append(node)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+
+def _function_vararg_markers(function: ast.FunctionDef) -> tuple[ast.AST, ...]:
+    parameter_markers = [
+        argument
+        for argument in _function_parameter_nodes(function)
+        if _is_vararg_array_annotation(argument.annotation)
+    ]
+    collector = _LexicalVarargMarkerCollector()
+    for statement in function.body:
+        collector.visit(statement)
+    return (*parameter_markers, *collector.markers)
+
+
+def _all_vararg_markers(node: ast.AST) -> tuple[ast.AST, ...]:
+    return tuple(
+        item
+        for item in ast.walk(node)
+        if (
+            isinstance(item, ast.arg)
+            and _is_vararg_array_annotation(item.annotation)
+        )
+        or (
+            isinstance(item, ast.AnnAssign)
+            and _is_vararg_array_annotation(item.annotation)
+        )
+    )
+
+
+def _selected_vararg_entry(
+    tree: ast.Module,
+    *,
+    function_name: str,
+) -> tuple[ast.FunctionDef, bool]:
+    targets = [
+        function
+        for function in tree.body
+        if isinstance(function, ast.FunctionDef)
+        and function.name == function_name
+    ]
+    if len(targets) != 1:
+        raise TritonSourceSliceError(
+            "selected vararg entry must resolve to one top-level function"
+        )
+    target = targets[0]
+    lexical_markers = _function_vararg_markers(target)
+    lexical_marker_ids = {id(item) for item in lexical_markers}
+    foreign_markers = [
+        item
+        for item in _all_vararg_markers(tree)
+        if id(item) not in lexical_marker_ids
+    ]
+    if foreign_markers:
+        lines = sorted(
+            {
+                str(getattr(item, "lineno", "?"))
+                for item in foreign_markers
+            }
+        )
+        raise TritonSourceSliceError(
+            "VAR_ARGS_ARRAY markers outside the selected top-level entry "
+            "lexical scope are unsupported (line(s): "
+            + ", ".join(lines)
+            + ")"
+        )
+    return target, bool(lexical_markers)
+
+
+class _VarargLoopSubstituter(ast.NodeTransformer):
+    def __init__(
+        self,
+        *,
+        loop_variable: str,
+        inline_variables: set[str],
+        index: int,
+    ) -> None:
+        self.loop_variable = loop_variable
+        self.inline_variables = inline_variables
+        self.index = index
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self.inline_variables
+            and isinstance(node.slice, ast.Name)
+            and node.slice.id == self.loop_variable
+        ):
+            return ast.copy_location(
+                ast.Name(
+                    id=f"{node.value.id}{self.index}",
+                    ctx=copy.deepcopy(node.ctx),
+                ),
+                node,
+            )
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if node.id == self.loop_variable:
+            return ast.copy_location(ast.Constant(self.index), node)
+        return node
+
+    def _preserve_nested_scope(self, node: ast.AST) -> ast.AST:
+        forbidden = {self.loop_variable, *self.inline_variables}
+        captured = sorted(
+            {
+                item.id
+                for item in ast.walk(node)
+                if isinstance(item, ast.Name) and item.id in forbidden
+            }
+        )
+        if captured:
+            raise TritonSourceSliceError(
+                "VAR_ARGS_ARRAY expansion cannot rewrite across a nested "
+                f"lexical scope; referenced names: {captured}"
+            )
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_ListComp(self, node: ast.ListComp) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.AST:
+        return self._preserve_nested_scope(node)
+
+
+class _ClosedVarargExpander(ast.NodeTransformer):
+    def __init__(self, arity: int) -> None:
+        self.arity = arity
+        self.inline_variables: set[str] = set()
+        self.marker_count = 0
+        self._entry: ast.FunctionDef | None = None
+
+    def expand_entry(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        if self._entry is not None:
+            raise RuntimeError("VAR_ARGS_ARRAY expander entry is already set")
+        self._entry = node
+        result = self.visit(node)
+        assert isinstance(result, ast.FunctionDef)
+        return result
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        if node is not self._entry:
+            return node
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return node
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        return node
+
+    def visit_arguments(self, node: ast.arguments) -> ast.AST:
+        unsupported = [
+            argument.arg
+            for argument in (*node.posonlyargs, *node.kwonlyargs)
+            if _is_vararg_array_annotation(argument.annotation)
+        ]
+        if node.vararg is not None and _is_vararg_array_annotation(
+            node.vararg.annotation
+        ):
+            unsupported.append(node.vararg.arg)
+        if node.kwarg is not None and _is_vararg_array_annotation(
+            node.kwarg.annotation
+        ):
+            unsupported.append(node.kwarg.arg)
+        if unsupported:
+            raise TritonSourceSliceError(
+                "VAR_ARGS_ARRAY is supported only on ordinary positional "
+                f"parameters; found {sorted(unsupported)}"
+            )
+        positional = [*node.posonlyargs, *node.args]
+        defaulted = positional[-len(node.defaults):] if node.defaults else []
+        defaulted_markers = sorted(
+            argument.arg
+            for argument in defaulted
+            if _is_vararg_array_annotation(argument.annotation)
+        )
+        if defaulted_markers:
+            raise TritonSourceSliceError(
+                "VAR_ARGS_ARRAY positional parameters with defaults are "
+                "unsupported because expansion cannot preserve their ABI "
+                f"unambiguously: {defaulted_markers}"
+            )
+        expanded: list[ast.arg] = []
+        for argument in node.args:
+            if not _is_vararg_array_annotation(argument.annotation):
+                expanded.append(self.visit(argument))
+                continue
+            self.marker_count += 1
+            self.inline_variables.add(argument.arg)
+            expanded.extend(
+                ast.copy_location(ast.arg(arg=f"{argument.arg}{index}"), argument)
+                for index in range(self.arity)
+            )
+        node.args = expanded
+        return self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST | None:
+        if not _is_vararg_array_annotation(node.annotation):
+            return self.generic_visit(node)
+        if (
+            node.value is not None
+            or node.simple != 1
+            or not isinstance(node.target, ast.Name)
+        ):
+            raise TritonSourceSliceError(
+                "local VAR_ARGS_ARRAY declarations must be bare annotated names"
+            )
+        self.marker_count += 1
+        self.inline_variables.add(node.target.id)
+        return None
+
+    def visit_For(self, node: ast.For) -> ast.AST | list[ast.stmt]:
+        iterator = node.iter
+        exact = (
+            isinstance(node.target, ast.Name)
+            and isinstance(iterator, ast.Call)
+            and isinstance(iterator.func, ast.Name)
+            and iterator.func.id == "range"
+            and len(iterator.args) == 1
+            and not iterator.keywords
+            and isinstance(iterator.args[0], ast.Call)
+            and isinstance(iterator.args[0].func, ast.Name)
+            and iterator.args[0].func.id == "len"
+            and len(iterator.args[0].args) == 1
+            and not iterator.args[0].keywords
+            and isinstance(iterator.args[0].args[0], ast.Name)
+            and iterator.args[0].args[0].id in self.inline_variables
+            and not node.orelse
+        )
+        if not exact:
+            return self.generic_visit(node)
+        assert isinstance(node.target, ast.Name)
+        expanded: list[ast.stmt] = []
+        for index in range(self.arity):
+            substituter = _VarargLoopSubstituter(
+                loop_variable=node.target.id,
+                inline_variables=self.inline_variables,
+                index=index,
+            )
+            for statement in node.body:
+                cloned = substituter.visit(copy.deepcopy(statement))
+                transformed = self.visit(cloned)
+                if transformed is None:
+                    continue
+                if isinstance(transformed, list):
+                    expanded.extend(transformed)
+                else:
+                    expanded.append(transformed)
+        return expanded
+
+
+def expand_triton_varargs(
+    source_slice: TritonSourceSlice,
+    *,
+    arity: int,
+) -> TritonSourceSlice:
+    """Apply the closed ``VAR_ARGS_ARRAY`` specialization declared by Source.
+
+    The transformation handles only exact ``range(len(array))`` loops and
+    constant-arity positional/local arrays.  Any marker or array reference that
+    survives expansion is rejected instead of being interpreted dynamically.
+    """
+
+    if isinstance(arity, bool) or not isinstance(arity, int) or not 1 <= arity <= 64:
+        raise TritonSourceSliceError("VAR_ARGS_ARRAY arity must be in [1, 64]")
+    tree = ast.parse(source_slice.code)
+    target, has_marker = _selected_vararg_entry(
+        tree, function_name=source_slice.function
+    )
+    if not has_marker:
+        raise TritonSourceSliceError(
+            "vararg arity was supplied but Source has no VAR_ARGS_ARRAY marker"
+        )
+    expander = _ClosedVarargExpander(arity)
+    expander.expand_entry(target)
+    if expander.marker_count == 0:
+        raise TritonSourceSliceError("VAR_ARGS_ARRAY expansion made no progress")
+    residual_markers = [
+        node
+        for node in ast.walk(target)
+        if (
+            isinstance(node, ast.arg)
+            and _is_vararg_array_annotation(node.annotation)
+        )
+        or (
+            isinstance(node, ast.AnnAssign)
+            and _is_vararg_array_annotation(node.annotation)
+        )
+    ]
+    residual_names = sorted(
+        {
+            node.id
+            for node in ast.walk(target)
+            if isinstance(node, ast.Name)
+            and node.id in expander.inline_variables
+        }
+    )
+    if residual_markers or residual_names:
+        raise TritonSourceSliceError(
+            "VAR_ARGS_ARRAY expansion left dynamic marker/reference(s): "
+            + ", ".join(residual_names or ["annotation"])
+        )
+    ast.fix_missing_locations(tree)
+    parameters = tuple(
+        argument.arg
+        for argument in (
+            *target.args.posonlyargs,
+            *target.args.args,
+            *target.args.kwonlyargs,
+        )
+    )
+    constexprs = tuple(
+        argument.arg
+        for argument in (
+            *target.args.posonlyargs,
+            *target.args.args,
+            *target.args.kwonlyargs,
+        )
+        if _annotation_is_constexpr(argument.annotation)
+    )
+    return TritonSourceSlice(
+        ast.unparse(tree) + "\n",
+        source_slice.function,
+        parameters,
+        constexprs,
+        source_slice.included_declarations,
+        source_slice.included_functions,
+        source_slice.removed_decorators,
+        source_slice.inlined_imports,
+        vararg_arity=arity,
+    )
+
+
+def requires_triton_vararg_expansion(source_slice: TritonSourceSlice) -> bool:
+    """Return whether the selected entry lexical scope carries the marker."""
+
+    tree = ast.parse(source_slice.code)
+    _target, has_marker = _selected_vararg_entry(
+        tree, function_name=source_slice.function
+    )
+    return has_marker
+
+
 def _module_source_path(
     module: str,
     search_roots: Iterable[str | Path],
@@ -318,26 +728,185 @@ def _module_source_path(
     return None
 
 
+def _is_static_literal(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_is_static_literal(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(
+            key is not None
+            and _is_static_literal(key)
+            and _is_static_literal(value)
+            for key, value in zip(node.keys, node.values, strict=True)
+        )
+    if isinstance(node, ast.UnaryOp) and isinstance(
+        node.op, (ast.UAdd, ast.USub, ast.Invert, ast.Not)
+    ):
+        return _is_static_literal(node.operand)
+    return False
+
+
+def _plain_helper_statement_dependencies(statement: ast.stmt) -> set[str]:
+    if isinstance(statement, ast.FunctionDef):
+        if statement.decorator_list:
+            raise TritonSourceSliceError(
+                f"plain imported helper {statement.name!r} must not be decorated"
+            )
+        forbidden = next(
+            (
+                node
+                for node in ast.walk(statement)
+                if isinstance(
+                    node,
+                    (
+                        ast.AsyncFunctionDef,
+                        ast.Await,
+                        ast.Global,
+                        ast.Import,
+                        ast.ImportFrom,
+                        ast.Nonlocal,
+                        ast.Yield,
+                        ast.YieldFrom,
+                    ),
+                )
+            ),
+            None,
+        )
+        if forbidden is not None:
+            raise TritonSourceSliceError(
+                f"plain imported helper {statement.name!r} contains unsupported "
+                f"{type(forbidden).__name__}"
+            )
+        return _function_dependencies(statement)
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        if isinstance(statement, ast.ImportFrom):
+            if statement.level != 0 or statement.module is None:
+                raise TritonSourceSliceError(
+                    "plain imported helper dependencies require absolute imports"
+                )
+            modules = (statement.module,)
+        else:
+            modules = tuple(alias.name for alias in statement.names)
+        unsupported = sorted(
+            {
+                module
+                for module in modules
+                if module.split(".", 1)[0] not in sys.stdlib_module_names
+                and module.split(".", 1)[0] != "triton"
+            }
+        )
+        if unsupported:
+            raise TritonSourceSliceError(
+                "plain imported helper closure permits only standard-library "
+                f"or Triton imports; found {unsupported}"
+            )
+        return set()
+    value: ast.expr | None = None
+    if isinstance(statement, ast.Assign):
+        value = statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        value = statement.value
+    if value is not None and _is_static_literal(value):
+        return _statement_dependencies(statement)
+    names = sorted(_bound_names(statement))
+    label = names[0] if names else type(statement).__name__
+    raise TritonSourceSliceError(
+        f"plain imported helper dependency {label!r} is not a closed import, "
+        "undecorated function, or static literal"
+    )
+
+
+def _build_plain_helper_closure(
+    source: str,
+    *,
+    source_symbol: str,
+) -> list[ast.stmt]:
+    """Project one undecorated Python helper and its closed declarations."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise TritonSourceSliceError(
+            f"plain imported helper source cannot be parsed: {exc}"
+        ) from exc
+    bindings: dict[str, list[int]] = {}
+    for index, statement in enumerate(tree.body):
+        for name in _bound_names(statement):
+            bindings.setdefault(name, []).append(index)
+    owners = bindings.get(source_symbol, [])
+    if len(owners) != 1:
+        raise TritonSourceSliceError(
+            f"plain imported helper {source_symbol!r} must have one top-level "
+            f"binding; found {len(owners)}"
+        )
+    target_index = owners[0]
+    target = tree.body[target_index]
+    if not isinstance(target, ast.FunctionDef) or target.decorator_list:
+        raise TritonSourceSliceError(
+            f"plain imported helper {source_symbol!r} must be one undecorated "
+            "top-level function"
+        )
+
+    selected = {target_index}
+    pending = list(_plain_helper_statement_dependencies(target))
+    while pending:
+        name = pending.pop()
+        dependency_owners = bindings.get(name, [])
+        if len(dependency_owners) != 1:
+            raise TritonSourceSliceError(
+                f"plain imported helper dependency {name!r} must have one "
+                f"top-level binding; found {len(dependency_owners)}"
+            )
+        owner = dependency_owners[0]
+        if owner in selected:
+            continue
+        selected.add(owner)
+        pending.extend(
+            _plain_helper_statement_dependencies(tree.body[owner])
+        )
+    return [
+        copy.deepcopy(statement)
+        for index, statement in enumerate(tree.body)
+        if index in selected
+    ]
+
+
 def inline_imported_triton_helpers(
     source_slice: TritonSourceSlice,
     *,
     search_roots: Iterable[str | Path],
 ) -> TritonSourceSlice:
-    """Inline imported ``@triton.jit`` helpers without importing a package.
+    """Inline closed imported helpers without importing a package.
 
     Real source trees can have a Python package ``__init__`` that requires an
     optional native extension even though the selected Triton kernel only needs
-    a small JIT helper module.  This routine resolves those helper definitions
-    from source and forms their ordinary AST closure.  Non-Triton imports and
-    unresolved helpers remain fail-closed.
+    a small helper module.  This routine resolves actually referenced imported
+    ``@triton.jit`` helpers or undecorated Python helpers from explicit source
+    roots and forms their ordinary AST closure.  Plain-helper dependencies are
+    restricted to standard-library/Triton imports, other undecorated functions,
+    and static literals; ambiguous, conflicting, decorated, dynamically
+    initialized, or unresolved declarations remain fail-closed.
     """
 
     roots = tuple(Path(item).expanduser().resolve() for item in search_roots)
     tree = ast.parse(source_slice.code)
-    function_loads: set[str] = set()
+    retained_loads: set[str] = set()
     for statement in tree.body:
         if isinstance(statement, ast.FunctionDef):
-            function_loads.update(_function_dependencies(statement))
+            retained_loads.update(_function_dependencies(statement))
+    changed = True
+    while changed:
+        changed = False
+        for statement in tree.body:
+            if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                continue
+            if not (_bound_names(statement) & retained_loads):
+                continue
+            expanded = retained_loads | _load_names(statement)
+            if expanded != retained_loads:
+                retained_loads = expanded
+                changed = True
 
     replacements: dict[int, list[ast.stmt]] = {}
     inlined_labels: list[str] = []
@@ -350,7 +919,7 @@ def inline_imported_triton_helpers(
         requested = [
             alias
             for alias in statement.names
-            if (alias.asname or alias.name) in function_loads
+            if (alias.asname or alias.name) in retained_loads
         ]
         if not requested:
             continue
@@ -366,10 +935,30 @@ def inline_imported_triton_helpers(
                 raise TritonSourceSliceError(
                     "aliased imported Triton helpers are not supported"
                 )
-            helper = build_triton_source_slice(
-                module_source, source_symbol=alias.name
-            )
-            replacement.extend(copy.deepcopy(ast.parse(helper.code).body))
+            module_tree = ast.parse(module_source)
+            definitions = [
+                node
+                for node in module_tree.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == alias.name
+            ]
+            if len(definitions) != 1:
+                raise TritonSourceSliceError(
+                    f"imported helper {module}:{alias.name} must resolve to one "
+                    "top-level function"
+                )
+            definition = definitions[0]
+            if any(_is_jit_decorator(item) for item in definition.decorator_list):
+                helper = build_triton_source_slice(
+                    module_source, source_symbol=alias.name
+                )
+                replacement.extend(copy.deepcopy(ast.parse(helper.code).body))
+            else:
+                replacement.extend(
+                    _build_plain_helper_closure(
+                        module_source, source_symbol=alias.name
+                    )
+                )
             inlined_labels.append(f"{module}:{alias.name}")
         replacements[index] = replacement
 
@@ -381,16 +970,16 @@ def inline_imported_triton_helpers(
         expanded.extend(replacements.get(index, [statement]))
     deduplicated: list[ast.stmt] = []
     seen_structures: set[str] = set()
-    named_functions: dict[str, str] = {}
+    named_declarations: dict[str, str] = {}
     for statement in expanded:
         structure = ast.dump(statement, include_attributes=False)
-        if isinstance(statement, ast.FunctionDef):
-            previous = named_functions.get(statement.name)
+        for name in _bound_names(statement):
+            previous = named_declarations.get(name)
             if previous is not None and previous != structure:
                 raise TritonSourceSliceError(
-                    f"inlined helper {statement.name!r} has conflicting definitions"
+                    f"inlined declaration {name!r} has conflicting definitions"
                 )
-            named_functions[statement.name] = structure
+            named_declarations[name] = structure
         if structure in seen_structures:
             continue
         seen_structures.add(structure)
@@ -413,6 +1002,7 @@ def inline_imported_triton_helpers(
         tuple(functions),
         source_slice.removed_decorators,
         tuple(dict.fromkeys((*source_slice.inlined_imports, *inlined_labels))),
+        vararg_arity=source_slice.vararg_arity,
     )
 
 
@@ -421,5 +1011,7 @@ __all__ = [
     "TritonSourceSlice",
     "TritonSourceSliceError",
     "build_triton_source_slice",
+    "expand_triton_varargs",
     "inline_imported_triton_helpers",
+    "requires_triton_vararg_expansion",
 ]

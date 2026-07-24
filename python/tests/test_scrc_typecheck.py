@@ -19,7 +19,11 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate1.prompt import build_normal_rewriter_view
-from intentir.verify.typecheck import TypeCheckErrorCode, type_check
+from intentir.verify.typecheck import (
+    TYPECHECK_PROTOCOL,
+    TypeCheckErrorCode,
+    type_check,
+)
 
 
 def _codes(artifact) -> set[TypeCheckErrorCode]:
@@ -33,8 +37,256 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v5"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def test_reduce_contract_rejects_kind_alias_and_missing_canonical_attrs() -> None:
+    artifact = make_reduce_artifact()
+    artifact.j.intent.body[1].attrs = {
+        "kind": "sum",
+        "axes": [1],
+        "keepdims": False,
+    }
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+    ]
+    assert {item.path for item in matching} == {
+        "j.intent.intent_function.body[1].attrs.assoc",
+        "j.intent.intent_function.body[1].attrs.fn",
+        "j.intent.intent_function.body[1].attrs.kind",
+    }
+    assert any("never translated by fixed code" in item.detail for item in matching)
+
+
+def test_reduce_contract_rejects_kind_even_when_it_conflicts_with_fn() -> None:
+    artifact = make_reduce_artifact()
+    artifact.j.intent.body[1].attrs["kind"] = "max"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert [item.path for item in report.diagnostics] == [
+        "j.intent.intent_function.body[1].attrs.kind"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attrs", "invalid_suffix"),
+    [
+        (
+            {"fn": "median", "axes": [1], "assoc": "associative"},
+            "attrs.fn",
+        ),
+        (
+            {"fn": "sum", "axes": [], "assoc": "associative"},
+            "attrs.axes",
+        ),
+        (
+            {"fn": "sum", "axes": [True], "assoc": "associative"},
+            "attrs.axes[0]",
+        ),
+        (
+            {"fn": "sum", "axes": [2], "assoc": "associative"},
+            "attrs.axes[0]",
+        ),
+        (
+            {"fn": "sum", "axes": [1, -1], "assoc": "associative"},
+            "attrs.axes[1]",
+        ),
+        (
+            {"fn": "sum", "axes": [1], "assoc": "stable"},
+            "attrs.assoc",
+        ),
+        (
+            {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+                "keepdims": 1,
+            },
+            "attrs.keepdims",
+        ),
+    ],
+)
+def test_reduce_contract_rejects_invalid_closed_fields(
+    attrs, invalid_suffix
+) -> None:
+    artifact = make_reduce_artifact()
+    artifact.j.intent.body[1].attrs = attrs
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert any(
+        item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+        and item.path.endswith(invalid_suffix)
+        for item in report.diagnostics
+    )
+
+
+def test_reduce_contract_keeps_explicit_keepdims_and_result_shape_check() -> None:
+    keepdims = make_reduce_artifact()
+    keepdims.j.intent.body[1].attrs["keepdims"] = True
+    keepdims.j.intent.outputs[0].shape = ["x0", 1]
+    keepdims.j.signature.parameters[1].rank = 2
+    keepdims.j.boundary.accesses[1].index_expression = "[v3, 0]"
+    assert type_check(keepdims.j, keepdims.c, keepdims.pi).passed
+
+    collapsed = make_reduce_artifact()
+    collapsed.j.intent.body[1].attrs["keepdims"] = False
+    assert type_check(collapsed.j, collapsed.c, collapsed.pi).passed
+
+    negative_axis = make_reduce_artifact()
+    negative_axis.j.intent.body[1].attrs["axes"] = [-1]
+    assert type_check(
+        negative_axis.j, negative_axis.c, negative_axis.pi
+    ).passed
+
+    mismatch = make_reduce_artifact()
+    mismatch.j.intent.body[1].attrs["keepdims"] = True
+    report = type_check(mismatch.j, mismatch.c, mismatch.pi)
+    assert not report.passed
+    assert report.diagnostics[0].code is TypeCheckErrorCode.J_ELABORATION_FAILED
+    assert "conflicting types" in report.diagnostics[0].detail
+
+
+def _contraction_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0] = Tensor("t0", "f16", [2, 3])
+    artifact.j.intent.inputs.append(Tensor("t2", "f16", [3, 4]))
+    artifact.j.intent.outputs[0] = Tensor("t1", "f32", [2, 4])
+    artifact.j.signature.parameters = [
+        SignatureParameter(
+            "p0",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f16",
+            2,
+            logical_ref="t0",
+        ),
+        SignatureParameter(
+            "p1",
+            ParameterKind.POINTER,
+            ParameterMode.OUTPUT,
+            "f32",
+            2,
+            logical_ref="t1",
+        ),
+        SignatureParameter(
+            "p2",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f16",
+            2,
+            logical_ref="t2",
+        ),
+    ]
+    operation = artifact.j.intent.body[0]
+    operation.op = "contraction"
+    operation.operands = ["t0", "t2"]
+    operation.attrs = {"subscripts": "mk,kn->mn"}
+    operation.type = {"dtype": "f32", "shape": [2, 4]}
+    return artifact
+
+
+def test_contraction_contract_accepts_canonical_typed_binary_einsum() -> None:
+    artifact = _contraction_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize(
+    ("lhs_shape", "rhs_shape", "result_shape", "subscripts"),
+    [
+        ([2], [4], [2, 4], "m,n->mn"),
+        ([5, 2, 3], [5, 3, 4], [5, 2, 4], "bmk,bkn->bmn"),
+    ],
+)
+def test_contraction_typecheck_does_not_require_the_tl_dot_fast_path(
+    lhs_shape, rhs_shape, result_shape, subscripts
+) -> None:
+    artifact = _contraction_artifact()
+    artifact.j.intent.inputs[0].shape = lhs_shape
+    artifact.j.intent.inputs[1].shape = rhs_shape
+    artifact.j.intent.outputs[0].shape = result_shape
+    artifact.j.signature.parameters[0].rank = len(lhs_shape)
+    artifact.j.signature.parameters[1].rank = len(result_shape)
+    artifact.j.signature.parameters[2].rank = len(rhs_shape)
+    operation = artifact.j.intent.body[0]
+    operation.attrs = {"subscripts": subscripts}
+    operation.type = {"dtype": "f32", "shape": result_shape}
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_contraction_contract_rejects_axis_aliases_without_translation() -> None:
+    artifact = _contraction_artifact()
+    artifact.j.intent.body[0].attrs = {
+        "lhs_contract_axes": [1],
+        "rhs_contract_axes": [0],
+    }
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+    ]
+    assert {item.path for item in matching} == {
+        "j.intent.intent_function.body[0].attrs.lhs_contract_axes",
+        "j.intent.intent_function.body[0].attrs.rhs_contract_axes",
+        "j.intent.intent_function.body[0].attrs.subscripts",
+    }
+    assert all(
+        "never translated by fixed code" in item.detail
+        for item in matching
+        if not item.path.endswith(".subscripts")
+    )
+
+
+@pytest.mark.parametrize(
+    ("subscripts", "rhs_shape", "result_shape", "detail"),
+    [
+        ("mk,k...->m", [3, 4], [2], "closed binary einsum grammar"),
+        ("mk,kn->mm", [3, 4], [2, 2], "output labels must be unique"),
+        ("mk,kn->mp", [3, 4], [2, 4], "unknown labels"),
+        ("mk,k->m", [3, 4], [2], "operand 1 labels have rank 1"),
+        ("mk,kn->mn", [5, 4], [2, 4], "inconsistent typed extents"),
+        ("mk,kn->mn", [3, 4], [2, 5], "does not match subscripts result"),
+    ],
+)
+def test_contraction_contract_rejects_mechanically_invalid_typed_einsum(
+    subscripts, rhs_shape, result_shape, detail
+) -> None:
+    artifact = _contraction_artifact()
+    artifact.j.intent.inputs[1].shape = rhs_shape
+    artifact.j.intent.outputs[0].shape = result_shape
+    operation = artifact.j.intent.body[0]
+    operation.attrs = {"subscripts": subscripts}
+    operation.type = {"dtype": "f32", "shape": result_shape}
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert any(
+        item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+        and detail in item.detail
+        for item in report.diagnostics
+    ), report.to_json()
 
 
 def _row_scale_artifact():
@@ -286,6 +538,68 @@ def test_typed_authorization_source_must_match_its_j_carrier() -> None:
     ]
     artifact.pi = RealizationWitness.from_json(payload)
     assert TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH in _codes(artifact)
+
+
+def test_absent_none_carrier_cannot_gain_realization_semantics() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3", ParameterKind.OPAQUE, ParameterMode.VALUE, "none"
+        )
+    )
+    artifact.j.boundary.realization_authorizations = [
+        RealizationAuthorization(
+            "u0", RefinementKind.REASSOCIATION, "p3"
+        )
+    ]
+    payload = artifact.pi.to_json()
+    payload["instances"].append(
+        {
+            "id": "i1",
+            "semantic_ref": "p3",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    payload["refinements"] = [
+        {"instance": "i1", "kind": "reassociation", "auth_ref": "u0"}
+    ]
+    artifact.pi = RealizationWitness.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert [item.code for item in report.diagnostics] == [
+        TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+        TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+        TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+    ]
+    assert [item.path for item in report.diagnostics] == [
+        "j.boundary.realization_authorizations[0].subject_ref",
+        "pi.instances[1].semantic_ref",
+        "pi.refinements[0].instance",
+    ]
+
+
+def test_ordinary_opaque_carrier_may_still_own_a_realization() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3", ParameterKind.OPAQUE, ParameterMode.VALUE, "stream"
+        )
+    )
+    payload = artifact.pi.to_json()
+    payload["instances"].append(
+        {
+            "id": "i1",
+            "semantic_ref": "p3",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi = RealizationWitness.from_json(payload)
+
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
 
 
 def test_numeric_cast_authorization_types_operand_and_result() -> None:

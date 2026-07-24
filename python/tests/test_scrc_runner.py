@@ -349,7 +349,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     assert initial.physical_calls == relifted.physical_calls == 2
     assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
     assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v4"
+    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v5"
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
@@ -466,6 +466,51 @@ def test_gate1_search_defers_hidden_gate2_until_explicit_completion() -> None:
     assert report.call_budget.gate2_cases == 1
     assert gate2.calls == 1
     assert events == ["lift", "gate1", "gate2_inputs_and_execution"]
+
+
+def test_gate1_search_reports_source_free_stage_transitions() -> None:
+    transitions = []
+    runner = _runner(
+        _Lift([make_reduce_artifact()]),
+        _Gate1Factory([_gate1_result(closed=True)]),
+        _Gate2(),
+    )
+
+    search = runner.search_gate1(
+        _request(),
+        progress_callback=lambda stage, attempt, formal_round, status: (
+            transitions.append((stage, attempt, formal_round, status))
+        ),
+    )
+
+    assert search.closed
+    assert transitions == [
+        ("lift", 1, None, "started"),
+        ("lift", 1, None, "finished"),
+        ("typecheck", 1, None, "started"),
+        ("typecheck", 1, None, "pass"),
+        ("gate1", None, 1, "started"),
+        ("gate1", None, 1, "replay_closed"),
+    ]
+
+
+def test_progress_callback_failure_cannot_change_gate1_search() -> None:
+    runner = _runner(
+        _Lift([make_reduce_artifact()]),
+        _Gate1Factory([_gate1_result(closed=True)]),
+        _Gate2(),
+    )
+
+    def broken_progress(*_args) -> None:
+        raise RuntimeError("progress sink is unavailable")
+
+    search = runner.search_gate1(
+        _request(),
+        progress_callback=broken_progress,
+    )
+
+    assert search.closed
+    assert search.accepted_attempt == 1
 
 
 def test_gate1_search_cooperatively_stops_before_relift() -> None:

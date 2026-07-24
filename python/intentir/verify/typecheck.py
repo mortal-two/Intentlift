@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
 from intentir.verify.gate1.model import (
     ImplementationConfig,
+    ParameterKind,
     RefinementKind,
     ResultRelationKind,
     ScheduleSlotKind,
@@ -24,8 +25,16 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v4"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v5"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
+
+_REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
+_REDUCE_ASSOCIATIVITY = frozenset(
+    {"associative", "float_nondeterministic"}
+)
+_REDUCE_ATTRS = frozenset({"fn", "axes", "assoc", "keepdims"})
+_CONTRACTION_ATTRS = frozenset({"subscripts"})
+_EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
 
 
 class TypeCheckStatus(str, Enum):
@@ -37,6 +46,7 @@ class TypeCheckStatus(str, Enum):
 class TypeCheckErrorCode(str, Enum):
     J_ELABORATION_FAILED = "j_elaboration_failed"
     J_VALUE_TYPE_INCOMPLETE = "j_value_type_incomplete"
+    KNOWN_OP_CONTRACT_INVALID = "known_op_contract_invalid"
     DUPLICATE_J_REF = "duplicate_j_ref"
     INVALID_C_SLOT = "invalid_c_slot"
     C_REQUIRED_VALUE_MISSING = "c_required_value_missing"
@@ -52,6 +62,9 @@ class TypeCheckErrorCode(str, Enum):
     INVALID_SHARING = "invalid_sharing"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
+    ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN = (
+        "absent_carrier_semantic_use_forbidden"
+    )
     REFINEMENT_AUTH_MISSING = "refinement_auth_missing"
     REFINEMENT_AUTH_UNKNOWN = "refinement_auth_unknown"
     REFINEMENT_AUTH_KIND_MISMATCH = "refinement_auth_kind_mismatch"
@@ -138,6 +151,353 @@ def _explicit_type(operation: Mapping[str, Any]) -> _ValueType | None:
     if not isinstance(dtype, str) or not isinstance(shape, list):
         return None
     return _ValueType(dtype, len(shape))
+
+
+def _check_known_operation_contracts(
+    j: SemanticArchive,
+) -> tuple[TypeCheckDiagnostic, ...]:
+    """Reject malformed attrs for the small set of closed known-op contracts.
+
+    v5 deliberately closes only ``reduce`` and ``contraction`` here.  In
+    particular, this checker validates the model-authored spelling; it never
+    translates aliases such as ``kind`` or ``lhs_contract_axes`` into the
+    canonical fields consumed by RefEval/Emit.
+    """
+
+    diagnostics: list[TypeCheckDiagnostic] = []
+    try:
+        value_types = j_elaboration(j).value_type_by_name
+    except ValueError:
+        # Canonical elaboration below remains authoritative for graph/type
+        # errors.  The known-op pass can still report closed attr diagnostics.
+        value_types = {}
+
+    intent = j.intent.to_json()["intent_function"]
+    for operation_path, operation in _walk_operations(
+        intent.get("body", [])
+    ):
+        op_name = operation.get("op")
+        if op_name not in {"reduce", "contraction"}:
+            continue
+        base = f"j.intent.intent_function.{operation_path}"
+        ref_value = operation.get("id")
+        ref = ref_value if isinstance(ref_value, str) else operation_path
+        attrs_value = operation.get("attrs")
+        attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+
+        if op_name == "contraction":
+            for key in sorted(set(attrs) - _CONTRACTION_ATTRS):
+                detail = (
+                    "contraction uses only canonical attr 'subscripts'; "
+                    f"alias {key!r} is forbidden and is never translated by "
+                    "fixed code"
+                    if key in {"lhs_contract_axes", "rhs_contract_axes"}
+                    else f"contraction attrs contain unsupported key {key!r}"
+                )
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.{key}",
+                        detail,
+                        ref,
+                    )
+                )
+
+            operands = operation.get("operands")
+            operand_refs = operands if isinstance(operands, list) else []
+            if (
+                len(operand_refs) != 2
+                or not all(isinstance(item, str) for item in operand_refs)
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.operands",
+                        "contraction requires exactly two value operands",
+                        ref,
+                    )
+                )
+
+            result = operation.get("result")
+            if not isinstance(result, str) or not result:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.result",
+                        "contraction requires exactly one value result",
+                        ref,
+                    )
+                )
+
+            subscripts = attrs.get("subscripts")
+            lhs_labels: str | None = None
+            rhs_labels: str | None = None
+            output_labels: str | None = None
+            if not isinstance(subscripts, str):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.subscripts",
+                        "contraction subscripts must be an explicit binary "
+                        "einsum string such as 'mk,kn->mn'",
+                        ref,
+                    )
+                )
+            else:
+                compact = "".join(subscripts.split())
+                inputs_and_output = compact.split("->")
+                input_terms = (
+                    inputs_and_output[0].split(",")
+                    if len(inputs_and_output) == 2
+                    else []
+                )
+                if (
+                    len(inputs_and_output) != 2
+                    or len(input_terms) != 2
+                    or not all(_EINSUM_TERM.fullmatch(term) for term in input_terms)
+                    or _EINSUM_TERM.fullmatch(inputs_and_output[-1]) is None
+                ):
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                            f"{base}.attrs.subscripts",
+                            "contraction subscripts must use the closed binary "
+                            "einsum grammar '<labels>,<labels>-><labels>' "
+                            "without ellipsis",
+                            ref,
+                        )
+                    )
+                else:
+                    lhs_labels, rhs_labels = input_terms
+                    output_labels = inputs_and_output[1]
+                    if len(set(output_labels)) != len(output_labels):
+                        diagnostics.append(
+                            TypeCheckDiagnostic(
+                                TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                                f"{base}.attrs.subscripts",
+                                "contraction output labels must be unique",
+                                ref,
+                            )
+                        )
+                    unknown_output = sorted(
+                        set(output_labels) - set(lhs_labels) - set(rhs_labels)
+                    )
+                    if unknown_output:
+                        diagnostics.append(
+                            TypeCheckDiagnostic(
+                                TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                                f"{base}.attrs.subscripts",
+                                "contraction output labels must occur in an "
+                                f"input term; unknown labels {unknown_output!r}",
+                                ref,
+                            )
+                        )
+
+            if (
+                lhs_labels is not None
+                and rhs_labels is not None
+                and output_labels is not None
+                and len(operand_refs) == 2
+                and all(isinstance(item, str) for item in operand_refs)
+            ):
+                operand_types = [value_types.get(item) for item in operand_refs]
+                for index, (labels, value_type) in enumerate(
+                    zip((lhs_labels, rhs_labels), operand_types, strict=True)
+                ):
+                    if value_type is not None and len(labels) != len(value_type.shape):
+                        diagnostics.append(
+                            TypeCheckDiagnostic(
+                                TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                                f"{base}.attrs.subscripts",
+                                f"contraction operand {index} labels have rank "
+                                f"{len(labels)}, but its typed J value has rank "
+                                f"{len(value_type.shape)}",
+                                ref,
+                            )
+                        )
+
+                if all(
+                    value_type is not None
+                    and len(labels) == len(value_type.shape)
+                    for labels, value_type in zip(
+                        (lhs_labels, rhs_labels), operand_types, strict=True
+                    )
+                ):
+                    label_extents: dict[str, Any] = {}
+                    for labels, value_type in zip(
+                        (lhs_labels, rhs_labels), operand_types, strict=True
+                    ):
+                        assert value_type is not None
+                        for label, extent in zip(
+                            labels, value_type.shape, strict=True
+                        ):
+                            previous = label_extents.get(label, extent)
+                            if previous != extent:
+                                diagnostics.append(
+                                    TypeCheckDiagnostic(
+                                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                                        f"{base}.attrs.subscripts",
+                                        f"contraction label {label!r} has "
+                                        f"inconsistent typed extents {previous!r} "
+                                        f"and {extent!r}",
+                                        ref,
+                                    )
+                                )
+                            else:
+                                label_extents[label] = extent
+
+                    result_type = (
+                        value_types.get(result)
+                        if isinstance(result, str)
+                        else None
+                    )
+                    if (
+                        result_type is not None
+                        and set(output_labels).issubset(label_extents)
+                    ):
+                        expected_shape = tuple(
+                            label_extents[label] for label in output_labels
+                        )
+                        if result_type.shape != expected_shape:
+                            diagnostics.append(
+                                TypeCheckDiagnostic(
+                                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                                    f"{base}.type.shape",
+                                    "contraction typed result shape "
+                                    f"{result_type.shape!r} does not match "
+                                    f"subscripts result {expected_shape!r}",
+                                    ref,
+                                )
+                            )
+            continue
+
+        for key in sorted(set(attrs) - _REDUCE_ATTRS):
+            detail = (
+                "reduce uses canonical attr 'fn'; alias 'kind' is forbidden "
+                "and is never translated by fixed code"
+                if key == "kind"
+                else f"reduce attrs contain unsupported key {key!r}"
+            )
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.attrs.{key}",
+                    detail,
+                    ref,
+                )
+            )
+
+        fn = attrs.get("fn")
+        if not isinstance(fn, str) or fn not in _REDUCE_FNS:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.attrs.fn",
+                    "reduce fn must be one of "
+                    f"{sorted(_REDUCE_FNS)!r}; aliases are not accepted",
+                    ref,
+                )
+            )
+
+        assoc = attrs.get("assoc")
+        if not isinstance(assoc, str) or assoc not in _REDUCE_ASSOCIATIVITY:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.attrs.assoc",
+                    "reduce assoc must be 'associative' or "
+                    "'float_nondeterministic'",
+                    ref,
+                )
+            )
+
+        operands = operation.get("operands")
+        operand_refs = operands if isinstance(operands, list) else []
+        if len(operand_refs) != 1 or not isinstance(operand_refs[0], str):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.operands",
+                    "reduce requires exactly one value operand",
+                    ref,
+                )
+            )
+            operand_rank = None
+        else:
+            operand_type = value_types.get(operand_refs[0])
+            operand_rank = (
+                len(operand_type.shape) if operand_type is not None else None
+            )
+
+        axes = attrs.get("axes")
+        if not isinstance(axes, list) or not axes:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.attrs.axes",
+                    "reduce axes must be a non-empty array of integer axes",
+                    ref,
+                )
+            )
+        else:
+            normalized_axes: set[int] = set()
+            for index, axis in enumerate(axes):
+                axis_path = f"{base}.attrs.axes[{index}]"
+                if type(axis) is not int:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                            axis_path,
+                            "reduce axis must be an integer, not bool or text",
+                            ref,
+                        )
+                    )
+                    continue
+                normalized = (
+                    axis + operand_rank
+                    if operand_rank is not None and axis < 0
+                    else axis
+                )
+                if operand_rank is not None and not 0 <= normalized < operand_rank:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                            axis_path,
+                            f"reduce axis {axis} is out of range for "
+                            f"rank-{operand_rank} operand",
+                            ref,
+                        )
+                    )
+                    continue
+                if normalized in normalized_axes:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                            axis_path,
+                            "reduce axes must be unique after negative-axis "
+                            "normalization",
+                            ref,
+                        )
+                    )
+                    continue
+                normalized_axes.add(normalized)
+
+        if "keepdims" in attrs and type(attrs["keepdims"]) is not bool:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                    f"{base}.attrs.keepdims",
+                    "optional reduce keepdims must be a boolean",
+                    ref,
+                )
+            )
+
+    return tuple(
+        sorted(
+            diagnostics,
+            key=lambda item: (item.path, item.code.value, item.detail),
+        )
+    )
 
 
 def _c_value_matches(value_type: str, value: Any) -> bool:
@@ -557,6 +917,10 @@ def type_check(
     if not isinstance(pi, RealizationWitness):
         raise TypeError("type_check requires parsed RealizationWitness pi")
 
+    known_op_diagnostics = _check_known_operation_contracts(j)
+    if known_op_diagnostics:
+        return TypeCheckReport(TypeCheckStatus.FAIL, known_op_diagnostics)
+
     try:
         j = canonicalize_semantic_archive(j)
     except ValueError as exc:
@@ -570,6 +934,13 @@ def type_check(
                 ),
             ),
         )
+
+    # The first pass above rejects malformed surface attrs without asking the
+    # elaborator to interpret them.  Re-run on accepted canonical J so axis
+    # bounds can use its closed operand ranks.
+    known_op_diagnostics = _check_known_operation_contracts(j)
+    if known_op_diagnostics:
+        return TypeCheckReport(TypeCheckStatus.FAIL, known_op_diagnostics)
 
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_total_j_value_typing(j, diagnostics)
@@ -636,6 +1007,11 @@ def type_check(
             )
 
     anchors, node_operations = _build_anchors(j, c, diagnostics)
+    absent_signature_refs = {
+        parameter.name
+        for parameter in j.signature.parameters
+        if parameter.kind is ParameterKind.OPAQUE and parameter.dtype == "none"
+    }
     _check_result_relations(j, diagnostics)
     c_subject_kinds = {"node", "domain", "access", "scope", "storage"}
     for index, slot in enumerate(c.slots):
@@ -672,6 +1048,17 @@ def type_check(
     instance_anchors: dict[str, _Anchor] = {}
     for index, item in enumerate(pi.instances):
         ref = str(item["semantic_ref"])
+        if ref in absent_signature_refs:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+                    f"pi.instances[{index}].semantic_ref",
+                    "opaque(dtype=none) is an absent ABI carrier and cannot "
+                    "own a realization instance",
+                    ref,
+                )
+            )
+            continue
         anchor = anchors.get(ref)
         if anchor is None or anchor.kind == "authorization":
             diagnostics.append(
@@ -795,6 +1182,17 @@ def type_check(
     for index, authorization in enumerate(
         j.boundary.realization_authorizations
     ):
+        if authorization.subject_ref in absent_signature_refs:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+                    f"j.boundary.realization_authorizations[{index}].subject_ref",
+                    "opaque(dtype=none) is an absent ABI carrier and cannot "
+                    "authorize a semantic realization refinement",
+                    authorization.subject_ref,
+                )
+            )
+            continue
         subject = anchors.get(authorization.subject_ref)
         if authorization.subject_ref not in valid_subjects:
             diagnostics.append(
@@ -886,6 +1284,21 @@ def type_check(
         kind = str(refinement["kind"])
         instance_id = str(refinement["instance"])
         auth_ref = refinement["auth_ref"]
+        refined_instance = instances.get(instance_id)
+        if (
+            refined_instance is not None
+            and refined_instance["semantic_ref"] in absent_signature_refs
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN,
+                    f"pi.refinements[{index}].instance",
+                    "opaque(dtype=none) is an absent ABI carrier and cannot "
+                    "serve as a refinement carrier",
+                    instance_id,
+                )
+            )
+            continue
         if kind in GLOBAL_SAFE_REFINEMENTS:
             if auth_ref is not None:
                 diagnostics.append(
