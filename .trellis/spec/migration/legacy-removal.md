@@ -1,6 +1,7 @@
 # 旧实现退役与首步重构
 
-> 状态：当前迁移规范。目标是让代码开始实现三份核心设计及其数学/claim 总述，不维持新旧双轨。
+> 状态：当前迁移规范。目标是让代码实现四份 SCRC 权威设计与第五份 production backend 设计，
+> 不维持新旧双轨。
 
 ## 必须退役的协议设施
 
@@ -41,7 +42,8 @@
 
 ## 已执行的首步重构顺序
 
-1. 以三份核心文档、数学/claim 总述和本 spec 替换旧运行口径，历史材料只留在 archive/source-notes。
+1. 以四份 SCRC 文档、第五份后端设计和本 spec 替换旧运行口径，历史材料只留在
+   archive/source-notes。
 2. 删除 formal runner 中的旧 hash/epoch/commitment gate 与对应 schema/tests。
 3. 将 logical signature 收入 J，删除独立 interface 输入；需要时只计算 `InterfaceView(J)`。
 4. 建立最小 `TypeCheck(J,C,π)`：refs、slot/type、observable J anchor、泄漏禁令、authorization。

@@ -57,7 +57,9 @@ Production:
 - Replay view、Gate view 和 lowering view 都是 C 的确定性投影；
 - `RefEval` 在接口层面禁止访问 C；
 - production lowerer 可以消费或忽略 C，但不读取 pi；
-- backend cost model 与未来 retune 是后话，不进入当前核心设计或当前 28-kernel 验收。
+- backend cost model 与 retune 不进入 SCRC 核心设计或当前 28-kernel 认证验收；其 production
+  合同由 [第五份后端设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
+  独立定义。
 
 ## 2. 严格三对象因子化
 
@@ -154,6 +156,41 @@ LLM response 在进入证明相关路径前必须经过确定性的 Decode/Elabo
 并物化唯一可推导类型、消去可机械证明的恒等表示。接受后只有一个 J；不存在 `J_wire` 与
 `CanonicalJ` 两个 artifact。解析 AST/axes 只是 J 的私有派生缓存，不读取 Source、C/π、Harness
 concrete value 或 Gate 结果，也不得猜测缺失语义。Replay、RefEval 与 production lowering 只消费 J。
+
+#### 2.5.1 Lift 内的只读 CandidateCheck
+
+为减少复杂 artifact 在静态 JSON Schema 通过后才暴露 dependent type/reference 错误，同一个
+source-aware Lift agent 可以在一次有界生成动作内，对自己已经写出的完整 candidate 调用只读、
+非认证的 `CandidateCheck`：
+
+```text
+ctx = {
+  anonymous_compiler_view,
+  schema_version,
+  decode_version,
+  typecheck_version
+}
+CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
+```
+
+该工具可以复用外部 Runner 的 strict parser、窄 Decode/Elaborate、匿名 handle/Harness-view 一致性
+检查与 `TypeCheck(J,C,pi)`，但必须满足：
+
+- 只检查当前完整 candidate；可以构造 ephemeral validation view，但不得合成、补写、分类、修改或
+  返回新的 J/C/π candidate/artifact；
+- diagnostics 只包含 closed `protocol/status/rule_code/path/observed_refs_or_types`，不返回建议值、
+  canonical artifact、patch 或 corrected artifact；
+- 不读取 Replay、Gate1、Gate2、RefEval、compiler observation 或历史 sibling；
+- 调用次数与诊断只进入 proof-irrelevant audit；
+- tool `PASS` 不签发证书，正式提交后 Runner 必须重新执行权威检查；
+- agent 修改后仍提交完整 `(J,C,pi)`，不能只交局部 patch。
+
+`ctx` 精确等于该 agent 原本已经获准读取的匿名机械 Harness compiler view 与公共协议版本；
+CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也不增加新的 source-conditioned
+信息通道。
+该工具扩大的是即时裁决能力，不是固定代码的语义生成权；Harness 仍不得替 Lift 完成 J/C 分类。
+CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
+在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
 ### 2.6 显式语义所有权投影
 
@@ -641,6 +678,10 @@ c_access = forbidden_by_interface
 K_t = Lower_t(J,C)
 ```
 
+这里的 `Lower_t(J,C)` 只是 orchestration 层的抽象签名，不表示 materializer 可以同时读取
+`J` 与 `C` 来决定基准 IR。其内部因子分解必须满足 11.3：先由 `J` 独立得到
+`M0 = Emit_v(J)`，再让 `C` 只影响搜索 seed / ordering。
+
 不引入：
 
 - LoweringAgent；
@@ -663,7 +704,8 @@ Layer-B relation 已被 logical Intent MLIR 完整表示；若目标 lowering �
 若当前阶段验证 backend：
 
 ```text
-O_target = Exec(Lower_t(J,C), x)
+M in Visited_(t,b)(J;C) subseteq Reach_t(J)
+O_target = Exec(Lower_t(M), x)
 G_backend = Close_Q(O_target, RefEval(J,x))
 ```
 
@@ -671,11 +713,14 @@ G_backend = Close_Q(O_target, RefEval(J,x))
 
 ### 11.3 C 在 lower IR 中的生命周期
 
-直接 production 路径可以是：
+直接 production 路径必须保持如下职责顺序：
 
 ```text
-J + C
-  -> Intent MLIR + schedule annotations/sidecar
+J
+  -> M0 = Emit_v(J)
+C
+  -> SearchSeed_C(M0)
+  -> M in Visited_(t,b)(J;C) subseteq Reach_t(J)
   -> target lowering
   -> tile/vector/thread/pipeline/memory decisions
   -> lower target IR
@@ -683,37 +728,47 @@ J + C
   -> executable
 ```
 
+这里不是把 `J+C` 合并成新的后端语义输入。`Emit_v` 只读取 `J` 并构造基准
+Intent MLIR；`C` 随后只初始化搜索顺序、候选优先级和代价模型先验。搜索得到的
+`M` 必须属于由 `J` 定义的语义保持可达域，不能因 `C` 改写合法性、结果关系或
+可观察语义。
+
 production lowerer可以消费、部分消费或忽略 C；但不能读取 pi 或 source-specific hidden binding。
 若它忽略未知 C，必须仍能从完整 J 走 generic correctness fallback。
 
 production execution 也不能重新接收一份 J 或独立 interface sidecar。已编译 lowering 持有唯一 J
 及由它生成的 target program；runtime input 必须以 J logical handles 精确绑定，底层顺序 output
 只能在 backend 内部确定性映射回 J outputs。缺失/额外/positional fallback 均 fail closed。该路径的
-正确性继续由 `Close_Q(Exec(Lower_t(J,C),x),RefEval(J,x))` 的独立 backend conformance 表达，不向
-Gate2 增加第四条边。
+正确性合同由 materializer、pass 与 target lowerer 支撑；
+`Close_Q(Exec(Lower_t(M),x),RefEval(J,x))` 只作为独立 CI/debug/evaluation conformance，不向
+Gate2 增加第四条边，也不成为 production legality oracle。
 
-### 11.4 未来 retune 与 cost model
+### 11.4 Retune 与 cost model 的 production 扩展
 
-未来若实现 target autotuning，可以在 backend 内部选择：
-
-```text
-C' in Adm_t(J)
-```
-
-并验证：
+完整 multi-lowering、retune 与 cost-model 合同由
+[第五份后端设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
+定义。其核心是在 backend 内部选择：
 
 ```text
-Exec(Lower_t(J,C')) belongs to [[J]]
+M0 = Emit_v(J)
+M in Visited_(t,b)(J;C) subseteq Reach_t(J)
+Lower_t(M) models J
 ```
 
-这属于 future work，不改变当前核心 artifact `(J,C,pi)`，也不产生新的系统角色。
+若实现内部仍使用 `sigma_target`，它只表示某个 `M` 所携带的 schedule / layout /
+precision 配置分量，而不是脱离 MLIR 的完整实现候选，也不是由 `C` 授权的语义变体。
+`C` 可以决定先从哪些候选开始、先测试哪些 tile / vectorization / fusion 组合；
+但 `C` 不定义 `Reach_t(J)`，也不证明某个候选合法。合法性来自 `J` 与后端变换合同。
+
+`sigma_target` 是 backend internal schedule state，不是新的 C artifact。该扩展不改变核心 artifact
+`(J,C,pi)`，也不产生新的系统角色。
 
 面对“每个 backend 是否都要重建 cost model”的 reviewer 问题，当前回答是：
 
 - correctness 架构不依赖 cost model；
-- 当前只要求 backend 能消费或忽略 C 并通过 J/B conformance；
-- target-specific cost model 是未来的性能优化层，而不是 Lift/Replay/Gate 正确性的前置条件；
-- 本阶段不实现、不声称已经实现，也不把它加入 28-kernel canary 验收。
+- backend 可以消费、忽略或以 C 排序候选；
+- target-specific cost model 是 production 性能层，不是 Lift/Replay/Gate 正确性的前置条件；
+- 28-kernel SCRC canary 与 backend multi-lowering/performance 实验继续分开验收。
 
 ## 12. C-purity 与多值实验
 
@@ -810,6 +865,9 @@ Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正�
 7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi。
 
 ## 15. 当前阶段明确不做
+
+本节约束 SCRC artifact、Replay 与在线 acceptance；它不禁止第五份后端设计在 production 内部实现
+不进入 SCRC 的 generic search/cost model。
 
 - 不新增 `CBindingMap` artifact；
 - 不新增 portable-hint artifact；
@@ -921,4 +979,4 @@ Production:
     K_t = Lower_t(J,C)
 ```
 
-> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + pi + MaskC(C)`。当前证明相关 artifact 始终只有 `(J,C,pi)`，LoweringAgent、retune agent 与 backend cost model 均属于未来工作。**
+> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + pi + MaskC(C)`。当前证明相关 artifact 始终只有 `(J,C,pi)`；production multi-lowering、retune 与 cost model 不属于 SCRC，并由第五份后端文档单独约束。**

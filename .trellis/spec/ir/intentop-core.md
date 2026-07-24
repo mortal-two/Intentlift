@@ -14,7 +14,8 @@ J 使用小型、可组合、可执行的语义构造表达 Kernel denotation，
 5. logical update。
 
 支持 claim 必须同时来自真实 parser/TypeCheck consumer、J-only RefEval、Gate1/Gate2 与相关
-backend conformance；schema 能保存字段不等于系统已经支持该能力。
+backend conformance；schema 能保存字段不等于系统已经支持该能力。backend conformance 在这里是
+实现覆盖的 regression evidence，不是 pass applicability 或 candidate legality 的定义。
 
 ## 所有权
 
@@ -36,8 +37,8 @@ LogicalUpdate(node, base, indices, values, axis,
               combiner, duplicate_policy, order)
 ResultRelation(output,
                exact
-               | tolerance(parameters)
-               | allowed_result(relation))
+               | tolerance
+               | one_of_updates(update))
 ```
 
 `IntentFunction.reduce.attrs.axes` 始终是 whole-tensor logical axes；与该节点对应的
@@ -49,16 +50,49 @@ C valuation 或任意公式；identity 与 masked contribution 仍由同一个 B
 不支持、关系参数非法或 authorization 不完整时必须 fail closed，不能退回 case-specific Python
 oracle 或旁路 metadata。
 
-当前 SCRC 主认证只接收 deterministic / contract-deterministic 的可观察合同。schema 能表达
-`allowed_result` 不等于主 Gate2 已支持真正集合值语义；只有当合同在 Q 下给出唯一外部观察要求
-时才能进入当前三边 `Close_Q`。一般集合值语义留给未来逐观察 `Accept_{J,Q}`，不得从有限次
-membership 外推完整行为集合包含。
+当前 SCRC 主认证只接收 deterministic / contract-deterministic 的可观察合同。当前真实 enum 是
+`exact/tolerance/one_of_updates`；`one_of_updates` 只是受限 update relation，不表示主 Gate2 已支持
+一般集合值语义。一般 `allowed_result` 与逐观察 `Accept_{J,Q}` 留给未来，不得从有限次 membership
+外推完整行为集合包含。
 
 ## Comparator class
 
 B 只能从系统支持的封闭 comparison class 中选择并声明必要语义合同。外部比较政策 Q 根据
 dtype、reduction extent、reassociation 权限等构造确定性、对称的 comparator，并约束 tolerance、
 NaN/Inf 等参数。Lift 不得写入任意 comparator 或自行放宽及格线。
+
+comparison class 只定义观察比较类别，不是 backend transformation permission。实际 operand/result/
+cast dtype 属于 A typed graph；B 可以规定 order、reassociation、rounding、tie、duplicate 与允许观察
+关系；Q 只实例化 comparator。`tolerance` 不能授权 backend 改 reduction tree、accumulation dtype、
+FMA 或 transcendental 实现。
+
+## Intent MLIR 中的 A/B/C 投影
+
+production materializer 先对唯一 J 做严格 J-only 的确定性编码：
+
+```text
+A -> structured Intent ops/regions/value graph
+B -> closed attrs/effects/verifier facts/ephemeral analyses
+```
+
+得到 `M0=Emit_v(J)` 后，backend 再将 C 投影成 discardable schedule annotations、search seed 与
+candidate ordering。该后置步骤不修改 M0/J，也不产生新 artifact。
+
+Intent MLIR 可以同时携带三类投影和 compiler internal state，但它不是第二份 J。所有权由信息来源
+决定，不由 attr 物理附着在哪个 op 上决定：
+
+- `reduce.assoc` 可以是 B-derived closed attr；
+- `intent.loop.tile_hint` 可以在 canonical J 之外作为 C-derived MLIR annotation；
+- 禁止恢复任意 per-op `layer_b` 或让 C annotation 反向改变 J denotation。
+
+structured ops 必须保留到 generic implementation-family 选择完成。Op.td description 只写
+extensional semantics、typed operands/results、logical axes/order 与 closed contract，不写 NVVM、
+`arith.select`、Hillis--Steele、bitonic、shared-memory/barrier、one-block-per-row 或其他 target recipe。
+target recipe 属于 production pass library。
+
+backend 根据 A 识别通用 implementation family，根据 B 和 target capability 检查 pass precondition，
+根据 C 排序候选。缺少某个 pass 所需的 B fact 时，该 pass 不适用；不能从 Source、π、kernel name、
+Gate2 tolerance 或运行结果补出前提。
 
 ## 禁止恢复的旧旁路
 

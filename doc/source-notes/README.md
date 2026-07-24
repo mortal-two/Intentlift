@@ -4,14 +4,23 @@
 包含后来被否定的 hash、epoch、commitment、单次 Replay、旧 masked-J 状态机或其他历史概念。
 这些内容不是当前规范，不能直接约束实现。
 
-当前规范性结论只见三份核心设计：
+当前规范性结论只见五份权威设计：
 
 1. [C 设计](../IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
 2. [π 设计](../IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)
 3. [最终执行流程](../IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)
+4. [IntentIR / SCRC 最终数学、执行流程与论文表述](../IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
+5. [Contract-Preserving Multi-Lowering 后端最终设计](../IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
 
-三份设计的数学记号与论文 claim 总述见
-[IntentIR / SCRC 最终数学、执行流程与论文表述](../IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)。
+前四份定义 SCRC，第五份只定义 SCRC 之后的 production backend。
+
+## 2026-07-24：后端设计来源
+
+| 材料 | 性质 | 主要吸收位置 |
+|---|---|---|
+| [Intent 搜索建议](高级ai建议intent搜索.md) | 早期搜索方向、曾包含在 J/MLIR 搜索位置上的反复判断 | 第五份后端设计 |
+| [SCRC-Certified Multi-Lowering 设计草案](SCRC-Certified_Intent-Guided_Multi-Lowering_完整设计与逻辑审查.md) | A/B/C、`Impl(J)`、multi-lowering 与论文第四章建议；部分 C/authorization 表述未采纳 | 第五份后端设计与派生 spec |
+| [高级 AI 对论文思考](高级ai对论文思考.md) | N+M 论文主线、后端章节与实验消融设想 | 第五份后端设计的动机与实验结构 |
 
 ## 2026-07-22：三份核心设计的形成与复核
 
@@ -35,5 +44,5 @@
 | [回答 2](721回答2.md) | 严格 Gate1、π 在 Intent 外、匿名参数与轻 Harness |
 | [回答 1](721回答1.md) | 对旧系统膨胀和历史漂移的审计 |
 
-这些早期材料解释了设计演进，但冲突时不再按材料之间的“优先级”裁决，而是一律以当前三份
-核心设计及与之对齐的数学/claim 总述为准。
+这些来源材料解释了设计演进，但冲突时不再按材料之间的“优先级”裁决，一律以当前五份权威
+设计及与之对齐的活动 spec 为准。

@@ -270,6 +270,23 @@ execution 与 target/C lowering 处分叉。解析 AST/axes 可作为 J 的私�
 - result relation 和 update relation；
 - typed index、numeric conversion 等语义关系。
 
+TypeCheck 还必须检查 closed result relation 与对应 output 的 dtype、A 依赖图和 B numeric contract
+相容。该检查只拒绝不相容声明，不替 Lift 选择 relation。当前版本定义封闭判定
+`RequiresTolerance_v1(J,output)`：
+
+1. 从 logical output 经 direct producer、函数级 `returns` 或唯一 `output_mapping` 解析到 A value，
+   再沿 op operands 递归得到 `Deps_A(output)`；无法唯一解析时 fail closed；
+2. output dtype 为 floating，且依赖闭包含以下任一项时返回 true：
+   - floating `reduce`；
+   - `map_unary.fn` 属于 `{exp,log,sqrt,rsqrt,tanh,sigmoid,cos,sin,tan,exp2,atan,erf}`；
+   - J/B 中 `kind=reassociation` 的 **source-realization authorization**，其 `subject_ref` 位于该闭包；
+3. `RequiresTolerance_v1=true` 时，显式或默认的 `exact` 均 fail closed，Lift 必须显式重新声明
+   `tolerance`。
+
+v1 没有“更强 exact contract”例外；未来若需要，必须新增版本化 closed vocabulary 与判定，而不能
+使用自由文本豁免。这里的 reassociation authorization 只触发 SCRC comparison-class 检查，不授权
+production backend 改变 reduction tree。具体 tolerance 阈值继续只由 Q 提供。
+
 ### 6.2 C 检查
 
 检查 C 的：
@@ -306,7 +323,62 @@ TypeCheck 不证明某种 representation 在一般情况下与 J 语义等价。
 reassociation、atomic form 等 sensitive refinement，它只检查两件事：J/B 是否已有明确的 typed/effect
 authorization，或者该 refinement 是否属于系统统一维护的安全白名单；两者都不满足就直接失败。
 
-### 6.4 格式修正和正式实验轮次
+authorization 的 dependent type rule 必须按 kind 定义，不能把所有 `subject_ref` 都只解释为其
+result carrier。特别地，对：
+
+```text
+n = cast(x : Ts) -> Tt
+u = numeric_cast(subject_ref=n, source_dtype=Ts, target_dtype=Tt)
+```
+
+TypeCheck 必须检查：
+
+```text
+u.kind == numeric_cast
+u.subject_ref resolves to a unary A cast node n
+u.source_dtype and u.target_dtype are both present
+u.source_dtype == Type(n.operand[0])
+u.target_dtype == Type(n.result)
+```
+
+并继续检查 refinement kind、`auth_ref`、instance `semantic_ref` 与 `u.subject_ref` 三方一致。
+authorization 仍必须由 Lift 显式声明；Decode/Elaborate 和 TypeCheck 都不得从 cast node 自动创建它。
+每个 instance 至多拥有一个 refinement；重复项必须在 parser/TypeCheck 阶段 fail closed。
+
+### 6.4 Lift 内的有界 CandidateCheck
+
+同一个 source-aware Lift agent 可以在一次生成动作内，对自己已经写出的完整 candidate 调用只读、
+非认证的 `CandidateCheck`。定义显式上下文：
+
+```text
+ctx = {
+  anonymous_compiler_view,
+  schema_version,
+  decode_version,
+  typecheck_version
+}
+
+CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
+```
+
+`ctx` 精确等于本次 Lift 已可见的匿名机械 compiler view 与协议版本；实现禁止读取 ambient host
+Harness 状态。工具可以在私有内存中构造 ephemeral parsed/elaborated validation view，但不得合成、
+补写、修改或返回新的 candidate/artifact。diagnostics 使用固定 closed schema：
+
+```text
+protocol, status, rule_code, path, observed_refs_or_types
+```
+
+它不返回 recommended value、canonical artifact 或 patch，也不读取 Replay、Gate1、Gate2、RefEval
+或 compiler observation，不运行行为测试，不生成 J/C 分类、authorization、result relation 或 π
+topology。agent 必须根据诊断自行修改并最终提交完整 `(J,C,pi)`。调用次数必须有界并作为普通 Lift
+audit 记录；tool `PASS` 不构成正式 TypeCheck，提交后 Runner 必须用相同 `typecheck_version` 重新
+执行权威检查。
+
+该能力只把原本发生在相邻 fresh Lift invocation 之间的机械反馈移入一次有界 Lift episode，不增加
+Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round 的定义。
+
+### 6.5 格式修正和正式实验轮次
 
 以下错误仍属于 Lift 输出修正：
 
@@ -320,6 +392,9 @@ authorization，或者该 refinement 是否属于系统统一维护的安全白�
 这些错误在 Replay 之前处理，不算一次 Gate1 正式轮次。但每次实际 LLM 调用仍应计入普通调用记录，并设置修正次数上限，不能无限重试。
 
 只有 TypeCheck 通过、能够进入全新 Replay 的候选，才算一次正式实验轮次。
+
+上述新增规则构成下一 TypeCheck protocol version；实现完成、protocol/version receipt 同步升级并
+开始新的实验后才生效。不得用新规则静默重判历史 artifact。
 
 ## 7. 第三步：source-blind Replay
 
@@ -533,6 +608,10 @@ B 只能声明系统支持的 comparison class 和必要语义合同，例如 ex
 reduction extent、reassociation 权限等构造 comparator，并检查 tolerance 上限、NaN/Inf 合同等
 全部参数；不支持的类别或非法参数直接 fail closed。Q 不是 Lift artifact，也不进入 Replay。
 
+comparison class 在进入 Replay 前已经由 TypeCheck 做结构相容性检查；Q 只实例化一个已接受的
+class，不负责把错误的 `exact` 自动改成 `tolerance`。同样，Gate2 的 tolerance 不能反向授权 J 或
+production backend 改变 reduction order、accumulation dtype、FMA 或 transcendental 实现。
+
 Lift 不能自由写入任意 Python comparator，也不能通过任意大的 `rtol/atol` 或“所有输出均可接受”
 来放宽自己的 Gate2。B 保留对语义比较类别与必要合同的所有权，但候选不能自己决定及格线。
 
@@ -634,6 +713,7 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 - Lift prompt；
 - Lift 输入说明；
 - Lift 的公共示例；
+- source-neutral schema query 与有界 `CandidateCheck` 诊断工具；
 - 结构化 diff 的表达方式。
 
 不修改：

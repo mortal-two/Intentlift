@@ -15,6 +15,14 @@ dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 B 同时拥有会改变允许结果关系的 typed/effect authorization 与 comparison class 声明。它不包含
 任意可执行 comparator；外部验证政策 Q 根据 B 的封闭类别构造实际比较关系。
 
+comparison class 必须与 output dtype、A 依赖图和 B numeric contract 相容。TypeCheck 只检查并
+拒绝不相容声明，不替 Lift 选择或改写 relation。当前采用最终执行流程第 6.1 节的 closed
+`RequiresTolerance_v1(J,output)`：从 output producer/return/mapping 沿 A operands 得到依赖闭包，
+浮点 output 若依赖 closed transcendental 集、floating reduction 或其依赖节点具有
+`kind=reassociation` 的 source-realization authorization，则显式或默认 `exact` 均被拒绝。v1 没有
+自由文本或“更强合同”例外；具体 tolerance 阈值仍只来自 Q。该 authorization 只触发 SCRC
+compatibility check，不成为 production backend permission。
+
 J access 采用唯一的 canonical fill 合同：
 
 ```text
@@ -143,6 +151,32 @@ Sensitive(r)
 `GlobalSafeRefinement` 是系统统一维护的封闭安全集合，不由 Lift 或单个 Kernel 修改。两项均不
 满足时 fail closed；TypeCheck 不现场运行 SMT、range proof 或一般语义等价证明。
 
+authorization 的 carrier typing 按 kind 定义。对：
+
+```text
+n = cast(x : Ts) -> Tt
+u = numeric_cast(subject_ref=n, source_dtype=Ts, target_dtype=Tt)
+```
+
+必须检查：
+
+```text
+u.kind == numeric_cast
+u.subject_ref resolves to n
+OpKind(n) == cast
+Arity(n) == one operand and one result
+u.source_dtype and u.target_dtype are both present
+u.source_dtype == Type(n.operand[0])
+u.target_dtype == Type(n.result)
+refinement.kind == u.kind
+instance.semantic_ref == u.subject_ref
+refinement.auth_ref == u.auth_id
+```
+
+不能将 `source_dtype` 与 cast result carrier 比较，也不能要求 subject 改绑 cast 前的 tensor。
+authorization 和 refinement 都由 Lift 显式声明；decoder/TypeCheck 不得自动生成缺失项。
+每个 π instance 至多一个 refinement；重复项 fail closed，不由 parser/tool/Replay 选择。
+
 ## 最小 TypeCheck
 
 `TypeCheck(J,C,π)` 接收已经构造完成的唯一 J，并至少检查 J access 的 canonical fill 合同、refs、route slot/type、observable
@@ -160,3 +194,6 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
 线索，也不证明 J 或 realization 的行为正确。
+
+上述 numeric-cast 与 result-relation compatibility 属于下一 `typecheck_version` 合同。实现、
+CandidateCheck 与 receipt 必须同步提升版本后才对新实验生效；历史证书不由新规则静默重判。

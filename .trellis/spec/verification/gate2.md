@@ -23,9 +23,9 @@ RefEval 与 production lowering 使用同一个 `J -> Intent MLIR` 入口。于�
 general affine、缺 predicate/effect 或类型冲突仍在准确边界 fail closed。
 
 RefEval 在发射 MLIR 前调用共享的 `ProjectFunctionalBoundary(J)`，只消费其 ephemeral structured
-结果；CUDA production analyzer 调用同一函数。该投影不是新的 J/Gate/artifact，只负责证明完整 B
-可进入 logical-tensor evaluation，不改变 `RefEval(J,x)` 的函数类型，也不把 target conformance
-并入 Gate2。
+结果；CUDA production analyzer 调用同一函数。该投影不是新的 J/Gate/artifact，只负责证明全部
+影响 logical-tensor evaluation 的 functional B facts 已被消费；π 专用 realization authorization 不在
+该投影内。它不改变 `RefEval(J,x)` 的函数类型，也不把 target conformance 并入 Gate2。
 
 ## 比较关系
 
@@ -41,9 +41,20 @@ class 与必要语义合同。Q 根据经验证的 class、dtype、reduction ext
 不支持的类别、非法参数、缺腿或执行不完整均 fail closed。Q 不是 Lift artifact，也不进入 Replay
 或 RefEval。
 
+在 Gate2 之前，TypeCheck 必须验证 comparison class 与 output dtype、A 依赖图和 B numeric contract
+相容；它只拒绝，不自动把 `exact` 改成 `tolerance`。当前使用最终执行流程第 6.1 节的
+`RequiresTolerance_v1` closed dependency rule；该规则命中时，显式或默认 `exact` 都被拒绝，v1
+没有自由文本或“更强合同”例外。其 reassociation 输入专指 J/B 中锚定 output dependency 的
+source-realization authorization，只触发 SCRC compatibility check，不成为 backend permission。
+Lift 仍显式声明 relation，Q 仍独占具体阈值。
+
 `Close_Q` 必须是确定性、对称的谓词；若底层 `isclose` 有方向性，Q 必须显式对称化或执行双向
 检查。第三条 Replay–J 边不增加执行，只比较已经产生的三个输出；两条 Source-centered 近似边
 不能依靠传递性推出它。
+
+Gate2 relation 只服务 Source/Replay/J 的观察闭合。production backend 不读取 Q；`tolerance` 不能
+作为改变 reduction tree、accumulation dtype、FMA、rounding 或 approximate transcendental 的
+lowering permission。
 
 当前主认证域只覆盖 deterministic / contract-deterministic Kernel，即内部调度可变化，但 J/B
 在协议可观察层面给出唯一合同结果。真正集合值的 Kernel 留给未来 `Accept_{J,Q}(x,o)` 的

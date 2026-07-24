@@ -120,6 +120,9 @@ NaN/Inf 合同等全部参数；不支持的类别或非法参数直接 fail clo
 K_t = Lower_t(J,C)
 ```
 
+该式是 production orchestration 的抽象签名；其内部必须先执行 J-only 的
+`M0 = Emit_v(J)`，再让 C 仅初始化搜索，具体合同由第五份后端权威文档定义。
+
 π 只证明 source realization 与 Replay closure。production lowerer 读取 π 会使 backend 退化为
 模仿 source frontend，违反 J/C 与 π 的所有权边界。
 
@@ -551,6 +554,45 @@ Sensitive(r)
 不满足，TypeCheck 直接失败。这样整数宽度、numeric cast 等语义由 J/B 表达，π 只表达显式
 materialization、placement、order 与 sharing。
 
+#### 5.4.1 `numeric_cast` authorization 的 dependent type
+
+当 authorization 的 `subject_ref` 指向显式 cast node：
+
+```text
+n = cast(x : Ts) -> Tt
+u = numeric_cast(subject_ref=n, source_dtype=Ts, target_dtype=Tt)
+```
+
+其类型规则是：
+
+```text
+u.kind == numeric_cast
+u.subject_ref resolves to n
+OpKind(n) == cast
+Arity(n) == one operand and one result
+u.source_dtype and u.target_dtype are both present
+u.source_dtype == Type(n.operand[0])
+u.target_dtype == Type(n.result)
+```
+
+不能用一个通用 “`source_dtype == Type(subject result carrier)`” 规则检查所有 authorization；该规则
+会把合法的 `f16 -> f32` cast 错误地比较为 `f16 != f32`。同理，accumulation、widen、atomic/update
+等 kind 必须分别定义自己读取的 operand/result/effect carrier。
+
+authorization 仍由 source-aware Lift 显式写入 J/B，π refinement 显式引用它。固定代码只能检查：
+
+```text
+refinement.kind == authorization.kind
+authorization.subject_ref == instance.semantic_ref
+auth_ref resolves to that authorization
+```
+
+每个 π instance 至多有一个 refinement；重复 refinement 必须在 parser/TypeCheck 前置边界 fail
+closed，不能由工具或 Replay 选择其中一个。
+
+Decode/Elaborate、TypeCheck 与 Replay 都不得从 op 自动创建缺失的 authorization，也不得要求
+numeric-cast instance 改绑 cast 前的 tensor 而丢失显式 cast stage 的 J node anchor。
+
 ### 5.5 Effect realization
 
 π 可以决定如何 realization 一个 J-owned effect，不能决定 effect 是否存在或具有什么 conflict
@@ -957,6 +999,16 @@ TypeCheck(J,C,pi)
 这些项目已有聚焦正反例和真实 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
 已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
 consumer 私有字符串解析，也不增加第二个 J 对象。
+
+同一权威 Decode/TypeCheck 可以通过有界、只读、非认证的 `CandidateCheck` 暴露给 source-aware
+Lift agent，使其在提交前看到当前完整 candidate 的 dependent diagnostics。该工具不得修改 candidate、
+返回 patch、生成 authorization 或读取 Replay/Gate evidence；正式提交后 Runner 仍重新执行
+TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic schema 以最终执行流程
+第 6.4 节为准；禁止读取 ambient host state。因此它只缩短机械错误反馈，不改变上述 judgement、
+π 的所有权或证书谓词。
+
+numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
+生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

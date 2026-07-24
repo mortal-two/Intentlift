@@ -119,7 +119,7 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 \[
 \eta=
 \bigl(
- f,p,H,U_f,\Phi_{f,p},Q,T,v_J,\mathcal E,\mathcal G
+ f,p,H,U_f,\Phi_{f,p},Q,T,v_D,v_{TC},v_J,\mathcal E,\mathcal G
 \bigr),
 \]
 
@@ -132,6 +132,8 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 - \(\Phi_{f,p}\)：Gate1 在 profile \(p\) 下的 frontend observer；
 - \(Q\)：由实验协议或 benchmark correctness policy 预先确定的比较政策；
 - \(T\)：Gate2 测试集；
+- \(v_D\)：Decode/Elaborate protocol version；
+- \(v_{TC}\)：正式 TypeCheck protocol version；
 - \(v_J\)：J-only evaluator 版本；
 - \(\mathcal E\)：编译器、运行时、设备等环境；
 - \(\mathcal G\)：模型、prompt、调用预算和实验流程配置。
@@ -362,6 +364,13 @@ TypeCheck 不是 Gate0，也不证明 Source 与 J 等价。它只机械执行 a
 - result/update relation；
 - typed index、numeric conversion 等语义关系。
 
+TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B numeric contract 的相容性。
+它不为 Lift 选择 relation，只执行版本化封闭判定 `RequiresTolerance_v1(J,output)`，具体 dependency
+解析、transcendental 集、floating reduction 与 source-realization reassociation authorization 规则
+见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
+或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
+不是 production backend permission。
+
 ## 4.2 C 检查
 
 - slot 匿名且唯一；
@@ -379,7 +388,43 @@ TypeCheck 不是 Gate0，也不证明 Source 与 J 等价。它只机械执行 a
 - sensitive representation refinement 有 J/B 授权；
 - 不含 source text、API、C value 或自由文本。
 
+authorization 必须按 kind 做 dependent typing。对 `kind=numeric_cast`，`subject_ref` 必须解析到
+真实 unary A cast node `n : Ts -> Tt`，`source_dtype/target_dtype` 必须同时存在并分别等于 operand
+type `Ts` 与 result type `Tt`；不能把二者都与 node result carrier 比较。authorization 必须由 Lift
+显式提出，固定核只检查其与 instance/refinement 的 kind、`auth_ref`、`semantic_ref` 和类型一致性。
+每个 instance 至多一个 refinement。
+
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
+
+## 4.4 Lift 内的非认证 CandidateCheck
+
+同一个 source-aware Lift agent 可以对自己已经产生的完整 candidate 调用有界、只读的：
+
+```text
+ctx = (anonymous_compiler_view, schema_version, v_D, v_TC)
+CandidateCheck_v(candidate_bytes, ctx)
+```
+
+提前获得与外部 Decode/TypeCheck 同源的机械 diagnostics。该调用：
+
+- 只读取显式 `candidate_bytes,ctx`，禁止读取 ambient host state；
+- 可以构造 ephemeral validation view，但不修改、补全或返回候选/artifact；
+- 不生成 J/C 分类、authorization、result relation 或 π topology；
+- 不读取 Replay、Gate、RefEval 或 compiler observation；
+- 只返回 closed `protocol/status/rule_code/path/observed_refs_or_types`，不返回建议值或 patch；
+- 不签发证书，也不替代提交后的正式 TypeCheck；
+- 只作为 proof-irrelevant Lift audit 记录。
+
+因此它改变的是 finding a well-typed witness 的工程效率，不改变：
+
+\[
+\mathsf{SCRC\_CERTIFIED}
+=
+\mathsf{TypeCheck}\land\mathsf{Gate1}\land\mathsf{Gate2}.
+\]
+
+扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
+新版本不静默重判历史证书。
 
 ---
 
@@ -1004,6 +1049,10 @@ R_{r+1}
 报告 branch 数 `B`、每分支正式预算 `K`、首轮 TypeCheck 通过率、`closure@branch/round`、
 time-to-first-closure、logical/physical Lift、normal/masked Replay、transport retry、未完成 branch
 与 `NO_CLOSURE_(B,K)` 分类。Gate2 只报告预选 winner 的三边结果。
+
+一次 Lift agent session 内的 `CandidateCheck` 次数、agent model turns 与 diagnostics 另行报告；它们
+不增加正式 Gate1 round。只有 agent 最终提交的完整 candidate 经外部 TypeCheck 通过后，才进入
+正式 witness search 计数。
 
 一次实验中：
 

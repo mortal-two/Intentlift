@@ -63,11 +63,43 @@ Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修
 语法/静态 Schema 检查。这是普通文件上的轻量 retrieval；不需要 vector database，也不能按
 当前 Kernel、历史失败或 sibling candidate 动态选择知识库。
 
-session 内不得调用 canonical artifact parser 的依赖检查、TypeCheck、Replay、compiler observer、
-Gate1、Gate2 或 RefEval。提交 `candidate.json` 后 session 结束；任何 parser/TypeCheck/Gate1 反馈
-只能由 Runner 显式放入下一次全新 Lift 调用，不能恢复旧 conversation 或旧可写 workspace。
-因此 agent 内部多步不增加正式 Gate round，也不削弱门禁；报告必须分别记录外部 Lift invocation、
-agent model turns 与实际 provider calls。
+agent 还可以对自己已经写出的完整 candidate 调用有界、只读、非认证的 `CandidateCheck`。该工具
+通过窄 host RPC 或同等隔离边界，复用外部 Runner 的 strict parser、既有 Decode/Elaborate、匿名
+Harness-view consistency check 与 `TypeCheck(J,C,pi)`：
+
+```text
+ctx = {
+  anonymous_compiler_view,
+  schema_version,
+  decode_version,
+  typecheck_version
+}
+CandidateCheck_v(candidate_bytes, ctx) -> PASS | structured diagnostics
+```
+
+工具不得：
+
+- 修改 candidate 或写 `/output/candidate.json`；
+- 返回 patch、corrected/canonical artifact 或 recommended field value；
+- 创建 logical binding、operator、authorization、result relation 或 π topology；
+- 读取 Replay、compiler observer、Gate1、Gate2、RefEval、历史/sibling evidence；
+- 执行行为测试或签发正式 TypeCheck/证书。
+
+`ctx` 精确等于 agent 原本已经可见的匿名机械 Harness compiler view 与协议版本；RPC 禁止读取
+未声明的 ambient host state。工具可以在私有内存中构造 ephemeral parsed/elaborated validation view，
+但不能将其作为 artifact 返回。diagnostics 只包含 closed
+`protocol/status/rule_code/path/observed_refs_or_types`。agent 根据 diagnostics 自行修改完整 object，
+最终仍最多提交一个完整
+`(J,C,pi)`。提交后 session 结束，Runner 必须重新运行全部权威 Decode/TypeCheck；工具 `PASS`
+不进入 Replay packet、Gate verdict 或 certificate，且 CandidateCheck/Runner 必须使用相同
+`typecheck_version`。
+
+agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
+Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
+Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
+
+CandidateCheck、numeric-cast dependent typing 与 result-relation compatibility 随下一协议版本实现；
+在实现与 receipt version 同步前，不能把本节当作现有 worker 已具备能力，也不能重判历史证书。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
 和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应

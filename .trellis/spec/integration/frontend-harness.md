@@ -29,6 +29,12 @@ Harness 不得：
 - 把真实 Source binding、compiler diff 或 H 整体交给 Replay；
 - 建立独立 `LogicalABI`、`InterfaceArtifact` 或带语义的 BindingMap。
 
+Lift session 的只读 `CandidateCheck_v(candidate_bytes,ctx)` 只能通过显式 `ctx` 接收当前 agent 已经
+获准看到的匿名机械 compiler view 与 schema/decode/typecheck version，以检查 candidate 是否篡改
+参数 kind/mode/dtype/rank、C valuation 或 anonymous handle 合同。工具禁止读取 ambient host state，
+也不得把 hidden inputs、真实 Source binding、Gate evidence 或额外 Harness 状态返回 agent，不得替
+Lift 生成 `logical_ref`、J/C 分类或任何 artifact 字段。
+
 ## Logical signature 与绑定
 
 input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical
