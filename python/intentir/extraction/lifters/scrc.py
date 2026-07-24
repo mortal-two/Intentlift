@@ -21,11 +21,14 @@ from intentir.verify.gate1.model import (
     ParameterKind,
     ScheduleSlotKind,
 )
+from intentir.verify.typecheck import TYPECHECK_PROTOCOL, type_check
 
 from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v2"
+CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -99,6 +102,45 @@ class SCRCLiftRequest:
     harness_binding: SCRCHarnessBinding
     anonymous_compiler_view: Mapping[str, Any] | None = field(
         default=None, repr=False
+    )
+
+
+@dataclass(frozen=True)
+class SCRCCandidateCheckContext:
+    """Source-free, versioned context visible to the local CandidateCheck."""
+
+    expected_parameters: tuple[str, ...]
+    anonymous_compiler_view: Mapping[str, Any] | None = field(
+        default=None, repr=False
+    )
+    schema_version: str = Gate1Artifact.SCHEMA
+    decode_protocol: str = SCRC_DECODE_PROTOCOL
+    typecheck_protocol: str = TYPECHECK_PROTOCOL
+
+    def __post_init__(self) -> None:
+        if any(not re.fullmatch(r"p[0-9]+", item) for item in self.expected_parameters):
+            raise ValueError("CandidateCheck parameters must be anonymous p* handles")
+        if self.anonymous_compiler_view is not None:
+            if not isinstance(self.anonymous_compiler_view, Mapping):
+                raise TypeError("CandidateCheck compiler view must be a mapping")
+            value = dict(self.anonymous_compiler_view)
+            json.dumps(value, sort_keys=True, allow_nan=False)
+            object.__setattr__(self, "anonymous_compiler_view", value)
+
+
+def scrc_candidate_check_context(
+    request: SCRCLiftRequest,
+) -> SCRCCandidateCheckContext:
+    """Project a Lift request to the exact source-free checker context."""
+
+    return SCRCCandidateCheckContext(
+        expected_parameters=tuple(
+            opaque
+            for _source, opaque in request.harness_binding.source_to_opaque
+            if re.fullmatch(r"p[0-9]+", opaque)
+        ),
+        anonymous_compiler_view=request.anonymous_compiler_view,
+        typecheck_protocol=TYPECHECK_PROTOCOL,
     )
 
 
@@ -690,6 +732,12 @@ closure; do not assume TypeCheck can infer an undeclared cast from source code.
 
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.
+When one C prior has a source-neutral J attachment, write optional subject_ref
+explicitly as one declared n*/d*/a*/q*/b* handle. Write axis_ref only when the
+closed subject contract exposes that logical axis: a reduction input axis, loop
+trip axis, canonical domain/index axis, or declared x* dimension. Do not infer
+an attachment from role, source names, pi, or physical thread/lane axes. Global
+priors may omit both fields; missing local attachment is safer than guessing.
 
 Pi is not semantics and is not executable. It may record only anonymous
 regions, instances referring to J/C handles, routes with operand slots, partial
@@ -836,11 +884,108 @@ def decode_scrc_lift_artifact(
 ) -> Gate1Artifact:
     """Apply the one canonical J/C/pi decoder to any Lift backend output."""
 
+    expected_parameters = tuple(
+        opaque
+        for _source, opaque in request.harness_binding.source_to_opaque
+        if re.fullmatch(r"p[0-9]+", opaque)
+    )
+    artifact = _decode_scrc_lift_artifact_core(
+        response_text,
+        expected_parameters=expected_parameters,
+        anonymous_compiler_view=request.anonymous_compiler_view,
+        required_schema=Gate1Artifact.SCHEMA,
+    )
+    _validate_source_identifier_privacy(artifact, request.harness_binding)
+    return artifact
+
+
+def _decode_scrc_lift_artifact_core(
+    response_text: str,
+    *,
+    expected_parameters: tuple[str, ...],
+    anonymous_compiler_view: Mapping[str, Any] | None,
+    required_schema: str,
+) -> Gate1Artifact:
+    """Shared source-free Decode core used by Runner and CandidateCheck."""
+
     payload = _json_object(response_text)
     artifact = canonicalize_gate1_artifact(Gate1Artifact.from_json(payload))
-    _validate_anonymous_lift(artifact, request.harness_binding)
-    _validate_compiler_view(artifact, request.anonymous_compiler_view)
+    if artifact.wire_schema != required_schema:
+        raise ValueError(
+            f"Lift artifact uses {artifact.wire_schema!r}; "
+            f"this round requires {required_schema!r}"
+        )
+    _validate_anonymous_lift_core(artifact, expected_parameters)
+    _validate_compiler_view(artifact, anonymous_compiler_view)
     return artifact
+
+
+def check_scrc_lift_candidate(
+    response_text: str,
+    context: SCRCCandidateCheckContext,
+) -> dict[str, Any]:
+    """Run the authoritative decode/TypeCheck core and return diagnostics only."""
+
+    if (
+        context.schema_version != Gate1Artifact.SCHEMA
+        or context.decode_protocol != SCRC_DECODE_PROTOCOL
+        or context.typecheck_protocol != TYPECHECK_PROTOCOL
+    ):
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": [
+                {
+                    "rule_code": "candidate_check_context_mismatch",
+                    "path": "<context>",
+                    "observed_refs_or_types": [
+                        context.schema_version,
+                        context.decode_protocol,
+                        context.typecheck_protocol,
+                    ],
+                }
+            ],
+        }
+    try:
+        artifact = _decode_scrc_lift_artifact_core(
+            response_text,
+            expected_parameters=context.expected_parameters,
+            anonymous_compiler_view=context.anonymous_compiler_view,
+            required_schema=context.schema_version,
+        )
+    except Exception as exc:
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": [
+                {
+                    "rule_code": "decode_rejected",
+                    "path": "<candidate>",
+                    "observed_refs_or_types": [
+                        f"{type(exc).__name__}: {exc}"
+                    ],
+                }
+            ],
+        }
+
+    # This is the same callable used by the formal Runner.  CandidateCheck does
+    # not retain or return the canonical artifact and therefore cannot become a
+    # second acceptance path.
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    return {
+        "protocol": CANDIDATE_CHECK_PROTOCOL,
+        "status": "pass" if report.passed else "fail",
+        "diagnostics": [
+            {
+                "rule_code": item.code.value,
+                "path": item.path,
+                "observed_refs_or_types": (
+                    [item.ref] if item.ref is not None else []
+                ),
+            }
+            for item in report.diagnostics[:20]
+        ],
+    }
 
 
 def _response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
@@ -857,7 +1002,7 @@ def _response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
 
 
 def _validate_compiler_view(
-    artifact: Gate1Artifact, anonymous_view: dict[str, Any] | None
+    artifact: Gate1Artifact, anonymous_view: Mapping[str, Any] | None
 ) -> None:
     if anonymous_view is None:
         return
@@ -946,8 +1091,9 @@ def _validate_compiler_view(
     # extraction sidecar and deliberately absent from the proof artifact.
 
 
-def _validate_anonymous_lift(
-    artifact: Gate1Artifact, binding: SCRCHarnessBinding
+def _validate_anonymous_lift_core(
+    artifact: Gate1Artifact,
+    expected_parameters: tuple[str, ...],
 ) -> None:
     if artifact.j.kernel_id != "scrc_k0":
         raise ValueError("Lift kernel id must use scrc_k0")
@@ -965,12 +1111,9 @@ def _validate_anonymous_lift(
         f"n{index}" for index in range(len(artifact.j.node_ids))
     ]:
         raise ValueError("J node ids must use declaration-order handles n0, n1, ...")
-    expected_parameters = [
-        opaque
-        for _source, opaque in binding.source_to_opaque
-        if re.fullmatch(r"p[0-9]+", opaque)
-    ]
-    if [item.name for item in artifact.j.signature.parameters] != expected_parameters:
+    if [item.name for item in artifact.j.signature.parameters] != list(
+        expected_parameters
+    ):
         raise ValueError("J.signature parameters differ from anonymous source handles")
     dimensions: list[str] = []
     for tensor in tensors:
@@ -990,6 +1133,14 @@ def _validate_anonymous_lift(
             raise ValueError(f"J {prefix} handles are not declaration ordered")
     if any(not re.fullmatch(r"c[0-9]+", item.name) for item in artifact.c.slots):
         raise ValueError("pure C slots must use c0, c1, ...")
+
+
+def _validate_source_identifier_privacy(
+    artifact: Gate1Artifact,
+    binding: SCRCHarnessBinding,
+) -> None:
+    """Apply the privileged source-name leak check only in the formal decoder."""
+
     visible = {
         "j": artifact.j.to_json(),
         "c": artifact.c.to_json(),
@@ -1236,16 +1387,20 @@ class ResponsesSCRCLiftAdapter:
                 "response_id": extraction.provenance.response_id,
                 "usage": dict(extraction.provenance.usage),
                 "elapsed_ms": extraction.provenance.elapsed_ms,
+                "artifact_schema": extraction.artifact.wire_schema,
+                "decode_protocol": SCRC_DECODE_PROTOCOL,
+                "typecheck_protocol": TYPECHECK_PROTOCOL,
             },
         )
 
 
 __all__ = [
     "ResponsesSCRCLiftAdapter", "ResponsesSCRCRelifter",
-    "SCRC_RELIFT_PROTOCOL", "SCRCCompilerArgument",
+    "CANDIDATE_CHECK_PROTOCOL", "SCRC_DECODE_PROTOCOL", "SCRC_RELIFT_PROTOCOL",
+    "SCRCCandidateCheckContext", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
     "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
-    "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_lift_prompt_sha256",
+    "check_scrc_lift_candidate", "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_candidate_check_context", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
 ]

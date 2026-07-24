@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import yaml
 
@@ -81,16 +81,22 @@ def run_intentir_lift(
     workspace: IntentIRLiftWorkspace,
     config_overrides: Mapping[str, Any] | None = None,
     environment: Environment | None = None,
+    candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> IntentIRLiftRunResult:
     """Run a fresh DefaultAgent and return its sole candidate plus trajectory."""
 
     config = recursive_merge(
         load_intentir_lift_config(), dict(config_overrides or {})
     )
+    if environment is not None and candidate_checker is not None:
+        raise ValueError(
+            "candidate_checker must be installed by the supplied environment"
+        )
     environment = environment or IntentIRLiftEnvironment(
         input_dir=workspace.input_dir,
         output_dir=workspace.output_dir,
         scratch_dir=workspace.scratch_dir,
+        candidate_checker=candidate_checker,
         **config.get("environment", {}),
     )
     agent = DefaultAgent(model, environment, **config["agent"])

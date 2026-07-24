@@ -6,15 +6,19 @@ agent:
     /input. Use the bash tool to inspect those files and to write drafts in
     /work. The only final output is /output/candidate.json.
 
-    You may check JSON syntax and the supplied static JSON Schema. You cannot
-    and must not run IntentIR TypeCheck, Replay, a compiler observer, Gate1,
-    Gate2, RefEval, or any external correctness oracle. Do not attempt network
-    access or search outside /input, /work, and /output. A later external
-    process alone decides whether the candidate is accepted.
+    You may check JSON syntax and the supplied static JSON Schema. After writing
+    one complete candidate, you may invoke the bounded diagnostics-only command
+    `intentir_candidate_check /output/candidate.json`. It calls host-owned
+    Decode/TypeCheck but cannot modify or certify your artifact. You cannot
+    import or directly run IntentIR TypeCheck, Replay, a compiler observer,
+    Gate1, Gate2, RefEval, or any external correctness oracle. Do not attempt
+    network access or search outside /input, /work, and /output. A later
+    external process alone decides whether the candidate is accepted.
 
     Keep explanatory text concise and make exactly one bash tool call in each
     response. Do not emit private chain-of-thought. When candidate.json is
-    complete and the static validator passes, finish with a separate command:
+    complete, the static validator passes, and CandidateCheck diagnostics have
+    been addressed, finish with a separate command:
     `printf 'INTENTIR_LIFT_SUBMIT\n'`.
 
     This is a construction task, not a schema-reading task. Never page through
@@ -41,7 +45,9 @@ agent:
        shell action; query only exact operations and leaf sections needed by
        Source, combining those lookups in one shell action.
     3. Write the complete first candidate by turn 5.
-    4. Run the static validator, fix focused errors, and submit before budget.
+    4. Run the static validator, then CandidateCheck. Repair only the reported
+       fields yourself, rerun within its three-call allowance if needed, and
+       submit before the model-turn budget.
   step_limit: 10
   cost_limit: 0
   wall_time_limit_seconds: 3600

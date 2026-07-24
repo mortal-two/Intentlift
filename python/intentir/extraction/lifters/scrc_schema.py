@@ -18,6 +18,7 @@ from intentir.verify.gate1.model import (
     BOUNDARY_WIRE_FIELDS,
     GATE1_ARTIFACT_MODEL_FIELDS,
     SEMANTIC_ARCHIVE_WIRE_FIELDS,
+    Gate1Artifact,
     render_boundary_access_wire_grammar,
     render_gate1_artifact_envelope_grammar,
 )
@@ -58,6 +59,7 @@ _STRING = {"type": "string", "minLength": 1}
 _TENSOR_HANDLE = {"type": "string", "pattern": "^t[0-9]+$"}
 _NODE_HANDLE = {"type": "string", "pattern": "^n[0-9]+$"}
 _C_HANDLE = {"type": "string", "pattern": "^c[0-9]+$"}
+_C_SUBJECT_HANDLE = {"type": "string", "pattern": "^[ndaqb][0-9]+$"}
 _PARAMETER_HANDLE = {"type": "string", "pattern": "^p[0-9]+$"}
 _PORTABLE_PREDICATE_STRING = {
     "type": "string",
@@ -397,6 +399,24 @@ def _c_schema() -> dict[str, Any]:
             },
             "value_type": _STRING,
             "required": {"type": "boolean"},
+            "subject_ref": {
+                **_C_SUBJECT_HANDLE,
+                "description": (
+                    "Optional source-neutral attachment to one declared J "
+                    "node/domain/access/scope/storage subject. It is not a "
+                    "transformation permission or source binding."
+                ),
+            },
+            "axis_ref": {
+                "anyOf": [
+                    {"type": "integer", "minimum": 0},
+                    {"type": "string", "pattern": "^x[0-9]+$"},
+                ],
+                "description": (
+                    "Optional logical axis in AxisRefs_v1(J,subject_ref); "
+                    "requires subject_ref and never names a physical axis."
+                ),
+            },
         },
         ("name", "kind", "role"),
     )
@@ -685,7 +705,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
         {
             "schema": {
                 "type": "string",
-                "enum": ["intentir.scrc.artifact.v1"],
+                "enum": [Gate1Artifact.SCHEMA],
             },
             "j": semantic_archive,
             "c": _c_schema(),

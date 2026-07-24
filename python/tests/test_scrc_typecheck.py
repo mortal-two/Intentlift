@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from direct_fixtures import make_reduce_artifact
+from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.verify.gate1.model import (
     AccessKind,
     RealizationAuthorization,
     RefinementKind,
+    ResultRelationKind,
+    ResultRelationSpec,
+    ScheduleSlot,
     SchemaError,
 )
 from intentir.verify.gate1.pi import RealizationWitness
@@ -108,6 +111,48 @@ def test_required_c_slot_must_have_the_actual_harness_valuation() -> None:
     assert TypeCheckErrorCode.C_REQUIRED_VALUE_MISSING in _codes(artifact)
 
 
+def test_c_attachment_uses_closed_subject_dependent_axis_domain() -> None:
+    artifact = make_reduce_artifact()
+    slot = artifact.c.slots[0]
+    slot.subject_ref = "n1"
+    slot.axis_ref = 1
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    view = build_normal_rewriter_view(artifact)
+    assert view["c"]["slots"][0]["subject_ref"] == "n1"
+    assert view["c"]["slots"][0]["axis_ref"] == 1
+
+    slot.subject_ref = "d0"
+    slot.axis_ref = "x1"
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    slot.subject_ref = "a1"
+    slot.axis_ref = 0
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+    slot.axis_ref = "x0"
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    slot.subject_ref = "n0"
+    slot.axis_ref = 1
+    assert TypeCheckErrorCode.C_AXIS_INVALID in _codes(artifact)
+
+    slot.subject_ref = "n99"
+    slot.axis_ref = None
+    assert TypeCheckErrorCode.C_SUBJECT_UNKNOWN in _codes(artifact)
+
+
+def test_c_axis_requires_an_explicit_closed_subject() -> None:
+    with pytest.raises(SchemaError, match="axis_ref requires subject_ref"):
+        ScheduleSlot.from_json(
+            {
+                "name": "c0",
+                "kind": "constexpr",
+                "role": "tile_extent",
+                "axis_ref": 1,
+            }
+        )
+
+
 def test_observable_realization_cannot_be_owned_by_c() -> None:
     artifact = make_reduce_artifact()
     payload = artifact.pi.to_json()
@@ -161,6 +206,76 @@ def test_typed_authorization_source_must_match_its_j_carrier() -> None:
     ]
     artifact.pi = RealizationWitness.from_json(payload)
     assert TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH in _codes(artifact)
+
+
+def test_numeric_cast_authorization_types_operand_and_result() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].dtype = "f16"
+    artifact.j.signature.parameters[0].dtype = "f16"
+    operation = artifact.j.intent.body[0]
+    operation.op = "cast"
+    operation.attrs = {"to_dtype": "f32"}
+    artifact.j.boundary.realization_authorizations = [
+        RealizationAuthorization(
+            "u0", RefinementKind.NUMERIC_CAST, "n0", "f16", "f32"
+        )
+    ]
+    payload = artifact.pi.to_json()
+    payload["refinements"] = [
+        {"instance": "i0", "kind": "numeric_cast", "auth_ref": "u0"}
+    ]
+    artifact.pi = RealizationWitness.from_json(payload)
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    artifact.j.boundary.realization_authorizations[0].source_dtype = "f32"
+    assert TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH in _codes(artifact)
+
+
+def test_floating_transcendental_and_reduction_require_tolerance() -> None:
+    reduction = make_reduce_artifact()
+    reduction.j.boundary.result_relations = [
+        ResultRelationSpec("t1", ResultRelationKind.EXACT)
+    ]
+    assert TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE in _codes(reduction)
+
+    reduction.j.boundary.result_relations = []
+    assert TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE in _codes(reduction)
+
+    integer = make_reduce_artifact()
+    for tensor in [*integer.j.intent.inputs, *integer.j.intent.outputs]:
+        tensor.dtype = "i32"
+    integer.j.signature.parameters[0].dtype = "i32"
+    integer.j.signature.parameters[1].dtype = "i32"
+    integer.j.boundary.result_relations = [
+        ResultRelationSpec("t1", ResultRelationKind.EXACT)
+    ]
+    assert type_check(integer.j, integer.c, integer.pi).passed
+
+    nonlinear = make_copy_artifact()
+    nonlinear.j.intent.body[0].attrs["fn"] = "tanh"
+    assert TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE in _codes(nonlinear)
+
+    nonlinear.j.boundary.result_relations = [
+        ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
+    ]
+    assert type_check(nonlinear.j, nonlinear.c, nonlinear.pi).passed
+
+    reassociated = make_copy_artifact()
+    reassociated.j.boundary.realization_authorizations = [
+        RealizationAuthorization("u0", RefinementKind.REASSOCIATION, "n0")
+    ]
+    assert TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE in _codes(
+        reassociated
+    )
+    reassociated.j.boundary.result_relations = [
+        ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
+    ]
+    assert type_check(
+        reassociated.j, reassociated.c, reassociated.pi
+    ).passed
+
+    identity = make_copy_artifact()
+    assert type_check(identity.j, identity.c, identity.pi).passed
 
 
 def test_global_safe_refinement_is_closed_and_cannot_cite_candidate_auth() -> None:

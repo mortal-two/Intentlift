@@ -17,9 +17,12 @@ from intentir.extraction.lifters.miniswe import (
     _input_files,
 )
 from intentir.extraction.lifters.scrc import (
+    CANDIDATE_CHECK_PROTOCOL as SCRC_CANDIDATE_CHECK_PROTOCOL,
     SCRCLiftAttempt,
     SCRCReliftRecord,
+    check_scrc_lift_candidate,
     prepare_scrc_lift,
+    scrc_candidate_check_context,
 )
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import Gate1Artifact
@@ -32,6 +35,8 @@ from intentir.verify.scrc_runner import (
     SourceProgram,
 )
 from minisweagent.environments.intentir_lift import (
+    CANDIDATE_CHECK_PROTOCOL,
+    INTENTIR_CANDIDATE_CHECK,
     INTENTIR_LIFT_SUBMIT,
     IntentIRLiftEnvironment,
     IntentIRLiftWorkspace,
@@ -114,12 +119,16 @@ def source_copy(a, b, n, block: tl.constexpr):
 def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v6"
+    assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v7"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
     assert "map_binary" in files["knowledge/intent_ops.md"]
     assert "Do not page through the raw schema" in files["README.md"]
+    assert "intentir_candidate_check /output/candidate.json" in (
+        files["README.md"]
+    )
     assert "never names a source/local or J-body v*" in (
         files["knowledge/lift_contract.md"]
     )
@@ -252,6 +261,89 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     assert result.model_calls == 2
     assert len(model.query_inputs) == 2
     assert len(model.query_inputs[0]) == 2
+
+
+def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
+    workspace = _workspace()
+    workspace.candidate_path.write_text('{"candidate": 1}\n', encoding="utf-8")
+    seen: list[str] = []
+
+    def checker(candidate_text: str) -> dict:
+        seen.append(candidate_text)
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+        candidate_check_limit=2,
+    )
+    original = workspace.candidate_path.read_bytes()
+    try:
+        first = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json"}
+        )
+        second = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json"}
+        )
+        exhausted = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json"}
+        )
+        evidence = environment.serialize()["info"]["candidate_check"]
+    finally:
+        workspace.cleanup()
+
+    assert first["returncode"] == second["returncode"] == 0
+    assert exhausted["returncode"] == 1
+    assert json.loads(exhausted["output"])["diagnostics"][0][
+        "rule_code"
+    ] == "check_budget_exhausted"
+    assert seen == ['{"candidate": 1}\n', '{"candidate": 1}\n']
+    assert original == b'{"candidate": 1}\n'
+    assert evidence["calls"] == 3
+    assert [item["status"] for item in evidence["results"]] == [
+        "pass", "pass", "fail"
+    ]
+
+
+def test_agent_can_use_candidate_check_before_independent_submission() -> None:
+    workspace = _workspace()
+    candidate = '{"j": {}, "c": {}, "pi": {}}'
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{candidate}' > /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json",
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+        ]
+    )
+
+    def checker(candidate_text: str) -> dict:
+        assert json.loads(candidate_text) == json.loads(candidate)
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.exit_status == "Submitted"
+    assert result.model_calls == 3
+    check_evidence = result.trajectory["info"]["candidate_check"]
+    assert check_evidence["calls"] == 1
+    assert check_evidence["results"][0]["status"] == "pass"
 
 
 def test_bubblewrap_hides_host_env_repo_and_network_and_protects_input(
@@ -676,6 +768,33 @@ def _adapter_request() -> SCRCRunRequest:
     )
 
 
+def test_authoritative_candidate_check_uses_source_free_versioned_context() -> None:
+    request = _adapter_request()
+    prepared = prepare_scrc_lift(request.source.text)
+    context = scrc_candidate_check_context(prepared)
+    assert context.expected_parameters == ("p0", "p1", "p2")
+    assert "source_copy" not in repr(context)
+    assert not hasattr(context, "user_input")
+    assert not hasattr(context, "harness_binding")
+
+    artifact = make_copy_artifact()
+    passed = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json()),
+        context,
+    )
+    assert passed == {
+        "protocol": CANDIDATE_CHECK_PROTOCOL,
+        "status": "pass",
+        "diagnostics": [],
+    }
+
+    invalid = artifact.to_json()
+    invalid["c"]["slots"][0]["subject_ref"] = "n999"
+    rejected = check_scrc_lift_candidate(json.dumps(invalid), context)
+    assert rejected["status"] == "fail"
+    assert rejected["diagnostics"][0]["rule_code"] == "c_subject_unknown"
+
+
 def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> None:
     artifact = make_copy_artifact()
     captured: list[tuple[Path, dict]] = []
@@ -684,12 +803,13 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
         assert kwargs["reasoning_effort"] == "xhigh"
         return object()
 
-    def fake_run(*, model, workspace, config_overrides):
+    def fake_run(*, model, workspace, config_overrides, candidate_checker):
         del model, config_overrides
         feedback = json.loads(
             (workspace.input_dir / "feedback.json").read_text()
         )
         captured.append((workspace.root, feedback))
+        assert candidate_checker(json.dumps(artifact.to_json()))["status"] == "pass"
         response = {
             "object": "response",
             "id": f"response-{len(captured)}",
@@ -736,6 +856,10 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.artifact.to_json() == second.artifact.to_json()
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v3"
+    assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "gate1"
@@ -763,8 +887,8 @@ def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
         del kwargs
         return object()
 
-    def fake_run(*, model, workspace, config_overrides):
-        del model, config_overrides
+    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+        del model, config_overrides, candidate_checker
         feedback = json.loads(
             (workspace.input_dir / "feedback.json").read_text()
         )

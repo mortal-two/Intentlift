@@ -49,6 +49,23 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
+def test_artifact_v2_activates_c_attachments_without_rewriting_v1() -> None:
+    current = make_reduce_artifact().to_json()
+    assert current["schema"] == "intentir.scrc.artifact.v2"
+
+    legacy = copy.deepcopy(current)
+    legacy["schema"] = "intentir.scrc.artifact.v1"
+    parsed = Gate1Artifact.from_json(legacy)
+    assert parsed.to_json()["schema"] == "intentir.scrc.artifact.v1"
+    assert canonical_artifact_digest(parsed) != canonical_artifact_digest(
+        make_reduce_artifact()
+    )
+
+    legacy["c"]["slots"][0]["subject_ref"] = "n0"
+    with pytest.raises(SchemaError, match="do not contain C attachments"):
+        Gate1Artifact.from_json(legacy)
+
+
 @pytest.mark.parametrize(
     "forbidden",
     [
@@ -602,9 +619,13 @@ def test_lift_wire_schema_encodes_parser_critical_anonymous_shapes() -> None:
         "name"
     ]["pattern"] == "^p[0-9]+$"
     c_schema = schema["properties"]["c"]
-    assert c_schema["properties"]["slots"]["items"]["properties"]["name"][
-        "pattern"
-    ] == "^c[0-9]+$"
+    slot = c_schema["properties"]["slots"]["items"]["properties"]
+    assert slot["name"]["pattern"] == "^c[0-9]+$"
+    assert slot["subject_ref"]["pattern"] == "^[ndaqb][0-9]+$"
+    assert slot["axis_ref"]["anyOf"] == [
+        {"type": "integer", "minimum": 0},
+        {"type": "string", "pattern": "^x[0-9]+$"},
+    ]
 
 
 def test_lift_wire_schema_rejects_orphan_and_non_load_fill() -> None:

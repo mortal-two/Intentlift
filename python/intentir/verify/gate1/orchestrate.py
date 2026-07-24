@@ -148,7 +148,7 @@ def canonical_artifact_digest(
     """Compute an audit identifier; it is not a verdict or protocol gate."""
 
     payload = {
-        "schema": artifact.SCHEMA,
+        "schema": artifact.wire_schema,
         "j": artifact.j.to_json(),
         "c": artifact.c.to_json(),
         "pi": artifact.pi.to_json(),

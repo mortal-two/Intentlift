@@ -25,14 +25,16 @@ from .scrc import (
     SCRCReliftContext,
     SCRCReliftRecord,
     decode_scrc_lift_artifact,
+    check_scrc_lift_candidate,
     prepare_scrc_lift,
+    scrc_candidate_check_context,
 )
 from .scrc_schema import scrc_lift_core_json_schema
 from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v6"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v7"
 
 
 def _usage_and_response_identity(
@@ -106,6 +108,10 @@ def _worker_evidence(
     result: Any,
     trajectory: Mapping[str, Any],
 ) -> dict[str, Any]:
+    info = trajectory.get("info", {})
+    candidate_check = (
+        info.get("candidate_check", {}) if isinstance(info, Mapping) else {}
+    )
     return {
         "backend": MINISWE_LIFT_BACKEND,
         "knowledge_profile": MINISWE_LIFT_KNOWLEDGE,
@@ -115,6 +121,11 @@ def _worker_evidence(
         "transport_retries": 0,
         "elapsed_ms": result.elapsed_ms,
         "fresh_session": True,
+        "candidate_check": (
+            dict(candidate_check)
+            if isinstance(candidate_check, Mapping)
+            else {}
+        ),
         "trajectory": trajectory,
     }
 
@@ -155,6 +166,9 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `knowledge/minimal_example.json`: source-neutral wire-shape example only;
   replace all semantics, handles, shapes, values, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
+- `intentir_candidate_check /output/candidate.json`: bounded, read-only
+  Decode/TypeCheck diagnostics for the complete candidate (at most three
+  calls); it never repairs or certifies the artifact.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 
@@ -178,6 +192,13 @@ Write it to `/output/candidate.json`; then run:
 `python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`
 
 The validator is not TypeCheck and does not certify the artifact.
+After it passes, run the source-free diagnostic check:
+
+`intentir_candidate_check /output/candidate.json`
+
+If it fails, edit the candidate yourself from the closed diagnostics and rerun
+within the bounded allowance. The formal Runner independently repeats Decode
+and TypeCheck after submission; CandidateCheck is not an acceptance path.
 """
     return {
         "README.md": readme,
@@ -301,6 +322,7 @@ class MiniSWELiftAdapter:
             source_symbol=self.source_symbol,
         )
         round_index = len(self._records) + 1
+        candidate_check_context = scrc_candidate_check_context(prepared)
         try:
             from minisweagent.environments.intentir_lift import (
                 IntentIRLiftWorkspace,
@@ -332,6 +354,12 @@ class MiniSWELiftAdapter:
                 model=model,
                 workspace=workspace,
                 config_overrides=self.worker_config,
+                candidate_checker=lambda candidate_text: (
+                    check_scrc_lift_candidate(
+                        candidate_text,
+                        candidate_check_context,
+                    )
+                ),
             )
         except IntentIRLiftRunError as exc:
             result = exc.result
@@ -400,6 +428,7 @@ class MiniSWELiftAdapter:
             safe_trajectory
         )
         raw_trajectory = _trajectory_bytes(safe_trajectory)
+        worker_evidence = _worker_evidence(result, safe_trajectory)
         try:
             artifact = decode_scrc_lift_artifact(result.candidate_text, prepared)
         except Exception as exc:
@@ -426,7 +455,7 @@ class MiniSWELiftAdapter:
                     round_index,
                     diagnostic=attempt.diagnostic,
                     rejected_attempts=(attempt,),
-                    backend_evidence=_worker_evidence(result, safe_trajectory),
+                    backend_evidence=worker_evidence,
                 )
             )
             from intentir.verify.scrc_runner import CandidateLiftError
@@ -467,7 +496,7 @@ class MiniSWELiftAdapter:
             SCRCReliftRecord(
                 round_index,
                 extraction=extraction,
-                backend_evidence=_worker_evidence(result, safe_trajectory),
+                backend_evidence=worker_evidence,
             )
         )
         from intentir.verify.scrc_runner import LiftCallResult
@@ -486,6 +515,10 @@ class MiniSWELiftAdapter:
                 "agent_steps": result.model_calls,
                 "transport_retries": 0,
                 "fresh_session": True,
+                "artifact_schema": artifact.wire_schema,
+                "decode_protocol": candidate_check_context.decode_protocol,
+                "typecheck_protocol": candidate_check_context.typecheck_protocol,
+                "candidate_check": worker_evidence["candidate_check"],
             },
         )
 

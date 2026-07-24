@@ -817,7 +817,12 @@ def canonicalize_gate1_artifact(artifact: "Gate1Artifact") -> "Gate1Artifact":
     archive = elaborate_j(artifact.j)
     if archive is artifact.j:
         return artifact
-    return Gate1Artifact(archive, artifact.c, artifact.pi)
+    return Gate1Artifact(
+        archive,
+        artifact.c,
+        artifact.pi,
+        wire_schema=artifact.wire_schema,
+    )
 
 
 __all__ = [

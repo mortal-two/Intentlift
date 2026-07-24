@@ -5,11 +5,12 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
-当前执行顺序（2026-07-24）是：先收尾不改变语义的 Task 09；随后完成下一 SCRC protocol 的通用
-实现并让 28 个目标 Kernel 顺序产出各自 accepted J/C/π 与证据。后端 B0/B1 只在这批稳定 J 形成
-后独立展开，不要求每闭合一个 Kernel 就紧邻实现其 backend。SCRC 期间只修复真实 closure evidence
-暴露的 J/TypeCheck/Replay/RefEval 通用缺口，不提前混入后端 ownership/search 重构。
+当前执行顺序（2026-07-24）是：Task 10 先完成 J readiness 与下一 SCRC protocol 的横向实现和
+六类 bring-up；随后 Task 03 让 28 个目标 Kernel 顺序产出各自 accepted J/C/π 与证据。后端 B0/B1
+只在这批稳定 J 形成后独立展开，不要求每闭合一个 Kernel 就紧邻实现其 backend。Task 09 是正交的
+重复解释器清理，保留但不阻塞 Task 10 主线。
 
+- [Task 10：J Semantic Readiness 与 SCRC vNext 横向闭合](07-24-j-readiness-scrc-vnext-10/task.md)（执行中；当前主线）
 - [Task 09：退役 RefEval 重复 Layer-B 解释器](07-23-retire-duplicate-boundary-interpreter-09/task.md)（执行中）
 - [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](07-23-executable-j-cuda-backend-08/task.md)（已完成）
 - [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](07-23-canonical-boundary-lowering-07/task.md)（已完成）

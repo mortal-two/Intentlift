@@ -8,6 +8,8 @@ from .miniswe import (
 from .scrc import (
     ResponsesSCRCLiftAdapter,
     ResponsesSCRCRelifter,
+    SCRCCandidateCheckContext,
+    SCRC_DECODE_PROTOCOL,
     SCRC_RELIFT_PROTOCOL,
     SCRCCompilerArgument,
     SCRCCompilerView,
@@ -19,6 +21,7 @@ from .scrc import (
     SCRCReliftRecord,
     decode_scrc_lift_artifact,
     extract_scrc_artifact,
+    scrc_candidate_check_context,
     scrc_lift_prompt_sha256,
     scrc_relift_prompt_sha256,
 )
@@ -33,6 +36,8 @@ __all__ = [
     "MiniSWELiftAdapter",
     "ResponsesSCRCRelifter",
     "ResponsesSCRCLiftAdapter",
+    "SCRCCandidateCheckContext",
+    "SCRC_DECODE_PROTOCOL",
     "SCRC_RELIFT_PROTOCOL",
     "SCRCExtraction",
     "SCRCCompilerArgument",
@@ -44,6 +49,7 @@ __all__ = [
     "SCRCReliftRecord",
     "decode_scrc_lift_artifact",
     "extract_scrc_artifact",
+    "scrc_candidate_check_context",
     "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
     "scrc_lift_core_json_schema",

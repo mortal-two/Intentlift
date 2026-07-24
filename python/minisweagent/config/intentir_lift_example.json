@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v1",
+  "schema": "intentir.scrc.artifact.v2",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {

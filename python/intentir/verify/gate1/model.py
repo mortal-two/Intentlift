@@ -2826,6 +2826,8 @@ class ScheduleSlot(StrictJSONMixin):
     role: str
     value_type: str = "int"
     required: bool = True
+    subject_ref: str | None = None
+    axis_ref: int | str | None = None
 
     def __post_init__(self) -> None:
         self.name = _string(self.name, "ScheduleSlot.name")
@@ -2854,13 +2856,45 @@ class ScheduleSlot(StrictJSONMixin):
             raise SchemaError("ScheduleSlot.role must remain pure scheduling metadata")
         self.value_type = _string(self.value_type, "ScheduleSlot.value_type")
         self.required = _boolean(self.required, "ScheduleSlot.required")
+        if self.subject_ref is not None:
+            self.subject_ref = _string(
+                self.subject_ref, "ScheduleSlot.subject_ref"
+            )
+            if re.fullmatch(r"[ndaqb][0-9]+", self.subject_ref) is None:
+                raise SchemaError(
+                    "ScheduleSlot.subject_ref must be a closed J scheduling "
+                    "subject n*/d*/a*/q*/b*"
+                )
+        if self.axis_ref is not None:
+            if self.subject_ref is None:
+                raise SchemaError(
+                    "ScheduleSlot.axis_ref requires subject_ref"
+                )
+            if isinstance(self.axis_ref, bool) or not isinstance(
+                self.axis_ref, (int, str)
+            ):
+                raise SchemaError(
+                    "ScheduleSlot.axis_ref must be a non-negative integer or x*"
+                )
+            if isinstance(self.axis_ref, int):
+                if self.axis_ref < 0:
+                    raise SchemaError(
+                        "ScheduleSlot.axis_ref must be non-negative"
+                    )
+            elif re.fullmatch(r"x[0-9]+", self.axis_ref) is None:
+                raise SchemaError(
+                    "ScheduleSlot.axis_ref symbolic dimensions must use x*"
+                )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "ScheduleSlot":
         data = _strict_object(
             value,
             path="ScheduleSlot",
-            allowed={"name", "kind", "role", "value_type", "required"},
+            allowed={
+                "name", "kind", "role", "value_type", "required",
+                "subject_ref", "axis_ref",
+            },
             required={"name", "kind", "role"},
         )
         return cls(
@@ -2869,16 +2903,23 @@ class ScheduleSlot(StrictJSONMixin):
             role=data["role"],
             value_type=data.get("value_type", "int"),
             required=data.get("required", True),
+            subject_ref=data.get("subject_ref"),
+            axis_ref=data.get("axis_ref"),
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "name": self.name,
             "kind": self.kind.value,
             "role": self.role,
             "value_type": self.value_type,
             "required": self.required,
         }
+        if self.subject_ref is not None:
+            result["subject_ref"] = self.subject_ref
+        if self.axis_ref is not None:
+            result["axis_ref"] = self.axis_ref
+        return result
 
 
 @dataclass
@@ -3185,11 +3226,15 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v1"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v2"
+    LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
+        {"intentir.scrc.artifact.v1"}
+    )
 
     j: SemanticArchive
     c: ImplementationConfig
     pi: RealizationWitness
+    wire_schema: str = field(default=SCHEMA, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.j, SemanticArchive):
@@ -3201,6 +3246,17 @@ class Gate1Artifact(StrictJSONMixin):
                 self.pi = RealizationWitness.from_json(self.pi)
             except RealizationWitnessError as exc:
                 raise SchemaError(str(exc)) from exc
+        if self.wire_schema not in {self.SCHEMA, *self.LEGACY_SCHEMAS}:
+            raise SchemaError(
+                f"unsupported Gate1 artifact schema {self.wire_schema!r}"
+            )
+        if self.wire_schema in self.LEGACY_SCHEMAS and any(
+            slot.subject_ref is not None or slot.axis_ref is not None
+            for slot in self.c.slots
+        ):
+            raise SchemaError(
+                "legacy Gate1 artifact schemas do not contain C attachments"
+            )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
         boundary_node_refs = {
@@ -3238,10 +3294,10 @@ class Gate1Artifact(StrictJSONMixin):
             allowed=set(GATE1_ARTIFACT_MODEL_FIELDS),
             required=set(GATE1_ARTIFACT_MODEL_FIELDS),
         )
-        if data["schema"] != cls.SCHEMA:
+        if data["schema"] not in {cls.SCHEMA, *cls.LEGACY_SCHEMAS}:
             raise SchemaError(
                 f"unsupported Gate1 artifact schema {data['schema']!r}; "
-                f"expected {cls.SCHEMA!r}"
+                f"expected {cls.SCHEMA!r} or a supported legacy schema"
             )
         try:
             pi = RealizationWitness.from_json(data["pi"])
@@ -3251,11 +3307,12 @@ class Gate1Artifact(StrictJSONMixin):
             j=SemanticArchive.from_json(data["j"]),
             c=ImplementationConfig.from_json(data["c"]),
             pi=pi,
+            wire_schema=data["schema"],
         )
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "schema": self.SCHEMA,
+            "schema": self.wire_schema,
             "j": self.j.to_json(),
             "c": self.c.to_json(),
             "pi": self.pi.to_json(),
@@ -3729,6 +3786,12 @@ def _opaque_signature_and_c_view(
     c_view = artifact.c.masked_view()
     for slot in c_view["slots"]:
         slot["name"] = _opaque_reference(slot["name"], aliases)
+        if slot.get("subject_ref") is not None:
+            slot["subject_ref"] = _opaque_reference(
+                slot["subject_ref"], aliases
+            )
+        if isinstance(slot.get("axis_ref"), str):
+            slot["axis_ref"] = _opaque_reference(slot["axis_ref"], aliases)
     return signature, c_view
 
 

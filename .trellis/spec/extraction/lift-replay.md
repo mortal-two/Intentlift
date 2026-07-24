@@ -99,9 +99,11 @@ agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱�
 Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility 随下一
-协议版本实现；在 schema/checker/receipt version 同步前，不能把本节当作现有 worker 已具备能力，
-也不能重判历史证书。
+当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v3 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。
+Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
+diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1` 历史对象不因
+此次激活而被静默重判。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
 和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应

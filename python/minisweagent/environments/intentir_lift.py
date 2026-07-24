@@ -7,12 +7,13 @@ import os
 import site
 import stat
 import shutil
+import shlex
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel
 
@@ -20,6 +21,8 @@ from minisweagent.exceptions import Submitted
 
 
 INTENTIR_LIFT_SUBMIT = "INTENTIR_LIFT_SUBMIT"
+INTENTIR_CANDIDATE_CHECK = "intentir_candidate_check"
+CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_ACTION_OUTPUT_BYTES = 1024 * 1024
 MAX_WORKSPACE_BYTES = 64 * 1024 * 1024
@@ -138,6 +141,7 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
+    candidate_check_limit: int = 3
     executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
     env: dict[str, str] = {
         "HOME": "/tmp",
@@ -154,11 +158,133 @@ class IntentIRLiftEnvironment:
         self,
         *,
         config_class: type[IntentIRLiftEnvironmentConfig] = IntentIRLiftEnvironmentConfig,
+        candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         self.config = config_class(**kwargs)
+        if self.config.candidate_check_limit < 0:
+            raise ValueError("candidate_check_limit must be non-negative")
+        self._candidate_checker = candidate_checker
+        self._candidate_check_calls = 0
+        self._candidate_check_audit: list[dict[str, Any]] = []
         self._validate_paths()
         self._probe()
+
+    def _execute_candidate_check(self, arguments: list[str]) -> dict[str, Any]:
+        self._candidate_check_calls += 1
+        if self._candidate_check_calls > self.config.candidate_check_limit:
+            result: Mapping[str, Any] = {
+                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                "status": "fail",
+                "diagnostics": [
+                    {
+                        "rule_code": "check_budget_exhausted",
+                        "path": "<candidate>",
+                        "observed_refs_or_types": [],
+                    }
+                ],
+            }
+        elif len(arguments) != 2 or arguments[1] not in {
+            "/work/candidate.json", "/output/candidate.json",
+        }:
+            result = {
+                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                "status": "fail",
+                "diagnostics": [
+                    {
+                        "rule_code": "invalid_candidate_path",
+                        "path": "<candidate>",
+                        "observed_refs_or_types": [],
+                    }
+                ],
+            }
+        elif self._candidate_checker is None:
+            result = {
+                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                "status": "fail",
+                "diagnostics": [
+                    {
+                        "rule_code": "candidate_check_unavailable",
+                        "path": "<candidate>",
+                        "observed_refs_or_types": [],
+                    }
+                ],
+            }
+        else:
+            candidate_path = (
+                self.config.scratch_dir / "candidate.json"
+                if arguments[1].startswith("/work/")
+                else self.config.output_dir / "candidate.json"
+            )
+            try:
+                if candidate_path.is_symlink() or not candidate_path.is_file():
+                    raise ValueError("candidate must be a regular file")
+                size = candidate_path.stat().st_size
+                if not 1 <= size <= MAX_CANDIDATE_BYTES:
+                    raise ValueError("candidate size is outside the allowed range")
+                candidate_bytes = candidate_path.read_bytes()
+                if len(candidate_bytes) != size:
+                    raise ValueError("candidate changed while being read")
+                candidate_text = candidate_bytes.decode("utf-8")
+                result = self._candidate_checker(candidate_text)
+            except Exception as exc:
+                result = {
+                    "protocol": CANDIDATE_CHECK_PROTOCOL,
+                    "status": "fail",
+                    "diagnostics": [
+                        {
+                            "rule_code": "candidate_check_failed",
+                            "path": "<candidate>",
+                            "observed_refs_or_types": [type(exc).__name__],
+                        }
+                    ],
+                }
+        protocol = result.get("protocol")
+        status = result.get("status")
+        diagnostics = result.get("diagnostics")
+        if (
+            set(result) != {"protocol", "status", "diagnostics"}
+            or protocol != CANDIDATE_CHECK_PROTOCOL
+            or status not in {"pass", "fail"}
+            or not isinstance(diagnostics, list)
+            or len(diagnostics) > 20
+            or (status == "pass" and bool(diagnostics))
+            or (status == "fail" and not diagnostics)
+            or any(
+                not isinstance(item, Mapping)
+                or set(item) != {
+                    "rule_code",
+                    "path",
+                    "observed_refs_or_types",
+                }
+                or not isinstance(item.get("rule_code"), str)
+                or not isinstance(item.get("path"), str)
+                or not isinstance(item.get("observed_refs_or_types"), list)
+                or any(
+                    not isinstance(observed, str)
+                    for observed in item.get("observed_refs_or_types", [])
+                )
+                for item in diagnostics
+            )
+        ):
+            raise RuntimeError("candidate checker returned an invalid closed result")
+        self._candidate_check_audit.append(
+            {
+                "protocol": protocol,
+                "status": status,
+                "rule_codes": [
+                    item.get("rule_code")
+                    for item in diagnostics
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("rule_code"), str)
+                ],
+            }
+        )
+        return {
+            "output": json.dumps(result, sort_keys=True) + "\n",
+            "returncode": 0 if status == "pass" else 1,
+            "exception_info": "",
+        }
 
     def _validate_paths(self) -> None:
         if self.config.tmp_dir is None:
@@ -316,6 +442,15 @@ class IntentIRLiftEnvironment:
         command = action.get("command", "")
         if not isinstance(command, str):
             raise TypeError("Lift shell command must be a string")
+        try:
+            candidate_check_arguments = shlex.split(command)
+        except ValueError:
+            candidate_check_arguments = []
+        if (
+            candidate_check_arguments
+            and candidate_check_arguments[0] == INTENTIR_CANDIDATE_CHECK
+        ):
+            return self._execute_candidate_check(candidate_check_arguments)
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
             "ulimit -t 60 -f 8192 -n 64 -u 128 -v 524288; "
@@ -480,17 +615,24 @@ class IntentIRLiftEnvironment:
                         "input": "read-only",
                         "output": "candidate-only",
                         "command_timeout_seconds": self.config.timeout,
+                        "candidate_check_limit": self.config.candidate_check_limit,
                     },
                     "environment_type": (
                         f"{self.__class__.__module__}.{self.__class__.__name__}"
                     ),
-                }
+                },
+                "candidate_check": {
+                    "calls": self._candidate_check_calls,
+                    "results": list(self._candidate_check_audit),
+                },
             }
         }
 
 
 __all__ = [
+    "CANDIDATE_CHECK_PROTOCOL",
     "INTENTIR_LIFT_SUBMIT",
+    "INTENTIR_CANDIDATE_CHECK",
     "IntentIRLiftEnvironment",
     "IntentIRLiftEnvironmentConfig",
     "IntentIRLiftWorkspace",

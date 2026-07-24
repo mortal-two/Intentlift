@@ -13,17 +13,18 @@ from enum import Enum
 import re
 from typing import Any, Iterable, Mapping
 
-from intentir.ir.canonical_j import canonicalize_semantic_archive
+from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     RefinementKind,
+    ResultRelationKind,
     ScheduleSlotKind,
     SemanticArchive,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v2"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v3"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 
@@ -39,7 +40,10 @@ class TypeCheckErrorCode(str, Enum):
     INVALID_C_SLOT = "invalid_c_slot"
     C_REQUIRED_VALUE_MISSING = "c_required_value_missing"
     C_VALUE_TYPE_MISMATCH = "c_value_type_mismatch"
+    C_SUBJECT_UNKNOWN = "c_subject_unknown"
+    C_AXIS_INVALID = "c_axis_invalid"
     INVALID_ACCESS_FILL = "invalid_access_fill"
+    RESULT_RELATION_INCOMPATIBLE = "result_relation_incompatible"
     UNRESOLVED_ANCHOR = "unresolved_anchor"
     ROUTE_CYCLE = "route_cycle"
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
@@ -184,6 +188,230 @@ def _c_value_matches(value_type: str, value: Any) -> bool:
     return False
 
 
+def _ordered_expression_refs(expression: Any) -> tuple[str, ...]:
+    result: list[str] = []
+
+    def visit(node: Any) -> None:
+        if getattr(node, "op", None) == "ref":
+            value = getattr(node, "value", None)
+            if isinstance(value, str) and value not in result:
+                result.append(value)
+        for argument in getattr(node, "args", ()):
+            visit(argument)
+
+    visit(expression)
+    return tuple(result)
+
+
+def _axis_refs_v1(
+    j: SemanticArchive,
+    subject_ref: str,
+    node_operations: Mapping[str, Mapping[str, Any]],
+) -> frozenset[int | str]:
+    """Return the closed dependent axis domain for one C attachment."""
+
+    dimensions = {
+        dim
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dim in tensor.shape
+        if isinstance(dim, str) and re.fullmatch(r"x[0-9]+", dim)
+    }
+    if subject_ref.startswith("n"):
+        operation = node_operations.get(subject_ref)
+        if operation is None:
+            return frozenset()
+        if operation.get("op") == "reduce":
+            attrs = operation.get("attrs")
+            attrs = attrs if isinstance(attrs, Mapping) else {}
+            axes = attrs.get("axes")
+            if not isinstance(axes, list):
+                return frozenset()
+            return frozenset(
+                axis
+                for axis in axes
+                if isinstance(axis, int)
+                and not isinstance(axis, bool)
+                and axis >= 0
+            )
+        if operation.get("op") == "loop":
+            trip = operation.get("trip")
+            axis = trip.get("axis") if isinstance(trip, Mapping) else None
+            result: set[int | str] = {0}
+            if isinstance(axis, str) and axis in dimensions:
+                result.add(axis)
+            return frozenset(result)
+        return frozenset()
+
+    elaboration = j_elaboration(j)
+    if subject_ref.startswith("d"):
+        expression = elaboration.domain_by_id.get(subject_ref)
+        if expression is None:
+            return frozenset()
+        refs = _ordered_expression_refs(expression)
+        logical_axes = tuple(ref for ref in refs if ref not in dimensions)
+        return frozenset(
+            [*range(len(logical_axes)), *(ref for ref in refs if ref in dimensions)]
+        )
+    if subject_ref.startswith("a"):
+        access = elaboration.access_by_id.get(subject_ref)
+        if access is None:
+            return frozenset()
+        access_spec = next(
+            (
+                item
+                for item in j.boundary.accesses
+                if item.access_id == subject_ref
+            ),
+            None,
+        )
+        tensors = {
+            item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+        }
+        tensor = (
+            tensors.get(access_spec.tensor) if access_spec is not None else None
+        )
+        symbolic = {
+            dim
+            for index, dim in enumerate(tensor.shape if tensor is not None else [])
+            if index < len(access.index.components) and dim in dimensions
+        }
+        return frozenset([*range(len(access.index.components)), *symbolic])
+    # Scope/storage attachments are intentionally axis-free in v1.
+    return frozenset()
+
+
+_TOLERANCE_UNARY_FNS = frozenset(
+    {
+        "exp", "log", "sqrt", "rsqrt", "tanh", "sigmoid", "cos",
+        "sin", "tan", "exp2", "atan", "erf",
+    }
+)
+
+
+def _floating_dtype(dtype: str | None) -> bool:
+    if dtype is None:
+        return False
+    normalized = dtype.casefold()
+    return normalized in {"float", "half", "bfloat"} or re.fullmatch(
+        r"(?:(?:b?float)|bf|f|fp)[0-9]+", normalized
+    ) is not None
+
+
+def _operation_dependencies(operation: Mapping[str, Any]) -> tuple[str, ...]:
+    result: list[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value not in result:
+            result.append(value)
+
+    for value in operation.get("operands", []):
+        add(value)
+    if operation.get("op") == "loop":
+        for item in operation.get("scan", []):
+            if isinstance(item, Mapping):
+                add(item.get("from"))
+        for item in operation.get("carry", []):
+            if isinstance(item, Mapping):
+                add(item.get("init_value"))
+                add(item.get("next_value"))
+        for value in operation.get("yield", []):
+            add(value)
+    return tuple(result)
+
+
+def _output_dependency(
+    j: SemanticArchive, output: str
+) -> tuple[set[str], list[Mapping[str, Any]]]:
+    intent = j.intent.to_json()["intent_function"]
+    operations = dict(_walk_operations(intent.get("body", [])))
+    path_to_node = {path: node for node, path in j.node_ids.items()}
+    producers: dict[str, tuple[str, str, Mapping[str, Any]]] = {}
+    for path, operation in operations.items():
+        node_ref = path_to_node.get(path, path)
+        for result in _operation_results(operation.get("result")):
+            producers[result] = (node_ref, path, operation)
+
+    bindings = {
+        item.output: item for item in j_elaboration(j).output_bindings
+    }
+    binding = bindings.get(output)
+    if binding is None:
+        return set(), []
+
+    refs: set[str] = set()
+    dependency_ops: list[Mapping[str, Any]] = []
+    pending = [binding.value]
+    visited_values: set[str] = set()
+    while pending:
+        value = pending.pop()
+        if value in visited_values:
+            continue
+        visited_values.add(value)
+        producer = producers.get(value)
+        if producer is None:
+            continue
+        node_ref, path, operation = producer
+        refs.update({node_ref, path})
+        dependency_ops.append(operation)
+        pending.extend(_operation_dependencies(operation))
+    return refs, dependency_ops
+
+
+def _check_result_relations(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    output_types = {item.name: item.dtype for item in j.intent.outputs}
+    relations = {
+        item.output: (index, item)
+        for index, item in enumerate(j.boundary.result_relations)
+    }
+    reassociation_subjects = {
+        item.subject_ref
+        for item in j.boundary.realization_authorizations
+        if item.kind is RefinementKind.REASSOCIATION
+    }
+    for output, dtype in output_types.items():
+        if not _floating_dtype(dtype):
+            continue
+        dependency_refs, dependency_ops = _output_dependency(j, output)
+        requires_tolerance = bool(dependency_refs & reassociation_subjects)
+        for operation in dependency_ops:
+            result_type = _explicit_type(operation)
+            if (
+                operation.get("op") == "reduce"
+                and result_type is not None
+                and _floating_dtype(result_type.dtype)
+            ):
+                requires_tolerance = True
+            attrs = operation.get("attrs")
+            attrs = attrs if isinstance(attrs, Mapping) else {}
+            if (
+                operation.get("op") == "map_unary"
+                and attrs.get("fn") in _TOLERANCE_UNARY_FNS
+            ):
+                requires_tolerance = True
+        if not requires_tolerance:
+            continue
+        indexed = relations.get(output)
+        relation = indexed[1] if indexed is not None else None
+        if relation is not None and relation.kind is ResultRelationKind.TOLERANCE:
+            continue
+        path = (
+            f"j.boundary.result_relations[{indexed[0]}].kind"
+            if indexed is not None else "j.boundary.result_relations"
+        )
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE,
+                path,
+                "floating transcendental/reduction/reassociation output "
+                "requires explicit tolerance relation",
+                output,
+            )
+        )
+
+
 def _has_cycle(nodes: set[str], edges: set[tuple[str, str]]) -> bool:
     outgoing: dict[str, set[str]] = {node: set() for node in nodes}
     indegree = {node: 0 for node in nodes}
@@ -285,6 +513,7 @@ def _build_anchors(
         anchor = _Anchor("j", "node", result_type, operand_types)
         add(node_id, anchor, f"j.node_ids.{node_id}")
         add(path, anchor, f"j.node_ids.{node_id}")
+        node_operations[path] = operation
     for value, value_type in value_types.items():
         if value not in anchors:
             add(value, _Anchor("j", "value", value_type), "j.intent")
@@ -421,7 +650,39 @@ def type_check(
                 )
             )
 
-    anchors, _operations = _build_anchors(j, c, diagnostics)
+    anchors, node_operations = _build_anchors(j, c, diagnostics)
+    _check_result_relations(j, diagnostics)
+    c_subject_kinds = {"node", "domain", "access", "scope", "storage"}
+    for index, slot in enumerate(c.slots):
+        if slot.subject_ref is None:
+            continue
+        subject = anchors.get(slot.subject_ref)
+        if (
+            subject is None
+            or subject.owner != "j"
+            or subject.kind not in c_subject_kinds
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.C_SUBJECT_UNKNOWN,
+                    f"c.slots[{index}].subject_ref",
+                    "C subject_ref is not a declared schedule-addressable J subject",
+                    slot.subject_ref,
+                )
+            )
+            continue
+        if slot.axis_ref is None:
+            continue
+        allowed_axes = _axis_refs_v1(j, slot.subject_ref, node_operations)
+        if slot.axis_ref not in allowed_axes:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.C_AXIS_INVALID,
+                    f"c.slots[{index}].axis_ref",
+                    "C axis_ref is outside AxisRefs_v1(J,subject_ref)",
+                    str(slot.axis_ref),
+                )
+            )
     instances = {str(item["id"]): item for item in pi.instances}
     instance_anchors: dict[str, _Anchor] = {}
     for index, item in enumerate(pi.instances):
@@ -559,7 +820,48 @@ def type_check(
                     authorization.subject_ref,
                 )
             )
-        elif (
+            continue
+        if authorization.kind is RefinementKind.NUMERIC_CAST:
+            operation = node_operations.get(authorization.subject_ref)
+            valid_cast = (
+                subject is not None
+                and subject.kind == "node"
+                and operation is not None
+                and operation.get("op") == "cast"
+                and len(subject.operand_types) == 1
+                and subject.operand_types[0] is not None
+                and subject.value_type is not None
+                and authorization.source_dtype is not None
+                and authorization.target_dtype is not None
+            )
+            if not valid_cast:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH,
+                        f"j.boundary.realization_authorizations[{index}]",
+                        "numeric_cast authorization requires one typed cast "
+                        "operand/result and explicit source/target dtype",
+                        authorization.auth_id,
+                    )
+                )
+                continue
+            assert subject is not None
+            assert subject.operand_types[0] is not None
+            assert subject.value_type is not None
+            if (
+                authorization.source_dtype != subject.operand_types[0].dtype
+                or authorization.target_dtype != subject.value_type.dtype
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH,
+                        f"j.boundary.realization_authorizations[{index}]",
+                        "numeric_cast dtype must match cast operand/result types",
+                        authorization.auth_id,
+                    )
+                )
+            continue
+        if (
             authorization.source_dtype is not None
             and subject is not None
             and subject.value_type is not None

@@ -73,8 +73,8 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-当前 slot 的真实字段为 `name/kind/role/value_type/required`，其中 `role` 必填。下一
-artifact/schema version 增加可选：
+当前 `artifact.v2` slot 的字段为 `name/kind/role/value_type/required`，其中 `role` 必填，并增加
+两个可选 attachment：
 
 ```text
 subject_ref in CSubject_v1(J)
@@ -224,6 +224,7 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
 线索，也不证明 J 或 realization 的行为正确。
 
-上述 C attachment、numeric-cast 与 result-relation compatibility 属于下一 schema/`typecheck_version`
-合同。实现、CandidateCheck 与 receipt 必须同步提升版本后才对新实验生效；历史证书不由新规则
-静默重判。
+上述 C attachment、numeric-cast 与 result-relation compatibility 已在
+`artifact.v2 / decode.v2 / typecheck.v3` 中成为 fresh run 的活动合同，并由
+`candidate-check.v1` 复用同一 source-free Decode/TypeCheck core。receipt 必须记录这些版本；
+`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，也不由新规则静默重判历史证书。

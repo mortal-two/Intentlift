@@ -39,12 +39,25 @@ the artifact schema or external TypeCheck.
 10. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind.
-11. C contains only the exact trusted scheduling slots and values from
-   `harness_view.json`. It contains no operator, predicate, formula, strategy,
-   source/API name, or semantic constant.
-12. Pi contains anonymous realization relations only. It contains no dtype,
+11. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
+   `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
+   and only when that subject declares the referenced non-negative logical axis
+   or `x*`; do not guess either attachment.
+12. C otherwise contains only the exact trusted scheduling slots and values
+   from `harness_view.json`. It contains no operator, predicate, formula,
+   strategy, source/API name, or semantic constant.
+13. For `numeric_cast`, authorization `subject_ref` names the explicit unary
+   cast node; `source_dtype` equals its operand dtype and `target_dtype` equals
+   its result dtype. The matching pi instance uses that same semantic ref and
+   at most one refinement may target an instance.
+14. A floating output depending on a transcendental op, floating reduction, or
+   reassociation declares `result_relation.kind=tolerance`, never default or
+   explicit `exact`. J declares only the class; numeric thresholds remain in
+   external Q.
+15. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-13. Run the supplied static schema validator. Passing it only means the JSON
-   envelope is well formed; the external runner still performs canonical
-   parsing, dependent TypeCheck, Replay, and Gates in a new phase.
+16. Run the supplied static schema validator and then
+   `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
+   diagnostics only; you must make every edit, and the external Runner still
+   repeats canonical Decode and dependent TypeCheck before Replay and Gates.

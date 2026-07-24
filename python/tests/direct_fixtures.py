@@ -11,6 +11,8 @@ from intentir.verify.gate1.model import (
     ParameterKind,
     ParameterMode,
     ReductionBoundary,
+    ResultRelationKind,
+    ResultRelationSpec,
     ScheduleSlot,
     ScheduleSlotKind,
     SemanticArchive,
@@ -81,6 +83,9 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
                 ReductionBoundary(
                     "n1", "x1", identity=0, masked_contribution=0
                 )
+            ],
+            result_relations=[
+                ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
             ],
         ),
         signature=LogicalSignature(

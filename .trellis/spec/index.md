@@ -19,9 +19,10 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-标注为“下一 protocol version”的 CandidateCheck、C `subject_ref/axis_ref` attachment、numeric-cast
-dependent typing 与 result-relation compatibility 是规范性目标合同；只有 schema、实现、测试、
-receipt version 与 fresh 实验同步升级后才成为活动认证语义，不能用于静默重判历史 artifact。
+自 2026-07-24 的 fresh run 起，CandidateCheck、C `subject_ref/axis_ref` attachment、numeric-cast
+dependent typing 与 result-relation compatibility 已由 `artifact.v2 / decode.v2 / typecheck.v3 /
+candidate-check.v1` 同步激活。`artifact.v1` 仅保留历史读取能力；新 Lift response 必须使用 v2，
+新规则不得用于静默重判既有 receipt 或历史证书。
 
 ## 导航
 
