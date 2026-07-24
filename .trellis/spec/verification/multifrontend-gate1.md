@@ -1,0 +1,125 @@
+# Multi-frontend SCRC contract: Triton, CuTe, TileLang and CUDA
+
+## Scope
+
+The SCRC proof objects remain exactly `J + C + pi`. Frontend selection is a
+harness decision (`U_f`) and must not add frontend syntax, source names or
+compiler artifacts to any proof object. The shared lifecycle is:
+
+```text
+Source_f ──compile(profile_f)──> Observation_f(Source)
+   │
+   └──Lift──> J + C + pi ──source-blind Replay_f──> Replay_f
+                                                │
+                     compile(profile_f)─────────┘
+                                                v
+                               Observation_f(Replay)
+                                                │
+                                  strict Gate1 comparison
+```
+
+The active registry contains four audited public frontends:
+
+| Frontend | Replay language | Level-2 compiler observation |
+|---|---|---|
+| Triton | Python/Triton | normalized TTIR |
+| CuTe | Python/CuTe DSL | normalized MLIR plus PTX topology |
+| TileLang | Python/TileLang | normalized TIR operation topology plus normalized PTX |
+| CUDA | standalone CUDA C++ | normalized PTX semantic topology |
+
+Source and Replay are always compiled with the same frontend compiler case,
+target and compiler options. Schedule values remain owned by `C`; the
+fingerprint records them for audit but does not reinterpret them as `J`.
+
+## CUDA semantic fingerprint
+
+Raw CUDA source and raw PTX text are not semantic fingerprints. They contain
+source spelling, debug paths, virtual-register allocation and label choices
+that are irrelevant to SCRC closure. The CUDA observer compiles both arms to
+PTX and builds the following hard views:
+
+1. Positional kernel ABI: PTX parameter types/alignment/extents, plus the
+   anonymous `J.signature` kind/dtype/rank/mode projection.
+2. Alpha-normalized instruction/dataflow topology.
+3. Opcode multiset including semantic modifiers (rounding, saturation,
+   approximation, vector width and data type).
+4. Memory effects, retaining load/store/atomic/reduction opcode, address
+   space, width, address expression and instruction predicate.
+5. Collective and synchronization topology: barriers, `mbarrier`, async copy,
+   fences, shuffle/vote/match, MMA/WGMMA and election operations.
+6. Control topology: labels, conditional/unconditional branches, calls,
+   returns and exits.
+7. Thread/block coordinate use: `%tid`, `%ctaid`, `%ntid`, `%nctaid`, lane,
+   warp, SM and related special registers.
+8. Target profile (for example `sm_120`).
+
+The following presentation-only information is normalized away:
+
+- kernel and ordinary helper names;
+- PTX virtual-register spelling and branch-label spelling;
+- `.file`, `.loc`, `.pragma`, comments, compiler banners and source paths;
+- register declaration order when it only changes alpha names;
+- `.version`, `.address_size` and target banner text (the selected target is
+  recorded separately by the compile case).
+
+The observer must fail closure when memory space, predication, atomic/barrier
+topology, warp/MMA operation, control structure, coordinate use, ABI or target
+changes. This makes PTX a compiler observation of public CUDA semantics, not a
+backend-support test and not a source-text similarity metric.
+
+## TileLang semantic fingerprint
+
+TileLang uses two linked views:
+
+- the public TIR/TileLang operation sequence (`T.Kernel`, loop forms, copy,
+  allocation, reduction, GEMM and other public operations), with identifiers
+  removed; and
+- the same normalized PTX fingerprint used by native CUDA.
+
+TIR prevents target code alone from erasing a frontend realization difference;
+PTX prevents a shallow list of TileLang API calls from accepting a different
+memory/control implementation. Both views are hard Gate1 evidence.
+
+## Replay safety and compiler isolation
+
+- CUDA Replay accepts one `extern "C" __global__ scrc_k0`, optional device
+  helpers and a fixed public-header allowlist. Host functions, launch code,
+  inline PTX, file/process/network I/O and arbitrary preprocessor directives
+  are rejected before `nvcc`.
+- TileLang Replay accepts one direct `@T.prim_func scrc_k0`, the canonical
+  public `T` import and public `T.*` operations. Host I/O, reflection, dynamic
+  execution, arbitrary imports and dunder access are rejected before a fresh
+  compile worker imports the module.
+- Neither compiler path launches a kernel during Gate1.
+
+## Gate2 execution
+
+The shared three-edge Gate2 judge can receive native CUDA or TileLang runners.
+CUDA launches the Gate1-profile PTX through the CUDA driver on isolated Torch
+tensors. TileLang compiles the accepted PrimFunc to a callable JIT kernel.
+Source and the exact Gate1-accepted Replay each receive cloned inputs, then the
+existing external-Q comparisons check Source↔Replay, Source↔J and Replay↔J.
+
+## External Dataset
+
+Source datasets live outside the code repository. The default root is the peer
+`/home/kingdom/phdworks/Dataset`, overridable with `INTENTIR_DATASET_ROOT`.
+`TianchenIR-MultiFrontend/` contains 31 TileLang kernel factories and four
+standalone CUDA kernels curated from the clean reference implementation.
+
+The catalog stores only source evidence. PTX, CUDA exports, Replay source,
+certificates, compiler caches and run reports are generated artifacts and must
+not be written back into Dataset.
+
+Dataset membership is not itself a pass claim. A case is runnable only under a
+recorded compatible compiler profile and a complete Harness descriptor. This
+distinguishes frontend support from version-specific kernel readiness.
+
+`tools/frontend_dataset.py --probe-tilelang` and `--probe-cuda` perform the
+corresponding compile-only readiness audits. On the integration host, CUDA 12.8
+compiles 4/4 CUDA entries for `sm_120`, while the default factory profiles under
+TileLang 0.1.8 compile 17/31 entries. The remaining 14 fail inside TileLang
+layout/code generation (most report non-unit layout scale); they are retained
+as dataset cases rather than being falsely reported as frontend closure.
+Adjusted factory schedules make additional entries runnable, but such schedules
+must be recorded as Harness/C profiles before an SCRC result can claim them.

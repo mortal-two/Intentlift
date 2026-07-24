@@ -80,6 +80,32 @@ PUBLIC_FRONTEND_CONTEXT = {
             "followed by stream; construct representation-only descriptors inside it."
         ),
     },
+    "tilelang": {
+        "context_policy": "public_frontend_context_v1",
+        "retrieval_scope": "public TileLang documentation and public examples",
+        "tool_access": ["public_document_lookup"],
+        "compile_entry_contract": (
+            "Return one self-contained Python module using exactly "
+            "`import tilelang.language as T` and one `@T.prim_func` named "
+            "`scrc_k0`. Express tensor ABI through public `T.Tensor` annotations, "
+            "device launch through `T.Kernel`, and realization topology through "
+            "public TileLang operations. C values are compile-time schedule "
+            "constants, never additional logical runtime parameters."
+        ),
+    },
+    "cuda": {
+        "context_policy": "public_frontend_context_v1",
+        "retrieval_scope": "public CUDA C++ programming documentation and examples",
+        "tool_access": ["public_document_lookup"],
+        "compile_entry_contract": (
+            "Return one standalone CUDA C++ translation unit containing exactly "
+            "one `extern \"C\" __global__` kernel named `scrc_k0`. Its positional "
+            "runtime parameters follow J.signature; C values are compiled "
+            "schedule constants and are not runtime parameters. Use only public "
+            "CUDA language constructs and intrinsics. Do not emit host code, "
+            "launch syntax, file I/O, inline PTX, build directives, or `main`."
+        ),
+    },
 }
 
 _FORBIDDEN_KEYS = frozenset(
@@ -294,14 +320,19 @@ def build_masked_rewriter_view(
     )
 
 
-def _instructions(*, masked: bool) -> str:
+def _instructions(*, frontend: Frontend, masked: bool) -> str:
     masked_clause = (
         "J has intentionally been masked for a single representation-partition audit. "
         if masked else ""
     )
+    output_contract = (
+        "Return CUDA C++ source only."
+        if frontend is Frontend.CUDA
+        else "Return Python source only."
+    )
     return (
         "You are the source-blind Replay LLM. Generate one complete, self-contained "
-        "Python module containing the requested public-frontend kernel. You never see "
+        f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
         "relation, representation refinement and region placement as required "
@@ -329,7 +360,7 @@ def _instructions(*, masked: bool) -> str:
         + render_realization_mechanism_grammar()
         + " "
         + masked_clause
-        + "Return Python source only."
+        + output_contract
     )
 
 
@@ -344,7 +375,8 @@ def build_rewriter_prompt(
         frontend=frontend,
         masked=masked,
     )
-    return _instructions(masked=masked), json.dumps(
+    frontend = Frontend(frontend)
+    return _instructions(frontend=frontend, masked=masked), json.dumps(
         payload, sort_keys=True, ensure_ascii=False, allow_nan=False
     )
 

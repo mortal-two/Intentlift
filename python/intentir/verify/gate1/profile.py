@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from .cute import CUTE_FINGERPRINT_SCHEMA
 from .model import Frontend
+from .ptx import PTX_FINGERPRINT_SCHEMA
+from .tilelang import TILELANG_FINGERPRINT_SCHEMA
 from .ttir import TTIR_FINGERPRINT_SCHEMA
 
 
@@ -47,9 +49,29 @@ CUTE_OBSERVER_PROFILE = ObserverProfile(
     "strong_structural",
 )
 
+CUDA_OBSERVER_PROFILE = ObserverProfile(
+    Frontend.CUDA,
+    "cuda_ptx_semantic_topology",
+    PTX_FINGERPRINT_SCHEMA,
+    "ptx",
+    PTX_FINGERPRINT_SCHEMA,
+    "strong_structural",
+)
+
+TILELANG_OBSERVER_PROFILE = ObserverProfile(
+    Frontend.TILELANG,
+    "tilelang_tir_ptx_topology",
+    TILELANG_FINGERPRINT_SCHEMA,
+    "tir+ptx",
+    TILELANG_FINGERPRINT_SCHEMA,
+    "strong_structural",
+)
+
 _PROFILES = {
     TRITON_OBSERVER_PROFILE.frontend: TRITON_OBSERVER_PROFILE,
     CUTE_OBSERVER_PROFILE.frontend: CUTE_OBSERVER_PROFILE,
+    CUDA_OBSERVER_PROFILE.frontend: CUDA_OBSERVER_PROFILE,
+    TILELANG_OBSERVER_PROFILE.frontend: TILELANG_OBSERVER_PROFILE,
 }
 
 
@@ -62,7 +84,9 @@ def observer_profile_for(frontend: Frontend | str) -> ObserverProfile:
 
 __all__ = [
     "CUTE_OBSERVER_PROFILE",
+    "CUDA_OBSERVER_PROFILE",
     "ObserverProfile",
+    "TILELANG_OBSERVER_PROFILE",
     "TRITON_OBSERVER_PROFILE",
     "observer_profile_for",
 ]

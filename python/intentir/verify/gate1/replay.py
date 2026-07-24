@@ -11,9 +11,11 @@ from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 
 from .codegen import extract_python_module
+from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
 from .prompt import build_rewriter_prompt, replay_packet_digest
+from .tilelang_codegen import extract_tilelang_module
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,22 @@ def _extract_replay_code(
             ),
             entry,
         )
+    if frontend is Frontend.TILELANG:
+        return (
+            extract_tilelang_module(
+                response,
+                required_function=function_name,
+            ),
+            None,
+        )
+    if frontend is Frontend.CUDA:
+        return (
+            extract_cuda_module(
+                response,
+                required_kernel=function_name,
+            ),
+            None,
+        )
     raise ValueError(
         f"source-blind Replay has no audited validator for {frontend.value!r}"
     )
@@ -151,7 +169,12 @@ class ResponsesReplayWriter:
         u_f = packet["u_f"]
         function_name = u_f["replay_function"]
         frontend = Frontend(u_f["frontend"])
-        if frontend not in {Frontend.TRITON, Frontend.CUTE}:
+        if frontend not in {
+            Frontend.TRITON,
+            Frontend.CUTE,
+            Frontend.TILELANG,
+            Frontend.CUDA,
+        }:
             raise ValueError(
                 f"source-blind Replay has no audited validator for {frontend.value!r}"
             )

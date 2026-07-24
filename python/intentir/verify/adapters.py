@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .gate1.compiler import KernelSource
+from .gate1.cuda_compiler import CudaKernelSource
 from .gate1.model import Gate1Artifact
 from .gate1.orchestrate import Gate1ExecutionResult
+from .gate1.tilelang_compiler import TileLangKernelSource
 from .gate2.model import Gate2SuiteResult
 from .gate2.orchestrate import Gate2Runner, Gate2Suite
 from .scrc_runner import HarnessBindingInstance, SCRCRunRequest
@@ -72,8 +74,57 @@ class TritonGate2ExecutionAdapter:
         return self.runner.run_suite(request.source.gate_source, replay, suite)
 
 
+@dataclass
+class NativeGate2ExecutionAdapter:
+    """Run CUDA or TileLang Source/Replay with the shared three-way Gate2 judge."""
+
+    frontend: str
+    runner: Gate2Runner
+    suite_factory: Gate2SuiteFactory
+
+    def __post_init__(self) -> None:
+        if self.frontend not in {"cuda", "tilelang"}:
+            raise ValueError("native Gate2 frontend must be cuda or tilelang")
+
+    def execute(
+        self,
+        artifact: Gate1Artifact,
+        gate1: Gate1ExecutionResult,
+        request: SCRCRunRequest,
+    ) -> Gate2SuiteResult:
+        if request.frontend != self.frontend:
+            raise ValueError(
+                f"{self.frontend} Gate2 adapter received {request.frontend!r}"
+            )
+        source = request.source.gate_source
+        generation = gate1.normal.generation
+        if generation is None:
+            raise ValueError("Gate2 requires the exact Gate1-accepted Replay")
+        if self.frontend == "cuda":
+            if not isinstance(source, CudaKernelSource):
+                raise TypeError("CUDA Gate2 requires CudaKernelSource")
+            replay = CudaKernelSource.from_replay(
+                generation.code, generation.function_name
+            )
+        else:
+            if not isinstance(source, TileLangKernelSource):
+                raise TypeError("TileLang Gate2 requires TileLangKernelSource")
+            replay = TileLangKernelSource.from_replay(
+                generation.code, generation.function_name
+            )
+        suite = self.suite_factory(artifact, gate1, request.binding)
+        if not isinstance(suite, Gate2Suite):
+            raise TypeError("native Gate2 suite_factory must return Gate2Suite")
+        if suite.c_values != request.binding.c_values:
+            raise ValueError("native Gate2 suite must use the same c0 as Gate1")
+        if any(case.j is not artifact.j for case in suite.cases):
+            raise ValueError("every native Gate2 case must use the accepted J")
+        return self.runner.run_suite(source, replay, suite)  # type: ignore[arg-type]
+
+
 __all__ = [
     "BoundGate1Adapter",
     "Gate2SuiteFactory",
+    "NativeGate2ExecutionAdapter",
     "TritonGate2ExecutionAdapter",
 ]
