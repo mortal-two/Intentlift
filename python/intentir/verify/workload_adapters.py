@@ -1,4 +1,4 @@
-"""Declarative Harness adapters for the Task03 real Triton representatives.
+"""Declarative Harness adapters for the active real Triton representatives.
 
 These records bind actual buffers, scalars, constexpr values, and launch grids.
 They deliberately contain no J operators, predicates, formulas, or Replay text.

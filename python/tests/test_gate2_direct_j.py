@@ -20,6 +20,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Runner
 from intentir.verify.gate2.scalar import (
+    SCALAR_LOWERING_PROTOCOL,
     ScalarLoweringRunner,
     ScalarLoweringSpec,
     _validate_complete_boundary,
@@ -388,7 +389,70 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
     result = ScalarLoweringRunner().run(spec, {"input": value})
 
     assert result.ok, result.error
+    assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v8"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def _make_node_less_input_load_artifact():
+    artifact = _make_masked_identity_artifact()
+    operation = make_copy_artifact().j.intent.body[0]
+    operation.result = "v0"
+    operation.attrs["fn"] = "tanh"
+    operation.type = {"dtype": "f32", "shape": ["x0"]}
+    artifact.j.intent.body = [operation]
+    artifact.j.intent.returns = [IntentReturn("t1", "v0")]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    artifact.j.boundary.accesses[1].node_ref = "n0"
+    artifact.j.boundary.effects[1].node_ref = "n0"
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v0", "n0")
+    ]
+    return artifact
+
+
+def test_scalar_e_j_consumes_node_less_input_load_in_nonidentity_graph() -> None:
+    artifact = _make_node_less_input_load_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def test_scalar_e_j_rejects_ambiguous_node_less_input_load() -> None:
+    artifact = _make_node_less_input_load_artifact()
+    artifact.j.boundary.accesses.insert(
+        1,
+        BoundaryAccess(
+            "a2", AccessKind.LOAD, "t0", predicate="i0 < x0",
+            fill_value=0.0, index_expression="i0",
+        ),
+    )
+    artifact.j.boundary.effects.insert(
+        1,
+        EffectSpec(EffectKind.READ, "t0", effect_id="e2", access_ref="a2"),
+    )
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(8, dtype=np.float32)}
+    )
+
+    assert not result.ok
+    assert "node-less input load must be the sole load" in (result.error or "")
 
 
 def test_mask_predicate_parser_separates_logical_guard_from_domain_bound() -> None:

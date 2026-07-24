@@ -50,7 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-root",
         type=Path,
-        default=ROOT / ".trellis/tasks/07-22-scrc-real-kernel-batch-03/runs",
+        default=ROOT / ".trellis/tasks/07-24-scrc-v4-full-closure-11/runs",
     )
     return parser
 
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.run and args.case is None and args.tier is None:
         print(
-            "--run requires --case or --tier; Task03 does not implicitly run all 28",
+            "--run requires --case or --tier; live batch does not implicitly run all 28",
             file=sys.stderr,
         )
         return 2
@@ -135,10 +135,11 @@ def main(argv: list[str] | None = None) -> int:
             BatchClassification,
         )
         from intentir.verify.candidate_fanout import (
+            CANDIDATE_FANOUT_PROTOCOL,
+            CANDIDATE_SELECTION_RULE,
             CandidateBranchOutcome,
             CandidateBranchStatus,
             ConcurrentCandidateFanoutRunner,
-            FirstClosureControl,
         )
         from intentir.verify.scrc_workload_run import (
             classify_scrc_report,
@@ -291,17 +292,12 @@ def main(argv: list[str] | None = None) -> int:
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
                     search_metadata={
-                        "protocol": "intentir.scrc.candidate-fanout.v1",
+                        "protocol": CANDIDATE_FANOUT_PROTOCOL,
                         "branch_id": branch_id,
                         "candidate_count": args.candidates,
-                        "selection_rule": (
-                            "first_gate1_closure_cooperative_stop.v2"
-                        ),
+                        "selection_rule": CANDIDATE_SELECTION_RULE,
                     },
                 )
-
-            control = FirstClosureControl()
-            winner_result_holder = {}
 
             def candidate_executor(candidate_entry, branch_id):
                 branch_dir = branch_dirs[branch_id]
@@ -315,7 +311,6 @@ def main(argv: list[str] | None = None) -> int:
                         effort=args.effort,
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
-                        stop_requested=control.stop_requested,
                     )
                 except Exception as exc:
                     runtime = (
@@ -361,12 +356,34 @@ def main(argv: list[str] | None = None) -> int:
                         "winner_branch_id": search.report.winner_branch_id,
                         "stop_observed_at": search.report.stop_observed_at,
                     },
+                    formal_round=(
+                        search.report.accepted_attempt
+                        if search.report.closed else None
+                    ),
                     runtime=(search, branch_dir),
                 )
 
-            def complete_first_closed(branch):
-                search, winner_dir = branch.runtime
-                evidence_path = branch.evidence_path
+            fanout = ConcurrentCandidateFanoutRunner().run(
+                entry,
+                candidate_executor,
+                candidates=args.candidates,
+            )
+            winner = fanout.winner
+            for branch in fanout.branches:
+                if branch.runtime is None or branch is winner:
+                    continue
+                search, branch_dir = branch.runtime
+                save_workload_gate1_search(
+                    branch_dir,
+                    prepared,
+                    search,
+                    selected_for_gate2=False,
+                )
+
+            winner_result = None
+            if winner is not None:
+                search, winner_dir = winner.runtime
+                evidence_path = winner.evidence_path
                 try:
                     execution = complete_prepared_workload_gate2(
                         prepared, search
@@ -383,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
                         runtime=runtime,
                     )
                     cause = runtime.cause if runtime is not None else exc
-                    winner_result_holder["result"] = BatchCaseResult(
+                    winner_result = BatchCaseResult(
                         entry.case_id,
                         entry.ordinal,
                         BatchClassification.INFRASTRUCTURE_FAILED,
@@ -394,30 +411,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 else:
                     save_workload_execution(winner_dir, prepared, execution)
-                    winner_result_holder["result"] = execution_result(
+                    winner_result = execution_result(
                         entry, prepared, execution, evidence_path
                     )
-
-            fanout = ConcurrentCandidateFanoutRunner().run(
-                entry,
-                candidate_executor,
-                candidates=args.candidates,
-                control=control,
-                on_first_closed=complete_first_closed,
-            )
-            winner = fanout.winner
-            for branch in fanout.branches:
-                if branch.runtime is None or branch is winner:
-                    continue
-                search, branch_dir = branch.runtime
-                save_workload_gate1_search(
-                    branch_dir,
-                    prepared,
-                    search,
-                    selected_for_gate2=False,
-                )
-
-            winner_result = winner_result_holder.get("result")
             value = fanout.to_json()
             value["mode"] = "live_candidate_fanout"
             value["winner_result"] = (

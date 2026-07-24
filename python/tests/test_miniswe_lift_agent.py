@@ -11,6 +11,7 @@ import pytest
 
 from direct_fixtures import make_copy_artifact
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.model import IntentOp
 from intentir.extraction.lifters.miniswe import (
     MINISWE_LIFT_KNOWLEDGE,
     MiniSWELiftAdapter,
@@ -18,6 +19,7 @@ from intentir.extraction.lifters.miniswe import (
 )
 from intentir.extraction.lifters.scrc import (
     CANDIDATE_CHECK_PROTOCOL as SCRC_CANDIDATE_CHECK_PROTOCOL,
+    SCRCCandidateCheckContext,
     SCRCLiftAttempt,
     SCRCReliftRecord,
     check_scrc_lift_candidate,
@@ -120,7 +122,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v7"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v10"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -129,6 +131,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
     )
+    readme = " ".join(files["README.md"].split())
+    assert "must be the entire shell action exactly as shown" in readme
+    assert "Do not prepend `set`" in readme
     assert "never names a source/local or J-body v*" in (
         files["knowledge/lift_contract.md"]
     )
@@ -216,7 +221,7 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
 
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
-    assert load_intentir_lift_config()["agent"]["step_limit"] == 10
+    assert load_intentir_lift_config()["agent"]["step_limit"] == 16
     model = create_intentir_lift_model(
         model_name="test",
         api_base="http://provider.invalid/v1",
@@ -234,11 +239,11 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 7, "step_limit": 10},
+        {"n_model_calls": 8, "step_limit": 16},
     )[0]
     rendered = json.loads(observation["output"])
 
-    assert rendered["turn_budget"] == {"used": 7, "limit": 10, "remaining": 3}
+    assert rendered["turn_budget"] == {"used": 8, "limit": 16, "remaining": 8}
     assert rendered["directive"].startswith("Stop browsing")
 
 
@@ -306,8 +311,14 @@ def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
     assert seen == ['{"candidate": 1}\n', '{"candidate": 1}\n']
     assert original == b'{"candidate": 1}\n'
     assert evidence["calls"] == 3
+    assert evidence["attempts"] == 3
+    assert evidence["evaluations"] == 2
+    assert evidence["limit"] == 2
     assert [item["status"] for item in evidence["results"]] == [
         "pass", "pass", "fail"
+    ]
+    assert [item["trigger"] for item in evidence["results"]] == [
+        "explicit", "explicit", "explicit"
     ]
 
 
@@ -343,7 +354,134 @@ def test_agent_can_use_candidate_check_before_independent_submission() -> None:
     assert result.model_calls == 3
     check_evidence = result.trajectory["info"]["candidate_check"]
     assert check_evidence["calls"] == 1
+    assert check_evidence["attempts"] == 1
+    assert check_evidence["evaluations"] == 1
+    assert check_evidence["limit"] == 4
     assert check_evidence["results"][0]["status"] == "pass"
+    assert check_evidence["results"][0]["trigger"] == "explicit"
+
+
+def test_submission_preflight_returns_diagnostics_then_accepts_repair() -> None:
+    workspace = _workspace()
+    rejected = '{"valid": false}'
+    accepted = '{"valid": true}'
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{rejected}' > /output/candidate.json",
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+            f"printf '%s\\n' '{accepted}' > /output/candidate.json",
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+        ]
+    )
+
+    def checker(candidate_text: str) -> dict:
+        if json.loads(candidate_text).get("valid") is True:
+            return {
+                "protocol": CANDIDATE_CHECK_PROTOCOL,
+                "status": "pass",
+                "diagnostics": [],
+            }
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": [
+                {
+                    "rule_code": "candidate_invalid",
+                    "path": "<candidate>",
+                    "observed_refs_or_types": [],
+                }
+            ],
+        }
+
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+        )
+    finally:
+        workspace.cleanup()
+
+    assert json.loads(result.candidate_text or "") == {"valid": True}
+    assert result.model_calls == 4
+    assert "Submission preflight rejected" in json.dumps(result.trajectory)
+    evidence = result.trajectory["info"]["candidate_check"]
+    assert evidence["calls"] == 2
+    assert [item["status"] for item in evidence["results"]] == ["fail", "pass"]
+    assert [item["trigger"] for item in evidence["results"]] == [
+        "submission", "submission"
+    ]
+
+
+def test_submission_preflight_matches_exact_bytes_not_json_equivalence() -> None:
+    workspace = _workspace()
+    compact = '{"j":{},"c":{},"pi":{}}'
+    pretty = '{"j": {}, "c": {}, "pi": {}}'
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{compact}' > /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json",
+            f"printf '%s\\n' '{pretty}' > /output/candidate.json",
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+        ]
+    )
+    checked: list[str] = []
+
+    def checker(candidate_text: str) -> dict:
+        checked.append(candidate_text)
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.exit_status == "Submitted"
+    assert checked == [compact + "\n", pretty + "\n"]
+    evidence = result.trajectory["info"]["candidate_check"]
+    assert [item["trigger"] for item in evidence["results"]] == [
+        "explicit", "submission"
+    ]
+
+
+def test_submission_rejects_checker_side_effect_after_pass() -> None:
+    workspace = _workspace()
+    checked = '{"which": "checked"}\n'
+    changed = '{"which": "changed-after-check"}\n'
+    workspace.candidate_path.write_text(checked, encoding="utf-8")
+
+    def checker(candidate_text: str) -> dict:
+        assert candidate_text == checked
+        workspace.candidate_path.write_text(changed, encoding="utf-8")
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        result = environment.execute(
+            {"command": f"printf '{INTENTIR_LIFT_SUBMIT}\\n'"}
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result["returncode"] == 2
+    assert "changed after the exact bytes were checked" in result["output"]
 
 
 def test_bubblewrap_hides_host_env_repo_and_network_and_protects_input(
@@ -773,6 +911,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v4"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -788,11 +927,58 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
         "diagnostics": [],
     }
 
+    stale = SCRCCandidateCheckContext(
+        context.expected_parameters,
+        context.anonymous_compiler_view,
+        context.schema_version,
+        context.decode_protocol,
+        "intentir.scrc.typecheck.v3",
+    )
+    mismatch = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json()), stale
+    )
+    assert mismatch["status"] == "fail"
+    assert (
+        mismatch["diagnostics"][0]["rule_code"]
+        == "candidate_check_context_mismatch"
+    )
+
+    untyped = make_copy_artifact()
+    untyped.j.intent.body.append(
+        IntentOp.from_json(
+            {
+                "id": "n1",
+                "op": "opaque_untyped",
+                "result": "v0",
+                "operands": [],
+                "attrs": {},
+            }
+        ),
+    )
+    untyped.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    shared_core_rejection = check_scrc_lift_candidate(
+        json.dumps(untyped.to_json()), context
+    )
+    assert shared_core_rejection["status"] == "fail"
+    assert (
+        shared_core_rejection["diagnostics"][0]["rule_code"]
+        == "j_value_type_incomplete"
+    )
+
     invalid = artifact.to_json()
     invalid["c"]["slots"][0]["subject_ref"] = "n999"
     rejected = check_scrc_lift_candidate(json.dumps(invalid), context)
     assert rejected["status"] == "fail"
     assert rejected["diagnostics"][0]["rule_code"] == "c_subject_unknown"
+
+    oversized = artifact.to_json()
+    oversized["j"]["x" * 10000] = True
+    bounded = check_scrc_lift_candidate(json.dumps(oversized), context)
+    observed = bounded["diagnostics"][0]["observed_refs_or_types"][0]
+    assert bounded["status"] == "fail"
+    assert bounded["diagnostics"][0]["rule_code"] == "decode_rejected"
+    assert len(observed) <= 2048
+    assert observed.endswith("...<truncated>")
 
 
 def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> None:
@@ -858,7 +1044,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v2"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v2"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v3"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v4"
     assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None

@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v3"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v4"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -715,6 +715,24 @@ def _cmp_info(name: str, tail: str) -> tuple[str | None, bool]:
 
 def _local_signature(name: str, tail: str) -> str:
     erased = _SSA_RE.sub("%", tail)
+    cache_modifiers = {
+        "tt.load": "ca|cg|cv",
+        "tt.store": "wb|cg|cs|wt",
+    }.get(name)
+    if cache_modifiers is not None:
+        # Triton cache modifiers are target cache-policy hints.  They do not
+        # change the memory effect, predicate, fill, address/dataflow topology,
+        # or J denotation, and the closed J/C/pi artifact does not carry a
+        # frontend cache-policy spelling.  Keeping them in the hard fingerprint
+        # would therefore make Replay closure mathematically underdetermined.
+        # Normalize only Triton 3.6's closed cache-hint values; eviction,
+        # masks, fills, types, and all other operation attributes remain
+        # observed.
+        erased = re.sub(
+            rf"\bcacheModifier\s*=\s*(?:{cache_modifiers})(?=\s|:|,|$)",
+            "",
+            erased,
+        )
     predicate, _ = _cmp_info(name, tail)
     if predicate is not None:
         erased = re.sub(r"^[A-Za-z]+(?=\s*,)", predicate, erased)

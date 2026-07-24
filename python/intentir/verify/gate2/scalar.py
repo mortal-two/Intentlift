@@ -36,7 +36,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v7"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v8"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -568,6 +568,15 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     input_names = {item.name for item in j.intent.inputs}
     output_names = {item.name for item in j.intent.outputs}
     returns = {item.output: item.value for item in j.intent.returns}
+    graph_operands = {
+        operand
+        for operation in _node_table(j).values()
+        for operand in operation.operands
+    }
+    loads_by_tensor: dict[str, list[Any]] = {}
+    for access in boundary.accesses:
+        if access.kind is AccessKind.LOAD:
+            loads_by_tensor.setdefault(access.tensor, []).append(access)
     logical_scalar_inputs = _logical_scalar_inputs(j)
     logical_guards = _logical_boolean_guards(j)
     mappings = {item.output: item for item in boundary.output_mappings}
@@ -721,12 +730,22 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 raise ValueError(
                     f"E_J load {access.access_id!r} is not a direct J operand"
                 )
-            if op is None and (
-                j.intent.body or access.tensor not in set(returns.values())
-            ):
-                raise NotImplementedError(
-                    "E_J node-less load is supported only for direct identity J"
-                )
+            if op is None:
+                if len(loads_by_tensor[access.tensor]) != 1:
+                    raise ValueError(
+                        "E_J node-less input load must be the sole load for its "
+                        "J tensor"
+                    )
+                if (
+                    access.tensor not in graph_operands
+                    and (
+                        j.intent.body
+                        or access.tensor not in set(returns.values())
+                    )
+                ):
+                    raise ValueError(
+                        "E_J node-less input load is absent from J value dataflow"
+                    )
             loaded.add(access.tensor)
             continue
 

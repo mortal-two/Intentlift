@@ -104,6 +104,11 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v8`。v8 相对 v7 只扩展一个通用消费能力：
+non-identity graph 可以拥有唯一的 node-less logical-input boundary load，但该 tensor 必须真实进入
+Layer-A value dataflow；同一 tensor 的重复/混合 load 声明仍按歧义 fail closed。v7 的
+`REFERENCE_UNSUPPORTED` 历史结果保持原解释，不由 v8 追认或覆盖。
+
 runtime scalar 或 non-C semantic constexpr 若代表 J 的逻辑数据，可以锚定一个 rank-0 J input。
 Harness 给 Source/Replay 绑定前端标量，同时给 `RefEval(J,x)` 提供相同值的 rank-0 logical input；
 它不能因此被折叠成 C。只有表示 shape/domain extent 的 integral handle 才进入 dimension binding，

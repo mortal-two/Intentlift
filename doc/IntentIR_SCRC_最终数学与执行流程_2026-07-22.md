@@ -410,8 +410,9 @@ ctx = (anonymous_compiler_view, schema_version, v_D, v_TC)
 CandidateCheck_v(candidate_bytes, ctx)
 ```
 
-提前获得机械 diagnostics。CandidateCheck 必须调用与正式 Runner 相同的
-parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 checker。该调用：
+提前获得机械 diagnostics。CandidateCheck 共享正式 Runner 的同一 source-free
+parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行 source-identifier privacy、
+receipt/provenance，并在提交后重新运行该 core。禁止维护第二套近似 checker。该调用：
 
 - 只读取显式 `candidate_bytes,ctx`，禁止读取 ambient host state；
 - 可以构造 ephemeral validation view，但不修改、补全或返回候选/artifact；
@@ -420,6 +421,12 @@ parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 che
 - 只返回 closed `protocol/status/rule_code/path/observed_refs_or_types`，不返回建议值或 patch；
 - 不签发证书，也不替代提交后的正式 TypeCheck；
 - 只作为 proof-irrelevant Lift audit 记录。
+
+若当前完整 candidate 的精确 bytes 在本 session 尚无 `PASS`，提交动作先自动调用同一
+CandidateCheck。FAIL 只把 closed diagnostics 返回 worker，不提交、修补或 canonicalize；只有与
+某次 `PASS` 对应的精确 bytes 完全相同时才可复用，任何不同 bytes 都必须重检。该前置调用与显式
+调用共享有界预算，PASS 仍不进入证书，正式 Runner 仍
+重跑 Decode/TypeCheck。
 
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：
 
@@ -431,6 +438,12 @@ parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 che
 
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
+
+当前 fresh-run 取 `v_TC = typecheck.v4`：closed elaboration 只物化唯一确定的 rank-0/普通 result
+type，随后 TypeCheck 要求 Layer-A graph typing total；默认 `map_binary` 严格服从 NumPy broadcast，
+缺失的 non-trailing axis relation 必须拒绝，不能由 checker 猜测。Scalar RefEval 能力边界另升为
+`j_scalar_cpu_mlir_v8`，仅新增唯一 node-less logical-input load 的确定性消费。所有 v3/v7 evidence
+以及 Softmax/RMS 历史运行保持原 verdict，新协议只用于 fresh run。
 
 ---
 

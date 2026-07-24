@@ -150,19 +150,20 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        stop_requested,
+        stop_requested=None,
     ):
         assert provider is not None
         assert effort == "xhigh"
         assert run_masked_j
         assert lift_backend == "responses"
-        assert callable(stop_requested)
+        assert stop_requested is None
         barrier.wait()
         with counter_lock:
             calls["search"] += 1
         return SimpleNamespace(report=SearchReport())
 
     def fake_complete(_prepared, _search):
+        assert calls["search"] == 5
         calls["gate2"] += 1
         report = SimpleNamespace(
             main_status=MainStatus.SCRC_CERTIFIED,
@@ -189,8 +190,11 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert run_masked_j
         assert lift_backend == "responses"
         assert search_metadata["candidate_count"] == 5
+        assert search_metadata["protocol"] == (
+            "intentir.scrc.candidate-fanout.v3"
+        )
         assert search_metadata["selection_rule"] == (
-            "first_gate1_closure_cooperative_stop.v2"
+            "wave_barrier_branch_id_formal_round.v3"
         )
         calls["initialized_efforts"].append(effort)
 
@@ -231,7 +235,12 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["candidate_count"] == 5
-    assert payload["winner_branch_id"] in range(1, 6)
+    assert payload["winner_branch_id"] == 1
+    assert payload["winner_formal_round"] == 1
+    assert payload["status_counts"] == {
+        "gate1_closed": 1,
+        "gate1_closed_not_selected": 4,
+    }
     assert payload["winner_result"]["main_status"] == "SCRC_CERTIFIED"
     assert calls == {
         "search": 5,

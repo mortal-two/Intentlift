@@ -63,10 +63,12 @@ Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修
 语法/静态 Schema 检查。这是普通文件上的轻量 retrieval；不需要 vector database，也不能按
 当前 Kernel、历史失败或 sibling candidate 动态选择知识库。
 
-agent 还可以对自己已经写出的完整 candidate 调用有界、只读、非认证的 `CandidateCheck`。该工具
-通过窄 host RPC 或同等隔离边界，必须调用正式 Runner 使用的同一个 strict parser、既有
-Decode/Elaborate、匿名 Harness-view consistency check 与 `TypeCheck(J,C,pi)` entrypoint/ruleset；
-禁止维护第二套近似 checker：
+agent 还可以对自己已经写出的完整 candidate 调用有界、只读、非认证的 `CandidateCheck`。为避免
+已完整序列化的候选绕过这一机械诊断边界，若当前完整 candidate bytes 在本 session 内还没有
+`PASS`，提交动作必须先自动调用同一 `CandidateCheck`。该工具通过窄 host RPC 或同等隔离边界，
+共享正式 Runner 的同一 source-free strict parser、Decode/Elaborate、anonymous-view consistency 与
+`TypeCheck(J,C,pi)` callable core；正式 Runner 另执行 source-identifier privacy、receipt/provenance，
+并在正式提交后重新运行该 core。禁止维护第二套近似 checker：
 
 ```text
 ctx = {
@@ -91,16 +93,24 @@ CandidateCheck_v(candidate_bytes, ctx) -> PASS | structured diagnostics
 但不能将其作为 artifact 返回。diagnostics 只包含 closed
 `protocol/status/rule_code/path/observed_refs_or_types`。agent 根据 diagnostics 自行修改完整 object，
 最终仍最多提交一个完整
-`(J,C,pi)`。提交后 session 结束，Runner 必须重新运行全部权威 Decode/TypeCheck；工具 `PASS`
+`(J,C,pi)`。提交前置检查失败只把同样的 closed diagnostics 返回当前 worker，不会提交、
+修补、canonicalize 或派生任何 artifact 字段；worker 必须自行重写完整 object。只有当前 candidate
+bytes 与本 session 内某次 `PASS` 对应的精确 bytes 完全相同时才能复用；任何不同 bytes 都必须
+重新检查。提交后 session 结束，Runner 必须重新运行全部权威 Decode/TypeCheck；工具 `PASS`
 不进入 Replay packet、Gate verdict 或 certificate，且 CandidateCheck/Runner 必须使用相同
-`typecheck_version`。
+`typecheck_version`。激活的 vNext SCRC adapter 必须安装 CandidateCheck；checker 缺失或不可用属于
+提交前 infrastructure failure。generic environment 可以在非认证测试中不安装 checker，但不得把
+该路径报告为 vNext SCRC run。
 
 agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
 Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v3 / candidate-check.v1` 实现上述
+当前 fresh worker 使用 `artifact.v2 / decode.v2 / typecheck.v4 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。
+`typecheck.v4` 还要求 Layer-A graph value typing total，并按既有 NumPy broadcast 合同拒绝缺少
+显式 `J.boundary.broadcasts` 的 non-trailing broadcast；它只消费 Lift 已声明的 broadcast relation，
+不推导或补写轴。`typecheck.v3` receipt 保留旧 judgement，不由 v4 静默重判。
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
 diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1` 历史对象不因
 此次激活而被静默重判。
@@ -210,8 +220,9 @@ relift diagnostic view 必须明确区分。
 当前同一 case 使用 `B=5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
 Gate1 round，`K` 包含首次候选。每个 branch 的 previous artifact、Gate1 diff、Lift conversation、
 Replay writer 与调用预算完全隔离；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
-artifact。首个正式 Gate1 closure exactly-once 成为 winner，并立即生成隐藏 Gate2 输入和执行 Gate2，
-不等待 fanout barrier。其他 branch 已开始的 provider call自然返回，在紧邻阶段边界记录为
-`SUPERSEDED` 并停止，不再启动新的 Lift/Replay/relift；它们不能冒充 `NO_CLOSURE` 或 infrastructure
-failure。只有没有 winner 且所有未被外部停止的完整 branch 都未闭合时才报告
-`NO_CLOSURE_(5,3)`；infrastructure-incomplete branch 必须单独报告。
+artifact。Runner 等待当前 search wave 的所有 branch 到达 pre-Gate2 barrier，再仅依据完整
+TypeCheck/Gate1 evidence，按固定 `(branch_id, formal_round)` 顺序选择第一个 Gate1-closed 候选。
+未选但已闭合的 branch 记录为 `GATE1_CLOSED_NOT_SELECTED`；只有固定 winner 随后获得隐藏 Gate2
+输入并执行一次 Gate2，Gate2 失败不得 fallback 到 sibling。没有 Gate1-closed 候选时才报告
+`NO_CLOSURE_(5,3)`；infrastructure-incomplete branch 必须单独报告。wall-clock 完成先后不进入
+winner 函数。

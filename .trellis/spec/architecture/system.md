@@ -11,14 +11,19 @@
 Source + Harness coordinates
         |
         v
-LLM_H(Source) -> response JSON
-        |  agent 可对自己写出的完整 candidate 调用 bounded CandidateCheck
+LLM_H(Source) -> complete candidate bytes
+        |  agent 可显式调用 bounded CandidateCheck
+        |  submission: exact bytes 若无本 session PASS，则自动 preflight
+        |      FAIL -> closed diagnostics -> LLM 重写完整 candidate
+        |      PASS -> 仅允许提交，不产生 artifact 或证书
+        v
+formal Runner wrapper: privacy/provenance; rerun source-free core
         |
         v
-Decode/Elaborate(response) -> (J,C,pi)
+strict parser + Decode/Elaborate(response) -> (J,C,pi)
         |
         v
-TypeCheck(J,C,pi)
+anonymous-view consistency + TypeCheck(J,C,pi)
         |
         v
 Replay W_f(J,pi,MaskC(C);U_f) -> R
@@ -50,8 +55,12 @@ structured diff -> relift      Gate2(Source,R,RefEval(J))
 Decode/Elaborate 与 TypeCheck 是 Replay 前的确定性 closed-IR 前端，不是新的证明对象或额外 Gate。
 接受后的 typed/canonical archive 就是唯一 J；响应 JSON 不叫另一份 J。只有二者通过并
 进入一次全新 Replay 的候选才计为正式实验轮次；最多三轮，之后报告 `NO_CLOSURE`。
-`CandidateCheck` 必须调用正式 Runner 的同一个 parser/Decode/TypeCheck entrypoint/ruleset，只返回
-diagnostics，不修改候选、不签发证书，也不进入 Replay；禁止维护第二套近似 checker。
+`CandidateCheck` 共享正式 Runner 的同一 source-free
+parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行 source-identifier privacy、
+receipt/provenance，并在提交后重新运行该 core。CandidateCheck 只返回 diagnostics，不修改候选、
+不签发证书，也不进入 Replay；禁止维护第二套近似 checker。激活的 vNext SCRC adapter 必须安装
+该 checker；缺失或不可用时属于提交前 infrastructure failure。generic environment 可以不安装 checker
+用于非认证测试，但这种执行不属于 vNext SCRC 认证路径。
 production search 在 `SCRC_CERTIFIED` 之后独立发生，不改变该状态。`Emit_v` 严格 J-only；只有
 后置 `Attach_C` 可以产生可擦除 C-derived search state，且 `BaseIR(S_C)=M0`。
 

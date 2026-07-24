@@ -495,18 +495,34 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "satisfied by the parameter binding" in contract
     assert "J.boundary.reductions.tile_axis" in contract
     assert "physical frontend reduction axis" in contract
+    assert "when predicate is absent" in contract
+    assert "never synthesize a defensive or redundant mask" in contract
     assert "placement='program' alone never authorizes tl.program_id" in contract
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
     assert "map declaration-ordered stages" in contract
-    assert "merge before one pointer addition" in contract
-    assert "even if that grid extent is one" in contract
-    assert "do not invent a second pointer addition" in contract
+    assert "combined before that pointer addition" in contract
+    assert "even if its grid extent is one" in contract
+    assert "second serial pointer addition" in contract
     assert "from triton.language.extra.cuda import libdevice" in contract
     assert "Directly importing a libdevice function is rejected" in contract
+    assert "tanh/tan/atan/atan2 as libdevice calls" in contract
+    assert "elementwise power as the public `x ** y` operator" in contract
+    assert "isnan as `x != x`" in contract
     assert "Every pi.refinements entry is mandatory" in contract
     assert "authorized target_dtype" in contract
     assert_source_isolated_payload(payload)
+
+
+def test_replay_prompt_closes_access_masks_and_integer_address_merge() -> None:
+    instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
+
+    assert "A boundary access with no predicate is unconditional" in instructions
+    assert "never derive a redundant mask from domains" in instructions
+    assert "preserve and combine those integer stages" in instructions
+    assert "never turn the route into serial extra pointer/address operations" in (
+        instructions
+    )
 
 
 def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None:

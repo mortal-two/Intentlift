@@ -34,7 +34,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v7"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v10"
 
 
 def _usage_and_response_identity(
@@ -167,8 +167,9 @@ This directory is the complete allowlisted input for one fresh Lift round.
   replace all semantics, handles, shapes, values, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: bounded, read-only
-  Decode/TypeCheck diagnostics for the complete candidate (at most three
-  calls); it never repairs or certifies the artifact.
+  Decode/TypeCheck diagnostics for the complete candidate (at most four
+  checker evaluations total across explicit calls and submission preflight);
+  it never repairs or certifies the artifact.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 
@@ -196,9 +197,16 @@ After it passes, run the source-free diagnostic check:
 
 `intentir_candidate_check /output/candidate.json`
 
+This host virtual command must be the entire shell action exactly as shown. Do
+not prepend `set`, an assignment, a pipe, or another shell command; such a
+prefixed action runs inside the sandbox, where it is not an executable.
 If it fails, edit the candidate yourself from the closed diagnostics and rerun
 within the bounded allowance. The formal Runner independently repeats Decode
 and TypeCheck after submission; CandidateCheck is not an acceptance path.
+If the exact submitted bytes have no prior CandidateCheck PASS, submission
+automatically invokes the same read-only preflight and returns FAIL diagnostics
+to this session instead of delivering the candidate. It still never edits the
+object, and a PASS still has no authority outside this worker.
 """
     return {
         "README.md": readme,

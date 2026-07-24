@@ -3,27 +3,33 @@
 本目录只借用 Trellis 的文件布局。工作项是普通 Markdown，不使用 `task.json` 状态机、
 Trellis CLI、自动 session 或 workflow phase。
 
-## 当前新设计序列
+## 当前任务
 
-当前执行顺序（2026-07-24）是：Task 10 先完成 J readiness 与下一 SCRC protocol 的横向实现和
-六类 bring-up；随后 Task 03 让 28 个目标 Kernel 顺序产出各自 accepted J/C/π 与证据。后端 B0/B1
-只在这批稳定 J 形成后独立展开，不要求每闭合一个 Kernel 就紧邻实现其 backend。Task 09 是正交的
-重复解释器清理，保留但不阻塞 Task 10 主线。
+2026-07-24 只有 Task 11 是活动任务。它继承已归档 Task 10 的 v4/v8 协议，以独立 fresh
+lifecycle 对 28 个目标 Kernel 做有界 case-level 并行闭合，并按 registry ordinal 稳定汇总；不会
+恢复或改写已经结束的 Task 03。后端 B0/B1 仍在稳定 J corpus 形成后独立展开。
 
-- [Task 10：J Semantic Readiness 与 SCRC vNext 横向闭合](07-24-j-readiness-scrc-vnext-10/task.md)（执行中；当前主线）
-- [Task 09：退役 RefEval 重复 Layer-B 解释器](07-23-retire-duplicate-boundary-interpreter-09/task.md)（执行中）
-- [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](07-23-executable-j-cuda-backend-08/task.md)（已完成）
-- [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](07-23-canonical-boundary-lowering-07/task.md)（已完成）
-- [Task 06：J 构造标准化与统一 lowering 消费边界](07-23-canonical-j-elaboration-06/task.md)（已完成）
-- [Task 05：Gate2 dense pointwise RefEval 合同闭合](07-23-gate2-dense-refeval-05/task.md)（已完成）
-- [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（已完成）
-- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](07-22-scrc-real-kernel-batch-03/task.md)（执行中；下一 SCRC protocol 实现后顺序闭合全部目标 Kernel）
-- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（已完成）
-- [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)（已完成）
+- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；唯一当前主线）
+
+## 本轮已归档任务
+
+Task 01–10 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+当前执行状态或后继调度的权威来源。
+
+- [Task 10：J Semantic Readiness 与 SCRC vNext 横向闭合](archive/2026-07/07-24-j-readiness-scrc-vnext-10/task.md)
+- [Task 09：退役 RefEval 重复 Layer-B 解释器](archive/2026-07/07-23-retire-duplicate-boundary-interpreter-09/task.md)
+- [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](archive/2026-07/07-23-executable-j-cuda-backend-08/task.md)
+- [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](archive/2026-07/07-23-canonical-boundary-lowering-07/task.md)
+- [Task 06：J 构造标准化与统一 lowering 消费边界](archive/2026-07/07-23-canonical-j-elaboration-06/task.md)
+- [Task 05：Gate2 dense pointwise RefEval 合同闭合](archive/2026-07/07-23-gate2-dense-refeval-05/task.md)
+- [Task 04：mini-swe-agent 有界 Lift Worker 接入](archive/2026-07/07-23-miniswe-lift-worker-04/task.md)
+- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](archive/2026-07/07-22-scrc-real-kernel-batch-03/task.md)
+- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](archive/2026-07/07-22-scrc-real-canary-02/task.md)
+- [Task 01：SCRC Gate Core 整体门禁能力重构](archive/2026-07/07-22-scrc-system-rebuild-01/task.md)
 
 编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC 数学总述已经替换此前
-formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。Task 01 只负责门禁系统能力的
-代码重构；当前 Task 02 从三个顺序 canary 开始使用真实 LLM，不直接跳到 28-kernel 或性能结论。
+formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。当前序列的 Task 01–10 已成为
+Task 11 的历史输入，不得因正文中的旧“执行中”或“后续”措辞被重新激活。
 
 ## 历史任务序列
 

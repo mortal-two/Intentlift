@@ -21,8 +21,14 @@ epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
 自 2026-07-24 的 fresh run 起，CandidateCheck、C `subject_ref/axis_ref` attachment、numeric-cast
 dependent typing 与 result-relation compatibility 已由 `artifact.v2 / decode.v2 / typecheck.v3 /
-candidate-check.v1` 同步激活。`artifact.v1` 仅保留历史读取能力；新 Lift response 必须使用 v2，
+candidate-check.v1` 同步激活；随后 total graph typing 与显式 non-trailing broadcast 合同将
+TypeCheck 升为 `typecheck.v4`。`artifact.v1` 仅保留历史读取能力；新 Lift response 必须使用 v2，
 新规则不得用于静默重判既有 receipt 或历史证书。
+
+同日激活的 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v4`；它只 NormalizeAway closed
+load/store cache-policy hint，其他 memory attributes 仍为 hard evidence。同 case fan-out 协议是
+`intentir.scrc.candidate-fanout.v3`，在 pre-Gate2 wave barrier 后按固定
+`(branch_id, formal_round)` 选择 winner，wall-clock 到达次序不参与选择。
 
 ## 导航
 

@@ -77,8 +77,22 @@ _FORBIDDEN_TL_CALLS = {
 # Security policy is global and kernel-independent.  It is deliberately not
 # selected from J, pi, a dataset identity, or a per-operation catalog.
 GLOBAL_LIBDEVICE_CALLS = frozenset(
-    {"cos", "erf", "exp", "log", "pow", "rsqrt", "sin", "sqrt", "tanh"}
+    {
+        "atan", "atan2", "cos", "erf", "exp", "log", "pow", "rsqrt",
+        "sin", "sqrt", "tan", "tanh",
+    }
 )
+# Triton 3.6 exposes some reviewed math only through the public libdevice
+# namespace.  Accepting these spellings under ``tl`` merely defers a
+# deterministic API error to compilation and wastes a formal Gate1 round.
+TRITON_UNAVAILABLE_CALL_GUIDANCE = {
+    "atan": "import libdevice and call `libdevice.atan`",
+    "atan2": "import libdevice and call `libdevice.atan2`",
+    "isnan": "use the public comparison `x != x`",
+    "pow": "use the public `x ** y` operator",
+    "tan": "import libdevice and call `libdevice.tan`",
+    "tanh": "import libdevice and call `libdevice.tanh`",
+}
 
 # A conservative statement/expression allowlist.  Context and operator marker
 # nodes are included because ``ast.walk`` yields them independently.
@@ -316,6 +330,12 @@ def _validate_call(
     if isinstance(target, ast.Attribute):
         _check_identifier(target.attr, target, "attribute")
         if _is_name(target.value, "tl"):
+            if target.attr in TRITON_UNAVAILABLE_CALL_GUIDANCE:
+                _fail(
+                    node,
+                    f"`tl.{target.attr}` is unavailable in the public frontend; "
+                    f"{TRITON_UNAVAILABLE_CALL_GUIDANCE[target.attr]}",
+                )
             if target.attr.startswith("_") or target.attr in _FORBIDDEN_TL_CALLS:
                 _fail(node, f"call to `tl.{target.attr}` is forbidden")
             return

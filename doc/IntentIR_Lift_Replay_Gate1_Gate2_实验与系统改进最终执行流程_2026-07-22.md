@@ -218,6 +218,12 @@ Kernel 并发混在一次认证中。设 branch 数 `B=5`；每个 branch 拥有
 `(J,C,pi)`、TypeCheck、全新盲 Replay、Gate1 evidence 与 branch-local relift history。branch 之间
 不得读取、拼接或投票组合 artifact。Harness 仍是机械绑定环境，不变成新的 LLM Agent。
 
+“不混在一次认证中”不等于不同 case 必须 wall-clock 串行。批量调度可以在明示资源上限内
+并行执行多个完整 case lifecycle，前提是每个 case 分别新建 Harness 可变状态、Lift/Replay/provider
+session、TypeCheck/Gate runner、relift history、output buffer 和 evidence 目录。只读 registry/source/adapter
+定义可共享，候选、会话、Replay、diff、winner 和 C valuation 不得跨 case 共享；结果最终按
+registry ordinal 稳定汇总。provider 限流属于资源证据，不改变任何 case 的认证谓词。
+
 ## 5. 第一步：Lift 生成完整三元 artifact
 
 Lift 的每一次正式输出都必须是完整的：
@@ -368,9 +374,10 @@ CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
 ```
 
 `ctx` 精确等于本次 Lift 已可见的匿名机械 compiler view 与协议版本；实现禁止读取 ambient host
-Harness 状态。CandidateCheck 必须调用与正式 Runner 相同的 parser/Decode/TypeCheck
-entrypoint 与 ruleset，禁止维护第二套近似 checker；工具可以在私有内存中构造 ephemeral
-parsed/elaborated validation view，但不得合成、
+Harness 状态。CandidateCheck 共享正式 Runner 的同一 source-free
+parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行 source-identifier privacy、
+receipt/provenance，并在提交后重新运行该 core。禁止维护第二套近似 checker；工具可以在私有内存中
+构造 ephemeral parsed/elaborated validation view，但不得合成、
 补写、修改或返回新的 candidate/artifact。diagnostics 使用固定 closed schema：
 
 ```text
@@ -382,6 +389,13 @@ protocol, status, rule_code, path, observed_refs_or_types
 topology。agent 必须根据诊断自行修改并最终提交完整 `(J,C,pi)`。调用次数必须有界并作为普通 Lift
 audit 记录；tool `PASS` 不构成正式 TypeCheck，提交后 Runner 必须用相同 `typecheck_version` 重新
 执行权威检查。
+
+提交动作对尚无本 session `PASS` 的精确 candidate bytes 自动执行同一 CandidateCheck；
+FAIL 只返回上述 closed diagnostics 而不提交或修补；只有与某次 `PASS` 对应的精确 bytes 完全
+相同时才可复用，任何不同 bytes 都必须重新检查。该前置
+调用与 worker 显式调用共享同一有界预算，PASS 仍只是当前 episode 的诊断结果。当前 fresh
+worker 使用 16 个 model turn 与最多 4 次实际 checker evaluation；这些是可报告的工程预算，
+不进入 certificate predicate。
 
 该能力只把原本发生在相邻 fresh Lift invocation 之间的机械反馈移入一次有界 Lift episode，不增加
 Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round 的定义。
@@ -403,6 +417,12 @@ Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round �
 
 上述新增规则构成下一 TypeCheck protocol version；实现完成、protocol/version receipt 同步升级并
 开始新的实验后才生效。不得用新规则静默重判历史 artifact。
+
+当前 fresh-run 版本为 `typecheck.v4`：rank-0 closed signature 的唯一类型可由 elaborator 机械物化，
+但全图任一 result 仍不能闭合时 TypeCheck 必须拒绝；`map_binary` 的 non-trailing broadcast 必须由
+Lift 显式给出 `J.boundary.broadcasts`，不得由 checker 补造。`j_scalar_cpu_mlir_v8` 只扩展固定
+RefEval 对唯一 node-less logical-input load 的通用消费。旧 v3/v7 evidence 以及已落盘的
+Softmax/RMS run-008 不被新版本静默改成 PASS，必须 fresh relift/fresh run。
 
 ## 7. 第三步：source-blind Replay
 
@@ -488,6 +508,12 @@ Gate1 可以使用协议中已经确定的全局 canonicalization，例如：
 - 其他已经明确、全局适用的 frontend presentation noise。
 
 如果未来要把某类 compiler transformation 全局 NormalizeAway，必须在实验结束后的系统改进阶段统一修改 observer。不能在某个 Kernel 失败时临时忽略。
+
+当前 Triton 3.6 profile 的一个明示全局决策是：`tt.load` 上的 closed
+`cacheModifier in {ca,cg,cv}` 与 `tt.store` 上的 `{wb,cg,cs,wt}` 是 target cache-policy hint，不改变 J denotation、memory
+effect、predicate/fill、address/dataflow 或 transfer topology，且 closed J/C/π 不携带 frontend cache
+spelling，因此在 `triton-ttir-3.6-gate1-v4` 中统一 NormalizeAway。未知或 load/store 方向不合法的 cache policy、eviction、
+mask、fill、type 及其他 operation attributes 仍被观察；不得借此归一任意 memory difference。
 
 因此，Gate1 的准确含义是：
 

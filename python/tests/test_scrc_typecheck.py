@@ -3,14 +3,19 @@ from __future__ import annotations
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
+from intentir.ir.model import IntentOp, Tensor
 from intentir.verify.gate1.model import (
     AccessKind,
+    BroadcastSpec,
+    ParameterKind,
+    ParameterMode,
     RealizationAuthorization,
     RefinementKind,
     ResultRelationKind,
     ResultRelationSpec,
     ScheduleSlot,
     SchemaError,
+    SignatureParameter,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate1.prompt import build_normal_rewriter_view
@@ -30,6 +35,81 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     assert report.passed
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def _row_scale_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [2, "x0"]
+    artifact.j.intent.outputs[0].shape = [2, "x0"]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.intent.inputs.append(Tensor("t2", "f32", [2]))
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f32",
+            1,
+            logical_ref="t2",
+        )
+    )
+    operation = artifact.j.intent.body[0]
+    operation.op = "map_binary"
+    operation.operands = ["t0", "t2"]
+    operation.attrs = {"fn": "mul"}
+    operation.type = None
+    return artifact
+
+
+def test_non_numpy_broadcast_requires_an_explicit_j_relation() -> None:
+    artifact = _row_scale_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert report.diagnostics[0].code is TypeCheckErrorCode.J_ELABORATION_FAILED
+    assert "non-trailing broadcast must be declared explicitly" in (
+        report.diagnostics[0].detail
+    )
+
+
+def test_explicit_nontrailing_broadcast_closes_value_typing() -> None:
+    artifact = _row_scale_artifact()
+    artifact.j.boundary.broadcasts = [BroadcastSpec("n0", "t2", [1])]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_rejects_a_graph_with_an_untyped_intermediate() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.body.insert(
+        0,
+        IntentOp.from_json(
+            {
+                "id": "n1",
+                "op": "opaque_untyped",
+                "result": "v0",
+                "operands": [],
+                "attrs": {},
+            }
+        ),
+    )
+    artifact.j.node_ids = {"n1": "body[0]", "n0": "body[1]"}
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.J_VALUE_TYPE_INCOMPLETE in {
+        item.code for item in report.diagnostics
+    }
+    diagnostic = next(
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.J_VALUE_TYPE_INCOMPLETE
+    )
+    assert diagnostic.ref == "v0"
 
 
 def test_fill_requires_a_predicated_load_before_replay() -> None:

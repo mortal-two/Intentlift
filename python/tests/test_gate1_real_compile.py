@@ -71,6 +71,46 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
 """
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "libdevice.tanh(value)",
+        "libdevice.tan(value)",
+        "libdevice.atan(value)",
+        "libdevice.atan2(value, value + 1.0)",
+    ],
+)
+def test_reviewed_triton36_libdevice_frontend_calls_compile(
+    expression: str,
+) -> None:
+    code = f"""import triton
+import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+@triton.jit
+def scrc_math(p0, p1, p2, c0: tl.constexpr):
+    offsets = tl.arange(0, c0)
+    mask = offsets < p2
+    value = tl.load(p0 + offsets, mask=mask, other=0.0)
+    result = {expression}
+    tl.store(p1 + offsets, result, mask=mask)
+"""
+    result = TritonCompiler(timeout=180).compile(
+        KernelSource.from_code(code, "scrc_math", trusted=False),
+        CompileCase(
+            {
+                "p0": RuntimeArgument.tensor((128,), "float32"),
+                "p1": RuntimeArgument.tensor((128,), "float32"),
+                "p2": RuntimeArgument.scalar(128, "int32"),
+            },
+            (1,),
+            {"c0": 128},
+        ),
+    )
+
+    assert result.ok, result.diagnostic
+
+
 @pytest.mark.parametrize("kind", ["copy", "masked_reduce"])
 def test_real_triton_gate1_strict_closure_with_anonymous_signature(kind: str) -> None:
     if kind == "copy":

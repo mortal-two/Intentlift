@@ -33,8 +33,10 @@ Lift session 的只读 `CandidateCheck_v(candidate_bytes,ctx)` 只能通过显�
 获准看到的匿名机械 compiler view 与 schema/decode/typecheck version，以检查 candidate 是否篡改
 参数 kind/mode/dtype/rank、C valuation 或 anonymous handle 合同。工具禁止读取 ambient host state，
 也不得把 hidden inputs、真实 Source binding、Gate evidence 或额外 Harness 状态返回 agent，不得替
-Lift 生成 `logical_ref`、C `subject_ref/axis_ref`、J/C 分类或任何 artifact 字段。它必须调用正式
-Runner 的同一个 checker entrypoint/ruleset，不得维护 Harness-private 近似规则。
+Lift 生成 `logical_ref`、C `subject_ref/axis_ref`、J/C 分类或任何 artifact 字段。它共享正式 Runner
+的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行
+source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。不得维护
+Harness-private 近似规则。
 
 ## Logical signature 与绑定
 
@@ -63,7 +65,7 @@ RefEval 的功能输入。
 或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须记录 frontend、observer
 profile/version、compiler/dump stage 与 canonicalization version。
 
-## 高性能工作负载投影与顺序批量入口
+## 高性能工作负载投影与有界隔离批量入口
 
 SCRC 的高性能工作负载清单只能是现行 lowering capability registry 的确定性 Harness-side
 投影。direct kernel 的 ID、ordinal 与总数继续由
@@ -71,7 +73,7 @@ SCRC 的高性能工作负载清单只能是现行 lowering capability registry 
 28 项 truth，也不得把 scenario 29 计作 direct kernel。
 
 投影可以附加 source module/file、entry symbol、frontend、observer/Q 版本、现有 lowering evidence、
-adapter readiness 与代表性 tier。这些字段只用于定位真实 Source、选择 Harness adapter 和组织顺序
+adapter readiness 与代表性 tier。这些字段只用于定位真实 Source、选择 Harness adapter 和组织稳定
 运行，不是 `(J,C,π)`、TypeCheck 或 Gate predicate 的输入。特别是，source path、Harness factory、
 concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容都不得进入 Replay packet。
 
@@ -83,18 +85,28 @@ concrete C valuation、BindingMap、历史 diff 和其他 case 的会话内容�
 - source/schema 不一致记为 `MANIFEST_INVALID`，不得伪装成 Gate 失败；
 - list、validate 与 dry-run 不调用 Lift/Replay provider。
 
-批量入口默认顺序执行，每个 case 使用独立的新 Lift/Replay 生命周期。单个 case 的准备、编译或
-认证异常必须收敛为该 case 的结构化结果并继续后续 case；汇总层只统计既有 TypeCheck、Gate1、
-Gate2、main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
+批量入口的逻辑顺序由 registry ordinal 唯一决定；实际执行可以串行，也可以在明示资源上限内对
+多个 case 做有界并行。无论调度方式如何，每个 case 都必须使用独立的 fresh Lift/Replay 生命周期和
+独立 evidence 目录。单个 case 的准备、编译或认证异常必须收敛为该 case 的结构化结果，不得
+取消、污染或改写其他 case 的结果。汇总层最终按 registry ordinal 稳定排序，只统计既有
+TypeCheck、Gate1、Gate2、main status、J-necessity status 与真实调用预算，不能重新定义认证条件。
 
-不同 Kernel/case 的外层顺序保持串行；并发只允许发生在同一 Source、同一 Harness 与同一 `c0`
-的候选搜索内部。主线程预先分配 `B` 个互不重叠的 evidence 目录，每个 worker 新建独立 Lift、
-Replay writer、TypeCheck/Gate1 runner 与 relift history。Source slice 和只读 adapter 描述可以共享，
-但 candidate artifact、provider response、Replay、diff、输出 buffer 与可变执行状态不得共享。
+跨 case 并行的最小隔离单位是完整 case lifecycle：每个 case 分别新建 Harness 可变执行状态、Lift
+session、provider session、Replay writer、TypeCheck/Gate runner、relift history、输出 buffer 与 evidence
+目录。只读 registry、source file 和不含 case 状态的 adapter 定义可以共享；candidate artifact、provider
+response/conversation、Replay、diff、winner、C valuation 和任何可变 Harness 状态不得跨 case 共享。
+资源争用或 provider 限流必须记为相应 case 的执行证据，不得通过交换候选或压缩隔离边界
+规避。
 
-Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out 结束后由
-受信任 runner 依据 pre-Gate2 evidence 选择一个 winner，再由 Harness 为该 winner 生成隐藏 Gate2
-输入；其余 branch 不读取这些输入。
+同一 case 内的候选 fan-out 仍按同一 Source、同一 Harness 合同与同一 `c0` 建立 `B` 个互不
+重叠的 branch evidence 目录。每个 branch 新建独立 Lift、Replay writer、TypeCheck/Gate1 runner 与
+relift history；Source slice 和只读 adapter 描述可以共享，但 candidate、provider response、Replay、
+diff 与输出 buffer 不得在 branch 间共享。
+
+Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out 的
+pre-Gate2 wave barrier 完成后，由受信任 runner 只依据 TypeCheck/Gate1 evidence，按固定
+`(branch_id, formal_round)` 顺序选择一个 winner，再由 Harness 为该 winner 生成隐藏 Gate2 输入；
+wall-clock 完成先后不参与选择，其余 branch 不读取这些输入。
 
 ## 真实 Triton Source 投影与声明式 adapter
 

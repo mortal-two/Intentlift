@@ -23,6 +23,12 @@ presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打�
 删除会改变必要 realization closure 的 op、def-use、predicate/fill、effect、region、order、
 sharing、placement 或 representation topology。
 
+`triton-ttir-3.6-gate1-v4` 有一条全局、窄而 closed 的例外：对 `tt.load` 只归一
+`cacheModifier in {ca,cg,cv}`，对 `tt.store` 只归一 `{wb,cg,cs,wt}`。它们是不由
+J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation、memory effect、
+predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
+以及其他 memory attributes 仍参与 hard comparison。
+
 ## Observer 能力
 
 frontend adapter 必须声明其实际 observer 能力，例如：

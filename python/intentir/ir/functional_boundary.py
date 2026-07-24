@@ -587,6 +587,15 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     input_names = {item.name for item in j.intent.inputs}
     output_names = {item.name for item in j.intent.outputs}
     returns = {item.output: item.value for item in j.intent.returns}
+    graph_operands = {
+        operand
+        for operation in _node_table(j).values()
+        for operand in operation.operands
+    }
+    loads_by_tensor: dict[str, list[Any]] = {}
+    for access in boundary.accesses:
+        if access.kind.value == "load":
+            loads_by_tensor.setdefault(access.tensor, []).append(access)
     mappings = {item.output: item for item in boundary.output_mappings}
     for output, mapping in mappings.items():
         if output in returns and mapping.value != returns[output]:
@@ -714,12 +723,23 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
                 raise ValueError("functional load is not a J input")
             if op is not None and access.tensor not in op.operands:
                 raise ValueError("functional load is not a direct J operand")
-            if op is None and (
-                j.intent.body or access.tensor not in set(returns.values())
-            ):
-                raise NotImplementedError(
-                    "node-less load is supported only for direct identity J"
-                )
+            if op is None:
+                if len(loads_by_tensor[access.tensor]) != 1:
+                    raise ValueError(
+                        "functional node-less input load must be the sole load "
+                        "for its J tensor"
+                    )
+                if (
+                    access.tensor not in graph_operands
+                    and (
+                        j.intent.body
+                        or access.tensor not in set(returns.values())
+                    )
+                ):
+                    raise ValueError(
+                        "functional node-less input load is absent from J "
+                        "value dataflow"
+                    )
             loaded.add(access.tensor)
             continue
 

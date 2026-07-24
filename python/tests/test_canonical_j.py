@@ -7,6 +7,7 @@ import pytest
 from direct_fixtures import make_copy_artifact
 from intentir.backend.protocol import BackendTarget, LoweringRequest
 from intentir.frontend.canonical_j import emit_j_module
+from intentir.ir.model import IntentOp
 from intentir.ir.canonical_j import (
     CanonicalJError,
     elaborate_j,
@@ -119,6 +120,41 @@ def test_explicit_result_type_conflict_fails_closed() -> None:
 
     with pytest.raises(CanonicalJError, match="conflicting types"):
         elaborate_j(j)
+
+
+def test_rank_zero_closed_signature_is_materialized() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = []
+    artifact.j.intent.outputs[0].shape = []
+    artifact.j.signature.parameters[0].rank = 0
+    artifact.j.signature.parameters[1].rank = 0
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "cast",
+                "result": "v0",
+                "operands": ["t0"],
+                "attrs": {"to_dtype": "f32"},
+            }
+        ),
+        IntentOp.from_json(
+            {
+                "id": "n1",
+                "op": "map_unary",
+                "result": "t1",
+                "operands": ["v0"],
+                "attrs": {"fn": "identity"},
+            }
+        ),
+    ]
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+
+    j = elaborate_j(artifact.j)
+
+    assert j.intent.body[0].type == {"dtype": "f32", "shape": []}
+    assert j_elaboration(j).value_type_by_name["v0"].shape == ()
 
 
 def test_reference_and_production_requests_share_canonical_mlir_front() -> None:

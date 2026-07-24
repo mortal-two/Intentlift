@@ -61,3 +61,5 @@ the artifact schema or external TypeCheck.
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still
    repeats canonical Decode and dependent TypeCheck before Replay and Gates.
+   If the exact submitted bytes lack a prior PASS, submission invokes this same
+   read-only preflight and returns any failure to you; it never repairs fields.

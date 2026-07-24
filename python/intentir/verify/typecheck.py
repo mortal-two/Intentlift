@@ -24,7 +24,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v3"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v4"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 
@@ -36,6 +36,7 @@ class TypeCheckStatus(str, Enum):
 
 class TypeCheckErrorCode(str, Enum):
     J_ELABORATION_FAILED = "j_elaboration_failed"
+    J_VALUE_TYPE_INCOMPLETE = "j_value_type_incomplete"
     DUPLICATE_J_REF = "duplicate_j_ref"
     INVALID_C_SLOT = "invalid_c_slot"
     C_REQUIRED_VALUE_MISSING = "c_required_value_missing"
@@ -137,36 +138,6 @@ def _explicit_type(operation: Mapping[str, Any]) -> _ValueType | None:
     if not isinstance(dtype, str) or not isinstance(shape, list):
         return None
     return _ValueType(dtype, len(shape))
-
-
-def _infer_result_type(
-    operation: Mapping[str, Any], value_types: Mapping[str, _ValueType]
-) -> _ValueType | None:
-    explicit = _explicit_type(operation)
-    if explicit is not None:
-        return explicit
-    operands = operation.get("operands")
-    operand_refs = operands if isinstance(operands, list) else []
-    first = next(
-        (
-            value_types[item]
-            for item in operand_refs
-            if isinstance(item, str) and item in value_types
-        ),
-        None,
-    )
-    if first is None:
-        return None
-    op = operation.get("op")
-    attrs = operation.get("attrs")
-    attrs = attrs if isinstance(attrs, Mapping) else {}
-    if op == "cast" and isinstance(attrs.get("to_dtype"), str):
-        return _ValueType(str(attrs["to_dtype"]), first.rank)
-    if op == "reduce":
-        axes = attrs.get("axes")
-        if isinstance(axes, list):
-            return _ValueType(first.dtype, max(0, first.rank - len(set(axes))))
-    return first
 
 
 def _c_value_matches(value_type: str, value: Any) -> bool:
@@ -452,10 +423,12 @@ def _build_anchors(
             return
         anchors[ref] = anchor
 
-    value_types: dict[str, _ValueType] = {}
+    value_types: dict[str, _ValueType] = {
+        name: _ValueType(value.dtype, len(value.shape))
+        for name, value in j_elaboration(j).value_type_by_name.items()
+    }
     for tensor in [*j.intent.inputs, *j.intent.outputs]:
         value_type = _ValueType(tensor.dtype, len(tensor.shape))
-        value_types[tensor.name] = value_type
         add(tensor.name, _Anchor("j", "tensor", value_type), "j.signature")
         for dim in tensor.shape:
             if isinstance(dim, str):
@@ -478,17 +451,6 @@ def _build_anchors(
 
     intent = j.intent.to_json()["intent_function"]
     operations = dict(_walk_operations(intent.get("body", [])))
-    changed = True
-    while changed:
-        changed = False
-        for operation in operations.values():
-            inferred = _infer_result_type(operation, value_types)
-            if inferred is None:
-                continue
-            for result in _operation_results(operation.get("result")):
-                if result not in value_types:
-                    value_types[result] = inferred
-                    changed = True
 
     node_operations: dict[str, Mapping[str, Any]] = {}
     for node_id, path in j.node_ids.items():
@@ -559,6 +521,28 @@ def _build_anchors(
     return anchors, node_operations
 
 
+def _check_total_j_value_typing(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Require every Layer-A result to have one closed canonical value type."""
+
+    typed_values = j_elaboration(j).value_type_by_name
+    body = j.intent.to_json()["intent_function"].get("body", [])
+    for path, operation in _walk_operations(body):
+        for result in _operation_results(operation.get("result")):
+            if result in typed_values:
+                continue
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.J_VALUE_TYPE_INCOMPLETE,
+                    f"j.intent.intent_function.{path}.result",
+                    "Layer-A result has no uniquely determined closed value type",
+                    result,
+                )
+            )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -588,6 +572,7 @@ def type_check(
         )
 
     diagnostics: list[TypeCheckDiagnostic] = []
+    _check_total_j_value_typing(j, diagnostics)
     for index, access in enumerate(j.boundary.accesses):
         if access.fill_value is None:
             continue

@@ -173,9 +173,10 @@ ctx = {
 CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
 ```
 
-该工具必须调用正式 Runner 使用的同一个 strict parser、窄 Decode/Elaborate、匿名
-handle/Harness-view consistency check 与 `TypeCheck(J,C,pi)` entrypoint/ruleset；禁止在 worker 中
-维护第二套近似 checker。正式 Runner 仍在提交后重新执行。该工具还必须满足：
+该工具共享正式 Runner 的同一 source-free strict parser、窄 Decode/Elaborate、anonymous-view
+consistency 与 `TypeCheck(J,C,pi)` callable core；正式 Runner 另执行 source-identifier privacy、
+receipt/provenance，并在提交后重新运行该 core。禁止在 worker 中维护第二套近似 checker。该工具
+还必须满足：
 
 - 只检查当前完整 candidate；可以构造 ephemeral validation view，但不得合成、补写、分类、修改或
   返回新的 J/C/π candidate/artifact；
@@ -186,12 +187,24 @@ handle/Harness-view consistency check 与 `TypeCheck(J,C,pi)` entrypoint/ruleset
 - tool `PASS` 不签发证书，正式提交后 Runner 必须重新执行权威检查；
 - agent 修改后仍提交完整 `(J,C,pi)`，不能只交局部 patch。
 
+为使完整候选不会因 worker 忘记显式调用而绕过这一机械诊断边界，提交动作对尚无本
+session `PASS` 的精确 candidate bytes 先调用同一 CandidateCheck。失败只返回 closed
+diagnostics 并留在当前 worker 中，不提交也不修改 artifact；只有与某次 `PASS` 对应的精确 bytes
+完全相同时才可复用，任何不同 bytes 都必须重检。
+该前置检查与显式调用共享同一有界预算，且不取消提交后 Runner 的独立重检。
+
 `ctx` 精确等于该 agent 原本已经获准读取的匿名机械 Harness compiler view 与公共协议版本；
 CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也不增加新的 source-conditioned
 信息通道。
 该工具扩大的是即时裁决能力，不是固定代码的语义生成权；Harness 仍不得替 Lift 完成 J/C 分类。
 CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
+
+2026-07-24 起的新 fresh-run 合同使用 `typecheck.v4`：canonical graph 的每个 Layer-A result 都必须
+具有 closed total type；`map_binary` 默认严格服从既有 NumPy broadcast，non-trailing broadcast
+只能消费 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation，checker 不从 shape 或算子名称
+猜轴。Gate2 scalar RefEval 同步以 `j_scalar_cpu_mlir_v8` 标识新增的唯一 node-less logical-input
+load 消费能力。v3/v7 receipt 及 Softmax/RMS 历史 verdict 保持原解释，不由新版本追认或重判。
 
 ### 2.6 显式语义所有权投影
 

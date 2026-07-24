@@ -6,14 +6,13 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum
-from threading import Event, Lock
 from typing import Any, Callable, Mapping
 
 from .workload_manifest import SCRCWorkloadEntry
 
 
-CANDIDATE_FANOUT_PROTOCOL = "intentir.scrc.candidate-fanout.v2"
-CANDIDATE_SELECTION_RULE = "first_gate1_closure_cooperative_stop.v2"
+CANDIDATE_FANOUT_PROTOCOL = "intentir.scrc.candidate-fanout.v3"
+CANDIDATE_SELECTION_RULE = "wave_barrier_branch_id_formal_round.v3"
 
 
 class CandidateBranchStatus(str, Enum):
@@ -22,35 +21,6 @@ class CandidateBranchStatus(str, Enum):
     NO_CLOSURE = "no_closure"
     SUPERSEDED = "superseded"
     INFRASTRUCTURE_FAILED = "infrastructure_failed"
-
-
-class FirstClosureControl:
-    """Exactly-once winner selection plus a cooperative branch stop signal."""
-
-    def __init__(self) -> None:
-        self._event = Event()
-        self._lock = Lock()
-        self._winner_branch_id: int | None = None
-
-    @property
-    def winner_branch_id(self) -> int | None:
-        with self._lock:
-            return self._winner_branch_id
-
-    def try_claim(self, branch_id: int) -> bool:
-        if not isinstance(branch_id, int) or branch_id < 1:
-            raise ValueError("winner branch_id must be positive")
-        with self._lock:
-            if self._winner_branch_id is not None:
-                return False
-            self._winner_branch_id = branch_id
-            self._event.set()
-            return True
-
-    def stop_requested(self) -> int | None:
-        if not self._event.is_set():
-            return None
-        return self.winner_branch_id
 
 
 @dataclass(frozen=True)
@@ -63,6 +33,7 @@ class CandidateBranchOutcome:
     evidence_path: str | None = None
     call_budget: Mapping[str, int] = field(default_factory=dict)
     details: Mapping[str, Any] = field(default_factory=dict)
+    formal_round: int | None = None
     runtime: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -74,6 +45,19 @@ class CandidateBranchOutcome:
             raise ValueError("candidate ordinal must be positive")
         if not isinstance(self.status, CandidateBranchStatus):
             object.__setattr__(self, "status", CandidateBranchStatus(self.status))
+        closed_statuses = {
+            CandidateBranchStatus.GATE1_CLOSED,
+            CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
+        }
+        if self.status in closed_statuses:
+            if not isinstance(self.formal_round, int) or self.formal_round < 1:
+                raise ValueError(
+                    "Gate1-closed candidate must identify a positive formal_round"
+                )
+        elif self.formal_round is not None:
+            raise ValueError(
+                "only a Gate1-closed candidate may identify formal_round"
+            )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -85,7 +69,16 @@ class CandidateBranchOutcome:
             "evidence_path": self.evidence_path,
             "call_budget": dict(self.call_budget),
             "details": dict(self.details),
+            "formal_round": self.formal_round,
         }
+
+    @property
+    def selection_coordinate(self) -> tuple[int, int]:
+        if self.formal_round is None:
+            raise ValueError(
+                "only a Gate1-closed candidate has a selection coordinate"
+            )
+        return (self.branch_id, self.formal_round)
 
 
 @dataclass(frozen=True)
@@ -94,6 +87,7 @@ class CandidateFanoutSearchReport:
     ordinal: int
     branches: tuple[CandidateBranchOutcome, ...]
     winner_branch_id: int | None = None
+    winner_formal_round: int | None = None
     selection_rule: str = CANDIDATE_SELECTION_RULE
 
     def __post_init__(self) -> None:
@@ -112,11 +106,34 @@ class CandidateFanoutSearchReport:
             for item in self.branches
             if item.status is CandidateBranchStatus.GATE1_CLOSED
         ]
+        closed = [
+            item
+            for item in self.branches
+            if item.status
+            in {
+                CandidateBranchStatus.GATE1_CLOSED,
+                CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
+            }
+        ]
         if self.winner_branch_id is None:
-            if selected:
+            if closed or self.winner_formal_round is not None:
                 raise ValueError("fan-out report omitted its selected winner")
         elif selected != [self.winner_branch_id]:
             raise ValueError("fan-out report winner differs from selected branch")
+        elif self.winner.formal_round != self.winner_formal_round:
+            raise ValueError("fan-out report winner formal round differs")
+        else:
+            expected = min(
+                closed,
+                key=lambda item: item.selection_coordinate,
+            )
+            if (
+                expected.branch_id,
+                expected.formal_round,
+            ) != (self.winner_branch_id, self.winner_formal_round):
+                raise ValueError(
+                    "fan-out report winner violates deterministic selection rule"
+                )
 
     @property
     def winner(self) -> CandidateBranchOutcome | None:
@@ -147,6 +164,7 @@ class CandidateFanoutSearchReport:
             "candidate_count": len(self.branches),
             "selection_rule": self.selection_rule,
             "winner_branch_id": self.winner_branch_id,
+            "winner_formal_round": self.winner_formal_round,
             "status_counts": self.counts,
             "aggregate_call_budget": self.aggregate_call_budget,
             "branches": [item.to_json() for item in self.branches],
@@ -156,11 +174,10 @@ class CandidateFanoutSearchReport:
 CandidateBranchExecutor = Callable[
     [SCRCWorkloadEntry, int], CandidateBranchOutcome
 ]
-FirstClosedCallback = Callable[[CandidateBranchOutcome], None]
 
 
 class ConcurrentCandidateFanoutRunner:
-    """Run independent branches concurrently and select without Gate2 evidence."""
+    """Run one pre-Gate2 wave, then select deterministically after its barrier."""
 
     def run(
         self,
@@ -168,14 +185,9 @@ class ConcurrentCandidateFanoutRunner:
         executor: CandidateBranchExecutor,
         *,
         candidates: int,
-        control: FirstClosureControl | None = None,
-        on_first_closed: FirstClosedCallback | None = None,
     ) -> CandidateFanoutSearchReport:
         if not isinstance(candidates, int) or not 1 <= candidates <= 32:
             raise ValueError("candidates must be an integer in [1, 32]")
-        control = control or FirstClosureControl()
-        if control.winner_branch_id is not None:
-            raise ValueError("candidate fan-out control was already used")
         completed: dict[int, CandidateBranchOutcome] = {}
         with ThreadPoolExecutor(
             max_workers=candidates,
@@ -201,6 +213,13 @@ class ConcurrentCandidateFanoutRunner:
                         raise ValueError(
                             "candidate executor returned another ordinal"
                         )
+                    if (
+                        outcome.status
+                        is CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED
+                    ):
+                        raise ValueError(
+                            "candidate executor returned an output-only status"
+                        )
                 except Exception as exc:
                     outcome = CandidateBranchOutcome(
                         branch_id,
@@ -209,26 +228,47 @@ class ConcurrentCandidateFanoutRunner:
                         CandidateBranchStatus.INFRASTRUCTURE_FAILED,
                         diagnostic=f"{type(exc).__name__}: {exc}",
                     )
-                if outcome.status is CandidateBranchStatus.GATE1_CLOSED:
-                    if control.try_claim(branch_id):
-                        if on_first_closed is not None:
-                            on_first_closed(outcome)
-                    else:
-                        outcome = CandidateBranchOutcome(
-                            outcome.branch_id,
-                            outcome.case_id,
-                            outcome.ordinal,
-                            CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
-                            diagnostic=outcome.diagnostic,
-                            evidence_path=outcome.evidence_path,
-                            call_budget=outcome.call_budget,
-                            details={
-                                **dict(outcome.details),
-                                "winner_branch_id": control.winner_branch_id,
-                            },
-                            runtime=outcome.runtime,
-                        )
                 completed[branch_id] = outcome
+
+        # Leaving the executor context is the wave barrier: every branch has
+        # either returned an outcome or been isolated as an infrastructure
+        # failure.  Winner selection must not observe wall-clock completion
+        # order and hidden Gate2 work cannot be injected into this runner.
+        closed = [
+            outcome
+            for outcome in completed.values()
+            if outcome.status is CandidateBranchStatus.GATE1_CLOSED
+        ]
+        winner = (
+            min(
+                closed,
+                key=lambda outcome: outcome.selection_coordinate,
+            )
+            if closed
+            else None
+        )
+        if winner is not None:
+            for branch_id, outcome in tuple(completed.items()):
+                if (
+                    outcome.status is CandidateBranchStatus.GATE1_CLOSED
+                    and branch_id != winner.branch_id
+                ):
+                    completed[branch_id] = CandidateBranchOutcome(
+                        outcome.branch_id,
+                        outcome.case_id,
+                        outcome.ordinal,
+                        CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
+                        diagnostic=outcome.diagnostic,
+                        evidence_path=outcome.evidence_path,
+                        call_budget=outcome.call_budget,
+                        details={
+                            **dict(outcome.details),
+                            "winner_branch_id": winner.branch_id,
+                            "winner_formal_round": winner.formal_round,
+                        },
+                        formal_round=outcome.formal_round,
+                        runtime=outcome.runtime,
+                    )
         branches = tuple(
             completed[branch_id] for branch_id in range(1, candidates + 1)
         )
@@ -236,7 +276,10 @@ class ConcurrentCandidateFanoutRunner:
             entry.case_id,
             entry.ordinal,
             branches,
-            winner_branch_id=control.winner_branch_id,
+            winner_branch_id=(winner.branch_id if winner is not None else None),
+            winner_formal_round=(
+                winner.formal_round if winner is not None else None
+            ),
         )
 
 
@@ -247,5 +290,4 @@ __all__ = [
     "CandidateBranchStatus",
     "CandidateFanoutSearchReport",
     "ConcurrentCandidateFanoutRunner",
-    "FirstClosureControl",
 ]

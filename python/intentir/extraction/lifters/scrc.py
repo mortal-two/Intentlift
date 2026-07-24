@@ -29,6 +29,7 @@ from .scrc_schema import scrc_lift_core_text_format
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
 SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v2"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
+_CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -962,7 +963,9 @@ def check_scrc_lift_candidate(
                     "rule_code": "decode_rejected",
                     "path": "<candidate>",
                     "observed_refs_or_types": [
-                        f"{type(exc).__name__}: {exc}"
+                        _bounded_candidate_diagnostic_text(
+                            f"{type(exc).__name__}: {exc}"
+                        )
                     ],
                 }
             ],
@@ -978,14 +981,26 @@ def check_scrc_lift_candidate(
         "diagnostics": [
             {
                 "rule_code": item.code.value,
-                "path": item.path,
+                "path": _bounded_candidate_diagnostic_text(item.path),
                 "observed_refs_or_types": (
-                    [item.ref] if item.ref is not None else []
+                    [_bounded_candidate_diagnostic_text(item.ref)]
+                    if item.ref is not None
+                    else []
                 ),
             }
             for item in report.diagnostics[:20]
         ],
     }
+
+
+def _bounded_candidate_diagnostic_text(value: Any) -> str:
+    """Keep source-free CandidateCheck diagnostics closed and compact."""
+
+    text = str(value)
+    marker = "...<truncated>"
+    if len(text) <= _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT:
+        return text
+    return text[: _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT - len(marker)] + marker
 
 
 def _response_usage(raw: Mapping[str, Any]) -> dict[str, int]:

@@ -430,15 +430,72 @@ def _broadcast_shape(shapes: Sequence[tuple[Any, ...]]) -> tuple[Any, ...] | Non
     return tuple(reversed(result))
 
 
+def _project_explicit_broadcast_shape(
+    shape: tuple[Any, ...],
+    axes: Sequence[int],
+    target_shape: tuple[Any, ...] | None,
+) -> tuple[Any, ...]:
+    """Project one operand using only broadcast axes explicitly present in J."""
+
+    from intentir.frontend.emit_mlir import _broadcast_projection
+
+    try:
+        projected, _inserted = _broadcast_projection(
+            list(shape),
+            axes,
+            list(target_shape) if target_shape is not None else None,
+        )
+    except (NotImplementedError, ValueError) as exc:
+        raise CanonicalJError(str(exc)) from exc
+    if projected is None:  # pragma: no cover - concrete shape is supplied above
+        raise CanonicalJError("explicit broadcast has no closed shape projection")
+    return tuple(projected)
+
+
 def _infer_shape(
     op: IntentOp,
     known: Mapping[str, CanonicalValueType],
+    broadcast_axes: Mapping[str, Mapping[str, tuple[int, ...]]] | None = None,
 ) -> tuple[Any, ...] | None:
     operand_shapes = [known[name].shape for name in op.operands if name in known]
     if op.op in {"map_unary", "cast", "scan", "flip"} and operand_shapes:
         return operand_shapes[0]
     if op.op in {"map_binary", "select"} and len(operand_shapes) == len(op.operands):
-        return _broadcast_shape(operand_shapes)
+        explicit = (
+            broadcast_axes.get(op.result, {})
+            if broadcast_axes is not None and isinstance(op.result, str)
+            else {}
+        )
+        target = known.get(op.result) if isinstance(op.result, str) else None
+        target_shape = target.shape if target is not None else None
+        if target_shape is None and explicit:
+            target_shape = next(
+                (
+                    shape
+                    for operand, shape in zip(
+                        op.operands, operand_shapes, strict=True
+                    )
+                    if operand not in explicit
+                    and len(shape) == max(len(item) for item in operand_shapes)
+                ),
+                None,
+            )
+        projected = tuple(
+            _project_explicit_broadcast_shape(
+                shape,
+                explicit.get(operand, ()),
+                target_shape,
+            )
+            for operand, shape in zip(op.operands, operand_shapes, strict=True)
+        )
+        inferred = _broadcast_shape(projected)
+        if inferred is None and op.op == "map_binary":
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op!r} operands have incompatible "
+                "NumPy broadcast shapes; a non-trailing broadcast must be "
+                "declared explicitly in J.boundary.broadcasts"
+            )
+        return inferred
     if op.op == "transpose" and operand_shapes:
         permutation = op.attrs.get("perm")
         if (
@@ -505,7 +562,10 @@ def _merge_type(
     return False
 
 
-def _elaborate_function_types(fn: IntentFunction) -> dict[str, CanonicalValueType]:
+def _elaborate_function_types(
+    fn: IntentFunction,
+    broadcast_axes: Mapping[str, Mapping[str, tuple[int, ...]]] | None = None,
+) -> dict[str, CanonicalValueType]:
     known: dict[str, CanonicalValueType] = {
         tensor.name: CanonicalValueType(tensor.dtype, tuple(tensor.shape))
         for tensor in [*fn.inputs, *fn.outputs]
@@ -554,13 +614,13 @@ def _elaborate_function_types(fn: IntentFunction) -> dict[str, CanonicalValueTyp
                     )
 
             inferred_dtypes = _infer_dtypes(op, known)
-            inferred_shape = _infer_shape(op, known)
+            inferred_shape = _infer_shape(op, known, broadcast_axes)
             for name in names:
                 previous = known.get(name)
                 dtype = inferred_dtypes.get(name) or (
                     previous.dtype if previous is not None else None
                 )
-                shape = inferred_shape or (
+                shape = inferred_shape if inferred_shape is not None else (
                     previous.shape if previous is not None else None
                 )
                 if dtype is None or shape is None:
@@ -602,6 +662,60 @@ def _node_results(j: Any) -> dict[str, tuple[str, ...]]:
     for node_id, path in j.node_ids.items():
         if path in by_path:
             result[node_id] = by_path[path]
+    return result
+
+
+def _declared_broadcast_axes(
+    j: Any,
+) -> dict[str, dict[str, tuple[int, ...]]]:
+    """Resolve only the broadcast facts explicitly serialized in canonical J."""
+
+    by_path: dict[str, IntentOp] = {}
+
+    def visit(body: Sequence[IntentOp], prefix: str = "body") -> None:
+        for index, operation in enumerate(body):
+            path = f"{prefix}[{index}]"
+            by_path[path] = operation
+            visit(operation.body, f"{path}.body")
+
+    visit(j.intent.body)
+    nodes = dict(by_path)
+    for node_id, path in j.node_ids.items():
+        operation = by_path.get(path)
+        if operation is not None:
+            nodes[node_id] = operation
+
+    result: dict[str, dict[str, tuple[int, ...]]] = {}
+    for projection in j.boundary.broadcasts:
+        operation = nodes.get(projection.node_ref)
+        if operation is None or not isinstance(operation.result, str):
+            raise CanonicalJError(
+                "J boundary broadcast references an unknown single-result node"
+            )
+        if operation.op not in {"map_binary", "select"}:
+            raise CanonicalJError(
+                "J boundary broadcast must target map_binary or select"
+            )
+        if projection.operand not in operation.operands:
+            raise CanonicalJError(
+                "J boundary broadcast operand is not consumed by its node"
+            )
+        if any(
+            isinstance(axis, bool) or not isinstance(axis, int)
+            for axis in projection.axes
+        ):
+            raise CanonicalJError(
+                "canonical value typing requires integer broadcast axes"
+            )
+        axes = tuple(int(axis) for axis in projection.axes)
+        previous = result.setdefault(operation.result, {}).get(
+            projection.operand
+        )
+        if previous is not None and previous != axes:
+            raise CanonicalJError(
+                "J boundary contains conflicting broadcast projections"
+            )
+        result[operation.result][projection.operand] = axes
     return result
 
 
@@ -705,7 +819,7 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
 
     payload = copy.deepcopy(source_payload)
     function = IntentFunction.from_json(payload["intent"])
-    _elaborate_function_types(function)
+    _elaborate_function_types(function, _declared_broadcast_axes(j))
     payload["intent"] = function.to_json()
 
     boundary = payload["boundary"]
@@ -770,7 +884,14 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
         for access in canonical_archive.boundary.accesses
     )
     typed_function = IntentFunction.from_json(canonical_archive.intent.to_json())
-    value_types = tuple(sorted(_elaborate_function_types(typed_function).items()))
+    value_types = tuple(
+        sorted(
+            _elaborate_function_types(
+                typed_function,
+                _declared_broadcast_axes(canonical_archive),
+            ).items()
+        )
+    )
     record = JElaboration(
         domains,
         accesses,

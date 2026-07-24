@@ -59,7 +59,7 @@ from intentir.verify.scrc_runner import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TASK_ROOT = ROOT / ".trellis/tasks/07-22-scrc-real-canary-02"
+TASK_ROOT = ROOT / ".trellis/tasks/07-24-scrc-v4-full-closure-11"
 
 
 EXACT_SOURCE = """import triton

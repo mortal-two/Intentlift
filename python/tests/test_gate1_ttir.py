@@ -56,6 +56,40 @@ module {
 '''
 
 
+def test_cache_policy_hints_are_global_presentation_noise() -> None:
+    with_cache_hints = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero cacheModifier = ca :",
+    ).replace(
+        "tt.store %optr, %sum, %mask :",
+        "tt.store %optr, %sum, %mask cacheModifier = cs :",
+    )
+
+    result = compare_ttir(EQUIVALENT_SOURCE, with_cache_hints)
+    unknown_hint = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero cacheModifier = future_policy :",
+    )
+    wrong_direction_hint = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero cacheModifier = cs :",
+    )
+    eviction_change = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero evictModifier = evict_first :",
+    )
+    volatile_change = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero isVolatile = true :",
+    )
+
+    assert result.passed, result.to_dict()
+    assert not compare_ttir(EQUIVALENT_SOURCE, unknown_hint).passed
+    assert not compare_ttir(EQUIVALENT_SOURCE, wrong_direction_hint).passed
+    assert not compare_ttir(EQUIVALENT_SOURCE, eviction_change).passed
+    assert not compare_ttir(EQUIVALENT_SOURCE, volatile_change).passed
+
+
 REDUCE_TTIR = r'''
 module {
   tt.func public @row_sum(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>, %n: i32) attributes {noinline = false} {

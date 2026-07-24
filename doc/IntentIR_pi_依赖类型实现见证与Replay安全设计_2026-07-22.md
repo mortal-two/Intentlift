@@ -708,6 +708,13 @@ feature belongs to
 若 strict Gate1 检查某个 source-specific topology，而 J/C/π 都不表达它，也不归一化，那么 Replay
 失败是数学欠定，不是模型能力不足。
 
+当前 Triton observer 将 `tt.load` 的 closed `cacheModifier {ca,cg,cv}` 与 `tt.store` 的
+`{wb,cg,cs,wt}` 归为 `NormalizeAway`：这些值是 target cache-policy hint，不改变 J
+denotation、memory effect、predicate/fill、address/dataflow 或 transfer topology，且 J/C/π 都不拥有
+frontend cache spelling。该规则统一属于 `triton-ttir-3.6-gate1-v4`；未知或 load/store 方向不合法的 policy、eviction、
+mask、fill、type 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend
+API mechanism，也不把 cache hint 当作 J 语义。
+
 完整性目标是：
 
 ```text
@@ -1000,16 +1007,27 @@ TypeCheck(J,C,pi)
 已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
 consumer 私有字符串解析，也不增加第二个 J 对象。
 
-有界、只读、非认证的 `CandidateCheck` 必须直接调用正式 Runner 使用的同一个
-parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 checker；它向 source-aware Lift
+有界、只读、非认证的 `CandidateCheck` 共享正式 Runner 的同一 source-free
+parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行 source-identifier privacy、
+receipt/provenance，并在提交后重新运行该 core。禁止维护第二套近似 checker；它向 source-aware Lift
 agent 暴露当前完整 candidate 的 dependent diagnostics。该工具不得修改 candidate、
 返回 patch、生成 authorization 或读取 Replay/Gate evidence；正式提交后 Runner 仍重新执行
 TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic schema 以最终执行流程
 第 6.4 节为准；禁止读取 ambient host state。因此它只缩短机械错误反馈，不改变上述 judgement、
 π 的所有权或证书谓词。
 
+若精确 candidate bytes 在本 Lift session 中尚无 CandidateCheck `PASS`，提交动作先调用同一
+只读 checker。FAIL 不提交或修改对象；只有与某次 PASS 对应的精确 bytes 完全相同时才可复用，
+任何不同 bytes 都必须重检；提交后的外部 TypeCheck 仍
+必须重跑。这个提交前诊断边界没有获得任何 π 构造权。
+
 numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
 生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
+
+活动 fresh-run `typecheck.v4` 进一步要求 Layer-A value typing total，并严格检查 NumPy broadcast
+compatibility。只有 J 中显式存在的 non-trailing broadcast relation 才能被消费；这不会给 π、
+CandidateCheck 或 elaborator 增加 artifact 构造权。Gate2 scalar consumer 的新增能力独立标为
+`j_scalar_cpu_mlir_v8`，v3/v7 的历史 receipt 与 Softmax/RMS verdict 均不追认。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

@@ -225,6 +225,10 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 线索，也不证明 J 或 realization 的行为正确。
 
 上述 C attachment、numeric-cast 与 result-relation compatibility 已在
-`artifact.v2 / decode.v2 / typecheck.v3` 中成为 fresh run 的活动合同，并由
-`candidate-check.v1` 复用同一 source-free Decode/TypeCheck core。receipt 必须记录这些版本；
-`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，也不由新规则静默重判历史证书。
+`artifact.v2 / decode.v2 / typecheck.v4` 中成为 fresh run 的活动合同；v4 同时要求 Layer-A
+value typing total，并按 NumPy broadcast 合同拒绝未由 J 显式声明的 non-trailing broadcast。
+`candidate-check.v1` 共享
+正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner
+另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
+这些版本；`artifact.v1` 仍可按旧 wire 读取，但不能携带 v2 C attachment，v3/历史证书也不由新
+规则静默重判。

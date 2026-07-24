@@ -28,6 +28,9 @@ MAX_ACTION_OUTPUT_BYTES = 1024 * 1024
 MAX_WORKSPACE_BYTES = 64 * 1024 * 1024
 MAX_WORKSPACE_ENTRIES = 2048
 MAX_WORKSPACE_DEPTH = 64
+MAX_CANDIDATE_CHECK_FIELD_CHARS = 4096
+MAX_CANDIDATE_CHECK_OBSERVED_ITEMS = 20
+MAX_CANDIDATE_CHECK_RESULT_BYTES = 128 * 1024
 _SANDBOX_START_MARKER = b"__INTENTIR_LIFT_SANDBOX_STARTED__\n"
 
 
@@ -141,7 +144,7 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
-    candidate_check_limit: int = 3
+    candidate_check_limit: int = 4
     executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
     env: dict[str, str] = {
         "HOME": "/tmp",
@@ -166,12 +169,22 @@ class IntentIRLiftEnvironment:
             raise ValueError("candidate_check_limit must be non-negative")
         self._candidate_checker = candidate_checker
         self._candidate_check_calls = 0
+        self._candidate_check_evaluations = 0
         self._candidate_check_audit: list[dict[str, Any]] = []
+        self._candidate_check_passed_bytes: bytes | None = None
         self._validate_paths()
         self._probe()
 
-    def _execute_candidate_check(self, arguments: list[str]) -> dict[str, Any]:
+    def _execute_candidate_check(
+        self,
+        arguments: list[str],
+        *,
+        trigger: str = "explicit",
+    ) -> dict[str, Any]:
+        if trigger not in {"explicit", "submission"}:
+            raise ValueError("unsupported CandidateCheck trigger")
         self._candidate_check_calls += 1
+        candidate_bytes: bytes | None = None
         if self._candidate_check_calls > self.config.candidate_check_limit:
             result: Mapping[str, Any] = {
                 "protocol": CANDIDATE_CHECK_PROTOCOL,
@@ -226,6 +239,7 @@ class IntentIRLiftEnvironment:
                 if len(candidate_bytes) != size:
                     raise ValueError("candidate changed while being read")
                 candidate_text = candidate_bytes.decode("utf-8")
+                self._candidate_check_evaluations += 1
                 result = self._candidate_checker(candidate_text)
             except Exception as exc:
                 result = {
@@ -260,18 +274,30 @@ class IntentIRLiftEnvironment:
                 or not isinstance(item.get("rule_code"), str)
                 or not isinstance(item.get("path"), str)
                 or not isinstance(item.get("observed_refs_or_types"), list)
+                or len(item.get("rule_code", "")) > MAX_CANDIDATE_CHECK_FIELD_CHARS
+                or len(item.get("path", "")) > MAX_CANDIDATE_CHECK_FIELD_CHARS
+                or len(item.get("observed_refs_or_types", []))
+                > MAX_CANDIDATE_CHECK_OBSERVED_ITEMS
                 or any(
                     not isinstance(observed, str)
+                    or len(observed) > MAX_CANDIDATE_CHECK_FIELD_CHARS
                     for observed in item.get("observed_refs_or_types", [])
                 )
                 for item in diagnostics
             )
+            or len(
+                json.dumps(result, sort_keys=True, ensure_ascii=False).encode(
+                    "utf-8"
+                )
+            )
+            > MAX_CANDIDATE_CHECK_RESULT_BYTES
         ):
             raise RuntimeError("candidate checker returned an invalid closed result")
         self._candidate_check_audit.append(
             {
                 "protocol": protocol,
                 "status": status,
+                "trigger": trigger,
                 "rule_codes": [
                     item.get("rule_code")
                     for item in diagnostics
@@ -280,6 +306,10 @@ class IntentIRLiftEnvironment:
                 ],
             }
         )
+        if status == "pass" and candidate_bytes is not None:
+            self._candidate_check_passed_bytes = candidate_bytes
+        elif candidate_bytes == self._candidate_check_passed_bytes:
+            self._candidate_check_passed_bytes = None
         return {
             "output": json.dumps(result, sort_keys=True) + "\n",
             "returncode": 0 if status == "pass" else 1,
@@ -583,12 +613,43 @@ class IntentIRLiftEnvironment:
             tmp_dir=self.config.tmp_dir,
         )
         try:
-            workspace.read_candidate()
+            candidate_text = workspace.read_candidate()
         except Exception as exc:
             output["returncode"] = 2
             output["output"] += (
                 "\nSubmission rejected by the local syntax check: "
                 f"{type(exc).__name__}: {exc}\n"
+            )
+            return
+        candidate_bytes = candidate_text.encode("utf-8")
+        if self._candidate_checker is not None:
+            if candidate_bytes != self._candidate_check_passed_bytes:
+                preflight = self._execute_candidate_check(
+                    [INTENTIR_CANDIDATE_CHECK, "/output/candidate.json"],
+                    trigger="submission",
+                )
+                if preflight["returncode"] != 0:
+                    output["returncode"] = 2
+                    output["output"] += (
+                        "\nSubmission preflight rejected the current candidate. "
+                        "Edit the complete object and submit again.\n"
+                        + str(preflight["output"])
+                    )
+                    return
+        try:
+            final_candidate_text = workspace.read_candidate()
+        except Exception as exc:
+            output["returncode"] = 2
+            output["output"] += (
+                "\nSubmission rejected while confirming the checked bytes: "
+                f"{type(exc).__name__}: {exc}\n"
+            )
+            return
+        if final_candidate_text.encode("utf-8") != candidate_bytes:
+            output["returncode"] = 2
+            output["output"] += (
+                "\nSubmission rejected because candidate.json changed after "
+                "the exact bytes were checked. Recheck and submit again.\n"
             )
             return
         raise Submitted(
@@ -623,6 +684,9 @@ class IntentIRLiftEnvironment:
                 },
                 "candidate_check": {
                     "calls": self._candidate_check_calls,
+                    "attempts": self._candidate_check_calls,
+                    "evaluations": self._candidate_check_evaluations,
+                    "limit": self.config.candidate_check_limit,
                     "results": list(self._candidate_check_audit),
                 },
             }
