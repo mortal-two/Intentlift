@@ -294,7 +294,13 @@ production backend 改变 reduction tree。具体 tolerance 阈值继续只由 Q
 - slot 是否匿名且唯一；
 - binding kind 和 value type 是否匹配；
 - concrete value 是否来自 Harness 已有坐标；
+- 下一 schema version 中，可选 `subject_ref` 是否属于 closed `CSubject_v1(J)`，可选 `axis_ref`
+  是否满足 C 权威文档定义的 `axis_ref in AxisRefs_v1(J,subject_ref)`，且 `axis_ref` 不得脱离
+  `subject_ref`；
 - 是否把 predicate、formula、logical shape 或 result semantics 错误放进 C。
+
+上述 attachment 必须由 Lift 显式生成；TypeCheck 只验证，不从 Source、π、Harness、`role` 或唯一
+候选位置推导。缺失/含混 attachment 只使 production backend 安全忽略对应 prior，不允许其猜测。
 
 ### 6.3 π 检查
 
@@ -362,7 +368,9 @@ CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
 ```
 
 `ctx` 精确等于本次 Lift 已可见的匿名机械 compiler view 与协议版本；实现禁止读取 ambient host
-Harness 状态。工具可以在私有内存中构造 ephemeral parsed/elaborated validation view，但不得合成、
+Harness 状态。CandidateCheck 必须调用与正式 Runner 相同的 parser/Decode/TypeCheck
+entrypoint 与 ruleset，禁止维护第二套近似 checker；工具可以在私有内存中构造 ephemeral
+parsed/elaborated validation view，但不得合成、
 补写、修改或返回新的 candidate/artifact。diagnostics 使用固定 closed schema：
 
 ```text

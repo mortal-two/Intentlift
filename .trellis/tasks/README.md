@@ -5,13 +5,18 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前新设计序列
 
+当前执行顺序（2026-07-24）是：先收尾不改变语义的 Task 09；随后完成下一 SCRC protocol 的通用
+实现并让 28 个目标 Kernel 顺序产出各自 accepted J/C/π 与证据。后端 B0/B1 只在这批稳定 J 形成
+后独立展开，不要求每闭合一个 Kernel 就紧邻实现其 backend。SCRC 期间只修复真实 closure evidence
+暴露的 J/TypeCheck/Replay/RefEval 通用缺口，不提前混入后端 ownership/search 重构。
+
 - [Task 09：退役 RefEval 重复 Layer-B 解释器](07-23-retire-duplicate-boundary-interpreter-09/task.md)（执行中）
 - [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](07-23-executable-j-cuda-backend-08/task.md)（已完成）
 - [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](07-23-canonical-boundary-lowering-07/task.md)（已完成）
 - [Task 06：J 构造标准化与统一 lowering 消费边界](07-23-canonical-j-elaboration-06/task.md)（已完成）
 - [Task 05：Gate2 dense pointwise RefEval 合同闭合](07-23-gate2-dense-refeval-05/task.md)（已完成）
 - [Task 04：mini-swe-agent 有界 Lift Worker 接入](07-23-miniswe-lift-worker-04/task.md)（已完成）
-- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](07-22-scrc-real-kernel-batch-03/task.md)（执行中；先完成 Task 04 的 Lift 生成能力替换）
+- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](07-22-scrc-real-kernel-batch-03/task.md)（执行中；下一 SCRC protocol 实现后顺序闭合全部目标 Kernel）
 - [Task 02：真实 SCRC Exact / Masked / Reduction Canary](07-22-scrc-real-canary-02/task.md)（已完成）
 - [Task 01：SCRC Gate Core 整体门禁能力重构](07-22-scrc-system-rebuild-01/task.md)（已完成）
 

@@ -27,7 +27,11 @@ SCRC-accepted (J,C,pi)
 M0 = Emit_v(J)                         deterministic materialization
           |
           v
-Intent MLIR + B-derived contract facts + C-derived schedule prior
+S_C = Attach_C(M0,C,t)                 independent post-materialization step
+          |
+          |  BaseIR(S_C)=M0; C only supplies erasable hints/order
+          v
+Intent MLIR + B-derived contract facts + C-derived search state
           |
           v
 generic implementation-family lowering / rewrite search
@@ -231,8 +235,14 @@ C 不决定某个 implementation family 是否语义合法，不增加或删除 
 
 ### 4.1 当前最小 C 足以启动后端
 
-当前 slot、kind、role、value type、required 与 observed value 可以作为第一版 source prior。第五份
-设计不要求 Lift 立即增加完整 schedule ontology。
+当前 slot、kind、role、value type、required 与 observed value 已能保存 source prior，但只靠 `role`
+无法在多 loop、多 reduction 或多 tensor 的 J 中无歧义地指出消费位置。C 权威文档已经把下一
+protocol 的最小、source-neutral `subject_ref/axis_ref` attachment 定义清楚；其 schema、Lift 与
+TypeCheck 激活规则仍只属于 C/SCRC 文档，不由本文重定义。
+
+本文只规定 backend 消费语义：`subject_ref/axis_ref` 若存在，`Attach_C` 可据此定位 prior；全局 prior
+或历史 artifact 可以没有 attachment。局部 prior 缺少 anchor、anchor 含混或 backend 不理解时必须
+安全忽略，不能读取 Source/π 猜测，也不能据此改变 `Reach_t(J)`。
 
 特别地：
 
@@ -240,7 +250,8 @@ C 不决定某个 implementation family 是否语义合法，不增加或删除 
 - target-specific parameter domain 由 implementation family 和 target capability 定义；
 - C 按定义可以被忽略或 retune，不需要重复声明 `retunable=true`；
 - 若某个值不可替换且会改变逻辑结果，它不属于纯 C；
-- `target_ref/axis_ref` 只有在真实通用样本证明 `role` 无法消歧时，才按最小 closed extension 增加。
+- 不增加 `legal_domain/strength/retunable/fixed`；候选合法域仍属于 pass/family/target contract；
+- `subject_ref/axis_ref` 只解决“这个 prior 作用于哪里”，不授权该作用点上的 transformation。
 
 ### 4.2 不增加 C_target
 
@@ -278,13 +289,23 @@ M_0=\operatorname{Emit}_v(J).
 - 识别 `realization_authorizations` 的 SCRC-only 身份，不把它当 target permission，也不因其存在
   自动拒绝 J。
 
-`Emit_v(J)` 严格不读取 C。materialization 完成后，backend 才可以执行：
+`Emit_v(J)` 严格不读取 C。materialization 完成后，backend 才可以通过独立入口执行：
 
 ```text
-SearchSeed_C(M0) -> C-derived discardable annotations / candidate ordering
+S_C = Attach_C(M0,C,t)
+BaseIR(S_C) = M0
 ```
 
-该步骤只产生 backend internal search state，不修改 `M0` 或 J，也不产生新 artifact。
+`S_C` 是一次 backend invocation 内的 search state，包含不可变 `M0`、可擦除 C annotations、初始
+参数与 candidate ordering。若实现为工作副本 `M_C` 上的 attrs，必须满足：
+
+```text
+Erase_C(M_C) = M0
+```
+
+且擦除前后 A/B denotation、pass applicability 与 target ABI 不变。只有 `Attach_C` 可以把 artifact C
+投影为 C-derived MLIR attr；parser、`Emit_v`、pass default 或 kernel recognizer 都不能冒充 C 来源。
+该步骤不产生新的顶层 artifact，也不修改 J。
 
 这里的 deterministic materialization 与 Lift/Replay 中被禁止的 deterministic composer完全不同：
 
@@ -293,14 +314,15 @@ SearchSeed_C(M0) -> C-derived discardable annotations / candidate ordering
 
 ## 6. Intent MLIR 的正式角色
 
-Intent MLIR 是：
+基准 Intent MLIR `M0` 是：
 
 ```text
 J 的确定性 typed encoding
 + B-derived compiler facts
-+ C-derived schedule annotation
-+ backend internal implementation state
 ```
+
+调用 `Attach_C` 后的 backend working state 才可以另外持有 C-derived schedule annotation 与其他
+compiler internal implementation state；`BaseIR(S_C)` 仍是同一个 `M0`。
 
 它不是：
 
@@ -397,6 +419,11 @@ searchable parameters
 \Gamma_{J,t}\vdash\rho(M):\operatorname{Impl}_t(J)
 }.
 \]
+
+这是版本化 compiler contract 的规范级 judgement 与条件组合义务，不是已经完成的机器检查形式
+证明。某个实现或 release 只能对当时实际实现、登记并经过准入检查的 `Emit_v`、transformation
+`rho` 与 `Lower_t` 作支持 claim；第 7 节列出的尚未实现 family 以及第 20 节 roadmap 不能被计入
+当前 `Reach_t(J)`。
 
 若当前 B 没有足够事实证明某个 precondition，该 pass 对该 J 不适用；系统选择保守实现或显式
 unsupported，不能从 tolerance、Source 惯例或运行结果补足前提。
@@ -533,6 +560,9 @@ IntentOps.td 中的 summary/description 应保留：
 - 性能 tolerance 数值。
 
 移走 recipe 不等于删除 backend 能力；它使同一 A/B 能匹配多个 target implementation family。
+当前 `include/Intent/IntentOps.td` 仍含上述多类 target recipe；因此这是 B0 的实际清理项，而不是
+已经完成的架构事实。extensional equation、tie/order/bounds、result type 与 region/yield contract
+仍属于 op semantics，不应因清理 recipe 一并删除。
 
 ### 12.2 不恢复 per-op layer_b
 
@@ -547,9 +577,17 @@ fixed order、tree-permitted、浮点 reassociation 与 observation relation，�
 
 ### 12.4 loop.tile_hint
 
-canonical J/A 不拥有 schedule tile；但 C 被 materialize 后，Intent MLIR 上可以存在明确标记为
-C-derived 的 `tile_hint`。backend 可以替换、retune 或删除该 annotation。无需为了所有权而物理删除
-MLIR attr。
+canonical J/A 不拥有 schedule tile。`intent.loop.tile_hint` 只有同时满足以下条件时，才可以作为
+C-derived MLIR annotation 保留：
+
+- canonical `Emit_v(J)`、LoopOp 的 A denotation 与 verifier 都不依赖它；
+- 只由独立的 `Attach_C` 后置生成；
+- 删除它满足 `Erase_C(M_C)=M0`，并且不改变合法候选集合。
+
+满足这些条件后，backend 才可以替换、retune 或删除该 annotation。当前实现尚未满足：
+`emit_mlir.py` 总是发射 `tile_hint`，`ConvertIntentToLinalg.cpp` 用它决定 slice size 与 trip count，
+缺失时还默认成 1。这是 B0 必须解除的旧依赖；解除前不能把当前 `tile_hint` 当作 ownership-compliant
+C 投影的例证。
 
 ## 13. Attention 与复杂 Kernel 的后端解释
 
@@ -671,8 +709,11 @@ M\in\operatorname{Reach}_t(J)
 \operatorname{Lower}_t(M^*_{b,C})\models J.
 \]
 
-该命题明确把 materializer、pass contracts 与 target lowerer 列为 compiler TCB。它不声称 SCRC
-已经证明 production compiler 的每个 pass。
+该命题的 compiler TCB 至少包括：`Emit_v` 及其 B projection、`ContractView`/target-capability
+query、每个实际启用 transformation 的实现及其 `Pre`/preservation/admission 检查、transition
+admission，以及 target lowerer。search/cost model 只有在不能绕过 admission、不能直接构造未登记
+candidate 时才不承担语义裁决。该命题不声称 SCRC 已经证明 production compiler 的每个 pass，
+也不把测试通过冒充上述条件的形式证明。
 
 ## 17. Backend conformance 的位置
 
@@ -686,6 +727,7 @@ Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 
 - compiler regression；
 - CI；
+- release preflight / smoke test；
 - debug；
 - 实验审计；
 - 新 implementation family 的工程验证。
@@ -748,16 +790,22 @@ E4  multi-lowering without C prior
 
 ## 20. 实现阶段
 
+项目执行上，B0--B4 在目标 Kernel 的 SCRC closure 与 accepted J corpus 形成后再独立展开；不要求
+每闭合一个 Kernel 就紧邻实现其 backend。SCRC 阶段若真实证据暴露 J/TypeCheck/Replay/RefEval 的
+通用缺口，可以修正对应 A/B 语义合同，但不提前混入本节的 IntentOp ownership/search 重构。
+
 ### 阶段 B0：IntentOp/ABC ownership 对齐
 
 - 清理 Op.td target recipe；
 - 标记 A semantics、B-derived attrs 与 C-derived annotations；
+- 解除 `intent.loop.tile_hint` 对 canonical Emit、LoopOp denotation/verifier 与通用 loop lowering 的旧依赖；
 - 审计每个 B 字段的 consumer；
 - 保证 structured ops 不在 family selection 前过早消失。
 
 ### 阶段 B1：后端合同入口
 
 - 固化 `Emit_v(J)`；
+- 实现独立 `Attach_C(M0,C,t)` 与 `Erase_C` invariant；
 - 建立 `ContractView(J,target)`；
 - 让 materializer 对所有影响 target denotation、safety 与 ABI 的 backend-relevant B facts 完整消费
   或 fail closed；

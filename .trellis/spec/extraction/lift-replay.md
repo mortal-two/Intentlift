@@ -64,8 +64,9 @@ Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修
 当前 Kernel、历史失败或 sibling candidate 动态选择知识库。
 
 agent 还可以对自己已经写出的完整 candidate 调用有界、只读、非认证的 `CandidateCheck`。该工具
-通过窄 host RPC 或同等隔离边界，复用外部 Runner 的 strict parser、既有 Decode/Elaborate、匿名
-Harness-view consistency check 与 `TypeCheck(J,C,pi)`：
+通过窄 host RPC 或同等隔离边界，必须调用正式 Runner 使用的同一个 strict parser、既有
+Decode/Elaborate、匿名 Harness-view consistency check 与 `TypeCheck(J,C,pi)` entrypoint/ruleset；
+禁止维护第二套近似 checker：
 
 ```text
 ctx = {
@@ -98,8 +99,9 @@ agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱�
 Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-CandidateCheck、numeric-cast dependent typing 与 result-relation compatibility 随下一协议版本实现；
-在实现与 receipt version 同步前，不能把本节当作现有 worker 已具备能力，也不能重判历史证书。
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility 随下一
+协议版本实现；在 schema/checker/receipt version 同步前，不能把本节当作现有 worker 已具备能力，
+也不能重判历史证书。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
 和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应

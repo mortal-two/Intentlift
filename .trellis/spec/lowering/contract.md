@@ -29,7 +29,7 @@ response JSON -> Decode/Elaborate -> J
                                     v
                                Intent MLIR
                                 |       |
-                                |       `-> target lowering(J,C,target)
+                                |       `-> Attach_C(M0,C,t) -> target search/lowering
                                 `-> scalar CPU RefEval(J)
 ```
 
@@ -113,6 +113,8 @@ relation，都必须同时增加其 denotation、正反例和真实 canary。
 - production analyzer 必须先成功取得同一个 `P_B(J)` 才能发射 logical Intent MLIR；projection
   失败不得继续 codegen；
 - lowerer 不理解某个 C slot 时可以采用保守实现或显式 unsupported，但不能从 π/Source 猜测；
+- 可选 `subject_ref/axis_ref` 只定位 prior；局部 slot 缺失/含混 attachment 时必须安全忽略，不能
+  依靠 role-first、π 或 Source 猜测作用点；
 - alias/effect、logical update 与当前 `exact/tolerance/one_of_updates` obligation 中所有影响 target
   denotation、safety 或 ABI 的 backend-relevant B facts 必须实际实现或拒绝；
 - `realization_authorizations` 的既有 consumer 是 SCRC TypeCheck/π；backend 只识别其 SCRC-only
@@ -136,10 +138,14 @@ B 投影为 structured dataflow、closed attrs、effects、verifier facts 或 ep
 得到 M0 后，backend 才执行：
 
 ```text
-SearchSeed_C(M0) -> discardable C annotations / candidate ordering
+S_C = Attach_C(M0,C,t)
+BaseIR(S_C) = M0
 ```
 
-该步骤只产生 backend internal search state，不修改 M0/J，也不产生新 artifact。
+`S_C` 只包含不可变 M0、discardable C annotations、初始参数与 candidate ordering。若实现产生
+decorated working MLIR `M_C`，必须满足 `Erase_C(M_C)=M0`，且不改变 A/B denotation、pass
+applicability 或 target ABI。只有 `Attach_C` 可以产生 C-derived attr；parser、`Emit_v`、pass default
+或 kernel recognizer 不得冒充 C 来源。该步骤不修改 J，也不产生新顶层 artifact。
 
 Intent MLIR 是 J 的确定性 typed encoding 加 compiler internal state，不是第二份 J。structured ops
 必须保留到 implementation-family 选择完成；未接受 response、π、Source 或 Gate evidence 不得进入。
@@ -163,6 +169,13 @@ Gamma_(J,t) |- M : Impl_t(J)
 and Pre_rho(J,M,t)
 => Gamma_(J,t) |- rho(M) : Impl_t(J)
 ```
+
+这是规范级、条件化 compiler contract，不是当前已经完成的机器检查形式证明。支持 claim 只覆盖
+当前 release 实际实现、登记并经过 admission 的 `Emit_v`、transformation 与 target lowerer；roadmap
+中的 family 不进入当前 `Reach_t(J)`。compiler TCB 至少包括 `Emit_v`/B projection、
+`ContractView`/target capability query、实际 transformation 及其 Pre/preservation/admission 检查、
+transition admission 与 target lowerer。search/cost model 只有在不能绕过 admission 或直接构造
+candidate 时才不承担语义裁决。
 
 缺少 pass 所需 B fact 时，该 pass 不适用。系统不得从 Gate2 tolerance、运行结果、Source/π 或
 kernel identity 补足前提。`realization_authorizations` 服务 π，不自动成为 target permission。
@@ -232,8 +245,8 @@ backend conformance：
 Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 ```
 
-只用于 CI、debug、new-family regression 与 evaluation audit，不是 production legality oracle，也不是
-SCRC 的第四条 Gate2 edge。
+只用于 CI、release preflight/smoke、debug、new-family regression 与 evaluation audit，不是
+production legality oracle，也不是 SCRC 的第四条 Gate2 edge。
 
 ## J-facing executable CUDA boundary
 

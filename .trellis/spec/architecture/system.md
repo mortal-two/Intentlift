@@ -38,6 +38,9 @@ structured diff -> relift      Gate2(Source,R,RefEval(J))
                            M0 = Emit_v(J)
                                   |
                                   v
+                         S_C = Attach_C(M0,C,t)
+                                  |
+                                  v
                        contract-preserving Intent MLIR search
                                   |
                                   v
@@ -47,8 +50,10 @@ structured diff -> relift      Gate2(Source,R,RefEval(J))
 Decode/Elaborate 与 TypeCheck 是 Replay 前的确定性 closed-IR 前端，不是新的证明对象或额外 Gate。
 接受后的 typed/canonical archive 就是唯一 J；响应 JSON 不叫另一份 J。只有二者通过并
 进入一次全新 Replay 的候选才计为正式实验轮次；最多三轮，之后报告 `NO_CLOSURE`。
-`CandidateCheck` 只复用 Decode/TypeCheck diagnostics，不修改候选、不签发证书，也不进入 Replay。
-production search 在 `SCRC_CERTIFIED` 之后独立发生，不改变该状态。
+`CandidateCheck` 必须调用正式 Runner 的同一个 parser/Decode/TypeCheck entrypoint/ruleset，只返回
+diagnostics，不修改候选、不签发证书，也不进入 Replay；禁止维护第二套近似 checker。
+production search 在 `SCRC_CERTIFIED` 之后独立发生，不改变该状态。`Emit_v` 严格 J-only；只有
+后置 `Attach_C` 可以产生可擦除 C-derived search state，且 `BaseIR(S_C)=M0`。
 
 ## 可见性矩阵
 

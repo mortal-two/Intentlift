@@ -376,7 +376,12 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 - slot 匿名且唯一；
 - binding kind 与 value type 合法；
 - concrete value 来自 Harness 已有坐标；
+- 下一 schema version 的可选 `subject_ref` 属于 closed `CSubject_v1(J)`；可选 `axis_ref` 满足
+  `axis_ref in AxisRefs_v1(J,subject_ref)`，且 `axis_ref => subject_ref`；
 - 不包含 predicate、formula、logical result 等 J 语义。
+
+这些 attachment 由 Lift 显式声明，固定代码只验证、不推导；它们只定位 prior，不构成
+transformation permission，也不改变 `Reach_t(J)`。
 
 ## 4.3 π 检查
 
@@ -405,7 +410,8 @@ ctx = (anonymous_compiler_view, schema_version, v_D, v_TC)
 CandidateCheck_v(candidate_bytes, ctx)
 ```
 
-提前获得与外部 Decode/TypeCheck 同源的机械 diagnostics。该调用：
+提前获得机械 diagnostics。CandidateCheck 必须调用与正式 Runner 相同的
+parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 checker。该调用：
 
 - 只读取显式 `candidate_bytes,ctx`，禁止读取 ambient host state；
 - 可以构造 ephemeral validation view，但不修改、补全或返回候选/artifact；

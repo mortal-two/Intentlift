@@ -4,6 +4,23 @@
 >
 > 类型：SCRC 系统运行能力扩展；不是性能实验、论文统计或 28 项一次性 provider 全跑。
 
+## 2026-07-24 执行范围收敛
+
+六个 representative case 只是下一协议的 bring-up 顺序，不是 Task 03 的最终覆盖终点。当前项目
+顺序调整为：
+
+1. 完成 Task 09 的非语义重复解释器清理；
+2. 实现同一权威 CandidateCheck、C attachment、numeric-cast dependent typing 与
+   result-relation compatibility；
+3. 用 DYT、SwiGLU、Attention reduction 三项完成新协议纵切；
+4. 继续顺序闭合 registry 的全部 28 个 Kernel，使每项都留下 accepted J/C/π、Replay、Gate1、
+   Gate2 与预算证据；
+5. 稳定 J corpus 完成后，再独立启动后端 B0/B1；不要求每闭合一个 Kernel 就紧邻开发其 backend。
+
+这里的“不是 28 项一次性 provider 全跑”只禁止在通用协议尚未纵切闭合时发起一个不可诊断的
+单体批次，不排除最终逐项完成 28/28 SCRC。某项失败时先结束该 fresh run，依据跨字段、跨 Kernel
+可复用的 evidence 修正通用系统并重新运行；不得用 per-kernel prompt、手写 J 或后端特例换取通过。
+
 ## 上游基线
 
 Task 01 已完成 canonical `(J,C,pi)`、dependent TypeCheck、source-isolated Replay、Gate1 observer、
@@ -103,6 +120,9 @@ compatibility candidates，不预先宣称必然通过；后三项是能力边�
 `SCRC_CERTIFIED`、`NO_CLOSURE`、`GATE2_FAILED/reference_unsupported` 或明确 infrastructure
 unavailable，但不能用 per-kernel prompt patch、手写 J、Task 02 source 或 Python oracle 伪造通过。
 
+六项完成只表示 bring-up 结束；随后进入全部 28 项的顺序 closure。最终目标不是用一份 aggregate
+状态代替 individual evidence，而是每个 registry item 都有独立 fresh lifecycle 与 accepted artifact。
+
 ## 失败分类与汇总
 
 批量层只规范化既有事实，不增加 Gate：
@@ -145,6 +165,8 @@ Gate1 primary diff、Gate2 三边、RefEval profile/unsupported reason、真实 
 9. 当前支持域若暴露通用缺口，先结束 run，再增加通用 schema/consumer/prompt 回归并新跑；
 10. frontier unsupported 必须准确落在具体阶段，不能归成未知异常；
 11. Task 03 完成时运行全量测试，工作区无 secret 或无主 sidecar。
+12. 六项 bring-up 后继续顺序运行全部 registry item；Task 03 只有在 28/28 各自形成
+    `SCRC_CERTIFIED` artifact 与独立 evidence 时完成，aggregate summary 不能代替单项闭合。
 
 ## 本任务明确不做
 
@@ -161,8 +183,9 @@ Gate1 primary diff、Gate2 三边、RefEval profile/unsupported reason、真实 
 Task 03 的首个五候选真实运行表明，当前一次性 Responses Lift 才是继续纵切前的系统瓶颈；因此
 Task 04 先把 mini-swe-agent 接成现有 Lift 的有界候选生成实现，外部 TypeCheck、Replay、Gate1、
 Gate2 与本任务的五分支控制面保持不变。Task 04 完成后从全新 dyt fan-out 恢复本任务；六项纵切
-全部完成后，后续任务再依据结构化结果选择可泛化语义能力扩展。达到门禁覆盖与达到性能目标继续
-作为不同任务处理。
+全部完成后，继续按同一协议顺序推进其余 registry item。每次失败仍先依据结构化结果做可泛化
+系统改进再 fresh rerun，直到形成 28/28 accepted corpus。达到 SCRC 门禁覆盖与达到后端性能目标
+继续作为不同任务处理，后端 B0/B1 不在本 Task 内穿插实现。
 
 ## 执行记录
 

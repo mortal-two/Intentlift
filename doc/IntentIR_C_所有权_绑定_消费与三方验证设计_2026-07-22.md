@@ -173,8 +173,9 @@ ctx = {
 CandidateCheck_v(candidate_bytes, ctx) -> PASS | diagnostics
 ```
 
-该工具可以复用外部 Runner 的 strict parser、窄 Decode/Elaborate、匿名 handle/Harness-view 一致性
-检查与 `TypeCheck(J,C,pi)`，但必须满足：
+该工具必须调用正式 Runner 使用的同一个 strict parser、窄 Decode/Elaborate、匿名
+handle/Harness-view consistency check 与 `TypeCheck(J,C,pi)` entrypoint/ruleset；禁止在 worker 中
+维护第二套近似 checker。正式 Runner 仍在提交后重新执行。该工具还必须满足：
 
 - 只检查当前完整 candidate；可以构造 ephemeral validation view，但不得合成、补写、分类、修改或
   返回新的 J/C/π candidate/artifact；
@@ -217,7 +218,7 @@ TypeCheck(J,C,pi)
 | 对象 | 数学身份 | 所有内容 | 禁止内容 |
 |---|---|---|---|
 | `J=A+B` | 唯一 denotational semantic object | logical signature、value/state relation、domain、predicate、fill、effect、alias、result relation | schedule、frontend API、source topology |
-| `C` | denotation-preserving implementation-selection object | anonymous slots、binding kind、value type、concrete valuation，以及已有的最小 source-neutral schedule metadata | J 语义副本、predicate/formula、kernel-specific executable policy |
+| `C` | denotation-preserving implementation-selection object | anonymous slots、binding kind、value type、concrete valuation、source-neutral role，以及可选的 J-owned subject/axis attachment | J 语义副本、predicate/formula、kernel-specific executable policy、transformation permission |
 | `pi` | source realization witness | instance、region、route、slot、order、sharing、placement、representation topology | C value、J 语义副本、production target policy |
 | `H` | 隐藏求值环境 | inputs、C values、source/replay invocation coordinates、grid、device、compiler options、receipts | 新 IR、语义分类、Replay construction |
 
@@ -299,20 +300,70 @@ C = (Sigma_C, nu_C)
 - `Sigma_C`：匿名参数化 slot schema；
 - `nu_C`：Harness 持有、解析并提交的 concrete valuation。
 
-示意：
+当前真实 canonical slot vocabulary 是：
+
+```text
+name, kind, role, value_type, required
+```
+
+其中 `role` 已是必填 source-neutral schedule metadata，并非仍待决定的可选字段。真实多-slot
+artifact 已出现两个 `role=tile_extent` 对应不同结构位置的情况；production backend 又不能读取
+Source/π，因此 role-only 不能一般性消歧。
+
+下一 artifact/schema version 在上述五个字段之外增加两个可选 closed attachment：
+
+```text
+subject_ref : optional member of CSubject_v1(J)
+axis_ref    : optional (non-negative integer | declared symbolic dimension x*)
+axis_ref => subject_ref is present
+
+CSubject_v1(J)
+  = NodeIds(n*) union DomainIds(d*) union AccessIds(a*)
+    union ScopeIds(q*) union StorageIds(b*)
+
+axis_ref in AxisRefs_v1(J, subject_ref)
+```
+
+`subject_ref` 只回答“该 prior 作用于 J 的哪个稳定结构”；`axis_ref` 只回答该 subject 内的 logical
+axis。它们不允许引用 π/C/source handle、realization authorization 或物理 thread/lane/warp axis，
+也不授权某个 implementation family、参数值或 transformation。全局 compiler prior 可以省略
+subject；局部 prior 缺失或含混时 backend 必须安全忽略，不能从 Source/π 猜测。
+
+`AxisRefs_v1` 是 closed dependent domain，不由 consumer 自行解释：
+
+- `reduce n*`：该 A node 的显式 reduction input-axis ordinals；
+- `loop n*`：其唯一 trip axis 的 ordinal `0`，以及显式 `trip.axis=x*`；
+- `domain d*`：canonical ContractExpr parser 给出的 ordered logical-axis ordinals；若某一轴显式绑定
+  declared symbolic dimension `x*`，该 `x*` 也是同一轴的合法 ref；
+- `access a*`：canonical structured index vector 的 axis ordinals；若对应 logical extent 显式为
+  declared `x*`，该 `x*` 也是合法 ref；
+- `scope q*`、`storage b*`：空集；它们只能承载无 `axis_ref` 的 scoped prior；
+- 其他 `n*`：v1 仅在该 closed A op contract 显式声明 logical axes 时返回这些 ordinals，否则为空。
+
+整数始终表示 subject 自己的 canonical logical-axis ordinal；`x*` 必须已经由该 subject 的 closed
+typed relation 显式关联，不能从 shape、role、Source、π 或“唯一可能轴”猜测。TypeCheck judgement
+因此精确写成 `axis_ref in AxisRefs_v1(J,subject_ref)`；集合为空、越界或无法唯一解析均拒绝。
+
+下一版本示意（假设 `n3` 是显式 `axes=[3]` 的 reduce node）：
 
 ```json
 {
   "slots": [
     {
-      "id": "c0",
-      "value_type": "int",
-      "binding_kind": "constexpr"
+      "name": "c0",
+      "kind": "constexpr",
+      "role": "tile_extent",
+      "value_type": "i32",
+      "required": true,
+      "subject_ref": "n3",
+      "axis_ref": 3
     },
     {
-      "id": "c1",
-      "value_type": "int",
-      "binding_kind": "compiler_option"
+      "name": "c1",
+      "kind": "compiler",
+      "role": "parallel_worker_count",
+      "value_type": "i32",
+      "required": true
     }
   ],
   "values": {
@@ -322,8 +373,13 @@ C = (Sigma_C, nu_C)
 }
 ```
 
-实现可以保留当前已有、经过审查的最小 `role` 等字段，但它们属于同一个 C，不能再扩张成
-portable-hint artifact、schedule ontology 或 LoweringAgent 输入协议。
+Lift LLM 随完整 C 显式产生 attachment；Harness、Decode/Elaborate、CandidateCheck 与 TypeCheck
+均不得推断或补造，只能检查 ref 存在、`axis_ref in AxisRefs_v1(J,subject_ref)`，以及
+`axis_ref => subject_ref`。不增加
+`legal_domain/strength/retunable/fixed`：target 参数合法域仍属于 implementation family/capability，
+C 按定义仍可忽略或 retune。schema 变更必须随下一 schema/TypeCheck protocol version 生效，旧
+artifact 不重判。上述字段仍属于同一个 C，不能扩张成 portable-hint artifact、schedule ontology
+或 LoweringAgent 输入协议。
 
 ### 5.2 Replay view
 
@@ -339,23 +395,32 @@ MaskC(C) = (Sigma_C, bottom)
 {
   "slots": [
     {
-      "id": "c0",
-      "value_type": "int",
-      "binding_kind": "constexpr"
+      "name": "c0",
+      "kind": "constexpr",
+      "role": "tile_extent",
+      "value_type": "i32",
+      "required": true,
+      "subject_ref": "n3",
+      "axis_ref": 3
     },
     {
-      "id": "c1",
-      "value_type": "int",
-      "binding_kind": "compiler_option"
+      "name": "c1",
+      "kind": "compiler",
+      "role": "parallel_worker_count",
+      "value_type": "i32",
+      "required": true
     }
   ]
 }
 ```
 
+`MaskC(C)` 保留 `subject_ref/axis_ref`，因为它们只引用已经可见的 J，是 source-neutral attachment；
+它只删除 concrete values 与 private source invocation provenance。
+
 Replay 看不到：
 
 - `values`；
-- `BLOCK_N`、`num_warps` 等 source spelling；
+- raw source parameter spelling（例如 Source 中的 `BLOCK_N`、`num_warps`）及其到 `c*` 的调用映射；
 - source parameter position；
 - source/replay invocation binding；
 - Harness；
@@ -363,6 +428,9 @@ Replay 看不到：
 - source/compiler fingerprint；
 - prior Replay、compiler diff 或旧模型 conversation context；
 - per-kernel RuleCard 或其他 source-conditioned frontend context。
+
+Replay 可以看到 schema 中的 closed public `role` token；即便某个合法 role token 恰与 Source 标识符
+同名，其可见身份也只是协议 role，不能携带 source position、binding 或 provenance。
 
 ### 5.3 Gate view
 
@@ -387,6 +455,10 @@ backend 可以消费、部分消费或忽略 C；当前设计不新增 `C_target
 如果未来 backend 内部 retune，它是 production 实现细节与独立 conformance 问题，不改变核心
 artifact `(J,C,pi)`。
 
+`V_lower(C)` 中可供 backend 使用的结构定位只有 C 自身的 source-neutral
+`subject_ref/axis_ref`；private source invocation provenance 不属于 lowering view。backend 只能通过
+11.3 的后置 `Attach_C` 消费这些 attachment，缺失或含混时安全忽略。
+
 ### 5.5 不存在额外顶层对象
 
 本设计删除以下额外 Lift 产物：
@@ -403,6 +475,8 @@ artifact `(J,C,pi)`。
 2. C 内部的 private provenance，且在 `MaskC(C)` 中被确定性擦除。
 
 它不能成为第四个 Lift artifact，也不能进入 Replay packet。
+这里的 source coordinate provenance 与 `subject_ref/axis_ref` 不同：后者只引用 J 的 canonical
+subject/axis，保留在 `MaskC(C)` 中；前者引用 Source/Harness 调用位置，必须擦除。
 
 ## 6. Harness 是隐藏求值环境
 
@@ -719,7 +793,8 @@ G_backend = Close_Q(O_target, RefEval(J,x))
 J
   -> M0 = Emit_v(J)
 C
-  -> SearchSeed_C(M0)
+  -> S_C = Attach_C(M0,C,t)
+  -> BaseIR(S_C) = M0
   -> M in Visited_(t,b)(J;C) subseteq Reach_t(J)
   -> target lowering
   -> tile/vector/thread/pipeline/memory decisions
@@ -729,7 +804,9 @@ C
 ```
 
 这里不是把 `J+C` 合并成新的后端语义输入。`Emit_v` 只读取 `J` 并构造基准
-Intent MLIR；`C` 随后只初始化搜索顺序、候选优先级和代价模型先验。搜索得到的
+Intent MLIR；独立的 `Attach_C` 随后只初始化可擦除 annotation、搜索顺序、候选优先级和代价
+模型先验。若实现产生 decorated working MLIR `M_C`，必须满足 `Erase_C(M_C)=M0`；parser、
+`Emit_v` 与 pass default 都不得冒充 C 来源。搜索得到的
 `M` 必须属于由 `J` 定义的语义保持可达域，不能因 `C` 改写合法性、结果关系或
 可观察语义。
 
@@ -751,6 +828,7 @@ Gate2 增加第四条边，也不成为 production legality oracle。
 
 ```text
 M0 = Emit_v(J)
+S_C = Attach_C(M0,C,t) and BaseIR(S_C) = M0
 M in Visited_(t,b)(J;C) subseteq Reach_t(J)
 Lower_t(M) models J
 ```
@@ -844,15 +922,19 @@ Injector 禁止：
 
 ### 14.1 已经符合的部分
 
-当前 `ScheduleSpec` 已保存：
+当前 `ImplementationConfig` 已保存：
 
 ```text
 slots + values
 ```
 
-当前 `ScheduleSpec.rewriter_view()` 只返回 slots，并明确将 concrete values 视为 secret。Gate1 在
+当前 `ImplementationConfig.masked_view()` 只返回 slots，并明确将 concrete values 视为 secret。Gate1 在
 Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正是 `C=(Sigma_C,nu_C)` 与
 `MaskC(C)` 的基本实现，应保留。
+
+当前 strict slot schema 已要求 `name/kind/role/value_type/required`，但尚无
+`subject_ref/axis_ref`。因此 role-only 的历史 artifact 仍按原版本解释；两个新 attachment 只有在
+schema/parser/TypeCheck/CandidateCheck/receipt 同步升级后才对 fresh run 生效。
 
 ### 14.2 需要修正或审计的部分
 
@@ -862,7 +944,8 @@ Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正�
 4. 任意 binding/private provenance 是否在 Replay view 中被确定性擦除；
 5. Replay packet 是否严格只有 `J + pi + MaskC(C) + fixed U_f`；
 6. Gate2 RefEval 类型是否机械禁止 C；
-7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi。
+7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi；
+8. 下一版本是否由 Lift 显式产生 C attachment、由同一 TypeCheck 检查，而非 Harness/normalizer 补造。
 
 ## 15. 当前阶段明确不做
 
@@ -917,6 +1000,7 @@ Gate2(Source(C),Replay(C),RefEval(J))
 
 - canonical C 只有一个对象，保存 slots 与 values；
 - Replay view 确定性删除 values 和 private provenance；
+- Replay view 保留 source-neutral `subject_ref/axis_ref`；
 - Harness 只枚举/绑定坐标，不做 J/C 分类；
 - Source/Replay 使用同一个 C 对象和同一份 valuation；
 - Injector 只绑定，不修改 AST。
@@ -942,19 +1026,19 @@ Gate2(Source(C),Replay(C),RefEval(J))
 
 - 当前接口是直接 `Lower_t(J,C)`；
 - lowerer 不读取 pi；
+- `Emit_v(J)` 不读取 C，只有后置 `Attach_C(M0,C,t)` 可以产生可擦除 C-derived search state；
 - 未理解的 C 可被忽略而不破坏 generic correctness；
 - future retune/cost model 不进入当前 acceptance。
 
 ## 18. 后续实现中需要确定的通用接口
 
-1. `Sigma_C` 的最小字段是否保留当前 `role`，还是只保留 handle/type/binding kind？
-2. Harness 的匿名 bindable coordinate 如何机械形成，避免预先做 J/C 分类？
-3. source coordinate 到 C slot 的关系优先采用同 handle，还是 C private provenance？
-4. 一个 source parameter 的多用途如何同时体现在 J 与 C，而不新增第四对象？
-5. Lift 最小可见的 H 机械坐标包含哪些结构事实，以及如何确定性形成 `InterfaceView(J)`？
-6. 如何从类型/API 层机械证明 RefEval 无法访问 artifact C？
-7. 当前 production lowerer对 C 的 consume/ignore receipt 需要做到什么粒度？
-8. future backend cost model 在 reviewer response 中如何表述而不形成当前实现承诺？
+1. Harness 的匿名 bindable coordinate 如何机械形成，避免预先做 J/C 分类？
+2. source coordinate 到 C slot 的关系优先采用同 handle，还是 C private provenance？
+3. 一个 source parameter 的多用途如何同时体现在 J 与 C，而不新增第四对象？
+4. Lift 最小可见的 H 机械坐标包含哪些结构事实，以及如何确定性形成 `InterfaceView(J)`？
+5. 如何从类型/API 层机械证明 RefEval 无法访问 artifact C？
+6. production lowerer 对 C 的 consume/ignore/ambiguous receipt 需要做到什么粒度？
+7. future backend cost model 在 reviewer response 中如何表述而不形成当前实现承诺？
 
 这些开放项不能通过新增 proof-relevant artifact 或 LLM agent 静默解决。
 

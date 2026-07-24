@@ -73,12 +73,41 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
+当前 slot 的真实字段为 `name/kind/role/value_type/required`，其中 `role` 必填。下一
+artifact/schema version 增加可选：
+
+```text
+subject_ref in CSubject_v1(J)
+axis_ref    in (non-negative integer | declared x*)  only if subject_ref exists
+
+CSubject_v1(J)
+  = NodeIds(n*) union DomainIds(d*) union AccessIds(a*)
+    union ScopeIds(q*) union StorageIds(b*)
+
+axis_ref in AxisRefs_v1(J, subject_ref)
+```
+
+`AxisRefs_v1` 是 closed dependent domain：reduce node 使用其显式 reduction input-axis ordinals；loop
+node 使用 trip-axis ordinal `0` 及其显式 `trip.axis=x*`；domain 使用 canonical ContractExpr ordered
+axis ordinals，并只在显式绑定 declared `x*` 时接受该符号；access 使用 canonical structured-index
+axis ordinals，并只在对应 extent 显式为 declared `x*` 时接受该符号；scope/storage 的集合为空；
+其他 node 只有 closed A op contract 显式声明 axes 时才非空。不得从 shape、role、Source、π 或唯一
+候选位置推导 axis。集合为空、越界或无法唯一解析均由 TypeCheck 拒绝。
+
+attachment 只定位 source-neutral prior，不授权 transformation。Lift 必须显式生成；Harness、
+Decode/Elaborate、CandidateCheck 与 TypeCheck 不得推断或补造。TypeCheck 只检查
+`axis_ref in AxisRefs_v1(J,subject_ref)` 与 `axis_ref => subject_ref`。全局 prior 可以没有 attachment；
+局部 prior 缺失、含混或 consumer 不支持时必须安全忽略，不能读取 Source/π 猜测。具体 legal
+domain 属于 implementation family/target capability，不在 C 中增加
+`legal_domain/strength/retunable/fixed`。
+
 ```text
 MaskC(C) = erase(concrete values, private provenance)
 ```
 
 Replay 只读取 `MaskC(C)`；Harness 将同一 C valuation 绑定给 Source 与 Replay。C 不拆成
 `C_source`、binding map、portable hints 或其他顶层对象。
+`MaskC(C)` 保留 `subject_ref/axis_ref`，因为它们只引用 J；source invocation provenance 仍被擦除。
 
 ## π：依赖类型实现见证
 
@@ -195,5 +224,6 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
 线索，也不证明 J 或 realization 的行为正确。
 
-上述 numeric-cast 与 result-relation compatibility 属于下一 `typecheck_version` 合同。实现、
-CandidateCheck 与 receipt 必须同步提升版本后才对新实验生效；历史证书不由新规则静默重判。
+上述 C attachment、numeric-cast 与 result-relation compatibility 属于下一 schema/`typecheck_version`
+合同。实现、CandidateCheck 与 receipt 必须同步提升版本后才对新实验生效；历史证书不由新规则
+静默重判。

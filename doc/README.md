@@ -29,7 +29,8 @@ Source–Replay、Source–J 与 Replay–J 三条 `Close_Q` 边；证书相对�
 accepted J
   -> M0 = deterministic Intent MLIR
 optional C
-  -> search seed / candidate ordering after M0
+  -> S_C = Attach_C(M0,C,t) after M0
+  -> erasable search seed / candidate ordering
   -> contract-preserving multi-lowering
   -> performance-only selection
 ```

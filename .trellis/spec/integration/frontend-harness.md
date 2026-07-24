@@ -33,7 +33,8 @@ Lift session 的只读 `CandidateCheck_v(candidate_bytes,ctx)` 只能通过显�
 获准看到的匿名机械 compiler view 与 schema/decode/typecheck version，以检查 candidate 是否篡改
 参数 kind/mode/dtype/rank、C valuation 或 anonymous handle 合同。工具禁止读取 ambient host state，
 也不得把 hidden inputs、真实 Source binding、Gate evidence 或额外 Harness 状态返回 agent，不得替
-Lift 生成 `logical_ref`、J/C 分类或任何 artifact 字段。
+Lift 生成 `logical_ref`、C `subject_ref/axis_ref`、J/C 分类或任何 artifact 字段。它必须调用正式
+Runner 的同一个 checker entrypoint/ruleset，不得维护 Harness-private 近似规则。
 
 ## Logical signature 与绑定
 

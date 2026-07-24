@@ -75,20 +75,35 @@ A -> structured Intent ops/regions/value graph
 B -> closed attrs/effects/verifier facts/ephemeral analyses
 ```
 
-得到 `M0=Emit_v(J)` 后，backend 再将 C 投影成 discardable schedule annotations、search seed 与
-candidate ordering。该后置步骤不修改 M0/J，也不产生新 artifact。
+得到 `M0=Emit_v(J)` 后，backend 只能通过独立后置步骤：
+
+```text
+S_C = Attach_C(M0,C,t)
+BaseIR(S_C) = M0
+```
+
+将 C 投影成 discardable schedule annotations、search seed 与 candidate ordering。若使用 decorated
+working MLIR `M_C`，必须满足 `Erase_C(M_C)=M0`。parser、`Emit_v`、pass default 或 kernel
+recognizer 不得产生冒充 C-derived 的 attr；该步骤不修改 J，也不产生新顶层 artifact。
 
 Intent MLIR 可以同时携带三类投影和 compiler internal state，但它不是第二份 J。所有权由信息来源
 决定，不由 attr 物理附着在哪个 op 上决定：
 
 - `reduce.assoc` 可以是 B-derived closed attr；
-- `intent.loop.tile_hint` 可以在 canonical J 之外作为 C-derived MLIR annotation；
+- `intent.loop.tile_hint` 只有在 canonical Emit、LoopOp denotation/verifier 与 pass applicability 均不
+  依赖它，并且仅由 `Attach_C` 生成、满足 erase invariance 后，才可作为 C-derived annotation；
 - 禁止恢复任意 per-op `layer_b` 或让 C annotation 反向改变 J denotation。
 
 structured ops 必须保留到 generic implementation-family 选择完成。Op.td description 只写
 extensional semantics、typed operands/results、logical axes/order 与 closed contract，不写 NVVM、
 `arith.select`、Hillis--Steele、bitonic、shared-memory/barrier、one-block-per-row 或其他 target recipe。
 target recipe 属于 production pass library。
+
+当前实现尚未对齐这两条规则：`IntentOps.td` 仍含多处 target recipe；`emit_mlir.py` 总是发射
+`loop.tile_hint`，而 `ConvertIntentToLinalg.cpp` 用它决定 slice size/trip count、缺失时默认 1。
+这些是后端 B0 的已知清理项；在解除依赖前不得把当前 `tile_hint` 宣称为可删除的纯 C attr。
+清理时仍须保留真正改变 denotation 的 extensional equation、tie/order/bounds、result type 与
+region/yield contract。
 
 backend 根据 A 识别通用 implementation family，根据 B 和 target capability 检查 pass precondition，
 根据 C 排序候选。缺少某个 pass 所需的 B fact 时，该 pass 不适用；不能从 Source、π、kernel name、

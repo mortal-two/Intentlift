@@ -19,9 +19,9 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-标注为“下一 protocol version”的 CandidateCheck、numeric-cast dependent typing 与 result-relation
-compatibility 是规范性目标合同；只有实现、测试、receipt version 与 fresh 实验同步升级后才成为
-活动认证语义，不能用于静默重判历史 artifact。
+标注为“下一 protocol version”的 CandidateCheck、C `subject_ref/axis_ref` attachment、numeric-cast
+dependent typing 与 result-relation compatibility 是规范性目标合同；只有 schema、实现、测试、
+receipt version 与 fresh 实验同步升级后才成为活动认证语义，不能用于静默重判历史 artifact。
 
 ## 导航
 

@@ -1000,8 +1000,9 @@ TypeCheck(J,C,pi)
 已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
 consumer 私有字符串解析，也不增加第二个 J 对象。
 
-同一权威 Decode/TypeCheck 可以通过有界、只读、非认证的 `CandidateCheck` 暴露给 source-aware
-Lift agent，使其在提交前看到当前完整 candidate 的 dependent diagnostics。该工具不得修改 candidate、
+有界、只读、非认证的 `CandidateCheck` 必须直接调用正式 Runner 使用的同一个
+parser/Decode/TypeCheck entrypoint 与 ruleset，禁止维护第二套近似 checker；它向 source-aware Lift
+agent 暴露当前完整 candidate 的 dependent diagnostics。该工具不得修改 candidate、
 返回 patch、生成 authorization 或读取 Replay/Gate evidence；正式提交后 Runner 仍重新执行
 TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic schema 以最终执行流程
 第 6.4 节为准；禁止读取 ambient host state。因此它只缩短机械错误反馈，不改变上述 judgement、
