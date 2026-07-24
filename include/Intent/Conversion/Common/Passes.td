@@ -21,4 +21,18 @@ def ConvertIntentToLinalg : Pass<"convert-intent-to-linalg", "::mlir::ModuleOp">
   ];
 }
 
+def ExpandRsqrtForLibm : Pass<"expand-rsqrt-for-libm", "::mlir::ModuleOp"> {
+  let summary = "Expand math.rsqrt for host libm lowering.";
+  let description = [{
+    Rewrites `math.rsqrt(x)` to `1 / math.sqrt(x)` so a subsequent
+    `convert-math-to-libm` uses only the standard sqrt/sqrtf host ABI instead
+    of the non-standard rsqrtf symbol. This is a host-pipeline compatibility
+    pass; target-neutral and GPU pipelines must not schedule it.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::math::MathDialect",
+  ];
+}
+
 #endif // INTENT_CONVERSION_COMMON_PASSES

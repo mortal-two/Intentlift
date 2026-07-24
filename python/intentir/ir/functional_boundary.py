@@ -9,9 +9,11 @@ tensors of ``IntentFunction`` without silently dropping semantics.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
-from dataclasses import dataclass
+from numbers import Integral
+import re
 from typing import Any, Mapping, Sequence
 
 from intentir.ir.canonical_j import (
@@ -25,7 +27,10 @@ from intentir.ir.canonical_j import (
 from intentir.ir.model import IntentOp
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v2"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v3"
+RUNTIME_PREDICATE_PROOF_PROTOCOL = (
+    "intentir.j-functional-runtime-predicate-tautology.v1"
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,32 @@ class PredicateProjection:
             "guards": sorted(self.guards),
             "lower_axes": sorted(self.lower_axes),
             "upper_bounds": [list(item) for item in self.upper_bounds],
+        }
+
+
+@dataclass(frozen=True)
+class RuntimePredicateProofReceipt:
+    """Source-free receipt for one invocation-local tautology proof.
+
+    The receipt deliberately contains no runtime value or value digest.  The
+    enclosing Gate2 case already binds the execution to its hidden input
+    digest; this record says only which J-owned predicate was proved over
+    which J-owned closed axes for that invocation.
+    """
+
+    access_id: str
+    predicate_digest: str
+    logical_input_refs: tuple[str, ...]
+    domain_axes: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "protocol": RUNTIME_PREDICATE_PROOF_PROTOCOL,
+            "proof": "closed_domain_tautology",
+            "access_id": self.access_id,
+            "predicate_digest": self.predicate_digest,
+            "logical_input_refs": list(self.logical_input_refs),
+            "domain_axes": list(self.domain_axes),
         }
 
 
@@ -58,6 +89,7 @@ class FunctionalBoundaryProjection:
     boundary_digest: str
     predicated_access_count: int
     erased_fill_count: int
+    runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -96,6 +128,9 @@ class FunctionalBoundaryProjection:
             "boundary_digest": self.boundary_digest,
             "predicated_access_count": self.predicated_access_count,
             "erased_fill_count": self.erased_fill_count,
+            "runtime_predicate_proofs": [
+                receipt.to_json() for receipt in self.runtime_predicate_proofs
+            ],
         }
 
 
@@ -284,6 +319,170 @@ def _logical_boolean_guards(j: Any) -> frozenset[str]:
     return frozenset(
         name for name in _logical_scalar_inputs(j) if inputs[name].dtype == "i1"
     )
+
+
+_MISSING_RUNTIME_VALUE = object()
+_INTEGER_DTYPE = re.compile(r"[iu][0-9]+")
+
+
+def _rank_zero_runtime_value(value: Any) -> Any:
+    """Return a Python scalar without coercing arrays or numeric kinds."""
+
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        try:
+            if tuple(shape) != ():
+                return _MISSING_RUNTIME_VALUE
+        except TypeError:
+            return _MISSING_RUNTIME_VALUE
+        item = getattr(value, "item", None)
+        if not callable(item):
+            return _MISSING_RUNTIME_VALUE
+        try:
+            value = item()
+        except (TypeError, ValueError):
+            return _MISSING_RUNTIME_VALUE
+    elif isinstance(value, (list, tuple, dict, set)):
+        return _MISSING_RUNTIME_VALUE
+    return value
+
+
+def _runtime_logical_scalar(
+    name: str,
+    *,
+    expected_dtype: str,
+    logical_inputs: Mapping[str, Any] | None,
+) -> int | bool | object:
+    if logical_inputs is None or name not in logical_inputs:
+        return _MISSING_RUNTIME_VALUE
+    value = _rank_zero_runtime_value(logical_inputs[name])
+    if expected_dtype == "i1":
+        return value if type(value) is bool else _MISSING_RUNTIME_VALUE
+    if expected_dtype == "index" or _INTEGER_DTYPE.fullmatch(expected_dtype):
+        if isinstance(value, Integral) and not isinstance(value, bool):
+            return int(value)
+    return _MISSING_RUNTIME_VALUE
+
+
+def _runtime_predicate_tautology(
+    expression: ContractExpr,
+    *,
+    access_id: str,
+    access_axes: tuple[str, ...],
+    domains: Mapping[str, int | str],
+    logical_input_types: Mapping[str, str],
+    logical_inputs: Mapping[str, Any] | None,
+    logical_dimensions: Mapping[str, int] | None,
+) -> tuple[PredicateProjection, RuntimePredicateProofReceipt] | None:
+    """Prove a narrow predicate true at every point of one closed access domain.
+
+    This is an invocation-local RefEval capability proof, never a J legality
+    rule.  It handles only conjunctions of exact logical boolean guards,
+    zero-lower bounds, and strict integer upper bounds.  A runtime bound is
+    sufficient exactly when it is at least the concrete closed-domain extent.
+    """
+
+    lower_axes: set[str] = set()
+    effective_upper: dict[str, int | str] = {}
+    logical_refs: set[str] = set()
+    saw_upper = False
+    access_axis_set = set(access_axes)
+
+    for term in _flatten_conjunction(expression):
+        guard = _reference(term)
+        negated = False
+        if guard is None and term.op == "not" and len(term.args) == 1:
+            guard = _reference(term.args[0])
+            negated = guard is not None
+        if guard is not None and logical_input_types.get(guard) == "i1":
+            value = _runtime_logical_scalar(
+                guard,
+                expected_dtype="i1",
+                logical_inputs=logical_inputs,
+            )
+            if value is _MISSING_RUNTIME_VALUE or bool(value) == negated:
+                return None
+            logical_refs.add(guard)
+            continue
+
+        left, right = term.args if len(term.args) == 2 else (None, None)
+        lower_axis: str | None = None
+        if term.op == "le" and left is not None and right is not None:
+            if left.op == "int" and left.value == 0:
+                lower_axis = _reference(right)
+        elif term.op == "ge" and left is not None and right is not None:
+            if right.op == "int" and right.value == 0:
+                lower_axis = _reference(left)
+        if lower_axis is not None:
+            if lower_axis not in access_axis_set or lower_axis not in domains:
+                return None
+            lower_axes.add(lower_axis)
+            continue
+
+        if term.op != "lt" or left is None or right is None:
+            return None
+        axis = _reference(left)
+        if axis is None or axis not in access_axis_set:
+            return None
+        domain_extent = domains.get(axis)
+        if domain_extent is None:
+            return None
+        concrete_domain_extent = (
+            logical_dimensions.get(domain_extent)
+            if isinstance(domain_extent, str)
+            and logical_dimensions is not None
+            else domain_extent
+        )
+
+        bound: int | str | None = _bound_value(right)
+        if bound is None:
+            return None
+        if isinstance(bound, int):
+            if (
+                isinstance(concrete_domain_extent, int)
+                and bound < concrete_domain_extent
+            ):
+                return None
+            if not isinstance(concrete_domain_extent, int):
+                return None
+        elif bound in logical_input_types:
+            dtype = logical_input_types[bound]
+            if dtype == "i1" or not (
+                dtype == "index" or _INTEGER_DTYPE.fullmatch(dtype)
+            ):
+                return None
+            runtime_bound = _runtime_logical_scalar(
+                bound,
+                expected_dtype=dtype,
+                logical_inputs=logical_inputs,
+            )
+            if (
+                runtime_bound is _MISSING_RUNTIME_VALUE
+                or not isinstance(concrete_domain_extent, int)
+                or runtime_bound < concrete_domain_extent
+            ):
+                return None
+            logical_refs.add(bound)
+        elif bound != domain_extent:
+            return None
+
+        effective_upper[axis] = domain_extent
+        saw_upper = True
+
+    if not saw_upper:
+        return None
+    canonical = PredicateProjection(
+        frozenset(),
+        frozenset(lower_axes),
+        tuple(sorted(effective_upper.items())),
+    )
+    receipt = RuntimePredicateProofReceipt(
+        access_id=access_id,
+        predicate_digest=_digest({"predicate": expression.to_text()}),
+        logical_input_refs=tuple(sorted(logical_refs)),
+        domain_axes=tuple(sorted(effective_upper)),
+    )
+    return canonical, receipt
 
 
 def _full_domains(j: Any) -> dict[str, int | str]:
@@ -1040,7 +1239,12 @@ def _validate_reduction_padding_closure(
             )
 
 
-def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
+def _project_functional_boundary(
+    j: Any,
+    *,
+    runtime_logical_inputs: Mapping[str, Any] | None,
+    runtime_logical_dimensions: Mapping[str, int] | None,
+) -> FunctionalBoundaryProjection:
     """Prove that complete Layer B can use J's logical tensor execution."""
 
     j = elaborate_j(j)
@@ -1122,6 +1326,12 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     store_counts = {name: 0 for name in output_names}
     logical_scalar_inputs = _logical_scalar_inputs(j)
     logical_guards = _logical_boolean_guards(j)
+    logical_input_types = {
+        item.name: item.dtype
+        for item in j.intent.inputs
+        if item.name in logical_scalar_inputs
+    }
+    runtime_predicate_proofs: list[RuntimePredicateProofReceipt] = []
     declared_dimensions = {
         dimension
         for tensor in tensors.values()
@@ -1177,8 +1387,29 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
             _predicate_projection(parsed, logical_guards=logical_guards)
             if parsed is not None else None
         )
-        predicates[access.access_id] = predicate
         if predicate is not None:
+            runtime_refs = {
+                *predicate.guards,
+                *(
+                    extent
+                    for _axis, extent in predicate.upper_bounds
+                    if isinstance(extent, str)
+                    and extent in logical_input_types
+                ),
+            }
+            if runtime_refs:
+                runtime_proof = _runtime_predicate_tautology(
+                    parsed,
+                    access_id=access.access_id,
+                    access_axes=axes,
+                    domains=domains,
+                    logical_input_types=logical_input_types,
+                    logical_inputs=runtime_logical_inputs,
+                    logical_dimensions=runtime_logical_dimensions,
+                )
+                if runtime_proof is not None:
+                    predicate, receipt = runtime_proof
+                    runtime_predicate_proofs.append(receipt)
             if predicate.guards:
                 raise NotImplementedError(
                     "functional mask projection does not implement "
@@ -1223,6 +1454,7 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
                 )
         elif access.fill_value is not None:
             raise ValueError("functional unpredicated access must not declare fill")
+        predicates[access.access_id] = predicate
         if access.kind.value != "load" and access.fill_value is not None:
             raise ValueError("functional store/update must not declare fill")
 
@@ -1349,15 +1581,26 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
         j.node_ids.get(item.node_ref, item.node_ref)
         for item in boundary.index_bounds
     )
-    profile = (
-        "logical_domain_reduction_padding_v2"
-        if concrete_predicates and boundary.reductions
-        else (
-            "logical_domain_mask_erasure_v1"
-            if concrete_predicates
-            else ("dense_functional_v1" if boundary.accesses else "pure_value_v1")
+    if runtime_predicate_proofs:
+        profile = (
+            "logical_domain_runtime_reduction_padding_v1"
+            if boundary.reductions
+            else "logical_domain_runtime_mask_erasure_v1"
         )
-    )
+    else:
+        profile = (
+            "logical_domain_reduction_padding_v2"
+            if concrete_predicates and boundary.reductions
+            else (
+                "logical_domain_mask_erasure_v1"
+                if concrete_predicates
+                else (
+                    "dense_functional_v1"
+                    if boundary.accesses
+                    else "pure_value_v1"
+                )
+            )
+        )
     consumed = {
         *(f"domain:{name}" for name in boundary.domains),
         *(f"access:{item.access_id}" for item in boundary.accesses),
@@ -1370,11 +1613,11 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
         *(f"result_relation:{item.output}" for item in boundary.result_relations),
     }
     return FunctionalBoundaryProjection(
-        profile,
-        tuple(sorted(domains.items())),
-        tuple(sorted(axes_by_access.items())),
-        tuple(sorted(predicates.items())),
-        tuple(
+        profile=profile,
+        domains=tuple(sorted(domains.items())),
+        access_axes=tuple(sorted(axes_by_access.items())),
+        predicates=tuple(sorted(predicates.items())),
+        broadcast_axes=tuple(
             sorted(
                 (
                     result,
@@ -1383,22 +1626,75 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
                 for result, operands in broadcast_axes.items()
             )
         ),
-        proven_bounds,
-        tuple(sorted(consumed)),
-        _digest(boundary.to_json()),
-        sum(item.predicate is not None for item in boundary.accesses),
-        sum(item.fill_value is not None for item in boundary.accesses),
+        proven_index_bounds=proven_bounds,
+        consumed=tuple(sorted(consumed)),
+        boundary_digest=_digest(boundary.to_json()),
+        predicated_access_count=sum(
+            item.predicate is not None for item in boundary.accesses
+        ),
+        erased_fill_count=sum(
+            item.fill_value is not None for item in boundary.accesses
+        ),
+        runtime_predicate_proofs=tuple(runtime_predicate_proofs),
+    )
+
+
+def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
+    """Project J without invocation values, as production consumers must."""
+
+    return _project_functional_boundary(
+        j,
+        runtime_logical_inputs=None,
+        runtime_logical_dimensions=None,
+    )
+
+
+def project_functional_boundary_for_refeval(
+    j: Any,
+    logical_input_values: Mapping[str, Any],
+    logical_dimensions: Mapping[str, int],
+) -> FunctionalBoundaryProjection:
+    """Project J for one RefEval invocation using only J-owned input values."""
+
+    j = elaborate_j(j)
+    expected = {item.name for item in j.intent.inputs}
+    if set(logical_input_values) != expected:
+        raise ValueError(
+            "RefEval runtime predicate proof requires exactly the J logical inputs"
+        )
+    expected_dimensions = {
+        dimension
+        for item in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in item.shape
+        if isinstance(dimension, str)
+    }
+    if set(logical_dimensions) != expected_dimensions or any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for value in logical_dimensions.values()
+    ):
+        raise ValueError(
+            "RefEval runtime predicate proof requires exactly the J logical dimensions"
+        )
+    return _project_functional_boundary(
+        j,
+        runtime_logical_inputs=dict(logical_input_values),
+        runtime_logical_dimensions=dict(logical_dimensions),
     )
 
 
 __all__ = [
     "FUNCTIONAL_BOUNDARY_PROTOCOL",
+    "RUNTIME_PREDICATE_PROOF_PROTOCOL",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
     "PredicateProjection",
+    "RuntimePredicateProofReceipt",
     "functional_boundary_closure_issues",
     "functional_reduction_padding_issues",
     "parse_direct_axes",
     "project_predicate_text",
     "project_functional_boundary",
+    "project_functional_boundary_for_refeval",
 ]

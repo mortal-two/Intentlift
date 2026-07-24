@@ -257,19 +257,31 @@ rank-0 J input，integral extent-only 绑定 declared `x*`。只影响 layout/ti
 selection 的 constexpr 应由 Harness 分类为 C slot；既无 J denotation、又不能合法归入 C 的 case
 是 Harness invalid，不能把 constexpr 以 `logical_ref=null` 留在 π-only topology 中。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v9`，shared functional projection 使用
-`intentir.j-functional-boundary.v2`。v9 完整继承 v8 的唯一 node-less logical-input load 能力，并新增
-严格 J-only 的通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v10`，shared functional projection 使用
+`intentir.j-functional-boundary.v3`。v10 完整继承 v9 的唯一 node-less logical-input load 与严格
+J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 `masked_contribution` contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
-不再被旧 single-sum topology 人为拒绝。projector 不读取 Source、C、π、runtime/hidden input，也不
-生成 padding 公式；上述窄 rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract、
+不再被旧 single-sum topology 人为拒绝。
+
+v10/v3 只新增当前 Gate2 winner invocation 的 runtime predicate tautology proof：主 SCRC runner
+先选定 winner，再把该次 J logical inputs 与 closed dimensions 交给 RefEval-only 入口；projection
+library 本身不选择 winner。该入口只消费 rank-0 logical `i1`/integer values，逐 access 按真实
+布尔极性、direct axis、零下界和 closed extent 证明 predicate 在完整 logical domain 恒真。它不修改
+J、不进入 Lift feedback、不读取 Source/C/π；v3 projection 中的 invocation-local proof subreceipt 只
+保存 access id、J predicate digest、logical input refs 与 domain axes，不保存 raw value 或 value
+digest。这是 audit-data minimization，不是 confidentiality/privacy proof。production 仍调用没有
+runtime value 接口的 value-free projection，不能消费该 subreceipt。
+
+value-free projector 不读取 runtime/hidden input，也不生成 padding 公式；上述窄 rectangular
+provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract、
 缺 domain/fill/reduction/broadcast、update/alias 等继续 fail closed。
-此外，guard-bearing access 当前一律属于 consumer unsupported（避免折叠 `flag`/`not flag` 或把 dead
-operand membership 当控制证明）；masked provenance 进入 contraction/其他未建模 op 时也在该 op
-处拒绝，不能静默丢弃后放行下游 mean。这两项不把合法 J 改判为 TypeCheck 非法。
-既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8` receipt 及 Softmax/RMS 历史 verdict 保持原
-解释，不由 v9 追认或重判。
+无法形成上述全域证明的 guard-bearing access 仍 consumer unsupported（避免把 dead operand
+membership 当控制证明）；masked provenance 进入 contraction/其他未建模 op 时也在该 op 处拒绝，
+不能静默丢弃后放行下游 mean。这两项不把合法 J 改判为 TypeCheck 非法。CPU host 为标准 libm ABI
+在共享 Intent-to-Linalg 之后单独展开 `rsqrt -> 1/sqrt`；共享/GPU lowering 不调度该 pass。
+既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8/v9` 与 functional-boundary v1/v2 receipt 及
+Softmax/RMS 历史 verdict 保持原解释，不由 v10/v3 追认或重判。
 
 ### 2.6 显式语义所有权投影
 
@@ -760,6 +772,14 @@ topology、reduction tree 与浮点 realization。
 
 Gate1 不能从额外 binding artifact、RuleCard 或 source-conditioned sidecar 获得 construction 信息。
 
+当前 active Triton profile 是 `triton-ttir-3.6-gate1-v6`。它保留 v5 对已建模 op 与 reachable
+static structured acyclic `tt.call` graph 的 interprocedural comparison rules，并新增 typed
+single-block、encodingless
+`tt.scan`；axis/reverse、combine arguments/return、recurrence 与 region topology 都是 hard evidence。
+operation/effect classification 为全局 closed profile，unknown op、malformed generic/body line、
+multi-block CFG/region 与未支持 control/region 均 fail closed。Source 侧能力缺口仍由 batch v3 报
+`observer_unsupported`；这不声称 v5→v6 acceptance 单调，历史 v5 evidence 也不重判。
+
 ## 10. Gate2
 
 ### 10.1 J reference 接口中没有 C
@@ -863,11 +883,14 @@ K_t = Lower_t(J,C)
 
 production lowerer 是被验证对象，不能同时充当 J 的独立 semantic oracle。
 
-两条路径可以且应当共用 `ProjectFunctionalBoundary(J)` 这一确定性内部分析，用于把 J 中完整的
-domain/access/effect relation 投影为 logical-tensor consumer 所需的 structured view。该 view 不改写
-J、不读取 C/π/Source，不单独序列化，也不是第二个 J 或新的 proof artifact。投影成功只说明这些
-Layer-B relation 已被 logical Intent MLIR 完整表示；若目标 lowering 引入 padded physical execution，
-仍须自行物化 mask/bounds 或给出目标侧等价保证，不能把该投影冒充 production correctness 证明。
+两条路径共用同一 deterministic functional-boundary core 与 closed rules，但入口权限不同：
+production 只能调用 value-free `ProjectFunctionalBoundary(J)`；主 SCRC runner 选定 Gate2 winner 后，
+才可为当前 invocation 调用 RefEval-only
+`ProjectFunctionalBoundaryForRefEval(J,x,d)`。projection library 不选择 winner；`x,d` 不进入
+production。两种 view 都不改写 J、不读取 C/π/Source、不单独序列化，也不是第二个 J 或新的 proof
+artifact。投影成功只说明相应 Layer-B relation 已被 logical Intent MLIR 完整表示；若目标 lowering
+引入 padded physical execution，仍须自行物化 mask/bounds 或给出目标侧等价保证，不能把该投影或
+runtime-proof subreceipt 冒充 production correctness 证明。
 
 若当前阶段验证 backend：
 

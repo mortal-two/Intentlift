@@ -112,6 +112,79 @@ module {
 '''
 
 
+SCAN_TTIR = r'''
+module {
+  tt.func public @prefix(%x: tensor<2x4xf32>) -> tensor<2x4xf32> {
+    %result = "tt.scan"(%x) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      tt.scan.return %lhs : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %result : tensor<2x4xf32>
+  }
+}
+'''
+
+
+MULTI_SCAN_TTIR = r'''
+module {
+  tt.func public @tuple_prefix(%values: tensor<2x4xf32>, %indices: tensor<2x4xi32>) -> (tensor<2x4xf32>, tensor<2x4xi32>) {
+    %result:2 = "tt.scan"(%values, %indices) <{axis = 1 : i32, reverse = true}> ({
+    ^bb0(%lhs_value: f32, %lhs_index: i32, %rhs_value: f32, %rhs_index: i32):
+      %next_value = arith.addf %lhs_value, %rhs_value : f32
+      %next_index = arith.maxsi %lhs_index, %rhs_index : i32
+      tt.scan.return %next_value, %next_index : f32, i32
+    }) : (tensor<2x4xf32>, tensor<2x4xi32>) -> (tensor<2x4xf32>, tensor<2x4xi32>)
+    tt.return %result#0, %result#1 : tensor<2x4xf32>, tensor<2x4xi32>
+  }
+}
+'''
+
+
+SAME_TYPE_MULTI_SCAN_TTIR = r'''
+module {
+  tt.func public @paired_prefix(%first: tensor<2x4xf32>, %second: tensor<2x4xf32>) -> (tensor<2x4xf32>, tensor<2x4xf32>) {
+    %result:2 = "tt.scan"(%first, %second) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs_first: f32, %lhs_second: f32, %rhs_first: f32, %rhs_second: f32):
+      tt.scan.return %lhs_first, %lhs_second : f32, f32
+    }) : (tensor<2x4xf32>, tensor<2x4xf32>) -> (tensor<2x4xf32>, tensor<2x4xf32>)
+    tt.return %result#0, %result#1 : tensor<2x4xf32>, tensor<2x4xf32>
+  }
+}
+'''
+
+
+OUTLINED_SCAN_COMBINER_TTIR = r'''
+module {
+  tt.func public @outlined_prefix(%x: tensor<2x4xf32>) -> tensor<2x4xf32> {
+    %result = "tt.scan"(%x) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      %next = tt.call @combine(%lhs, %rhs) : (f32, f32) -> f32
+      tt.scan.return %next : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %result : tensor<2x4xf32>
+  }
+  tt.func private @combine(%left: f32, %right: f32) -> f32 {
+    %sum = arith.addf %left, %right : f32
+    tt.return %sum : f32
+  }
+}
+'''
+
+
+INLINED_SCAN_COMBINER_TTIR = r'''
+module {
+  tt.func public @inline_prefix(%input: tensor<2x4xf32>) -> tensor<2x4xf32> {
+    %output = "tt.scan"(%input) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%left: f32, %right: f32):
+      %sum = arith.addf %left, %right : f32
+      tt.scan.return %sum : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %output : tensor<2x4xf32>
+  }
+}
+'''
+
+
 DATAFLOW_TTIR = r'''
 module {
   tt.func public @dataflow(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
@@ -192,16 +265,16 @@ module {
 
 NON_LOOP_REGION_POINTER_LEAF_TTIR = r'''
 module {
-  tt.func public @non_loop_region(%unrelated: !tt.ptr<f16>, %out: !tt.ptr<f16>) {
+  tt.func public @non_loop_region(%seed: tensor<8x!tt.ptr<f16>>, %out: !tt.ptr<f16>) {
     %zero = arith.constant 0 : i32
-    %seed = arith.constant dense<0> : tensor<8xi32>
     %result = "tt.reduce"(%seed) <{axis = 0 : i32}> ({
     ^bb0(%lhs: !tt.ptr<f16>, %rhs: !tt.ptr<f16>):
       %value = tt.load %lhs : !tt.ptr<f16>
       %next = tt.addptr %lhs, %zero : !tt.ptr<f16>, i32
       tt.reduce.return %next : !tt.ptr<f16>
-    }) : (tensor<8xi32>) -> !tt.ptr<f16>
-    tt.store %out, %zero : !tt.ptr<f16>
+    }) : (tensor<8x!tt.ptr<f16>>) -> !tt.ptr<f16>
+    %stored = tt.load %result : !tt.ptr<f16>
+    tt.store %out, %stored : !tt.ptr<f16>
     tt.return
   }
 }
@@ -345,7 +418,8 @@ module {
 SIBLING_REDUCE_BLOCK_ARG_REUSE_TTIR = r'''
 module {
   tt.func public @two_reduces(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
-    %values = tt.load %x : !tt.ptr<f32>
+    %pointers = tt.splat %x : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+    %values = tt.load %pointers : tensor<8x!tt.ptr<f32>>
     %left_total = "tt.reduce"(%values) <{axis = 0 : i32}> ({
     ^bb0(%lhs: f32, %rhs: f32):
       %combined = arith.addf %lhs, %rhs : f32
@@ -367,7 +441,8 @@ module {
 RENAMED_SIBLING_REDUCE_BLOCK_ARG_TTIR = r'''
 module {
   tt.func public @two_reduces(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
-    %loaded = tt.load %x : !tt.ptr<f32>
+    %addresses = tt.splat %x : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+    %loaded = tt.load %addresses : tensor<8x!tt.ptr<f32>>
     %first_total = "tt.reduce"(%loaded) <{axis = 0 : i32}> ({
     ^bb0(%first_lhs: f32, %first_rhs: f32):
       %first_combined = arith.addf %first_lhs, %first_rhs : f32
@@ -515,6 +590,534 @@ def test_changed_reduce_combiner_is_detected():
     assert verdict.primary_difference_category == "reduction"
 
 
+def test_typed_scan_and_heterogeneous_multi_scan_are_observed() -> None:
+    single = fingerprint_ttir(SCAN_TTIR)
+    multiple = fingerprint_ttir(MULTI_SCAN_TTIR)
+
+    assert single.schema_version == "triton-ttir-3.6-gate1-v6"
+    assert dict(single.op_multiset)["tt.scan"] == 1
+    assert dict(multiple.op_multiset)["tt.scan"] == 1
+    assert compare_ttir(SCAN_TTIR, SCAN_TTIR.replace("%lhs", "%renamed")).hard_pass
+
+
+def test_scan_input_type_is_proved_through_typed_arith_select() -> None:
+    selected = SCAN_TTIR.replace(
+        "%x: tensor<2x4xf32>",
+        "%x: tensor<2x4xf32>, %mask: tensor<2x4xi1>",
+        1,
+    ).replace(
+        "    %result = \"tt.scan\"(%x)",
+        "    %zero = arith.constant dense<0.000000e+00> : tensor<2x4xf32>\n"
+        "    %selected = arith.select %mask, %x, %zero : "
+        "tensor<2x4xi1>, tensor<2x4xf32>\n"
+        "    %result = \"tt.scan\"(%selected)",
+        1,
+    )
+
+    fingerprint = fingerprint_ttir(selected)
+    assert dict(fingerprint.op_multiset)["tt.scan"] == 1
+
+    lying_select = selected.replace(
+        "tensor<2x4xi1>, tensor<2x4xf32>\n"
+        "    %result = \"tt.scan\"",
+        "tensor<2x4xi1>, tensor<2x4xf64>\n"
+        "    %result = \"tt.scan\"",
+        1,
+    )
+    with pytest.raises(TTIRParseError, match="input SSA type cannot be established"):
+        fingerprint_ttir(lying_select)
+
+
+def test_scan_axis_and_reverse_are_hard_dataflow_evidence() -> None:
+    changed_axis = SCAN_TTIR.replace("axis = 1", "axis = 0", 1)
+    changed_reverse = SCAN_TTIR.replace("reverse = false", "reverse = true", 1)
+
+    for changed in (changed_axis, changed_reverse):
+        verdict = compare_ttir(SCAN_TTIR, changed)
+        assert not verdict.hard_pass
+        assert verdict.hard_passes["op_multiset"]
+        assert not verdict.hard_passes["dataflow"]
+
+
+def test_scan_noncommutative_argument_order_is_not_normalized_away() -> None:
+    # Returning the first argument is associative but not commutative.  The
+    # observer must retain lhs/rhs orientation even though both programs have
+    # exactly the same operation multiset.
+    returns_rhs = SCAN_TTIR.replace(
+        "tt.scan.return %lhs : f32", "tt.scan.return %rhs : f32", 1
+    )
+    verdict = compare_ttir(SCAN_TTIR, returns_rhs)
+
+    assert not verdict.hard_pass
+    assert verdict.hard_passes["op_multiset"]
+    assert not verdict.hard_passes["dataflow"]
+
+
+def test_multi_scan_return_slot_order_is_hard_evidence() -> None:
+    swapped = SAME_TYPE_MULTI_SCAN_TTIR.replace(
+        "tt.scan.return %lhs_first, %lhs_second : f32, f32",
+        "tt.scan.return %lhs_second, %lhs_first : f32, f32",
+        1,
+    )
+    verdict = compare_ttir(SAME_TYPE_MULTI_SCAN_TTIR, swapped)
+
+    assert not verdict.hard_pass
+    assert verdict.hard_passes["op_multiset"]
+    assert not verdict.hard_passes["dataflow"]
+
+
+def test_outlined_pure_scan_combiner_matches_equivalent_inline_region() -> None:
+    verdict = compare_ttir(OUTLINED_SCAN_COMBINER_TTIR, INLINED_SCAN_COMBINER_TTIR)
+
+    assert verdict.hard_pass, verdict.to_dict()
+
+
+def test_scan_inside_outlined_helper_matches_equivalent_inline_scan() -> None:
+    outlined = r'''
+module {
+  tt.func public @caller(%x: tensor<2x4xf32>) -> tensor<2x4xf32> {
+    %result = tt.call @prefix(%x) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %result : tensor<2x4xf32>
+  }
+  tt.func private @prefix(%input: tensor<2x4xf32>) -> tensor<2x4xf32> {
+    %output = "tt.scan"(%input) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      tt.scan.return %lhs : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %output : tensor<2x4xf32>
+  }
+}
+'''
+
+    assert compare_ttir(outlined, SCAN_TTIR).hard_pass
+
+
+def test_scan_participates_in_recursive_region_topology_digest() -> None:
+    nested_loop = r'''
+module {
+  tt.func public @nested(%x: tensor<2x4xf32>, %n: i32) -> tensor<2x4xf32> {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %result = "tt.scan"(%x) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      scf.for %iv = %c0 to %n step %c1 : i32 {
+        scf.yield
+      }
+      tt.scan.return %lhs : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %result : tensor<2x4xf32>
+  }
+}
+'''
+    sibling_loop = r'''
+module {
+  tt.func public @sibling(%x: tensor<2x4xf32>, %n: i32) -> tensor<2x4xf32> {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      scf.yield
+    }
+    %result = "tt.scan"(%x) <{axis = 1 : i32, reverse = false}> ({
+    ^bb0(%lhs: f32, %rhs: f32):
+      tt.scan.return %lhs : f32
+    }) : (tensor<2x4xf32>) -> tensor<2x4xf32>
+    tt.return %result : tensor<2x4xf32>
+  }
+}
+'''
+    left = fingerprint_ttir(nested_loop)
+    right = fingerprint_ttir(sibling_loop)
+    verdict = compare_fingerprints(left, right)
+
+    assert dict(left.op_multiset) == dict(right.op_multiset)
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]
+
+
+@pytest.mark.parametrize(
+    "malformed, message",
+    [
+        (
+            SCAN_TTIR.replace('"tt.scan"(%x)', "tt.scan(%x)", 1),
+            "quoted-generic syntax",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "<{axis = 1 : i32, reverse = false}>",
+                "<{reverse = false}>",
+                1,
+            ),
+            "exactly one axis and one reverse",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "<{axis = 1 : i32, reverse = false}>",
+                "<{axis = 1 : i32}>",
+                1,
+            ),
+            "exactly one axis and one reverse",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "<{axis = 1 : i32, reverse = false}>",
+                "<{axis = 1 : i32, axis = 0 : i32, reverse = false}>",
+                1,
+            ),
+            "exactly one axis and one reverse",
+        ),
+        (
+            SCAN_TTIR.replace("reverse = false", "reverse = 0 : i1", 1),
+            "reverse must be an explicit boolean",
+        ),
+        (
+            SCAN_TTIR.replace("axis = 1", "axis = 2", 1),
+            "outside rank 2",
+        ),
+        (
+            SCAN_TTIR.replace("axis = 1", "axis = -1", 1),
+            "outside rank 2",
+        ),
+        (
+            SCAN_TTIR.replace(
+                '%result = "tt.scan"(%x)', '"tt.scan"()', 1
+            ),
+            "at least one input",
+        ),
+        (
+            MULTI_SCAN_TTIR.replace("%result:2 =", "%result =", 1),
+            "same number of SSA results as inputs",
+        ),
+        (
+            SCAN_TTIR.replace("tensor<2x4xf32>", "f32"),
+            "ranked tensors",
+        ),
+        (
+            MULTI_SCAN_TTIR.replace(
+                "tensor<2x4xi32>", "tensor<2x8xi32>"
+            ),
+            "one common shape and encoding",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "}) : (tensor<2x4xf32>) -> tensor<2x4xf32>",
+                "}) : (tensor<2x8xf32>) -> tensor<2x4xf32>",
+                1,
+            ),
+            "explicit input types do not match actual SSA types",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "}) : (tensor<2x4xf32>) -> tensor<2x4xf32>",
+                "}) : (tensor<2x4xf32>) -> tensor<2x4xf64>",
+                1,
+            ),
+            "result type must match",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "}) : (tensor<2x4xf32>) -> tensor<2x4xf32>",
+                "}) : tensor<2x4xf32> -> tensor<2x4xf32>",
+                1,
+            ),
+            "function type inputs must use an explicit tuple",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tensor<2x4xf32>", "tensor<2x4xf32, #layout>",
+            ),
+            "tensor encodings are unsupported",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "^bb0(%lhs: f32, %rhs: f32):",
+                "^bb0(%lhs: f32):",
+                1,
+            ),
+            "exactly 2N ordered arguments",
+        ),
+        (
+            MULTI_SCAN_TTIR.replace(
+                "%lhs_value: f32, %lhs_index: i32, %rhs_value: f32, %rhs_index: i32",
+                "%lhs_value: f32, %lhs_index: f32, %rhs_value: i32, %rhs_index: i32",
+                1,
+            ),
+            "ordered lhs",
+        ),
+        (
+            MULTI_SCAN_TTIR.replace(
+                "tt.scan.return %next_value, %next_index : f32, i32",
+                "tt.scan.return %next_value : f32",
+                1,
+            ),
+            "one value per scan input",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs : i32",
+                1,
+            ),
+            "explicit types do not match scan element types",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "%wrong = arith.constant 1 : i32\n"
+                "      tt.scan.return %wrong : f32",
+                1,
+            ),
+            "actual SSA types do not match scan element types",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "      tt.scan.return %lhs : f32",
+                "    ^bb1(%other_lhs: f32, %other_rhs: f32):\n"
+                "      tt.scan.return %other_lhs : f32",
+                1,
+            ),
+            "more than one block",
+        ),
+        (
+            SCAN_TTIR.replace("      tt.scan.return %lhs : f32\n", "", 1),
+            "exactly one tt.scan.return",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs : f32\n"
+                "      tt.scan.return %lhs : f32",
+                1,
+            ),
+            "operation after tt.scan terminator",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs : f32\n"
+                "      %late = arith.addf %lhs, %rhs : f32",
+                1,
+            ),
+            "operation after tt.scan terminator",
+        ),
+        (
+            SCAN_TTIR.replace("tt.scan.return", "tt.reduce.return", 1),
+            "requires tt.scan.return",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                '"tt.scan.return"(%lhs) : (f32) -> ()',
+                1,
+            ),
+            "custom terminator syntax",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs, : f32",
+                1,
+            ),
+            "non-empty comma-separated operand list",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return ??? %lhs : f32",
+                1,
+            ),
+            "is not one SSA value",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs nonsense : f32",
+                1,
+            ),
+            "is not one SSA value",
+        ),
+    ],
+)
+def test_typed_scan_contract_fails_closed(
+    malformed: str, message: str
+) -> None:
+    with pytest.raises(TTIRParseError, match=message):
+        fingerprint_ttir(malformed)
+
+
+def test_direct_effect_inside_scan_fails_closed() -> None:
+    effectful = SCAN_TTIR.replace(
+        "%x: tensor<2x4xf32>",
+        "%x: tensor<2x4xf32>, %side: !tt.ptr<f32>",
+        1,
+    ).replace(
+        "      tt.scan.return %lhs : f32",
+        "      %observed = tt.load %side : !tt.ptr<f32>\n"
+        "      %next = arith.addf %lhs, %observed : f32\n"
+        "      tt.scan.return %next : f32",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="tt.load inside tt.scan"):
+        fingerprint_ttir(effectful)
+
+
+def _with_unknown_effect_pair(
+    text: str,
+    *,
+    anchor: str,
+    operand: str,
+    reverse: bool,
+) -> str:
+    names = ("future.effect_b", "future.effect_a") if reverse else (
+        "future.effect_a",
+        "future.effect_b",
+    )
+    pair = "".join(
+        f'      "{name}"({operand}) : (f32) -> ()\n' for name in names
+    )
+    return text.replace(anchor, pair + anchor, 1)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "text, anchor, operand",
+    [
+        (DATAFLOW_TTIR, "    tt.store %out", "%answer"),
+        (SIBLING_REGION_SSA_REUSE_TTIR, "      scf.yield", "%value"),
+        (SCAN_TTIR, "      tt.scan.return", "%lhs"),
+        (REDUCE_TTIR, "      tt.reduce.return", "%lhs"),
+    ],
+    ids=["root", "scf-for", "scan", "reduce"],
+)
+def test_unknown_operations_are_globally_observer_unsupported(
+    text: str,
+    anchor: str,
+    operand: str,
+    reverse: bool,
+) -> None:
+    unknown = _with_unknown_effect_pair(
+        text,
+        anchor=anchor,
+        operand=operand,
+        reverse=reverse,
+    )
+
+    with pytest.raises(TTIRParseError, match="closed operation/effect profile"):
+        fingerprint_ttir(unknown)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["arith.future_effect", "future.barrier", "tt.atomic_future"],
+)
+def test_dialect_or_effect_like_name_does_not_bypass_closed_classification(
+    name: str,
+) -> None:
+    unknown = DATAFLOW_TTIR.replace(
+        "    tt.store %out, %answer",
+        f'    "{name}"(%answer) : (f32) -> ()\n'
+        "    tt.store %out, %answer",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="closed operation/effect profile"):
+        fingerprint_ttir(unknown)
+
+
+def test_malformed_quoted_generic_operation_is_not_accepted_as_opaque() -> None:
+    malformed = DATAFLOW_TTIR.replace(
+        "    tt.store %out, %answer",
+        '    "future.effect"(%answer) totally-malformed-tail\n'
+        "    tt.store %out, %answer",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="missing its explicit function type"):
+        fingerprint_ttir(malformed)
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        DATAFLOW_TTIR.replace(
+            "    tt.store %out, %answer",
+            "    this is not a TTIR operation\n    tt.store %out, %answer",
+            1,
+        ),
+        SCAN_TTIR.replace(
+            "      tt.scan.return %lhs : f32",
+            "      %broken =\n      tt.scan.return %lhs : f32",
+            1,
+        ),
+    ],
+    ids=["root-garbage", "scan-empty-assignment"],
+)
+def test_nonempty_unparsed_body_lines_fail_closed(malformed: str) -> None:
+    with pytest.raises(TTIRParseError, match="cannot parse non-empty TTIR body line"):
+        fingerprint_ttir(malformed)
+
+
+@pytest.mark.parametrize("payload", ["one", "two"])
+def test_scan_rejects_unresolved_tensor_encoding_aliases(payload: str) -> None:
+    encoded = SCAN_TTIR.replace(
+        "module {",
+        f"#layout = #future.layout<{payload}>\nmodule {{",
+        1,
+    ).replace("tensor<2x4xf32>", "tensor<2x4xf32, #layout>")
+
+    with pytest.raises(TTIRParseError, match="tensor encodings are unsupported"):
+        fingerprint_ttir(encoded)
+
+
+def test_nested_effect_inside_scan_fails_closed() -> None:
+    effectful = SCAN_TTIR.replace(
+        "%x: tensor<2x4xf32>",
+        "%x: tensor<2x4xf32>, %side: !tt.ptr<f32>, %n: i32",
+        1,
+    ).replace(
+        "    %result = \"tt.scan\"",
+        "    %c0 = arith.constant 0 : i32\n"
+        "    %c1 = arith.constant 1 : i32\n"
+        "    %result = \"tt.scan\"",
+        1,
+    ).replace(
+        "      tt.scan.return %lhs : f32",
+        "      scf.for %iv = %c0 to %n step %c1 : i32 {\n"
+        "        tt.store %side, %lhs : !tt.ptr<f32>\n"
+        "        scf.yield\n"
+        "      }\n"
+        "      tt.scan.return %lhs : f32",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="tt.store inside tt.scan"):
+        fingerprint_ttir(effectful)
+
+
+def test_effect_in_outlined_scan_combiner_fails_closed_after_expansion() -> None:
+    effectful = OUTLINED_SCAN_COMBINER_TTIR.replace(
+        "%x: tensor<2x4xf32>",
+        "%x: tensor<2x4xf32>, %side: !tt.ptr<f32>",
+        1,
+    ).replace(
+        "@combine(%lhs, %rhs) : (f32, f32) -> f32",
+        "@combine(%lhs, %rhs, %side) : (f32, f32, !tt.ptr<f32>) -> f32",
+        1,
+    ).replace(
+        "@combine(%left: f32, %right: f32) -> f32",
+        "@combine(%left: f32, %right: f32, %side: !tt.ptr<f32>) -> f32",
+        1,
+    ).replace(
+        "    tt.return %sum : f32",
+        "    tt.store %side, %sum : !tt.ptr<f32>\n"
+        "    tt.return %sum : f32",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="tt.store inside tt.scan"):
+        fingerprint_ttir(effectful)
+
+
 def test_changed_other_fill_is_predicate_effect_failure():
     negative_infinity_fill = REDUCE_TTIR.replace(
         "dense<0.000000e+00>", "dense<0xFF800000>", 1
@@ -630,7 +1233,7 @@ def test_scf_for_yield_can_introduce_another_pointer_dependency() -> None:
 def test_scf_for_carried_pointer_arity_mismatch_fails_closed(
     malformed: str,
 ) -> None:
-    with pytest.raises(TTIRParseError, match="identical arity"):
+    with pytest.raises(TTIRParseError, match="arity"):
         fingerprint_ttir(malformed)
 
 
@@ -891,7 +1494,7 @@ def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
 
     assert verdict.hard_pass, verdict.to_dict()
     fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v5"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v6"
     assert "tt.call" not in dict(fingerprint.op_multiset)
     assert dict(fingerprint.loops[0].body_op_multiset) == {
         "tt.addptr": 2,
@@ -1348,3 +1951,216 @@ def test_unknown_public_function_attribute_fails_closed(name: str) -> None:
 
     with pytest.raises(TTIRParseError, match="unsupported function attribute"):
         fingerprint_ttir(unsupported)
+
+
+def test_function_return_value_mapping_is_hard_dataflow_evidence() -> None:
+    template = r'''
+module {
+  tt.func public @choose(%x: f32, %y: f32) -> f32 {
+    %sum = arith.addf %x, %y : f32
+    %product = arith.mulf %x, %y : f32
+    tt.return %RETURN : f32
+  }
+}
+'''
+    returns_sum = template.replace("%RETURN", "%sum")
+    returns_product = template.replace("%RETURN", "%product")
+
+    verdict = compare_ttir(returns_sum, returns_product)
+
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]
+
+
+@pytest.mark.parametrize("replacement", ["%result#1, %result#0", "%result#1, %result#1"])
+def test_equal_typed_multi_scan_result_slots_keep_identity(
+    replacement: str,
+) -> None:
+    changed = SAME_TYPE_MULTI_SCAN_TTIR.replace(
+        "tt.return %result#0, %result#1 :",
+        f"tt.return {replacement} :",
+        1,
+    )
+
+    verdict = compare_ttir(SAME_TYPE_MULTI_SCAN_TTIR, changed)
+
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]
+
+
+@pytest.mark.parametrize(
+    "malformed, message",
+    [
+        (
+            DATAFLOW_TTIR.replace("tt.return", "tt.return arbitrary-garbage", 1),
+            "tt.return",
+        ),
+        (
+            DATAFLOW_TTIR.replace(
+                "tt.return", "tt.return {future_semantics = true}", 1
+            ),
+            "attributes are unsupported",
+        ),
+        (
+            LOOP_CARRIED_POINTER_ACCESS_TTIR.replace(
+                "      scf.yield %next_read, %next_write, %next_inout : "
+                "tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>, "
+                "tensor<8x!tt.ptr<f16>>\n",
+                "",
+                1,
+            ),
+            "exactly one scf.yield",
+        ),
+        (
+            SIBLING_REGION_SSA_REUSE_TTIR.replace(
+                "      scf.yield\n",
+                "      scf.yield\n      scf.yield\n",
+                1,
+            ),
+            "operation after scf.for terminator",
+        ),
+        (
+            LOOP_CARRIED_POINTER_ACCESS_TTIR.replace(
+                "scf.yield %next_read, %next_write, %next_inout : "
+                "tensor<8x!tt.ptr<f16>>, tensor<8x!tt.ptr<f16>>, "
+                "tensor<8x!tt.ptr<f16>>",
+                "scf.yield %next_read, %next_write, %next_inout : i32, i32, i32",
+                1,
+            ),
+            "yield types must close positionally",
+        ),
+        (
+            REDUCE_TTIR.replace(
+                "tt.reduce.return %combined : f32",
+                "tt.reduce.return %combined : i32",
+                1,
+            ),
+            "explicit types do not match reduce element types",
+        ),
+        (
+            REDUCE_TTIR.replace(
+                "tt.reduce.return %combined : f32",
+                "tt.reduce.return %combined : f32 nonsense",
+                1,
+            ),
+            "trailing or compound type syntax",
+        ),
+        (
+            REDUCE_TTIR.replace(
+                "      tt.reduce.return %combined : f32\n",
+                "      tt.reduce.return %combined : f32\n"
+                "      tt.reduce.return\n",
+                1,
+            ),
+            "operation after tt.reduce terminator",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs {future_semantics = true} : f32",
+                1,
+            ),
+            "attributes are unsupported",
+        ),
+        (
+            SCAN_TTIR.replace(
+                "tt.scan.return %lhs : f32",
+                "tt.scan.return %lhs : (f32)",
+                1,
+            ),
+            "unparenthesized list",
+        ),
+    ],
+    ids=[
+        "root-garbage",
+        "root-attribute",
+        "scf-missing-yield",
+        "scf-duplicate-yield",
+        "scf-lying-yield-type",
+        "reduce-lying-return-type",
+        "reduce-trailing-type-garbage",
+        "reduce-duplicate-return",
+        "scan-return-attribute",
+        "scan-return-parenthesized-type",
+    ],
+)
+def test_all_terminator_shells_and_region_closures_fail_closed(
+    malformed: str,
+    message: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match=message):
+        fingerprint_ttir(malformed)
+
+
+def test_zero_result_scf_for_implicit_empty_yield_is_canonical() -> None:
+    implicit = SIBLING_REGION_SSA_REUSE_TTIR.replace(
+        "      scf.yield\n", "", 1
+    )
+
+    assert compare_ttir(SIBLING_REGION_SSA_REUSE_TTIR, implicit).hard_pass
+
+
+def test_quoted_generic_result_type_cannot_have_unparsed_tail() -> None:
+    malformed = DATAFLOW_TTIR.replace(
+        "    tt.store %out, %answer",
+        '    %junk = "arith.addf"(%answer, %answer) '
+        ": (f32, f32) -> f32 nonsense\n"
+        "    tt.store %out, %answer",
+        1,
+    )
+
+    with pytest.raises(TTIRParseError, match="trailing or compound type syntax"):
+        fingerprint_ttir(malformed)
+
+
+def test_non_scan_tensor_encoding_alias_denotation_fails_closed_globally() -> None:
+    template = r'''
+#layout = #future.layout<PAYLOAD>
+module {
+  tt.func public @encoded(%x: tensor<8xf32, #layout>) -> tensor<8xf32, #layout> {
+    %result = arith.addf %x, %x : tensor<8xf32, #layout>
+    tt.return %result : tensor<8xf32, #layout>
+  }
+}
+'''
+    for payload in ("one", "two"):
+        with pytest.raises(TTIRParseError, match="tensor encodings are unsupported"):
+            fingerprint_ttir(template.replace("PAYLOAD", payload))
+
+
+def test_module_type_alias_denotation_fails_closed_globally() -> None:
+    template = r'''
+!element = type PAYLOAD
+module {
+  tt.func public @aliased(%x: !element) -> !element {
+    tt.return %x : !element
+  }
+}
+'''
+    for payload in ("f32", "i32"):
+        with pytest.raises(TTIRParseError, match="type aliases are unsupported"):
+            fingerprint_ttir(template.replace("PAYLOAD", payload))
+
+
+def test_effect_order_inside_scf_region_is_hard_evidence() -> None:
+    template = r'''
+module {
+  tt.func public @ordered(%out: !tt.ptr<f32>, %first: f32, %second: f32, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      tt.store %out, %FIRST : !tt.ptr<f32>
+      tt.store %out, %SECOND : !tt.ptr<f32>
+      scf.yield
+    }
+    tt.return
+  }
+}
+'''
+    source = template.replace("%FIRST", "%first").replace("%SECOND", "%second")
+    reordered = template.replace("%FIRST", "%second").replace("%SECOND", "%first")
+
+    verdict = compare_ttir(source, reordered)
+
+    assert not verdict.hard_pass
+    assert not verdict.hard_passes["dataflow"]

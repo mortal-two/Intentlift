@@ -420,6 +420,11 @@ region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 han
 该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
 `pi.iterations` 限制或选择自己的 `Impl(J)` lowering/search。
 
+Linear 剩余的 pointer-carry topology 是否需要新的 temporal relation 仍属未来设计；若后续独立审查
+确认不可表达，它只能进入未来 `artifact.v4/decode.v4` 并在新的 fresh session 生效。当前
+`artifact.v3/decode.v3` 仍只含本节已实现的 `pi.iterations`，既有 wire/receipt 不变；本文此处不定义
+未来 relation schema。
+
 ### 4.4 对 semantic labels 参数化
 
 必须满足：
@@ -811,13 +816,19 @@ frontend cache spelling。该规则自 `triton-ttir-3.6-gate1-v4` 起成立；�
 mask、fill、type 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend
 API mechanism，也不把 cache hint 当作 J 语义。
 
-当前 active `triton-ttir-3.6-gate1-v5` 再把 public entry 可达、静态已知、structured 且无环的
-`tt.call` graph 展开到同一 observation：formal-to-actual、helper return SSA、op/def-use、effect 与
-已支持的 structured region 都继续成为 hard evidence，π 仍不保存 helper 名或 frontend call API。
-动态/未知 callee、递归 cycle、call signature/return 不一致、reachable arbitrary multi-block CFG 或
-未支持 control/region 形态使 observer fail closed；Source 侧缺口由 batch v3 报
-`observer_unsupported`，不能伪装成 π 缺字段、Gate1 hard mismatch 或有界 `NO_CLOSURE`。这只是当前
-compiler observer 的实现合同，不是 call graph/TTIR observer 完备性的形式证明。
+当前 active `triton-ttir-3.6-gate1-v6` 保留 v5 对已建模 op 与 public-entry reachable、静态已知、
+structured 且无环 `tt.call` graph 的 interprocedural comparison rules；formal-to-actual、helper return SSA、
+op/def-use、effect 与已支持 region 都是 hard evidence，π 仍不保存 helper 名或 frontend call API。
+
+v6 只新增 typed、single-block、encodingless `tt.scan` observer：ranked tensor shape、axis/reverse、
+ordered combine args、唯一 typed return、recurrence/region topology 都被观察。它同时使用全局 closed
+operation/effect classification；unknown op 不能因位于 root/`scf.for`/combiner 而默认 pure。
+malformed generic/body line、动态/未知 callee、递归 cycle、call signature/return 不一致、reachable
+arbitrary multi-block CFG/region 或未支持 control/region 均 fail closed；Source 侧缺口由 batch v3 报
+`observer_unsupported`，不能伪装成 π 缺字段、Gate1 hard mismatch 或有界 `NO_CLOSURE`。历史 v5
+evidence 保持原解释；这不声称 v5→v6 acceptance 单调。上述只是当前 compiler observer 的实现
+合同，不是 call graph/TTIR observer
+完备性的形式证明。
 
 完整性目标是：
 
@@ -1168,17 +1179,26 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v9`，共享
-`intentir.j-functional-boundary.v2`：v9 继承 v8 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v10`，共享
+`intentir.j-functional-boundary.v3`：v10 继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
-logical input，也不读取 Source、C、runtime/hidden input；缺失 relation，以及上述窄 rectangular
-provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract 时继续
-unsupported。既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8` receipt 与 Softmax/RMS verdict
-均不追认。
-对 guard-bearing access，consumer 当前不尝试从 guard 名称恢复极性或由 operand membership 推断控制
-依赖，而是一律 unsupported；已有 masked provenance 进入 contraction/其他未建模 op 时也在入口
-fail closed。这些是 Gate2/后端 projection 能力边界，不由 π 补证，也不扩大 TypeCheck legality。
+logical input。
+
+v10/v3 只允许主 SCRC runner 在已选定 Gate2 winner 后，为当前 invocation 调用 RefEval-only 入口；
+projection library 不自行选择 winner。该入口用 J 自身 rank-0 logical `i1`/integer values 与完整
+closed dimensions，逐 access 按真实 guard 极性、direct axis、零下界及 runtime bound 不小于
+domain extent 证明 predicate 全域为真。不改 J、不进入 Lift feedback、不读取 Source/C/π；v3
+projection 内的 invocation-local proof subreceipt 不保存 raw value/value digest。字段最小化只服务
+audit-data minimization，不是 confidentiality/privacy proof。production projection 仍无 runtime
+inputs，π 也不能转交或复用该 subreceipt。缺失 relation，以及上述窄 rectangular provenance 可证明
+masked axis 被 `mean` 消去却没有
+logical count contract 时继续 unsupported。无法完成该 proof 的 guard-bearing access 与已有 masked
+provenance 进入 contraction/其他未建模 op 仍在 consumer 入口 fail closed。这些是 Gate2/后端
+projection 能力边界，不由 π 补证，也不扩大 TypeCheck legality。CPU-only `rsqrt -> 1/sqrt` host
+libm compatibility pass 位于共享 Intent-to-Linalg 之后，不改变共享/GPU lowering。
+既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8/v9`、functional-boundary v1/v2 receipt 与
+Softmax/RMS verdict 均不追认。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

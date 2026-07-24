@@ -505,19 +505,33 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v9`，shared projection 为
-`intentir.j-functional-boundary.v2`。v9 继承 v8 的唯一 node-less logical-input load，并把 padded
-reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：每个 predicated direct access 必须
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v10`，shared projection 为
+`intentir.j-functional-boundary.v3`。v10 完整继承 v9；v9 已继承 v8 的唯一 node-less
+logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
+每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
 恰有一个中性 `masked_contribution` contract；pointwise 的 trailing/显式 non-trailing broadcast 必须
 由 closed type/J relation 决定。满足这些条件的 max → pointwise → sum 等多 reduction DAG 直接交给
-既有 Intent MLIR scalar executor，不读取 Source、C、π 或 hidden input，也没有 Softmax/Kernel 分支。
-上述窄 rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract，以及缺
+既有 Intent MLIR scalar executor，也没有 Softmax/Kernel 分支。
+
+v10/v3 只为 pre-Gate2 规则已经选定的 winner，在当前 Gate2 invocation 内增加 runtime predicate
+tautology proof。主 SCRC runner 负责 winner 选择并把该次 inputs/dimensions 交给 RefEval-only 入口；
+projection library 不自行选择 winner。该入口要求精确 J logical-input mapping 与完整 closed
+dimensions，只消费 J 自身 rank-0 logical `i1`/integer values，逐 access 按真实 guard 极性、direct
+axis、零下界及 runtime bound 不小于
+domain extent 证明 predicate 在完整 logical domain 恒真。不修改 J、不进入 Lift feedback、不读取
+Source/C/π。v3 projection 内的 invocation-local proof subreceipt 只含 access id、J predicate digest、
+logical input refs 与 domain axes，不保存 raw value/value digest；这是 audit-data minimization，不是
+confidentiality/privacy proof。production projection 仍是没有 runtime-value 参数的 J-only 分析。
+上述窄
+rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract，以及缺
 domain/fill/reduction/broadcast 等继续 unsupported。所有既有 typecheck.v3/v4/v5/v6、
-`j_scalar_cpu_mlir_v7/v8` evidence 以及 Softmax/RMS 历史运行保持原 verdict，新协议只用于 fresh run。
-guard-bearing access 当前由 RefEval consumer 一律 fail closed；已有 masked provenance 进入
-contraction/其他未建模 op 时也必须在该 op 处拒绝，不能靠 guard 名称 membership 或静默停止传播来
-证明 mask erasure。两者是 consumer 能力边界，不新增 TypeCheck 非法 J 条件。
+`j_scalar_cpu_mlir_v7/v8/v9`、functional-boundary v1/v2 evidence 以及 Softmax/RMS 历史运行保持原
+verdict，新协议只用于 fresh run。无法完成上述 proof 的 guard-bearing access 仍由 RefEval consumer
+fail closed；已有 masked provenance 进入 contraction/其他未建模 op 时也必须在该 op 处拒绝，不能靠
+operand membership 或静默停止传播来证明 mask erasure。两者是 consumer 能力边界，不新增
+TypeCheck 非法 J 条件。CPU host 只在共享 Intent-to-Linalg 之后调度 `rsqrt -> 1/sqrt` 的标准 libm
+ABI compatibility pass，不改变共享/GPU lowering。
 
 ---
 
@@ -713,15 +727,21 @@ G_1^{\Phi_1}=1.
 canonicalization version。mutation test 可以评估 observer 的经验敏感性，但不构成 observer
 完备性定理，也不进入主认证谓词。
 
-当前 Triton active profile 是 `triton-ttir-3.6-gate1-v5`。它继承 v4 对 closed load/store cache-policy
-hint 的 NormalizeAway，并把从 public entry 可达、静态已知、structured 且无环的 `tt.call` graph
-interprocedurally 展开：formal-to-actual、helper return SSA、op/def-use、effect 与已支持 structured
-region 都进入同一 observation。未知/动态 callee、递归/cyclic call graph、signature/return 不一致、
-reachable arbitrary multi-block CFG 与未支持 control/region 形态一律 fail closed。若 Source 侧因此
-无法形成 `F_source`，`intentir.scrc.batch.v3` 报 `observer_unsupported`；它表示 observer 能力缺口，
-不是候选非法、Gate1 mismatch 或 `NO_CLOSURE`。Replay 侧失败不能冒充 Source observer 缺口；历史
-batch v2 report 也不由 v3 重判。上述 profile 只是当前实现与测试覆盖的 compiler contract，不是 TTIR
-observer 完备性的形式证明。
+当前 Triton active profile 是 `triton-ttir-3.6-gate1-v6`。它保留 v5 对已建模 op 的 closed
+load/store cache-policy 规则，以及从 public entry 可达、静态已知、structured 且无环 `tt.call` 的
+interprocedural comparison：call graph 仍 interprocedurally 展开，formal-to-actual、helper return
+SSA、op/def-use、effect 与已支持
+region 都进入同一 observation。
+
+v6 新增 typed、single-block、encodingless quoted-generic `tt.scan`；ranked tensor shape、axis/reverse、
+ordered combine args、唯一 typed return 与 recurrence/region topology 都是 hard evidence。全局 closed
+operation/effect classification 禁止 unknown op 在 root、`scf.for` 或 combiner 中默认 pure；malformed
+generic/body line、未知/动态 callee、递归/cyclic call、signature/return 不一致、reachable arbitrary
+multi-block CFG/region 与未支持 control/region 一律 fail closed。若 Source 侧因此无法形成
+`F_source`，`intentir.scrc.batch.v3` 报 `observer_unsupported`；它表示 observer 能力缺口，不是候选
+非法、Gate1 mismatch 或 `NO_CLOSURE`。Replay 侧失败不能冒充 Source observer 缺口；历史 v5 evidence
+与 batch v2 report 均保持原版本，不由 v6/v3 重判。这不声称 v5→v6 acceptance 单调。上述 profile
+只是当前实现与测试覆盖的 compiler contract，不是 TTIR observer 完备性的形式证明。
 
 ---
 

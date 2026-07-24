@@ -22,6 +22,7 @@ from intentir.ir.canonical_j import (
 from intentir.ir.functional_boundary import (
     parse_direct_axes,
     project_functional_boundary,
+    project_functional_boundary_for_refeval,
     project_predicate_text,
 )
 from intentir.ir.model import IntentOp
@@ -36,7 +37,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v9"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v10"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -995,12 +996,16 @@ class ScalarLoweringRunner:
         except KeyError as exc:
             return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
-            projection = project_functional_boundary(spec.j)
-            boundary_digest = projection.boundary_digest
             inputs_by_ref = {
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)
             }
+            projection = project_functional_boundary_for_refeval(
+                spec.j,
+                inputs_by_ref,
+                spec.dims_map,
+            )
+            boundary_digest = projection.boundary_digest
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = projection.emitter_broadcast_axes()
             execution = execute_on_cpu_outputs(
@@ -1035,6 +1040,9 @@ class ScalarLoweringRunner:
                     "effect_relation_count": len(spec.j.boundary.effects),
                     "predicated_access_count": projection.predicated_access_count,
                     "erased_fill_count": projection.erased_fill_count,
+                    "runtime_predicate_proof_count": len(
+                        projection.runtime_predicate_proofs
+                    ),
                     "broadcast_consumer_count": len(broadcast_axes),
                     "index_bounds_count": len(spec.j.boundary.index_bounds),
                     "result_relation_count": len(

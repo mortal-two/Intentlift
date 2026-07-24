@@ -205,7 +205,10 @@ def compile_cpu_module(source: str) -> CompiledCPUModule:
     pipeline_identity = {
         "compiler_protocol": CPU_COMPILER_PROTOCOL,
         "abi_protocol": CPU_MEMREF_ABI_PROTOCOL,
-        "intent_opt_passes": ["-convert-intent-to-linalg"],
+        "intent_opt_passes": [
+            "-convert-intent-to-linalg",
+            "-expand-rsqrt-for-libm",
+        ],
         "mlir_pipeline": list(CPU_LOWERING_PIPELINE),
         "clang_flags": list(_CLANG_FLAGS),
     }
@@ -255,7 +258,11 @@ def compile_cpu_module(source: str) -> CompiledCPUModule:
                 cache_hit = False
         if not cache_hit:
             intent_mlir = _run_text(
-                [str(_resolve_tool(str(INTENT_OPT))), "-convert-intent-to-linalg"],
+                [
+                    str(_resolve_tool(str(INTENT_OPT))),
+                    "-convert-intent-to-linalg",
+                    "-expand-rsqrt-for-libm",
+                ],
                 source,
                 stage="intent-opt",
             )

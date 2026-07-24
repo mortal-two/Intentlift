@@ -99,6 +99,39 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
     np.testing.assert_allclose(actual, x.sum(axis=1), rtol=1.0e-6, atol=1.0e-6)
 
 
+def test_rsqrt_uses_standard_host_sqrt_abi() -> None:
+    from intentir.backend.cpu.pipeline import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "host_rsqrt",
+                "inputs": [{"name": "X", "dtype": "f32", "shape": [8]}],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": [8]}],
+                "body": [
+                    {
+                        "op": "map_unary",
+                        "result": "Y",
+                        "operands": ["X"],
+                        "attrs": {"fn": "rsqrt"},
+                    }
+                ],
+            }
+        }
+    )
+    value = np.linspace(0.25, 4.0, 8, dtype=np.float32)
+
+    actual = run_on_cpu(fn, {}, [value])
+
+    np.testing.assert_allclose(
+        actual,
+        1.0 / np.sqrt(value),
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+
+
 def test_multiple_logical_outputs_run_on_cpu() -> None:
     from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
     from intentir.ir.model import IntentFunction

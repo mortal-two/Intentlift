@@ -1,5 +1,6 @@
 add_mlir_library(MLIRIntentConversionCommon
   ConvertIntentToLinalg.cpp
+  ExpandRsqrtForLibm.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/Intent/Conversion
@@ -17,6 +18,7 @@ add_mlir_library(MLIRIntentConversionCommon
   MLIRTensorDialect
   MLIRArithDialect
   MLIRMathDialect
+  MLIRMathTransforms
   MLIRSCFDialect
 )
 

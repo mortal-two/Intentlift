@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from intentir.ir.canonical_j import elaborate_j
-from intentir.verify.gate1.model import SemanticArchive
 
 from .emit_mlir import BroadcastAxes, IndexBoundsProjection, emit_module
+
+if TYPE_CHECKING:  # pragma: no cover - annotation only
+    from intentir.verify.gate1.model import SemanticArchive
 
 
 def emit_j_module(

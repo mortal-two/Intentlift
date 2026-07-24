@@ -40,24 +40,35 @@ binding 变成 typed canonical form。RefEval 和 production backend 均不得�
 
 ## 共享 Functional Boundary Projection
 
-RefEval 与 production lowerer 在发射 Intent MLIR 前，共用同一个确定性内部分析：
+RefEval 与 production lowerer 在发射 Intent MLIR 前，共用同一套 deterministic
+functional-boundary core 与 closed rules，但不是同一函数签名或同一次 analysis invocation：
 
 ```text
-P_B(J) = ProjectFunctionalBoundary(J)
+P_B^prod(J) = ProjectFunctionalBoundary(J)
+P_B^ref(J,x,d) = ProjectFunctionalBoundaryForRefEval(J,x,d)
 ```
 
-`P_B(J)` 只把唯一 J 中已经存在的 typed domain/access/effect/output/reduction relation 投影为 consumer
+production 只能调用 value-free 的 `P_B^prod(J)`。它把唯一 J 中已经存在的 typed
+domain/access/effect/output/reduction relation 投影为 consumer
 可直接使用的 structured axes、predicate contract、broadcast axes 与 index-bounds handles。它不改写
 J，不读取 C/π/Source/Harness/Gate evidence，不补 predicate 或 operator，也不单独序列化；它是一次
 调用内的派生分析结果，不是 `CanonicalJ`、第四 artifact 或新 certificate。
 
-当前 `P_B` 只有在全部影响 RefEval/target logical execution 的 functional B facts 可机械表示为 J 的
+主 SCRC runner 负责先按 pre-Gate2 evidence 选定 winner，再把该 Gate2 invocation 的 J logical
+inputs 与完整 closed dimension mapping 交给 scalar RefEval 的 `P_B^ref(J,x,d)`；projection/RefEval
+library 本身不选择 winner，也不取得跨 invocation 调用权限。该入口只用 J 自身 rank-0 logical
+`i1`/integer values 逐 access 证明 J predicate 在完整 logical domain 恒真。结果仍是
+invocation-local ephemeral analysis，不修改 J、不读 Source/C/π、不进入 Lift feedback。production
+API 没有 `x,d` 参数，也不得读取或复用 v3 projection 中的 runtime-proof subreceipt。
+
+shared core 只有在全部影响 RefEval/target logical execution 的 functional B facts 可机械表示为 J 的
 完整 logical-tensor execution 时成功：pure value、dense
 functional、full-logical-domain mask erasure，以及由每个 reduction contract 闭合的通用 padded
 functional graph。任何
 affine-as-dense、predicate/domain mismatch、effect mismatch、alias/inout 或未实现的 mutable relation
 都在进入 codegen 前 fail closed。π 专用的 `realization_authorizations` 不属于该 functional
-projection。RefEval 与 CUDA analyzer 记录相同的 projection record，不能各自
+projection。RefEval 与 CUDA analyzer 使用同一 protocol/core output structure；v10 RefEval record
+可以额外含 invocation-local runtime-proof subreceipt，production record 必须为空。二者不能各自
 保留第二套 wire parser 或 B-consumption 判定。
 
 投影成功的准确含义只是：当前 logical Intent MLIR 可以完整代表这些 B relation；它不自动证明任意
@@ -90,9 +101,9 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
   full-logical-domain predicate，predicate upper bound 与 domain/shape 精确一致，masked load 有显式
   fill，每个 output 独立 store 一次，且 observable store producer 的 elaborated result type 与 output
   完全一致。该类型可以由 closed op signature 唯一物化，不要求 Lift 重复填写。rank-0 logical
-  scalar/guard 仍可构成合法 J，但当前 projector 对任何 guard-bearing access predicate 都显式
-  unsupported：只记录 guard 名称会丢失 `flag`/`not flag` 极性，而“出现在某个 operand”也不能证明
-  guard 到 observable output 的控制语义，因此 fixed consumer 不擦除这种 mask；
+  scalar/guard 仍可构成合法 J；value-free production projector 对 guard-bearing access predicate
+  继续显式 unsupported。RefEval v10 只在当前 invocation 中按 J predicate 的真实极性、closed axis
+  与 dimension extent 证明其全域恒真后才可擦除；operand membership 不能替代该 proof；
 - `logical_domain_reduction_padding_v2` 不再把合法图限制为单 input、单 output、唯一单轴 `sum`。
   每个带 physical predicate 的 direct access 必须为自身每个非常量 `0` 的 axis 显式声明完整零起点
   logical domain；所有仍携带某个 masked axis 的 load/store 必须声明同一个 full-domain predicate，
@@ -126,21 +137,31 @@ seed 上传播 padded provenance：predicated direct load 不含 logical guard�
 矩形；predicate upper bound 与同轴 typed tensor extent 相等。只有该同轴 provenance 经已建模
 pointwise/broadcast 路径被 `mean` 消去时才映射为 `padded_mean_count_unproven`。该必要条件与
 consumer capability 仍分离：guard-bearing 与 cross-axis/general predicate 不成为 TypeCheck padding
-seed，未知 op 会停止 TypeCheck 的窄传播；v9 projector 对 guard/cross-axis 访问或 masked provenance
-进入未知 op 均显式 consumer-unsupported。fixed code 不补写 count、domain、predicate 或 reduction
-contract。
+seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 guard/cross-axis 访问或 masked
+provenance 进入未知 op 均显式 consumer-unsupported。v10 只增加上述 invocation-local、可证明全真的
+guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v2`，scalar RefEval 为
-`j_scalar_cpu_mlir_v9`。v9 完整继承 v8 的唯一 node-less logical-input load 能力，只新增上述通用
-multi-reduction padding closure；旧 v8 Gate2 receipt 与 `logical_domain_reduction_padding_v1`
-记录保持历史解释，不由 v9 追认或重判。
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v3`，scalar RefEval 为
+`j_scalar_cpu_mlir_v10`。v10 完整继承 v9 的唯一 node-less logical-input load 与通用 multi-reduction
+padding closure，只新增当前 Gate2 invocation 的 runtime predicate tautology proof。v3 projection 中
+对应的 invocation-local proof subreceipt 只含
+protocol、access id、J predicate digest、logical input refs 与 domain axes，不含 raw runtime value 或
+value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2
+receipt、functional-boundary v1/v2 与
+`logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v10/v3 追认或重判。
+
+CPU host pipeline 另在共享 `J -> Intent MLIR -> Intent-to-Linalg` 之后调度
+`expand-rsqrt-for-libm`，只将 `math.rsqrt(x)` 展开为 `1 / math.sqrt(x)`，以使用标准 host libm
+sqrt/sqrtf ABI。这是 CPU-only compatibility pass；共享 Intent lowering 与 GPU/target-neutral pipeline
+均不调度它，因此不改变 production/GPU 的 rsqrt lowering 选择。
 
 ## Production 要求
 
 - C 只影响已经由 pass contracts 判定为合法的 candidate 的初始化、搜索顺序、优先邻域与有限预算
   下的访问集合；不参与 legality，也不改变 J denotation；
-- production analyzer 必须先成功取得同一个 `P_B(J)` 才能发射 logical Intent MLIR；projection
-  失败不得继续 codegen；
+- production analyzer 必须先成功取得 value-free `P_B^prod(J)` 才能发射 logical Intent MLIR；projection
+  失败不得继续 codegen；该入口不接收 runtime logical values/dimensions，也不能消费 RefEval 的
+  invocation-local proof subreceipt；
 - lowerer 不理解某个 C slot 时可以采用保守实现或显式 unsupported，但不能从 π/Source 猜测；
 - 可选 `subject_ref/axis_ref` 只定位 prior；局部 slot 缺失/含混 attachment 时必须安全忽略，不能
   依靠 role-first、π 或 Source 猜测作用点；

@@ -7,7 +7,12 @@ import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.canonical_j import CanonicalJError, j_elaboration
-from intentir.ir.functional_boundary import functional_reduction_padding_issues
+from intentir.ir.functional_boundary import (
+    FUNCTIONAL_BOUNDARY_PROTOCOL,
+    RUNTIME_PREDICATE_PROOF_PROTOCOL,
+    functional_reduction_padding_issues,
+    project_functional_boundary,
+)
 from intentir.ir.model import IntentFunction, IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
@@ -257,6 +262,52 @@ def test_scalar_e_j_consumes_masked_sum_reduction_padding() -> None:
     )
     assert result.metadata["predicated_access_count"] == 1
     assert result.metadata["erased_fill_count"] == 1
+
+
+def test_refeval_runtime_logical_bound_preserves_reduction_padding_contract() -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"].append({"name": "limit", "dtype": "i32", "shape": []})
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            f"p{len(artifact.j.signature.parameters)}",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i32",
+            0,
+            logical_ref="limit",
+        )
+    )
+    artifact.j.boundary.accesses[0].predicate = "i1 < limit"
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input", "limit": "hidden_limit"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": value,
+            "hidden_limit": np.asarray(4, dtype=np.int32),
+        },
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(
+        result.outputs["output"],
+        np.sum(value * value, axis=1),
+    )
+    assert result.metadata["boundary_profile"] == (
+        "logical_domain_runtime_reduction_padding_v1"
+    )
+    assert result.metadata["runtime_predicate_proof_count"] == 1
+    assert result.metadata["boundary_projection"]["runtime_predicate_proofs"][
+        0
+    ]["access_id"] == "a0"
 
 
 @pytest.mark.parametrize(
@@ -521,7 +572,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v9"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v10"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -607,6 +658,297 @@ def _make_masked_identity_artifact():
     ]
     artifact.j.boundary.output_mappings = [OutputMapping("t1", "t0")]
     return artifact
+
+
+def _make_runtime_logical_mask_artifact(
+    *,
+    predicate: str = "i0 < limit",
+    limit_dtype: str = "i32",
+    guard: bool = False,
+):
+    artifact = _make_masked_identity_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"].append(
+        {"name": "limit", "dtype": limit_dtype, "shape": []}
+    )
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            limit_dtype,
+            0,
+            logical_ref="limit",
+        )
+    )
+    if guard:
+        payload["inputs"].append({"name": "flag", "dtype": "i1", "shape": []})
+        artifact.j.signature.parameters.append(
+            SignatureParameter(
+                "p4",
+                ParameterKind.SCALAR,
+                ParameterMode.VALUE,
+                "i1",
+                0,
+                logical_ref="flag",
+            )
+        )
+    artifact.j.intent = IntentFunction.from_json(payload)
+    for access in artifact.j.boundary.accesses:
+        access.predicate = predicate
+    return artifact
+
+
+def _runtime_logical_mask_spec(artifact) -> ScalarLoweringSpec:
+    input_bindings = {"t0": "input", "limit": "hidden_limit"}
+    if any(item.name == "flag" for item in artifact.j.intent.inputs):
+        input_bindings["flag"] = "hidden_flag"
+    return ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings=input_bindings,
+        output_bindings={"t1": "output"},
+    )
+
+
+@pytest.mark.parametrize("limit", [8, 13])
+def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) -> None:
+    artifact = _make_runtime_logical_mask_artifact()
+    spec = _runtime_logical_mask_spec(artifact)
+    value = np.arange(8, dtype=np.float32)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="cross-axis logical access predicates",
+    ):
+        project_functional_boundary(spec.j)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": value,
+            "hidden_limit": np.asarray(limit, dtype=np.int32),
+        },
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["output"], value)
+    projection = result.metadata["boundary_projection"]
+    assert projection["protocol"] == "intentir.j-functional-boundary.v3"
+    assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
+    assert result.metadata["boundary_profile"] == (
+        "logical_domain_runtime_mask_erasure_v1"
+    )
+    assert result.metadata["runtime_predicate_proof_count"] == 2
+    receipts = projection["runtime_predicate_proofs"]
+    assert [item["access_id"] for item in receipts] == ["a0", "a1"]
+    assert all(
+        item["protocol"] == RUNTIME_PREDICATE_PROOF_PROTOCOL
+        and item["proof"] == "closed_domain_tautology"
+        and item["logical_input_refs"] == ["limit"]
+        and item["domain_axes"] == ["i0"]
+        and "value" not in item
+        for item in receipts
+    )
+
+
+def test_refeval_runtime_rejects_logical_bound_short_of_closed_domain() -> None:
+    artifact = _make_runtime_logical_mask_artifact()
+    spec = _runtime_logical_mask_spec(artifact)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(7, dtype=np.int32),
+        },
+    )
+
+    assert not result.ok
+    assert result.unsupported
+    assert "cross-axis logical access predicates" in (result.error or "")
+    assert "7" not in (result.error or "")
+
+
+@pytest.mark.parametrize(
+    ("predicate", "flag", "accepted"),
+    [
+        ("flag and i0 < limit", True, True),
+        ("flag and i0 < limit", False, False),
+        ("not flag and i0 < limit", False, True),
+        ("not flag and i0 < limit", True, False),
+    ],
+)
+def test_refeval_runtime_guard_polarity_is_proved_not_erased(
+    predicate: str,
+    flag: bool,
+    accepted: bool,
+) -> None:
+    artifact = _make_runtime_logical_mask_artifact(
+        predicate=predicate,
+        guard=True,
+    )
+    spec = _runtime_logical_mask_spec(artifact)
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(8, dtype=np.int32),
+            "hidden_flag": np.asarray(flag, dtype=np.bool_),
+        },
+    )
+
+    assert result.ok is accepted
+    if accepted:
+        receipts = result.metadata["boundary_projection"][
+            "runtime_predicate_proofs"
+        ]
+        assert all(
+            item["logical_input_refs"] == ["flag", "limit"]
+            for item in receipts
+        )
+    else:
+        assert result.unsupported
+        assert "guard-bearing access predicates" in (result.error or "")
+        assert str(flag).lower() not in (result.error or "").lower()
+
+
+@pytest.mark.parametrize(
+    ("limit_dtype", "runtime_value"),
+    [
+        ("f32", np.asarray(8.0, dtype=np.float32)),
+        ("f32", np.asarray(np.nan, dtype=np.float32)),
+        ("i1", np.asarray(True, dtype=np.bool_)),
+        ("i32", np.asarray([8], dtype=np.int32)),
+    ],
+)
+def test_refeval_runtime_bound_requires_exact_rank_zero_integer_logical_input(
+    limit_dtype: str,
+    runtime_value: np.ndarray,
+) -> None:
+    artifact = _make_runtime_logical_mask_artifact(limit_dtype=limit_dtype)
+    spec = _runtime_logical_mask_spec(artifact)
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"input": np.arange(8, dtype=np.float32), "hidden_limit": runtime_value},
+    )
+
+    assert not result.ok
+    assert result.unsupported
+    assert "cross-axis logical access predicates" in (result.error or "")
+    assert "nan" not in (result.error or "").lower()
+
+
+def test_refeval_runtime_proves_each_store_predicate_independently() -> None:
+    artifact = _make_runtime_logical_mask_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"].append({"name": "short", "dtype": "i32", "shape": []})
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p4",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i32",
+            0,
+            logical_ref="short",
+        )
+    )
+    artifact.j.boundary.accesses[1].predicate = "i0 < short"
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={
+            "t0": "input",
+            "limit": "hidden_limit",
+            "short": "hidden_short",
+        },
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(8, dtype=np.int32),
+            "hidden_short": np.asarray(7, dtype=np.int32),
+        },
+    )
+
+    assert not result.ok
+    assert result.unsupported
+    assert "cross-axis logical access predicates" in (result.error or "")
+
+
+def test_refeval_runtime_rejects_predicate_axis_outside_direct_access() -> None:
+    artifact = _make_runtime_logical_mask_artifact(
+        predicate="i1 < limit",
+    )
+    spec = _runtime_logical_mask_spec(artifact)
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(8, dtype=np.int32),
+        },
+    )
+
+    assert not result.ok
+    assert result.unsupported
+    assert "cross-axis logical access predicates" in (result.error or "")
+
+
+def test_runtime_predicate_receipt_does_not_disclose_hidden_value() -> None:
+    artifact = _make_runtime_logical_mask_artifact()
+    spec = _runtime_logical_mask_spec(artifact)
+    hidden_value = 13
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(hidden_value, dtype=np.int32),
+        },
+    )
+
+    assert result.ok, result.error
+    receipts = result.metadata["boundary_projection"][
+        "runtime_predicate_proofs"
+    ]
+    assert receipts
+    assert all("value" not in receipt for receipt in receipts)
+    assert all(
+        hidden_value not in receipt.values()
+        for receipt in receipts
+    )
+
+
+def test_runtime_predicate_receipt_and_compile_identity_are_value_independent() -> None:
+    artifact = _make_runtime_logical_mask_artifact()
+    spec = _runtime_logical_mask_spec(artifact)
+    runner = ScalarLoweringRunner()
+    results = [
+        runner.run(
+            spec,
+            {
+                "input": np.arange(8, dtype=np.float32),
+                "hidden_limit": np.asarray(limit, dtype=np.int32),
+            },
+        )
+        for limit in (8, 13)
+    ]
+
+    assert all(result.ok for result in results)
+    assert results[0].metadata["scalar_spec_digest"] == results[1].metadata[
+        "scalar_spec_digest"
+    ]
+    assert results[0].metadata["boundary_digest"] == results[1].metadata[
+        "boundary_digest"
+    ]
+    assert results[0].metadata["boundary_projection"][
+        "runtime_predicate_proofs"
+    ] == results[1].metadata["boundary_projection"][
+        "runtime_predicate_proofs"
+    ]
 
 
 def test_scalar_e_j_erases_full_logical_domain_mask_for_identity() -> None:
@@ -707,7 +1049,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v9"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v10"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 

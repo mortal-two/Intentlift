@@ -7,8 +7,8 @@ order of independent pure operations.  This module implements that deliberately
 small boundary:
 
 * parse the public ``tt.func`` runtime ABI and infer pointer access modes;
-* build an SSA producer/consumer graph, including ``tt.reduce`` regions and
-  ``scf.for`` loop-carried values;
+* build an SSA producer/consumer graph, including typed ``tt.reduce``/
+  ``tt.scan`` regions and ``scf.for`` loop-carried values;
 * canonicalize commutative operands and bounded comparison rewrites;
 * record reductions, masked memory effects and fills, dots, loops, and effects;
 * emit an immutable, JSON-serializable fingerprint.
@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v5"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v6"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -72,7 +72,144 @@ _COMMUTATIVE_OPS = {
     "arith.ori",
     "arith.xori",
 }
-_TERMINATORS = {"tt.return", "tt.reduce.return", "scf.yield"}
+_REGION_OWNERS = {"tt.reduce", "tt.scan", "scf.for"}
+_REGION_TERMINATORS = {"tt.reduce.return", "tt.scan.return", "scf.yield"}
+_EXPECTED_REGION_TERMINATOR = {
+    "tt.reduce": "tt.reduce.return",
+    "tt.scan": "tt.scan.return",
+    "scf.for": "scf.yield",
+}
+_TERMINATORS = {"tt.return", *_REGION_TERMINATORS}
+_KNOWN_PURE_OPS = {
+    # Pinned pure Arith operations observed in the corpus or emitted by the
+    # supported bounded normalizations.  Dialect prefixes are intentionally
+    # not trusted: a future ``arith.*`` spelling is unsupported until it is
+    # classified here.
+    "arith.addf",
+    "arith.addi",
+    "arith.andi",
+    "arith.bitcast",
+    "arith.cmpf",
+    "arith.cmpi",
+    "arith.constant",
+    "arith.divf",
+    "arith.divsi",
+    "arith.divui",
+    "arith.extf",
+    "arith.extsi",
+    "arith.extui",
+    "arith.floordivsi",
+    "arith.fptosi",
+    "arith.fptoui",
+    "arith.index_cast",
+    "arith.index_castui",
+    "arith.maximumf",
+    "arith.maxf",
+    "arith.maxnumf",
+    "arith.maxsi",
+    "arith.maxui",
+    "arith.minimumf",
+    "arith.minf",
+    "arith.minnumf",
+    "arith.minsi",
+    "arith.minui",
+    "arith.mulf",
+    "arith.muli",
+    "arith.negf",
+    "arith.ori",
+    "arith.remsi",
+    "arith.remui",
+    "arith.select",
+    "arith.shli",
+    "arith.shrsi",
+    "arith.shrui",
+    "arith.sitofp",
+    "arith.subf",
+    "arith.subi",
+    "arith.truncf",
+    "arith.trunci",
+    "arith.uitofp",
+    "arith.xori",
+    # Pinned pure Math operations.  Keep this explicit for the same reason.
+    "math.absf",
+    "math.absi",
+    "math.acos",
+    "math.asin",
+    "math.atan",
+    "math.atan2",
+    "math.cbrt",
+    "math.ceil",
+    "math.copysign",
+    "math.cos",
+    "math.erf",
+    "math.exp",
+    "math.exp2",
+    "math.expm1",
+    "math.floor",
+    "math.fma",
+    "math.log",
+    "math.log10",
+    "math.log1p",
+    "math.log2",
+    "math.powf",
+    "math.round",
+    "math.roundeven",
+    "math.rsqrt",
+    "math.sin",
+    "math.sqrt",
+    "math.tan",
+    "math.tanh",
+    "math.trunc",
+    # Structured owners are pure only when every operation in their nested
+    # region is accepted by this same closed check.
+    "scf.for",
+    "tt.reduce",
+    "tt.scan",
+    "tt.return",
+    *_REGION_TERMINATORS,
+    # Triton value/address constructors.  Loads, stores, atomics,
+    # descriptors, barriers, assertions, and other observable operations are
+    # deliberately absent.
+    "tt.addptr",
+    "tt.advance",
+    "tt.bitcast",
+    "tt.broadcast",
+    "tt.cat",
+    "tt.clamp",
+    "tt.dot",
+    "tt.expand_dims",
+    "tt.fp_to_fp",
+    "tt.get_num_programs",
+    "tt.get_program_id",
+    "tt.join",
+    "tt.make_range",
+    "tt.make_tensor_descriptor",
+    "tt.precise_divf",
+    "tt.precise_sqrt",
+    "tt.reshape",
+    "tt.split",
+    "tt.splat",
+    "tt.trans",
+}
+_KNOWN_EFFECT_OPS = {
+    "gpu.barrier",
+    "gpu.wait",
+    "tt.assert",
+    "tt.async_wait",
+    "tt.atomic_cas",
+    "tt.atomic_rmw",
+    "tt.barrier",
+    "tt.debug_barrier",
+    "tt.descriptor_gather",
+    "tt.descriptor_load",
+    "tt.descriptor_reduce",
+    "tt.descriptor_scatter",
+    "tt.descriptor_store",
+    "tt.device_assert",
+    "tt.load",
+    "tt.print",
+    "tt.store",
+}
 _CMP_FLIPS = {
     "sgt": "slt",
     "sge": "sle",
@@ -198,6 +335,26 @@ def _canonical_attrs(text: str) -> tuple[tuple[str, str], ...]:
         else:
             attrs.append((_normalize_space(item), ""))
     return tuple(sorted(attrs))
+
+
+def _validate_attribute_dictionary(
+    text: str, *, context: str
+) -> tuple[tuple[str, str], ...]:
+    """Parse one pinned bare-name attr dictionary and reject duplicates."""
+
+    attrs = _canonical_attrs(text)
+    seen: set[str] = set()
+    for name, _value in attrs:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", name) is None:
+            raise TTIRParseError(
+                f"{context} has malformed attribute name {name!r}"
+            )
+        if name in seen:
+            raise TTIRParseError(
+                f"{context} repeats attribute {name!r}"
+            )
+        seen.add(name)
+    return attrs
 
 
 def _pointer_dtype(type_text: str) -> str | None:
@@ -372,6 +529,7 @@ class _Operation:
     local_signature: str
     context: tuple[int, ...]
     axis: int | None = None
+    reverse: bool | None = None
     cmp_predicate: str | None = None
     cmp_flipped: bool = False
     header_operand_count: int = 0
@@ -381,6 +539,7 @@ class _Operation:
     callee: str | None = None
     call_operand_types: tuple[str, ...] = ()
     call_result_types: tuple[str, ...] = ()
+    terminator_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -436,7 +595,14 @@ def _parse_function_definition(text: str, match: re.Match[str]) -> _FunctionPart
             type_text = rest[:attr_start]
             attrs = _canonical_attrs(rest[attr_start : attr_end + 1])
         arguments.append(
-            (argument_match.group("name"), _normalize_space(type_text), attrs)
+            (
+                argument_match.group("name"),
+                _validate_closed_type(
+                    type_text,
+                    context=f"tt.func argument {argument_match.group('name')}",
+                ),
+                attrs,
+            )
         )
 
     # The first brace after the argument list can be the function attribute
@@ -465,11 +631,19 @@ def _parse_function_definition(text: str, match: re.Match[str]) -> _FunctionPart
         result_text = result_text[2:].strip()
         if result_text.startswith("(") and result_text.endswith(")"):
             results = tuple(
-                _normalize_space(item)
+                _validate_closed_type(
+                    item,
+                    context=f"tt.func @{_symbol_value(match.group('name'))} result",
+                )
                 for item in _split_top_level(result_text[1:-1])
             )
         else:
-            results = (_normalize_space(result_text),)
+            results = (
+                _validate_closed_type(
+                    result_text,
+                    context=f"tt.func @{_symbol_value(match.group('name'))} result",
+                ),
+            )
     else:
         results = ()
     return _FunctionParts(
@@ -509,7 +683,7 @@ def _parse_function(text: str) -> _FunctionParts:
 
 
 def _validate_function_metadata_boundary(function: _FunctionParts) -> None:
-    """Validate the closed function-metadata boundary for TTIR v5."""
+    """Validate the closed function-metadata boundary for TTIR v6."""
 
     if function.visibility != "public":
         for position, (_, _, attributes) in enumerate(function.arguments):
@@ -582,7 +756,9 @@ def _parse_results(lhs: str) -> tuple[str, ...]:
     return tuple(results)
 
 
-def _operation_head(line: str) -> tuple[tuple[str, ...], str, str] | None:
+def _operation_head(
+    line: str,
+) -> tuple[tuple[str, ...], str, str, bool] | None:
     stripped = line.strip()
     if not stripped or stripped.startswith(("^", "}", ")", "module", "tt.func")):
         return None
@@ -600,7 +776,91 @@ def _operation_head(line: str) -> tuple[tuple[str, ...], str, str] | None:
     name = token.strip('"')
     if "." not in name:
         return None
-    return lhs, name, tail[match.end() :].strip()
+    return lhs, name, tail[match.end() :].strip(), token.startswith('"')
+
+
+def _validate_quoted_generic_shell(
+    name: str,
+    tail: str,
+    *,
+    result_count: int,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Validate the closed, region-free MLIR generic-operation shell.
+
+    Gate1 validates syntax before applying its closed operation/effect
+    classification.  Merely recognizing ``"dialect.op"`` is insufficient:
+    accepting arbitrary trailing prose would make malformed TTIR
+    indistinguishable from a well-formed but observer-unsupported operation.
+
+    Region owners are parsed by their dedicated structured parsers, so this
+    helper intentionally accepts only the region-free spelling
+    ``(%operands) [<{properties}>] [{attributes}] : inputs -> results``.
+    """
+
+    stripped = tail.strip()
+    if not stripped.startswith("("):
+        raise TTIRParseError(
+            f'quoted generic operation "{name}" is missing its operand list'
+        )
+    operands_close = _balanced_end(stripped, 0, "(", ")")
+    operand_items = _split_top_level(stripped[1:operands_close])
+    for index, item in enumerate(operand_items):
+        if _SSA_RE.fullmatch(item) is None:
+            raise TTIRParseError(
+                f'quoted generic operation "{name}" operand {index} is not '
+                f"one SSA value: {item!r}"
+            )
+
+    remainder = stripped[operands_close + 1 :].strip()
+    colon = _find_top_level_token(remainder, ":", last=True)
+    if colon is None:
+        raise TTIRParseError(
+            f'quoted generic operation "{name}" is missing its explicit '
+            "function type"
+        )
+    prefix = remainder[:colon].strip()
+    signature = remainder[colon + 1 :].strip()
+
+    # Properties and attributes are both optional, but their order and
+    # delimiters are part of the pinned generic syntax.  No unparsed token is
+    # allowed between the operand list and the type contract.
+    if prefix.startswith("<"):
+        properties_close = _balanced_end(prefix, 0, "<", ">")
+        properties = prefix[: properties_close + 1]
+        if not (properties.startswith("<{") and properties.endswith("}>")):
+            raise TTIRParseError(
+                f'quoted generic operation "{name}" has malformed properties'
+            )
+        _validate_attribute_dictionary(
+            properties[1:-1],
+            context=f'quoted generic operation "{name}" properties',
+        )
+        prefix = prefix[properties_close + 1 :].strip()
+    if prefix.startswith("{"):
+        attributes_close = _balanced_end(prefix, 0, "{", "}")
+        _validate_attribute_dictionary(
+            prefix[: attributes_close + 1],
+            context=f'quoted generic operation "{name}" attributes',
+        )
+        prefix = prefix[attributes_close + 1 :].strip()
+    if prefix:
+        raise TTIRParseError(
+            f'quoted generic operation "{name}" has unsupported or malformed '
+            f"trailing syntax before its type: {prefix!r}"
+        )
+
+    input_types, result_types = _functional_types(
+        signature, context=f'quoted generic operation "{name}"'
+    )
+    if len(input_types) != len(operand_items):
+        raise TTIRParseError(
+            f'quoted generic operation "{name}" operand/type arity mismatch'
+        )
+    if len(result_types) != result_count:
+        raise TTIRParseError(
+            f'quoted generic operation "{name}" result/type arity mismatch'
+        )
+    return tuple(operand_items), input_types, result_types
 
 
 def _parse_call_contract(
@@ -702,6 +962,46 @@ def _find_top_level_token(text: str, token: str, *, last: bool = False) -> int |
     return found
 
 
+def _validate_closed_type(type_text: str, *, context: str) -> str:
+    """Validate the encodingless, alias-free type boundary observed by Gate1.
+
+    TTIR v6 deliberately does not interpret module-level type/encoding aliases.
+    Accepting only their use-site spelling would let two different alias
+    definitions hard-pass, so every proof-relevant type must be self-contained.
+    Pinned TTIR is pre-layout and therefore needs no ranked-tensor encoding.
+    """
+
+    normalized = _normalize_space(type_text)
+    if not normalized:
+        raise TTIRParseError(f"{context} has an empty type")
+    if re.search(r"#[A-Za-z_][A-Za-z0-9_.$-]*", normalized) is not None:
+        raise TTIRParseError(
+            f"{context} uses a module-level type/encoding alias; tensor "
+            "encodings are unsupported and Gate1 v6 requires self-contained "
+            "encodingless TTIR types"
+        )
+    if re.search(r"\s", normalized) is not None:
+        raise TTIRParseError(
+            f"{context} has unsupported trailing or compound type syntax: "
+            f"{normalized!r}"
+        )
+    cursor = 0
+    while True:
+        marker = normalized.find("tensor<", cursor)
+        if marker < 0:
+            break
+        opening = marker + len("tensor")
+        closing = _balanced_end(normalized, opening, "<", ">")
+        pieces = _split_top_level(normalized[opening + 1 : closing])
+        if len(pieces) != 1:
+            raise TTIRParseError(
+                f"{context} uses a ranked-tensor encoding; Gate1 v6 "
+                "requires encodingless TTIR types"
+            )
+        cursor = closing + 1
+    return normalized
+
+
 def _declared_types(text: str) -> tuple[str, ...]:
     text = text.strip()
     if not text or text == "()":
@@ -711,7 +1011,245 @@ def _declared_types(text: str) -> tuple[str, ...]:
         if text[closing + 1 :].strip():
             raise TTIRParseError(f"trailing syntax after type list {text!r}")
         text = text[1:closing]
-    return tuple(_normalize_space(item) for item in _split_top_level(text))
+    return tuple(
+        _validate_closed_type(item, context="explicit operation type")
+        for item in _split_top_level(text)
+    )
+
+
+def _functional_types(
+    text: str, *, context: str
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Parse one explicit ``inputs -> results`` MLIR type contract."""
+
+    signature = text.strip()
+    arrow = _find_top_level_token(signature, "->")
+    if arrow is None:
+        raise TTIRParseError(f"{context} is missing its explicit function type")
+    if _find_top_level_token(signature[arrow + 2 :], "->") is not None:
+        raise TTIRParseError(f"{context} has more than one result arrow")
+    input_text = signature[:arrow].strip()
+    if not input_text.startswith("("):
+        raise TTIRParseError(
+            f"{context} function type inputs must use an explicit tuple"
+        )
+    input_close = _balanced_end(input_text, 0, "(", ")")
+    if input_text[input_close + 1 :].strip():
+        raise TTIRParseError(
+            f"{context} has trailing syntax after its input type tuple"
+        )
+    inputs = _declared_types(input_text)
+    results = _declared_types(signature[arrow + 2 :])
+    return inputs, results
+
+
+def _ranked_tensor_contract(
+    type_text: str | None,
+) -> tuple[tuple[str, ...], str, tuple[str, ...]] | None:
+    """Return ``(shape, element, encoding)`` for a ranked tensor type.
+
+    This deliberately recognizes only the closed ranked-tensor spelling used
+    by pinned Triton TTIR.  It is not a general MLIR type parser.
+    """
+
+    if type_text is None:
+        return None
+    normalized = _normalize_space(type_text)
+    if not normalized.startswith("tensor<"):
+        return None
+    opening = normalized.find("<")
+    try:
+        closing = _balanced_end(normalized, opening, "<", ">")
+    except TTIRParseError:
+        return None
+    if normalized[closing + 1 :].strip():
+        return None
+    pieces = _split_top_level(normalized[opening + 1 : closing])
+    if not pieces:
+        return None
+    if len(pieces) != 1:
+        # Gate1 v6 does not parse module-level encoding aliases or prove their
+        # denotation.  Comparing only alias spellings would let two different
+        # layouts hard-pass, so the pinned scan subset is explicitly
+        # encodingless.
+        raise TTIRParseError(
+            "tt.scan tensor encodings are unsupported by Gate1 v6; inputs "
+            "and results must be encodingless"
+        )
+    shaped = _split_top_level(pieces[0], delimiter="x")
+    if not shaped:
+        return None
+    dimensions = tuple(_normalize_space(item) for item in shaped[:-1])
+    if any(re.fullmatch(r"(?:\?|[0-9]+)", item) is None for item in dimensions):
+        return None
+    element = _normalize_space(shaped[-1])
+    if not element:
+        return None
+    return dimensions, element, ()
+
+
+def _parse_scan_header(
+    tail: str,
+) -> tuple[list[str], int, bool]:
+    """Parse Triton 3.6's quoted-generic ``tt.scan`` opening line.
+
+    ``tt.scan`` has no custom assembly format in Triton 3.6.  The pinned
+    compiler emits the operand list, a closed property dictionary containing
+    exactly ``axis`` and ``reverse``, and then the single combine region.
+    """
+
+    stripped = tail.strip()
+    if not stripped.startswith("("):
+        raise TTIRParseError("generic tt.scan is missing its operand list")
+    operands_close = _balanced_end(stripped, 0, "(", ")")
+    operand_items = _split_top_level(stripped[1:operands_close])
+    if not operand_items:
+        raise TTIRParseError("tt.scan must have at least one input")
+    operands: list[str] = []
+    for index, item in enumerate(operand_items):
+        if _SSA_RE.fullmatch(item) is None:
+            raise TTIRParseError(
+                f"tt.scan operand {index} is not one SSA value: {item!r}"
+            )
+        operands.append(item)
+
+    remainder = stripped[operands_close + 1 :].strip()
+    if not remainder.startswith("<{"):
+        raise TTIRParseError(
+            "tt.scan requires the Triton 3.6 <{axis, reverse}> property dictionary"
+        )
+    properties_close = _balanced_end(remainder, 0, "<", ">")
+    properties_text = remainder[1:properties_close]
+    properties = _canonical_attrs(properties_text)
+    if len(properties) != 2 or {name for name, _ in properties} != {
+        "axis",
+        "reverse",
+    }:
+        raise TTIRParseError(
+            "tt.scan properties must contain exactly one axis and one reverse"
+        )
+    property_map = dict(properties)
+    axis_match = re.fullmatch(r"(-?[0-9]+):i32", property_map["axis"])
+    if axis_match is None:
+        raise TTIRParseError("tt.scan axis must be an explicit i32 integer")
+    reverse_text = property_map["reverse"]
+    if reverse_text not in {"false", "true"}:
+        raise TTIRParseError("tt.scan reverse must be an explicit boolean")
+
+    region_open = _normalize_space(remainder[properties_close + 1 :])
+    if region_open != "({":
+        raise TTIRParseError(
+            "tt.scan must have exactly one quoted-generic combine region"
+        )
+    return operands, int(axis_match.group(1)), reverse_text == "true"
+
+
+def _parse_reduce_header(tail: str) -> tuple[list[str], int]:
+    """Parse Triton 3.6's quoted-generic ``tt.reduce`` opening line."""
+
+    stripped = tail.strip()
+    if not stripped.startswith("("):
+        raise TTIRParseError("generic tt.reduce is missing its operand list")
+    operands_close = _balanced_end(stripped, 0, "(", ")")
+    operand_items = _split_top_level(stripped[1:operands_close])
+    if not operand_items:
+        raise TTIRParseError("tt.reduce must have at least one input")
+    operands: list[str] = []
+    for index, item in enumerate(operand_items):
+        if _SSA_RE.fullmatch(item) is None:
+            raise TTIRParseError(
+                f"tt.reduce operand {index} is not one SSA value: {item!r}"
+            )
+        operands.append(item)
+
+    remainder = stripped[operands_close + 1 :].strip()
+    if not remainder.startswith("<{"):
+        raise TTIRParseError(
+            "tt.reduce requires the Triton 3.6 <{axis}> property dictionary"
+        )
+    properties_close = _balanced_end(remainder, 0, "<", ">")
+    properties = _validate_attribute_dictionary(
+        remainder[1:properties_close],
+        context="tt.reduce properties",
+    )
+    if len(properties) != 1 or properties[0][0] != "axis":
+        raise TTIRParseError("tt.reduce properties must contain exactly one axis")
+    axis_match = re.fullmatch(r"(-?[0-9]+):i32", properties[0][1])
+    if axis_match is None:
+        raise TTIRParseError("tt.reduce axis must be an explicit i32 integer")
+    if _normalize_space(remainder[properties_close + 1 :]) != "({":
+        raise TTIRParseError(
+            "tt.reduce must have exactly one quoted-generic combine region"
+        )
+    return operands, int(axis_match.group(1))
+
+
+def _parse_typed_terminator(
+    name: str,
+    tail: str,
+    *,
+    allow_empty: bool,
+) -> tuple[list[str], tuple[str, ...]]:
+    """Parse one exact pinned custom terminator shell."""
+
+    stripped = tail.strip()
+    if not stripped:
+        if allow_empty:
+            return [], ()
+        raise TTIRParseError(f"{name} requires at least one returned SSA value")
+    if "{" in stripped or "}" in stripped:
+        raise TTIRParseError(
+            f"{name} attributes are unsupported by Gate1's pinned terminator shell"
+        )
+    colon = _find_top_level_token(stripped, ":", last=True)
+    if colon is None:
+        raise TTIRParseError(f"{name} is missing its explicit result types")
+    operand_text = stripped[:colon].strip()
+    type_text = stripped[colon + 1 :].strip()
+    if not type_text:
+        raise TTIRParseError(f"{name} is missing its explicit result types")
+    if type_text.startswith("("):
+        raise TTIRParseError(
+            f"{name} custom result types must be an unparenthesized list"
+        )
+
+    if (
+        not operand_text
+        or operand_text.startswith(",")
+        or operand_text.endswith(",")
+        or re.search(r",\s*,", operand_text) is not None
+    ):
+        raise TTIRParseError(
+            f"{name} requires a non-empty comma-separated operand list"
+        )
+    operand_items = _split_top_level(operand_text)
+    if not operand_items or any(not item.strip() for item in operand_items):
+        raise TTIRParseError(
+            f"{name} requires a non-empty comma-separated operand list"
+        )
+    operands: list[str] = []
+    for index, item in enumerate(operand_items):
+        item = item.strip()
+        if _SSA_RE.fullmatch(item) is None:
+            raise TTIRParseError(
+                f"{name} operand {index} is not one SSA value: {item!r}"
+            )
+        operands.append(item)
+
+    declared = _declared_types(type_text)
+    if len(declared) != len(operands):
+        raise TTIRParseError(f"{name} SSA/type arity mismatch")
+    return operands, declared
+
+
+def _parse_scan_return(
+    tail: str,
+) -> tuple[list[str], tuple[str, ...]]:
+    """Parse the exact Triton 3.6 custom ``tt.scan.return`` spelling."""
+
+    return _parse_typed_terminator(
+        "tt.scan.return", tail, allow_empty=False
+    )
 
 
 def _trailing_type_signature(tail: str) -> str | None:
@@ -810,6 +1348,22 @@ def _operation_result_types(
             operand_types[0] if operand_types else None
         )
         return (inferred,) if result_count == 1 else (None,) * result_count
+    if name == "arith.select":
+        inferred = operand_types[1] if len(operand_types) >= 3 else None
+        if (
+            inferred is None
+            or operand_types[2] != inferred
+            or result_count != 1
+        ):
+            return (None,) * result_count
+        signature = _trailing_type_signature(tail)
+        if signature is None:
+            return (None,)
+        declared = _declared_types(signature)
+        expected = (operand_types[0], inferred)
+        if None in expected or declared != expected:
+            return (None,)
+        return (inferred,)
 
     signature = _trailing_type_signature(tail)
     if signature is None:
@@ -1062,7 +1616,9 @@ def _local_signature(name: str, tail: str) -> str:
     return _normalize_space(f"{name} {erased}")
 
 
-def _parse_for_header(tail: str) -> tuple[list[str], list[str]]:
+def _parse_for_header(
+    tail: str,
+) -> tuple[list[str], list[str], str, tuple[str, ...]]:
     match = re.match(
         r"(?P<iv>%[A-Za-z0-9_.$-]+)\s*=\s*(?P<lower>%[A-Za-z0-9_.$-]+)"
         r"\s+to\s+(?P<upper>%[A-Za-z0-9_.$-]+)\s+step\s+"
@@ -1073,12 +1629,30 @@ def _parse_for_header(tail: str) -> tuple[list[str], list[str]]:
         raise TTIRParseError(f"cannot parse scf.for header: {tail!r}")
     operands = [match.group("lower"), match.group("upper"), match.group("step")]
     block_args = [match.group("iv")]
-    rest = match.group("rest")
-    marker = re.search(r"\biter_args\s*\(", rest)
-    if marker:
-        opening = rest.find("(", marker.start())
+    rest = match.group("rest").strip()
+    if not rest.endswith("{"):
+        raise TTIRParseError("scf.for header must end with exactly one body opener")
+    rest = rest[:-1].strip()
+    colon = _find_top_level_token(rest, ":", last=True)
+    if colon is None:
+        raise TTIRParseError("scf.for header is missing its induction type")
+    prefix = rest[:colon].strip()
+    induction_type = _validate_closed_type(
+        rest[colon + 1 :], context="scf.for induction type"
+    )
+    result_types: tuple[str, ...] = ()
+    if prefix:
+        marker = re.match(r"iter_args\s*\(", prefix)
+        if marker is None:
+            raise TTIRParseError(
+                f"scf.for has unsupported trailing header syntax {prefix!r}"
+            )
+        opening = prefix.find("(", marker.start())
         closing = _balanced_end(rest, opening, "(", ")")
-        for item in _split_top_level(rest[opening + 1 : closing]):
+        items = _split_top_level(prefix[opening + 1 : closing])
+        if not items:
+            raise TTIRParseError("scf.for iter_args must not be empty")
+        for item in items:
             pair = re.fullmatch(
                 r"(?P<arg>%[A-Za-z0-9_.$-]+)\s*=\s*(?P<init>%[A-Za-z0-9_.$-]+)",
                 item,
@@ -1087,7 +1661,17 @@ def _parse_for_header(tail: str) -> tuple[list[str], list[str]]:
                 raise TTIRParseError(f"cannot parse scf.for iter_arg: {item!r}")
             block_args.append(pair.group("arg"))
             operands.append(pair.group("init"))
-    return operands, block_args
+        suffix = prefix[closing + 1 :].strip()
+        if not suffix.startswith("->"):
+            raise TTIRParseError("scf.for iter_args require explicit result types")
+        result_text = suffix[2:].strip()
+        if not result_text.startswith("("):
+            raise TTIRParseError("scf.for result types must use an explicit tuple")
+        result_close = _balanced_end(result_text, 0, "(", ")")
+        if result_text[result_close + 1 :].strip():
+            raise TTIRParseError("scf.for has trailing syntax after result types")
+        result_types = _declared_types(result_text[: result_close + 1])
+    return operands, block_args, induction_type, result_types
 
 
 _BLOCK_HEADER_RE = re.compile(
@@ -1111,7 +1695,10 @@ def _parse_block_header(line: str) -> tuple[str, tuple[tuple[str, str], ...]] | 
         arguments.append(
             (
                 argument.group("name"),
-                _normalize_space(argument.group("type")),
+                _validate_closed_type(
+                    argument.group("type"),
+                    context=f"region block argument {argument.group('name')}",
+                ),
             )
         )
     return match.group("label"), tuple(arguments)
@@ -1125,19 +1712,29 @@ def _parse_block_args(line: str) -> list[str]:
 
 
 def _operation_has_effect(operation: _Operation) -> bool:
-    """Return whether an operation participates in lexical effect order."""
+    """Classify one operation under Gate1's closed effect contract.
 
-    return (
-        operation.name in {
-            "tt.load",
-            "tt.store",
-            "tt.assert",
-            "tt.device_assert",
-            "gpu.wait",
-            "tt.async_wait",
-        }
-        or operation.name.startswith("tt.atomic")
-        or "barrier" in operation.name
+    Returning ``False`` is a positive purity claim, not the absence of a match
+    in an effect denylist.  Unknown operations are observer-unsupported at
+    every nesting level because otherwise reordering two future effectful ops
+    could hard-pass before Gate1 learns their semantics.
+    """
+
+    if operation.name in {
+        "tt.extern_elementwise",
+        "tt.elementwise_inline_asm",
+    }:
+        pure = re.search(r"\bpure=(true|false)\b", operation.local_signature)
+        # Missing/unknown conditional-purity metadata is outside the closed
+        # observer boundary and is conservatively effectful.
+        return pure is None or pure.group(1) != "true"
+    if operation.name in _KNOWN_EFFECT_OPS:
+        return True
+    if operation.name in _KNOWN_PURE_OPS:
+        return False
+    raise TTIRParseError(
+        f"unclassified operation {operation.name} is outside Gate1's closed "
+        "operation/effect profile"
     )
 
 
@@ -1197,6 +1794,19 @@ class TTIRParser:
         schedule: Mapping[str, Any] | None = None,
     ) -> TTIRFingerprint:
         cleaned = _strip_locations(text)
+        # Module type aliases are definitions, while proof-relevant use sites
+        # carry only the alias spelling.  Ignoring the definition would let a
+        # source/replay pair keep ``!alias`` unchanged while changing its
+        # denotation.  Gate1 v6 does not elaborate MLIR aliases, so reject the
+        # entire closed profile before parsing any interface or operation type.
+        if re.search(
+            r"(?m)^\s*![A-Za-z_][A-Za-z0-9_.$-]*\s*=\s*type(?:\s|$)",
+            cleaned,
+        ) is not None:
+            raise TTIRParseError(
+                "module-level type aliases are unsupported by Gate1 v6; "
+                "proof-relevant types must be self-contained"
+            )
         functions = _parse_functions(cleaned)
         function = next(
             item for item in functions.values() if item.visibility == "public"
@@ -1230,12 +1840,14 @@ class TTIRParser:
         }
         region_stack: list[tuple[int, int]] = []
         region_block_counts: dict[int, int] = {}
+        scan_return_types: dict[int, tuple[str, ...]] = {}
+        region_terminator_types: dict[int, tuple[str, ...]] = {}
         # One lexical binding map for the function and one for every active
         # operation region.  MLIR SSA names need only be unique within their
-        # region; sibling scf.for/tt.reduce bodies may legally reuse spellings
-        # such as ``%n_offset``.  Internal qualified keys keep the existing
-        # fingerprint graph globally addressable without exposing SSA spelling
-        # in the final fingerprint.
+        # region; sibling scf.for/tt.reduce/tt.scan bodies may legally reuse
+        # spellings such as ``%n_offset``.  Internal qualified keys keep the
+        # existing fingerprint graph globally addressable without exposing SSA
+        # spelling in the final fingerprint.
         scope_bindings: list[dict[str, str]] = [
             {name: name for name, _, _ in function.arguments}
         ]
@@ -1275,15 +1887,391 @@ class TTIRParser:
             # check emits a deterministic parse error with useful context.
             return name
 
+        def close_scan_region(
+            owner_id: int, closing_text: str, *, line_number: int
+        ) -> None:
+            operation = operations[owner_id]
+            if not closing_text.startswith("})"):
+                raise TTIRParseError(
+                    f"line {line_number}: tt.scan must close its quoted-generic region"
+                )
+            suffix = closing_text[2:].strip()
+            if not suffix.startswith(":"):
+                raise TTIRParseError(
+                    f"line {line_number}: tt.scan is missing its explicit function type"
+                )
+            declared_inputs, declared_results = _functional_types(
+                suffix[1:], context="tt.scan"
+            )
+            input_count = len(operation.operands)
+            if input_count < 1:
+                raise TTIRParseError("tt.scan must have at least one input")
+            if len(operation.result_names) != input_count:
+                raise TTIRParseError(
+                    "tt.scan must have the same number of SSA results as inputs"
+                )
+            if len(declared_inputs) != input_count:
+                raise TTIRParseError(
+                    "tt.scan explicit input type arity does not match its operands"
+                )
+            if len(declared_results) != input_count:
+                raise TTIRParseError(
+                    "tt.scan explicit result type arity does not match its inputs"
+                )
+
+            actual_inputs = tuple(value_types.get(name) for name in operation.operands)
+            if any(type_text is None for type_text in actual_inputs):
+                raise TTIRParseError("tt.scan input SSA type cannot be established")
+            normalized_actual_inputs = tuple(
+                _normalize_space(type_text)
+                for type_text in actual_inputs
+                if type_text is not None
+            )
+            if declared_inputs != normalized_actual_inputs:
+                raise TTIRParseError(
+                    "tt.scan explicit input types do not match actual SSA types"
+                )
+            if declared_results != declared_inputs:
+                raise TTIRParseError(
+                    "tt.scan result type must match the corresponding input type"
+                )
+
+            tensor_contracts = tuple(
+                _ranked_tensor_contract(type_text)
+                for type_text in declared_inputs
+            )
+            if any(contract is None for contract in tensor_contracts):
+                raise TTIRParseError("tt.scan inputs and results must be ranked tensors")
+            checked_contracts = tuple(
+                contract for contract in tensor_contracts if contract is not None
+            )
+            first_shape, _, first_encoding = checked_contracts[0]
+            if any(
+                shape != first_shape or encoding != first_encoding
+                for shape, _, encoding in checked_contracts[1:]
+            ):
+                raise TTIRParseError(
+                    "tt.scan inputs and results must have one common shape and encoding"
+                )
+            if operation.axis is None:
+                raise TTIRParseError("tt.scan is missing its axis property")
+            if not 0 <= operation.axis < len(first_shape):
+                raise TTIRParseError(
+                    f"tt.scan axis {operation.axis} is outside rank {len(first_shape)}"
+                )
+            if operation.reverse is None:
+                raise TTIRParseError("tt.scan is missing its reverse property")
+
+            if region_block_counts.get(owner_id, 0) != 1:
+                raise TTIRParseError("tt.scan must contain exactly one combine block")
+            expected_block_types = tuple(
+                [contract[1] for contract in checked_contracts] * 2
+            )
+            actual_block_types = tuple(
+                value_types.get(name) for name in operation.region_block_args
+            )
+            if len(actual_block_types) != 2 * input_count:
+                raise TTIRParseError(
+                    "tt.scan combine block must take exactly 2N ordered arguments"
+                )
+            if actual_block_types != expected_block_types:
+                raise TTIRParseError(
+                    "tt.scan combine block argument types must be ordered lhs[0:N], "
+                    "rhs[0:N]"
+                )
+
+            declared_returns = scan_return_types.get(owner_id)
+            if declared_returns is None:
+                raise TTIRParseError(
+                    "tt.scan combine block must end with exactly one tt.scan.return"
+                )
+            if len(operation.region_results) != input_count:
+                raise TTIRParseError(
+                    "tt.scan.return must return exactly one value per scan input"
+                )
+            actual_return_types = tuple(
+                value_types.get(name) for name in operation.region_results
+            )
+            expected_return_types = tuple(
+                contract[1] for contract in checked_contracts
+            )
+            if any(type_text is None for type_text in actual_return_types):
+                raise TTIRParseError(
+                    "tt.scan.return operand SSA type cannot be established"
+                )
+            if declared_returns != expected_return_types:
+                raise TTIRParseError(
+                    "tt.scan.return explicit types do not match scan element types"
+                )
+            if actual_return_types != expected_return_types:
+                raise TTIRParseError(
+                    "tt.scan.return actual SSA types do not match scan element types"
+                )
+
+            for result, type_text in zip(
+                operation.result_names, declared_results, strict=True
+            ):
+                value_types[result] = type_text
+            operation.local_signature = _normalize_space(
+                "tt.scan "
+                f"axis={operation.axis}:i32 "
+                f"reverse={'true' if operation.reverse else 'false'} "
+                f":({','.join(declared_inputs)})->"
+                f"({','.join(declared_results)})"
+            )
+
+        def close_reduce_region(
+            owner_id: int, closing_text: str, *, line_number: int
+        ) -> None:
+            operation = operations[owner_id]
+            if not closing_text.startswith("})"):
+                raise TTIRParseError(
+                    f"line {line_number}: tt.reduce must close its "
+                    "quoted-generic region"
+                )
+            suffix = closing_text[2:].strip()
+            if not suffix.startswith(":"):
+                raise TTIRParseError(
+                    f"line {line_number}: tt.reduce is missing its explicit "
+                    "function type"
+                )
+            declared_inputs, declared_results = _functional_types(
+                suffix[1:], context="tt.reduce"
+            )
+            input_count = len(operation.operands)
+            if input_count < 1 or len(operation.result_names) != input_count:
+                raise TTIRParseError(
+                    "tt.reduce must have one SSA result per input"
+                )
+            if len(declared_inputs) != input_count:
+                raise TTIRParseError(
+                    "tt.reduce explicit input type arity does not match its operands"
+                )
+            if len(declared_results) != input_count:
+                raise TTIRParseError(
+                    "tt.reduce explicit result type arity does not match its inputs"
+                )
+            actual_inputs = tuple(value_types.get(name) for name in operation.operands)
+            if any(type_text is None for type_text in actual_inputs):
+                raise TTIRParseError("tt.reduce input SSA type cannot be established")
+            if declared_inputs != tuple(actual_inputs):
+                raise TTIRParseError(
+                    "tt.reduce explicit input types do not match actual SSA types"
+                )
+            tensor_contracts = tuple(
+                _ranked_tensor_contract(type_text) for type_text in declared_inputs
+            )
+            if any(contract is None for contract in tensor_contracts):
+                raise TTIRParseError("tt.reduce inputs must be ranked tensors")
+            contracts = tuple(
+                contract for contract in tensor_contracts if contract is not None
+            )
+            first_shape, _, first_encoding = contracts[0]
+            if any(
+                shape != first_shape or encoding != first_encoding
+                for shape, _, encoding in contracts[1:]
+            ):
+                raise TTIRParseError(
+                    "tt.reduce inputs must have one common shape and encoding"
+                )
+            if operation.axis is None or not 0 <= operation.axis < len(first_shape):
+                raise TTIRParseError(
+                    f"tt.reduce axis {operation.axis} is outside rank {len(first_shape)}"
+                )
+            element_types = tuple(contract[1] for contract in contracts)
+            expected_result_types = tuple(
+                (
+                    contract[1]
+                    if len(contract[0]) == 1
+                    else "tensor<"
+                    + "x".join(
+                        [
+                            *(
+                                extent
+                                for index, extent in enumerate(contract[0])
+                                if index != operation.axis
+                            ),
+                            contract[1],
+                        ]
+                    )
+                    + ">"
+                )
+                for contract in contracts
+            )
+            if declared_results != expected_result_types:
+                raise TTIRParseError(
+                    "tt.reduce result types must remove exactly its reduction axis"
+                )
+            if region_block_counts.get(owner_id, 0) != 1:
+                raise TTIRParseError("tt.reduce must contain exactly one combine block")
+            block_types = tuple(
+                value_types.get(name) for name in operation.region_block_args
+            )
+            if block_types != tuple([*element_types, *element_types]):
+                raise TTIRParseError(
+                    "tt.reduce combine block arguments must be ordered "
+                    "lhs[0:N], rhs[0:N]"
+                )
+            terminator_types = region_terminator_types.get(owner_id)
+            if terminator_types is None:
+                raise TTIRParseError(
+                    "tt.reduce combine block must end with exactly one "
+                    "tt.reduce.return"
+                )
+            if len(operation.region_results) != input_count:
+                raise TTIRParseError(
+                    "tt.reduce.return must return exactly one value per input"
+                )
+            if terminator_types != element_types:
+                raise TTIRParseError(
+                    "tt.reduce.return explicit types do not match reduce "
+                    "element types"
+                )
+            actual_return_types = tuple(
+                value_types.get(name) for name in operation.region_results
+            )
+            if actual_return_types != element_types:
+                raise TTIRParseError(
+                    "tt.reduce.return actual SSA types do not match reduce "
+                    "element types"
+                )
+            for result, type_text in zip(
+                operation.result_names, declared_results, strict=True
+            ):
+                value_types[result] = type_text
+            operation.local_signature = _normalize_space(
+                "tt.reduce "
+                f"axis={operation.axis}:i32 "
+                f":({','.join(declared_inputs)})->"
+                f"({','.join(declared_results)})"
+            )
+
+        def close_for_region(
+            owner_id: int, closing_text: str, *, line_number: int
+        ) -> None:
+            closing = closing_text.strip()
+            if not closing.startswith("}"):
+                raise TTIRParseError(
+                    f"line {line_number}: scf.for has malformed closing syntax"
+                )
+            operation = operations[owner_id]
+            suffix = closing[1:].strip()
+            if suffix:
+                if not suffix.startswith("{"):
+                    raise TTIRParseError(
+                        f"line {line_number}: scf.for has malformed closing syntax"
+                    )
+                attr_close = _balanced_end(suffix, 0, "{", "}")
+                if suffix[attr_close + 1 :].strip():
+                    raise TTIRParseError(
+                        f"line {line_number}: scf.for has trailing closing syntax"
+                    )
+                close_attrs = _validate_attribute_dictionary(
+                    suffix[: attr_close + 1],
+                    context="scf.for closing attributes",
+                )
+                if any(
+                    name != "tt.num_stages"
+                    or re.fullmatch(r"[1-9][0-9]*:i32", value) is None
+                    for name, value in close_attrs
+                ):
+                    raise TTIRParseError(
+                        "scf.for has unsupported closing attributes"
+                    )
+                operation.local_signature = _normalize_space(
+                    operation.local_signature
+                    + " close_attrs={"
+                    + ",".join(f"{name}={value}" for name, value in close_attrs)
+                    + "}"
+                )
+            if region_block_counts.get(owner_id, 0) != 1:
+                raise TTIRParseError("scf.for must contain exactly one body block")
+            init_count = max(0, len(operation.operands) - 3)
+            if owner_id not in region_terminator_types and init_count:
+                raise TTIRParseError(
+                    "scf.for body must end with exactly one scf.yield"
+                )
+            init_types = tuple(
+                value_types.get(name) for name in operation.operands[3:]
+            )
+            if any(type_text is None for type_text in init_types):
+                raise TTIRParseError(
+                    "scf.for iter_arg input SSA type cannot be established"
+                )
+            if len(operation.region_block_args) != 1 + len(init_types):
+                raise TTIRParseError(
+                    "scf.for block arguments must contain one induction value "
+                    "and one value per iter_arg"
+                )
+            block_types = tuple(
+                value_types.get(name) for name in operation.region_block_args[1:]
+            )
+            result_types = tuple(
+                value_types.get(name) for name in operation.result_names
+            )
+            yield_types = region_terminator_types.get(owner_id, ())
+            actual_yield_types = tuple(
+                value_types.get(name) for name in operation.region_results
+            )
+            if not (
+                block_types == init_types
+                and result_types == init_types
+                and yield_types == init_types
+                and actual_yield_types == init_types
+                and len(operation.region_results) == len(init_types)
+            ):
+                raise TTIRParseError(
+                    "scf.for iter_args, results, block arguments, and yield "
+                    "types must close positionally"
+                )
+
+        def close_region(
+            owner_id: int, closing_text: str, *, line_number: int
+        ) -> None:
+            owner = operations[owner_id]
+            if owner.name == "tt.scan":
+                close_scan_region(
+                    owner_id, closing_text, line_number=line_number
+                )
+            elif owner.name == "tt.reduce":
+                close_reduce_region(
+                    owner_id, closing_text, line_number=line_number
+                )
+            elif owner.name == "scf.for":
+                close_for_region(
+                    owner_id, closing_text, line_number=line_number
+                )
+            else:  # pragma: no cover - region owner set is closed above
+                raise TTIRParseError(f"unsupported region owner {owner.name}")
+
         for line_number, line in enumerate(function.body.splitlines(), 1):
             stripped = line.strip()
             indent = len(line) - len(line.lstrip())
             if not stripped or stripped.startswith("//"):
                 continue
             if stripped.startswith(("})", "}")):
+                if not region_stack:
+                    raise TTIRParseError(
+                        f"line {line_number}: unexpected structured-region close"
+                    )
+                first_closed = True
+                closed_any = False
                 while region_stack and indent <= region_stack[-1][1]:
+                    owner_id = region_stack[-1][0]
+                    close_region(
+                        owner_id,
+                        stripped if first_closed else "}",
+                        line_number=line_number,
+                    )
                     region_stack.pop()
                     scope_bindings.pop()
+                    first_closed = False
+                    closed_any = True
+                if not closed_any:
+                    raise TTIRParseError(
+                        f"line {line_number}: region close indentation does not "
+                        "match an active owner"
+                    )
                 continue
 
             block_header = _parse_block_header(line)
@@ -1291,7 +2279,7 @@ class TTIRParser:
                 if not region_stack:
                     raise TTIRParseError(
                         f"line {line_number}: top-level block label "
-                        f"^{block_header[0]} is unsupported; Gate1 TTIR v5 "
+                        f"^{block_header[0]} is unsupported; Gate1 TTIR v6 "
                         "cannot soundly flatten a function CFG"
                     )
                 block_args = [name for name, _ in block_header[1]]
@@ -1302,7 +2290,7 @@ class TTIRParser:
                     raise TTIRParseError(
                         f"line {line_number}: structured region "
                         f"{parent.name} has more than one block; Gate1 TTIR "
-                        "v5 supports only single-block structured regions"
+                        "v6 supports only single-block structured regions"
                     )
                 region_block_counts[parent_id] = 1
                 qualified_args = [
@@ -1319,12 +2307,21 @@ class TTIRParser:
                     leaf_labels[name] = f"region[{path}].arg[{index}]"
                 continue
 
+            if region_stack and region_stack[-1][0] in region_terminator_types:
+                owner = operations[region_stack[-1][0]]
+                raise TTIRParseError(
+                    f"line {line_number}: operation after {owner.name} terminator"
+                )
+
             head = _operation_head(line)
             if head is None:
-                continue
-            results, name, tail = head
+                raise TTIRParseError(
+                    f"line {line_number}: cannot parse non-empty TTIR body "
+                    f"line: {stripped!r}"
+                )
+            results, name, tail, quoted = head
             if (
-                name not in {"tt.reduce", "scf.for"}
+                name not in _REGION_OWNERS
                 and stripped.endswith("{")
             ):
                 raise TTIRParseError(
@@ -1332,10 +2329,72 @@ class TTIRParser:
                     f"operation {name!r}; Gate1 refuses to flatten an unknown "
                     "SSA scope"
                 )
-            raw_operands = _SSA_RE.findall(tail)
+            if quoted and name in _TERMINATORS:
+                raise TTIRParseError(
+                    f"{name} must use Triton 3.6 custom terminator syntax"
+                )
+            generic_contract: tuple[
+                tuple[str, ...], tuple[str, ...], tuple[str, ...]
+            ] | None = None
+            if quoted and name not in _REGION_OWNERS:
+                generic_contract = _validate_quoted_generic_shell(
+                    name,
+                    tail,
+                    result_count=len(results),
+                )
+            raw_operands = (
+                list(generic_contract[0])
+                if generic_contract is not None
+                else _SSA_RE.findall(tail)
+            )
             raw_block_args: list[str] = []
+            scan_axis: int | None = None
+            scan_reverse: bool | None = None
+            for_induction_type: str | None = None
+            for_result_types: tuple[str, ...] = ()
+            parsed_terminator_types: tuple[str, ...] = ()
             if name == "scf.for":
-                raw_operands, raw_block_args = _parse_for_header(tail)
+                (
+                    raw_operands,
+                    raw_block_args,
+                    for_induction_type,
+                    for_result_types,
+                ) = _parse_for_header(tail)
+            elif name == "tt.reduce":
+                if not quoted:
+                    raise TTIRParseError(
+                        "tt.reduce outer operation must use Triton 3.6 "
+                        "quoted-generic syntax"
+                    )
+                raw_operands, scan_axis = _parse_reduce_header(tail)
+                if len(results) != len(raw_operands):
+                    raise TTIRParseError(
+                        "tt.reduce must have the same number of SSA results as inputs"
+                    )
+            elif name == "tt.scan":
+                if not quoted:
+                    raise TTIRParseError(
+                        "tt.scan outer operation must use Triton 3.6 quoted-generic syntax"
+                    )
+                raw_operands, scan_axis, scan_reverse = _parse_scan_header(tail)
+                if len(results) != len(raw_operands):
+                    raise TTIRParseError(
+                        "tt.scan must have the same number of SSA results as inputs"
+                    )
+            elif name == "tt.scan.return":
+                raw_operands, parsed_terminator_types = _parse_scan_return(tail)
+            elif name == "tt.reduce.return":
+                raw_operands, parsed_terminator_types = _parse_typed_terminator(
+                    name, tail, allow_empty=False
+                )
+            elif name == "scf.yield":
+                raw_operands, parsed_terminator_types = _parse_typed_terminator(
+                    name, tail, allow_empty=True
+                )
+            elif name == "tt.return":
+                raw_operands, parsed_terminator_types = _parse_typed_terminator(
+                    name, tail, allow_empty=True
+                )
             callee: str | None = None
             call_operand_types: tuple[str, ...] = ()
             call_result_types: tuple[str, ...] = ()
@@ -1345,6 +2404,25 @@ class TTIRParser:
                 )
             operands = [resolve(operand) for operand in raw_operands]
             operand_types = tuple(value_types.get(operand) for operand in operands)
+            if generic_contract is not None:
+                declared_generic_inputs = generic_contract[1]
+                if len(operand_types) != len(declared_generic_inputs):
+                    raise TTIRParseError(
+                        f'quoted generic operation "{name}" operand/type arity mismatch'
+                    )
+                for index, (actual, declared) in enumerate(
+                    zip(operand_types, declared_generic_inputs, strict=True)
+                ):
+                    if actual is None:
+                        raise TTIRParseError(
+                            f'quoted generic operation "{name}" operand {index} '
+                            "actual SSA type cannot be established"
+                        )
+                    if _normalize_space(actual) != declared:
+                        raise TTIRParseError(
+                            f'quoted generic operation "{name}" operand {index} '
+                            f"actual SSA type {actual} does not match {declared}"
+                        )
             if name == "tt.call":
                 if len(operand_types) != len(call_operand_types):
                     raise TTIRParseError("tt.call operand SSA/type arity mismatch")
@@ -1361,8 +2439,32 @@ class TTIRParser:
                             f"tt.call operand {index} actual SSA type {actual} "
                             f"does not match its explicit call type {declared}"
                         )
+            if name == "scf.for":
+                assert for_induction_type is not None
+                if any(
+                    actual is None or _normalize_space(actual) != for_induction_type
+                    for actual in operand_types[:3]
+                ):
+                    raise TTIRParseError(
+                        "scf.for lower/upper/step SSA types must match its "
+                        "explicit induction type"
+                    )
+                init_types = tuple(operand_types[3:])
+                if any(type_text is None for type_text in init_types):
+                    raise TTIRParseError(
+                        "scf.for iter_arg input SSA type cannot be established"
+                    )
+                if tuple(init_types) != for_result_types:
+                    raise TTIRParseError(
+                        "scf.for iter_arg input types must match its explicit "
+                        "result types"
+                    )
+                if len(results) != len(for_result_types):
+                    raise TTIRParseError(
+                        "scf.for SSA result arity must match its iter_args"
+                    )
             if name == "tt.return":
-                declared_returns = _return_contract_types(tail, len(operands))
+                declared_returns = parsed_terminator_types
                 if declared_returns != function.results:
                     raise TTIRParseError(
                         f"tt.return explicit types {declared_returns} do not "
@@ -1405,7 +2507,12 @@ class TTIRParser:
                 operands=list(operands),
                 local_signature=_local_signature(name, tail),
                 context=tuple(node for node, _ in region_stack),
-                axis=int(axis_match.group(1)) if axis_match else None,
+                axis=(
+                    scan_axis
+                    if name == "tt.scan"
+                    else int(axis_match.group(1)) if axis_match else None
+                ),
+                reverse=scan_reverse,
                 cmp_predicate=_cmp_info(name, tail)[0],
                 cmp_flipped=_cmp_info(name, tail)[1],
                 header_operand_count=len(operands),
@@ -1418,6 +2525,7 @@ class TTIRParser:
                 callee=callee,
                 call_operand_types=call_operand_types,
                 call_result_types=call_result_types,
+                terminator_types=parsed_terminator_types,
             )
             operations.append(operation)
             for result in qualified_results:
@@ -1427,11 +2535,33 @@ class TTIRParser:
                     )
                 result_to_node[result] = operation.node_id
 
-            if name in {"tt.reduce.return", "scf.yield"} and region_stack:
-                parent = operations[region_stack[-1][0]]
+            if name in _REGION_TERMINATORS:
+                if not region_stack:
+                    raise TTIRParseError(
+                        f"line {line_number}: {name} appears outside a structured region"
+                    )
+                parent_id = region_stack[-1][0]
+                parent = operations[parent_id]
+                expected = _EXPECTED_REGION_TERMINATOR[parent.name]
+                if name != expected:
+                    raise TTIRParseError(
+                        f"line {line_number}: {parent.name} requires {expected}, got {name}"
+                    )
+                if results:
+                    raise TTIRParseError(
+                        f"line {line_number}: region terminator {name} cannot define SSA results"
+                    )
+                if parent_id in region_terminator_types:
+                    raise TTIRParseError(
+                        f"line {line_number}: {parent.name} has more than one "
+                        f"{expected}"
+                    )
+                region_terminator_types[parent_id] = parsed_terminator_types
+                if parent.name == "tt.scan":
+                    scan_return_types[parent_id] = parsed_terminator_types
                 parent.region_results.extend(operands)
 
-            if name in {"tt.reduce", "scf.for"}:
+            if name in _REGION_OWNERS:
                 path = "/".join(
                     [*(operations[node].name for node, _ in region_stack), name]
                 )
@@ -1468,7 +2598,8 @@ class TTIRParser:
                 scope_bindings.append(child_bindings)
                 # Custom ``scf.for`` assembly declares its one body block via
                 # the induction variable/iter_args in the operation header.
-                # ``tt.reduce`` declares its block on the following ^bb line.
+                # ``tt.reduce``/``tt.scan`` declare their block on the
+                # following ^bb line.
                 region_block_counts[operation.node_id] = (
                     1 if raw_block_args else 0
                 )
@@ -1496,12 +2627,13 @@ class TTIRParser:
         and the frontend's choice to outline or inline are therefore erased,
         while every reachable operation and memory effect remains observable.
 
-        The current TTIR observer models structured ``scf.for``/``tt.reduce``
-        regions.  It does not yet model arbitrary multi-block CFG dominance or
-        phi/block arguments.  A reachable function containing CF branches is
-        rejected explicitly instead of flattening mutually exclusive blocks
-        into a false proof.  Unreachable helpers are deliberately never
-        parsed and cannot perturb the fingerprint.
+        The current TTIR observer models structured
+        ``scf.for``/``tt.reduce``/``tt.scan`` regions.  It does not yet model
+        arbitrary multi-block CFG dominance or phi/block arguments.  A
+        reachable function containing CF branches is rejected explicitly
+        instead of flattening mutually exclusive blocks into a false proof.
+        Unreachable helpers are deliberately never parsed and cannot perturb
+        the fingerprint.
         """
 
         parsed: dict[
@@ -1538,7 +2670,7 @@ class TTIRParser:
                 raise TTIRParseError(
                     "reachable tt.func "
                     f"@{function.name} uses a multi-block CFG; "
-                    "Gate1 TTIR v5 cannot soundly canonicalize that helper"
+                    "Gate1 TTIR v6 cannot soundly canonicalize that helper"
                 )
             cached = self._parse_operations(function)
             parsed[function.name] = cached
@@ -1712,6 +2844,7 @@ class TTIRParser:
                     local_signature=operation.local_signature,
                     context=mapped_context,
                     axis=operation.axis,
+                    reverse=operation.reverse,
                     cmp_predicate=operation.cmp_predicate,
                     cmp_flipped=operation.cmp_flipped,
                     header_operand_count=operation.header_operand_count,
@@ -1719,6 +2852,7 @@ class TTIRParser:
                     region_block_args=new_block_args,
                     constant_value=operation.constant_value,
                     callee=None,
+                    terminator_types=operation.terminator_types,
                 )
                 expanded.append(clone)
                 context_map[operation.node_id] = clone.node_id
@@ -1762,8 +2896,8 @@ class TTIRParser:
         )
 
         # Reconstruct region leaves from the expanded graph so an outlined
-        # helper called inside ``scf.for`` gets exactly the same structural
-        # path as the equivalent inline operations.
+        # helper called inside a supported structured region gets exactly the
+        # same structural path as the equivalent inline operations.
         for operation in expanded:
             path = "/".join(
                 [
@@ -1801,7 +2935,17 @@ class TTIRParser:
             if name in leaf_labels:
                 return leaf_labels[name]
             node_id = result_to_node[name]
-            return node_ref(node_id, semantic=semantic)
+            producer = node_by_id[node_id]
+            base = node_ref(node_id, semantic=semantic)
+            if len(producer.result_names) <= 1:
+                return base
+            try:
+                slot = producer.result_names.index(name)
+            except ValueError as error:  # pragma: no cover - map is constructed together
+                raise TTIRParseError(
+                    f"SSA value {name!r} is absent from its multi-result producer"
+                ) from error
+            return f"{base}#result[{slot}]"
 
         def normalized_operand_refs(
             operation: _Operation, *, semantic: bool
@@ -1860,6 +3004,28 @@ class TTIRParser:
                     role = f"region_result[{index - operation.header_operand_count}]"
                 edges.append((producer, consumer, role))
 
+        # The function result mapping is semantic dataflow, not terminator
+        # presentation.  Without these positional edges, returning a different
+        # already-computed SSA value (or swapping equal-typed multi-results)
+        # would leave the operation graph unchanged and falsely hard-pass.
+        public_returns = [
+            operation
+            for operation in operations
+            if operation.name == "tt.return" and not operation.context
+        ]
+        if len(public_returns) != 1:
+            raise TTIRParseError(
+                "expanded public tt.func must contain exactly one top-level tt.return"
+            )
+        for index, value in enumerate(public_returns[0].operands):
+            edges.append(
+                (
+                    operand_ref(value, semantic=True),
+                    "region[root]",
+                    f"function.return[{index}]",
+                )
+            )
+
         # Region ownership is hard evidence.  A global operation multiset plus
         # descendant counts cannot distinguish non-isomorphic loop trees, and
         # sorting memory effects loses the order of writes to the same address.
@@ -1872,7 +3038,7 @@ class TTIRParser:
         region_ids = {
             operation.node_id
             for operation in operations
-            if operation.name in {"scf.for", "tt.reduce"}
+            if operation.name in _REGION_OWNERS
         }
         direct_children: dict[int | None, list[int]] = {}
         direct_members: dict[int | None, list[_Operation]] = {}
@@ -1889,13 +3055,23 @@ class TTIRParser:
             elif operation.name not in _TERMINATORS:
                 direct_members.setdefault(parent, []).append(operation)
 
-            if _operation_has_effect(operation) and any(
-                node_by_id[ancestor].name == "tt.reduce"
-                for ancestor in operation.context
-            ):
+            restricted_ancestor = next(
+                (
+                    node_by_id[ancestor].name
+                    for ancestor in reversed(operation.context)
+                    if node_by_id[ancestor].name in {"tt.reduce", "tt.scan"}
+                ),
+                None,
+            )
+            # Classification is total over the pinned observer profile.  Do
+            # this even at function root: unknown operations may be effectful,
+            # so treating them as pure until a future release understands them
+            # would make lexical reordering invisible.
+            operation_has_effect = _operation_has_effect(operation)
+            if operation_has_effect and restricted_ancestor is not None:
                 raise TTIRParseError(
                     f"side-effecting operation {operation.name} inside "
-                    "tt.reduce is unsupported"
+                    f"{restricted_ancestor} is unsupported"
                 )
 
         effectful_cache: dict[int, bool] = {}
@@ -2221,6 +3397,29 @@ class TTIRParser:
         value_sources: dict[str, tuple[str, ...]] = {}
 
         for operation in operations:
+            if operation.name == "tt.scan":
+                input_count = len(operation.operands)
+                if (
+                    input_count < 1
+                    or len(operation.result_names) != input_count
+                    or len(operation.region_results) != input_count
+                    or len(operation.region_block_args) != 2 * input_count
+                ):
+                    raise TTIRParseError(
+                        "tt.scan recurrence arities changed after call expansion"
+                    )
+                for index, block_arg in enumerate(operation.region_block_args):
+                    value_sources[block_arg] = (
+                        operation.operands[index % input_count],
+                    )
+                for result_name, initial, returned in zip(
+                    operation.result_names,
+                    operation.operands,
+                    operation.region_results,
+                    strict=True,
+                ):
+                    value_sources[result_name] = (initial, returned)
+                continue
             if operation.name != "scf.for":
                 sources = tuple(operation.operands)
                 for result_name in operation.result_names:

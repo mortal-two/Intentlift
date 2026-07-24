@@ -43,14 +43,26 @@ totality，显式 relation 的合法性不依赖 role，loop axis 可写 `0` 或
 原 wire 保留历史读取能力并禁止该新字段；新 Lift response 必须使用 v3，新规则不得用于静默重判
 既有 receipt 或历史证书，DYT/SwiGLU 也不因协议升级被重跑或冒充 fresh v3 evidence。
 
-当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v5`；它继承 v4 只 NormalizeAway closed
-load/store cache-policy hint，并展开 public entry 可达、静态、structured、acyclic 的 `tt.call`
-graph。未知/递归 call、reachable arbitrary multi-block CFG 与未支持 control/region fail closed；这
-只是当前 compiler contract，不是形式完备性证明。同 case fan-out 协议是
+当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v6`；它保留 v5 对已建模 op 与 public-entry
+reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并新增 typed single-block、
+encodingless `tt.scan` observation。operation/effect classification 是全局 closed profile；unknown op、
+malformed generic/body line、multi-block CFG/structured region 与未支持 control/region fail closed。
+历史 v5 evidence 不由 v6 重判，也不声称 v5→v6 acceptance 单调；该 profile 只是当前 compiler
+contract，不是形式完备性证明。同 case fan-out 协议是
 `intentir.scrc.candidate-fanout.v3`，在 pre-Gate2 wave barrier 后按固定
 `(branch_id, formal_round)` 选择 winner，wall-clock 到达次序不参与选择。
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
+
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v10`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v3`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
+rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
+domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。v3 projection 内的 invocation-local
+proof subreceipt 不保存 raw value/value digest；这是 audit-data minimization，不是
+confidentiality/privacy proof。
+production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-only
+`expand-rsqrt-for-libm` 位于共享 Intent-to-Linalg 之后，不改变共享/GPU lowering。
 
 ## 导航
 

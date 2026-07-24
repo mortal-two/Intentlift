@@ -29,13 +29,26 @@ J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation�
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v5`。v5 继承上述 canonicalization，并将从 public
-entry 可达、callee 静态已知且 call graph 无环的 structured `tt.call` 展开到同一 SSA observation：
-formal-to-actual、helper returns、op/def-use、effect 与当前支持的 structured region 都参与 hard
-comparison；public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。未知或动态 callee、
-递归/cyclic call、signature/return 不一致、reachable arbitrary multi-block CFG 与未支持的
-control/region 形态 fail closed。该范围是当前 compiler contract 与测试边界，不是 observer 或 TTIR
-语义完备性的形式证明。
+当前 active profile 是 `triton-ttir-3.6-gate1-v6`。v6 保留 v5 对已建模 op 与 interprocedural
+observation 的 comparison rules：从 public entry 可达、callee 静态已知且 call graph 无环的
+structured `tt.call` 仍按
+formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；
+public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
+
+v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：
+输入/结果必须是同 shape 的 ranked tensor，axis/reverse、`2N` 个有序 combine block arguments、唯一
+`tt.scan.return` 的 `N` 个 typed values，以及 recurrence/region topology 都是 hard evidence。当前
+observer 不解释 module-level tensor encoding alias，因此任何非空 scan tensor encoding 都明确
+unsupported，不能只比较 alias 名称。
+
+v6 同时把 operation/effect classification 收成全局 closed profile：只有显式登记的 pure op 才能按
+pure dataflow 处理，只有显式登记的 effect op 才能进入 lexical effect trace；未知 operation 即使位于
+function root 或 `scf.for` 内也不能默认 pure。畸形 quoted-generic、非空但无法解析的 operation line、
+未知/动态 callee、递归/cyclic call、signature/return 不一致、reachable arbitrary multi-block CFG、
+多 block scan/reduce 与未支持 control/region 一律 fail closed。Source 侧能力缺口仍由 batch v3 报
+`observer_unsupported`；历史 v5 evidence 保持原 profile/verdict，不由 v6 追认。上述范围只是当前
+compiler contract 与测试边界，不是 observer 或 TTIR 语义完备性的形式证明，也不声称 v5→v6
+acceptance 单调。
 
 ## Observer 能力
 

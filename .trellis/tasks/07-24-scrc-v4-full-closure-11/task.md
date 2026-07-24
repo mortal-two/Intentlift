@@ -9,11 +9,14 @@
 
 ## 目标
 
-使用 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1`、
-`j_scalar_cpu_mlir_v9` 与 Gate1 observer v5，为尚未认证的 26 个 Kernel 建立各自独立的 fresh
-accepted `(J,C,π)`、Replay、Gate1、Gate2 与预算证据；active registry 的最终 28/28 覆盖由这 26 份
-Task 11 evidence 加上 DYT、SwiGLU 两份原版本独立证书组成，后二者不冒充 fresh v3。执行必须真正
-支持多个语义族 wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
+为 Task 10 之后的 26 个 Kernel 建立各自独立、按落盘版本解释的 accepted `(J,C,π)`、Replay、
+Gate1、Gate2 与预算证据；active registry 的最终 28/28 覆盖由这 26 份 Task 11 evidence 加上 DYT、
+SwiGLU 两份原版本独立证书组成。已经取得的 Softmax
+`RefEval.v9/functional-boundary.v2/observer.v5` Task 11 证书继续计入覆盖，不重跑、不重标为新版本。
+后续只有尚未闭合、或确受新能力影响且要声明新版本结论的 case，才以
+`artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1 / j_scalar_cpu_mlir_v10 /
+intentir.j-functional-boundary.v3 / Gate1 observer v6` 开 fresh run。执行必须真正支持多个语义族
+wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
 
 稳定 J corpus 完成后，production backend B0/B1 作为独立任务消费这些 J；本任务不要求每闭合一个
 Kernel 就紧邻实现其 backend。
@@ -356,11 +359,13 @@ induction_basis = extent_step | tile_ordinal
 
 `artifact.v1/v2` parser/to-json/digest 保持历史 wire，不接受或暗加空 `iterations`；已闭合的 DYT 与
 SwiGLU receipt 原样保留，不因 v3 升级重跑，也不得被称为 fresh v3。Replay packet envelope 与 Gate1
-report 未增加字段，仍分别是 `replay-input.v1` 与既有 report version；当前合并版本为
+report 未增加字段，仍分别是 `replay-input.v1` 与既有 report version；后续受影响 case 的 active
+fresh-run stack 为
 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1 / public_frontend_context_v6 /
-lift-knowledge.v15 / j_scalar_cpu_mlir_v9 / Gate1 observer v5 / batch.v3`。
+lift-knowledge.v15 / j_scalar_cpu_mlir_v10 / functional-boundary.v3 / Gate1 observer v6 / batch.v3`。
 
-Gate1 observer 因上述 full-bwd 反例从 `triton-ttir-3.6-gate1-v4` 窄升 v5。v5 对 Source 与 Replay
+此前 Gate1 observer 因上述 full-bwd 反例从 `triton-ttir-3.6-gate1-v4` 窄升 v5。该 v5 checkpoint
+对 Source 与 Replay
 执行相同的 source-neutral interprocedural fingerprint：reachable acyclic structured `tt.call` DAG
 按 formal→actual 与返回值关系展开，private helper 名称/是否 outline 不进入证据，而 helper 的 op、
 dataflow、递归 region topology、caller region 归属以及 load/store/atomic/barrier/assert 的 lexical
@@ -372,6 +377,78 @@ function attr 只闭合允许布尔 `noinline` 这一组织 hint。Source capabi
 清洗再进入同 branch 的 bounded feedback。真实 full `_bwd_kernel` 的 helper 含 early-return
 `cf.cond_br`，当前因此准确标记 observer unsupported；尚未闭合，不能把旧 v4 的 289 条假差异或新
 unsupported 当作 SCRC 进展。普通 `noinline=false` helper 组织不进入 π，production 仍只消费 J+C。
+
+### v7/v15 双 outer-batch immutable terminal checkpoint（2026-07-25）
+
+公共合同提交 `e01c126f` 后同时启动两个互不共享 case/evidence/provider session 的 outer batch。A 使用
+`W=2,B=3,G=6,G2=1`，B 使用 `W=3,B=2,G=6,G2=1`；两者都是 MiniSWE `gpt-5.6-sol/xhigh`、
+`--skip-masked-j`。因此这不是单 B，也不是把不同 case 混成一次认证。两个进程均正常写出 aggregate
+report 后以 exit 2 结束；exit 2 只表示批内含非通过分类。immutable evidence 为：
+
+- A root：`/tmp/intentir-scrc-task11/wave-20260725-b3-v7-v15-affected4-xhigh-01`；
+- A report：同路径加 `-report.json`；
+- B root：`/tmp/intentir-scrc-task11/wave-20260725-b2-v7-v15-complex6-xhigh-01`；
+- B report：同路径加 `-report.json`。
+
+本轮运行栈是 `artifact.v3/decode.v3/typecheck.v7/candidate-check.v1/context.v6/knowledge.v15/
+RefEval.v9/functional-boundary.v2/observer.v5/batch.v3`。后续 observer v6、RefEval v10 或其他修复只能
+通过新鲜运行产生新结论，不能回写下表：
+
+| case | immutable terminal 与预算 | 一手边界 |
+|---|---|---|
+| `liger_softmax` | **`SCRC_CERTIFIED`**；winner branch 1/round 3；Lift/physical=`9/136`，TC/Gate1=`9/9`，Gate2=`1` | 三边均为 tolerance PASS：Source–Replay=`0`，Source–J=Replay–J=`3.725290298461914e-09`；v9 native J execution 1 次；另两 branch 各跑满 3 rounds 后 no-closure，Gate2 不 fallback |
+| `liger_rms_norm` | `reference_unsupported`；branch 2/round 3 与 branch 3/round 2 均 Gate1 closed，固定 winner 为 branch 2；Lift/physical=`8/126`，TC/Gate1=`8/8`，Gate2=`1` | Source–Replay 的 `y/rstd` 均误差 0；J leg 在 execution 前因 `k1 < t2` rank-0 runtime logical predicate 超出 v9 consumer 而 unsupported，另外两边未比较；该 winner J 已通过 `typecheck.v7`，且不能改选 branch 3 |
+| `linear.kernel_fwd` | 三 branch `NO_CLOSURE`；Lift/physical=`11/185`，TC/Gate1=`9/9` | branch 2 由 LLM 明示 `extent_step`，Source/Replay loop lower/upper/step 已完全一致，旧 basis 欠定消失；剩余是 structured K recurrence 与 A/B pointer carry→advance→yield π topology未被稳定联合构造。branch 1 最后因 pointer 直接进入 `tl.dot` compile fail，branch 2/3 为真实 op/dataflow（branch 3 另含 predicate/effect）mismatch |
+| `_bwd_preprocess_do_o_dot` | `infrastructure_failed`；已观察 Lift/physical=`6/73`、TC/Gate1=`6/6`，预算不完整 | branch 1/2 各跑满 3 rounds no-closure；branch 3 第 3 次 Lift 遭服务端 `auth_unavailable`，不能把本 case 写成完整语义 verdict，必须另开 fresh multi-batch |
+| `liger_fused_add_rms_norm` | 两 branch `NO_CLOSURE`；Lift/physical=`6/98`，TC/Gate1=`6/6` | branch 1 最后为 op/dataflow/predicate-effect mismatch；branch 2 最后 Replay 把 block value store 到 scalar pointer而 compile fail。Source observer 正常，不属于 observer unsupported |
+| `liger_cross_entropy` | `observer_unsupported`；Lift/physical=`3/61`，TC=`2`，Source observer 后不调用 Replay | 两个 well-typed artifact 都在 public root 的 runtime `cf.cond_br`、multi-block 与 early return 处 fail closed；attempt feedback 均为 null，不继续 relift |
+| `liger_sparsemax` | `observer_unsupported`；Lift/physical=`2/37`，TC=`2`，Source observer 后不调用 Replay | 两个 well-typed J 都已使用通用 scan；合法 Source TTIR 的 quoted generic `tt.scan`/typed `tt.scan.return` 超出 v5，feedback=null；不是缺 IntentOp 或 Sparsemax prompt |
+| full FlashAttention `_fwd_kernel` | 两 branch `NO_CLOSURE`；Lift/physical=`8/154`，TC/Gate1=`4/4` | branch 2 完成 3 个 formal round，最终仍有 interface/op/dataflow/predicate-effect mismatch；branch 1 两次 ingress rejection 后得到一个 well-typed formal round，后续仍以 LimitsExceeded 终止。Source observer 可用，这是 online-attention 真正 realization frontier |
+| FlashAttention `_bwd_kernel_one_col_block` | 两 branch `NO_CLOSURE`；Lift/physical=`4/95`，TC=`1` | branch 1 well-typed 后在 public multi-block CFG observer 边界停止且 feedback=null；branch 2 三次 Lift 均 LimitsExceeded、无 TypeCheck。混合边界不能伪装成纯 observer verdict |
+| xFormers SplitK `_fwd_kernel_splitK` | `infrastructure_failed`；aggregate 只记录不完整 observed Lift/physical=`3/44` | branch 2 三次 ingress rejection后 no-closure；branch 1 最后遭 provider `unexpected EOF`，没有完整 candidate budget，必须 fresh multi-batch |
+
+Softmax 证书的 artifact digest 是
+`610ba6bc5f49741fe17cceb496d45600e385dcd6bd37a41658d725836f35dba6`。其 Gate1
+interface/op-multiset/dataflow/reduction/predicate-effect 五类全过，RefEval receipt 为
+`j_scalar_cpu_mlir_v9 + intentir.j-functional-boundary.v2 + logical_domain_reduction_padding_v2`；
+`run_masked_j=false/J-necessity=NOT_RUN` 只是未执行可选必要性实验，不改变主证书。严格 claim 仍只覆盖
+当前 Harness、`c0=128` 与外部 Q 下的 hidden finite case，不外推为所有 Softmax shape/value 的全称证明。
+
+这轮横向结果也给出下一共性顺序，而非 per-kernel 修补：
+
+1. observer v6 只增加 typed、single-block、effect-restricted 的通用 `tt.scan`，随后仅 fresh rerun
+   Sparsemax；v5 evidence 不重判；
+2. RefEval v10 只在当前 invocation 可由 J logical valuation 证明 access predicate 对 closed domain
+   全真时做 runtime tautology discharge，随后 fresh rerun RMS；不读 Source/C/π、不改 J；
+3. multi-block CFG/early-return observer 先定义 closed CFG fingerprint 再实现，不能 flatten block；
+4. Linear 先审查既有 π vocabulary 是否已足以表达 pointer carry topology；只有证明不可表达才增加
+   最小 source-neutral relation。任何这种 future relation 都只能进入未来
+   `artifact.v4/decode.v4` 并另开 fresh session；当前 `artifact.v3/decode.v3` wire 与既有 receipt 不变，
+   本 checkpoint 不定义其 schema；
+5. preprocess 与 SplitK 的基础设施失败在下一干净 checkpoint 另开 fresh multi-batch，不从本轮补造
+   verdict。
+
+### observer v6 / RefEval v10 active implementation checkpoint（2026-07-25；不是 fresh case verdict）
+
+- `triton-ttir-3.6-gate1-v6` 已实现，并保留 v5 对已建模 op/reachable structured call graph 的
+  interprocedural comparison rules；新增 typed、single-block、encodingless `tt.scan`，以及全局
+  closed operation/effect classification。unknown op、malformed
+  generic/body line、multi-block CFG/region 与未支持 control/region fail closed；TTIR 专项为
+  `136 passed`，完整 Gate1/SCRC 回归为 `460 passed`。历史 191 份真实 TTIR 中 182 份继续通过、
+  9 份保持既有 multi-block unsupported；77 组可比较历史 Source/Replay pair 无 verdict 漂移，另
+  4 组只因同一 multi-block 边界无法比较。这不声称 v5→v6 acceptance 单调；
+- `j_scalar_cpu_mlir_v10 + intentir.j-functional-boundary.v3` 已实现。它只为已选 Gate2 winner 的当前
+  invocation，用 J rank-0 logical `i1`/integer values 与完整 closed dimensions 逐 access 证明 predicate
+  全域为真；调用权属于已完成 winner 选择的主 SCRC runner，projection library 不自行选择 winner。
+  不改 J、不读 Source/C/π、不进入 Lift feedback；v3 projection 的 invocation-local proof subreceipt
+  不含 raw value/value digest，这只是 audit-data minimization，不是 confidentiality/privacy proof。
+  production projection 仍没有 runtime-value 参数；Gate2 direct-J + CPU backend 回归为 `85 passed`；
+- CPU host pipeline 的 `expand-rsqrt-for-libm` 只在共享 Intent-to-Linalg 之后展开 `rsqrt -> 1/sqrt`，
+  不改变共享/GPU lowering；isolated CPU backend 为 `20 passed`；
+- 根级受影响回归为 `484 passed`，完整 `python/tests` 回归为 `1274 passed`；
+- 以上是实现与测试 checkpoint，不是 Sparsemax/RMS 或其他 case 的新 SCRC evidence。上方
+  `RefEval.v9/functional-boundary.v2/observer.v5` immutable table、Softmax certificate 和历史 verdict
+  均不回写；受影响 case 仍需 fresh run。
 
 DYT 与 SwiGLU 的既有通过证据不属于 B1，也未在 B1 重跑。
 
@@ -398,8 +475,10 @@ FlashAttention 或其他 Kernel 专用 prompt、Replay、J/C/π 构造或 Intent
 2. `W/B/G/G2` 合同 fail closed，实际测试证明多个不同 case lifecycle 确实重叠；
 3. same-case v3 barrier winner 与唯一 Gate2 规则不回退；
 4. B1/B3/v6-v14 slice 的旧 receipt terminal evidence 保持不可变；受影响项若要形成当前
-   artifact.v3/decode.v3/typecheck.v7/context.v6/knowledge.v15/RefEval.v9/observer.v5 结论，必须分别
-   fresh rerun，且问题归因不复用旧 verdict 或 diagnostic recheck；
+   artifact.v3/decode.v3/typecheck.v7/context.v6/knowledge.v15/RefEval.v10/
+   functional-boundary.v3/observer.v6 结论，必须分别
+   fresh rerun，且问题归因不复用旧 verdict 或 diagnostic recheck；已经成立的 Softmax
+   RefEval.v9/functional-boundary.v2/observer.v5 证书继续满足本 Task 覆盖验收，不要求重跑或重标；
 5. 28/28 各自具有独立 `SCRC_CERTIFIED` artifact 与完整 evidence：DYT/SwiGLU 为原版本证书，其余
    26 项为 Task 11 fresh evidence；
 6. 全量回归通过，活动 task 唯一，完成后本 Task 直接迁入 archive，工作区提交且干净。

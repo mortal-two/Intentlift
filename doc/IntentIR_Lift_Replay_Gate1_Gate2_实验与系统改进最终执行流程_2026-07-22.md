@@ -545,20 +545,35 @@ implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而�
 留在 π-only 形态；既不具有 J denotation、又不能合法归入 C 的 constexpr 使 Harness/case invalid，
 不得交给 Lift 用 `logical_ref=null` 猜测兜底。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v9`，shared functional projection 为
-`intentir.j-functional-boundary.v2`。v9 继承 v8 对唯一 node-less logical-input load 的通用消费，并
-移除旧 single-input/single-output/single-sum padded topology 限制。对 predicated direct access，J 必须
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v10`，shared functional projection 为
+`intentir.j-functional-boundary.v3`。v10 完整继承 v9；v9 已继承 v8 对唯一 node-less
+logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
+对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
 同一 full-domain predicate；padded graph 中每个 logical reduce 必须有唯一、显式中性
 `masked_contribution`，pointwise operand 的 trailing 或显式 non-trailing broadcast 必须闭合。满足这些
 通用规则的 max+sum、多 reduction、broadcast/pointwise DAG 由既有 Intent MLIR scalar executor 执行，
-没有 Softmax 或 Kernel 特判，也不读取 Source、C、π、runtime/hidden input。缺 relation、上述窄
+没有 Softmax 或 Kernel 特判。
+
+v10/v3 只为已经按 pre-Gate2 evidence 选定的 winner，在当前 Gate2 invocation 内增加 runtime
+predicate tautology proof。主 SCRC runner 负责 winner 选择并把该次 inputs/dimensions 交给
+RefEval-only 入口；projection library 不自行选择 winner。该入口要求精确的 J logical-input mapping 与
+完整 closed dimensions，只消费 J 自身 rank-0 logical `i1`/integer values，并逐 access 按 guard
+极性、direct axis、零下界及 runtime
+bound 不小于 closed extent 证明 predicate 对完整 logical domain 恒真。不改 J、不进入 Lift feedback、
+不读取 Source/C/π。v3 projection 的 invocation-local proof subreceipt 只有 access id、J predicate
+digest、logical input refs 与 domain axes，没有 raw value 或 value digest；这是 audit-data
+minimization，不是 confidentiality/privacy proof。production projection 仍无 runtime-value 接口。
+缺 relation、上述窄
 rectangular provenance 可证明 masked axis 被 `mean` 消去却没有 logical count contract、
-update/alias 等继续 fail closed。旧 v3/v4/v5/v6 TypeCheck evidence、v7/v8 RefEval evidence以及已落盘的
-Softmax/RMS run 不被 v9 静默改成 PASS，必须 fresh relift/fresh run。
-guard-bearing access 当前由 consumer 一律拒绝；masked provenance 进入 contraction/其他未建模 op
-时也在入口拒绝，避免极性丢失、dead-use 冒充控制证明或 provenance 静默消失。这不扩大 TypeCheck
-对合法 J 的拒绝集合。
+update/alias 等继续 fail closed。无法完成该全域证明的 guard-bearing access 仍由 consumer 拒绝；
+masked provenance 进入 contraction/其他未建模 op 时也在入口拒绝，避免 dead-use 冒充控制证明或
+provenance 静默消失。这不改变 `typecheck.v7` 的接受集合。CPU host 只在共享 Intent-to-Linalg
+之后调度 `rsqrt -> 1/sqrt` 的 libm ABI compatibility pass，共享/GPU lowering 不变。旧 v3/v4/v5/v6
+TypeCheck evidence、v7/v8/v9 RefEval 与 functional-boundary v1/v2 evidence 以及已落盘的
+Softmax/RMS run 不被 v10/v3 静默改写。只有尚未闭合、或确受该能力影响且要声明
+v10/functional-boundary.v3 结论的 case 才必须 fresh relift/fresh run；已经成立的 Softmax
+v9/v2/v5 证书继续有效并计入覆盖，不要求重跑或重标。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式
@@ -684,14 +699,20 @@ effect、predicate/fill、address/dataflow 或 transfer topology，且 closed J/
 spelling，因此自 `triton-ttir-3.6-gate1-v4` 起统一 NormalizeAway。未知或 load/store 方向不合法的 cache policy、eviction、
 mask、fill、type 及其他 operation attributes 仍被观察；不得借此归一任意 memory difference。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v5`。v5 继承上述 cache-policy 规则，并对从 public
-entry 可达、静态已知且无环的 `tt.call` graph 做 interprocedural expansion：按 formal-to-actual
+当前 active profile 是 `triton-ttir-3.6-gate1-v6`。v6 保留 v5 对已建模 op 的 cache-policy 规则与
+从 public entry 可达、静态已知且无环的 `tt.call` interprocedural comparison：按 formal-to-actual
 substitution 展开 private helper，并将其返回 SSA、op/def-use、effect 与当前已支持的 structured region
-纳入同一 observation；public entry ABI 仍是比较边界，helper 名称本身不是新的语义 artifact。动态或
-未知 callee、递归/cyclic call graph、signature/return 不一致、reachable arbitrary multi-block CFG，
-以及 observer 尚未建模的 control/region 形态一律 fail closed。若这种缺口发生在 Source observation，
-batch v3 记为 `observer_unsupported`，不伪造成 hard diff 或 `NO_CLOSURE`；它也不是 observer 完备性或
-整个 TTIR 的形式证明，只是当前实现与测试覆盖的 compiler contract。
+纳入同一 observation；public entry ABI 仍是比较边界，helper 名称本身不是新的语义 artifact。
+
+v6 新增 typed、single-block、encodingless quoted-generic `tt.scan`：同 shape ranked tensor、
+axis/reverse、`2N` ordered combine args、唯一 typed `tt.scan.return` 与 recurrence/region topology 都
+是 hard evidence。operation/effect classification 同时改为全局 closed profile；unknown op 不在 root、
+`scf.for` 或 combiner 中默认 pure。malformed generic/body line、动态/未知 callee、递归/cyclic call、
+signature/return 不一致、reachable arbitrary multi-block CFG/region 与未支持 control/region 均 fail
+closed。若缺口发生在 Source observation，batch v3 记为 `observer_unsupported`，不伪造成 hard diff
+或 `NO_CLOSURE`。这不声称 v5→v6 acceptance 单调；历史 v5 evidence 不由 v6 重判。它也不是
+observer 完备性或整个 TTIR 的形式证明，
+只是当前实现与测试覆盖的 compiler contract。
 
 因此，Gate1 的准确含义是：
 
