@@ -696,10 +696,13 @@ Gate1 可以使用协议中已经确定的全局 canonicalization，例如：
 当前 Triton 3.6 profile 的一个明示全局决策是：`tt.load` 上的 closed
 `cacheModifier in {ca,cg,cv}` 与 `tt.store` 上的 `{wb,cg,cs,wt}` 是 target cache-policy hint，不改变 J denotation、memory
 effect、predicate/fill、address/dataflow 或 transfer topology，且 closed J/C/π 不携带 frontend cache
-spelling，因此自 `triton-ttir-3.6-gate1-v4` 起统一 NormalizeAway。未知或 load/store 方向不合法的 cache policy、eviction、
-mask、fill、type 及其他 operation attributes 仍被观察；不得借此归一任意 memory difference。
+spelling，因此自 `triton-ttir-3.6-gate1-v4` 起统一 NormalizeAway。v8 同样归一 closed
+`evictionPolicy in {evict_first,evict_last}`：π 仍严格拥有 transfer 数量与顺序，Replay 只可把 closed
+eviction spelling 当作防止 compiler CSE 的 public frontend mechanism；具体 spelling 不进入 hard
+fingerprint。未知或方向不合法的 cache/eviction policy、mask、fill、type、volatility 及其他 operation
+attributes 仍被观察；不得借此归一任意 memory difference。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v6`。v6 保留 v5 对已建模 op 的 cache-policy 规则与
+当前 active profile 是 `triton-ttir-3.6-gate1-v8`。它保留既有对已建模 op 的 cache-policy 规则与
 从 public entry 可达、静态已知且无环的 `tt.call` interprocedural comparison：按 formal-to-actual
 substitution 展开 private helper，并将其返回 SSA、op/def-use、effect 与当前已支持的 structured region
 纳入同一 observation；public entry ABI 仍是比较边界，helper 名称本身不是新的语义 artifact。

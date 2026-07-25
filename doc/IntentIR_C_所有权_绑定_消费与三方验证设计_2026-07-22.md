@@ -772,7 +772,10 @@ topology、reduction tree 与浮点 realization。
 
 Gate1 不能从额外 binding artifact、RuleCard 或 source-conditioned sidecar 获得 construction 信息。
 
-当前 active Triton profile 是 `triton-ttir-3.6-gate1-v6`。它保留 v5 对已建模 op 与 reachable
+当前 active Triton profile 是 `triton-ttir-3.6-gate1-v8`。closed cache modifier 与 closed eviction
+spelling 均作为不由 J/C/π 拥有的 frontend presentation noise 归一；π 仍拥有 distinct transfer
+instance 的数量、顺序与 route，Replay 可用 public spelling 防止同址 transfer 被 compiler CSE。
+它保留既有对已建模 op 与 reachable
 static structured acyclic `tt.call` graph 的 interprocedural comparison rules，并新增 typed
 single-block、encodingless
 `tt.scan`；axis/reverse、combine arguments/return、recurrence 与 region topology 都是 hard evidence。

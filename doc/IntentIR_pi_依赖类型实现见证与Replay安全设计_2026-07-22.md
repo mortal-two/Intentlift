@@ -812,11 +812,14 @@ feature belongs to
 当前 Triton observer 将 `tt.load` 的 closed `cacheModifier {ca,cg,cv}` 与 `tt.store` 的
 `{wb,cg,cs,wt}` 归为 `NormalizeAway`：这些值是 target cache-policy hint，不改变 J
 denotation、memory effect、predicate/fill、address/dataflow 或 transfer topology，且 J/C/π 都不拥有
-frontend cache spelling。该规则自 `triton-ttir-3.6-gate1-v4` 起成立；未知或 load/store 方向不合法的 policy、eviction、
-mask、fill、type 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend
-API mechanism，也不把 cache hint 当作 J 语义。
+frontend cache spelling。`triton-ttir-3.6-gate1-v8` 进一步把 closed
+`evictionPolicy in {evict_first,evict_last}` 归入同一类 NormalizeAway：π 负责同址 transfer instance
+的数量与顺序，Replay 可用 public eviction spelling 防止 compiler CSE，但具体 spelling 不由 J/C/π
+拥有，也不得成为 source-blind reconstruction 的隐含答案。未知或方向不合法的 policy、mask、fill、
+type、volatility 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend API
+mechanism，也不把 cache hint 当作 J 语义。
 
-当前 active `triton-ttir-3.6-gate1-v6` 保留 v5 对已建模 op 与 public-entry reachable、静态已知、
+当前 active `triton-ttir-3.6-gate1-v8` 保留既有对已建模 op 与 public-entry reachable、静态已知、
 structured 且无环 `tt.call` graph 的 interprocedural comparison rules；formal-to-actual、helper return SSA、
 op/def-use、effect 与已支持 region 都是 hard evidence，π 仍不保存 helper 名或 frontend call API。
 

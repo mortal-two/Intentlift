@@ -78,9 +78,13 @@ def test_cache_policy_hints_are_global_presentation_noise() -> None:
         "tt.load %xptr, %mask, %zero :",
         "tt.load %xptr, %mask, %zero cacheModifier = cs :",
     )
-    eviction_change = EQUIVALENT_SOURCE.replace(
+    eviction_hint = EQUIVALENT_SOURCE.replace(
         "tt.load %xptr, %mask, %zero :",
-        "tt.load %xptr, %mask, %zero evictModifier = evict_first :",
+        "tt.load %xptr, %mask, %zero evictionPolicy = evict_first :",
+    )
+    unknown_eviction = EQUIVALENT_SOURCE.replace(
+        "tt.load %xptr, %mask, %zero :",
+        "tt.load %xptr, %mask, %zero evictionPolicy = future_policy :",
     )
     volatile_change = EQUIVALENT_SOURCE.replace(
         "tt.load %xptr, %mask, %zero :",
@@ -90,7 +94,8 @@ def test_cache_policy_hints_are_global_presentation_noise() -> None:
     assert result.passed, result.to_dict()
     assert not compare_ttir(EQUIVALENT_SOURCE, unknown_hint).passed
     assert not compare_ttir(EQUIVALENT_SOURCE, wrong_direction_hint).passed
-    assert not compare_ttir(EQUIVALENT_SOURCE, eviction_change).passed
+    assert compare_ttir(EQUIVALENT_SOURCE, eviction_hint).passed
+    assert not compare_ttir(EQUIVALENT_SOURCE, unknown_eviction).passed
     assert not compare_ttir(EQUIVALENT_SOURCE, volatile_change).passed
 
 
@@ -598,7 +603,7 @@ def test_typed_scan_and_heterogeneous_multi_scan_are_observed() -> None:
     single = fingerprint_ttir(SCAN_TTIR)
     multiple = fingerprint_ttir(MULTI_SCAN_TTIR)
 
-    assert single.schema_version == "triton-ttir-3.6-gate1-v7"
+    assert single.schema_version == "triton-ttir-3.6-gate1-v8"
     assert dict(single.op_multiset)["tt.scan"] == 1
     assert dict(multiple.op_multiset)["tt.scan"] == 1
     assert compare_ttir(SCAN_TTIR, SCAN_TTIR.replace("%lhs", "%renamed")).hard_pass
@@ -1498,7 +1503,7 @@ def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
 
     assert verdict.hard_pass, verdict.to_dict()
     fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v7"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v8"
     assert "tt.call" not in dict(fingerprint.op_multiset)
     assert dict(fingerprint.loops[0].body_op_multiset) == {
         "tt.addptr": 2,
@@ -1921,7 +1926,7 @@ def test_repeated_effectful_region_instances_have_distinct_event_paths() -> None
 def test_closed_terminal_binary_fork_preserves_roles_and_control_edges() -> None:
     fingerprint = fingerprint_ttir(TERMINAL_BINARY_FORK)
 
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v7"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v8"
     assert dict(fingerprint.op_multiset)["control.conditional"] == 1
     assert len(fingerprint.terminal_forks) == 1
     fork = fingerprint.terminal_forks[0]

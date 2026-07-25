@@ -746,7 +746,12 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "contracted label, use one direct tl.dot with the declared accumulation "
         "dtype; do not expand it into outer-product multiply plus tl.sum. Do not "
         "apply this spelling outside those support conditions or when pi explicitly "
-        "declares multiple contraction stages. "
+        "declares multiple contraction stages. Distinct ordered transfer_direct "
+        "instances remain distinct compiler-visible transfers even when they read "
+        "the same address. If Triton would CSE such transfers, use a public closed "
+        "eviction_policy spelling to retain them; the observer normalizes the exact "
+        "closed eviction spelling, so it carries no Source information. Never add "
+        "a transfer absent from J/pi or collapse one that is present. "
         if frontend is Frontend.TRITON
         else ""
     )

@@ -47,7 +47,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v7"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v8"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -1657,11 +1657,21 @@ def _local_signature(name: str, tail: str) -> str:
         # or J denotation, and the closed J/C/pi artifact does not carry a
         # frontend cache-policy spelling.  Keeping them in the hard fingerprint
         # would therefore make Replay closure mathematically underdetermined.
-        # Normalize only Triton 3.6's closed cache-hint values; eviction,
-        # masks, fills, types, and all other operation attributes remain
-        # observed.
+        # Normalize only Triton 3.6's closed cache-hint values.  Closed eviction
+        # policies are likewise presentation choices: pi owns the existence and
+        # order of distinct transfer instances, while the public frontend may
+        # need an eviction spelling merely to keep those instances from being
+        # CSE'd.  The spelling itself is absent from J/C/pi and cannot be hard
+        # evidence.  Unknown policies, masks, fills, types, volatility, and all
+        # other operation attributes remain observed.
         erased = re.sub(
             rf"\bcacheModifier\s*=\s*(?:{cache_modifiers})(?=\s|:|,|$)",
+            "",
+            erased,
+        )
+        erased = re.sub(
+            r"\bevictionPolicy\s*=\s*(?:evict_first|evict_last)"
+            r"(?=\s|:|,|$)",
             "",
             erased,
         )
