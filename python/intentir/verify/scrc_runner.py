@@ -25,6 +25,7 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 MAX_GATE1_ROUNDS = 3
 MAX_PRE_REPLAY_REJECTIONS = 3
 UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
+UNRESOLVED_GATE2_DIAGNOSTIC = "unresolved_gate2"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
 _OBSERVER_NODE_FINGERPRINT = re.compile(
@@ -485,11 +486,13 @@ class SCRCGateRunner:
     def __init__(self, dependencies: SCRCRunDependencies) -> None:
         self.dependencies = dependencies
 
-    @staticmethod
+    @classmethod
     def _gate1_feedback(
+        cls,
         result: Gate1ExecutionResult,
         formal_round: int,
         artifact: Gate1Artifact,
+        prior_feedback: LiftFeedback | None = None,
     ) -> LiftFeedback:
         normal = result.normal
         diagnostics: dict[str, Any] = {
@@ -500,6 +503,9 @@ class SCRCGateRunner:
             diagnostics["observer_diff"] = _compact_gate1_observer_diff(
                 normal.comparison
             )
+        unresolved_gate2 = cls._unresolved_gate2(prior_feedback)
+        if unresolved_gate2 is not None:
+            diagnostics[UNRESOLVED_GATE2_DIAGNOSTIC] = unresolved_gate2
         return LiftFeedback(
             FeedbackKind.GATE1,
             diagnostics,
@@ -534,6 +540,22 @@ class SCRCGateRunner:
             "diagnostics": dict(diagnostics),
         }
 
+    @staticmethod
+    def _unresolved_gate2(
+        feedback: LiftFeedback | None,
+    ) -> dict[str, Any] | None:
+        if feedback is None:
+            return None
+        if feedback.kind is FeedbackKind.GATE2:
+            return {"diagnostics": dict(feedback.diagnostics)}
+        retained = feedback.diagnostics.get(UNRESOLVED_GATE2_DIAGNOSTIC)
+        if not isinstance(retained, Mapping):
+            return None
+        diagnostics = retained.get("diagnostics")
+        if not isinstance(diagnostics, Mapping):
+            return None
+        return {"diagnostics": dict(diagnostics)}
+
     @classmethod
     def _retain_gate1_diagnostic(
         cls,
@@ -544,6 +566,9 @@ class SCRCGateRunner:
         unresolved = cls._unresolved_gate1(feedback)
         if unresolved is not None:
             combined[UNRESOLVED_GATE1_DIAGNOSTIC] = unresolved
+        unresolved_gate2 = cls._unresolved_gate2(feedback)
+        if unresolved_gate2 is not None:
+            combined[UNRESOLVED_GATE2_DIAGNOSTIC] = unresolved_gate2
         return combined
 
     def search_gate1(
@@ -848,7 +873,12 @@ class SCRCGateRunner:
                         stop_observed_at="after_gate1",
                     )
 
-                feedback = self._gate1_feedback(gate1, formal_rounds, artifact)
+                feedback = self._gate1_feedback(
+                    gate1,
+                    formal_rounds,
+                    artifact,
+                    feedback,
+                )
                 attempts.append(
                     CandidateAttemptReport(
                         lift_call=lift_calls,

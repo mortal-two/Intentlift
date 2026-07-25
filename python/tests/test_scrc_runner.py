@@ -536,6 +536,40 @@ def test_gate1_search_resumes_from_typed_or_gate2_j_failure(
     assert search.call_budget.formal_gate1_rounds == 1
 
 
+def test_unresolved_gate2_context_survives_gate1_retries() -> None:
+    previous = make_reduce_artifact()
+    artifacts = [make_reduce_artifact(), make_reduce_artifact()]
+    gate2_diagnostic = {
+        "gate2": {
+            "status": "reference_unsupported",
+            "diagnostic": "J-side boundary projection failed",
+        }
+    }
+    seed = LiftFeedback(
+        FeedbackKind.GATE2,
+        gate2_diagnostic,
+        None,
+        previous,
+    )
+    lift = _Lift(artifacts)
+    factory = _Gate1Factory(
+        [_gate1_result(closed=False), _gate1_result(closed=True)]
+    )
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        initial_feedback=seed,
+    )
+
+    assert search.closed
+    assert lift.feedbacks[0] is seed
+    retained = lift.feedbacks[1]
+    assert retained.kind is FeedbackKind.GATE1
+    assert retained.diagnostics["unresolved_gate2"] == {
+        "diagnostics": gate2_diagnostic
+    }
+
+
 @pytest.mark.parametrize(
     "seed, message",
     [
