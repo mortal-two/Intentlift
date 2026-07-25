@@ -792,7 +792,7 @@ Replay LLM 应遵守以下过程合同：
 13. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v6` 与 `intentir.lift-knowledge.v17`；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v7` 与 `intentir.lift-knowledge.v17`；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
 当前新 Lift wire/decode 为 `intentir.scrc.artifact.v5 / intentir.scrc.decode.v6`；v3 历史上把上述

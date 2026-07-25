@@ -621,7 +621,8 @@ pointer carrier 已由 π 直接 route 到 `address_base`，v2 Replay 却把 bas
 
 同一 linear contraction wave 还暴露了两个彼此独立的 Replay 合同缺口：单个 contraction
 `realize` 被展开为 outer-product multiply + `tl.sum`，以及锚定同一 domain `d*` 的第二个 instance
-被无依据映射成 `program_id(1)`。下一 fresh run 使用当前 `public_frontend_context_v6`（继承 v5
+被无依据映射成 `program_id(1)`。该 checkpoint 当时的下一 fresh run 使用
+`public_frontend_context_v6`（继承 v5
 direct-contraction/program-axis 合同）：在 rank-2、单一
 contracted label、公开 `tl.dot` 支持的 floating tile/dtype/accumulation 条件下，单个 stage 使用一个
 direct `tl.dot`；同一 `d*` 的多个 instance 保留 multiplicity 但复用同一 program-axis identity，
@@ -656,7 +657,7 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v6` 与 source-aware MiniSWE
+`public_frontend_context_v7` 与 source-aware MiniSWE
 `intentir.lift-knowledge.v17`；fresh evidence 必须保存实际 receipt，旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。

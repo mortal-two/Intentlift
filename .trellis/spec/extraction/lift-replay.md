@@ -233,8 +233,8 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v6`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v15`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v7`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
+`intentir.lift-knowledge.v17`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
 `U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败

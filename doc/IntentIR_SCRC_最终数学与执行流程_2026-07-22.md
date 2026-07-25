@@ -431,7 +431,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
 当前合并协议为 `artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`；Replay packet envelope
-仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v6`，Lift knowledge 为 v17。
+仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v7`，Lift knowledge 为 v17。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
