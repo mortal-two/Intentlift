@@ -24,6 +24,7 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 
 MAX_GATE1_ROUNDS = 3
 MAX_PRE_REPLAY_REJECTIONS = 3
+UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
@@ -452,6 +453,45 @@ class SCRCGateRunner:
             artifact,
         )
 
+    @staticmethod
+    def _unresolved_gate1(
+        feedback: LiftFeedback | None,
+    ) -> dict[str, Any] | None:
+        if feedback is None:
+            return None
+        if feedback.kind is FeedbackKind.GATE1:
+            return {
+                "formal_round": feedback.formal_round,
+                "diagnostics": dict(feedback.diagnostics),
+            }
+        retained = feedback.diagnostics.get(UNRESOLVED_GATE1_DIAGNOSTIC)
+        if not isinstance(retained, Mapping):
+            return None
+        formal_round = retained.get("formal_round")
+        diagnostics = retained.get("diagnostics")
+        if (
+            not isinstance(formal_round, int)
+            or formal_round < 1
+            or not isinstance(diagnostics, Mapping)
+        ):
+            return None
+        return {
+            "formal_round": formal_round,
+            "diagnostics": dict(diagnostics),
+        }
+
+    @classmethod
+    def _retain_gate1_diagnostic(
+        cls,
+        diagnostics: Mapping[str, Any],
+        feedback: LiftFeedback | None,
+    ) -> dict[str, Any]:
+        combined = dict(diagnostics)
+        unresolved = cls._unresolved_gate1(feedback)
+        if unresolved is not None:
+            combined[UNRESOLVED_GATE1_DIAGNOSTIC] = unresolved
+        return combined
+
     def search_gate1(
         self,
         request: SCRCRunRequest,
@@ -530,7 +570,7 @@ class SCRCGateRunner:
                 )
                 feedback = LiftFeedback(
                     FeedbackKind.LIFT,
-                    exc.diagnostics,
+                    self._retain_gate1_diagnostic(exc.diagnostics, feedback),
                     None,
                     last_artifact,
                 )
@@ -597,7 +637,9 @@ class SCRCGateRunner:
                 pre_replay_rejections += 1
                 feedback = LiftFeedback(
                     FeedbackKind.TYPECHECK,
-                    {"typecheck": report.to_json()},
+                    self._retain_gate1_diagnostic(
+                        {"typecheck": report.to_json()}, feedback
+                    ),
                     None,
                     artifact,
                 )

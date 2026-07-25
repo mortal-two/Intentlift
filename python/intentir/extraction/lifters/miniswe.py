@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v23"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v24"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -260,6 +260,9 @@ On a fresh retry where `feedback.json.previous_artifact` is an object, copy
 that complete candidate first and make only the focused external-diagnostic
 repair; do not rebuild it from Source. The repaired full object is still a new
 Lift submission and will be checked externally again.
+If current Lift/TypeCheck diagnostics contain `unresolved_gate1`, the enclosed
+Gate1 counterexample remains an open obligation across the intermediate
+construction failure; address both without inventing fields.
 Write it to `/output/candidate.json`; then run:
 
 `python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`

@@ -42,6 +42,10 @@ agent:
        explicitly supplied previous artifact to `/output/candidate.json`
        without editing it. Then run
        `python /input/tools/context_query.py feedback` before repair.
+       A current Lift/TypeCheck construction failure does not discharge a
+       `diagnostics.unresolved_gate1` item: preserve the copied candidate and
+       repair both the current mechanical diagnostic and that retained Gate1
+       counterexample before submission.
        Never concatenate README, Source, Harness, feedback, contract, and
        preflight into one shell output: the transport may elide the middle.
        If no previous artifact exists but `candidate_check_feedback` is present,

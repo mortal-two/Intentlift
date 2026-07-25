@@ -124,7 +124,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v23"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v24"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -205,8 +205,8 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
     input_root.mkdir()
     previous = {"j": {"large": "x" * 30_000}, "c": {}, "pi": {}}
     feedback = {
-        "kind": "gate1",
-        "round": 2,
+        "failure_kind": "gate1",
+        "relift_round": 2,
         "diagnostics": {
             "observer_diff": {
                 "categories": [
@@ -237,6 +237,7 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
     assert len(observation) < 12_000
     assert '"category": "op_multiset"' in observation
     assert '"candidate_copied_to_output": true' in observation
+    assert '"feedback_kind": "gate1"' in observation
     assert json.loads((output_root / "candidate.json").read_text()) == previous
 
 

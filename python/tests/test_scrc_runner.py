@@ -330,6 +330,30 @@ def test_unparseable_lift_is_recorded_without_entering_typecheck_or_replay() -> 
     assert factory.rounds == [1]
 
 
+def test_intermediate_lift_failure_retains_unresolved_gate1_feedback() -> None:
+    artifact = make_reduce_artifact()
+    lift = _Lift(
+        [
+            artifact,
+            CandidateLiftError({"diagnostic": "construction failed"}),
+            artifact,
+        ]
+    )
+    factory = _Gate1Factory(
+        [_gate1_result(closed=False), _gate1_result(closed=True)]
+    )
+
+    report = _runner(lift, factory, _Gate2()).run(_request())
+
+    assert report.main_status is MainStatus.SCRC_CERTIFIED
+    assert lift.feedbacks[1].kind is FeedbackKind.GATE1
+    assert lift.feedbacks[2].kind is FeedbackKind.LIFT
+    retained = lift.feedbacks[2].diagnostics["unresolved_gate1"]
+    assert retained["formal_round"] == 1
+    assert "observer_diff" in retained["diagnostics"]
+    assert factory.rounds == [1, 2]
+
+
 def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     monkeypatch,
 ) -> None:

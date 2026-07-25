@@ -77,6 +77,18 @@ def _observer_categories(feedback: dict[str, Any] | None) -> list[dict[str, Any]
         return []
     observer = diagnostics.get("observer_diff")
     if not isinstance(observer, dict):
+        unresolved = diagnostics.get("unresolved_gate1")
+        unresolved_diagnostics = (
+            unresolved.get("diagnostics")
+            if isinstance(unresolved, dict)
+            else None
+        )
+        observer = (
+            unresolved_diagnostics.get("observer_diff")
+            if isinstance(unresolved_diagnostics, dict)
+            else None
+        )
+    if not isinstance(observer, dict):
         return []
     categories = observer.get("categories")
     if not isinstance(categories, list):
@@ -121,10 +133,14 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
         "candidate_copied_to_output": copied,
         "files": files,
         "feedback_kind": (
-            feedback.get("kind") if isinstance(feedback, dict) else None
+            feedback.get("failure_kind")
+            if isinstance(feedback, dict)
+            else None
         ),
         "feedback_round": (
-            feedback.get("round") if isinstance(feedback, dict) else None
+            feedback.get("relift_round")
+            if isinstance(feedback, dict)
+            else None
         ),
         "observer_categories": _observer_categories(feedback),
         "next": [
