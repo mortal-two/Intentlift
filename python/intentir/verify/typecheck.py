@@ -34,8 +34,11 @@ from intentir.ir.value_dimension import (
     validate_value_dimension_relations,
 )
 from intentir.verify.gate1.model import (
+    AccessGuardPolarity,
+    AccessKind,
     ImplementationConfig,
     ParameterKind,
+    ParameterMode,
     RefinementKind,
     ResultRelationKind,
     ScheduleSlotKind,
@@ -44,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v13"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v14"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -79,6 +82,7 @@ class TypeCheckErrorCode(str, Enum):
     PADDED_MEAN_COUNT_UNPROVEN = "padded_mean_count_unproven"
     LOGICAL_INPUT_UNUSED = "logical_input_unused"
     BOUNDARY_VALUE_NOT_DOMINATING = "boundary_value_not_dominating"
+    ACCESS_GUARD_RELATION_INVALID = "access_guard_relation_invalid"
     REPRESENTATION_CARRIER_J_USE_FORBIDDEN = (
         "representation_carrier_j_use_forbidden"
     )
@@ -1027,6 +1031,7 @@ def _check_boundary_value_dominance(
 
     visible_at_function_exit = visit_sequence(operations, inputs, "body")
     elaboration = j_elaboration(j)
+    visible_by_access: dict[str, tuple[frozenset[str], str]] = {}
     for index, access in enumerate(j.boundary.accesses):
         parsed = elaboration.access_by_id.get(access.access_id)
         if parsed is None:
@@ -1041,6 +1046,7 @@ def _check_boundary_value_dominance(
                 # Ordinary reference checking owns unknown node handles.
                 continue
             event_ref = f"access node {access.node_ref!r}"
+        visible_by_access[access.access_id] = (visible, event_ref)
 
         expressions: list[tuple[str, Any]] = [
             (
@@ -1069,6 +1075,416 @@ def _check_boundary_value_dominance(
                         access.access_id,
                     )
                 )
+
+    for index, relation in enumerate(j.boundary.access_guard_relations):
+        visibility = visible_by_access.get(relation.access_ref)
+        if visibility is None:
+            # Boundary/model reference closure owns an unknown access.
+            continue
+        visible, event_ref = visibility
+        if relation.value_ref not in all_values or relation.value_ref in visible:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.BOUNDARY_VALUE_NOT_DOMINATING,
+                f"j.boundary.access_guard_relations[{index}].value_ref",
+                f"Layer-A value {relation.value_ref!r} does not dominate "
+                f"the {event_ref}",
+                relation.access_ref,
+            )
+        )
+
+
+def _check_access_guard_relations(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check the closed v5 access-local computed-guard contract.
+
+    The relation is entirely J-owned.  This routine validates authored facts;
+    it never copies a predicate, invents broadcast axes, inserts a ``select``,
+    changes an output parameter into ``inout``, or consults pi.
+    """
+
+    if not j.boundary.access_guard_relations:
+        return
+
+    from intentir.frontend.emit_mlir import _broadcast_projection
+
+    function = j.intent.to_json()["intent_function"]
+    by_path: dict[str, Mapping[str, Any]] = {}
+    loop_stack_by_path: dict[str, tuple[tuple[str, Mapping[str, Any]], ...]] = {}
+    declared_values = {
+        item.get("name")
+        for item in function.get("inputs", [])
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+
+    def visit(
+        operations: Any,
+        prefix: str,
+        loop_stack: tuple[tuple[str, Mapping[str, Any]], ...],
+    ) -> None:
+        if not isinstance(operations, list):
+            return
+        for index, operation in enumerate(operations):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            by_path[path] = operation
+            loop_stack_by_path[path] = loop_stack
+            declared_values.update(_operation_results(operation.get("result")))
+            if operation.get("op") != "loop":
+                visit(operation.get("body"), f"{path}.body", loop_stack)
+                continue
+            scans = operation.get("scan")
+            if isinstance(scans, list):
+                declared_values.update(
+                    item.get("name")
+                    for item in scans
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("name"), str)
+                )
+            carries = operation.get("carry")
+            if isinstance(carries, list):
+                declared_values.update(
+                    item.get("body_argument")
+                    for item in carries
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("body_argument"), str)
+                )
+            visit(
+                operation.get("body"),
+                f"{path}.body",
+                (*loop_stack, (path, operation)),
+            )
+
+    visit(function.get("body", []), "body", ())
+    nodes = dict(by_path)
+    for node_ref, path in j.node_ids.items():
+        operation = by_path.get(path)
+        if operation is not None:
+            nodes[node_ref] = operation
+
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
+    input_names = {
+        item.name for item in j.intent.inputs
+    }
+    output_names = {
+        item.name for item in j.intent.outputs
+    }
+    return_values = {
+        item.output: item.value for item in j.intent.returns
+    }
+    parameters_by_logical: dict[str, list[Any]] = {}
+    for parameter in j.signature.parameters:
+        if parameter.logical_ref is not None:
+            parameters_by_logical.setdefault(
+                parameter.logical_ref, []
+            ).append(parameter)
+
+    seen_pairs: set[tuple[str, str]] = set()
+    relations_by_access: dict[str, list[int]] = {}
+    carry_relations: dict[tuple[str, int], list[int]] = {}
+
+    def reject(
+        index: int,
+        field: str,
+        detail: str,
+        ref: str | None = None,
+    ) -> None:
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID,
+                f"j.boundary.access_guard_relations[{index}].{field}",
+                detail,
+                ref,
+            )
+        )
+
+    for index, relation in enumerate(j.boundary.access_guard_relations):
+        pair = (relation.access_ref, relation.value_ref)
+        if pair in seen_pairs:
+            reject(
+                index,
+                "access_ref",
+                "one (access_ref, value_ref) pair may be declared only once",
+                relation.access_ref,
+            )
+        seen_pairs.add(pair)
+        relations_by_access.setdefault(relation.access_ref, []).append(index)
+
+        access = accesses.get(relation.access_ref)
+        if access is None:
+            # The strict Boundary model owns unknown access references.
+            continue
+        guard_type = value_types.get(relation.value_ref)
+        if relation.value_ref not in declared_values or guard_type is None:
+            reject(
+                index,
+                "value_ref",
+                "value_ref must name a real typed Layer-A declaration",
+                relation.value_ref,
+            )
+            continue
+        if guard_type.dtype.casefold() != "i1":
+            reject(
+                index,
+                "value_ref",
+                "access guard value_ref must have canonical dtype i1",
+                relation.value_ref,
+            )
+
+        axes = tuple(relation.axes)
+        if axes != tuple(sorted(set(axes))):
+            reject(
+                index,
+                "axes",
+                "access guard axes must be strictly increasing and unique",
+                relation.access_ref,
+            )
+
+        target_type = value_types.get(access.tensor)
+        if target_type is None:
+            reject(
+                index,
+                "access_ref",
+                "access target must have one closed Layer-A tensor type",
+                access.tensor,
+            )
+        else:
+            try:
+                _broadcast_projection(
+                    list(guard_type.shape),
+                    axes,
+                    list(target_type.shape),
+                )
+            except (NotImplementedError, ValueError) as exc:
+                reject(
+                    index,
+                    "axes",
+                    "guard shape cannot project to the access target using "
+                    f"the authored broadcast axes: {exc}",
+                    relation.access_ref,
+                )
+
+        parsed_access = elaboration.access_by_id.get(access.access_id)
+        if (
+            parsed_access is not None
+            and parsed_access.predicate is not None
+            and relation.value_ref
+            in _ordered_expression_refs(parsed_access.predicate)
+        ):
+            reject(
+                index,
+                "value_ref",
+                "the relation-bound computed guard must not also appear in "
+                "the access predicate",
+                relation.access_ref,
+            )
+
+        if access.kind is AccessKind.LOAD:
+            if access.fill_value is None:
+                reject(
+                    index,
+                    "access_ref",
+                    "a relation-guarded load requires an explicit fill_value",
+                    relation.access_ref,
+                )
+            continue
+        if access.kind is AccessKind.UPDATE:
+            reject(
+                index,
+                "access_ref",
+                "access-guard relation v1 has no closed update merge contract",
+                relation.access_ref,
+            )
+            continue
+
+        assert access.kind is AccessKind.STORE
+        access_path = (
+            j.node_ids.get(access.node_ref, access.node_ref)
+            if access.node_ref is not None
+            else None
+        )
+        loop_stack = (
+            loop_stack_by_path.get(access_path, ())
+            if access_path is not None
+            else ()
+        )
+        observable_value = return_values.get(access.tensor, access.tensor)
+        matches: list[tuple[str, int, Mapping[str, Any]]] = []
+        for loop_path, loop in loop_stack:
+            raw_carries = loop.get("carry")
+            carries = raw_carries if isinstance(raw_carries, list) else []
+            for ordinal, carry in enumerate(carries):
+                if (
+                    isinstance(carry, Mapping)
+                    and carry.get("result_value") == observable_value
+                ):
+                    matches.append((loop_path, ordinal, carry))
+
+        target_parameters = parameters_by_logical.get(access.tensor, [])
+        has_real_inout = (
+            access.tensor in output_names
+            and len(target_parameters) == 1
+            and target_parameters[0].mode is ParameterMode.INOUT
+        )
+        if not has_real_inout:
+            reject(
+                index,
+                "access_ref",
+                "a relation-guarded store must target one J output bound by "
+                "exactly one mode=inout parameter; TypeCheck never upgrades "
+                "output to inout",
+                relation.access_ref,
+            )
+
+        if not loop_stack:
+            # A non-loop conditional effect is fully owned by the relation and
+            # the explicit inout pre-state.  The select-merge rule below is
+            # deliberately only for structured loop-carried writes.
+            continue
+        if len(matches) != 1:
+            reject(
+                index,
+                "access_ref",
+                "a relation-guarded store inside a structured loop must map "
+                "to exactly one enclosing carry result",
+                relation.access_ref,
+            )
+            continue
+
+        loop_path, carry_ordinal, carry = matches[0]
+        carry_relations.setdefault((loop_path, carry_ordinal), []).append(index)
+        init_value = carry.get("init_value")
+        init_type = (
+            value_types.get(init_value)
+            if isinstance(init_value, str)
+            else None
+        )
+        if (
+            not isinstance(init_value, str)
+            or init_value not in input_names
+            or init_type is None
+            or target_type is None
+            or init_type != target_type
+        ):
+            reject(
+                index,
+                "access_ref",
+                "the guarded carry must initialize from one explicit typed "
+                "Layer-A input pre-state matching the inout target",
+                relation.access_ref,
+            )
+
+        operation = nodes.get(access.node_ref or "")
+        operands = operation.get("operands") if operation is not None else None
+        result = operation.get("result") if operation is not None else None
+        if (
+            operation is None
+            or operation.get("op") != "select"
+            or not isinstance(operands, list)
+            or len(operands) != 3
+            or not all(isinstance(item, str) for item in operands)
+            or not isinstance(result, str)
+        ):
+            reject(
+                index,
+                "access_ref",
+                "a guarded loop-carried store must anchor one explicit "
+                "three-operand Layer-A select merge",
+                relation.access_ref,
+            )
+            continue
+        if carry.get("next_value") != result:
+            reject(
+                index,
+                "access_ref",
+                "carry.next_value must be the explicit select merge result",
+                relation.access_ref,
+            )
+        if operands[0] != relation.value_ref:
+            reject(
+                index,
+                "value_ref",
+                "the explicit select condition must equal relation.value_ref",
+                relation.access_ref,
+            )
+
+        current = carry.get("body_argument")
+        inactive_index = (
+            2
+            if relation.polarity is AccessGuardPolarity.POSITIVE
+            else 1
+        )
+        active_index = 1 if inactive_index == 2 else 2
+        if operands[inactive_index] != current:
+            reject(
+                index,
+                "polarity",
+                "the select branch inactive under the authored polarity must "
+                "be the current carry body_argument",
+                relation.access_ref,
+            )
+        if operands[active_index] == current:
+            reject(
+                index,
+                "polarity",
+                "the select branch active under the authored polarity must "
+                "be the candidate update, not the current carry",
+                relation.access_ref,
+            )
+
+        select_guard_broadcasts = [
+            item
+            for item in j.boundary.broadcasts
+            if item.operand == relation.value_ref
+            and nodes.get(item.node_ref) is operation
+        ]
+        if len(select_guard_broadcasts) > 1:
+            reject(
+                index,
+                "axes",
+                "the select condition has multiple independent broadcast "
+                "declarations",
+                relation.access_ref,
+            )
+        elif (
+            select_guard_broadcasts
+            and tuple(select_guard_broadcasts[0].axes) != axes
+        ):
+            reject(
+                index,
+                "axes",
+                "the access-local guard axes disagree with the explicit "
+                "select-condition broadcast axes",
+                relation.access_ref,
+            )
+
+    for access_ref, indexes in sorted(relations_by_access.items()):
+        if len(indexes) <= 1:
+            continue
+        for index in indexes:
+            reject(
+                index,
+                "access_ref",
+                "access-guard relation v1 permits exactly one guard per access",
+                access_ref,
+            )
+    for (_loop_path, _carry_ordinal), indexes in sorted(carry_relations.items()):
+        if len(indexes) <= 1:
+            continue
+        for index in indexes:
+            reject(
+                index,
+                "access_ref",
+                "access-guard relation v1 fails closed on multiple guarded "
+                "writes to one loop carry",
+                j.boundary.access_guard_relations[index].access_ref,
+            )
 
 
 def _axis_refs_v1(
@@ -2616,6 +3032,7 @@ def type_check(
     _check_total_j_value_typing(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     _check_boundary_value_dominance(j, diagnostics)
+    _check_access_guard_relations(j, diagnostics)
     diagnostics.extend(
         TypeCheckDiagnostic(
             TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,
@@ -2634,6 +3051,9 @@ def type_check(
         )
         for issue in functional_reduction_padding_issues(j)
     )
+    relation_guarded_accesses = {
+        item.access_ref for item in j.boundary.access_guard_relations
+    }
     for index, access in enumerate(j.boundary.accesses):
         if access.fill_value is None:
             continue
@@ -2647,12 +3067,16 @@ def type_check(
                     access.access_id,
                 )
             )
-        if access.predicate is None:
+        if (
+            access.predicate is None
+            and access.access_id not in relation_guarded_accesses
+        ):
             diagnostics.append(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.INVALID_ACCESS_FILL,
                     path,
-                    "fill_value requires a non-null access predicate",
+                    "fill_value requires an authored access predicate or "
+                    "access_guard_relation",
                     access.access_id,
                 )
             )

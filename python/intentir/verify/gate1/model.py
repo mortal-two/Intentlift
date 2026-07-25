@@ -2835,11 +2835,17 @@ class ValueDimensionRelation(StrictJSONMixin):
 def _validate_access_guard_reference_closure(
     archive: "SemanticArchive",
 ) -> None:
-    """Require access-guard endpoints to name declarations in this exact J."""
+    """Require access-guard endpoints to name real declarations in this J.
 
-    declared_values = {
-        item.name for item in [*archive.intent.inputs, *archive.intent.outputs]
-    }
+    Function outputs and carry ``next_value`` fields are references, not value
+    declarations by themselves.  In particular, accepting either one here
+    would let an output-only name or a misspelled carry update cross the wire
+    merely because another field repeated the same spelling.  The ordinary
+    Layer-A validator separately proves that loop results and next values are
+    backed by actual operation results.
+    """
+
+    declared_values = {item.name for item in archive.intent.inputs}
 
     def visit(operations: list[Any]) -> None:
         for operation in operations:
@@ -2849,13 +2855,7 @@ def _validate_access_guard_reference_closure(
                 declared_values.update(operation.result)
             declared_values.update(scan.name for scan in operation.scan)
             for state in operation.carry:
-                declared_values.update(
-                    {
-                        state.body_argument,
-                        state.next_value,
-                        state.result_value,
-                    }
-                )
+                declared_values.add(state.body_argument)
             visit(operation.body)
 
     visit(archive.intent.body)

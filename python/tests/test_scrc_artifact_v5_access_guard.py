@@ -23,11 +23,35 @@ from intentir.verify.gate1.prompt import (
 
 def _guarded_payload() -> dict:
     payload = make_reduce_artifact().to_json()
+
+    def rename_output(value):
+        if isinstance(value, str):
+            return "t2" if value == "t1" else value
+        if isinstance(value, list):
+            return [rename_output(item) for item in value]
+        if isinstance(value, dict):
+            return {key: rename_output(item) for key, item in value.items()}
+        return value
+
+    payload = rename_output(payload)
+    payload["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "t1", "dtype": "i1", "shape": ["x0"]}
+    )
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "pointer",
+            "mode": "input",
+            "dtype": "i1",
+            "rank": 1,
+            "logical_ref": "t1",
+        }
+    )
     payload["j"]["boundary"]["access_guard_relations"] = [
         {
-            "access_ref": "a1",
-            "value_ref": "v0",
-            "axes": [0],
+            "access_ref": "a0",
+            "value_ref": "t1",
+            "axes": [1],
             "polarity": "positive",
         }
     ]
@@ -40,7 +64,12 @@ def _request() -> SCRCLiftRequest:
         user_input="",
         prompt_sha256="0" * 64,
         harness_binding=SCRCHarnessBinding(
-            source_to_opaque=(("arg0", "p0"), ("arg1", "p1"), ("arg2", "p2")),
+            source_to_opaque=(
+                ("arg0", "p0"),
+                ("arg1", "p1"),
+                ("arg2", "p2"),
+                ("arg3", "p3"),
+            ),
             source_function="source_kernel",
         ),
     )
@@ -55,9 +84,9 @@ def test_v5_access_guard_round_trip_and_decode_are_exact() -> None:
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     assert decoded.wire_schema == "intentir.scrc.artifact.v5"
     assert decoded.j.boundary.access_guard_relations[0].to_json() == {
-        "access_ref": "a1",
-        "value_ref": "v0",
-        "axes": [0],
+        "access_ref": "a0",
+        "value_ref": "t1",
+        "axes": [1],
         "polarity": "positive",
     }
 
@@ -129,9 +158,9 @@ def test_normal_replay_packet_preserves_public_access_guard_relation() -> None:
     normal = build_normal_rewriter_view(artifact)
     assert normal["j"]["boundary"]["access_guard_relations"] == [
         {
-            "access_ref": "a1",
-            "value_ref": "v0",
-            "axes": [0],
+            "access_ref": "a0",
+            "value_ref": "t1",
+            "axes": [1],
             "polarity": "positive",
         }
     ]
@@ -139,9 +168,9 @@ def test_normal_replay_packet_preserves_public_access_guard_relation() -> None:
 
     masked = build_masked_rewriter_view(artifact)
     assert masked["j"]["boundary"]["access_guard_relations"] == [
-            {
-                "access_ref": "a1",
-                "value_ref": "r0",
+        {
+            "access_ref": "a0",
+            "value_ref": "t1",
                 "axes": ["<masked>"],
                 "polarity": "<masked>",
             }

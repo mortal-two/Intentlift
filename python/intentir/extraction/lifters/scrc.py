@@ -794,7 +794,14 @@ contain k0 and one domain must declare exactly 0 <= k0 and k0 < x0. A tensor
 shape, Source fact, C value, pi route, or runtime value never fills a missing or
 different domain relation. General logical predicates remain legal J; do not
 delete them merely to satisfy this rectangular profile. A fill_value is legal
-only on a load with a non-null predicate.
+only on a load with an authored predicate or access_guard_relation.
+A computed Layer-A i1 access guard gets exactly one
+boundary.access_guard_relations item with increasing target-broadcast axes and
+closed polarity; do not copy it into the access predicate. A guarded load has a
+fill. A loop-carried guarded store authors mode=inout, typed input pre-state,
+and select(guard,candidate,current) when positive or
+select(guard,current,candidate) when negative; its result is carry.next_value.
+One carry has one guarded write.
 If a guard-free direct padding predicate and a complete zero-based rectangular
 domain use the same-axis bound as the typed tensor extent, and that masked axis
 is later eliminated by `reduce(fn=mean)`, a neutral zero fill closes only the

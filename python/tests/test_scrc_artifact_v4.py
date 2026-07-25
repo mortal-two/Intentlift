@@ -1143,7 +1143,7 @@ def test_loop_carrier_wire_rejects_unknown_fields_and_reused_state_result_slots(
         RealizationWitness.from_json(payload)
 
 
-def test_candidate_check_uses_v5_v13_and_reports_missing_consumer_relation() -> None:
+def test_candidate_check_uses_v5_v14_and_reports_missing_consumer_relation() -> None:
     artifact = make_reduce_artifact()
     context = SCRCCandidateCheckContext(("p0", "p1", "p2"))
 
@@ -1159,7 +1159,7 @@ def test_candidate_check_uses_v5_v13_and_reports_missing_consumer_relation() -> 
     )
 
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v6"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v13"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v14"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

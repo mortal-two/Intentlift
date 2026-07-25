@@ -251,7 +251,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v13"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v14"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -1440,7 +1440,7 @@ def test_fill_requires_a_predicated_load_before_replay() -> None:
     ]
     assert len(matching) == 1
     assert matching[0].ref == "a0"
-    assert "non-null access predicate" in matching[0].detail
+    assert "access predicate or access_guard_relation" in matching[0].detail
     with pytest.raises(SchemaError, match="invalid_access_fill"):
         build_normal_rewriter_view(orphan)
 
@@ -1673,7 +1673,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v13"
+    assert report.protocol == "intentir.scrc.typecheck.v14"
 
 
 @pytest.mark.parametrize(

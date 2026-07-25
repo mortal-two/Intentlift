@@ -58,9 +58,22 @@ the artifact schema or external TypeCheck.
    domain `0 <= k0 and k0 < x0`; tensor shape, C, pi, Source, and runtime values
    never fill a missing/different domain. Preserve general logical predicates
    rather than deleting them to force this profile.
-7. `fill_value` is legal only on a load with a non-null `predicate`. An
+7. `fill_value` is legal only on a load with an authored predicate or
+   `access_guard_relation`. An
    unconditional access omits both fields (or leaves both null); never attach a
    redundant fill to it. Consumers reject rather than normalize an orphan fill.
+   A computed Layer-A `i1` access guard belongs in exactly one
+   `boundary.access_guard_relations` item, not copied into the access predicate.
+   Its non-negative axes are strictly increasing access-target broadcast axes;
+   for example a guard shaped `[M]` used by an access shaped `[M,N]` declares
+   `axes:[1]`. A relation-guarded load has an explicit fill. A relation-guarded
+   store inside a structured loop has an authored `mode=inout` output, a typed
+   input carry pre-state, and an explicit select merge. Positive polarity is
+   `select(guard,candidate,current)`; negative polarity is
+   `select(guard,current,candidate)`; the result is exactly `carry.next_value`.
+   One carry has at most one guarded write in this version. CandidateCheck only
+   rejects bad declarations: it never inserts select, changes output to inout,
+   derives axes/polarity, or asks pi to supply any missing semantic fact.
    If a guard-free direct padding predicate and a complete zero-based
    rectangular domain use the same-axis bound as the typed tensor extent, and
    that masked axis is eliminated by `reduce(mean)`, zero fill proves only the
