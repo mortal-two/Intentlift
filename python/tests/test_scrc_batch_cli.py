@@ -316,6 +316,20 @@ def test_batch_cli_candidate_width_fails_closed(capsys) -> None:
         assert "must be in [1, 5]" in capsys.readouterr().err
 
 
+def test_batch_cli_gate1_round_budget_is_positive_and_bounded(capsys) -> None:
+    for rounds in ("0", "13"):
+        assert scrc_batch.main(
+            [
+                "--run",
+                "--case",
+                "high_performance:liger_dyt",
+                "--gate1-rounds",
+                rounds,
+            ]
+        ) == 2
+        assert "must be in [1, 12]" in capsys.readouterr().err
+
+
 def test_batch_cli_parallel_controls_are_live_only_and_globally_bounded(
     tmp_path, capsys
 ) -> None:
@@ -392,7 +406,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        replay_backend,
+        replay_backend, max_gate1_rounds,
         stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
@@ -400,6 +414,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert run_masked_j
         assert lift_backend == "responses"
         assert replay_backend == "miniswe"
+        assert max_gate1_rounds == 6
         assert stop_requested is None
         assert progress_callback is not None
         barrier.wait()
@@ -475,6 +490,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "xhigh",
             "--replay-backend",
             "miniswe",
+            "--gate1-rounds",
+            "6",
             "--run-root",
             str(tmp_path / "runs"),
             "--json",
@@ -489,6 +506,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         "candidates": 5,
         "max_branch_workers": 8,
         "gate2_workers": 1,
+        "gate1_rounds": 6,
     }
     assert payload["status_counts"] == {"scrc_certified": 1}
     assert len(payload["cases"]) == 1
@@ -603,6 +621,7 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         "candidates": 2,
         "max_branch_workers": 4,
         "gate2_workers": 2,
+        "gate1_rounds": 3,
     }
     assert [case["ordinal"] for case in payload["cases"]] == sorted(
         entry.ordinal for entry in selected_entries

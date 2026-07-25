@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections import Counter
 import hashlib
 import json
@@ -669,6 +669,7 @@ def search_prepared_workload_gate1(
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     replay_backend: str = "responses",
+    max_gate1_rounds: int | None = None,
     stop_requested: Callable[[], int | None] | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadGate1Search:
@@ -682,9 +683,12 @@ def search_prepared_workload_gate1(
         lift_backend=lift_backend,
         replay_backend=replay_backend,
     )
+    request = prepared.request
+    if max_gate1_rounds is not None:
+        request = replace(request, max_gate1_rounds=max_gate1_rounds)
     try:
         report = runner.search_gate1(
-            prepared.request,
+            request,
             stop_requested=stop_requested,
             progress_callback=progress_callback,
         )

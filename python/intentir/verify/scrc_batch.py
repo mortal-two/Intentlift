@@ -23,6 +23,7 @@ _SCHEDULING_KEYS = (
     "candidates",
     "max_branch_workers",
     "gate2_workers",
+    "gate1_rounds",
 )
 
 
