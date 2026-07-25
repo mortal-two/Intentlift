@@ -174,6 +174,40 @@ def _gather_j() -> SemanticArchive:
     )
 
 
+def _static_index_gather_j(index: int = 2) -> SemanticArchive:
+    fn = IntentFunction.from_json(
+        {
+            "name": "static_index_gather",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [4]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": []}],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "const",
+                    "result": "I",
+                    "attrs": {"value": index, "dtype": "i32", "shape": []},
+                    "type": {"dtype": "i32", "shape": []},
+                },
+                {
+                    "id": "n1",
+                    "op": "gather",
+                    "result": "Y",
+                    "operands": ["X", "I"],
+                    "attrs": {"axis": 0, "mode": "take"},
+                    "type": {"dtype": "f32", "shape": []},
+                },
+            ],
+        }
+    )
+    return SemanticArchive(
+        "static_index_gather",
+        fn,
+        {"n0": "body[0]", "n1": "body[1]"},
+        Boundary(index_bounds=[IndexBoundsSpec("n1", "X", "I", 0)]),
+        _signature(fn),
+    )
+
+
 class _FakeRunner:
     def __init__(self, output: np.ndarray):
         self.output = np.asarray(output)
@@ -387,6 +421,35 @@ def test_typed_gather_bounds_drive_emitter_and_runtime_precondition() -> None:
                 "X": np.arange(4, dtype=np.float32),
                 "I": np.asarray([4, 0], dtype=np.int32),
             },
+        )
+
+
+def test_internal_constant_index_is_checked_from_j_and_executes() -> None:
+    j = _static_index_gather_j()
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={},
+        input_bindings={"X": "base"},
+        output_bindings={"Y": "out"},
+    )
+
+    validate_index_bounds_inputs(j, {"X": np.arange(4, dtype=np.float32)})
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"base": np.arange(4, dtype=np.float32)},
+    )
+
+    assert result.ok, result.error
+    assert result.outputs["out"] == np.asarray(2, dtype=np.float32)
+
+
+def test_internal_constant_index_static_oob_fails_closed() -> None:
+    j = _static_index_gather_j(index=4)
+
+    with pytest.raises(ValueError, match="precondition failed"):
+        validate_index_bounds_inputs(
+            j,
+            {"X": np.arange(4, dtype=np.float32)},
         )
 
 

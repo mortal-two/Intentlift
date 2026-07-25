@@ -278,6 +278,45 @@ def _node_table(j: Any) -> dict[str, IntentOp]:
     return result
 
 
+def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
+    """Decide a closed internal-constant index precondition from J alone.
+
+    ``True`` and ``False`` are proofs for an integer ``const`` index against a
+    statically sized data axis.  ``None`` means the relation still needs a
+    runtime checker.  No Source, C, pi, Harness value, or target fact enters
+    this decision.
+    """
+
+    j = elaborate_j(j)
+    value_types = j_elaboration(j).value_type_by_name
+    data_type = value_types.get(relation.data)
+    index_type = value_types.get(relation.indices)
+    if (
+        data_type is None
+        or index_type is None
+        or relation.axis >= len(data_type.shape)
+        or re.fullmatch(r"[iu][0-9]+", index_type.dtype) is None
+    ):
+        return None
+    extent = data_type.shape[relation.axis]
+    if type(extent) is not int:
+        return None
+    producer = next(
+        (
+            operation
+            for operation in _node_table(j).values()
+            if relation.indices in _result_names(operation)
+        ),
+        None,
+    )
+    if producer is None or producer.op != "const":
+        return None
+    value = producer.attrs.get("value")
+    if type(value) is not int:
+        return None
+    return 0 <= value < extent
+
+
 def _flatten_conjunction(expression: ContractExpr) -> tuple[ContractExpr, ...]:
     if expression.op != "and":
         return (expression,)
@@ -2494,6 +2533,7 @@ __all__ = [
     "parse_direct_axes",
     "project_predicate_text",
     "resolve_consumer_local_tile_axis",
+    "static_index_bounds_status",
     "project_functional_boundary",
     "project_functional_boundary_for_refeval",
 ]

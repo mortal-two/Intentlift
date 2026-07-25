@@ -29,6 +29,7 @@ from intentir.ir.functional_boundary import (
     project_functional_boundary,
     project_functional_boundary_for_refeval,
     project_predicate_text,
+    static_index_bounds_status,
 )
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp
@@ -851,6 +852,13 @@ def validate_index_bounds_inputs(
     """Check J's indexed-domain preconditions before native scalar execution."""
 
     for item in j.boundary.index_bounds:
+        static_status = static_index_bounds_status(j, item)
+        if static_status is True:
+            continue
+        if static_status is False:
+            raise ValueError(
+                f"J index-bounds precondition failed at node {item.node_ref!r}"
+            )
         if item.data not in values or item.indices not in values:
             raise NotImplementedError(
                 "E_J runtime bounds checking currently requires data and indices "

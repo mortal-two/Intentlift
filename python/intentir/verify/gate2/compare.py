@@ -6,6 +6,8 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.ir.functional_boundary import static_index_bounds_status
+
 from intentir.verify.gate1.model import (
     DuplicatePolicy,
     LogicalUpdateSpec,
@@ -209,6 +211,13 @@ def validate_j_inputs(
 
     j_inputs = _j_inputs(j, input_bindings, values)
     for item in j.boundary.index_bounds:
+        static_status = static_index_bounds_status(j, item)
+        if static_status is True:
+            continue
+        if static_status is False:
+            raise ValueError(
+                f"Gate2 index-bounds precondition failed at {item.node_ref!r}"
+            )
         if item.data not in j_inputs or item.indices not in j_inputs:
             raise NotImplementedError(
                 "Gate2 index bounds currently require external data/indices inputs"
