@@ -300,7 +300,29 @@ def test_gate1_relift_node_witness_preserves_incident_edge_context() -> None:
                 "differences": differences,
             }
 
-    compact = _compact_gate1_observer_diff(RewiredComparison())
+    class SourceFingerprint:
+        diagnostic_node_signatures = (
+            (f"arith.addf[{source_add}]", "arith.addf %,% : f32"),
+            (f"arith.mulf[{source_mul}]", "arith.mulf %,% : f32"),
+        )
+
+    class ReplayFingerprint:
+        diagnostic_node_signatures = (
+            (
+                f"arith.addf[{replay_add}]",
+                "arith.addf %,% : tensor<8xf32>",
+            ),
+            (
+                f"arith.mulf[{replay_mul}]",
+                "arith.mulf %,% : tensor<8xf32>",
+            ),
+        )
+
+    compact = _compact_gate1_observer_diff(
+        RewiredComparison(),
+        source_fingerprint=SourceFingerprint(),
+        replay_fingerprint=ReplayFingerprint(),
+    )
     dataflow = compact["categories"][0]
     source = next(
         item
@@ -315,6 +337,10 @@ def test_gate1_relift_node_witness_preserves_incident_edge_context() -> None:
 
     assert len(source["incident_differences"]) == 3
     assert len(replay["incident_differences"]) == 3
+    assert source["source_local_signature"] == "arith.addf %,% : f32"
+    assert replay["replay_local_signature"] == (
+        "arith.addf %,% : tensor<8xf32>"
+    )
     assert {
         edge["item"][3] for edge in source["incident_differences"]
     } == {"operand[0]", "operand[1]", "function.return[0]"}

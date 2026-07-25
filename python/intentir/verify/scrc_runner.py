@@ -28,8 +28,9 @@ UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
 UNRESOLVED_GATE2_DIAGNOSTIC = "unresolved_gate2"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
-MAX_GATE1_FEEDBACK_NODE_WITNESSES = 6
+MAX_GATE1_FEEDBACK_NODE_WITNESSES = 10
 MAX_GATE1_FEEDBACK_EDGES_PER_NODE = 6
+MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS = 512
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -156,12 +157,14 @@ def _pseudonymize_observer_nodes(
 def _observer_node_witnesses(
     differences: list[Mapping[str, Any]],
     aliases: Mapping[str, str],
+    diagnostic_signatures: Mapping[str, Mapping[str, str]],
 ) -> list[dict[str, Any]]:
     """Expose bounded incident-edge witnesses for the first divergent nodes."""
 
     incident: dict[str, list[Mapping[str, Any]]] = {}
     labels: dict[str, str] = {}
-    seeds: list[str] = []
+    primary_consumers: list[str] = []
+    ordered_tokens: list[str] = []
     for difference in differences:
         item = difference.get("item")
         if (
@@ -175,45 +178,121 @@ def _observer_node_witnesses(
         # cascade of indistinguishable family-only missing/unexpected edges.
         ordered_endpoints = (item[2], item[1])
         edge_tokens: list[str] = []
-        for endpoint in ordered_endpoints:
+        for endpoint_index, endpoint in enumerate(ordered_endpoints):
             endpoint_tokens = _observer_fingerprints(endpoint)
             for token in endpoint_tokens:
                 if token not in edge_tokens:
                     edge_tokens.append(token)
+                if token not in ordered_tokens:
+                    ordered_tokens.append(token)
+                if (
+                    endpoint_index == 0
+                    and token not in primary_consumers
+                    and len(primary_consumers) < 2
+                ):
+                    primary_consumers.append(token)
                 labels.setdefault(
                     token,
                     str(_pseudonymize_observer_nodes(endpoint, aliases)),
                 )
         for token in edge_tokens:
             incident.setdefault(token, []).append(difference)
-            if token not in seeds and len(seeds) < MAX_GATE1_FEEDBACK_NODE_WITNESSES:
-                seeds.append(token)
+
+    # Start with the first source/replay consumer pair, then walk its upstream
+    # producers before spending the witness budget on an unrelated
+    # lexicographically early edge.  Recursive observer hashes make the
+    # earliest producer divergence much more useful than a broad family list;
+    # each selected witness still retains both incoming and outgoing edges.
+    seeds = list(primary_consumers)
+    seed_index = 0
+    while seed_index < len(seeds) and len(seeds) < MAX_GATE1_FEEDBACK_NODE_WITNESSES:
+        token = seeds[seed_index]
+        seed_index += 1
+        incoming_neighbors: list[str] = []
+        for edge in incident.get(token, ()):
+            item = edge.get("item")
+            if not isinstance(item, (list, tuple)) or len(item) != 4:
+                continue
+            producers = _observer_fingerprints(item[1])
+            consumers = _observer_fingerprints(item[2])
+            if token in consumers:
+                for neighbor in producers:
+                    if neighbor != token and neighbor not in incoming_neighbors:
+                        incoming_neighbors.append(neighbor)
+        for neighbor in incoming_neighbors:
+            if neighbor in seeds:
+                continue
+            seeds.append(neighbor)
+            if len(seeds) >= MAX_GATE1_FEEDBACK_NODE_WITNESSES:
+                break
+    for token in ordered_tokens:
+        if len(seeds) >= MAX_GATE1_FEEDBACK_NODE_WITNESSES:
+            break
+        if token not in seeds:
+            seeds.append(token)
 
     witnesses: list[dict[str, Any]] = []
     for token in seeds:
         edges = incident.get(token, ())
-        witnesses.append(
-            {
-                "node": labels[token],
-                "incident_differences": [
-                    {
-                        key: _pseudonymize_observer_nodes(edge[key], aliases)
-                        for key in (
-                            "kind",
-                            "item",
-                            "expected_count",
-                            "actual_count",
-                        )
-                        if key in edge
-                    }
-                    for edge in edges[:MAX_GATE1_FEEDBACK_EDGES_PER_NODE]
-                ],
-                "truncated_count": max(
-                    0, len(edges) - MAX_GATE1_FEEDBACK_EDGES_PER_NODE
-                ),
-            }
-        )
+        witness: dict[str, Any] = {
+            "node": labels[token],
+            "incident_differences": [
+                {
+                    key: _pseudonymize_observer_nodes(edge[key], aliases)
+                    for key in (
+                        "kind",
+                        "item",
+                        "expected_count",
+                        "actual_count",
+                    )
+                    if key in edge
+                }
+                for edge in edges[:MAX_GATE1_FEEDBACK_EDGES_PER_NODE]
+            ],
+            "truncated_count": max(
+                0, len(edges) - MAX_GATE1_FEEDBACK_EDGES_PER_NODE
+            ),
+        }
+        signatures = diagnostic_signatures.get(token, {})
+        source_signature = signatures.get("source")
+        replay_signature = signatures.get("replay")
+        if source_signature is not None and source_signature == replay_signature:
+            witness["local_signature"] = source_signature
+        else:
+            if source_signature is not None:
+                witness["source_local_signature"] = source_signature
+            if replay_signature is not None:
+                witness["replay_local_signature"] = replay_signature
+        witnesses.append(witness)
     return witnesses
+
+
+def _observer_diagnostic_signatures(
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> dict[str, dict[str, str]]:
+    """Index ephemeral normalized signatures by their opaque node digest."""
+
+    result: dict[str, dict[str, str]] = {}
+    for side, fingerprint in (
+        ("source", source_fingerprint),
+        ("replay", replay_fingerprint),
+    ):
+        entries = getattr(fingerprint, "diagnostic_node_signatures", ())
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            if (
+                not isinstance(entry, (list, tuple))
+                or len(entry) != 2
+                or not isinstance(entry[0], str)
+                or not isinstance(entry[1], str)
+            ):
+                continue
+            signature = entry[1][:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+            for token in _observer_fingerprints(entry[0]):
+                result.setdefault(token, {}).setdefault(side, signature)
+    return result
 
 
 def _observer_edge_endpoint(value: Any) -> str:
@@ -244,7 +323,12 @@ def _observer_edge_pattern(difference: Mapping[str, Any]) -> tuple[str, ...] | N
     )
 
 
-def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
+def _compact_gate1_observer_diff(
+    comparison: Any,
+    *,
+    source_fingerprint: Any | None = None,
+    replay_fingerprint: Any | None = None,
+) -> dict[str, Any]:
     """Keep full evidence on disk while sending Lift a bounded actionable diff."""
 
     raw = comparison.to_dict()
@@ -255,6 +339,10 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
         difference for difference in differences if isinstance(difference, Mapping)
     ]
     node_aliases = _observer_node_aliases(mapped_differences)
+    diagnostic_signatures = _observer_diagnostic_signatures(
+        source_fingerprint,
+        replay_fingerprint,
+    )
 
     grouped: dict[str, dict[str, Any]] = {}
     for difference in mapped_differences:
@@ -308,6 +396,7 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
             witnesses = _observer_node_witnesses(
                 mapped_differences,
                 node_aliases,
+                diagnostic_signatures,
             )
             if witnesses:
                 group["node_witnesses"] = witnesses
@@ -655,7 +744,9 @@ class SCRCGateRunner:
         }
         if normal.comparison is not None:
             diagnostics["observer_diff"] = _compact_gate1_observer_diff(
-                normal.comparison
+                normal.comparison,
+                source_fingerprint=result.source_fingerprint,
+                replay_fingerprint=normal.fingerprint,
             )
         unresolved_gate2 = cls._unresolved_gate2(prior_feedback)
         if unresolved_gate2 is not None:

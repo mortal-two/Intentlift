@@ -596,6 +596,15 @@ class TTIRFingerprint:
     terminal_forks: tuple[TerminalForkFingerprint, ...] = ()
     schedule_view: tuple[tuple[str, str], ...] = ()
     schema_version: str = _SCHEMA_VERSION
+    # Diagnostic-only normalized node descriptions.  They are deliberately
+    # excluded from equality, ``to_dict`` and ``digest``: Gate1 membership is
+    # still owned solely by the versioned fields above.  SCRC may use this
+    # ephemeral sidecar to explain a failed edge without exposing SSA names.
+    diagnostic_node_signatures: tuple[tuple[str, str], ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
     @property
     def digest(self) -> str:
@@ -4762,6 +4771,16 @@ class TTIRParser:
             structured_ifs=tuple(structured_if_fingerprints),
             terminal_forks=tuple(terminal_fork_fingerprints),
             schedule_view=_canonical_schedule(schedule),
+            diagnostic_node_signatures=tuple(
+                sorted(
+                    (
+                        node_ref(operation.node_id, semantic=True),
+                        operation.local_signature,
+                    )
+                    for operation in operations
+                    if operation.name not in _TERMINATORS
+                )
+            ),
         )
 
     def _infer_access(

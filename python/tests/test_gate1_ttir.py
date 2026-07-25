@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import re
 from pathlib import Path
@@ -58,6 +59,20 @@ module {
   } loc(#loc)
 } loc(#loc)
 '''
+
+
+def test_diagnostic_node_signatures_do_not_change_versioned_fingerprint() -> None:
+    fingerprint = fingerprint_ttir(EQUIVALENT_SOURCE)
+    without_diagnostics = replace(fingerprint, diagnostic_node_signatures=())
+
+    assert fingerprint.diagnostic_node_signatures
+    assert "diagnostic_node_signatures" not in fingerprint.to_dict()
+    assert fingerprint == without_diagnostics
+    assert fingerprint.digest == without_diagnostics.digest
+    assert all(
+        "%zero" not in signature and "%sum" not in signature
+        for _node, signature in fingerprint.diagnostic_node_signatures
+    )
 
 
 def test_cache_policy_hints_are_global_presentation_noise() -> None:
