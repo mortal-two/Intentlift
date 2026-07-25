@@ -130,8 +130,8 @@ def render_boundary_access_wire_grammar() -> str:
         "omit the matching effect, or invent them when the source has none. "
         "For a predicated pure-functional boundary, the observable store "
         "producer carries an explicit result type equal to the J output. A "
-        "direct same-handle output needs no output_mapping; output_mappings "
-        "exist only for an explicit function returns rebinding and must match it. "
+        "direct same-handle output needs no output_mapping; otherwise returns "
+        "or output_mappings may uniquely bind it, and both must agree if present. "
         "consumer_extensions is the sole artifact.v4+ authority for a physical "
         "outside-domain contribution to one sum/max/min reduce or scan operand. "
         "It references the predicate-bearing access instead of copying or "
@@ -2159,8 +2159,12 @@ def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
             "IntentFunction returns reference unknown outputs: "
             + ", ".join(unknown_return_outputs)
         )
+    mapping_values = {
+        item.output: item.value for item in archive.boundary.output_mappings
+    }
     observable_values = {
-        output: return_values.get(output, output) for output in outputs
+        output: mapping_values.get(output, return_values.get(output, output))
+        for output in outputs
     }
     relation_by_output = {
         item.output: item for item in archive.boundary.result_relations

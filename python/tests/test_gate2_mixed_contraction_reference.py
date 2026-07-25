@@ -15,6 +15,7 @@ from intentir.ir.model import IntentFunction
 from intentir.verify.gate1.model import (
     Boundary,
     LogicalSignature,
+    OutputMapping,
     ParameterKind,
     ParameterMode,
     SemanticArchive,
@@ -160,6 +161,23 @@ def test_mixed_bool_float_outer_product_uses_j_only_reference() -> None:
     assert result.metadata["path"] == (
         "canonical J -> typed structured CPU reference"
     )
+
+
+def test_structured_reference_consumes_mapping_only_canonical_output() -> None:
+    archive = _direct_contraction_archive()
+    archive.intent.body[0].result = "v0"
+    archive.boundary.output_mappings = [
+        OutputMapping("Y", "v0", "n0")
+    ]
+    lhs = np.asarray([2.0, -1.0], dtype=np.float32)
+    rhs = np.asarray([True, False, True], dtype=np.bool_)
+
+    result = execute_structured_reference(archive, {}, [lhs, rhs])
+
+    np.testing.assert_array_equal(
+        result.outputs["Y"], lhs[:, None] * rhs.astype(np.float32)[None, :]
+    )
+    assert result.metadata["protocol"] == STRUCTURED_CPU_REFERENCE_PROTOCOL
 
 
 @pytest.mark.parametrize(

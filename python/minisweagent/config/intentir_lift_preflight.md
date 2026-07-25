@@ -101,7 +101,10 @@ the artifact schema or external TypeCheck.
 8. If a pure-functional boundary contains any predicate/fill, the observable
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;
-   declare a mapping only for a matching explicit function `returns` rebinding.
+   otherwise author the non-identity destination in function `returns` or
+   boundary `output_mappings`. Either one is sufficient; if both are present,
+   they must bind the same output to the same value. Fixed code checks this
+   unique binding and never chooses or inserts its value.
 9. Preserve every Source program/grid-coordinate occurrence as a distinct
    domain-anchored `realize` path in a program region, even when its current grid
    extent is one. Its program-uniform path enters `address_base`; the lane/C path

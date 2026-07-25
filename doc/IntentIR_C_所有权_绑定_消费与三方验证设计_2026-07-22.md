@@ -274,8 +274,8 @@ rank-0 J input，integral extent-only 绑定 declared `x*`。只影响 layout/ti
 selection 的 constexpr 应由 Harness 分类为 C slot；既无 J denotation、又不能合法归入 C 的 case
 是 Harness invalid，不能把 constexpr 以 `logical_ref=null` 留在 π-only topology 中。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v12`，shared functional projection 使用
-`intentir.j-functional-boundary.v11`。它们完整继承 v10/v3 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v14`，shared functional projection 使用
+`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
@@ -310,9 +310,23 @@ contraction。后两项只扩展 Gate2 reference consumer，不是 production ta
 
 v12/v11 移除对 logical inout 的旧 blanket rejection：只有同一 `t*` 已以相同类型同时声明为 J
 input/output、由唯一 `mode=inout` 参数绑定，并且 pre-state load、post-state store、effect、
-return/output mapping 全部由 J 显式闭合时，RefEval 才分别消费 input binding 的旧值与产生 output
+canonical output binding 全部由 J 显式闭合时，RefEval 才分别消费 input binding 的旧值与产生 output
 binding 的新值。`alias_of` 与 `boundary.aliases` 表达的物理别名仍明确 unsupported；consumer 不插入
 merge、不复制 buffer，也不从 Harness/π 猜测 inout。
+
+v13/v12 进一步只从 J 识别显式 inout post-state reload：唯一 inout handle 已有唯一 output mapping，
+先由同 producer store，再以完全相同的 index/predicate load，且 boundary/scoped effect order 均证明
+store-before-load，后继 A node 又直接消费映射后的 post-state value。consumer 只把该物理 reload 投影回
+J 已有 SSA value，并产生 receipt；不读取 Source/C/π/Harness，也不补 state edge。
+
+v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predicated load 省略 fill：该 load 必须
+绑定 pointwise node，所有依赖路径只能经过 `map_unary/map_binary/select/cast`，所有可观察 destination
+都由完全相同 predicate 的 store 支配；reduce/scan/loop/transpose/pad、不同 predicate 或未匹配 effect
+仍 fail closed。canonical output destination 可由 function `returns` 或 boundary `output_mapping` 任一
+唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v5 消费同一个 deterministic
+`JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
+Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored
+binding；该版本只删除互相重复的双写要求，不允许 fixed code 从 store、Source 或地址关系猜 value。
 
 ### 2.6 显式语义所有权投影
 

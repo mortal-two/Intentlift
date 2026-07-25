@@ -24,7 +24,6 @@ from intentir.verify.gate1.model import (
     EffectSpec,
     ImplementationConfig,
     OutputMapping,
-    ParameterMode,
     SemanticArchive,
     TypedOutsideValue,
 )
@@ -183,6 +182,37 @@ def test_cuda_lowering_consumes_the_same_j_and_separate_c(monkeypatch) -> None:
     assert record.c_digest == request.c_digest
 
 
+def test_cuda_materializer_consumes_mapping_only_canonical_output(
+    monkeypatch,
+) -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.body[0].result = "v0"
+    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": ["x0"]}
+    artifact.j.intent.returns = []
+    _attach_dense_copy_boundary(artifact)
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v0", "n0")
+    ]
+
+    def fake_lower(source, *, target, allow_specialized):
+        del target, allow_specialized
+        return _FakeCudaArtifact(source)
+
+    monkeypatch.setattr(cuda_program, "lower_to_cuda", fake_lower)
+    request = LoweringRequest(
+        artifact.j,
+        cuda_program.cuda_target("sm_120a"),
+        "generic",
+        artifact.c,
+    )
+
+    lowered = cuda_program.lower_j_to_cuda(request, {"x0": 8})
+
+    assert lowered.boundary_consumption["supported"] is True
+    assert "output:t1" in lowered.boundary_consumption["consumed"]
+    assert "intent.map_unary" in lowered.intent_mlir
+
+
 def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
     monkeypatch,
 ) -> None:
@@ -317,7 +347,7 @@ def test_cuda_materializes_and_guards_value_dimension_relation(
     [
         ("affine", "direct ordered axis vector"),
         ("effect_mismatch", "disagrees with its effect"),
-        ("inout", "does not implement inout/alias ABI"),
+        ("physical_alias", "does not implement physical alias ABI"),
     ],
 )
 def test_cuda_fails_before_codegen_for_non_projectable_boundary(
@@ -329,8 +359,8 @@ def test_cuda_fails_before_codegen_for_non_projectable_boundary(
         artifact.j.boundary.accesses[0].index_expression = "i0 + 1"
     elif mutation == "effect_mismatch":
         artifact.j.boundary.effects[1].target = "t0"
-    elif mutation == "inout":
-        artifact.j.signature.parameters[0].mode = ParameterMode.INOUT
+    elif mutation == "physical_alias":
+        artifact.j.signature.parameters[1].alias_of = "p0"
     else:  # pragma: no cover - parametrization is closed above
         raise AssertionError(mutation)
     called = False

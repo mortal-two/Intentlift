@@ -18,6 +18,7 @@ from intentir.frontend.canonical_j import LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
 from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
 )
+from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.functional_boundary import (
     FunctionalBoundaryProjection,
     project_functional_boundary,
@@ -108,6 +109,7 @@ def analyze_j_for_cuda(
 
     if not isinstance(j, SemanticArchive):
         raise CudaJLoweringError("CUDA analysis requires canonical J")
+    j = elaborate_j(j)
     unsupported: list[str] = []
     consumed: list[str] = []
     projection: (
@@ -158,10 +160,9 @@ def analyze_j_for_cuda(
     tensor_by_name = {
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
-    return_values = {item.output: item.value for item in j.intent.returns}
     observable_values = {
-        item.name: return_values.get(item.name, item.name)
-        for item in j.intent.outputs
+        item.output: item.value
+        for item in j_elaboration(j).output_bindings
     }
     relation_by_output = {
         item.output: item for item in j.boundary.result_relations
@@ -255,12 +256,12 @@ def analyze_j_for_cuda(
         else:
             consumed.append(f"reduction:{item.node_ref}")
 
-    returns = {item.output: item.value for item in j.intent.returns}
-    mappings = {item.output: item.value for item in j.boundary.output_mappings}
-    if mappings and mappings != returns:
+    if set(observable_values) != {
+        item.name for item in j.intent.outputs
+    }:
         unsupported.append("output_destination_relation")
     else:
-        consumed.extend(f"output:{name}" for name in mappings)
+        consumed.extend(f"output:{name}" for name in observable_values)
     consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
     boundary_digest = (
         projection.boundary_digest

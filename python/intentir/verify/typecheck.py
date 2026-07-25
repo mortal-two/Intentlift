@@ -1210,8 +1210,8 @@ def _check_access_guard_relations(
     output_names = {
         item.name for item in j.intent.outputs
     }
-    return_values = {
-        item.output: item.value for item in j.intent.returns
+    output_values = {
+        item.output: item.value for item in elaboration.output_bindings
     }
     parameters_by_logical: dict[str, list[Any]] = {}
     for parameter in j.signature.parameters:
@@ -1349,7 +1349,7 @@ def _check_access_guard_relations(
             if access_path is not None
             else ()
         )
-        observable_value = return_values.get(access.tensor, access.tensor)
+        observable_value = output_values.get(access.tensor, access.tensor)
         matches: list[tuple[str, int, Mapping[str, Any]]] = []
         for loop_path, loop in loop_stack:
             raw_carries = loop.get("carry")
@@ -1446,14 +1446,14 @@ def _check_access_guard_relations(
                 and nodes.get(item.node_ref) is operation
             ]
             if (
-                return_values.get(access.tensor) != result
-                or len(matching_mappings) != 1
+                output_values.get(access.tensor) != result
+                or len(matching_mappings) > 1
             ):
                 reject(
                     index,
                     "access_ref",
-                    "a non-loop guarded store output/return mapping must name "
-                    "the explicit select merge result exactly once",
+                    "a non-loop guarded store canonical output binding must "
+                    "name the explicit select merge result exactly once",
                     relation.access_ref,
                 )
 

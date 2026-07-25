@@ -25,7 +25,9 @@ from intentir.ir.canonical_j import (
 )
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.functional_boundary import (
+    explicit_inout_poststate_reload_value,
     parse_direct_axes,
+    predicate_dominated_pointwise_load,
     project_functional_boundary,
     project_functional_boundary_for_refeval,
     project_predicate_text,
@@ -44,7 +46,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v12"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v14"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -405,18 +407,11 @@ def _validate_masked_sum_reduction(
         raise ValueError("E_J padded reduction store does not target reduce result")
     if not isinstance(reduction.result, str):
         raise NotImplementedError("E_J padded reduction requires one result")
-    returns = {item.output: item.value for item in j.intent.returns}
-    if returns != {output_tensor.name: reduction.result}:
+    output_values = {
+        item.output: item.value for item in j_elaboration(j).output_bindings
+    }
+    if output_values != {output_tensor.name: reduction.result}:
         raise ValueError("E_J padded reduction result is not the J output")
-    if (
-        len(boundary.output_mappings) != 1
-        or boundary.output_mappings[0].output != output_tensor.name
-        or boundary.output_mappings[0].value != reduction.result
-        or boundary.output_mappings[0].node_ref != contract.node_ref
-    ):
-        raise ValueError(
-            "E_J padded reduction requires one explicit reduction output mapping"
-        )
 
     body = j.intent.body
     if not body or body[-1] is not reduction or any(op.body for op in body):
@@ -575,7 +570,13 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     }
     input_names = {item.name for item in j.intent.inputs}
     output_names = {item.name for item in j.intent.outputs}
-    returns = {item.output: item.value for item in j.intent.returns}
+    canonical_output_bindings = {
+        item.output: item for item in j_elaboration(j).output_bindings
+    }
+    output_values = {
+        output: item.value
+        for output, item in canonical_output_bindings.items()
+    }
     graph_operands = {
         operand
         for operation in _node_table(j).values()
@@ -587,12 +588,6 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             loads_by_tensor.setdefault(access.tensor, []).append(access)
     logical_scalar_inputs = _logical_scalar_inputs(j)
     logical_guards = _logical_boolean_guards(j)
-    mappings = {item.output: item for item in boundary.output_mappings}
-    for output, mapping in mappings.items():
-        if output in returns and mapping.value != returns[output]:
-            raise ValueError(
-                "E_J output mapping differs from the J return value"
-            )
     access_ids = [item.access_id for item in boundary.accesses]
     if len(access_ids) != len(set(access_ids)):
         raise ValueError("E_J dense functional boundary has duplicate access ids")
@@ -706,9 +701,10 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 and access.kind is AccessKind.LOAD
                 and access.fill_value is None
             ):
-                raise NotImplementedError(
-                    "E_J mask erasure requires an explicit masked-load fill"
-                )
+                if not predicate_dominated_pointwise_load(j, access.access_id):
+                    raise NotImplementedError(
+                        "E_J mask erasure requires an explicit masked-load fill"
+                    )
         elif access.fill_value is not None:
             raise ValueError("E_J unpredicated access must not declare fill")
         if access.kind is not AccessKind.LOAD and access.fill_value is not None:
@@ -735,9 +731,12 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                     f"E_J load {access.access_id!r} is not a J input"
                 )
             if op is not None and access.tensor not in op.operands:
-                raise ValueError(
-                    f"E_J load {access.access_id!r} is not a direct J operand"
-                )
+                if explicit_inout_poststate_reload_value(
+                    j, access.access_id
+                ) is None:
+                    raise ValueError(
+                        f"E_J load {access.access_id!r} is not a direct J operand"
+                    )
             if op is None:
                 if len(loads_by_tensor[access.tensor]) != 1:
                     raise ValueError(
@@ -748,7 +747,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                     access.tensor not in graph_operands
                     and (
                         j.intent.body
-                        or access.tensor not in set(returns.values())
+                        or access.tensor not in set(output_values.values())
                     )
                 ):
                     raise ValueError(
@@ -761,14 +760,16 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             raise ValueError(
                 f"E_J store {access.access_id!r} does not target a J output"
             )
-        observable_value = returns.get(access.tensor, access.tensor)
-        mapping = mappings.get(access.tensor)
-        if mapping is not None:
-            observable_value = mapping.value
-            if mapping.node_ref is not None and nodes.get(mapping.node_ref) is not op:
-                raise ValueError(
-                    f"E_J store {access.access_id!r} disagrees with output mapping"
-                )
+        observable_value = output_values.get(access.tensor, access.tensor)
+        output_binding = canonical_output_bindings.get(access.tensor)
+        if (
+            output_binding is not None
+            and output_binding.node_ref is not None
+            and nodes.get(output_binding.node_ref) is not op
+        ):
+            raise ValueError(
+                f"E_J store {access.access_id!r} disagrees with output mapping"
+            )
         if op is not None:
             if observable_value not in _result_names(op):
                 raise ValueError(
@@ -784,7 +785,8 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 )
         elif (
             j.intent.body
-            or mapping is None
+            or output_binding is None
+            or output_binding.node_ref is not None
             or observable_value not in input_names
         ):
             raise NotImplementedError(

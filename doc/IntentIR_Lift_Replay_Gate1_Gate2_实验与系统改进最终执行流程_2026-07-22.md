@@ -573,8 +573,8 @@ implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而�
 留在 π-only 形态；既不具有 J denotation、又不能合法归入 C 的 constexpr 使 Harness/case invalid，
 不得交给 Lift 用 `logical_ref=null` 猜测兜底。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v12`，shared functional projection 为
-`intentir.j-functional-boundary.v11`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v14`，shared functional projection 为
+`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -615,9 +615,24 @@ production J+C 入口当前对任何 access guard 仍以
 静默擦除该 B relation。
 
 v12/v11 对 J-owned logical inout 作通用消费：同一 `t*` 必须在 input/output 两端复用、由唯一 inout
-parameter 绑定，并以完整 load/store/effect/return/output mapping 区分 pre-state 与 post-state；
+parameter 绑定，并以完整 load/store/effect/canonical output binding 区分 pre-state 与 post-state；
 RefEval 分别读取 input binding、写出 output binding。物理 `alias_of` 和 `boundary.aliases` 仍 fail
 closed，固定代码不生成 select/merge、不改 J，也不从 Harness 或 π 推导 alias。
+
+v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output mapping、同 tensor/index/predicate
+的 producer store 与后继 load、post-state SSA dependency、boundary/scoped store-before-load effect order
+缺一不可。v14/v13 又增加一个独立 J-only proof：没有 fill 的 predicated load 只有在全部 downstream
+路径都是 `map_unary/map_binary/select/cast`，且每个 observable store 使用完全相同 predicate 时才可
+擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
+未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
+
+函数 `returns` 与 boundary `output_mapping` 是同一 canonical output binding 的两种 authored 入口，
+不再要求 LLM 重复写两份；若同时存在必须一致。shared J→Intent MLIR materializer 从唯一
+`JElaboration.output_bindings` 读取该绑定，因此 Gate2 reference 与后续 production lowering 使用同一
+J-owned destination，不从 Source/Harness/π 猜测。
+对应 Lift/schema/preflight 为 `intentir.lift-knowledge.v21`：模型仍完整生成 binding，只是不再为同一
+destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v5 与
+shared materializer 都消费唯一 canonical binding。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式

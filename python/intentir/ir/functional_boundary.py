@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v11"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v13"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -489,6 +489,241 @@ def _node_table(j: Any) -> dict[str, IntentOp]:
         if path in by_path:
             result[node_id] = by_path[path]
     return result
+
+
+def explicit_inout_poststate_reload_value(
+    j: Any,
+    access_id: str,
+) -> str | None:
+    """Return the authored post-state value consumed by one physical reload.
+
+    A logical inout may be written once and then physically loaded again even
+    though Layer A directly uses the already-authored post-state SSA value.
+    This helper recognizes only that closed profile from J itself: one inout
+    handle, one matching store, identical coordinates/predicate, an explicit
+    output mapping, producer/consumer dataflow, and store-before-load effects.
+    It never invents a state edge or consults Harness, C, pi, or Source.
+    """
+
+    j = elaborate_j(j)
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    access = accesses.get(access_id)
+    if (
+        access is None
+        or access.kind.value != "load"
+        or access.node_ref is None
+    ):
+        return None
+    tensor = access.tensor
+    if (
+        tensor not in {item.name for item in j.intent.inputs}
+        or tensor not in {item.name for item in j.intent.outputs}
+    ):
+        return None
+    bindings = [
+        item
+        for item in j.signature.parameters
+        if item.mode.value == "inout"
+        and item.logical_ref == tensor
+        and item.alias_of is None
+    ]
+    if len(bindings) != 1:
+        return None
+
+    mappings = [
+        item for item in j.boundary.output_mappings if item.output == tensor
+    ]
+    if len(mappings) != 1:
+        return None
+    mapping = mappings[0]
+    poststate = mapping.value
+    returns = [item for item in j.intent.returns if item.output == tensor]
+    if returns and (
+        len(returns) != 1 or returns[0].value != poststate
+    ):
+        return None
+
+    nodes = _node_table(j)
+    consumer = nodes.get(access.node_ref)
+    if consumer is None or poststate not in _operation_dependencies(consumer):
+        return None
+    producer_refs = [
+        node_ref
+        for node_ref in j.node_ids
+        if poststate in _result_names(nodes[node_ref])
+    ]
+    if len(producer_refs) != 1:
+        return None
+    producer_ref = producer_refs[0]
+    if mapping.node_ref is not None and mapping.node_ref != producer_ref:
+        return None
+
+    stores = [
+        item
+        for item in j.boundary.accesses
+        if item.kind.value == "store" and item.tensor == tensor
+    ]
+    if len(stores) != 1:
+        return None
+    store = stores[0]
+    if (
+        store.node_ref != producer_ref
+        or store.index_expression != access.index_expression
+        or store.predicate != access.predicate
+    ):
+        return None
+
+    effects_by_access = {
+        item.access_ref: item
+        for item in j.boundary.effects
+        if item.access_ref is not None
+    }
+    if len(effects_by_access) != len(
+        [item for item in j.boundary.effects if item.access_ref is not None]
+    ):
+        return None
+    store_effect = effects_by_access.get(store.access_id)
+    load_effect = effects_by_access.get(access.access_id)
+    if store_effect is None or load_effect is None:
+        return None
+    effect_order = [item.effect_id for item in j.boundary.effects]
+    if effect_order.index(store_effect.effect_id) >= effect_order.index(
+        load_effect.effect_id
+    ):
+        return None
+    owning_scopes = [
+        scope
+        for scope in j.scopes
+        if store_effect.effect_id in scope.effects
+        or load_effect.effect_id in scope.effects
+    ]
+    if owning_scopes:
+        if len(owning_scopes) != 1:
+            return None
+        scope_effects = owning_scopes[0].effects
+        if (
+            store_effect.effect_id not in scope_effects
+            or load_effect.effect_id not in scope_effects
+            or scope_effects.index(store_effect.effect_id)
+            >= scope_effects.index(load_effect.effect_id)
+        ):
+            return None
+    return poststate
+
+
+_PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
+    {"map_unary", "map_binary", "select", "cast"}
+)
+
+
+def predicate_dominated_pointwise_load(
+    j: Any,
+    access_id: str,
+) -> bool:
+    """Prove that one missing masked-load fill is unobservable in J.
+
+    A physical load may omit ``other`` when every value depending on its
+    masked lanes stays inside a pointwise chain and every observable output of
+    that chain is stored under the exact same predicate.  The logical J domain
+    contains only predicate-true elements, so the physical outside-domain
+    value cannot affect an observable result.  Reductions, scans, loops,
+    transposes, padding, unmatched effects, and differently predicated stores
+    remain unsupported.
+
+    The proof is deliberately J-only.  It neither derives an artifact field
+    nor consults Harness, C, pi, Replay, or Source.
+    """
+
+    j = elaborate_j(j)
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    if len(accesses) != len(j.boundary.accesses):
+        return False
+    access = accesses.get(access_id)
+    if (
+        access is None
+        or access.kind.value != "load"
+        or access.predicate is None
+        or access.fill_value is not None
+        or access.node_ref is None
+    ):
+        return False
+
+    nodes = _node_table(j)
+    start = nodes.get(access.node_ref)
+    if (
+        start is None
+        or start.op not in _PREDICATE_DOMINATED_POINTWISE_OPS
+        or access.tensor not in _operation_dependencies(start)
+    ):
+        return False
+    start_results = set(_result_names(start))
+    if not start_results:
+        return False
+
+    canonical_refs = tuple(j.node_ids)
+    if any(node_ref not in nodes for node_ref in canonical_refs):
+        return False
+    reachable_refs = {access.node_ref}
+    reachable_values = set(start_results)
+    changed = True
+    while changed:
+        changed = False
+        for node_ref in canonical_refs:
+            if node_ref in reachable_refs:
+                continue
+            operation = nodes[node_ref]
+            if not reachable_values.intersection(
+                _operation_dependencies(operation)
+            ):
+                continue
+            if operation.op not in _PREDICATE_DOMINATED_POINTWISE_OPS:
+                return False
+            results = set(_result_names(operation))
+            if not results:
+                return False
+            reachable_refs.add(node_ref)
+            reachable_values.update(results)
+            changed = True
+
+    mappings = [
+        item
+        for item in j.boundary.output_mappings
+        if item.value in reachable_values
+    ]
+    if not mappings:
+        return False
+
+    matched_store_ids: set[str] = set()
+    for mapping in mappings:
+        producer_refs = [
+            node_ref
+            for node_ref in reachable_refs
+            if mapping.value in _result_names(nodes[node_ref])
+        ]
+        if len(producer_refs) != 1:
+            return False
+        producer_ref = producer_refs[0]
+        if mapping.node_ref is not None and mapping.node_ref != producer_ref:
+            return False
+        stores = [
+            item
+            for item in j.boundary.accesses
+            if item.kind.value == "store" and item.tensor == mapping.output
+        ]
+        if (
+            len(stores) != 1
+            or stores[0].node_ref != producer_ref
+            or stores[0].predicate != access.predicate
+        ):
+            return False
+        matched_store_ids.add(stores[0].access_id)
+
+    for item in j.boundary.accesses:
+        if item.node_ref not in reachable_refs or item.kind.value == "load":
+            continue
+        if item.kind.value != "store" or item.access_id not in matched_store_ids:
+            return False
+    return True
 
 
 def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
@@ -3073,6 +3308,8 @@ def _project_functional_boundary(
     coordinates_by_access: dict[str, tuple[str | int, ...]] = {}
     predicates: dict[str, PredicateProjection | None] = {}
     loaded: set[str] = set()
+    inout_poststate_reloads: set[tuple[str, str, str]] = set()
+    predicate_dominated_loads: set[tuple[str, str]] = set()
     stores_by_output: dict[str, list[Any]] = {
         name: [] for name in output_names
     }
@@ -3249,8 +3486,13 @@ def _project_functional_boundary(
                 and access.fill_value is None
                 and not runtime_predicate_proved
             ):
-                raise NotImplementedError(
-                    "functional mask projection requires an explicit masked-load fill"
+                if not predicate_dominated_pointwise_load(j, access.access_id):
+                    raise NotImplementedError(
+                        "functional mask projection requires an explicit "
+                        "masked-load fill"
+                    )
+                predicate_dominated_loads.add(
+                    (access.access_id, access.predicate)
                 )
         elif access.fill_value is not None:
             raise ValueError("functional unpredicated access must not declare fill")
@@ -3277,7 +3519,14 @@ def _project_functional_boundary(
             if access.tensor not in input_names:
                 raise ValueError("functional load is not a J input")
             if op is not None and access.tensor not in _operation_dependencies(op):
-                raise ValueError("functional load is not a direct J operand")
+                poststate = explicit_inout_poststate_reload_value(
+                    j, access.access_id
+                )
+                if poststate is None:
+                    raise ValueError("functional load is not a direct J operand")
+                inout_poststate_reloads.add(
+                    (access.access_id, access.tensor, poststate)
+                )
             if op is None:
                 if len(loads_by_tensor[access.tensor]) != 1:
                     raise ValueError(
@@ -3466,11 +3715,18 @@ def _project_functional_boundary(
         j, extension_requirements
     )
 
-    mapping_values = {item.output: item.value for item in boundary.output_mappings}
-    if (returns or mapping_values) and mapping_values != returns:
-        raise NotImplementedError(
-            "functional output destination relation is incomplete"
-        )
+    # Canonical elaboration owns the one output-binding rule.  An authored
+    # return, an authored boundary output_mapping, or the proven identity
+    # fallback may each determine a binding; redundant return/mapping entries
+    # are required to agree by ``_build_output_bindings``.  Requiring both
+    # serializations here would reject a complete J merely because the Lift
+    # model did not duplicate the same destination fact.
+    canonical_output_values = {
+        item.output: item.value
+        for item in j_elaboration(j).output_bindings
+    }
+    if set(canonical_output_values) != output_names:
+        raise ValueError("functional output destination relation is incomplete")
     for item in boundary.index_bounds:
         if nodes.get(item.node_ref) is None:
             raise ValueError("functional index bounds reference unknown node")
@@ -3547,6 +3803,14 @@ def _project_functional_boundary(
         ),
         *(f"scope:{item}" for item in structured_scopes),
         *(f"storage:{item}" for item in structured_storage),
+        *(
+            f"inout_poststate_reload:{access_id}:{tensor}:{poststate}"
+            for access_id, tensor, poststate in inout_poststate_reloads
+        ),
+        *(
+            f"predicate_dominated_load:{access_id}:{predicate}"
+            for access_id, predicate in predicate_dominated_loads
+        ),
     }
     return FunctionalBoundaryProjection(
         profile=profile,
@@ -3662,6 +3926,8 @@ __all__ = [
     "functional_boundary_closure_issues",
     "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",
+    "explicit_inout_poststate_reload_value",
+    "predicate_dominated_pointwise_load",
     "parse_direct_axes",
     "project_predicate_text",
     "resolve_consumer_local_tile_axis",
