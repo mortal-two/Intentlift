@@ -884,7 +884,10 @@ def test_access_effect_identity_scope_and_write_once_are_cross_checked() -> None
 def test_storage_lifetime_and_loop_state_membership_are_fail_closed() -> None:
     missing_member = _loop_archive()
     missing_member["storage"][0]["members"].remove("acc_next")
-    with pytest.raises(SchemaError, match="must bind init, body argument"):
+    with pytest.raises(
+        SchemaError,
+        match=r"storage 'storage0' is missing required member\(s\) \['acc_next'\]",
+    ):
         SemanticArchive.from_json(missing_member)
 
     wrong_event_namespace = _loop_archive()

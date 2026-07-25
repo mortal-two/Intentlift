@@ -1079,6 +1079,40 @@ def _canonical_j_carry_artifact(*, referenced_init: bool = False) -> Gate1Artifa
     return Gate1Artifact.from_json(payload)
 
 
+def test_loop_storage_rejection_names_exact_missing_carry_members() -> None:
+    payload = _canonical_j_carry_artifact().to_json()
+    payload["j"]["storage"][0]["members"].remove("v4")
+
+    with pytest.raises(SchemaError) as rejected:
+        Gate1Artifact.from_json(payload)
+
+    assert "storage 'b0' is missing required member(s) ['v4']" in str(
+        rejected.value
+    )
+    assert "['s0', 'v0', 'v1', 'v4']" in str(rejected.value)
+
+    checked = check_scrc_lift_candidate(
+        json.dumps(payload),
+        SCRCCandidateCheckContext(("p0", "p1", "p2")),
+    )
+    assert checked["status"] == "fail"
+    assert "storage 'b0' is missing required member(s) ['v4']" in checked[
+        "diagnostics"
+    ][0]["observed_refs_or_types"][0]
+
+
+def test_loop_storage_rejection_names_exact_lifetime_mismatch() -> None:
+    payload = _canonical_j_carry_artifact().to_json()
+    payload["j"]["storage"][0]["crosses_iteration"] = False
+
+    with pytest.raises(SchemaError) as rejected:
+        Gate1Artifact.from_json(payload)
+
+    assert "storage 'b0' requires scope_id='q1'" in str(rejected.value)
+    assert "crosses_iteration=False" in str(rejected.value)
+    assert "escapes=True" in str(rejected.value)
+
+
 @pytest.mark.parametrize("referenced_init", [False, True])
 def test_loop_carrier_reuses_one_j_carry_for_literal_or_referenced_init(
     referenced_init: bool,

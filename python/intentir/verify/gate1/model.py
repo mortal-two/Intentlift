@@ -2956,14 +2956,21 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         ):
             required_members.add(state.init_value)
         if not required_members.issubset(item.members):
+            missing_members = sorted(required_members - set(item.members))
             raise SchemaError(
-                f"semantic loop state {state.state_id!r} storage must bind init, "
-                "body argument, next value, and result value"
+                f"semantic loop state {state.state_id!r} storage "
+                f"{item.storage_id!r} is missing required member(s) "
+                f"{missing_members!r}; the complete carry ownership is "
+                f"{sorted(required_members)!r}"
             )
         if item.scope_id != scope_id or not item.crosses_iteration or not item.escapes:
             raise SchemaError(
-                f"semantic loop state {state.state_id!r} storage must live in its loop "
-                "scope, cross iterations, and escape as the loop result"
+                f"semantic loop state {state.state_id!r} storage "
+                f"{item.storage_id!r} requires scope_id={scope_id!r}, "
+                "crosses_iteration=true, escapes=true; authored "
+                f"scope_id={item.scope_id!r}, "
+                f"crosses_iteration={item.crosses_iteration!r}, "
+                f"escapes={item.escapes!r}"
             )
 
     for alias in archive.boundary.aliases:
