@@ -14,6 +14,7 @@ _ENVIRONMENT_MAPPING = {
     "bubblewrap": "minisweagent.environments.extra.bubblewrap.BubblewrapEnvironment",
     "contree": "minisweagent.environments.extra.contree.ContreeEnvironment",
     "intentir_lift": "minisweagent.environments.intentir_lift.IntentIRLiftEnvironment",
+    "intentir_replay": "minisweagent.environments.intentir_replay.IntentIRReplayEnvironment",
 }
 
 
