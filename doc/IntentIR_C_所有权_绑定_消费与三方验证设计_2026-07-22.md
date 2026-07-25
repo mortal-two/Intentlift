@@ -220,7 +220,9 @@ CandidateCheck 只解析、验证、拒绝和诊断，不补造 relation、axes�
 Layer-A op。v1-v4 仍按各自 wire/receipt 解释，不因当前 schema 增加空数组或被重标。
 
 对 v5 guarded store，Layer A 必须显式包含 `select`；目标 tensor 必须精确同时作为 J input/output，
-并由唯一 `mode=inout` parameter 绑定。loop 的 `carry.init_value` 必须是该 tensor，inactive branch
+并由唯一 `mode=inout` parameter 绑定。tensor handle 按 inputs 后 outputs 的首次声明连续编号；同一
+inout tensor 在 outputs 中复用 input 的 `t*`，不分配新 handle，也不借 `alias_of` 表达逻辑 inout。
+loop 的 `carry.init_value` 必须是该 tensor，inactive branch
 必须是 current body argument，select result 必须成为 `next_value`；非 loop 的 inactive pre-state
 就是该 tensor，return/output mapping 必须指向 select result。relation 的 `axes` 是同一 select guard
 的唯一 broadcast authority，不能在 `boundary.broadcasts` 重复。TypeCheck 不会因 dtype/shape 相同

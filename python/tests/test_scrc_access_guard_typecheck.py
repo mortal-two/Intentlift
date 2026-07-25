@@ -570,6 +570,18 @@ def test_candidate_check_reuses_authoritative_access_guard_typecheck() -> None:
     )
 
 
+def test_candidate_check_accepts_first_declared_inout_tensor_handle() -> None:
+    payload = _guarded_carry_payload()
+    context = SCRCCandidateCheckContext(("p0", "p1", "p2", "p3"))
+
+    result = check_scrc_lift_candidate(
+        json.dumps(payload, sort_keys=True),
+        context,
+    )
+
+    assert result["status"] == "pass", result
+
+
 def test_lift_rules_keep_access_guard_authorship_explicit_and_generic() -> None:
     instructions = " ".join(build_scrc_lift_instructions().split())
 

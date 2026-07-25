@@ -49,7 +49,9 @@ the artifact schema or external TypeCheck.
    CandidateCheck rejects rather than auto-unbinding a dead logical input.
    Every `mode=inout` logical_ref names the same tensor declared with identical
    type in both J inputs and J outputs; an input-only or output-only ref is
-   rejected rather than repaired.
+   rejected rather than repaired. Tensor ids advance by first declaration:
+   the output occurrence repeats the input `t*` handle and does not allocate a
+   second handle or use `alias_of` (which only relates physical `p*` parameters).
 5. A body operand must already be in the current lexical scope. Do not use an
    output tensor handle as if it were an already-defined intermediate; use the
    producing node's declared value handle where the grammar requires one.

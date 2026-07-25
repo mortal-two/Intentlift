@@ -700,11 +700,13 @@ values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
 effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
 c0,...; pi regions r0,... and instances i0,..., all by declaration order.
 
-J tensor handles form their own gap-free sequence over intent.inputs followed
-by intent.outputs. Never derive a t* suffix from a p* parameter position. For
-example, if p0 is an input pointer, p1 is an output pointer, and p2 is a
-runtime extent scalar, the J tensors are input t0 and output t1; p0.logical_ref
-is t0, p1.logical_ref is t1, and p2.logical_ref is the symbolic dimension x0.
+J tensor handles form their own gap-free sequence by first declaration over
+intent.inputs followed by intent.outputs. An inout tensor repeats its input
+handle verbatim in outputs and does not consume a new t* id. Never derive a t*
+suffix from a p* parameter position. For example, if p0 is an input pointer,
+p1 is an output pointer, and p2 is a runtime extent scalar, the J tensors are
+input t0 and output t1; p0.logical_ref is t0, p1.logical_ref is t1, and
+p2.logical_ref is the symbolic dimension x0.
 
 The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
 node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
@@ -1386,11 +1388,16 @@ def _validate_anonymous_lift_core(
     if artifact.j.intent.name != "scrc_j0":
         raise ValueError("Lift IntentFunction name must use scrc_j0")
     tensors = [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
-    actual_tensors = [item.name for item in tensors]
-    expected_tensors = [f"t{index}" for index in range(len(tensors))]
+    # One logical inout tensor is deliberately declared in both collections.
+    # Tensor ids therefore advance on first declaration, not on collection
+    # entries.  SemanticArchive already rejects duplicate tensors within one
+    # collection and non-identical input/output contracts.
+    actual_tensors = list(dict.fromkeys(item.name for item in tensors))
+    expected_tensors = [f"t{index}" for index in range(len(actual_tensors))]
     if actual_tensors != expected_tensors:
         raise ValueError(
-            "J tensors must use their own declaration-order handles independent "
+            "J tensors must use their own first-declaration-order handles "
+            "(an inout output repeats its input handle) independent "
             f"of p* positions; expected {expected_tensors}, got {actual_tensors}"
         )
     if list(artifact.j.node_ids) != [

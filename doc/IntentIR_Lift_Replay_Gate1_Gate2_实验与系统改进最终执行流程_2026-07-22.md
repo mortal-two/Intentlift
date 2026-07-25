@@ -347,7 +347,8 @@ two-sided outside identity。`artifact.v5` 再要求完整 `J.boundary.access_gu
 value、reducer/fill、Source、C、π 或 Gate evidence 生成 relation。
 
 relation-guarded store 不是 B 驱动的隐式控制流：Layer A 必须显式作者三 operand `select`，目标 tensor
-必须精确同时为 J input/output 并由唯一 `mode=inout` parameter 绑定。loop 的 init/current/next 与
+必须精确同时为 J input/output 并由唯一 `mode=inout` parameter 绑定。tensor handle 按首次声明连续
+编号；output 端复用同一 input `t*`，不新增 handle，`alias_of` 仍只描述物理 `p*` 参数关系。loop 的 init/current/next 与
 non-loop 的 tensor pre-state/return/output mapping 必须精确闭合；相同 dtype/shape 的其他 input 不算
 pre-state。`access_guard_relations.axes` 是同一 select guard 的唯一 broadcast authority，不能再由
 `boundary.broadcasts` 重复。TypeCheck/CandidateCheck 只拒绝和报告这些 dependent error，不插入

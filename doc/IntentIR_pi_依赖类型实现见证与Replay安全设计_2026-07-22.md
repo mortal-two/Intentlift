@@ -437,7 +437,8 @@ dimension 的 `eq`；`consumer_extensions` 由 Lift 显式声明某个 predicate
 当前 runtime valuation 补齐。
 
 尤其 guarded store 的 merge 必须已经在 A 中显式写为三 operand `select`：目标 tensor 精确同时为
-J input/output，并由唯一 `mode=inout` parameter 绑定；loop 的 `init_value/current/next_value` 或
+J input/output，并由唯一 `mode=inout` parameter 绑定；tensor handle 按首次声明连续编号，output
+复用同一 input `t*` 而不分配新 handle 或滥用 `alias_of`；loop 的 `init_value/current/next_value` 或
 non-loop 的 tensor pre-state/return/output mapping 必须精确闭合。relation axes 是同一 select guard
 的唯一 authority，不能由 `boundary.broadcasts` 或 π 重复。TypeCheck/CandidateCheck 只拒绝、诊断，
 不插入 select、不升级 inout、不选择 axes/polarity，也不接受仅同 dtype/shape 的替代 pre-state。

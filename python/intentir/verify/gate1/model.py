@@ -4503,13 +4503,15 @@ def _opaque_reference_data(
         ("outputs", artifact.j.intent.outputs),
     ):
         for index, tensor in enumerate(tensors):
+            first_declaration = tensor.name not in aliases
             allocate(
                 tensor.name,
                 f"t{tensor_index}",
                 "j_tensor",
                 f"j.intent.intent_function.{collection_name}[{index}]",
             )
-            tensor_index += 1
+            if first_declaration:
+                tensor_index += 1
 
     for index, (node_id, path) in enumerate(artifact.j.node_ids.items()):
         alias = allocate(node_id, f"n{index}", "j_node", f"j.intent.{path}")

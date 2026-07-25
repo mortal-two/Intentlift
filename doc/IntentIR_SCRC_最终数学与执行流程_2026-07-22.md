@@ -385,7 +385,8 @@ declared symbolic dimension 的 `eq`；`consumer_extensions` 必须闭合 predic
 closed polarity 声明；这些 axes 是同一 select guard 的唯一 broadcast authority。
 
 guarded store 必须已经由 A 显式写出三 operand `select`，目标 tensor 精确同时是 J input/output 且由
-唯一 `mode=inout` parameter 绑定。loop 的 init/current/next 或 non-loop 的 tensor
+唯一 `mode=inout` parameter 绑定。tensor handle 按 inputs 后 outputs 的首次声明连续编号；output
+端复用同一 input `t*`，不新增 handle，且不使用物理参数的 `alias_of` 代替。loop 的 init/current/next 或 non-loop 的 tensor
 pre-state/return/output mapping 都必须精确闭合；同 dtype/shape 的另一 input 不能替代 pre-state。
 固定核不插入 select、不升级 inout、不选择 axes/polarity，也不从 Source/C/π/运行值修补 relation。
 
