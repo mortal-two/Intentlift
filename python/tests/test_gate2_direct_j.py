@@ -1102,6 +1102,37 @@ def test_refeval_runtime_guard_polarity_is_proved_not_erased(
         assert str(flag).lower() not in (result.error or "").lower()
 
 
+def test_refeval_runtime_boolean_guard_accepts_canonical_bool_alias() -> None:
+    artifact = _make_runtime_logical_mask_artifact(
+        predicate="flag and i0 < limit",
+        guard=True,
+    )
+    payload = artifact.j.to_json()
+    function = payload["intent"]["intent_function"]
+    next(item for item in function["inputs"] if item["name"] == "flag")[
+        "dtype"
+    ] = "bool"
+    next(
+        item
+        for item in payload["signature"]["parameters"]
+        if item.get("logical_ref") == "flag"
+    )["dtype"] = "bool"
+    artifact.j = SemanticArchive.from_json(payload)
+    spec = _runtime_logical_mask_spec(artifact)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(8, dtype=np.int32),
+            "hidden_flag": np.asarray(True, dtype=np.bool_),
+        },
+    )
+
+    assert result.ok, result.error
+    assert result.metadata["runtime_predicate_proof_count"] == 2
+
+
 @pytest.mark.parametrize(
     ("limit_dtype", "runtime_value"),
     [

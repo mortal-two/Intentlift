@@ -236,7 +236,7 @@ def _logical_boolean_guards(j: SemanticArchive) -> frozenset[str]:
     return frozenset(
         name
         for name in _logical_scalar_inputs(j)
-        if inputs[name].dtype == "i1"
+        if inputs[name].dtype in {"bool", "i1"}
     )
 
 

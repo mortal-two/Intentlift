@@ -414,7 +414,9 @@ def _logical_scalar_inputs(j: Any) -> frozenset[str]:
 def _logical_boolean_guards(j: Any) -> frozenset[str]:
     inputs = {item.name: item for item in j.intent.inputs}
     return frozenset(
-        name for name in _logical_scalar_inputs(j) if inputs[name].dtype == "i1"
+        name
+        for name in _logical_scalar_inputs(j)
+        if inputs[name].dtype in {"bool", "i1"}
     )
 
 
@@ -453,7 +455,7 @@ def _runtime_logical_scalar(
     if logical_inputs is None or name not in logical_inputs:
         return _MISSING_RUNTIME_VALUE
     value = _rank_zero_runtime_value(logical_inputs[name])
-    if expected_dtype == "i1":
+    if expected_dtype in {"bool", "i1"}:
         return value if type(value) is bool else _MISSING_RUNTIME_VALUE
     if expected_dtype == "index" or _INTEGER_DTYPE.fullmatch(expected_dtype):
         if isinstance(value, Integral) and not isinstance(value, bool):
@@ -491,10 +493,10 @@ def _runtime_predicate_tautology(
         if guard is None and term.op == "not" and len(term.args) == 1:
             guard = _reference(term.args[0])
             negated = guard is not None
-        if guard is not None and logical_input_types.get(guard) == "i1":
+        if guard is not None and logical_input_types.get(guard) in {"bool", "i1"}:
             value = _runtime_logical_scalar(
                 guard,
-                expected_dtype="i1",
+                expected_dtype=logical_input_types[guard],
                 logical_inputs=logical_inputs,
             )
             if value is _MISSING_RUNTIME_VALUE or bool(value) == negated:
@@ -544,7 +546,7 @@ def _runtime_predicate_tautology(
                 return None
         elif bound in logical_input_types:
             dtype = logical_input_types[bound]
-            if dtype == "i1" or not (
+            if dtype in {"bool", "i1"} or not (
                 dtype == "index" or _INTEGER_DTYPE.fullmatch(dtype)
             ):
                 return None
