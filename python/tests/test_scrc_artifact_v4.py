@@ -183,13 +183,51 @@ def test_consumer_extension_accepts_scan_and_keeps_predicate_in_layer_b() -> Non
     consumer.type = {"dtype": "f32", "shape": ["x0", "x1"]}
     artifact.j.intent.outputs[0].shape = ["x0", "x1"]
     artifact.j.signature.parameters[1].rank = 2
-    artifact.j.boundary.reductions = []
+    artifact.j.boundary.accesses[1].index_expression = "[v0, v1]"
+    artifact.j.boundary.accesses[1].predicate = "v1 < x1"
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
     assert artifact.j.boundary.accesses[0].predicate == "v1 < x1"
     assert all(op.op != "select" for op in artifact.j.intent.body)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["extension_axis", "boundary_axis", "reverse_control", "missing_algebra"],
+)
+def test_consumer_extension_scan_local_axis_and_control_fail_closed(
+    mutation: str,
+) -> None:
+    artifact = make_reduce_artifact()
+    consumer = artifact.j.intent.body[1]
+    consumer.op = "scan"
+    consumer.attrs = {"fn": "sum", "axis": 1}
+    consumer.type = {"dtype": "f32", "shape": ["x0", "x1"]}
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.boundary.accesses[1].index_expression = "[v0, v1]"
+    artifact.j.boundary.accesses[1].predicate = "v1 < x1"
+    if mutation == "extension_axis":
+        artifact.j.boundary.consumer_extensions[0].tile_axis = 1
+    elif mutation == "boundary_axis":
+        artifact.j.boundary.reductions[0].tile_axis = 1
+    elif mutation == "reverse_control":
+        consumer.attrs["reverse"] = True
+    elif mutation == "missing_algebra":
+        artifact.j.boundary.reductions = []
+    else:  # pragma: no cover
+        raise AssertionError(mutation)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert any(
+        item.code is TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID
+        and item.path.endswith(".tile_axis")
+        for item in report.diagnostics
+    )
 
 
 def _insert_pad_before_reduce(artifact: Gate1Artifact, *, op_name: str = "pad") -> None:
@@ -438,6 +476,7 @@ def test_consumer_extension_provenance_stops_at_unknown_op() -> None:
         ("wrong_dtype", ".outside.dtype"),
         ("non_identity", ".outside.value"),
         ("wrong_operand", ".operand_index"),
+        ("wrong_tile_axis", ".tile_axis"),
         ("unpredicated", ".access_ref"),
         ("unrelated_node", ".access_ref"),
     ],
@@ -453,6 +492,8 @@ def test_consumer_extension_dependent_errors_fail_closed(
         extension.outside.value = 1
     elif mutation == "wrong_operand":
         extension.operand_index = 7
+    elif mutation == "wrong_tile_axis":
+        extension.tile_axis = 1
     elif mutation == "unpredicated":
         artifact.j.boundary.accesses[0].predicate = None
         artifact.j.boundary.accesses[0].fill_value = None
@@ -845,7 +886,7 @@ def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> N
     )
 
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v5"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v9"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v10"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

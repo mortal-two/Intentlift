@@ -21,7 +21,9 @@ from intentir.ir.dim_expr import (
 )
 from intentir.ir.functional_boundary import (
     functional_boundary_closure_issues,
+    functional_consumer_extension_requirements,
     functional_reduction_padding_issues,
+    resolve_consumer_local_tile_axis,
 )
 from intentir.verify.gate1.model import (
     ImplementationConfig,
@@ -34,7 +36,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v9"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v10"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -1693,42 +1695,10 @@ def _check_consumer_extensions(
         (item.consumer_ref, item.operand_index, item.access_ref): item
         for item in j.boundary.consumer_extensions
     }
-    required: set[tuple[str, int, str]] = set()
-
-    for consumer_ref, operation in node_operations.items():
-        if not re.fullmatch(r"n[0-9]+", consumer_ref):
-            continue
-        op_name = operation.get("op")
-        attrs = operation.get("attrs")
-        fn = attrs.get("fn") if isinstance(attrs, Mapping) else None
-        operands = operation.get("operands")
-        if (
-            op_name not in {"reduce", "scan"}
-            or fn not in _CONSUMER_EXTENSION_FNS
-            or not isinstance(operands, list)
-        ):
-            continue
-        for operand_index, operand in enumerate(operands):
-            if not isinstance(operand, str):
-                continue
-            candidates, ambiguous = _consumer_extension_candidates(
-                j, operand=operand
-            )
-            for tensor in ambiguous:
-                diagnostics.append(
-                    TypeCheckDiagnostic(
-                        TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
-                        "j.boundary.consumer_extensions",
-                        "node-less same-tensor predicate accesses are ambiguous; "
-                        "bind access.node_ref before declaring consumer provenance",
-                        tensor,
-                    )
-                )
-            if consumer_ref not in legacy_masked_reductions:
-                required.update(
-                    (consumer_ref, operand_index, access_ref)
-                    for access_ref in candidates
-                )
+    required = {
+        (item.consumer_ref, item.operand_index, item.access_ref)
+        for item in functional_consumer_extension_requirements(j)
+    }
 
     for index, extension in enumerate(j.boundary.consumer_extensions):
         path = f"j.boundary.consumer_extensions[{index}]"
@@ -1765,6 +1735,25 @@ def _check_consumer_extensions(
             )
             continue
         operand = str(operands[extension.operand_index])
+        axis_issue: str | None = None
+        try:
+            local_axis = resolve_consumer_local_tile_axis(
+                j, extension.consumer_ref
+            )
+        except (NotImplementedError, ValueError) as exc:
+            local_axis = None
+            axis_issue = str(exc)
+        if axis_issue is not None or extension.tile_axis != local_axis:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.tile_axis",
+                    axis_issue
+                    or "consumer extension tile axis differs from the consumer's "
+                    "closed local axis",
+                    str(extension.tile_axis),
+                )
+            )
         operand_type = value_types.get(operand)
         if (
             operand_type is None

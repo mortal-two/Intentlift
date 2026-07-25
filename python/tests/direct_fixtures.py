@@ -60,15 +60,15 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
                 predicate="v1 < x1",
                 fill_value=0,
                 node_ref="n0",
-                index_expression="v2",
+                index_expression="[v0, v1]",
             ),
             BoundaryAccess(
                 "a1",
                 AccessKind.STORE,
                 "t1",
-                predicate="v3 < x0",
+                predicate="v0 < x0",
                 node_ref="n1",
-                index_expression="v3",
+                index_expression="v0",
             ),
         ]
         if explicit_accesses
@@ -79,11 +79,18 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
         intent=function,
         node_ids={"n0": "body[0]", "n1": "body[1]"},
         boundary=Boundary(
-            domains={"d0": "v1 < x1"} if explicit_accesses else {},
+            domains=(
+                {
+                    "d0": "0 <= v0 and v0 < x0",
+                    "d1": "0 <= v1 and v1 < x1",
+                }
+                if explicit_accesses
+                else {}
+            ),
             accesses=accesses,
             reductions=[
                 ReductionBoundary(
-                    "n1", "x1", identity=0
+                    "n1", 0, identity=0
                 )
             ],
             consumer_extensions=(

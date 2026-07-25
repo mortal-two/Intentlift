@@ -27,7 +27,7 @@ from intentir.ir.canonical_j import (
 from intentir.ir.model import IntentOp
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v3"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v4"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -74,6 +74,29 @@ class RuntimePredicateProofReceipt:
 
 
 @dataclass(frozen=True)
+class ConsumerOutsideProjection:
+    """One J-authored outside-domain relation consumed by RefEval/backend."""
+
+    consumer_ref: str
+    operand_index: int
+    access_ref: str
+    tile_axis: int
+    dtype: str
+    value: Any
+    identity_law: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "consumer_ref": self.consumer_ref,
+            "operand_index": self.operand_index,
+            "access_ref": self.access_ref,
+            "tile_axis": self.tile_axis,
+            "outside": {"dtype": self.dtype, "value": self.value},
+            "identity_law": self.identity_law,
+        }
+
+
+@dataclass(frozen=True)
 class FunctionalBoundaryProjection:
     """One ephemeral proof that Layer B projects to logical tensor execution."""
 
@@ -90,6 +113,7 @@ class FunctionalBoundaryProjection:
     predicated_access_count: int
     erased_fill_count: int
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
+    consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -131,6 +155,9 @@ class FunctionalBoundaryProjection:
             "runtime_predicate_proofs": [
                 receipt.to_json() for receipt in self.runtime_predicate_proofs
             ],
+            "consumer_extensions": [
+                relation.to_json() for relation in self.consumer_extensions
+            ],
         }
 
 
@@ -148,6 +175,15 @@ class FunctionalBoundaryClosureIssue:
     path: str
     detail: str
     ref: str | None = None
+
+
+@dataclass(frozen=True, order=True)
+class ConsumerExtensionRequirement:
+    """One proven physical-padding edge that needs J-owned outside semantics."""
+
+    consumer_ref: str
+    operand_index: int
+    access_ref: str
 
 
 def parse_direct_axes(expression: str) -> tuple[str, ...]:
@@ -823,9 +859,13 @@ def _validate_broadcast_closure(
 
 def _reduction_padding_analysis(
     j: Any,
+    *,
+    predicate_overrides: Mapping[str, PredicateProjection | None] | None = None,
 ) -> tuple[
     tuple[FunctionalBoundaryClosureIssue, ...],
     tuple[FunctionalBoundaryClosureIssue, ...],
+    tuple[ConsumerExtensionRequirement, ...],
+    frozenset[str],
 ]:
     j = elaborate_j(j)
     elaboration = j_elaboration(j)
@@ -843,8 +883,8 @@ def _reduction_padding_analysis(
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
 
-    padding_positions: dict[str, frozenset[int]] = {
-        item.name: frozenset() for item in j.intent.inputs
+    padding_positions: dict[str, dict[str, frozenset[int]]] = {
+        item.name: {} for item in j.intent.inputs
     }
     for access in j.boundary.accesses:
         if access.kind.value != "load":
@@ -858,13 +898,18 @@ def _reduction_padding_analysis(
         tensor = tensors.get(access.tensor)
         if tensor is None or len(axes) != len(tensor.shape):
             continue
-        try:
-            predicate = _predicate_projection(
-                parsed.predicate,
-                logical_guards=logical_guards,
-            )
-        except (NotImplementedError, ValueError):
-            continue
+        if predicate_overrides is not None:
+            predicate = predicate_overrides.get(access.access_id)
+            if predicate is None:
+                continue
+        else:
+            try:
+                predicate = _predicate_projection(
+                    parsed.predicate,
+                    logical_guards=logical_guards,
+                )
+            except (NotImplementedError, ValueError):
+                continue
         if predicate.guards or not predicate.upper_bounds:
             continue
         # Seed physical-padding provenance only when J itself proves a full
@@ -884,8 +929,9 @@ def _reduction_padding_analysis(
             if axis in axes
         }
         if masked:
-            padding_positions[access.tensor] = frozenset(
-                set(padding_positions.get(access.tensor, frozenset())) | masked
+            by_access = padding_positions.setdefault(access.tensor, {})
+            by_access[access.access_id] = frozenset(
+                set(by_access.get(access.access_id, frozenset())) | masked
             )
 
     path_by_marker: dict[int, str] = {}
@@ -900,6 +946,35 @@ def _reduction_padding_analysis(
     ref_by_path = {path: node_ref for node_ref, path in j.node_ids.items()}
     mean_issues: list[FunctionalBoundaryClosureIssue] = []
     consumer_issues: list[FunctionalBoundaryClosureIssue] = []
+    requirements: set[ConsumerExtensionRequirement] = set()
+    affected_consumers: set[str] = set()
+
+    def has_padding(value: str) -> bool:
+        return any(padding_positions.get(value, {}).values())
+
+    def merge_projected(
+        target: dict[str, set[int]],
+        source: Mapping[str, frozenset[int]],
+        positions: tuple[int, ...] | None = None,
+    ) -> None:
+        for access_ref, axes in source.items():
+            projected = (
+                axes
+                if positions is None
+                else frozenset(
+                    positions[index]
+                    for index in axes
+                    if index < len(positions)
+                )
+            )
+            target.setdefault(access_ref, set()).update(projected)
+
+    def freeze(source: Mapping[str, set[int]]) -> dict[str, frozenset[int]]:
+        return {
+            access_ref: frozenset(axes)
+            for access_ref, axes in source.items()
+            if axes
+        }
 
     for op in _walk_ops(j.intent.body):
         path = path_by_marker.get(id(op), "body")
@@ -907,7 +982,7 @@ def _reduction_padding_analysis(
         padded_operands = tuple(
             operand
             for operand in op.operands
-            if padding_positions.get(operand, frozenset())
+            if has_padding(operand)
         )
         if not isinstance(op.result, str):
             if padded_operands:
@@ -932,7 +1007,7 @@ def _reduction_padding_analysis(
                     )
                 )
             continue
-        if op.op in {"map_unary", "cast"}:
+        if op.op in {"map_unary", "cast", "pad"}:
             if len(op.operands) != 1:
                 if padded_operands:
                     consumer_issues.append(
@@ -945,11 +1020,11 @@ def _reduction_padding_analysis(
                     )
                 continue
             padding_positions[op.result] = padding_positions.get(
-                op.operands[0], frozenset()
-            )
+                op.operands[0], {}
+            ).copy()
             continue
         if op.op in {"map_binary", "select"}:
-            projected: set[int] = set()
+            projected: dict[str, set[int]] = {}
             declared = broadcasts.get(op.result, {})
             for operand in op.operands:
                 operand_type = value_types.get(operand)
@@ -969,7 +1044,7 @@ def _reduction_padding_analysis(
                     )
                 )
                 if positions is None:
-                    if padding_positions.get(operand, frozenset()):
+                    if has_padding(operand):
                         consumer_issues.append(
                             FunctionalBoundaryClosureIssue(
                                 f"j.intent.intent_function.{path}.op",
@@ -980,12 +1055,12 @@ def _reduction_padding_analysis(
                             )
                         )
                     continue
-                projected.update(
-                    positions[index]
-                    for index in padding_positions.get(operand, frozenset())
-                    if index < len(positions)
+                merge_projected(
+                    projected,
+                    padding_positions.get(operand, {}),
+                    positions,
                 )
-            padding_positions[op.result] = frozenset(projected)
+            padding_positions[op.result] = freeze(projected)
             continue
         if op.op == "transpose":
             if len(op.operands) != 1:
@@ -1016,13 +1091,16 @@ def _reduction_padding_analysis(
                 continue
             perm = tuple(raw_perm)
             source_padding = padding_positions.get(
-                op.operands[0], frozenset()
+                op.operands[0], {}
             )
             if sorted(perm) == list(range(len(perm))):
-                padding_positions[op.result] = frozenset(
-                    perm.index(axis) for axis in source_padding
-                )
-            elif source_padding:
+                projected: dict[str, set[int]] = {}
+                for access_ref, axes in source_padding.items():
+                    projected[access_ref] = {
+                        perm.index(axis) for axis in axes
+                    }
+                padding_positions[op.result] = freeze(projected)
+            elif any(source_padding.values()):
                 consumer_issues.append(
                     FunctionalBoundaryClosureIssue(
                         f"j.intent.intent_function.{path}.attrs.perm",
@@ -1032,7 +1110,7 @@ def _reduction_padding_analysis(
                     )
                 )
             continue
-        if op.op != "reduce":
+        if op.op not in {"reduce", "scan"}:
             if padded_operands:
                 consumer_issues.append(
                     FunctionalBoundaryClosureIssue(
@@ -1056,14 +1134,18 @@ def _reduction_padding_analysis(
             continue
 
         operand_type = value_types.get(op.operands[0])
-        raw_axes = op.attrs.get("axes")
+        raw_axes: Any = (
+            op.attrs.get("axes")
+            if op.op == "reduce"
+            else [op.attrs.get("axis")]
+        )
         if operand_type is None or not isinstance(raw_axes, list):
             if padded_operands:
                 consumer_issues.append(
                     FunctionalBoundaryClosureIssue(
                         f"j.intent.intent_function.{path}.attrs.axes",
                         "functional projection cannot propagate masked padding "
-                        "provenance through an unclosed reduction",
+                            f"provenance through an unclosed {op.op}",
                         node_ref,
                     )
                 )
@@ -1079,9 +1161,9 @@ def _reduction_padding_analysis(
                 reduced.clear()
                 break
             reduced.add(axis)
-        source_padding = padding_positions.get(op.operands[0], frozenset())
+        source_padding = padding_positions.get(op.operands[0], {})
         if raw_axes and not reduced:
-            if source_padding:
+            if any(source_padding.values()):
                 consumer_issues.append(
                     FunctionalBoundaryClosureIssue(
                         f"j.intent.intent_function.{path}.attrs.axes",
@@ -1091,7 +1173,14 @@ def _reduction_padding_analysis(
                     )
                 )
             continue
-        if op.attrs.get("fn") == "mean" and reduced.intersection(source_padding):
+        consumed_accesses = {
+            access_ref
+            for access_ref, positions in source_padding.items()
+            if reduced.intersection(positions)
+        }
+        if consumed_accesses and node_ref is not None:
+            affected_consumers.add(node_ref)
+        if op.attrs.get("fn") == "mean" and consumed_accesses:
             mean_issues.append(
                 FunctionalBoundaryClosureIssue(
                     f"j.intent.intent_function.{path}.attrs.fn",
@@ -1102,18 +1191,68 @@ def _reduction_padding_analysis(
                 )
             )
 
-        if len(result_type.shape) == rank:
-            padding_positions[op.result] = frozenset(
-                axis for axis in source_padding if axis not in reduced
+        candidates, ambiguous = _consumer_extension_candidates(
+            j, operand=op.operands[0]
+        )
+        if ambiguous:
+            consumer_issues.append(
+                FunctionalBoundaryClosureIssue(
+                    "j.boundary.consumer_extensions",
+                    "node-less same-tensor predicate accesses are ambiguous; "
+                    "bind access.node_ref before declaring consumer provenance",
+                    ambiguous[0],
+                )
             )
-        else:
-            padding_positions[op.result] = frozenset(
-                axis - sum(item < axis for item in reduced)
-                for axis in source_padding
-                if axis not in reduced
+        legacy = any(
+            contract.node_ref == node_ref
+            and contract.masked_contribution is not None
+            for contract in j.boundary.reductions
+        )
+        if (
+            consumed_accesses
+            and node_ref is not None
+            and op.attrs.get("fn") in _CONSUMER_EXTENSION_FNS
+            and not legacy
+        ):
+            requirements.update(
+                ConsumerExtensionRequirement(node_ref, 0, access_ref)
+                for access_ref in consumed_accesses.intersection(candidates)
             )
 
-    return tuple(mean_issues), tuple(consumer_issues)
+        remaining: dict[str, frozenset[int]] = {
+            access_ref: frozenset(
+                axis for axis in positions if axis not in reduced
+            )
+            for access_ref, positions in source_padding.items()
+        }
+        if op.op == "scan":
+            # An identity-padded suffix of an inclusive scan contains the
+            # final valid prefix, not the identity.  Keep the provenance until
+            # an observable mask kills it; a later consumer must not inherit
+            # the scan input's outside-domain law.
+            padding_positions[op.result] = source_padding.copy()
+        elif len(result_type.shape) == rank:
+            padding_positions[op.result] = {
+                access_ref: axes
+                for access_ref, axes in remaining.items()
+                if axes
+            }
+        else:
+            padding_positions[op.result] = {
+                access_ref: frozenset(
+                    axis - sum(item < axis for item in reduced)
+                    for axis in axes
+                )
+                for access_ref, axes in remaining.items()
+                if axes
+            }
+
+    return (
+        tuple(mean_issues),
+        tuple(consumer_issues),
+        tuple(sorted(requirements)),
+        frozenset(affected_consumers),
+    )
 
 
 def functional_reduction_padding_issues(
@@ -1121,7 +1260,7 @@ def functional_reduction_padding_issues(
 ) -> tuple[FunctionalBoundaryClosureIssue, ...]:
     """Return the versioned TypeCheck's narrow padded-mean omissions.
 
-    ``typecheck.v9`` consumes this J-only necessary condition.  It reports only
+    ``typecheck.v10`` consumes this J-only necessary condition.  It reports only
     cases where modeled direct-access and pointwise/broadcast provenance proves
     that a masked axis is eliminated by ``reduce(mean)`` without a logical
     count contract.  Unsupported graph operators deliberately stop this
@@ -1129,8 +1268,19 @@ def functional_reduction_padding_issues(
     provenance at that unsupported operation instead of silently erasing it.
     """
 
-    mean_issues, _consumer_issues = _reduction_padding_analysis(j)
+    mean_issues, _consumer_issues, _requirements, _affected = (
+        _reduction_padding_analysis(j)
+    )
     return mean_issues
+
+
+def functional_consumer_extension_requirements(
+    j: Any,
+) -> tuple[ConsumerExtensionRequirement, ...]:
+    """Return only statically proven physical-padding consumer edges."""
+
+    _mean, _consumer, requirements, _affected = _reduction_padding_analysis(j)
+    return requirements
 
 
 def _is_reduction_neutral(fn: str, value: Any) -> bool:
@@ -1157,35 +1307,431 @@ def _is_reduction_neutral(fn: str, value: Any) -> bool:
     return False
 
 
+_CONSUMER_EXTENSION_OPS = frozenset(
+    {"map_unary", "map_binary", "select", "cast", "transpose", "pad"}
+)
+_CONSUMER_EXTENSION_FNS = frozenset({"sum", "max", "min"})
+
+
+def _same_closed_scalar(left: Any, right: Any) -> bool:
+    aliases = {
+        "ZERO": "zero",
+        "NEG_INF": "neg_inf",
+        "-inf": "neg_inf",
+        "POS_INF": "pos_inf",
+        "+inf": "pos_inf",
+        "inf": "pos_inf",
+    }
+    if isinstance(left, str) or isinstance(right, str):
+        return aliases.get(str(left), str(left)) == aliases.get(
+            str(right), str(right)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    return (
+        isinstance(left, (int, float))
+        and isinstance(right, (int, float))
+        and float(left) == float(right)
+    )
+
+
+def _floating_dtype(dtype: str) -> bool:
+    normalized = dtype.casefold()
+    return normalized in {"float", "half", "bfloat"} or re.fullmatch(
+        r"(?:(?:b?float)|bf|f|fp)[0-9]+", normalized
+    ) is not None
+
+
+def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
+    if fn == "sum":
+        return value == "ZERO" or (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 0.0
+        )
+    if not _floating_dtype(dtype):
+        return False
+    if fn == "max":
+        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
+    if fn == "min":
+        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
+    return False
+
+
+def _operation_dependencies(op: IntentOp) -> tuple[str, ...]:
+    dependencies: list[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value not in dependencies:
+            dependencies.append(value)
+
+    for operand in op.operands:
+        add(operand)
+    if op.op == "loop":
+        for scan in op.scan:
+            add(scan.source)
+        for carry in op.carry:
+            add(carry.init_value)
+            add(carry.next_value)
+        for value in op.yields:
+            add(value)
+    return tuple(dependencies)
+
+
+def _consumer_dependency_path(
+    j: Any,
+    *,
+    operand: str,
+    access_node_ref: str | None,
+    access_tensor: str,
+) -> tuple[bool, tuple[IntentOp, ...]]:
+    """Find the exact J-only dependency path from an access to an operand."""
+
+    operations = _walk_ops(j.intent.body)
+    path_to_ref = {path: ref for ref, path in j.node_ids.items()}
+    path_by_marker: dict[int, str] = {}
+
+    def record_paths(body: Sequence[IntentOp], prefix: str = "body") -> None:
+        for index, op in enumerate(body):
+            path = f"{prefix}[{index}]"
+            path_by_marker[id(op)] = path
+            record_paths(op.body, f"{path}.body")
+
+    record_paths(j.intent.body)
+    producers: dict[str, tuple[str | None, IntentOp]] = {}
+    for op in operations:
+        node_ref = path_to_ref.get(path_by_marker[id(op)])
+        for result in _result_names(op):
+            producers[result] = (node_ref, op)
+
+    memo: dict[str, tuple[bool, tuple[IntentOp, ...]]] = {}
+    active: set[str] = set()
+
+    def visit(value: str) -> tuple[bool, tuple[IntentOp, ...]]:
+        if access_node_ref is None and value == access_tensor:
+            return True, ()
+        if value in memo:
+            return memo[value]
+        if value in active:
+            return False, ()
+        active.add(value)
+        producer = producers.get(value)
+        if producer is None:
+            result = (False, ())
+        else:
+            node_ref, operation = producer
+            if access_node_ref is not None and node_ref == access_node_ref:
+                result = (True, (operation,))
+            else:
+                selected: list[IntentOp] = []
+                found = False
+                for dependency in _operation_dependencies(operation):
+                    child_found, child_path = visit(dependency)
+                    if child_found:
+                        found = True
+                        selected.extend(child_path)
+                if found:
+                    selected.append(operation)
+                result = (found, tuple(selected))
+        active.remove(value)
+        memo[value] = result
+        return result
+
+    return visit(operand)
+
+
+def _consumer_extension_candidates(
+    j: Any,
+    *,
+    operand: str,
+) -> tuple[dict[str, tuple[Any, tuple[IntentOp, ...]]], tuple[str, ...]]:
+    """Resolve predicated-load provenance without a tensor-name fallback."""
+
+    by_tensor: dict[str, list[tuple[Any, tuple[IntentOp, ...]]]] = {}
+    for access in j.boundary.accesses:
+        if access.kind.value != "load" or access.predicate is None:
+            continue
+        found, path = _consumer_dependency_path(
+            j,
+            operand=operand,
+            access_node_ref=access.node_ref,
+            access_tensor=access.tensor,
+        )
+        if found:
+            by_tensor.setdefault(access.tensor, []).append((access, path))
+
+    selected: dict[str, tuple[Any, tuple[IntentOp, ...]]] = {}
+    ambiguous: list[str] = []
+    for tensor, candidates in by_tensor.items():
+        node_bound = [item for item in candidates if item[0].node_ref is not None]
+        if node_bound:
+            for access, path in node_bound:
+                selected[access.access_id] = (access, path)
+            continue
+        if len(candidates) != 1:
+            ambiguous.append(tensor)
+            continue
+        access, path = candidates[0]
+        selected[access.access_id] = (access, path)
+    return selected, tuple(sorted(ambiguous))
+
+
+def _validate_consumer_path(
+    path_operations: tuple[IntentOp, ...],
+    *,
+    outside_value: Any,
+    outside_dtype: str,
+) -> None:
+    for operation in path_operations:
+        if operation.op not in _CONSUMER_EXTENSION_OPS:
+            raise NotImplementedError(
+                "consumer-domain provenance crosses unsupported J op "
+                f"{operation.op!r}"
+            )
+        if operation.op != "pad":
+            continue
+        if (
+            set(operation.attrs) != {"lo", "hi", "value"}
+            or len(operation.operands) != 1
+            or not isinstance(operation.result, str)
+            or operation.type is None
+        ):
+            raise ValueError(
+                "pad provenance requires closed lo/hi/value and one typed operand"
+            )
+        lo = operation.attrs.get("lo")
+        hi = operation.attrs.get("hi")
+        result_shape = operation.type.get("shape")
+        if (
+            not isinstance(lo, list)
+            or not isinstance(hi, list)
+            or not isinstance(result_shape, list)
+            or len(lo) != len(result_shape)
+            or len(hi) != len(result_shape)
+            or any(
+                isinstance(item, bool) or not isinstance(item, (int, str))
+                for item in [*lo, *hi]
+            )
+        ):
+            raise ValueError(
+                "pad provenance requires closed affine lo/hi for every axis"
+            )
+        if str(operation.type.get("dtype", "")).casefold() != outside_dtype.casefold():
+            raise ValueError("pad result dtype differs from consumer outside dtype")
+        if not _same_closed_scalar(operation.attrs.get("value"), outside_value):
+            raise ValueError(
+                "pad value differs from the declared consumer outside value"
+            )
+
+
+def resolve_consumer_local_tile_axis(
+    j: Any,
+    consumer_ref: str,
+) -> int:
+    """Resolve Layer B's physical local axis, never Layer A's tensor axis."""
+
+    j = elaborate_j(j)
+    nodes = _node_table(j)
+    operation = nodes.get(consumer_ref)
+    if operation is None or operation.op not in {"reduce", "scan"}:
+        raise ValueError("consumer local axis requires a reduce or scan node")
+    if operation.op == "scan":
+        if (
+            set(operation.attrs) != {"fn", "axis"}
+            or len(operation.operands) != 1
+            or not isinstance(operation.result, str)
+        ):
+            raise ValueError(
+                "scan outside-domain erasure requires the closed forward "
+                "inclusive one-operand contract"
+            )
+        semantic_axis = operation.attrs.get("axis")
+        value_types = j_elaboration(j).value_type_by_name
+        operand_type = value_types.get(operation.operands[0])
+        result_type = value_types.get(operation.result)
+        if (
+            isinstance(semantic_axis, bool)
+            or not isinstance(semantic_axis, int)
+            or semantic_axis < 0
+            or operand_type is None
+            or semantic_axis >= len(operand_type.shape)
+            or result_type != operand_type
+        ):
+            raise ValueError(
+                "scan outside-domain erasure requires an in-range semantic "
+                "axis and a shape/dtype-preserving result"
+            )
+
+    contracts = [
+        contract
+        for contract in j.boundary.reductions
+        if nodes.get(contract.node_ref) is operation
+    ]
+    if len(contracts) != 1:
+        raise ValueError(
+            "reduce/scan consumer requires one local-axis algebra boundary "
+            "contract"
+        )
+    local_axis = contracts[0].tile_axis
+    if isinstance(local_axis, bool) or not isinstance(local_axis, int):
+        raise ValueError("consumer local tile axis must be a closed integer")
+    return local_axis
+
+
+def _project_consumer_extensions(
+    j: Any,
+    requirements: Sequence[ConsumerExtensionRequirement],
+) -> tuple[ConsumerOutsideProjection, ...]:
+    """Consume v4's unique per-consumer outside-domain authority.
+
+    Legacy v1-v3 reductions that carry ``masked_contribution`` retain their
+    exact historical behavior.  A v4 relation is never synthesized from a
+    fill value, a reducer kind, Source, C, or pi.
+    """
+
+    value_types = j_elaboration(j).value_type_by_name
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    nodes = _node_table(j)
+    canonical_nodes = {
+        ref: nodes[ref]
+        for ref in j.node_ids
+        if ref in nodes
+    }
+    legacy_masked_reductions = {
+        item.node_ref
+        for item in j.boundary.reductions
+        if item.masked_contribution is not None
+    }
+    declared = {
+        (item.consumer_ref, item.operand_index, item.access_ref): item
+        for item in j.boundary.consumer_extensions
+    }
+    required = {
+        (item.consumer_ref, item.operand_index, item.access_ref)
+        for item in requirements
+    }
+
+    projected: list[ConsumerOutsideProjection] = []
+    for extension in j.boundary.consumer_extensions:
+        operation = canonical_nodes.get(extension.consumer_ref)
+        fn = operation.attrs.get("fn") if operation is not None else None
+        if (
+            operation is None
+            or operation.op not in {"reduce", "scan"}
+            or fn not in _CONSUMER_EXTENSION_FNS
+        ):
+            raise ValueError(
+                "consumer extension requires a sum/max/min reduce or scan"
+            )
+        if extension.operand_index >= len(operation.operands):
+            raise ValueError(
+                "consumer operand ordinal is outside the closed operand list"
+            )
+        local_axis = resolve_consumer_local_tile_axis(
+            j, extension.consumer_ref
+        )
+        if extension.tile_axis != local_axis:
+            raise ValueError(
+                "consumer extension tile axis differs from the consumer's "
+                "closed local axis"
+            )
+        operand = operation.operands[extension.operand_index]
+        operand_type = value_types.get(operand)
+        if (
+            operand_type is None
+            or extension.outside.dtype.casefold() != operand_type.dtype.casefold()
+        ):
+            raise ValueError(
+                "outside dtype must equal the selected consumer operand dtype"
+            )
+        if not _is_consumer_identity(
+            str(fn), extension.outside.dtype, extension.outside.value
+        ):
+            raise ValueError(
+                "outside value is not the declared consumer's two-sided identity"
+            )
+        access = accesses.get(extension.access_ref)
+        if access is None or access.kind.value != "load" or access.predicate is None:
+            raise ValueError(
+                "consumer extension requires one predicate-bearing load access"
+            )
+        candidates, ambiguous = _consumer_extension_candidates(j, operand=operand)
+        selected = candidates.get(extension.access_ref)
+        if selected is None or access.tensor in ambiguous:
+            raise ValueError(
+                "access provenance does not unambiguously reach this consumer operand"
+            )
+        _validate_consumer_path(
+            selected[1],
+            outside_value=extension.outside.value,
+            outside_dtype=extension.outside.dtype,
+        )
+        if extension.consumer_ref in legacy_masked_reductions:
+            raise ValueError(
+                "masked_contribution and consumer extension are duplicate authorities"
+            )
+        projected.append(
+            ConsumerOutsideProjection(
+                extension.consumer_ref,
+                extension.operand_index,
+                extension.access_ref,
+                extension.tile_axis,
+                extension.outside.dtype,
+                extension.outside.value,
+                extension.identity_law,
+            )
+        )
+
+    missing = sorted(required - set(declared))
+    if missing:
+        consumer_ref, operand_index, access_ref = missing[0]
+        raise NotImplementedError(
+            "predicate-bearing reduce/scan operand requires an explicit "
+            "outside-domain identity relation: "
+            f"{consumer_ref}:{operand_index}:{access_ref}"
+        )
+    return tuple(
+        sorted(
+            projected,
+            key=lambda item: (
+                item.consumer_ref, item.operand_index, item.access_ref
+            ),
+        )
+    )
+
+
 def _validate_reduction_padding_closure(
     j: Any,
     *,
     has_physical_padding: bool,
+    padding_issues: Sequence[FunctionalBoundaryClosureIssue],
+    consumer_issues: Sequence[FunctionalBoundaryClosureIssue],
+    affected_consumers: frozenset[str],
 ) -> None:
     """Consume reduction B facts without constraining the Layer-A graph shape.
 
     A predicated physical realization may disappear from logical-tensor
-    RefEval only when every logical reduction has one explicit boundary
-    contract and its effective masked contribution is the reducer's neutral
-    element.  The contract is the J-owned fact connecting arbitrary intervening
-    pointwise/broadcast dataflow to that reduction; RefEval neither reconstructs
-    it from Source nor invents a per-kernel padding formula.
+    RefEval only through an explicit J-owned per-consumer relation.  The old
+    reduction-wide masked contribution remains accepted only for legacy J.
     """
 
     if has_physical_padding:
-        padding_issues, consumer_issues = _reduction_padding_analysis(j)
         if consumer_issues:
             raise NotImplementedError(consumer_issues[0].detail)
         if padding_issues:
             raise NotImplementedError(padding_issues[0].detail)
 
     nodes = _node_table(j)
-    reductions = tuple(op for op in _walk_ops(j.intent.body) if op.op == "reduce")
+    reductions = tuple(
+        op for op in _walk_ops(j.intent.body) if op.op in {"reduce", "scan"}
+    )
     contract_by_reduction: dict[int, Any] = {}
     for contract in j.boundary.reductions:
         reduction = nodes.get(contract.node_ref)
-        if reduction is None or reduction.op != "reduce":
-            raise ValueError("Layer-B reduction does not target reduce")
+        if reduction is None or reduction.op not in {"reduce", "scan"}:
+            raise ValueError(
+                "Layer-B algebra boundary does not target reduce or scan"
+            )
         marker = id(reduction)
         if marker in contract_by_reduction:
             raise ValueError(
@@ -1193,12 +1739,17 @@ def _validate_reduction_padding_closure(
             )
         contract_by_reduction[marker] = contract
 
-    if has_physical_padding and {
-        id(op) for op in reductions
-    } != set(contract_by_reduction):
+    affected_markers = {
+        id(nodes[consumer_ref])
+        for consumer_ref in affected_consumers
+        if consumer_ref in nodes
+    }
+    if has_physical_padding and not affected_markers.issubset(
+        contract_by_reduction
+    ):
         raise NotImplementedError(
-            "functional padded graph requires exactly one contract for every "
-            "logical reduction"
+            "functional padded reduce/scan requires one local-axis algebra "
+            "contract for every affected consumer"
         )
 
     for reduction in reductions:
@@ -1219,16 +1770,12 @@ def _validate_reduction_padding_closure(
                 f"functional projection requires neutral {fn!r} identity"
             )
         if has_physical_padding:
-            if contract.masked_contribution is None:
-                raise NotImplementedError(
-                    "functional padded reduction requires an explicit neutral "
-                    "masked_contribution"
-                )
-            if not _is_reduction_neutral(fn, contract.masked_contribution):
-                raise NotImplementedError(
-                    f"functional projection requires neutral {fn!r} "
-                    "masked_contribution"
-                )
+            if contract.masked_contribution is not None:
+                if not _is_reduction_neutral(fn, contract.masked_contribution):
+                    raise NotImplementedError(
+                        f"functional projection requires neutral {fn!r} "
+                        "masked_contribution"
+                    )
         elif (
             contract.masked_contribution is not None
             and not _is_reduction_neutral(fn, contract.masked_contribution)
@@ -1557,9 +2104,21 @@ def _project_functional_boundary(
 
     broadcast_axes = _broadcast_axes(j)
     _validate_broadcast_closure(j, broadcast_axes)
+    (
+        padding_issues,
+        consumer_issues,
+        extension_requirements,
+        affected_consumers,
+    ) = _reduction_padding_analysis(j, predicate_overrides=predicates)
     _validate_reduction_padding_closure(
         j,
         has_physical_padding=has_predicate_or_fill,
+        padding_issues=padding_issues,
+        consumer_issues=consumer_issues,
+        affected_consumers=affected_consumers,
+    )
+    consumer_extensions = _project_consumer_extensions(
+        j, extension_requirements
     )
 
     mapping_values = {item.output: item.value for item in boundary.output_mappings}
@@ -1583,13 +2142,21 @@ def _project_functional_boundary(
     )
     if runtime_predicate_proofs:
         profile = (
-            "logical_domain_runtime_reduction_padding_v1"
+            (
+                "logical_domain_runtime_reduction_padding_v2"
+                if consumer_extensions
+                else "logical_domain_runtime_reduction_padding_v1"
+            )
             if boundary.reductions
             else "logical_domain_runtime_mask_erasure_v1"
         )
     else:
         profile = (
-            "logical_domain_reduction_padding_v2"
+            (
+                "logical_domain_reduction_padding_v3"
+                if consumer_extensions
+                else "logical_domain_reduction_padding_v2"
+            )
             if concrete_predicates and boundary.reductions
             else (
                 "logical_domain_mask_erasure_v1"
@@ -1611,6 +2178,11 @@ def _project_functional_boundary(
         *(f"index_bounds:{item.node_ref}" for item in boundary.index_bounds),
         *(f"update:{item.node_ref}" for item in boundary.updates),
         *(f"result_relation:{item.output}" for item in boundary.result_relations),
+        *(
+            "consumer_extension:"
+            f"{item.consumer_ref}:{item.operand_index}:{item.access_ref}"
+            for item in boundary.consumer_extensions
+        ),
     }
     return FunctionalBoundaryProjection(
         profile=profile,
@@ -1636,6 +2208,7 @@ def _project_functional_boundary(
             item.fill_value is not None for item in boundary.accesses
         ),
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
+        consumer_extensions=consumer_extensions,
     )
 
 
@@ -1687,14 +2260,18 @@ def project_functional_boundary_for_refeval(
 __all__ = [
     "FUNCTIONAL_BOUNDARY_PROTOCOL",
     "RUNTIME_PREDICATE_PROOF_PROTOCOL",
+    "ConsumerExtensionRequirement",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
+    "ConsumerOutsideProjection",
     "PredicateProjection",
     "RuntimePredicateProofReceipt",
     "functional_boundary_closure_issues",
+    "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",
     "parse_direct_axes",
     "project_predicate_text",
+    "resolve_consumer_local_tile_axis",
     "project_functional_boundary",
     "project_functional_boundary_for_refeval",
 ]

@@ -1048,9 +1048,10 @@ class OutputMapping(StrictJSONMixin):
 
 @dataclass
 class ReductionBoundary(StrictJSONMixin):
-    """Boundary contract for a tiled reduction.
+    """Algebra/local-axis boundary contract for a reduce or inclusive scan.
 
-    ``identity`` records the algebraic identity used to pad the tile;
+    The wire name is retained for compatibility.  ``identity`` records the
+    algebraic identity used to pad the frontend-local tile;
     ``masked_contribution`` records the effective contribution when the
     frontend expresses masking after loading.  At least one must be explicit.
     """

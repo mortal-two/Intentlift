@@ -255,7 +255,8 @@ def _boundary_schema() -> dict[str, Any]:
         },
         ("node_ref", "tile_axis", "identity"),
         description=(
-            "Reduction algebra metadata. artifact.v4 forbids the historical "
+            "Reduce or inclusive-scan algebra and frontend-local tile-axis "
+            "metadata. artifact.v4 forbids the historical "
             "masked_contribution field: consumer_extensions is the unique "
             "authority for physical outside-domain contributions."
         ),

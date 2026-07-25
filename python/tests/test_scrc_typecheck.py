@@ -43,7 +43,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v9"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v10"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -315,6 +315,41 @@ def test_typecheck_v7_does_not_ban_guard_bearing_access(guard) -> None:
     assert report.passed, report.to_json()
 
 
+def test_consumer_extension_is_required_only_when_padding_reaches_consumer_axis() -> None:
+    non_reduced_axis = _functional_padded_reduction_artifact()
+    non_reduced_axis.j.boundary.accesses[0].predicate = "i0 < x0"
+    non_reduced_axis.j.boundary.consumer_extensions = []
+
+    report = type_check(
+        non_reduced_axis.j,
+        non_reduced_axis.c,
+        non_reduced_axis.pi,
+    )
+
+    assert report.passed, report.to_json()
+
+
+def test_logical_guard_does_not_become_physical_consumer_padding() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    artifact.j.intent.inputs.append(Tensor("flag", "i1", []))
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i1",
+            0,
+            logical_ref="flag",
+        )
+    )
+    artifact.j.boundary.accesses[0].predicate = "flag and i1 < x1"
+    artifact.j.boundary.consumer_extensions = []
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
 def test_typecheck_v7_rejects_padded_mean_without_logical_count() -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.body[1].attrs["fn"] = "mean"
@@ -575,7 +610,7 @@ def test_reduce_contract_keeps_explicit_keepdims_and_result_shape_check() -> Non
     keepdims.j.intent.body[1].attrs["keepdims"] = True
     keepdims.j.intent.outputs[0].shape = ["x0", 1]
     keepdims.j.signature.parameters[1].rank = 2
-    keepdims.j.boundary.accesses[1].index_expression = "[v3, 0]"
+    keepdims.j.boundary.accesses[1].index_expression = "[v0, 0]"
     assert type_check(keepdims.j, keepdims.c, keepdims.pi).passed
 
     collapsed = make_reduce_artifact()

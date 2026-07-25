@@ -1011,7 +1011,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v9"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v10"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -1438,7 +1438,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v4"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v5"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v9"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v10"
     assert first.metadata["candidate_check"] == {}
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None

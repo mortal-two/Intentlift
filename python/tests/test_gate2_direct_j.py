@@ -19,6 +19,7 @@ from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
     BroadcastSpec,
+    ConsumerExtension,
     EffectKind,
     EffectSpec,
     OutputMapping,
@@ -26,6 +27,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
     ReductionBoundary,
     SignatureParameter,
+    TypedOutsideValue,
 )
 from intentir.verify.gate2.model import ExecutionResult, Gate2Status
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Runner
@@ -191,7 +193,234 @@ def _make_masked_sum_reduction_artifact():
         OutputMapping("t1", "v1", "n1")
     ]
     artifact.j.boundary.reductions[0].tile_axis = 0
+    artifact.j.boundary.consumer_extensions = [
+        ConsumerExtension(
+            "n1",
+            0,
+            "a0",
+            0,
+            TypedOutsideValue("f32", 0),
+            "two_sided",
+        )
+    ]
     return artifact
+
+
+def _make_shared_access_sum_max_artifact():
+    artifact = _make_masked_sum_reduction_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["outputs"].append(
+        {"name": "t2", "dtype": "f32", "shape": ["x0"]}
+    )
+    payload["body"].append(
+        {
+            "id": "n2",
+            "op": "reduce",
+            "result": "v2",
+            "operands": ["v0"],
+            "attrs": {
+                "fn": "max",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        }
+    )
+    payload["returns"].append({"output": "t2", "value": "v2"})
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.node_ids["n2"] = "body[2]"
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.POINTER,
+            ParameterMode.OUTPUT,
+            "f32",
+            1,
+            logical_ref="t2",
+        )
+    )
+    artifact.j.boundary.accesses.append(
+        BoundaryAccess(
+            "a2",
+            AccessKind.STORE,
+            "t2",
+            node_ref="n2",
+            index_expression="[i0]",
+        )
+    )
+    artifact.j.boundary.effects.append(
+        EffectSpec(EffectKind.WRITE, "t2", "n2", "e2", "a2")
+    )
+    artifact.j.boundary.output_mappings.append(
+        OutputMapping("t2", "v2", "n2")
+    )
+    artifact.j.boundary.reductions.append(
+        ReductionBoundary("n2", 0, "NEG_INF")
+    )
+    artifact.j.boundary.consumer_extensions.append(
+        ConsumerExtension(
+            "n2",
+            0,
+            "a0",
+            0,
+            TypedOutsideValue("f32", "NEG_INF"),
+            "two_sided",
+        )
+    )
+    return artifact
+
+
+def _make_masked_forward_scan_artifact():
+    artifact = _make_masked_sum_reduction_artifact()
+    scan = artifact.j.intent.body[1]
+    scan.op = "scan"
+    scan.attrs = {"fn": "sum", "axis": 1}
+    scan.type = {"dtype": "f32", "shape": ["x0", "x1"]}
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.boundary.accesses[1].index_expression = "[i0, i1]"
+    artifact.j.boundary.accesses[1].predicate = "i1 < x1"
+    return artifact
+
+
+def test_functional_boundary_consumes_closed_forward_scan_extension() -> None:
+    projection = project_functional_boundary(
+        _make_masked_forward_scan_artifact().j
+    )
+
+    assert projection.consumer_extensions[0].consumer_ref == "n1"
+    assert projection.consumer_extensions[0].tile_axis == 0
+    assert projection.profile == "logical_domain_reduction_padding_v3"
+
+
+@pytest.mark.parametrize("mutation", ["wrong_local_axis", "reverse_control"])
+def test_functional_boundary_rejects_unclosed_scan_padding(mutation: str) -> None:
+    artifact = _make_masked_forward_scan_artifact()
+    if mutation == "wrong_local_axis":
+        artifact.j.boundary.consumer_extensions[0].tile_axis = 1
+    elif mutation == "reverse_control":
+        artifact.j.intent.body[1].attrs["reverse"] = True
+    else:  # pragma: no cover
+        raise AssertionError(mutation)
+
+    with pytest.raises(
+        ValueError,
+        match="closed local axis|closed forward inclusive",
+    ):
+        project_functional_boundary(artifact.j)
+
+
+def test_scan_padded_suffix_cannot_flow_unmasked_into_later_reduce() -> None:
+    artifact = _make_masked_forward_scan_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["outputs"][0]["shape"] = ["x0"]
+    payload["body"].append(
+        {
+            "id": "n2",
+            "op": "reduce",
+            "result": "v2",
+            "operands": ["v1"],
+            "attrs": {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        }
+    )
+    payload["returns"] = [{"output": "t1", "value": "v2"}]
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.node_ids["n2"] = "body[2]"
+    artifact.j.signature.parameters[1].rank = 1
+    artifact.j.boundary.accesses[1].node_ref = "n2"
+    artifact.j.boundary.accesses[1].index_expression = "[i0]"
+    artifact.j.boundary.accesses[1].predicate = None
+    artifact.j.boundary.effects[1].node_ref = "n2"
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v2", "n2")
+    ]
+    artifact.j.boundary.reductions.append(
+        ReductionBoundary("n2", 0, 0)
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="n2:0:a0",
+    ):
+        project_functional_boundary(artifact.j)
+
+
+def test_functional_boundary_consumes_same_access_per_consumer_identity() -> None:
+    projection = project_functional_boundary(
+        _make_shared_access_sum_max_artifact().j
+    )
+
+    assert [item.to_json() for item in projection.consumer_extensions] == [
+        {
+            "consumer_ref": "n1",
+            "operand_index": 0,
+            "access_ref": "a0",
+            "tile_axis": 0,
+            "outside": {"dtype": "f32", "value": 0},
+            "identity_law": "two_sided",
+        },
+        {
+            "consumer_ref": "n2",
+            "operand_index": 0,
+            "access_ref": "a0",
+            "tile_axis": 0,
+            "outside": {"dtype": "f32", "value": "NEG_INF"},
+            "identity_law": "two_sided",
+        },
+    ]
+    assert "consumer_extension:n1:0:a0" in projection.consumed
+    assert "consumer_extension:n2:0:a0" in projection.consumed
+
+
+def test_refeval_consumes_same_access_with_distinct_consumer_identities() -> None:
+    artifact = _make_shared_access_sum_max_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "sum_output", "t2": "max_output"},
+    )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    squared = value * value
+    np.testing.assert_allclose(
+        result.outputs["sum_output"], np.sum(squared, axis=1)
+    )
+    np.testing.assert_allclose(
+        result.outputs["max_output"], np.max(squared, axis=1)
+    )
+    relations = result.metadata["boundary_projection"]["consumer_extensions"]
+    assert [item["outside"]["value"] for item in relations] == [0, "NEG_INF"]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "wrong_consumer", "wrong_operand"])
+def test_functional_boundary_has_no_global_consumer_identity_fallback(
+    mutation: str,
+) -> None:
+    artifact = _make_shared_access_sum_max_artifact()
+    extension = artifact.j.boundary.consumer_extensions[1]
+    if mutation == "missing":
+        artifact.j.boundary.consumer_extensions.pop()
+    elif mutation == "wrong_consumer":
+        extension.consumer_ref = "n0"
+    elif mutation == "wrong_operand":
+        extension.operand_index = 1
+    else:  # pragma: no cover
+        raise AssertionError(mutation)
+
+    with pytest.raises(
+        (NotImplementedError, ValueError),
+        match="outside-domain identity relation|operand ordinal|sum/max/min",
+    ):
+        project_functional_boundary(artifact.j)
 
 
 def _add_logical_guard(artifact, *, predicate: str, live: bool) -> None:
@@ -258,7 +487,7 @@ def test_scalar_e_j_consumes_masked_sum_reduction_padding() -> None:
     )
     assert (
         result.metadata["boundary_profile"]
-        == "logical_domain_reduction_padding_v2"
+        == "logical_domain_reduction_padding_v3"
     )
     assert result.metadata["predicated_access_count"] == 1
     assert result.metadata["erased_fill_count"] == 1
@@ -302,7 +531,7 @@ def test_refeval_runtime_logical_bound_preserves_reduction_padding_contract() ->
         np.sum(value * value, axis=1),
     )
     assert result.metadata["boundary_profile"] == (
-        "logical_domain_runtime_reduction_padding_v1"
+        "logical_domain_runtime_reduction_padding_v2"
     )
     assert result.metadata["runtime_predicate_proof_count"] == 1
     assert result.metadata["boundary_projection"]["runtime_predicate_proofs"][
@@ -350,13 +579,13 @@ def test_scalar_e_j_rejects_guard_with_only_dead_dataflow_membership() -> None:
         ("wrong_store_axis", "differs from J tensor extent"),
         ("nonzero_identity", "neutral 'sum' identity"),
         (
-            "nonzero_masked_contribution",
-            "neutral 'sum' masked_contribution",
+            "nonneutral_consumer_extension",
+            "two-sided identity",
         ),
         ("non_sum", "neutral 'max' identity"),
         ("padded_mean", "physical denominator"),
         ("missing_output_mapping", "destination relation is incomplete"),
-        ("missing_reduction_contract", "contract for every logical reduction"),
+        ("missing_reduction_contract", "contract for every affected consumer"),
     ],
 )
 def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None:
@@ -373,8 +602,8 @@ def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None
         artifact.j.boundary.accesses[1].index_expression = "[i1]"
     elif mutation == "nonzero_identity":
         artifact.j.boundary.reductions[0].identity = 1.0
-    elif mutation == "nonzero_masked_contribution":
-        artifact.j.boundary.reductions[0].masked_contribution = 1.0
+    elif mutation == "nonneutral_consumer_extension":
+        artifact.j.boundary.consumer_extensions[0].outside.value = 1.0
     elif mutation == "non_sum":
         artifact.j.intent.body[1].attrs["fn"] = "max"
     elif mutation == "padded_mean":
@@ -588,7 +817,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
         ("missing_fill", "explicit masked-load fill"),
         ("missing_broadcast", "incompatible NumPy broadcast shapes"),
         ("wrong_broadcast", "cannot align with consumer shape"),
-        ("missing_reduction", "contract for every logical reduction"),
+        ("missing_reduction", "contract for every affected consumer"),
         ("nonneutral_max", "neutral 'max' masked_contribution"),
     ],
 )
@@ -734,7 +963,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v3"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v4"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"

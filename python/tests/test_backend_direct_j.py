@@ -19,11 +19,13 @@ from intentir.backend.protocol import (
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
+    ConsumerExtension,
     EffectKind,
     EffectSpec,
     ImplementationConfig,
     OutputMapping,
     ParameterMode,
+    TypedOutsideValue,
 )
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 
@@ -95,6 +97,16 @@ def _make_masked_sum_artifact():
         OutputMapping("t1", "v1", "n1")
     ]
     artifact.j.boundary.reductions[0].tile_axis = 0
+    artifact.j.boundary.consumer_extensions = [
+        ConsumerExtension(
+            "n1",
+            0,
+            "a0",
+            0,
+            TypedOutsideValue("f32", 0),
+            "two_sided",
+        )
+    ]
     return artifact
 
 
@@ -194,7 +206,7 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
         (
             _make_masked_sum_artifact,
             {"x0": 2, "x1": 4},
-            "logical_domain_reduction_padding_v2",
+            "logical_domain_reduction_padding_v3",
             "intent.reduce",
         ),
     ],
