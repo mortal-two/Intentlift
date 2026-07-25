@@ -1384,6 +1384,34 @@ def layer_norm_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     assert dict(binding.source_to_opaque)["BLOCK_SIZE"] == "c0"
 
 
+def test_source_privacy_does_not_confuse_closed_fn_with_private_name() -> None:
+    source = """@triton.jit
+def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
+    sum = tl.sum(tl.load(X), axis=0)
+    tl.store(Y, sum)
+"""
+    _anonymous, binding, _mapping = anonymize_source(source)
+    artifact = make_reduce_artifact()
+
+    # ``sum`` is both a private Source local and a closed Intent op function.
+    # The latter is schema vocabulary, not a retained source identifier.
+    scrc._validate_source_identifier_privacy(artifact, binding)
+
+
+def test_source_privacy_still_rejects_private_name_in_open_expression() -> None:
+    source = """@triton.jit
+def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
+    secret = tl.arange(0, BLOCK_SIZE)
+    tl.store(Y, tl.load(X) + secret)
+"""
+    _anonymous, binding, _mapping = anonymize_source(source)
+    artifact = make_reduce_artifact()
+    artifact.j.boundary.domains["d0"] = "secret < x0"
+
+    with pytest.raises(ValueError, match="retained a source identifier"):
+        scrc._validate_source_identifier_privacy(artifact, binding)
+
+
 def test_exact_source_symbol_is_selected_before_anonymization() -> None:
     source = """import triton
 import triton.language as tl

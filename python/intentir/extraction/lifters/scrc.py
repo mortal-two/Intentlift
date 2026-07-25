@@ -1407,7 +1407,7 @@ def _validate_source_identifier_privacy(
     }
     visible_strings: list[str] = []
     literal_fields = {
-        "dtype", "frontend", "kind", "mechanism", "mode", "op",
+        "dtype", "fn", "frontend", "kind", "mechanism", "mode", "op",
         "placement", "producer", "role", "value_type",
     }
 
