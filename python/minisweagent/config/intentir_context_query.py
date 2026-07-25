@@ -146,6 +146,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
         "next": [
             f"Run `{QUERY_COMMAND} feedback` before repairing a prior candidate.",
             "Read Source and Harness separately so neither can be transport-elided.",
+            f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
@@ -252,6 +253,294 @@ def _harness(input_root: Path, path: str | None) -> None:
         )
 
 
+def _candidate_abi(input_root: Path, output_root: Path) -> None:
+    """Compare one draft with the Harness-owned mechanical ABI, read-only.
+
+    This intentionally does not propose logical refs, tensor declarations,
+    symbolic dimensions, C subjects/axes, or any other semantic field.  It
+    merely makes the same already-authored public plumbing visible without
+    forcing an agent to manually diff two large JSON documents.
+    """
+
+    view = _load_json(input_root / "harness_view.json")
+    if not isinstance(view, dict):
+        raise TypeError("harness_view.json must be an object")
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        _emit_json(
+            {
+                "protocol": "intentir.lift-candidate-abi-query.v1",
+                "candidate_found": False,
+                "next": (
+                    "Write a complete LLM-authored /output/candidate.json, "
+                    f"then rerun `{QUERY_COMMAND} candidate-abi`."
+                ),
+            }
+        )
+        return
+    candidate = _load_json(candidate_path)
+    if not isinstance(candidate, dict):
+        raise TypeError("candidate.json must contain one root object")
+
+    issues: list[dict[str, Any]] = []
+
+    def issue(
+        code: str,
+        path: str,
+        expected: Any,
+        actual: Any,
+    ) -> None:
+        issues.append(
+            {
+                "code": code,
+                "path": path,
+                "expected": expected,
+                "actual": actual,
+            }
+        )
+
+    parameter_order = view.get("parameter_order", [])
+    if not isinstance(parameter_order, list) or not all(
+        isinstance(name, str) for name in parameter_order
+    ):
+        raise TypeError("Harness parameter_order must be an array of strings")
+    expected_p = [name for name in parameter_order if name.startswith("p")]
+    expected_c = [name for name in parameter_order if name.startswith("c")]
+
+    j = candidate.get("j")
+    signature = j.get("signature") if isinstance(j, dict) else None
+    parameters = (
+        signature.get("parameters") if isinstance(signature, dict) else None
+    )
+    if not isinstance(parameters, list):
+        parameters = []
+        issue(
+            "signature_parameters_missing",
+            "j.signature.parameters",
+            expected_p,
+            None,
+        )
+    actual_parameters = {
+        item.get("name"): item
+        for item in parameters
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    actual_p = [
+        item.get("name") if isinstance(item, dict) else None
+        for item in parameters
+    ]
+    if actual_p != expected_p:
+        issue(
+            "parameter_order_mismatch",
+            "j.signature.parameters[*].name",
+            expected_p,
+            actual_p,
+        )
+
+    arguments = view.get("arguments", [])
+    if not isinstance(arguments, list):
+        raise TypeError("Harness arguments must be an array")
+    arguments_by_name = {
+        item.get("name"): item
+        for item in arguments
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    bound_constexprs = view.get("bound_constexpr_values", {})
+    if not isinstance(bound_constexprs, dict):
+        raise TypeError("Harness bound_constexpr_values must be an object")
+
+    for name in expected_p:
+        actual = actual_parameters.get(name)
+        if actual is None:
+            issue(
+                "parameter_missing",
+                f"j.signature.parameters[{name}]",
+                "one declaration in Harness order",
+                None,
+            )
+            continue
+        argument = arguments_by_name.get(name)
+        if argument is None:
+            if name not in bound_constexprs:
+                issue(
+                    "parameter_unclassified",
+                    f"j.signature.parameters[{name}]",
+                    "Harness argument or bound constexpr",
+                    actual,
+                )
+                continue
+            expected_fields = {
+                "kind": ["constexpr"],
+                "mode": "value",
+            }
+        else:
+            source_kind = argument.get("kind")
+            allowed_kinds = {
+                "tensor": ["pointer", "tensor"],
+                "scalar": ["scalar"],
+                "opaque": ["opaque"],
+                "none": ["opaque"],
+            }.get(source_kind)
+            if allowed_kinds is None:
+                issue(
+                    "argument_kind_unknown",
+                    f"harness.arguments[{name}].kind",
+                    ["tensor", "scalar", "opaque", "none"],
+                    source_kind,
+                )
+                continue
+            expected_fields = {
+                "kind": allowed_kinds,
+                "dtype": argument.get("dtype"),
+            }
+            if "mode" in argument:
+                expected_fields["mode"] = argument.get("mode")
+            if source_kind == "tensor":
+                shape = argument.get("shape")
+                expected_fields["rank"] = (
+                    len(shape) if isinstance(shape, list) else "Harness shape"
+                )
+            elif source_kind == "scalar":
+                expected_fields["rank"] = 0
+            else:
+                expected_fields["rank"] = None
+                expected_fields["logical_ref"] = None
+        for field, expected in expected_fields.items():
+            observed = actual.get(field)
+            matches = (
+                observed in expected
+                if isinstance(expected, list)
+                else observed == expected
+            )
+            if not matches:
+                issue(
+                    "parameter_field_mismatch",
+                    f"j.signature.parameters[{name}].{field}",
+                    expected,
+                    observed,
+                )
+
+    c = candidate.get("c")
+    slots = c.get("slots") if isinstance(c, dict) else None
+    values = c.get("values") if isinstance(c, dict) else None
+    if not isinstance(slots, list):
+        slots = []
+        issue("c_slots_missing", "c.slots", "array", None)
+    actual_slots = [item for item in slots if isinstance(item, dict)]
+    actual_constexpr_c = [
+        item.get("name")
+        for item in actual_slots
+        if item.get("kind") == "constexpr"
+    ]
+    if actual_constexpr_c != expected_c:
+        issue(
+            "constexpr_c_order_mismatch",
+            "c.slots[kind=constexpr].name",
+            expected_c,
+            actual_constexpr_c,
+        )
+    expected_compiler = view.get("compiler_slots", [])
+    if not isinstance(expected_compiler, list):
+        raise TypeError("Harness compiler_slots must be an array")
+    actual_compiler = [
+        item.get("name")
+        for item in actual_slots
+        if item.get("kind") == "compiler"
+    ]
+    if actual_compiler != expected_compiler:
+        issue(
+            "compiler_c_order_mismatch",
+            "c.slots[kind=compiler].name",
+            expected_compiler,
+            actual_compiler,
+        )
+    expected_values = view.get("schedule_values", {})
+    if values != expected_values:
+        issue("c_values_mismatch", "c.values", expected_values, values)
+    expected_roles = view.get("compiler_roles", {})
+    if not isinstance(expected_roles, dict):
+        raise TypeError("Harness compiler_roles must be an object")
+    slots_by_name = {
+        item.get("name"): item
+        for item in actual_slots
+        if isinstance(item.get("name"), str)
+    }
+    for name, role in expected_roles.items():
+        slot = slots_by_name.get(name)
+        observed = (
+            {"kind": slot.get("kind"), "role": slot.get("role")}
+            if slot is not None
+            else None
+        )
+        expected = {"kind": "compiler", "role": role}
+        if observed != expected:
+            issue(
+                "compiler_c_role_mismatch",
+                f"c.slots[{name}]",
+                expected,
+                observed,
+            )
+
+    expected_constexprs = view.get("constexpr_parameters", [])
+    if not isinstance(expected_constexprs, list):
+        raise TypeError("Harness constexpr_parameters must be an array")
+    actual_constexprs = [
+        item.get("name")
+        for item in parameters
+        if isinstance(item, dict) and item.get("kind") == "constexpr"
+    ] + actual_constexpr_c
+    if set(actual_constexprs) != set(expected_constexprs):
+        issue(
+            "constexpr_membership_mismatch",
+            "J constexpr parameters union C constexpr slots",
+            sorted(expected_constexprs),
+            sorted(
+                name for name in actual_constexprs if isinstance(name, str)
+            ),
+        )
+
+    expected_aliases = view.get("aliases", [])
+    boundary = j.get("boundary") if isinstance(j, dict) else None
+    actual_aliases = (
+        boundary.get("aliases") if isinstance(boundary, dict) else None
+    )
+    if actual_aliases != expected_aliases:
+        issue(
+            "alias_mismatch",
+            "j.boundary.aliases",
+            expected_aliases,
+            actual_aliases,
+        )
+
+    issue_limit = 48
+    _emit_json(
+        {
+            "protocol": "intentir.lift-candidate-abi-query.v1",
+            "candidate_found": True,
+            "matches_public_mechanical_abi": not issues,
+            "issue_count": len(issues),
+            "issues": issues[:issue_limit],
+            "issues_omitted": max(0, len(issues) - issue_limit),
+            "counts": {
+                "expected_j_parameters": len(expected_p),
+                "actual_j_parameters": len(parameters),
+                "expected_constexpr_c_slots": len(expected_c),
+                "expected_compiler_c_slots": len(expected_compiler),
+            },
+            "agent_owned_not_inferred": [
+                "parameter logical_ref and logical tensor/dimension ownership",
+                "bound-constexpr semantic dtype/rank/logical_ref",
+                "C slot subject_ref and axis_ref",
+                "all J graph, boundary, scope, storage, and pi content",
+            ],
+            "authority": (
+                "Read-only diagnostic only; validator, CandidateCheck and the "
+                "external Runner remain authoritative and no field was edited."
+            ),
+        }
+    )
+
+
 def _knowledge(input_root: Path, query: str, context: int) -> None:
     if not query:
         raise ValueError("knowledge query must be non-empty")
@@ -308,6 +597,7 @@ def main() -> int:
     source.add_argument("--lines", type=int, default=160)
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
+    subparsers.add_parser("candidate-abi")
     knowledge = subparsers.add_parser("knowledge")
     knowledge.add_argument("query")
     knowledge.add_argument("--context", type=int, default=3)
@@ -324,6 +614,8 @@ def main() -> int:
         _source(args.input_root, args.start, args.lines)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
+    elif args.command == "candidate-abi":
+        _candidate_abi(args.input_root, args.output_root)
     elif args.command == "knowledge":
         _knowledge(args.input_root, args.query, args.context)
     elif not _write_previous(args.input_root, args.output_root):

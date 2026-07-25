@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v25"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v26"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -231,8 +231,10 @@ This directory is the complete allowlisted input for one fresh Lift round.
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
-  matches. `bootstrap` copies an explicitly supplied previous artifact without
-  editing it; no command constructs or repairs artifact fields.
+  matches. Its `candidate-abi` command compares the current draft with only
+  Harness-authored mechanical ABI facts and never proposes semantic fields.
+  `bootstrap` copies an explicitly supplied previous artifact without editing
+  it; no command constructs or repairs artifact fields.
 
 Start with this single bounded command so long inputs cannot hide feedback:
 
@@ -244,6 +246,10 @@ Then inspect Source and Harness in separate actions with
 `python /input/tools/context_query.py feedback` before editing the candidate
 copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.
+After writing or editing a complete draft, inspect the bounded public-ABI diff
+without paging the whole Harness again:
+
+`python /input/tools/context_query.py candidate-abi`
 
 Do not page through the raw schema. Use the example plus compact queries such as:
 

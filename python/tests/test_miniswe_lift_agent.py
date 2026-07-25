@@ -37,7 +37,7 @@ from intentir.verify.scrc_runner import (
     SCRCRunRequest,
     SourceProgram,
 )
-from minisweagent.config.intentir_context_query import _bootstrap
+from minisweagent.config.intentir_context_query import _bootstrap, _candidate_abi
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
     INTENTIR_CANDIDATE_CHECK,
@@ -124,7 +124,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v25"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v26"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -239,6 +239,126 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
     assert '"candidate_copied_to_output": true' in observation
     assert '"feedback_kind": "gate1"' in observation
     assert json.loads((output_root / "candidate.json").read_text()) == previous
+
+
+def test_candidate_abi_query_reports_only_public_mechanical_differences(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    output_root.mkdir()
+    harness = {
+        "parameter_order": ["p0", "p1", "p2", "p3", "c0"],
+        "arguments": [
+            {
+                "name": "p0",
+                "kind": "tensor",
+                "mode": "input",
+                "dtype": "f32",
+                "shape": [2, 3],
+            },
+            {
+                "name": "p1",
+                "kind": "scalar",
+                "mode": "value",
+                "dtype": "i64",
+                "value": 3,
+            },
+            {
+                "name": "p2",
+                "kind": "none",
+                "mode": "value",
+                "dtype": "none",
+            },
+        ],
+        "bound_constexpr_values": {"p3": 4},
+        "schedule_values": {"c0": 128},
+        "compiler_slots": [],
+        "compiler_roles": {},
+        "constexpr_parameters": ["p3", "c0"],
+        "aliases": [],
+    }
+    candidate = {
+        "j": {
+            "signature": {
+                "parameters": [
+                    {
+                        "name": "p0",
+                        "kind": "pointer",
+                        "mode": "input",
+                        "dtype": "f32",
+                        "rank": 2,
+                        "logical_ref": "t0",
+                    },
+                    {
+                        "name": "p1",
+                        "kind": "scalar",
+                        "mode": "value",
+                        "dtype": "i64",
+                        "rank": 0,
+                        "logical_ref": "x0",
+                    },
+                    {
+                        "name": "p2",
+                        "kind": "opaque",
+                        "mode": "value",
+                        "dtype": "none",
+                        "rank": None,
+                        "logical_ref": None,
+                    },
+                    {
+                        "name": "p3",
+                        "kind": "constexpr",
+                        "mode": "value",
+                        "dtype": "i32",
+                        "rank": 0,
+                        "logical_ref": "t1",
+                    },
+                ]
+            },
+            "boundary": {"aliases": []},
+        },
+        "c": {
+            "slots": [
+                {
+                    "name": "c0",
+                    "kind": "constexpr",
+                    "role": "tile_extent",
+                }
+            ],
+            "values": {"c0": 128},
+        },
+        "pi": {},
+    }
+    (input_root / "harness_view.json").write_text(json.dumps(harness))
+    candidate_path = output_root / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate))
+    before = candidate_path.read_bytes()
+
+    _candidate_abi(input_root, output_root)
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["matches_public_mechanical_abi"] is True
+    assert report["issue_count"] == 0
+    assert "logical_ref" in " ".join(report["agent_owned_not_inferred"])
+    assert candidate_path.read_bytes() == before
+
+    candidate["j"]["signature"]["parameters"][1]["dtype"] = "f32"
+    candidate["c"]["values"]["c0"] = 64
+    candidate_path.write_text(json.dumps(candidate))
+    _candidate_abi(input_root, output_root)
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["matches_public_mechanical_abi"] is False
+    assert {item["code"] for item in report["issues"]} == {
+        "parameter_field_mismatch",
+        "c_values_mismatch",
+    }
+    assert {item["path"] for item in report["issues"]} == {
+        "j.signature.parameters[p1].dtype",
+        "c.values",
+    }
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
