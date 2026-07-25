@@ -407,7 +407,7 @@ def test_effect_if_replay_check_does_not_guess_control_kind_from_arm_shape() -> 
     artifact = Gate1Artifact.from_json(_effect_if_payload())
     packet = build_normal_rewriter_view(artifact)
     operation = packet["j"]["intent"]["intent_function"]["body"][0]
-    operation["op"] = "value_if"
+    operation["op"] = "unknown_if_like"
     source_without_runtime_if = """import triton
 import triton.language as tl
 

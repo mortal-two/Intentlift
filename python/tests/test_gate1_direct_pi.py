@@ -721,6 +721,18 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " Every J value_if is mandatory pure value control. Emit one real "
+        "runtime `if` with explicit positive and negative arms in authored "
+        "polarity and lexical order. Each arm may compute pure local "
+        "temporaries, but its final statement must assign the authored yield "
+        "to the same merge local in both arms. Never replace value_if with "
+        "tl.where/select, effect_if, predicated unconditional computation, or "
+        "compile-time control. effect_if, value_if, and select are "
+        "hard-distinct; read the predicate, arms, yields, and result only "
+        "from J.",
+        "",
+    )
+    contract = contract.replace(
         " For induction_basis=rounded_extent_step, use the same zero lower "
         "and matching C tile step as extent_step, but use exactly "
         "ceil_div(the declared J trip extent, that C tile) multiplied by "
@@ -765,17 +777,30 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v8"]
+    assert current_digest == history["public_frontend_context_v9"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v8"]["context_sha256"]
+    ]["public_frontend_context_v9"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v8",
+        context_policy="public_frontend_context_v9",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
     assert current_receipt["receipt_hash_basis"] == "full_u_f"
+    prior_receipt = audit_public_frontend_context_receipt(
+        frontend="triton",
+        context_policy="public_frontend_context_v8",
+        context_sha256=receipt_history["public_frontend_context_v8"][
+            "context_sha256"
+        ],
+    )
+    assert prior_receipt["status"] == "historical"
+    assert audit_public_frontend_context_payload(
+        frontend="triton",
+        context_policy="public_frontend_context_v8",
+        public_context_sha256=history["public_frontend_context_v8"],
+    )["status"] == "historical"
     historical_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
         context_policy="public_frontend_context_v6",
@@ -856,7 +881,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v8"
+    ] == "public_frontend_context_v9"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -884,7 +909,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "79e3af0228c349639b52f5e763a9bf07e01669d470de24caeb7826e7c31d2466",
+            "9becf7924f26d695fc4390c6709a81fc729e12244c241482525ca44e5156d67b",
         ),
         (
             Frontend.CUTE,
@@ -981,7 +1006,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
     assert report.passed
     assert report.protocol == "intentir.scrc.typecheck.v16"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v8"
+        "public_frontend_context_v9"
     )
 
 
@@ -1013,7 +1038,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v8"
+    assert context["context_policy"] == "public_frontend_context_v9"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract

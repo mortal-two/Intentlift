@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v8",
+        "context_policy": "public_frontend_context_v9",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -96,6 +96,15 @@ PUBLIC_FRONTEND_CONTEXT = {
             "and an explicitly empty arm. Never replace effect_if with tl.where, "
             "a value select, predicated unconditional effects, or compile-time "
             "control. Read the predicate and both arms only from J."
+            " Every J value_if is mandatory pure value control. Emit one real "
+            "runtime `if` with explicit positive and negative arms in authored "
+            "polarity and lexical order. Each arm may compute pure local "
+            "temporaries, but its final statement must assign the authored yield "
+            "to the same merge local in both arms. Never replace value_if with "
+            "tl.where/select, effect_if, predicated unconditional computation, or "
+            "compile-time control. effect_if, value_if, and select are "
+            "hard-distinct; read the predicate, arms, yields, and result only "
+            "from J."
             " Every pi.refinements entry is mandatory realization topology. "
             "Resolve its auth_ref in J.boundary.realization_authorizations and "
             "materialize the authorized kind at that exact instance before its "
@@ -167,7 +176,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v8",
+        "triton": "public_frontend_context_v9",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -185,6 +194,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v8": (
                     "060ddb29e6acdc024b69a122eccd8a3151f3205c909799e5a9356128f1ba67e5"
+                ),
+                "public_frontend_context_v9": (
+                    "f83c5b223fd0b8edbc7b55d7fd626fa54b8d1e26db59f0e7ccdc489dcd30b7a8"
                 ),
             }
         ),
@@ -236,6 +248,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "79e3af0228c349639b52f5e763a9bf07e01669d470de24caeb7826e7c31d2466"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v9": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "9becf7924f26d695fc4390c6709a81fc729e12244c241482525ca44e5156d67b"
                         ),
                     }
                 ),
@@ -812,6 +832,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "authored polarity, keep every arm-local operation/effect in authored "
         "order, and spell an authored empty arm explicitly. Never lower effect_if "
         "to tl.where/select or execute either arm unconditionally under a mask. "
+        "Treat each J value_if as pure value control, distinct from effect_if and "
+        "select: emit one real runtime if with explicit polarity-preserving arms; "
+        "each arm may use pure local temporaries but must finally assign its J "
+        "yield to the same merge local. Never lower value_if to tl.where/select, "
+        "effect_if, predicated unconditional computation, or compile-time control. "
         "For every pi.iterations rounded_extent_step relation, resolve its "
         "loop_instance to the J loop trip extent and tile_instance to the matching "
         "C slot; use lower 0, step equal to that C tile, and upper exactly "

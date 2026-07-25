@@ -15,12 +15,14 @@ from intentir.extraction.lifters.scrc import (
     decode_scrc_lift_artifact,
 )
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
-from intentir.verify.gate1.model import Gate1Artifact, SchemaError
+from intentir.verify.gate1.model import Frontend, Gate1Artifact, SchemaError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.prompt import (
     build_masked_rewriter_view,
+    build_normal_rewriter_prompt,
     build_normal_rewriter_view,
 )
+from intentir.verify.gate1.replay import replay_source_ingress
 from intentir.verify.typecheck import TYPECHECK_PROTOCOL, TypeCheckErrorCode, type_check
 from test_scrc_typed_control_core import _effect_if_payload, _request
 from test_gate1_loop_schema import _tiled_loop_artifact
@@ -183,6 +185,169 @@ def test_value_if_normal_and_masked_views_preserve_control_and_yields() -> None:
     assert set(masked_op) >= {"result", "predicate", "positive", "negative"}
     assert "yield_value" in masked_op["positive"]
     assert "yield_value" in masked_op["negative"]
+
+
+def _pure_value_if_replay_source() -> str:
+    return """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    value = tl.load(p0)
+    if p2:
+        positive = value + value
+        merged = positive
+    else:
+        negative = value
+        merged = negative
+    result = merged * value
+    tl.store(p1, result)
+"""
+
+
+def test_value_if_replay_contract_is_hard_distinct_and_source_neutral() -> None:
+    artifact = Gate1Artifact.from_json(_value_if_payload())
+    instructions, packet = build_normal_rewriter_prompt(artifact)
+
+    assert "value_if as pure value control" in instructions
+    assert "same merge local" in instructions
+    assert "Never lower value_if to tl.where/select" in instructions
+    assert "distinct from effect_if and select" in instructions
+    for forbidden in ("source_kernel", "flash_attn", "Gate1 diff"):
+        assert forbidden not in instructions + packet
+
+
+def test_value_if_replay_check_accepts_runtime_if_and_rejects_select() -> None:
+    artifact = Gate1Artifact.from_json(_value_if_payload())
+    accepted = _pure_value_if_replay_source()
+    selected = accepted.replace(
+        "    if p2:\n"
+        "        positive = value + value\n"
+        "        merged = positive\n"
+        "    else:\n"
+        "        negative = value\n"
+        "        merged = negative\n",
+        "    merged = tl.where(p2, value + value, value)\n",
+    )
+
+    assert replay_source_ingress(
+        accepted, artifact=artifact, frontend=Frontend.TRITON
+    ).status == "pass"
+    result = replay_source_ingress(
+        selected, artifact=artifact, frontend=Frontend.TRITON
+    )
+    assert result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "value_if_runtime_count"
+    )
+
+
+def test_value_if_replay_check_requires_else_and_common_merge_target() -> None:
+    artifact = Gate1Artifact.from_json(_value_if_payload())
+    accepted = _pure_value_if_replay_source()
+    missing_else = accepted.replace(
+        "    else:\n"
+        "        negative = value\n"
+        "        merged = negative\n",
+        "",
+    )
+    split_merge = accepted.replace(
+        "        merged = positive\n",
+        "        merged1 = positive\n",
+    ).replace(
+        "        merged = negative\n",
+        "        merged2 = negative\n",
+    ).replace(
+        "    result = merged * value\n",
+        "    result = value * value\n",
+    )
+
+    missing_result = replay_source_ingress(
+        missing_else, artifact=artifact, frontend=Frontend.TRITON
+    )
+    split_result = replay_source_ingress(
+        split_merge, artifact=artifact, frontend=Frontend.TRITON
+    )
+    assert missing_result.to_check_response()["diagnostics"][0][
+        "rule_code"
+    ] == "value_if_explicit_negative_arm"
+    assert split_result.to_check_response()["diagnostics"][0][
+        "rule_code"
+    ] == "value_if_merge_target"
+
+
+def test_mixed_typed_controls_match_runtime_ifs_in_j_lexical_order() -> None:
+    artifact = Gate1Artifact.from_json(_value_if_payload())
+    packet = build_normal_rewriter_view(artifact)
+    body = packet["j"]["intent"]["intent_function"]["body"]
+    body.insert(
+        1,
+        {
+            "op": "effect_if",
+            "predicate": "t1",
+            "positive": {"body": [{"op": "opaque_effect"}]},
+            "negative": {"body": []},
+        },
+    )
+    value_control = (
+        "    if p2:\n"
+        "        positive = value + value\n"
+        "        merged = positive\n"
+        "    else:\n"
+        "        negative = value\n"
+        "        merged = negative\n"
+    )
+    effect_control = (
+        "    if p2:\n"
+        "        tl.store(p1, merged)\n"
+        "    else:\n"
+        "        pass\n"
+    )
+    prefix = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    value = tl.load(p0)
+"""
+    ordered = prefix + value_control + effect_control
+    swapped = prefix + effect_control.replace("merged", "value") + value_control
+
+    assert replay_source_ingress(
+        ordered,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    ).status == "pass"
+    result = replay_source_ingress(
+        swapped,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    )
+    assert result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "value_if_merge_target"
+    )
+
+
+def test_v6_effect_if_replay_contract_remains_compatible() -> None:
+    payload = _effect_if_payload()
+    payload["schema"] = "intentir.scrc.artifact.v6"
+    artifact = Gate1Artifact.from_json(payload)
+    source = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    if p2:
+        value = tl.load(p0)
+        tl.store(p1, value)
+    else:
+        pass
+"""
+
+    assert replay_source_ingress(
+        source, artifact=artifact, frontend=Frontend.TRITON
+    ).status == "pass"
 
 
 def test_value_if_predicate_yields_purity_and_scope_anchors_fail_closed() -> None:

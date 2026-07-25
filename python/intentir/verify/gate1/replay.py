@@ -204,10 +204,17 @@ def _check_triton_exact_abi(
             )
 
 
-def _packet_effect_if_arms(packet: Mapping[str, Any]) -> list[tuple[bool, bool]]:
-    """Return authored positive/negative non-emptiness in lexical preorder."""
+@dataclass(frozen=True)
+class _TypedControlContract:
+    kind: str
+    positive_nonempty: bool
+    negative_nonempty: bool
 
-    result: list[tuple[bool, bool]] = []
+
+def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
+    """Return explicitly typed J controls in lexical preorder."""
+
+    result: list[_TypedControlContract] = []
 
     def visit(body: Any) -> None:
         if not isinstance(body, list):
@@ -217,10 +224,17 @@ def _packet_effect_if_arms(packet: Mapping[str, Any]) -> list[tuple[bool, bool]]
                 continue
             positive = operation.get("positive")
             negative = operation.get("negative")
-            if operation.get("op") == "effect_if":
+            kind = operation.get("op")
+            if kind in {"effect_if", "value_if"}:
                 positive_body = positive.get("body", [])
                 negative_body = negative.get("body", [])
-                result.append((bool(positive_body), bool(negative_body)))
+                result.append(
+                    _TypedControlContract(
+                        kind=str(kind),
+                        positive_nonempty=bool(positive_body),
+                        negative_nonempty=bool(negative_body),
+                    )
+                )
                 visit(positive_body)
                 visit(negative_body)
             visit(operation.get("body"))
@@ -311,19 +325,34 @@ def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
     return bool(statements) and all(isinstance(item, ast.Pass) for item in statements)
 
 
-def _check_triton_effect_if_contract(
+def _final_simple_assignment_target(statements: list[ast.stmt]) -> str | None:
+    if not statements:
+        return None
+    final = statements[-1]
+    if (
+        isinstance(final, ast.Assign)
+        and len(final.targets) == 1
+        and isinstance(final.targets[0], ast.Name)
+    ):
+        return final.targets[0].id
+    if isinstance(final, ast.AnnAssign) and isinstance(final.target, ast.Name):
+        return final.target.id
+    return None
+
+
+def _check_triton_typed_control_contract(
     code: str,
     packet: Mapping[str, Any],
     function_name: str,
 ) -> None:
-    """Check only the packet-declared runtime binary-control shell.
+    """Check only packet-declared runtime typed-control shells.
 
     Gate1 remains authoritative for operation/dataflow/effect identity and order;
-    this compiler-free preflight merely prevents Replay from erasing an authored
-    ``effect_if`` into select/predicated unconditional execution.
+    this compiler-free preflight prevents Replay from erasing or conflating an
+    authored ``effect_if``/``value_if`` with select or another control kind.
     """
 
-    expected = _packet_effect_if_arms(packet)
+    expected = _packet_typed_controls(packet)
     if not expected:
         return
     tree = ast.parse(code, mode="exec")
@@ -349,26 +378,49 @@ def _check_triton_effect_if_contract(
         constexpr_parameters=constexpr_parameters,
     )
     if len(actual) != len(expected):
+        kinds = {contract.kind for contract in expected}
+        rule_code = (
+            f"{next(iter(kinds))}_runtime_count"
+            if len(kinds) == 1
+            else "typed_control_runtime_count"
+        )
         raise _ReplayABIViolation(
-            "effect_if_runtime_count",
+            rule_code,
             path="<typed-control>",
             line=(actual[0].lineno if actual else function.lineno),
         )
-    for index, (node, (positive_nonempty, negative_nonempty)) in enumerate(
+    for index, (node, contract) in enumerate(
         zip(actual, expected, strict=True)
     ):
         if not node.orelse:
             raise _ReplayABIViolation(
-                "effect_if_explicit_negative_arm",
-                path=f"<effect_if:{index}>",
+                f"{contract.kind}_explicit_negative_arm",
+                path=f"<{contract.kind}:{index}>",
                 line=node.lineno,
             )
-        positive_empty = _arm_is_explicitly_empty(node.body)
-        negative_empty = _arm_is_explicitly_empty(node.orelse)
-        if positive_empty == positive_nonempty or negative_empty == negative_nonempty:
+        if contract.kind == "effect_if":
+            positive_empty = _arm_is_explicitly_empty(node.body)
+            negative_empty = _arm_is_explicitly_empty(node.orelse)
+            if (
+                positive_empty == contract.positive_nonempty
+                or negative_empty == contract.negative_nonempty
+            ):
+                raise _ReplayABIViolation(
+                    "effect_if_arm_polarity",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            continue
+        positive_target = _final_simple_assignment_target(node.body)
+        negative_target = _final_simple_assignment_target(node.orelse)
+        if (
+            positive_target is None
+            or negative_target is None
+            or positive_target != negative_target
+        ):
             raise _ReplayABIViolation(
-                "effect_if_arm_polarity",
-                path=f"<effect_if:{index}>",
+                "value_if_merge_target",
+                path=f"<value_if:{index}>",
                 line=node.lineno,
             )
 
@@ -769,7 +821,7 @@ def replay_source_ingress(
             function_name=function_name,
         )
         _check_triton_exact_abi(code, packet, function_name)
-        _check_triton_effect_if_contract(code, packet, function_name)
+        _check_triton_typed_control_contract(code, packet, function_name)
         _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
         return ReplayIngressResult(
@@ -918,10 +970,12 @@ rejects; it never generates, patches, or certifies source.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including
-an explicit empty arm), and every pi `rounded_extent_step` must use its declared
-J trip extent and matching C tile as `range(0, ceil_div(extent,tile)*tile,
-tile)`. Never substitute select/predicated unconditional effects, current-shape
-guesses, or a second rounding formula.
+an explicit empty arm); every J `value_if` must remain a distinct runtime `if`
+whose explicit arms finally assign their yielded values to one common merge
+local; and every pi `rounded_extent_step` must use its declared J trip extent
+and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
+`value_if`, and select are hard-distinct. Never substitute select/predicated
+unconditional execution, current-shape guesses, or a second rounding formula.
 """
     tool = """# Replay tool contract
 
