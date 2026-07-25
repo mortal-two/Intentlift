@@ -120,7 +120,16 @@ def test_affine_contract_is_typed_but_not_misread_as_dense_axes() -> None:
     expression = parse_index_expression("row * stride + col")
 
     assert expression.direct_axes is None
+    assert expression.direct_coordinates is None
     assert expression.to_text() == "[((row * stride) + col)]"
+
+
+def test_direct_coordinates_keep_integer_literals_distinct_from_axis_refs() -> None:
+    expression = parse_index_expression("[row, 0, 2]")
+
+    assert expression.direct_coordinates == ("row", 0, 2)
+    assert expression.direct_axes is None
+    assert expression.to_text() == "[row, 0, 2]"
 
 
 @pytest.mark.parametrize(

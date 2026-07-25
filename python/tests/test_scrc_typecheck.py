@@ -12,6 +12,7 @@ from intentir.verify.gate1.model import (
     ConsumerExtension,
     EffectKind,
     EffectSpec,
+    IndexBoundsSpec,
     ParameterKind,
     ParameterMode,
     RealizationAuthorization,
@@ -39,6 +40,102 @@ def _codes(artifact) -> set[TypeCheckErrorCode]:
     }
 
 
+def _constant_gather_artifact(*, coordinate: int = 1, index: int = 1):
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [3]
+    artifact.j.intent.outputs[0].shape = []
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0", "op": "const", "result": "v0",
+                "attrs": {"value": index, "dtype": "i32", "shape": []},
+                "type": {"dtype": "i32", "shape": []},
+            }
+        ),
+        IntentOp.from_json(
+            {
+                "id": "n1", "op": "gather", "result": "t1",
+                "operands": ["t0", "v0"],
+                "attrs": {"axis": 0, "mode": "take"},
+                "type": {"dtype": "f32", "shape": []},
+            }
+        ),
+    ]
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    artifact.j.boundary.domains = {}
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n1",
+            index_expression=f"[{coordinate}]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", node_ref="n1",
+            index_expression="[]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n1", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
+    ]
+    artifact.j.boundary.output_mappings = []
+    artifact.j.boundary.index_bounds = [
+        IndexBoundsSpec("n1", "t0", "v0", 0)
+    ]
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.j.signature.parameters[0].rank = 1
+    artifact.j.signature.parameters[1].rank = 0
+    return artifact
+
+
+def _concat_partition_artifact(*, width: int = 1):
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [2, width]
+    artifact.j.intent.outputs[0].shape = [2, 3 * width]
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0", "op": "concat", "result": "t1",
+                "operands": ["t0", "t0", "t0"],
+                "attrs": {"axis": 1},
+                "type": {"dtype": "f32", "shape": [2, 3 * width]},
+            }
+        )
+    ]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    artifact.j.boundary.domains = {
+        "d0": "0 <= k0 and k0 < 2",
+        "d1": f"0 <= k1 and k1 < {width}",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[k0, k1]",
+        ),
+        *[
+            BoundaryAccess(
+                f"a{index + 1}", AccessKind.STORE, "t1", node_ref="n0",
+                index_expression=f"[k0, {index * width}]",
+            )
+            for index in range(3)
+        ],
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        *[
+            EffectSpec(
+                EffectKind.WRITE, "t1", "n0", f"e{index + 1}",
+                f"a{index + 1}",
+            )
+            for index in range(3)
+        ],
+    ]
+    artifact.j.boundary.output_mappings = []
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    return artifact
+
+
 def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
@@ -46,6 +143,112 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v11"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def test_typecheck_accepts_matching_constant_gather_boundary() -> None:
+    artifact = _constant_gather_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize(
+    ("artifact", "expected_path", "expected_detail"),
+    [
+        (
+            _constant_gather_artifact(coordinate=0, index=1),
+            "j.boundary.accesses[0].index_expression",
+            "coordinate differs from its J gather index",
+        ),
+        (
+            _constant_gather_artifact(coordinate=3, index=3),
+            "j.boundary.accesses[0].index_expression",
+            "coordinate is out of bounds",
+        ),
+    ],
+)
+def test_typecheck_rejects_recognized_constant_gather_contradictions(
+    artifact, expected_path, expected_detail
+) -> None:
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE
+    ]
+
+    assert not report.passed
+    assert any(
+        item.path == expected_path and expected_detail in item.detail
+        for item in matching
+    )
+
+
+def test_typecheck_accepts_complete_unit_concat_store_partition() -> None:
+    artifact = _concat_partition_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "missing"])
+def test_typecheck_rejects_recognized_concat_partition_contradiction(
+    mutation: str,
+) -> None:
+    artifact = _concat_partition_artifact()
+    if mutation == "duplicate":
+        artifact.j.boundary.accesses[2].index_expression = "[k0, 0]"
+        expected = "duplicate/nonconstant slices"
+    else:
+        artifact.j.boundary.accesses.pop()
+        artifact.j.boundary.effects.pop()
+        expected = "missing or extra store"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE
+    ]
+
+    assert not report.passed
+    assert any(expected in item.detail for item in matching)
+    assert all(item.path.startswith("j.boundary.accesses[") for item in matching)
+
+
+def test_typecheck_does_not_make_wide_concat_consumer_capability_illegal() -> None:
+    artifact = _concat_partition_artifact(width=2)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="unit-width operands"):
+        project_functional_boundary(artifact.j)
+
+
+def test_typecheck_does_not_invent_bounds_for_symbolic_constant_access() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.boundary.domains = {"d0": "0 <= i0 and i0 < x0"}
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[0]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", node_ref="n0",
+            index_expression="[i0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="static tensor extent"):
+        project_functional_boundary(artifact.j)
 
 
 def _rank_zero_input_artifact(*, dtype: str = "i64"):

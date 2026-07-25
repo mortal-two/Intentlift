@@ -287,6 +287,31 @@ class CanonicalIndex:
     components: tuple[ContractExpr, ...]
 
     @property
+    def direct_coordinates(self) -> tuple[str | int, ...] | None:
+        """Return the closed ref/integer coordinate vector, if direct.
+
+        Integer coordinates remain integers instead of being conflated with
+        axis references.  Consumers can therefore distinguish the literal
+        coordinate ``0`` from an axis handle without reparsing wire text.
+        General affine expressions deliberately remain outside this profile.
+        """
+
+        coordinates: list[str | int] = []
+        for component in self.components:
+            if component.op == "ref":
+                assert isinstance(component.value, str)
+                coordinates.append(component.value)
+            elif (
+                component.op == "int"
+                and isinstance(component.value, int)
+                and not isinstance(component.value, bool)
+            ):
+                coordinates.append(component.value)
+            else:
+                return None
+        return tuple(coordinates)
+
+    @property
     def direct_axes(self) -> tuple[str, ...] | None:
         axes: list[str] = []
         for component in self.components:

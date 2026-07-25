@@ -18,11 +18,14 @@ from intentir.ir.model import IntentFunction, IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import (
     AccessKind,
+    Boundary,
     BoundaryAccess,
     BroadcastSpec,
     ConsumerExtension,
     EffectKind,
     EffectSpec,
+    IndexBoundsSpec,
+    LogicalSignature,
     OutputMapping,
     ParameterKind,
     ParameterMode,
@@ -73,6 +76,187 @@ def _attach_dense_copy_boundary(artifact, *, domains=None) -> None:
         EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
         EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
     ]
+
+
+def _constant_gather_boundary_j() -> SemanticArchive:
+    function = IntentFunction.from_json(
+        {
+            "name": "constant_gather_boundary",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": [3]}],
+            "outputs": [
+                {"name": "Y0", "dtype": "f32", "shape": []},
+                {"name": "Y1", "dtype": "f32", "shape": []},
+                {"name": "Y2", "dtype": "f32", "shape": []},
+            ],
+            "body": [
+                {
+                    "id": "n0", "op": "const", "result": "I0",
+                    "attrs": {"value": 0, "dtype": "i32", "shape": []},
+                    "type": {"dtype": "i32", "shape": []},
+                },
+                {
+                    "id": "n1", "op": "gather", "result": "Y0",
+                    "operands": ["X", "I0"],
+                    "attrs": {"axis": 0, "mode": "take"},
+                    "type": {"dtype": "f32", "shape": []},
+                },
+                {
+                    "id": "n2", "op": "const", "result": "I1",
+                    "attrs": {"value": 1, "dtype": "i32", "shape": []},
+                    "type": {"dtype": "i32", "shape": []},
+                },
+                {
+                    "id": "n3", "op": "gather", "result": "Y1",
+                    "operands": ["X", "I1"],
+                    "attrs": {"axis": 0, "mode": "take"},
+                    "type": {"dtype": "f32", "shape": []},
+                },
+                {
+                    "id": "n4", "op": "const", "result": "I2",
+                    "attrs": {"value": 2, "dtype": "i32", "shape": []},
+                    "type": {"dtype": "i32", "shape": []},
+                },
+                {
+                    "id": "n5", "op": "gather", "result": "Y2",
+                    "operands": ["X", "I2"],
+                    "attrs": {"axis": 0, "mode": "take"},
+                    "type": {"dtype": "f32", "shape": []},
+                },
+            ],
+        }
+    )
+    accesses = [
+        BoundaryAccess(
+            f"a{index}", AccessKind.LOAD, "X", node_ref=f"n{2 * index + 1}",
+            index_expression=f"[{index}]",
+        )
+        for index in range(3)
+    ] + [
+        BoundaryAccess(
+            f"a{index + 3}", AccessKind.STORE, f"Y{index}",
+            node_ref=f"n{2 * index + 1}", index_expression="[]",
+        )
+        for index in range(3)
+    ]
+    effects = [
+        EffectSpec(
+            EffectKind.READ, "X", f"n{2 * index + 1}", f"e{index}",
+            f"a{index}",
+        )
+        for index in range(3)
+    ] + [
+        EffectSpec(
+            EffectKind.WRITE, f"Y{index}", f"n{2 * index + 1}",
+            f"e{index + 3}", f"a{index + 3}",
+        )
+        for index in range(3)
+    ]
+    return SemanticArchive(
+        "constant_gather_boundary",
+        function,
+        {f"n{index}": f"body[{index}]" for index in range(6)},
+        Boundary(
+            accesses=accesses,
+            effects=effects,
+            index_bounds=[
+                IndexBoundsSpec(f"n{2 * index + 1}", "X", f"I{index}", 0)
+                for index in range(3)
+            ],
+        ),
+        LogicalSignature(
+            [
+                SignatureParameter(
+                    "p0", ParameterKind.POINTER, ParameterMode.INPUT,
+                    "f32", 1, logical_ref="X",
+                ),
+                *[
+                    SignatureParameter(
+                        f"p{index + 1}", ParameterKind.POINTER,
+                        ParameterMode.OUTPUT, "f32", 0,
+                        logical_ref=f"Y{index}",
+                    )
+                    for index in range(3)
+                ],
+            ]
+        ),
+    )
+
+
+def _unit_concat_partition_j(*, width: int = 1) -> SemanticArchive:
+    result_width = 3 * width
+    function = IntentFunction.from_json(
+        {
+            "name": "unit_concat_partition",
+            "inputs": [
+                {"name": name, "dtype": "f32", "shape": [2, width]}
+                for name in ("A", "B", "C")
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": [2, result_width]}
+            ],
+            "body": [
+                {
+                    "id": "n0", "op": "concat", "result": "Y",
+                    "operands": ["A", "B", "C"],
+                    "attrs": {"axis": 1},
+                    "type": {"dtype": "f32", "shape": [2, result_width]},
+                }
+            ],
+        }
+    )
+    loads = [
+        BoundaryAccess(
+            f"a{index}", AccessKind.LOAD, tensor, node_ref="n0",
+            index_expression="[k0, k1]",
+        )
+        for index, tensor in enumerate(("A", "B", "C"))
+    ]
+    stores = [
+        BoundaryAccess(
+            f"a{index + 3}", AccessKind.STORE, "Y", node_ref="n0",
+            index_expression=f"[k0, {index * width}]",
+        )
+        for index in range(3)
+    ]
+    effects = [
+        EffectSpec(
+            EffectKind.READ, tensor, "n0", f"e{index}", f"a{index}",
+        )
+        for index, tensor in enumerate(("A", "B", "C"))
+    ] + [
+        EffectSpec(
+            EffectKind.WRITE, "Y", "n0", f"e{index + 3}", f"a{index + 3}",
+        )
+        for index in range(3)
+    ]
+    return SemanticArchive(
+        "unit_concat_partition",
+        function,
+        {"n0": "body[0]"},
+        Boundary(
+            domains={
+                "d0": "0 <= k0 and k0 < 2",
+                "d1": f"0 <= k1 and k1 < {width}",
+            },
+            accesses=[*loads, *stores],
+            effects=effects,
+        ),
+        LogicalSignature(
+            [
+                *[
+                    SignatureParameter(
+                        f"p{index}", ParameterKind.POINTER,
+                        ParameterMode.INPUT, "f32", 2, logical_ref=tensor,
+                    )
+                    for index, tensor in enumerate(("A", "B", "C"))
+                ],
+                SignatureParameter(
+                    "p3", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                    "f32", 2, logical_ref="Y",
+                ),
+            ]
+        ),
+    )
 
 
 def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
@@ -1023,7 +1207,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v6"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v7"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1605,6 +1789,144 @@ def test_scalar_e_j_consumes_dense_functional_boundary(
     assert result.metadata["domain_relation_count"] == expected_domain_count
     assert result.metadata["access_relation_count"] == 2
     assert result.metadata["effect_relation_count"] == 2
+
+
+def test_constant_gather_loads_match_boundary_coordinates_bidirectionally() -> None:
+    j = _constant_gather_boundary_j()
+
+    projection = project_functional_boundary(j)
+    receipt = projection.to_json()
+
+    assert projection.access_coordinates_map == {
+        "a0": (0,), "a1": (1,), "a2": (2,),
+        "a3": (), "a4": (), "a5": (),
+    }
+    assert projection.access_axes_map == {
+        "a0": ("0",), "a1": (), "a2": (),
+        "a3": (), "a4": (), "a5": (),
+    }
+    assert [
+        (
+            item["access_id"], item["node_ref"], item["index_ref"],
+            item["coordinate"],
+        )
+        for item in receipt["constant_gathers"]
+    ] == [
+        ("a0", "n1", "I0", 0),
+        ("a1", "n3", "I1", 1),
+        ("a2", "n5", "I2", 2),
+    ]
+
+
+def test_singleton_zero_keeps_legacy_axis_receipt_and_typed_coordinate() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [1]
+    artifact.j.intent.outputs[0].shape = [1]
+    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": [1]}
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[0]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", node_ref="n0",
+            index_expression="[0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert projection.access_axes_map == {"a0": ("0",), "a1": ("0",)}
+    assert projection.access_coordinates_map == {"a0": (0,), "a1": (0,)}
+
+
+def test_constant_gather_boundary_coordinate_mismatch_fails_closed() -> None:
+    j = _constant_gather_boundary_j()
+    j.boundary.accesses[0].index_expression = "[1]"
+
+    with pytest.raises(ValueError, match="differs from its J gather index"):
+        project_functional_boundary(j)
+
+
+def test_constant_gather_requires_reverse_coverage_of_direct_j_uses() -> None:
+    j = _constant_gather_boundary_j()
+    j.boundary.accesses = [
+        access for access in j.boundary.accesses if access.access_id != "a2"
+    ]
+    j.boundary.effects = [
+        effect for effect in j.boundary.effects if effect.access_ref != "a2"
+    ]
+
+    with pytest.raises(ValueError, match="do not cover.*direct J uses"):
+        project_functional_boundary(j)
+
+
+def test_unit_concat_stores_form_auditable_complete_partition() -> None:
+    j = _unit_concat_partition_j()
+    projection = project_functional_boundary(j)
+
+    assert len(projection.concat_store_partitions) == 1
+    receipt = projection.to_json()["concat_store_partitions"][0]
+    assert receipt == {
+        "proof": "unit_width_concat_store_partition",
+        "output": "Y",
+        "producer_ref": "n0",
+        "axis": 1,
+        "slices": [
+            {"access_id": "a3", "operand_ref": "A", "start": 0, "width": 1},
+            {"access_id": "a4", "operand_ref": "B", "start": 1, "width": 1},
+            {"access_id": "a5", "operand_ref": "C", "start": 2, "width": 1},
+        ],
+    }
+
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={},
+        input_bindings={"A": "a", "B": "b", "C": "c"},
+        output_bindings={"Y": "out"},
+    )
+    values = {
+        "a": np.asarray([[1.0], [2.0]], dtype=np.float32),
+        "b": np.asarray([[3.0], [4.0]], dtype=np.float32),
+        "c": np.asarray([[5.0], [6.0]], dtype=np.float32),
+    }
+    result = ScalarLoweringRunner().run(spec, values)
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["out"],
+        np.concatenate([values["a"], values["b"], values["c"]], axis=1),
+    )
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "missing"])
+def test_unit_concat_partition_rejects_duplicate_or_missing_store(mutation) -> None:
+    j = _unit_concat_partition_j()
+    if mutation == "duplicate":
+        j.boundary.accesses[4].index_expression = "[k0, 0]"
+        expected = "duplicate/nonconstant slices"
+    else:
+        j.boundary.accesses = [
+            access for access in j.boundary.accesses if access.access_id != "a5"
+        ]
+        j.boundary.effects = [
+            effect for effect in j.boundary.effects if effect.access_ref != "a5"
+        ]
+        expected = "missing or extra store"
+
+    with pytest.raises(ValueError, match=expected):
+        project_functional_boundary(j)
+
+
+def test_wide_concat_point_stores_remain_unsupported() -> None:
+    j = _unit_concat_partition_j(width=2)
+
+    with pytest.raises(NotImplementedError, match="unit-width operands"):
+        project_functional_boundary(j)
 
 
 def test_scalar_e_j_rejects_dense_boundary_extent_mismatch() -> None:

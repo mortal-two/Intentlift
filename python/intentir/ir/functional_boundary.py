@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v6"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v7"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -102,12 +102,75 @@ class ConsumerOutsideProjection:
 
 
 @dataclass(frozen=True)
+class ConstantGatherProjection:
+    """One J-only proof that a constant boundary load is one typed gather."""
+
+    access_id: str
+    node_ref: str
+    tensor: str
+    axis: int
+    index_ref: str
+    coordinate: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "constant_gather",
+            "access_id": self.access_id,
+            "node_ref": self.node_ref,
+            "tensor": self.tensor,
+            "axis": self.axis,
+            "index_ref": self.index_ref,
+            "coordinate": self.coordinate,
+        }
+
+
+@dataclass(frozen=True)
+class ConcatStoreSliceProjection:
+    """One unit-width physical store derived from concat operand order."""
+
+    access_id: str
+    operand_ref: str
+    start: int
+    width: int = 1
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "access_id": self.access_id,
+            "operand_ref": self.operand_ref,
+            "start": self.start,
+            "width": self.width,
+        }
+
+
+@dataclass(frozen=True)
+class ConcatStorePartitionProjection:
+    """One exhaustive, disjoint unit-width concat output partition."""
+
+    output: str
+    producer_ref: str
+    axis: int
+    slices: tuple[ConcatStoreSliceProjection, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "unit_width_concat_store_partition",
+            "output": self.output,
+            "producer_ref": self.producer_ref,
+            "axis": self.axis,
+            "slices": [item.to_json() for item in self.slices],
+        }
+
+
+@dataclass(frozen=True)
 class FunctionalBoundaryProjection:
     """One ephemeral proof that Layer B projects to logical tensor execution."""
 
     profile: str
     domains: tuple[tuple[str, int | str], ...]
     access_axes: tuple[tuple[str, tuple[str, ...]], ...]
+    access_coordinates: tuple[
+        tuple[str, tuple[str | int, ...]], ...
+    ]
     predicates: tuple[tuple[str, PredicateProjection | None], ...]
     broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
@@ -120,10 +183,16 @@ class FunctionalBoundaryProjection:
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
+    constant_gathers: tuple[ConstantGatherProjection, ...] = ()
+    concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
         return dict(self.access_axes)
+
+    @property
+    def access_coordinates_map(self) -> dict[str, tuple[str | int, ...]]:
+        return dict(self.access_coordinates)
 
     @property
     def predicate_map(self) -> dict[str, PredicateProjection | None]:
@@ -141,6 +210,10 @@ class FunctionalBoundaryProjection:
             "domains": [list(item) for item in self.domains],
             "access_axes": [
                 [access_id, list(axes)] for access_id, axes in self.access_axes
+            ],
+            "access_coordinates": [
+                [access_id, list(coordinates)]
+                for access_id, coordinates in self.access_coordinates
             ],
             "predicates": [
                 [access_id, predicate.to_json() if predicate is not None else None]
@@ -171,6 +244,12 @@ class FunctionalBoundaryProjection:
                     "relation": "eq",
                 }
                 for value_ref, dimension_ref in self.value_dimension_relations
+            ],
+            "constant_gathers": [
+                proof.to_json() for proof in self.constant_gathers
+            ],
+            "concat_store_partitions": [
+                proof.to_json() for proof in self.concat_store_partitions
             ],
         }
 
@@ -315,6 +394,230 @@ def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     if type(value) is not int:
         return None
     return 0 <= value < extent
+
+
+def _canonical_nodes(j: Any) -> dict[str, IntentOp]:
+    nodes = _node_table(j)
+    return {node_ref: nodes[node_ref] for node_ref in j.node_ids if node_ref in nodes}
+
+
+def _constant_int_producer(j: Any, value_ref: str) -> tuple[str, int] | None:
+    matches: list[tuple[str, int]] = []
+    for node_ref, operation in _canonical_nodes(j).items():
+        if value_ref not in _result_names(operation) or operation.op != "const":
+            continue
+        value = operation.attrs.get("value")
+        if type(value) is int:
+            matches.append((node_ref, value))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _project_constant_gather_load(
+    j: Any,
+    *,
+    access: Any,
+    coordinates: tuple[str | int, ...],
+    tensor: Any,
+    operation: IntentOp | None,
+) -> ConstantGatherProjection | None:
+    """Prove one non-singleton constant coordinate through exact J dataflow."""
+
+    non_singleton_constants = [
+        (axis, coordinate)
+        for axis, (coordinate, extent) in enumerate(
+            zip(coordinates, tensor.shape, strict=True)
+        )
+        if isinstance(coordinate, int)
+        and not (coordinate == 0 and extent == 1)
+    ]
+    if not non_singleton_constants:
+        return None
+    if len(non_singleton_constants) != 1:
+        raise NotImplementedError(
+            "functional constant load implements one selected tensor axis"
+        )
+    axis, coordinate = non_singleton_constants[0]
+    if access.node_ref is None or operation is None:
+        raise ValueError(
+            "functional constant load requires one node-bound gather"
+        )
+    if (
+        operation.op != "gather"
+        or len(operation.operands) != 2
+        or operation.operands[0] != access.tensor
+        or operation.attrs.get("axis") != axis
+        or operation.attrs.get("mode", "along_axis") != "take"
+    ):
+        raise ValueError(
+            "functional constant load must match a take gather on the same axis"
+        )
+    index_ref = operation.operands[1]
+    producer = _constant_int_producer(j, index_ref)
+    if producer is None or producer[1] != coordinate:
+        raise ValueError(
+            "functional constant load coordinate differs from its J gather index"
+        )
+    matches = [
+        relation
+        for relation in j.boundary.index_bounds
+        if (
+            relation.node_ref == access.node_ref
+            and relation.data == access.tensor
+            and relation.indices == index_ref
+            and relation.axis == axis
+        )
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "functional constant load requires one exact index-bounds relation"
+        )
+    if static_index_bounds_status(j, matches[0]) is not True:
+        raise ValueError(
+            "functional constant load lacks a closed in-bounds proof"
+        )
+
+    value_types = j_elaboration(j).value_type_by_name
+    data_type = value_types.get(access.tensor)
+    index_type = value_types.get(index_ref)
+    result_names = _result_names(operation)
+    result_type = value_types.get(result_names[0]) if len(result_names) == 1 else None
+    if data_type is None or index_type is None or result_type is None:
+        raise ValueError("functional constant gather lacks a closed J type")
+    expected_shape = (
+        *data_type.shape[:axis],
+        *index_type.shape,
+        *data_type.shape[axis + 1 :],
+    )
+    if (
+        index_type.shape
+        or result_type.dtype != data_type.dtype
+        or result_type.shape != expected_shape
+    ):
+        raise ValueError(
+            "functional constant gather result type differs from scalar take"
+        )
+    return ConstantGatherProjection(
+        access.access_id,
+        access.node_ref,
+        access.tensor,
+        axis,
+        index_ref,
+        coordinate,
+    )
+
+
+def _project_concat_store_partition(
+    j: Any,
+    *,
+    output: str,
+    stores: Sequence[Any],
+    coordinates_by_access: Mapping[str, tuple[str | int, ...]],
+    predicates: Mapping[str, PredicateProjection | None],
+    observable_value: str,
+) -> ConcatStorePartitionProjection:
+    """Prove multiple point stores are one complete unit-width concat output."""
+
+    producer_refs = {access.node_ref for access in stores}
+    if len(producer_refs) != 1 or None in producer_refs:
+        raise NotImplementedError(
+            "functional boundary requires exactly one store per logical output"
+        )
+    producer_ref = next(iter(producer_refs))
+    assert producer_ref is not None
+    operation = _canonical_nodes(j).get(producer_ref)
+    if operation is None or operation.op != "concat":
+        raise NotImplementedError(
+            "functional boundary requires exactly one store per logical output"
+        )
+    if any(predicates[access.access_id] is not None for access in stores):
+        raise NotImplementedError(
+            "functional concat store partition requires unpredicated stores"
+        )
+    if observable_value not in _result_names(operation):
+        raise ValueError(
+            "functional concat store partition does not produce its J output"
+        )
+
+    value_types = j_elaboration(j).value_type_by_name
+    result_type = value_types.get(observable_value)
+    operand_types = [value_types.get(operand) for operand in operation.operands]
+    axis = operation.attrs.get("axis")
+    if (
+        result_type is None
+        or not isinstance(axis, int)
+        or isinstance(axis, bool)
+        or axis < 0
+        or axis >= len(result_type.shape)
+        or not operand_types
+        or any(item is None for item in operand_types)
+    ):
+        raise ValueError("functional concat store partition lacks a closed type")
+    typed_operands = [item for item in operand_types if item is not None]
+    for operand_type in typed_operands:
+        if (
+            operand_type.dtype != result_type.dtype
+            or len(operand_type.shape) != len(result_type.shape)
+            or any(
+                operand_type.shape[dimension] != result_type.shape[dimension]
+                for dimension in range(len(result_type.shape))
+                if dimension != axis
+            )
+        ):
+            raise ValueError(
+                "functional concat store partition disagrees with concat types"
+            )
+    widths = [item.shape[axis] for item in typed_operands]
+    if any(type(width) is not int or width != 1 for width in widths):
+        raise NotImplementedError(
+            "functional concat store partition implements unit-width operands"
+        )
+    result_extent = result_type.shape[axis]
+    if type(result_extent) is not int or result_extent != len(typed_operands):
+        raise ValueError(
+            "functional concat store partition does not cover the output extent"
+        )
+    if len(stores) != len(typed_operands):
+        raise ValueError(
+            "functional concat store partition has a missing or extra store"
+        )
+
+    non_axis_coordinates = {
+        tuple(
+            coordinate
+            for dimension, coordinate in enumerate(
+                coordinates_by_access[access.access_id]
+            )
+            if dimension != axis
+        )
+        for access in stores
+    }
+    if len(non_axis_coordinates) != 1:
+        raise ValueError(
+            "functional concat stores disagree on non-concat coordinates"
+        )
+    by_start: dict[int, Any] = {}
+    for access in stores:
+        coordinates = coordinates_by_access[access.access_id]
+        coordinate = coordinates[axis]
+        if not isinstance(coordinate, int) or coordinate in by_start:
+            raise ValueError(
+                "functional concat store partition has duplicate/nonconstant slices"
+            )
+        by_start[coordinate] = access
+    expected_starts = set(range(len(typed_operands)))
+    if set(by_start) != expected_starts:
+        raise ValueError(
+            "functional concat store partition has a gap or out-of-range slice"
+        )
+    slices = tuple(
+        ConcatStoreSliceProjection(
+            by_start[start].access_id,
+            operation.operands[start],
+            start,
+        )
+        for start in range(len(typed_operands))
+    )
+    return ConcatStorePartitionProjection(output, producer_ref, axis, slices)
 
 
 def _flatten_conjunction(expression: ContractExpr) -> tuple[ContractExpr, ...]:
@@ -673,13 +976,14 @@ def functional_boundary_closure_issues(
         return ()
 
     # A non-rectangular or otherwise unsupported domain may still be a valid J
-    # contract.  RefEval can report that capability boundary later; v6 must not
-    # turn it into semantic illegality merely because the current projection
-    # cannot consume it.
+    # contract.  Keep checking independent typed coordinate/dataflow facts,
+    # while skipping only the rectangular domain/predicate legality subset.
+    rectangular_domains = True
     try:
         domains = _full_domains(j)
     except NotImplementedError:
-        return ()
+        domains = {}
+        rectangular_domains = False
     except ValueError as exc:
         return (
             FunctionalBoundaryClosureIssue(
@@ -698,7 +1002,14 @@ def functional_boundary_closure_issues(
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
     logical_guards = _logical_boolean_guards(j)
-    parsed_accesses = j_elaboration(j).access_by_id
+    elaboration = j_elaboration(j)
+    parsed_accesses = elaboration.access_by_id
+    value_types = elaboration.value_type_by_name
+    nodes = _canonical_nodes(j)
+    access_positions = {
+        access.access_id: index for index, access in enumerate(boundary.accesses)
+    }
+    direct_coordinates: dict[str, tuple[str | int, ...]] = {}
     issues: list[FunctionalBoundaryClosureIssue] = []
 
     for index, access in enumerate(boundary.accesses):
@@ -708,14 +1019,22 @@ def functional_boundary_closure_issues(
             # Canonical elaboration/ordinary reference checking owns these
             # errors.  Do not duplicate them under the closure rule.
             continue
-        axes = parsed_access.index.direct_axes
-        if axes is None or len(set(axes)) != len(axes):
+        coordinates = parsed_access.index.direct_coordinates
+        if coordinates is None:
             # General affine/diagonal accesses are outside this projection
             # profile, not automatically invalid J.
             continue
+        axes = tuple(
+            coordinate for coordinate in coordinates
+            if isinstance(coordinate, str)
+        )
+        if len(set(axes)) != len(axes):
+            # A diagonal/ref-reusing access remains a general capability case.
+            continue
+        direct_coordinates[access.access_id] = coordinates
 
         index_path = f"j.boundary.accesses[{index}].index_expression"
-        if len(axes) != len(tensor.shape):
+        if len(coordinates) != len(tensor.shape):
             issues.append(
                 FunctionalBoundaryClosureIssue(
                     index_path,
@@ -724,8 +1043,28 @@ def functional_boundary_closure_issues(
                 )
             )
             continue
-        for axis, declared_extent in zip(axes, tensor.shape, strict=True):
-            domain_extent = domains.get(axis)
+        has_static_coordinate_error = False
+        for coordinate, declared_extent in zip(
+            coordinates, tensor.shape, strict=True
+        ):
+            if isinstance(coordinate, int):
+                if (
+                    type(declared_extent) is int
+                    and not 0 <= coordinate < declared_extent
+                ):
+                    issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            index_path,
+                            "functional constant access coordinate is out of bounds",
+                            access.access_id,
+                        )
+                    )
+                    has_static_coordinate_error = True
+                # A constant against a symbolic extent remains a consumer
+                # capability question; TypeCheck does not invent a lower bound.
+                continue
+            axis = coordinate
+            domain_extent = domains.get(axis) if rectangular_domains else None
             if domain_extent is not None and domain_extent != declared_extent:
                 issues.append(
                     FunctionalBoundaryClosureIssue(
@@ -736,8 +1075,103 @@ def functional_boundary_closure_issues(
                     )
                 )
 
+        if not has_static_coordinate_error and access.kind.value == "load":
+            non_singleton_constants = [
+                (axis, coordinate)
+                for axis, (coordinate, extent) in enumerate(
+                    zip(coordinates, tensor.shape, strict=True)
+                )
+                if isinstance(coordinate, int)
+                and type(extent) is int
+                and not (coordinate == 0 and extent == 1)
+            ]
+            # Only contradictions inside the one-axis scalar-take profile are
+            # J legality.  Other constant selections remain valid-but-unsupported.
+            if len(non_singleton_constants) == 1:
+                coordinate_axis, coordinate = non_singleton_constants[0]
+                operation = nodes.get(access.node_ref) if access.node_ref else None
+                if (
+                    operation is not None
+                    and operation.op == "gather"
+                    and len(operation.operands) == 2
+                    and operation.operands[0] == access.tensor
+                    and operation.attrs.get("mode", "along_axis") == "take"
+                ):
+                    gather_axis = operation.attrs.get("axis")
+                    if gather_axis != coordinate_axis:
+                        issues.append(
+                            FunctionalBoundaryClosureIssue(
+                                index_path,
+                                "functional constant load axis differs from its "
+                                "J gather axis",
+                                access.access_id,
+                            )
+                        )
+                    index_ref = operation.operands[1]
+                    producer = _constant_int_producer(j, index_ref)
+                    if producer is not None:
+                        if producer[1] != coordinate:
+                            issues.append(
+                                FunctionalBoundaryClosureIssue(
+                                    index_path,
+                                    "functional constant load coordinate differs "
+                                    "from its J gather index",
+                                    access.access_id,
+                                )
+                            )
+                        matching_bounds = [
+                            relation
+                            for relation in boundary.index_bounds
+                            if (
+                                relation.node_ref == access.node_ref
+                                and relation.data == access.tensor
+                                and relation.indices == index_ref
+                                and relation.axis == gather_axis
+                            )
+                        ]
+                        if len(matching_bounds) != 1:
+                            issues.append(
+                                FunctionalBoundaryClosureIssue(
+                                    "j.boundary.index_bounds",
+                                    "functional constant gather requires one "
+                                    "matching index-bounds relation",
+                                    access.node_ref,
+                                )
+                            )
+                        data_type = value_types.get(access.tensor)
+                        index_type = value_types.get(index_ref)
+                        result_names = _result_names(operation)
+                        result_type = (
+                            value_types.get(result_names[0])
+                            if len(result_names) == 1 else None
+                        )
+                        if (
+                            isinstance(gather_axis, int)
+                            and data_type is not None
+                            and index_type is not None
+                            and result_type is not None
+                            and not index_type.shape
+                            and 0 <= gather_axis < len(data_type.shape)
+                        ):
+                            expected_shape = (
+                                *data_type.shape[:gather_axis],
+                                *data_type.shape[gather_axis + 1 :],
+                            )
+                            if (
+                                result_type.dtype != data_type.dtype
+                                or result_type.shape != expected_shape
+                            ):
+                                issues.append(
+                                    FunctionalBoundaryClosureIssue(
+                                        f"j.node_ids.{access.node_ref}",
+                                        "functional constant gather result type "
+                                        "differs from scalar take",
+                                        access.node_ref,
+                                    )
+                                )
+
         parsed_predicate = parsed_access.predicate
-        if parsed_predicate is None:
+        if parsed_predicate is None or not rectangular_domains:
             continue
         try:
             predicate = _j_predicate_projection(
@@ -787,6 +1221,80 @@ def functional_boundary_closure_issues(
                         access.access_id,
                     )
                 )
+
+    returns = {item.output: item.value for item in j.intent.returns}
+    mappings = {item.output: item for item in boundary.output_mappings}
+    stores_by_output: dict[str, list[Any]] = {}
+    for access in boundary.accesses:
+        if access.kind.value == "store":
+            stores_by_output.setdefault(access.tensor, []).append(access)
+    for output, stores in stores_by_output.items():
+        if not stores:
+            continue
+        producer_refs = {access.node_ref for access in stores}
+        if len(producer_refs) != 1 or None in producer_refs:
+            continue
+        producer_ref = next(iter(producer_refs))
+        assert producer_ref is not None
+        operation = nodes.get(producer_ref)
+        output_type = value_types.get(output)
+        if operation is None or operation.op != "concat" or output_type is None:
+            continue
+        axis = operation.attrs.get("axis")
+        operand_types = [value_types.get(name) for name in operation.operands]
+        if (
+            not isinstance(axis, int)
+            or isinstance(axis, bool)
+            or axis < 0
+            or axis >= len(output_type.shape)
+            or not operand_types
+            or any(item is None for item in operand_types)
+            or any(access.predicate is not None for access in stores)
+            or any(access.access_id not in direct_coordinates for access in stores)
+        ):
+            continue
+        typed_operands = [item for item in operand_types if item is not None]
+        if any(
+            len(item.shape) != len(output_type.shape)
+            or type(item.shape[axis]) is not int
+            or item.shape[axis] != 1
+            for item in typed_operands
+        ):
+            # General/wide concat slicing is a consumer capability, not J
+            # illegality under the current direct-coordinate relation.
+            continue
+        if any(
+            len(direct_coordinates[access.access_id]) != len(output_type.shape)
+            or not isinstance(direct_coordinates[access.access_id][axis], int)
+            for access in stores
+        ):
+            continue
+        observable_value = returns.get(output, output)
+        mapping = mappings.get(output)
+        if mapping is not None:
+            observable_value = mapping.value
+        try:
+            _project_concat_store_partition(
+                j,
+                output=output,
+                stores=stores,
+                coordinates_by_access=direct_coordinates,
+                predicates={access.access_id: None for access in stores},
+                observable_value=observable_value,
+            )
+        except NotImplementedError:
+            # A recognized producer can still use a boundary profile outside
+            # unit-width direct stores.  Keep that distinction as capability.
+            continue
+        except ValueError as exc:
+            first_index = access_positions[stores[0].access_id]
+            issues.append(
+                FunctionalBoundaryClosureIssue(
+                    f"j.boundary.accesses[{first_index}]",
+                    str(exc),
+                    output,
+                )
+            )
 
     return tuple(issues)
 
@@ -2089,10 +2597,20 @@ def _project_functional_boundary(
 
     consumed_domain_axes: set[str] = set()
     inferred_extents: dict[str, int | str] = dict(domains)
-    axes_by_access: dict[str, tuple[str, ...]] = {}
+    # ``access_axes`` is a public compatibility receipt: retain legacy
+    # singleton ``"0"`` sentinels when the old direct-axis profile exists.
+    # All semantic predicate/domain reasoning uses only real reference axes.
+    access_axes_by_access: dict[str, tuple[str, ...]] = {}
+    axis_refs_by_access: dict[str, tuple[str, ...]] = {}
+    coordinates_by_access: dict[str, tuple[str | int, ...]] = {}
     predicates: dict[str, PredicateProjection | None] = {}
     loaded: set[str] = set()
-    store_counts = {name: 0 for name in output_names}
+    stores_by_output: dict[str, list[Any]] = {
+        name: [] for name in output_names
+    }
+    whole_load_tensors: set[str] = set()
+    constant_gathers: list[ConstantGatherProjection] = []
+    constant_gather_edges: dict[str, dict[tuple[str, int], str]] = {}
     logical_scalar_inputs = _logical_scalar_inputs(j)
     logical_guards = _logical_boolean_guards(j)
     logical_input_types = {
@@ -2124,23 +2642,42 @@ def _project_functional_boundary(
             raise ValueError(
                 f"functional access {access.access_id!r} has unknown tensor"
             )
-        axes = parsed_accesses[access.access_id].index.direct_axes
-        if axes is None:
+        coordinates = parsed_accesses[access.access_id].index.direct_coordinates
+        if coordinates is None:
             raise NotImplementedError(
-                "functional dense access requires a direct ordered axis vector"
+                "functional dense access requires a direct ordered axis vector "
+                "of references or integer constants"
             )
+        axes = tuple(
+            coordinate for coordinate in coordinates
+            if isinstance(coordinate, str)
+        )
         if len(set(axes)) != len(axes):
             raise ValueError("functional dense access axes must be unique")
-        if len(axes) != len(tensor.shape):
+        if len(coordinates) != len(tensor.shape):
             raise ValueError(
                 f"functional access {access.access_id!r} rank differs from tensor"
             )
-        axes_by_access[access.access_id] = axes
-        for axis, declared_extent in zip(axes, tensor.shape, strict=True):
-            if axis == "0" and declared_extent != 1:
-                raise ValueError(
-                    "functional zero index is valid only for singleton axis"
-                )
+        legacy_axes = parsed_accesses[access.access_id].index.direct_axes
+        access_axes_by_access[access.access_id] = (
+            legacy_axes if legacy_axes is not None else axes
+        )
+        axis_refs_by_access[access.access_id] = axes
+        coordinates_by_access[access.access_id] = coordinates
+        for coordinate, declared_extent in zip(
+            coordinates, tensor.shape, strict=True
+        ):
+            if isinstance(coordinate, int):
+                if type(declared_extent) is not int:
+                    raise NotImplementedError(
+                        "functional constant access requires a static tensor extent"
+                    )
+                if coordinate < 0 or coordinate >= declared_extent:
+                    raise ValueError(
+                        "functional constant access coordinate is out of bounds"
+                    )
+                continue
+            axis = coordinate
             actual_extent = inferred_extents.get(axis, declared_extent)
             if actual_extent != declared_extent:
                 raise ValueError(
@@ -2150,6 +2687,18 @@ def _project_functional_boundary(
             inferred_extents.setdefault(axis, declared_extent)
             if axis in domains:
                 consumed_domain_axes.add(axis)
+
+        constant_gather = (
+            _project_constant_gather_load(
+                j,
+                access=access,
+                coordinates=coordinates,
+                tensor=tensor,
+                operation=op,
+            )
+            if access.kind.value == "load"
+            else None
+        )
 
         parsed = parsed_accesses[access.access_id].predicate
         predicate = (
@@ -2272,6 +2821,24 @@ def _project_functional_boundary(
                         "functional node-less input load is absent from J "
                         "value dataflow"
                     )
+            if constant_gather is not None:
+                if predicate is not None:
+                    raise NotImplementedError(
+                        "functional constant gather load requires no access predicate"
+                    )
+                # The recognized gather profile has exactly one data operand,
+                # ordinal 0.  Keep the edge key explicit so future variadic-op
+                # profiles cannot accidentally collapse operand multiplicity.
+                edge = (constant_gather.node_ref, 0)
+                by_edge = constant_gather_edges.setdefault(access.tensor, {})
+                if edge in by_edge:
+                    raise ValueError(
+                        "functional constant gather has duplicate boundary loads"
+                    )
+                by_edge[edge] = access.access_id
+                constant_gathers.append(constant_gather)
+            else:
+                whole_load_tensors.add(access.tensor)
             loaded.add(access.tensor)
             continue
 
@@ -2298,7 +2865,7 @@ def _project_functional_boundary(
             raise NotImplementedError(
                 "node-less store is supported only for direct identity J"
             )
-        store_counts[access.tensor] += 1
+        stores_by_output[access.tensor].append(access)
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")
@@ -2306,9 +2873,57 @@ def _project_functional_boundary(
         raise NotImplementedError(
             "functional boundary must cover every logical tensor input"
         )
-    if boundary.accesses and any(count != 1 for count in store_counts.values()):
-        raise NotImplementedError(
-            "functional boundary requires exactly one store per logical output"
+    canonical_nodes = _canonical_nodes(j)
+    for tensor, matched_edges in constant_gather_edges.items():
+        if tensor in whole_load_tensors:
+            continue
+        direct_uses = {
+            (node_ref, operand_index)
+            for node_ref, operation in canonical_nodes.items()
+            for operand_index, operand in enumerate(operation.operands)
+            if operand == tensor
+        }
+        if direct_uses != set(matched_edges):
+            raise ValueError(
+                "functional constant loads do not cover the tensor's direct J uses"
+            )
+
+    concat_store_partitions: list[ConcatStorePartitionProjection] = []
+    for output, stores in stores_by_output.items():
+        if not boundary.accesses:
+            continue
+        if len(stores) == 1:
+            coordinates = coordinates_by_access[stores[0].access_id]
+            tensor = tensors[output]
+            if any(
+                isinstance(coordinate, int)
+                and not (coordinate == 0 and extent == 1)
+                for coordinate, extent in zip(
+                    coordinates, tensor.shape, strict=True
+                )
+            ):
+                raise NotImplementedError(
+                    "functional boundary requires exactly one full store per "
+                    "logical output"
+                )
+            continue
+        if not stores:
+            raise NotImplementedError(
+                "functional boundary requires exactly one store per logical output"
+            )
+        observable_value = returns.get(output, output)
+        mapping = mappings.get(output)
+        if mapping is not None:
+            observable_value = mapping.value
+        concat_store_partitions.append(
+            _project_concat_store_partition(
+                j,
+                output=output,
+                stores=stores,
+                coordinates_by_access=coordinates_by_access,
+                predicates=predicates,
+                observable_value=observable_value,
+            )
         )
     if consumed_domain_axes != set(domains):
         raise NotImplementedError(
@@ -2322,7 +2937,7 @@ def _project_functional_boundary(
             for axis, _extent in predicate.upper_bounds
         }
         for access in boundary.accesses:
-            axes = axes_by_access[access.access_id]
+            axes = axis_refs_by_access[access.access_id]
             predicate = predicates[access.access_id]
             upper = dict(predicate.upper_bounds) if predicate is not None else {}
             for axis in masked_axes.intersection(axes):
@@ -2430,7 +3045,8 @@ def _project_functional_boundary(
     return FunctionalBoundaryProjection(
         profile=profile,
         domains=tuple(sorted(domains.items())),
-        access_axes=tuple(sorted(axes_by_access.items())),
+        access_axes=tuple(sorted(access_axes_by_access.items())),
+        access_coordinates=tuple(sorted(coordinates_by_access.items())),
         predicates=tuple(sorted(predicates.items())),
         broadcast_axes=tuple(
             sorted(
@@ -2465,6 +3081,8 @@ def _project_functional_boundary(
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
         consumer_extensions=consumer_extensions,
         value_dimension_relations=value_dimension_pairs,
+        constant_gathers=tuple(constant_gathers),
+        concat_store_partitions=tuple(concat_store_partitions),
     )
 
 
@@ -2522,6 +3140,9 @@ __all__ = [
     "FUNCTIONAL_BOUNDARY_PROTOCOL",
     "RUNTIME_PREDICATE_PROOF_PROTOCOL",
     "ConsumerExtensionRequirement",
+    "ConstantGatherProjection",
+    "ConcatStorePartitionProjection",
+    "ConcatStoreSliceProjection",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
     "ConsumerOutsideProjection",
