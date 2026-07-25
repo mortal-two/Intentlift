@@ -12,6 +12,7 @@ from .model import (
     BoundaryAccess,
     BroadcastSpec,
     CompileCase,
+    ConsumerExtension,
     DuplicatePolicy,
     EffectKind,
     EffectSpec,
@@ -47,6 +48,7 @@ from .model import (
     SourceSpan,
     StorageMutability,
     StorageObject,
+    TypedOutsideValue,
     UpdateCombiner,
     UpdateOrder,
     opaque_replay_abi,
@@ -56,7 +58,7 @@ from .profile import ObserverProfile, observer_profile_for
 
 __all__ = [
     "AccessKind", "AliasKind", "AliasSpec", "Boundary", "BoundaryAccess",
-    "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
+    "BroadcastSpec", "CompileCase", "ConsumerExtension", "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "Gate1Artifact", "Gate1Status", "ImplementationConfig",
     "IndexBoundsSpec", "LocationEntry", "LocationMap", "LogicalUpdateSpec",
@@ -69,5 +71,5 @@ __all__ = [
     "RuntimeArgument", "ScheduleSlot", "ScheduleSlotKind", "SchemaError",
     "SignatureParameter", "ScopeKind", "SemanticArchive", "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
-    "UpdateCombiner", "UpdateOrder", "opaque_replay_abi",
+    "TypedOutsideValue", "UpdateCombiner", "UpdateOrder", "opaque_replay_abi",
 ]

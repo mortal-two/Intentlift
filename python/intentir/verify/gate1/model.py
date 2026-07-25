@@ -50,7 +50,7 @@ SEMANTIC_ARCHIVE_WIRE_FIELDS = (
     "scopes",
     "storage",
 )
-BOUNDARY_WIRE_FIELDS = (
+BOUNDARY_LEGACY_WIRE_FIELDS = (
     "domains",
     "accesses",
     "broadcasts",
@@ -62,6 +62,10 @@ BOUNDARY_WIRE_FIELDS = (
     "updates",
     "result_relations",
     "realization_authorizations",
+)
+BOUNDARY_WIRE_FIELDS = (
+    *BOUNDARY_LEGACY_WIRE_FIELDS,
+    "consumer_extensions",
 )
 BOUNDARY_ACCESS_WIRE_FIELDS = (
     "access_id",
@@ -118,7 +122,11 @@ def render_boundary_access_wire_grammar() -> str:
         "For a predicated pure-functional boundary, the observable store "
         "producer carries an explicit result type equal to the J output. A "
         "direct same-handle output needs no output_mapping; output_mappings "
-        "exist only for an explicit function returns rebinding and must match it."
+        "exist only for an explicit function returns rebinding and must match it. "
+        "consumer_extensions is the sole artifact.v4 authority for a physical "
+        "outside-domain contribution to one sum/max/min reduce or scan operand. "
+        "It references the predicate-bearing access instead of copying or "
+        "promoting that predicate into Layer-A SSA."
     )
 
 
@@ -1093,6 +1101,118 @@ class ReductionBoundary(StrictJSONMixin):
 
 
 @dataclass
+class TypedOutsideValue(StrictJSONMixin):
+    """One explicitly typed scalar outside a consumer's logical domain."""
+
+    dtype: str
+    value: JsonValue
+
+    def __post_init__(self) -> None:
+        self.dtype = _string(self.dtype, "TypedOutsideValue.dtype")
+        self.value = _json_value(self.value, "TypedOutsideValue.value")
+        if self.value is None or isinstance(self.value, (list, dict)):
+            raise SchemaError("TypedOutsideValue.value must be a JSON scalar")
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "TypedOutsideValue":
+        data = _strict_object(
+            value,
+            path="TypedOutsideValue",
+            allowed={"dtype", "value"},
+            required={"dtype", "value"},
+        )
+        return cls(data["dtype"], data["value"])
+
+    def to_json(self) -> dict[str, Any]:
+        return {"dtype": self.dtype, "value": copy.deepcopy(self.value)}
+
+
+@dataclass
+class ConsumerExtension(StrictJSONMixin):
+    """Layer-B outside-domain contract for one reduce/scan operand.
+
+    The predicate remains owned by the referenced ``BoundaryAccess``.  This
+    relation states only which typed value the named consumer sees outside
+    that predicate on one frontend-local physical tile axis.
+    """
+
+    consumer_ref: str
+    operand_index: int
+    access_ref: str
+    tile_axis: int
+    outside: TypedOutsideValue
+    identity_law: str
+
+    def __post_init__(self) -> None:
+        self.consumer_ref = _string(
+            self.consumer_ref, "ConsumerExtension.consumer_ref"
+        )
+        self.operand_index = _integer(
+            self.operand_index,
+            "ConsumerExtension.operand_index",
+            minimum=0,
+        )
+        self.access_ref = _string(
+            self.access_ref, "ConsumerExtension.access_ref"
+        )
+        self.tile_axis = _integer(
+            self.tile_axis, "ConsumerExtension.tile_axis", minimum=0
+        )
+        if not isinstance(self.outside, TypedOutsideValue):
+            self.outside = TypedOutsideValue.from_json(self.outside)
+        self.identity_law = _string(
+            self.identity_law, "ConsumerExtension.identity_law"
+        )
+        if self.identity_law != "two_sided":
+            raise SchemaError(
+                "ConsumerExtension.identity_law must be 'two_sided'"
+            )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "ConsumerExtension":
+        data = _strict_object(
+            value,
+            path="ConsumerExtension",
+            allowed={
+                "consumer_ref",
+                "operand_index",
+                "access_ref",
+                "tile_axis",
+                "outside",
+                "identity_law",
+            },
+            required={
+                "consumer_ref",
+                "operand_index",
+                "access_ref",
+                "tile_axis",
+                "outside",
+                "identity_law",
+            },
+        )
+        if not isinstance(data["outside"], dict):
+            raise SchemaError("ConsumerExtension.outside must be an object")
+        return cls(
+            consumer_ref=data["consumer_ref"],
+            operand_index=data["operand_index"],
+            access_ref=data["access_ref"],
+            tile_axis=data["tile_axis"],
+            outside=TypedOutsideValue.from_json(data["outside"]),
+            identity_law=data["identity_law"],
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "consumer_ref": self.consumer_ref,
+            "operand_index": self.operand_index,
+            "access_ref": self.access_ref,
+            "tile_axis": self.tile_axis,
+            "outside": self.outside.to_json(),
+            "identity_law": self.identity_law,
+        }
+
+
+@dataclass
 class IndexBoundsSpec(StrictJSONMixin):
     """Typed precondition for one data-dependent index operation.
 
@@ -1353,6 +1473,7 @@ class Boundary(StrictJSONMixin):
     realization_authorizations: list[RealizationAuthorization] = field(
         default_factory=list
     )
+    consumer_extensions: list[ConsumerExtension] = field(default_factory=list)
 
     _KEYS: ClassVar[set[str]] = set(BOUNDARY_WIRE_FIELDS)
 
@@ -1420,6 +1541,12 @@ class Boundary(StrictJSONMixin):
             else RealizationAuthorization.from_json(item)
             for item in self.realization_authorizations
         ]
+        self.consumer_extensions = [
+            item
+            if isinstance(item, ConsumerExtension)
+            else ConsumerExtension.from_json(item)
+            for item in self.consumer_extensions
+        ]
         _unique(self.accesses, "access_id", "Boundary.accesses")
         _unique(self.effects, "effect_id", "Boundary.effects")
         access_ids = {item.access_id for item in self.accesses}
@@ -1446,6 +1573,25 @@ class Boundary(StrictJSONMixin):
             "auth_id",
             "Boundary.realization_authorizations",
         )
+        extension_keys = [
+            (item.consumer_ref, item.operand_index, item.access_ref)
+            for item in self.consumer_extensions
+        ]
+        if len(extension_keys) != len(set(extension_keys)):
+            raise SchemaError(
+                "Boundary.consumer_extensions consumer/operand/access keys "
+                "must be unique"
+            )
+        unknown_extension_accesses = sorted(
+            item.access_ref
+            for item in self.consumer_extensions
+            if item.access_ref not in access_ids
+        )
+        if unknown_extension_accesses:
+            raise SchemaError(
+                "Boundary.consumer_extensions references unknown access(es): "
+                + ", ".join(unknown_extension_accesses)
+            )
         if [item.auth_id for item in self.realization_authorizations] != [
             f"u{index}" for index in range(len(self.realization_authorizations))
         ]:
@@ -1456,7 +1602,10 @@ class Boundary(StrictJSONMixin):
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "Boundary":
         data = _strict_object(
-            value, path="Boundary", allowed=cls._KEYS, required=cls._KEYS
+            value,
+            path="Boundary",
+            allowed=cls._KEYS,
+            required=set(BOUNDARY_LEGACY_WIRE_FIELDS),
         )
         for key in cls._KEYS - {"domains"}:
             if key in data and not isinstance(data[key], list):
@@ -1479,6 +1628,10 @@ class Boundary(StrictJSONMixin):
                 RealizationAuthorization.from_json(item)
                 for item in data.get("realization_authorizations", [])
             ],
+            consumer_extensions=[
+                ConsumerExtension.from_json(item)
+                for item in data.get("consumer_extensions", [])
+            ],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -1495,6 +1648,9 @@ class Boundary(StrictJSONMixin):
             "result_relations": [item.to_json() for item in self.result_relations],
             "realization_authorizations": [
                 item.to_json() for item in self.realization_authorizations
+            ],
+            "consumer_extensions": [
+                item.to_json() for item in self.consumer_extensions
             ],
         }
 
@@ -3335,9 +3491,13 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v3"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v4"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
-        {"intentir.scrc.artifact.v1", "intentir.scrc.artifact.v2"}
+        {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        }
     )
 
     j: SemanticArchive
@@ -3366,9 +3526,29 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "legacy Gate1 artifact schemas do not contain C attachments"
             )
-        if self.wire_schema in self.LEGACY_SCHEMAS and self.pi.iterations:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+        } and self.pi.iterations:
             raise SchemaError(
-                "legacy Gate1 artifact schemas do not contain pi iterations"
+                "Gate1 artifact v1/v2 do not contain pi iterations"
+            )
+        if self.wire_schema != self.SCHEMA and self.pi.loop_carriers:
+            raise SchemaError(
+                "Gate1 artifact v1-v3 do not contain pi loop_carriers"
+            )
+        if self.wire_schema != self.SCHEMA and self.j.boundary.consumer_extensions:
+            raise SchemaError(
+                "Gate1 artifact v1-v3 do not contain J consumer_extensions"
+            )
+        if self.wire_schema == self.SCHEMA and any(
+            item.masked_contribution is not None
+            for item in self.j.boundary.reductions
+        ):
+            raise SchemaError(
+                "artifact.v4 uses consumer_extensions as the unique physical "
+                "outside-domain authority; ReductionBoundary must omit "
+                "masked_contribution"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -3380,6 +3560,7 @@ class Gate1Artifact(StrictJSONMixin):
             *(item.node_ref for item in self.j.boundary.reductions),
             *(item.node_ref for item in self.j.boundary.index_bounds),
             *(item.node_ref for item in self.j.boundary.updates),
+            *(item.consumer_ref for item in self.j.boundary.consumer_extensions),
             *(
                 item.update_node_ref
                 for item in self.j.boundary.result_relations
@@ -3416,22 +3597,52 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1Artifact.pi is missing required field: refinements"
             )
-        if (
-            data["schema"] == cls.SCHEMA
-            and isinstance(data["pi"], dict)
-            and "iterations" not in data["pi"]
+        schema = data["schema"]
+        pi_value = data["pi"] if isinstance(data["pi"], dict) else None
+        boundary_value = (
+            data["j"].get("boundary")
+            if isinstance(data["j"], dict)
+            and isinstance(data["j"].get("boundary"), dict)
+            else None
+        )
+        if schema in {"intentir.scrc.artifact.v3", cls.SCHEMA} and (
+            pi_value is not None and "iterations" not in pi_value
         ):
             raise SchemaError(
                 "Gate1Artifact.pi is missing required field: iterations"
             )
-        if (
-            data["schema"] in cls.LEGACY_SCHEMAS
-            and isinstance(data["pi"], dict)
-            and "iterations" in data["pi"]
-        ):
+        if schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+        } and pi_value is not None and "iterations" in pi_value:
             raise SchemaError(
-                "legacy Gate1 artifact schemas do not contain pi iterations"
+                "Gate1 artifact v1/v2 do not contain pi iterations"
             )
+        if schema == cls.SCHEMA:
+            if pi_value is not None and "loop_carriers" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: loop_carriers"
+                )
+            if (
+                boundary_value is not None
+                and "consumer_extensions" not in boundary_value
+            ):
+                raise SchemaError(
+                    "Gate1Artifact.j.boundary is missing required field: "
+                    "consumer_extensions"
+                )
+        else:
+            if pi_value is not None and "loop_carriers" in pi_value:
+                raise SchemaError(
+                    "Gate1 artifact v1-v3 do not contain pi loop_carriers"
+                )
+            if (
+                boundary_value is not None
+                and "consumer_extensions" in boundary_value
+            ):
+                raise SchemaError(
+                    "Gate1 artifact v1-v3 do not contain J consumer_extensions"
+                )
         try:
             pi = RealizationWitness.from_json(data["pi"])
         except RealizationWitnessError as exc:
@@ -3444,12 +3655,17 @@ class Gate1Artifact(StrictJSONMixin):
         )
 
     def to_json(self) -> dict[str, Any]:
+        j_value = self.j.to_json()
+        if self.wire_schema != self.SCHEMA:
+            j_value["boundary"].pop("consumer_extensions", None)
         return {
             "schema": self.wire_schema,
-            "j": self.j.to_json(),
+            "j": j_value,
             "c": self.c.to_json(),
             "pi": self.pi.to_json(
-                include_iterations=self.wire_schema == self.SCHEMA
+                include_iterations=self.wire_schema
+                in {"intentir.scrc.artifact.v3", self.SCHEMA},
+                include_loop_carriers=self.wire_schema == self.SCHEMA,
             ),
         }
 
@@ -4129,6 +4345,17 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in boundary.realization_authorizations
         ],
+        "consumer_extensions": [
+            {
+                "consumer_ref": _opaque_reference(item.consumer_ref, aliases),
+                "operand_index": item.operand_index,
+                "access_ref": _opaque_reference(item.access_ref, aliases),
+                "tile_axis": item.tile_axis,
+                "outside": item.outside.to_json(),
+                "identity_law": item.identity_law,
+            }
+            for item in boundary.consumer_extensions
+        ],
     }
 
     signature, c_view = _opaque_signature_and_c_view(artifact, aliases)
@@ -4407,6 +4634,17 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in artifact.j.boundary.realization_authorizations
         ],
+        "consumer_extensions": [
+            {
+                "consumer_ref": opaque_reference(item.consumer_ref),
+                "operand_index": item.operand_index,
+                "access_ref": opaque_reference(item.access_ref),
+                "tile_axis": "<masked>",
+                "outside": {"dtype": "<masked>", "value": "<masked>"},
+                "identity_law": "<masked>",
+            }
+            for item in artifact.j.boundary.consumer_extensions
+        ],
     }
 
     # The anti-leakage arm masks J's semantic declarations.  Its logical
@@ -4471,8 +4709,9 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 __all__ = [
     "AccessKind", "AliasKind", "AliasSpec",
     "BOUNDARY_ACCESS_REQUIRED_FIELDS", "BOUNDARY_ACCESS_WIRE_FIELDS",
-    "BOUNDARY_WIRE_FIELDS", "Boundary", "BoundaryAccess",
-    "BroadcastSpec", "CompileCase", "DuplicatePolicy", "EffectKind",
+    "BOUNDARY_LEGACY_WIRE_FIELDS", "BOUNDARY_WIRE_FIELDS", "Boundary",
+    "BoundaryAccess", "BroadcastSpec", "CompileCase", "ConsumerExtension",
+    "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "GATE1_ARTIFACT_MODEL_FIELDS", "GATE1_ARTIFACT_PRIVATE_FIELDS",
     "Gate1Artifact", "Gate1Status", "ImplementationConfig",
@@ -4491,4 +4730,5 @@ __all__ = [
     "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
     "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",
+    "TypedOutsideValue",
 ]

@@ -147,7 +147,12 @@ def render_realization_witness_wire_grammar() -> str:
         "J trip extent by that matching C tile, and unit step. Every frontend "
         "maps this same relation to its public constructs. The wire entry never "
         "carries a bound expression, value, operator, source fragment, or "
-        "frontend API."
+        "frontend API. Each declaration-ordered loop_carriers entry has exactly "
+        "region, loop_instance, init, state, next, and result instance refs. "
+        "Its global temporal denotation is state[0]=init, "
+        "state[k+1]=next[k], result=state[T], including T=0. The temporal "
+        "next-to-state edge and loop-exit result edge are not ordinary DAG "
+        "routes and never carry an expression or frontend spelling."
     )
 
 
@@ -245,6 +250,7 @@ class RealizationWitness:
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
     refinements: list[dict[str, JsonValue]] = field(default_factory=list)
     iterations: list[dict[str, JsonValue]] = field(default_factory=list)
+    loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
 
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
@@ -385,6 +391,58 @@ class RealizationWitness:
                 }
             )
 
+        checked_loop_carriers: list[dict[str, JsonValue]] = []
+        carrier_states: set[str] = set()
+        carrier_results: set[str] = set()
+        for index, raw in enumerate(self.loop_carriers):
+            path = f"pi.loop_carriers[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {
+                        "region",
+                        "loop_instance",
+                        "init",
+                        "state",
+                        "next",
+                        "result",
+                    }
+                ),
+            )
+            region = _name(item["region"], f"{path}.region")
+            if region not in known_regions:
+                raise RealizationWitnessError(
+                    "pi loop carrier relation names an unknown region"
+                )
+            refs = {
+                key: _declared_instance_ref(
+                    item[key],
+                    path=f"{path}.{key}",
+                    known_instances=known_instances,
+                )
+                for key in ("loop_instance", "init", "state", "next", "result")
+            }
+            if refs["init"] in {refs["state"], refs["next"], refs["result"]}:
+                raise RealizationWitnessError(
+                    "pi loop carrier init must be a distinct instance"
+                )
+            if refs["result"] in {refs["state"], refs["next"]}:
+                raise RealizationWitnessError(
+                    "pi loop carrier result must be a distinct instance"
+                )
+            if refs["state"] in carrier_states:
+                raise RealizationWitnessError(
+                    "pi loop carrier state slots must be unique"
+                )
+            if refs["result"] in carrier_results:
+                raise RealizationWitnessError(
+                    "pi loop carrier result slots must be unique"
+                )
+            carrier_states.add(refs["state"])
+            carrier_results.add(refs["result"])
+            checked_loop_carriers.append({"region": region, **refs})
+
         checked_routes: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.routes):
             item = _record(
@@ -514,6 +572,7 @@ class RealizationWitness:
         self.sharing = checked_sharing
         self.refinements = checked_refinements
         self.iterations = checked_iterations
+        self.loop_carriers = checked_loop_carriers
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
@@ -539,6 +598,7 @@ class RealizationWitness:
                     "sharing",
                     "refinements",
                     "iterations",
+                    "loop_carriers",
                 }
             ),
         )
@@ -550,6 +610,7 @@ class RealizationWitness:
             "sharing",
             "refinements",
             "iterations",
+            "loop_carriers",
         ):
             if key in data and not isinstance(data[key], list):
                 raise RealizationWitnessError(f"pi.{key} must be an array")
@@ -561,9 +622,15 @@ class RealizationWitness:
             sharing=copy.deepcopy(data["sharing"]),
             refinements=copy.deepcopy(data["refinements"]),
             iterations=copy.deepcopy(data.get("iterations", [])),
+            loop_carriers=copy.deepcopy(data.get("loop_carriers", [])),
         )
 
-    def to_json(self, *, include_iterations: bool = True) -> dict[str, Any]:
+    def to_json(
+        self,
+        *,
+        include_iterations: bool = True,
+        include_loop_carriers: bool = True,
+    ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
             "instances": copy.deepcopy(self.instances),
@@ -574,6 +641,8 @@ class RealizationWitness:
         }
         if include_iterations:
             result["iterations"] = copy.deepcopy(self.iterations)
+        if include_loop_carriers:
+            result["loop_carriers"] = copy.deepcopy(self.loop_carriers)
         return result
 
 

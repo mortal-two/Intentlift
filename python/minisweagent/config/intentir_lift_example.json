@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v3",
+  "schema": "intentir.scrc.artifact.v4",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {
@@ -34,7 +34,8 @@
       "index_bounds": [],
       "updates": [],
       "result_relations": [],
-      "realization_authorizations": []
+      "realization_authorizations": [],
+      "consumer_extensions": []
     },
     "signature": {
       "parameters": [
@@ -103,6 +104,7 @@
     "order": [],
     "sharing": [],
     "refinements": [],
-    "iterations": []
+    "iterations": [],
+    "loop_carriers": []
   }
 }

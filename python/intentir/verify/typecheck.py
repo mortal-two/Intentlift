@@ -29,7 +29,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v7"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v8"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -72,6 +72,9 @@ class TypeCheckErrorCode(str, Enum):
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
     ITERATION_WITNESS_MISSING = "iteration_witness_missing"
+    CONSUMER_EXTENSION_INVALID = "consumer_extension_invalid"
+    CONSUMER_EXTENSION_MISSING = "consumer_extension_missing"
+    LOOP_CARRIER_INVALID = "loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
     ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN = (
@@ -133,6 +136,7 @@ class _Anchor:
     kind: str
     value_type: _ValueType | None = None
     operand_types: tuple[_ValueType | None, ...] = ()
+    carrier_class: str | None = None
 
 
 def _operation_results(value: Any) -> tuple[str, ...]:
@@ -964,10 +968,18 @@ def _build_anchors(
     }
     for tensor in [*j.intent.inputs, *j.intent.outputs]:
         value_type = _ValueType(tensor.dtype, len(tensor.shape))
-        add(tensor.name, _Anchor("j", "tensor", value_type), "j.signature")
+        add(
+            tensor.name,
+            _Anchor("j", "tensor", value_type, carrier_class="value"),
+            "j.signature",
+        )
         for dim in tensor.shape:
             if isinstance(dim, str):
-                add(dim, _Anchor("j", "dimension", _ValueType("index", 0)), "j.signature")
+                add(
+                    dim,
+                    _Anchor("j", "dimension", _ValueType("index", 0)),
+                    "j.signature",
+                )
 
     for parameter in j.signature.parameters:
         add(
@@ -978,6 +990,13 @@ def _build_anchors(
                 (
                     _ValueType(parameter.dtype, parameter.rank or 0)
                     if parameter.dtype is not None
+                    else None
+                ),
+                carrier_class=(
+                    "pointer"
+                    if parameter.kind is ParameterKind.POINTER
+                    else "value"
+                    if parameter.kind is not ParameterKind.OPAQUE
                     else None
                 ),
             ),
@@ -1007,13 +1026,62 @@ def _build_anchors(
             ),
             None,
         )
-        anchor = _Anchor("j", "node", result_type, operand_types)
+        anchor = _Anchor(
+            "j", "node", result_type, operand_types, carrier_class="value"
+        )
         add(node_id, anchor, f"j.node_ids.{node_id}")
         add(path, anchor, f"j.node_ids.{node_id}")
         node_operations[path] = operation
     for value, value_type in value_types.items():
         if value not in anchors:
-            add(value, _Anchor("j", "value", value_type), "j.intent")
+            add(
+                value,
+                _Anchor("j", "value", value_type, carrier_class="value"),
+                "j.intent",
+            )
+
+    for node_ref, operation in node_operations.items():
+        if not re.fullmatch(r"n[0-9]+", node_ref) or operation.get("op") != "loop":
+            continue
+        carries = operation.get("carry")
+        if not isinstance(carries, list):
+            continue
+        for ordinal, carry in enumerate(carries):
+            if not isinstance(carry, Mapping):
+                continue
+            state_ref = carry.get("state_id")
+            type_value = carry.get("type")
+            if not isinstance(state_ref, str) or not isinstance(type_value, Mapping):
+                continue
+            dtype = type_value.get("dtype")
+            shape = type_value.get("shape")
+            if not isinstance(dtype, str) or not isinstance(shape, list):
+                continue
+            add(
+                state_ref,
+                _Anchor(
+                    "j",
+                    "loop_state",
+                    _ValueType(dtype, len(shape)),
+                    carrier_class="value",
+                ),
+                f"j.node_ids.{node_ref}.carry[{ordinal}]",
+            )
+            carry_type = _ValueType(dtype, len(shape))
+            for role_name in ("body_argument", "next_value", "result_value"):
+                role_ref = carry.get(role_name)
+                if not isinstance(role_ref, str) or role_ref in anchors:
+                    continue
+                add(
+                    role_ref,
+                    _Anchor(
+                        "j",
+                        "value",
+                        carry_type,
+                        carrier_class="value",
+                    ),
+                    f"j.node_ids.{node_ref}.carry[{ordinal}].{role_name}",
+                )
 
     for item in j.boundary.domains:
         add(item, _Anchor("j", "domain"), f"j.boundary.domains.{item}")
@@ -1026,7 +1094,9 @@ def _build_anchors(
         arity = (value_type,) if item.kind.value in {"store", "update"} else ()
         add(
             item.access_id,
-            _Anchor("j", "access", value_type, arity),
+            _Anchor(
+                "j", "access", value_type, arity, carrier_class="value"
+            ),
             f"j.boundary.accesses.{item.access_id}",
         )
     for item in j.boundary.effects:
@@ -1229,6 +1299,764 @@ def _check_iteration_witness(
         )
 
 
+_CONSUMER_EXTENSION_OPS = frozenset(
+    {"map_unary", "map_binary", "select", "cast", "transpose", "pad"}
+)
+_CONSUMER_EXTENSION_FNS = frozenset({"sum", "max", "min"})
+
+
+def _same_closed_scalar(left: Any, right: Any) -> bool:
+    aliases = {
+        "ZERO": "zero",
+        "NEG_INF": "neg_inf",
+        "-inf": "neg_inf",
+        "POS_INF": "pos_inf",
+        "+inf": "pos_inf",
+        "inf": "pos_inf",
+    }
+    if isinstance(left, str) or isinstance(right, str):
+        return aliases.get(str(left), str(left)) == aliases.get(str(right), str(right))
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    return (
+        isinstance(left, (int, float))
+        and isinstance(right, (int, float))
+        and float(left) == float(right)
+    )
+
+
+def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
+    if fn == "sum":
+        return value == "ZERO" or (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 0.0
+        )
+    if not _floating_dtype(dtype):
+        return False
+    if fn == "max":
+        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
+    if fn == "min":
+        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
+    return False
+
+
+def _consumer_dependency_path(
+    j: SemanticArchive,
+    *,
+    operand: str,
+    access_node_ref: str | None,
+    access_tensor: str,
+) -> tuple[bool, tuple[Mapping[str, Any], ...]]:
+    """Find only the J dependency path from one access to one operand.
+
+    A node-bearing access is tied to that exact node.  A node-less ABI load is
+    tied to its tensor leaf.  No tensor-name fallback is used for a node-bearing
+    access, so a same-tensor sibling access cannot silently satisfy it.
+    """
+
+    intent = j.intent.to_json()["intent_function"]
+    path_to_ref = {path: ref for ref, path in j.node_ids.items()}
+    producers: dict[str, tuple[str | None, Mapping[str, Any]]] = {}
+    for path, operation in _walk_operations(intent.get("body", [])):
+        for result in _operation_results(operation.get("result")):
+            producers[result] = (path_to_ref.get(path), operation)
+
+    memo: dict[str, tuple[bool, tuple[Mapping[str, Any], ...]]] = {}
+    active: set[str] = set()
+
+    def visit(value: str) -> tuple[bool, tuple[Mapping[str, Any], ...]]:
+        if access_node_ref is None and value == access_tensor:
+            return True, ()
+        if value in memo:
+            return memo[value]
+        if value in active:
+            return False, ()
+        active.add(value)
+        producer = producers.get(value)
+        if producer is None:
+            result = (False, ())
+        else:
+            node_ref, operation = producer
+            if access_node_ref is not None and node_ref == access_node_ref:
+                result = (True, (operation,))
+            else:
+                selected: list[Mapping[str, Any]] = []
+                found = False
+                for dependency in _operation_dependencies(operation):
+                    child_found, child_path = visit(dependency)
+                    if child_found:
+                        found = True
+                        selected.extend(child_path)
+                if found:
+                    selected.append(operation)
+                result = (found, tuple(selected))
+        active.remove(value)
+        memo[value] = result
+        return result
+
+    return visit(operand)
+
+
+def _consumer_extension_candidates(
+    j: SemanticArchive,
+    *,
+    operand: str,
+) -> tuple[
+    dict[str, tuple[Any, tuple[Mapping[str, Any], ...]]],
+    tuple[str, ...],
+]:
+    """Resolve access provenance, preferring exact access.node_ref evidence."""
+
+    by_tensor: dict[
+        str,
+        list[tuple[Any, tuple[Mapping[str, Any], ...]]],
+    ] = {}
+    for access in j.boundary.accesses:
+        if access.kind.value != "load" or access.predicate is None:
+            continue
+        found, path = _consumer_dependency_path(
+            j,
+            operand=operand,
+            access_node_ref=access.node_ref,
+            access_tensor=access.tensor,
+        )
+        if found:
+            by_tensor.setdefault(access.tensor, []).append((access, path))
+
+    selected: dict[str, tuple[Any, tuple[Mapping[str, Any], ...]]] = {}
+    ambiguous: list[str] = []
+    for tensor, candidates in by_tensor.items():
+        node_bound = [item for item in candidates if item[0].node_ref is not None]
+        if node_bound:
+            for access, path in node_bound:
+                selected[access.access_id] = (access, path)
+            continue
+        if len(candidates) != 1:
+            ambiguous.append(tensor)
+            continue
+        access, path = candidates[0]
+        selected[access.access_id] = (access, path)
+    return selected, tuple(sorted(ambiguous))
+
+
+def _validate_consumer_path(
+    path_operations: tuple[Mapping[str, Any], ...],
+    *,
+    outside_value: Any,
+    outside_dtype: str,
+) -> str | None:
+    for operation in path_operations:
+        op_name = operation.get("op")
+        if op_name not in _CONSUMER_EXTENSION_OPS:
+            return (
+                "consumer-domain provenance crosses unsupported J op "
+                f"{op_name!r}"
+            )
+        if op_name != "pad":
+            continue
+        attrs = operation.get("attrs")
+        operands = operation.get("operands")
+        result_type = _explicit_type(operation)
+        if (
+            not isinstance(attrs, Mapping)
+            or set(attrs) != {"lo", "hi", "value"}
+            or not isinstance(operands, list)
+            or len(operands) != 1
+            or result_type is None
+        ):
+            return "pad provenance requires closed lo/hi/value and one typed operand"
+        lo = attrs.get("lo")
+        hi = attrs.get("hi")
+        if (
+            not isinstance(lo, list)
+            or not isinstance(hi, list)
+            or len(lo) != result_type.rank
+            or len(hi) != result_type.rank
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in [*lo, *hi]
+            )
+        ):
+            return "pad provenance requires non-negative lo/hi for every axis"
+        if result_type.dtype != outside_dtype:
+            return "pad result dtype differs from consumer outside dtype"
+        if not _same_closed_scalar(attrs.get("value"), outside_value):
+            return "pad value differs from the declared consumer outside value"
+    return None
+
+
+def _check_consumer_extensions(
+    j: SemanticArchive,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check v4's unique per-consumer outside-domain authority."""
+
+    value_types = j_elaboration(j).value_type_by_name
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    legacy_masked_reductions = {
+        item.node_ref
+        for item in j.boundary.reductions
+        if item.masked_contribution is not None
+    }
+    declared = {
+        (item.consumer_ref, item.operand_index, item.access_ref): item
+        for item in j.boundary.consumer_extensions
+    }
+    required: set[tuple[str, int, str]] = set()
+
+    for consumer_ref, operation in node_operations.items():
+        if not re.fullmatch(r"n[0-9]+", consumer_ref):
+            continue
+        op_name = operation.get("op")
+        attrs = operation.get("attrs")
+        fn = attrs.get("fn") if isinstance(attrs, Mapping) else None
+        operands = operation.get("operands")
+        if (
+            op_name not in {"reduce", "scan"}
+            or fn not in _CONSUMER_EXTENSION_FNS
+            or not isinstance(operands, list)
+        ):
+            continue
+        for operand_index, operand in enumerate(operands):
+            if not isinstance(operand, str):
+                continue
+            candidates, ambiguous = _consumer_extension_candidates(
+                j, operand=operand
+            )
+            for tensor in ambiguous:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                        "j.boundary.consumer_extensions",
+                        "node-less same-tensor predicate accesses are ambiguous; "
+                        "bind access.node_ref before declaring consumer provenance",
+                        tensor,
+                    )
+                )
+            if consumer_ref not in legacy_masked_reductions:
+                required.update(
+                    (consumer_ref, operand_index, access_ref)
+                    for access_ref in candidates
+                )
+
+    for index, extension in enumerate(j.boundary.consumer_extensions):
+        path = f"j.boundary.consumer_extensions[{index}]"
+        operation = node_operations.get(extension.consumer_ref)
+        attrs = operation.get("attrs") if operation is not None else None
+        fn = attrs.get("fn") if isinstance(attrs, Mapping) else None
+        operands = operation.get("operands") if operation is not None else None
+        if (
+            operation is None
+            or operation.get("op") not in {"reduce", "scan"}
+            or fn not in _CONSUMER_EXTENSION_FNS
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.consumer_ref",
+                    "consumer extension requires a sum/max/min reduce or scan",
+                    extension.consumer_ref,
+                )
+            )
+            continue
+        if (
+            not isinstance(operands, list)
+            or extension.operand_index >= len(operands)
+            or not isinstance(operands[extension.operand_index], str)
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.operand_index",
+                    "consumer operand ordinal is outside the closed operand list",
+                    str(extension.operand_index),
+                )
+            )
+            continue
+        operand = str(operands[extension.operand_index])
+        operand_type = value_types.get(operand)
+        if (
+            operand_type is None
+            or extension.outside.dtype.casefold() != operand_type.dtype.casefold()
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.outside.dtype",
+                    "outside dtype must equal the selected consumer operand dtype",
+                    extension.outside.dtype,
+                )
+            )
+        if not _is_consumer_identity(
+            str(fn), extension.outside.dtype, extension.outside.value
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.outside.value",
+                    "outside value is not the declared consumer's two-sided identity",
+                    extension.consumer_ref,
+                )
+            )
+        access = accesses.get(extension.access_ref)
+        if access is None or access.kind.value != "load" or access.predicate is None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.access_ref",
+                    "consumer extension requires one predicate-bearing load access",
+                    extension.access_ref,
+                )
+            )
+            continue
+        candidates, ambiguous = _consumer_extension_candidates(j, operand=operand)
+        selected = candidates.get(extension.access_ref)
+        if selected is None or access.tensor in ambiguous:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.access_ref",
+                    "access provenance does not unambiguously reach this "
+                    "consumer operand",
+                    extension.access_ref,
+                )
+            )
+            continue
+        path_issue = _validate_consumer_path(
+            selected[1],
+            outside_value=extension.outside.value,
+            outside_dtype=extension.outside.dtype,
+        )
+        if path_issue is not None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    f"{path}.access_ref",
+                    path_issue,
+                    extension.access_ref,
+                )
+            )
+        if extension.consumer_ref in legacy_masked_reductions:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
+                    path,
+                    "masked_contribution and consumer extension are duplicate "
+                    "authorities",
+                    extension.consumer_ref,
+                )
+            )
+
+    for consumer_ref, operand_index, access_ref in sorted(required - set(declared)):
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.CONSUMER_EXTENSION_MISSING,
+                "j.boundary.consumer_extensions",
+                "predicate-bearing reduce/scan operand requires an explicit "
+                "outside-domain identity relation",
+                f"{consumer_ref}:{operand_index}:{access_ref}",
+            )
+        )
+
+
+def _check_loop_carriers(
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    anchors: Mapping[str, _Anchor],
+    instance_anchors: Mapping[str, _Anchor],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check explicit physical loop-carrier slots without temporal DAG edges."""
+
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+    route_edges = {
+        (str(item["source"]), str(item["target"])) for item in pi.routes
+    }
+    iteration_by_region = {
+        str(item["region"]): str(item["loop_instance"])
+        for item in pi.iterations
+    }
+    observable_mechanisms = {
+        "transfer_direct",
+        "transfer_async",
+        "update_atomic",
+        "update_privatized",
+        "synchronize",
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for source, target in route_edges:
+        outgoing.setdefault(source, set()).add(target)
+
+    def ancestor_regions(region_ref: str) -> tuple[str, ...]:
+        result: list[str] = []
+        parent = regions.get(region_ref, {}).get("parent")
+        while parent is not None:
+            parent_ref = str(parent)
+            result.append(parent_ref)
+            parent = regions.get(parent_ref, {}).get("parent")
+        return tuple(result)
+
+    def reaches_observable_consumer(state_instance: str) -> bool:
+        pending = list(outgoing.get(state_instance, ()))
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            instance = instances.get(current)
+            if (
+                instance is not None
+                and instance.get("mechanism") in observable_mechanisms
+            ):
+                return True
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    carry_owner: dict[str, tuple[str, int, Mapping[str, Any]]] = {}
+    for loop_ref, operation in node_operations.items():
+        if not re.fullmatch(r"n[0-9]+", loop_ref) or operation.get("op") != "loop":
+            continue
+        raw_carries = operation.get("carry")
+        if not isinstance(raw_carries, list):
+            continue
+        carries = [item for item in raw_carries if isinstance(item, Mapping)]
+        for ordinal, carry in enumerate(carries):
+            for key in ("state_id", "body_argument", "next_value", "result_value"):
+                ref = carry.get(key)
+                if isinstance(ref, str):
+                    carry_owner[ref] = (loop_ref, ordinal, carry)
+
+    state_slots: set[str] = set()
+    result_slots: set[str] = set()
+    claimed_j_carries: set[tuple[str, int]] = set()
+    last_j_carry_ordinal: dict[tuple[str, str], int] = {}
+    allowed_kinds = {
+        "signature", "tensor", "loop_state", "value", "node", "access",
+    }
+
+    for ordinal, relation in enumerate(pi.loop_carriers):
+        base = f"pi.loop_carriers[{ordinal}]"
+        region_ref = str(relation["region"])
+        region = regions.get(region_ref)
+        ancestors = ancestor_regions(region_ref)
+        if region is None or region.get("placement") != "loop":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.region",
+                    "loop carrier requires one placement=loop region",
+                    region_ref,
+                )
+            )
+
+        loop_instance_ref = str(relation["loop_instance"])
+        loop_instance = instances.get(loop_instance_ref)
+        loop_semantic_ref = (
+            str(loop_instance["semantic_ref"])
+            if loop_instance is not None
+            else ""
+        )
+        loop_operation = node_operations.get(loop_semantic_ref)
+        loop_region = str(loop_instance.get("region", "")) if loop_instance else ""
+        if (
+            loop_operation is None
+            or loop_operation.get("op") != "loop"
+            or loop_region not in {region_ref, *ancestors}
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.loop_instance",
+                    "loop_instance must visibly anchor one structured J loop",
+                    loop_instance_ref,
+                )
+            )
+        expected_iteration_loop = iteration_by_region.get(region_ref)
+        if (
+            expected_iteration_loop is not None
+            and expected_iteration_loop != loop_instance_ref
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.loop_instance",
+                    "loop carrier and iteration relation disagree for this region",
+                    loop_instance_ref,
+                )
+            )
+
+        role_ids = {
+            role: str(relation[role])
+            for role in ("init", "state", "next", "result")
+        }
+        state_id = role_ids["state"]
+        result_id = role_ids["result"]
+        if state_id in state_slots:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.state",
+                    "loop carrier state slots must be unique",
+                    state_id,
+                )
+            )
+        if result_id in result_slots:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.result",
+                    "loop carrier result slots must be unique",
+                    result_id,
+                )
+            )
+        state_slots.add(state_id)
+        result_slots.add(result_id)
+
+        role_instances = {role: instances.get(ref) for role, ref in role_ids.items()}
+        init_region = (
+            str(role_instances["init"].get("region"))
+            if role_instances["init"] is not None else ""
+        )
+        state_region = (
+            str(role_instances["state"].get("region"))
+            if role_instances["state"] is not None else ""
+        )
+        next_region = (
+            str(role_instances["next"].get("region"))
+            if role_instances["next"] is not None else ""
+        )
+        result_region = (
+            str(role_instances["result"].get("region"))
+            if role_instances["result"] is not None else ""
+        )
+        direct_parent = (
+            str(region.get("parent"))
+            if region and region.get("parent") is not None
+            else ""
+        )
+        if init_region not in ancestors:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.init",
+                    "init must be visible from a strict ancestor region",
+                    role_ids["init"],
+                )
+            )
+        if state_region != region_ref or next_region != region_ref:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.state",
+                    "state and next must be instances in the exact loop region",
+                    f"{role_ids['state']}:{role_ids['next']}",
+                )
+            )
+        if not direct_parent or result_region != direct_parent:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.result",
+                    "result must be an instance in the loop region's direct parent",
+                    role_ids["result"],
+                )
+            )
+
+        role_anchors = {
+            role: instance_anchors.get(ref) for role, ref in role_ids.items()
+        }
+        typed_keys: list[tuple[str, int, str]] = []
+        for role, anchor in role_anchors.items():
+            if (
+                anchor is None
+                or anchor.owner != "j"
+                or anchor.kind not in allowed_kinds
+                or anchor.value_type is None
+                or anchor.carrier_class not in {"pointer", "value"}
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        f"{base}.{role}",
+                        "carrier role must anchor a typed J carrier, not C/domain/"
+                        "scope/storage/effect/authorization/absent opaque",
+                        role_ids[role],
+                    )
+                )
+                continue
+            instance = role_instances[role]
+            semantic_ref = (
+                str(instance.get("semantic_ref")) if instance is not None else ""
+            )
+            if anchor.kind == "node":
+                operation = node_operations.get(semantic_ref)
+                if operation is None or len(
+                    _operation_results(operation.get("result"))
+                ) != 1:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                            f"{base}.{role}",
+                            "node carrier roles require one unambiguous typed result",
+                            role_ids[role],
+                        )
+                    )
+                    continue
+            typed_keys.append(
+                (
+                    anchor.value_type.dtype.casefold(),
+                    anchor.value_type.rank,
+                    anchor.carrier_class,
+                )
+            )
+        if typed_keys and len(set(typed_keys)) != 1:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    base,
+                    "init/state/next/result dtype, rank, and carrier class must match",
+                    state_id,
+                )
+            )
+
+        if (role_ids["init"], state_id) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.init",
+                    "ordinary pi routes must contain init -> state",
+                    role_ids["init"],
+                )
+            )
+        if state_id != role_ids["next"] and (
+            state_id, role_ids["next"]
+        ) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.next",
+                    "ordinary pi routes must contain state -> next; identity "
+                    "state==next is the only route-free update",
+                    role_ids["next"],
+                )
+            )
+        if not reaches_observable_consumer(state_id):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.state",
+                    "loop state must reach an observable realization consumer",
+                    state_id,
+                )
+            )
+
+        state_instance = role_instances["state"]
+        state_semantic_ref = (
+            str(state_instance.get("semantic_ref"))
+            if state_instance is not None else ""
+        )
+        carry_match = carry_owner.get(state_semantic_ref)
+        touched_carries = {
+            carry_owner[str(instance.get("semantic_ref"))][:2]
+            for instance in role_instances.values()
+            if instance is not None
+            and str(instance.get("semantic_ref")) in carry_owner
+        }
+        if carry_match is None and touched_carries:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    base,
+                    "a relation touching J carry members must use that carry's "
+                    "state slot as its state role",
+                    state_id,
+                )
+            )
+        if carry_match is not None:
+            carry_loop_ref, carry_ordinal, carry = carry_match
+            claim = (carry_loop_ref, carry_ordinal)
+            if state_semantic_ref not in {
+                str(carry.get("state_id", "")),
+                str(carry.get("body_argument", "")),
+            }:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        f"{base}.state",
+                        "state role may reuse only the J carry state slot or "
+                        "current-iteration body argument",
+                        state_semantic_ref,
+                    )
+                )
+            if carry_loop_ref != loop_semantic_ref:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        f"{base}.state",
+                        "J carry state belongs to a different structured loop",
+                        state_semantic_ref,
+                    )
+                )
+            if claim in claimed_j_carries:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        f"{base}.state",
+                        "one J carry ordinal cannot be duplicated as a second "
+                        "accumulator",
+                        state_semantic_ref,
+                    )
+                )
+            claimed_j_carries.add(claim)
+            ordinal_key = (region_ref, carry_loop_ref)
+            previous_ordinal = last_j_carry_ordinal.get(ordinal_key)
+            if previous_ordinal is not None and carry_ordinal <= previous_ordinal:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        base,
+                        "declaration-ordered physical carrier ordinals must "
+                        "preserve J carry ordinal order",
+                        state_semantic_ref,
+                    )
+                )
+            last_j_carry_ordinal[ordinal_key] = carry_ordinal
+            role_semantics = {
+                role: (
+                    str(instance.get("semantic_ref"))
+                    if instance is not None else ""
+                )
+                for role, instance in role_instances.items()
+            }
+            init_value = carry.get("init_value")
+            expected_init = (
+                str(init_value)
+                if isinstance(init_value, str) and init_value in anchors
+                else str(carry.get("state_id", ""))
+            )
+            expected = {
+                "init": expected_init,
+                "next": str(carry.get("next_value", "")),
+                "result": str(carry.get("result_value", "")),
+            }
+            for role, expected_ref in expected.items():
+                if role_semantics[role] == expected_ref:
+                    continue
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                        f"{base}.{role}",
+                        "physical slot must reuse the corresponding J carry "
+                        "init/next/result instead of encoding a second accumulator",
+                        role_ids[role],
+                    )
+                )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -1352,6 +2180,7 @@ def type_check(
             )
 
     anchors, node_operations = _build_anchors(j, c, diagnostics)
+    _check_consumer_extensions(j, node_operations, diagnostics)
     absent_signature_refs = {
         parameter.name
         for parameter in j.signature.parameters
@@ -1418,6 +2247,13 @@ def type_check(
         instance_anchors[str(item["id"])] = anchor
 
     _check_iteration_witness(j, c, pi, node_operations, diagnostics)
+    _check_loop_carriers(
+        pi,
+        node_operations,
+        anchors,
+        instance_anchors,
+        diagnostics,
+    )
 
     route_edges = {
         (str(item["source"]), str(item["target"])) for item in pi.routes

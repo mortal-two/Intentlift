@@ -5,6 +5,7 @@ from intentir.verify.gate1.model import (
     AccessKind,
     Boundary,
     BoundaryAccess,
+    ConsumerExtension,
     Gate1Artifact,
     ImplementationConfig,
     LogicalSignature,
@@ -17,6 +18,7 @@ from intentir.verify.gate1.model import (
     ScheduleSlotKind,
     SemanticArchive,
     SignatureParameter,
+    TypedOutsideValue,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 
@@ -81,9 +83,23 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
             accesses=accesses,
             reductions=[
                 ReductionBoundary(
-                    "n1", "x1", identity=0, masked_contribution=0
+                    "n1", "x1", identity=0
                 )
             ],
+            consumer_extensions=(
+                [
+                    ConsumerExtension(
+                        "n1",
+                        0,
+                        "a0",
+                        0,
+                        TypedOutsideValue("f32", 0),
+                        "two_sided",
+                    )
+                ]
+                if explicit_accesses
+                else []
+            ),
             result_relations=[
                 ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
             ],

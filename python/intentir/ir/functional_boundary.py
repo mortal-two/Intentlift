@@ -1121,7 +1121,7 @@ def functional_reduction_padding_issues(
 ) -> tuple[FunctionalBoundaryClosureIssue, ...]:
     """Return the versioned TypeCheck's narrow padded-mean omissions.
 
-    ``typecheck.v7`` consumes this J-only necessary condition.  It reports only
+    ``typecheck.v8`` consumes this J-only necessary condition.  It reports only
     cases where modeled direct-access and pointwise/broadcast provenance proves
     that a masked axis is eliminated by ``reduce(mean)`` without a logical
     count contract.  Unsupported graph operators deliberately stop this

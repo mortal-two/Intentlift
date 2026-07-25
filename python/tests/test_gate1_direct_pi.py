@@ -58,11 +58,18 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v3_preserves_v2_and_v1_legacy_contracts() -> None:
+def test_artifact_v4_preserves_v3_v2_and_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v3"
+    assert current["schema"] == "intentir.scrc.artifact.v4"
 
-    legacy_v2 = copy.deepcopy(current)
+    legacy_v3 = copy.deepcopy(current)
+    legacy_v3["schema"] = "intentir.scrc.artifact.v3"
+    del legacy_v3["j"]["boundary"]["consumer_extensions"]
+    del legacy_v3["pi"]["loop_carriers"]
+    parsed_v3 = Gate1Artifact.from_json(legacy_v3)
+    assert parsed_v3.to_json() == legacy_v3
+
+    legacy_v2 = copy.deepcopy(legacy_v3)
     legacy_v2["schema"] = "intentir.scrc.artifact.v2"
     del legacy_v2["pi"]["iterations"]
     parsed_v2 = Gate1Artifact.from_json(legacy_v2)
@@ -123,6 +130,7 @@ def test_artifact_v3_preserves_v2_and_v1_legacy_contracts() -> None:
         "intentir.scrc.artifact.v1",
         "intentir.scrc.artifact.v2",
         "intentir.scrc.artifact.v3",
+        "intentir.scrc.artifact.v4",
     ],
 )
 def test_every_artifact_wire_version_requires_explicit_pi_refinements(
@@ -131,6 +139,12 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
     if wire_schema != Gate1Artifact.SCHEMA:
+        del payload["j"]["boundary"]["consumer_extensions"]
+        del payload["pi"]["loop_carriers"]
+    if wire_schema in {
+        "intentir.scrc.artifact.v1",
+        "intentir.scrc.artifact.v2",
+    }:
         del payload["pi"]["iterations"]
     del payload["pi"]["refinements"]
 
@@ -898,7 +912,11 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
         "sharing",
         "refinements",
         "iterations",
+        "loop_carriers",
     }
+    assert "consumer_extensions" in (
+        properties["j"]["properties"]["boundary"]["required"]
+    )
     function_properties = (
         properties["j"]["properties"]["intent"]["properties"]
         ["intent_function"]["properties"]

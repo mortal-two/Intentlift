@@ -232,15 +232,53 @@ def _boundary_schema() -> dict[str, Any]:
             "node_ref": _STRING,
             "tile_axis": _INT_OR_STRING,
             "identity": {},
-            "masked_contribution": {},
         },
-        ("node_ref", "tile_axis"),
+        ("node_ref", "tile_axis", "identity"),
         description=(
-            "masked_contribution states the effective padded contribution to "
-            "the reducer, but it does not state a logical valid count. A "
-            "predicate-masked axis eliminated by reduce(mean) is therefore "
-            "not closed; preserve an explicit Source sum and division instead. "
-            "Dense mean and masks on unrelated non-reduced axes remain legal."
+            "Reduction algebra metadata. artifact.v4 forbids the historical "
+            "masked_contribution field: consumer_extensions is the unique "
+            "authority for physical outside-domain contributions."
+        ),
+    )
+    typed_outside = _closed_object(
+        {
+            "dtype": _STRING,
+            "value": {
+                "anyOf": [
+                    {"type": "boolean"},
+                    {"type": "integer"},
+                    {"type": "number"},
+                    {"type": "string"},
+                ]
+            },
+        },
+        ("dtype", "value"),
+    )
+    consumer_extension = _closed_object(
+        {
+            "consumer_ref": _NODE_HANDLE,
+            "operand_index": {"type": "integer", "minimum": 0},
+            "access_ref": {"type": "string", "pattern": "^a[0-9]+$"},
+            "tile_axis": {"type": "integer", "minimum": 0},
+            "outside": typed_outside,
+            "identity_law": {
+                "type": "string",
+                "enum": ["two_sided"],
+            },
+        },
+        (
+            "consumer_ref",
+            "operand_index",
+            "access_ref",
+            "tile_axis",
+            "outside",
+            "identity_law",
+        ),
+        description=(
+            "One LLM-authored Layer-B relation from a predicate-bearing load "
+            "access to one reduce/scan operand. The referenced BoundaryAccess "
+            "continues to own the predicate; no predicate is promoted to "
+            "Layer-A SSA. v4 closes only two-sided sum/max/min identities."
         ),
     )
     index_bounds = _closed_object(
@@ -345,6 +383,7 @@ def _boundary_schema() -> dict[str, Any]:
             "updates": _array(update),
             "result_relations": _array(result_relation),
             "realization_authorizations": _array(authorization),
+            "consumer_extensions": _array(consumer_extension),
         },
         BOUNDARY_WIRE_FIELDS,
         description=render_boundary_access_wire_grammar(),
@@ -598,6 +637,23 @@ def _pi_schema() -> dict[str, Any]:
             "frontend API."
         ),
     )
+    loop_carrier = _closed_object(
+        {
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "loop_instance": {"type": "string", "pattern": "^i[0-9]+$"},
+            "init": {"type": "string", "pattern": "^i[0-9]+$"},
+            "state": {"type": "string", "pattern": "^i[0-9]+$"},
+            "next": {"type": "string", "pattern": "^i[0-9]+$"},
+            "result": {"type": "string", "pattern": "^i[0-9]+$"},
+        },
+        ("region", "loop_instance", "init", "state", "next", "result"),
+        description=(
+            "One declaration-ordered physical loop-carrier slot. Its temporal "
+            "denotation is state[0]=init, state[k+1]=next[k], and "
+            "result=state[T], including T=0. Temporal/exit edges are not "
+            "ordinary pi DAG edges."
+        ),
+    )
     return _closed_object(
         {
             "regions": _array(region),
@@ -607,6 +663,7 @@ def _pi_schema() -> dict[str, Any]:
             "sharing": _array(sharing),
             "refinements": _array(refinement),
             "iterations": _array(iteration),
+            "loop_carriers": _array(loop_carrier),
         },
         (
             "regions",
@@ -616,6 +673,7 @@ def _pi_schema() -> dict[str, Any]:
             "sharing",
             "refinements",
             "iterations",
+            "loop_carriers",
         ),
         description=(
             render_realization_witness_wire_grammar()

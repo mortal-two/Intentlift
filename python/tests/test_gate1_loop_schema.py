@@ -182,6 +182,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
     archive["boundary"]["result_relations"] = [
         {"output": "y", "kind": "tolerance"}
     ]
+    archive["boundary"]["consumer_extensions"] = []
     return Gate1Artifact.from_json(
         {
             "schema": Gate1Artifact.SCHEMA,
@@ -232,6 +233,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                         "induction_basis": basis,
                     }
                 ],
+                "loop_carriers": [],
             },
         }
     )
@@ -628,9 +630,10 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                 ],
                 "order": [{"before": "i0", "after": "i1"}],
                 "sharing": [],
-                "refinements": [],
-                "iterations": [],
-            },
+                    "refinements": [],
+                    "iterations": [],
+                    "loop_carriers": [],
+                },
         }
     )
 

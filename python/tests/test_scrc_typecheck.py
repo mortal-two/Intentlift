@@ -9,6 +9,7 @@ from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
     BroadcastSpec,
+    ConsumerExtension,
     EffectKind,
     EffectSpec,
     ParameterKind,
@@ -20,6 +21,7 @@ from intentir.verify.gate1.model import (
     ScheduleSlot,
     SchemaError,
     SignatureParameter,
+    TypedOutsideValue,
 )
 from intentir.verify.gate1.pi import RealizationWitness
 from intentir.verify.gate1.prompt import build_normal_rewriter_view
@@ -41,7 +43,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v7"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v8"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -261,6 +263,16 @@ def _functional_padded_reduction_artifact():
         EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
     ]
     artifact.j.boundary.reductions[0].tile_axis = 0
+    artifact.j.boundary.consumer_extensions = [
+        ConsumerExtension(
+            "n1",
+            0,
+            "a0",
+            0,
+            TypedOutsideValue("f32", 0),
+            "two_sided",
+        )
+    ]
     return artifact
 
 
@@ -306,6 +318,7 @@ def test_typecheck_v7_does_not_ban_guard_bearing_access(guard) -> None:
 def test_typecheck_v7_rejects_padded_mean_without_logical_count() -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     matching = [
@@ -331,6 +344,7 @@ def test_typecheck_v7_does_not_reclassify_guarded_mean_as_padding(
 ) -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
     artifact.j.intent.inputs.append(Tensor("flag", "i1", []))
     artifact.j.signature.parameters.append(
         SignatureParameter(
@@ -354,6 +368,7 @@ def test_typecheck_v7_does_not_reclassify_guarded_mean_as_padding(
 def test_typecheck_v7_does_not_reclassify_cross_axis_mean_as_padding() -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
     artifact.j.boundary.accesses[0].predicate = "i1 < i0"
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
@@ -366,6 +381,7 @@ def test_typecheck_v7_does_not_reclassify_cross_axis_mean_as_padding() -> None:
 def test_typecheck_v7_accepts_dense_mean() -> None:
     artifact = make_reduce_artifact(explicit_accesses=False)
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
@@ -375,6 +391,7 @@ def test_typecheck_v7_accepts_dense_mean() -> None:
 def test_typecheck_v7_does_not_blanket_ban_mean_with_unrelated_mask() -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
     artifact.j.boundary.accesses[0].predicate = "i0 < x0"
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
@@ -393,6 +410,7 @@ def test_typecheck_v7_does_not_guess_padding_through_contraction() -> None:
     contraction.attrs = {"subscripts": "mk,nk->mn"}
     contraction.type = {"dtype": "f32", "shape": ["x0", "x0"]}
     artifact.j.intent.body[1].attrs["fn"] = "mean"
+    artifact.j.boundary.consumer_extensions = []
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
@@ -1060,6 +1078,7 @@ def test_floating_transcendental_and_reduction_require_tolerance() -> None:
         tensor.dtype = "i32"
     integer.j.signature.parameters[0].dtype = "i32"
     integer.j.signature.parameters[1].dtype = "i32"
+    integer.j.boundary.consumer_extensions[0].outside.dtype = "i32"
     integer.j.boundary.result_relations = [
         ResultRelationSpec("t1", ResultRelationKind.EXACT)
     ]
