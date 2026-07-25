@@ -39,6 +39,7 @@ _ALLOWED_OVERRIDE_KEYS = {
         "timeout",
         "replay_check_limit",
         "replay_submission_check_limit",
+        "replay_compile_check_limit",
     },
 }
 _OVERRIDE_BOUNDS = {
@@ -47,6 +48,7 @@ _OVERRIDE_BOUNDS = {
     ("environment", "timeout"): (1, 300),
     ("environment", "replay_check_limit"): (0, 32),
     ("environment", "replay_submission_check_limit"): (0, 4),
+    ("environment", "replay_compile_check_limit"): (0, 16),
 }
 
 
@@ -209,6 +211,9 @@ def intentir_replay_episode_contract_sha256(
             "replay_submission_check_limit": environment.get(
                 "replay_submission_check_limit"
             ),
+            "replay_compile_check_limit": environment.get(
+                "replay_compile_check_limit"
+            ),
             "transport_attempts_per_turn": model.get("retry_attempts"),
         },
     }
@@ -244,17 +249,23 @@ def run_intentir_replay(
     config_overrides: Mapping[str, Any] | None = None,
     environment: Environment | None = None,
     replay_checker: Callable[[str], Mapping[str, Any]] | None = None,
+    replay_compile_checker: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> IntentIRReplayRunResult:
     """Run one new DefaultAgent; no messages or workspace survive this call."""
 
     config = validated_intentir_replay_config(config_overrides)
-    if environment is not None and replay_checker is not None:
-        raise ValueError("replay_checker must be installed by the supplied environment")
+    if environment is not None and (
+        replay_checker is not None or replay_compile_checker is not None
+    ):
+        raise ValueError(
+            "Replay checkers must be installed by the supplied environment"
+        )
     environment = environment or IntentIRReplayEnvironment(
         input_dir=workspace.input_dir,
         output_dir=workspace.output_dir,
         scratch_dir=workspace.scratch_dir,
         replay_checker=replay_checker,
+        replay_compile_checker=replay_compile_checker,
         **config.get("environment", {}),
     )
     agent = DefaultAgent(model, environment, **config["agent"])

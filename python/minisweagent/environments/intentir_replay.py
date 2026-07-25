@@ -21,8 +21,9 @@ from minisweagent.exceptions import Submitted
 
 INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
+INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v1"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v2"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
 )
@@ -699,6 +700,7 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     timeout: int = 60
     replay_check_limit: int = 7
     replay_submission_check_limit: int = 1
+    replay_compile_check_limit: int = 4
 
 
 class IntentIRReplayEnvironment:
@@ -709,6 +711,7 @@ class IntentIRReplayEnvironment:
         *,
         config_class: type[IntentIRReplayEnvironmentConfig] = IntentIRReplayEnvironmentConfig,
         replay_checker: Callable[[str], Mapping[str, Any]] | None = None,
+        replay_compile_checker: Callable[[str], Mapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         self.config = config_class(**kwargs)
@@ -716,7 +719,10 @@ class IntentIRReplayEnvironment:
             raise ValueError("replay_check_limit must be non-negative")
         if self.config.replay_submission_check_limit < 0:
             raise ValueError("replay_submission_check_limit must be non-negative")
+        if self.config.replay_compile_check_limit < 0:
+            raise ValueError("replay_compile_check_limit must be non-negative")
         self._replay_checker = replay_checker
+        self._replay_compile_checker = replay_compile_checker
         self._check_calls = 0
         self._check_evaluations = 0
         self._calls_by_trigger = {"explicit": 0, "submission": 0}
@@ -724,6 +730,9 @@ class IntentIRReplayEnvironment:
         self._shared_evaluations = 0
         self._submission_reserved_evaluations = 0
         self._check_audit: list[dict[str, Any]] = []
+        self._compile_check_calls = 0
+        self._compile_check_evaluations = 0
+        self._compile_check_audit: list[dict[str, Any]] = []
         self._passed_bytes: bytes | None = None
         self._validate_paths()
         self._probe()
@@ -1054,6 +1063,63 @@ class IntentIRReplayEnvironment:
             "exception_info": "",
         }
 
+    def _execute_replay_compile_check(
+        self,
+        arguments: list[str],
+    ) -> dict[str, Any]:
+        """Run an advisory public-profile compile probe.
+
+        Unlike ReplayCheck, this result never records passed bytes and is never
+        consulted by submission.  It therefore cannot become an acceptance or
+        membership oracle.
+        """
+
+        self._compile_check_calls += 1
+        evaluated = False
+        if len(arguments) != 2 or arguments[1] not in {
+            "/work/replay.source", "/output/replay.source"
+        }:
+            result = _closed_failure("invalid_replay_compile_path")
+        elif self._replay_compile_checker is None:
+            result = _closed_failure("replay_compile_check_unavailable")
+        elif (
+            self._compile_check_evaluations
+            >= self.config.replay_compile_check_limit
+        ):
+            result = _closed_failure("compile_check_budget_exhausted")
+        else:
+            try:
+                _source_bytes, source_text = self._read_check_target(arguments[1])
+            except Exception:
+                result = _closed_failure("replay_compile_check_read_failed")
+            else:
+                evaluated = True
+                self._compile_check_evaluations += 1
+                try:
+                    result = self._replay_compile_checker(source_text)
+                except Exception:
+                    result = _closed_failure(
+                        "replay_compile_check_internal_failure"
+                    )
+        result = self._validate_check_result(result)
+        diagnostics = result["diagnostics"]
+        self._compile_check_audit.append(
+            {
+                "protocol": result["protocol"],
+                "status": result["status"],
+                "evaluated": evaluated,
+                "rule_paths": [
+                    {"rule_code": item["rule_code"], "path": item["path"]}
+                    for item in diagnostics
+                ],
+            }
+        )
+        return {
+            "output": json.dumps(result, sort_keys=True) + "\n",
+            "returncode": 0 if result["status"] == "pass" else 1,
+            "exception_info": "",
+        }
+
     def _execute_packet_query(self, arguments: list[str]) -> dict[str, Any]:
         try:
             packet = json.loads(
@@ -1133,6 +1199,11 @@ class IntentIRReplayEnvironment:
             return self._execute_packet_query(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
+        if (
+            check_arguments
+            and check_arguments[0] == INTENTIR_REPLAY_COMPILE_CHECK
+        ):
+            return self._execute_replay_compile_check(check_arguments)
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
             "ulimit -t 60 -f 8192 -n 64 -p 128 -v 524288; "
@@ -1290,6 +1361,9 @@ class IntentIRReplayEnvironment:
                         "replay_check_submission_reserve": (
                             self.config.replay_submission_check_limit
                         ),
+                        "replay_compile_check_limit": (
+                            self.config.replay_compile_check_limit
+                        ),
                     },
                     "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
                 },
@@ -1319,6 +1393,14 @@ class IntentIRReplayEnvironment:
                     },
                     "results": list(self._check_audit),
                 },
+                "replay_compile_check": {
+                    "protocol": REPLAY_CHECK_PROTOCOL,
+                    "authority": "advisory_public_synthetic_profile",
+                    "calls": self._compile_check_calls,
+                    "evaluations": self._compile_check_evaluations,
+                    "limit": self.config.replay_compile_check_limit,
+                    "results": list(self._compile_check_audit),
+                },
             }
         }
 
@@ -1326,6 +1408,7 @@ class IntentIRReplayEnvironment:
 __all__ = [
     "INTENTIR_PACKET_QUERY",
     "INTENTIR_REPLAY_CHECK",
+    "INTENTIR_REPLAY_COMPILE_CHECK",
     "INTENTIR_REPLAY_SUBMIT",
     "REPLAY_CHECK_PROTOCOL",
     "REPLAY_INPUT_FILES",

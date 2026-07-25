@@ -9,17 +9,22 @@ import pytest
 from direct_fixtures import make_reduce_artifact
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1 import replay as replay_module
+from intentir.verify.gate1.compiler import CompileResult
 from intentir.verify.gate1.model import Frontend
 from intentir.verify.gate1.prompt import assert_source_isolated_payload
 from intentir.verify.gate1.replay import (
     MINISWE_REPLAY_BACKEND,
     MiniSWEReplayWriter,
+    ReplayIngressResult,
     _replay_input_files,
+    build_source_blind_replay_compile_case,
     replay_source_ingress,
+    source_blind_replay_compile_check,
 )
 from minisweagent.environments.intentir_replay import (
     INTENTIR_PACKET_QUERY,
     INTENTIR_REPLAY_CHECK,
+    INTENTIR_REPLAY_COMPILE_CHECK,
     INTENTIR_REPLAY_SUBMIT,
     REPLAY_CHECK_PROTOCOL,
     REPLAY_INPUT_FILES,
@@ -141,6 +146,7 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         make_reduce_artifact(), frontend=Frontend.TRITON, masked=False
     )
     assert INTENTIR_PACKET_QUERY in files["README.md"]
+    assert INTENTIR_REPLAY_COMPILE_CHECK in files["TOOL.md"]
     workspace = IntentIRReplayWorkspace.create(files)
     environment = IntentIRReplayEnvironment(
         input_dir=workspace.input_dir,
@@ -193,6 +199,54 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert references["returncode"] == 0
     assert handle in references["output"]
     assert rejected_compound["returncode"] == 1
+
+
+def test_synthetic_compile_profile_never_reads_c0_or_harness_values() -> None:
+    artifact = make_reduce_artifact()
+    artifact.c.values["c0"] = 997
+
+    case = build_source_blind_replay_compile_case(artifact)
+
+    assert case.grid == (1, 1, 1)
+    assert case.schedule["c0"] == 16
+    assert 997 not in case.schedule.values()
+    assert all(
+        argument.shape == (1,)
+        for argument in case.arguments.values()
+        if argument.kind == "tensor"
+    )
+
+
+def test_synthetic_compile_check_returns_actionable_own_code_diagnostic() -> None:
+    captured = []
+
+    class RejectingCompiler:
+        def compile(self, source, case):
+            captured.append((source, case))
+            return CompileResult(
+                False,
+                diagnostic=(
+                    "triton.compiler.errors.CompilationError: at 42:4:\n"
+                    "    tl.store(p1, v0)\n"
+                    "Value argument cannot be block type if pointer argument "
+                    "is not a block"
+                ),
+            )
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        make_reduce_artifact(),
+        "scrc_k0",
+        compiler=RejectingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    assert len(captured) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic["rule_code"] == "synthetic_frontend_compile_failed"
+    assert diagnostic["line"] == 42
+    assert "Value argument cannot be block type" in diagnostic["path"]
+    assert diagnostic["anonymous_handles"] == []
 
 
 @pytest.mark.parametrize(
@@ -356,6 +410,57 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert evidence["evaluations"] == 2
 
 
+def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(
+        [
+            _write_source(VALID_REPLAY),
+            f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
+            f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source",
+            f"printf '{INTENTIR_REPLAY_SUBMIT}\n'",
+        ]
+    )
+
+    def passed_ingress(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    def failed_compile_probe(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": [
+                {
+                    "rule_code": "synthetic_frontend_compile_failed",
+                    "path": "<synthetic-frontend-compile> own-code shape error",
+                    "anonymous_handles": [],
+                    "line": 7,
+                }
+            ],
+        }
+
+    try:
+        result = run_intentir_replay(
+            model=model,
+            workspace=workspace,
+            replay_checker=passed_ingress,
+            replay_compile_checker=failed_compile_probe,
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.source_text == VALID_REPLAY
+    info = result.trajectory["info"]
+    assert info["replay_check"]["results"][0]["status"] == "pass"
+    compile_evidence = info["replay_compile_check"]
+    assert compile_evidence["authority"] == "advisory_public_synthetic_profile"
+    assert compile_evidence["evaluations"] == 1
+    assert compile_evidence["results"][0]["status"] == "fail"
+
+
 def test_check_budget_submission_reserve_and_exact_bytes() -> None:
     workspace = _workspace()
     checked: list[str] = []
@@ -451,6 +556,7 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
                     + _write_source(VALID_REPLAY)
                 ),
                 f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
+                f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source",
                 f"printf '{INTENTIR_REPLAY_SUBMIT}\\n'",
             ],
             secret=secret,
@@ -478,7 +584,20 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
         return original_ingress(source, **kwargs)
 
     monkeypatch.setattr(replay_module, "replay_source_ingress", counted_ingress)
-    writer = MiniSWEReplayWriter(provider=provider)
+    compile_checks = []
+
+    def passing_compile_check(code, artifact, function_name):
+        compile_checks.append((code, artifact, function_name))
+        return ReplayIngressResult(
+            "pass",
+            code=code,
+            entry_function_name=function_name,
+        )
+
+    writer = MiniSWEReplayWriter(
+        provider=provider,
+        compile_checker=passing_compile_check,
+    )
 
     normal = writer.generate(make_reduce_artifact(), masked=False)
     masked = writer.generate(make_reduce_artifact(), masked=True)
@@ -487,17 +606,20 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
     assert len(models) == 3
     assert len(set(workspace_roots)) == 3
     assert len(writer.records) == 3
-    assert len(ingress_calls) == 6  # explicit check + formal recheck per episode
+    assert len(ingress_calls) == 9  # ingress + compile preflight + formal ingress
+    assert len(compile_checks) == 3
     assert normal.context_receipt["backend_protocol"] == MINISWE_REPLAY_BACKEND
     assert normal.context_receipt["fresh_session"] is True
     assert normal.context_receipt["formal_ingress_recheck"] is True
-    assert normal.context_receipt["model_calls"] == 3
-    assert normal.context_receipt["physical_provider_calls"] == 3
+    assert normal.context_receipt["source_blind_synthetic_compile_probe"] is True
+    assert normal.context_receipt["model_calls"] == 4
+    assert normal.context_receipt["physical_provider_calls"] == 4
     assert normal.context_receipt["transport_retries"] == 0
-    assert normal.attempts == 3
-    assert normal.physical_provider_calls == 3
+    assert normal.attempts == 4
+    assert normal.physical_provider_calls == 4
     assert normal.transport_retries == 0
     assert normal.context_receipt["replay_check"]["evaluations"] == 1
+    assert normal.context_receipt["replay_compile_check"]["evaluations"] == 1
     assert normal.context_receipt["packet_digest"] == normal.packet_digest
     assert normal.context_receipt["episode_contract_sha256"] == (
         normal.episode_contract_sha256

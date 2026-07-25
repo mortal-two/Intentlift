@@ -424,7 +424,7 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
         raw_response=trajectory_bytes,
         response_text="exact submitted replay\n",
         trajectory=trajectory,
-        backend_protocol="minisweagent.intentir-replay.v1",
+        backend_protocol="minisweagent.intentir-replay.v2",
         episode_contract_sha256="e" * 64,
     )
     gate1 = SimpleNamespace(
@@ -483,7 +483,7 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
         "normalized replay\n"
     )
     receipt = json.loads((recheck_dir / "replay_receipt.json").read_text())
-    assert receipt["backend_protocol"] == "minisweagent.intentir-replay.v1"
+    assert receipt["backend_protocol"] == "minisweagent.intentir-replay.v2"
     assert receipt["episode_contract_sha256"] == "e" * 64
     assert json.loads((recheck_dir / "replay_trajectory.json").read_text()) == (
         trajectory
@@ -523,7 +523,7 @@ def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
         raw_response_sha256=normal_digest,
         raw_response=normal_raw,
         trajectory=normal_trajectory,
-        backend_protocol="minisweagent.intentir-replay.v1",
+        backend_protocol="minisweagent.intentir-replay.v2",
         episode_contract_sha256="a" * 64,
     )
     rejected = ReplayAttempt(
@@ -534,7 +534,7 @@ def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
         raw_response_sha256=masked_digest,
         raw_response=masked_raw,
         trajectory=masked_trajectory,
-        backend_protocol="minisweagent.intentir-replay.v1",
+        backend_protocol="minisweagent.intentir-replay.v2",
         episode_contract_sha256="b" * 64,
     )
     lift = SimpleNamespace(records=())
@@ -599,7 +599,7 @@ def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
             (replay_dir / f"{prefix}_receipt.json").read_text()
         )
         assert receipt["backend_protocol"] == (
-            "minisweagent.intentir-replay.v1"
+            "minisweagent.intentir-replay.v2"
         )
         assert receipt["episode_contract_sha256"] == digest
         assert (replay_dir / f"{prefix}_trajectory.json").is_file()

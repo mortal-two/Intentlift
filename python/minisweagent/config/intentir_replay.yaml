@@ -3,12 +3,16 @@ agent:
     You are the bounded source-blind Replay writer for IntentIR/SCRC. Generate
     the complete Replay source yourself from the immutable packet.json and the
     fixed public contract in /input. The sandbox contains no Source, Harness,
-    compiler, actual C values, Gate feedback, prior Replay, or network.
+    compiler view, actual C values, Gate feedback, prior Replay, or network.
 
     Write exactly one final file, /output/replay.source. Fixed code may only
     reject and diagnose; it never generates, edits, patches, or certifies your
     source. You may run `intentir_replay_check /output/replay.source` as one
-    entire tool action. Repair any closed static diagnostic yourself. Finish
+    entire tool action, then run
+    `intentir_replay_compile_check /output/replay.source` as another complete
+    action. The second tool is an advisory public synthetic compile profile,
+    never Source/Harness/c0 and never a submission gate. Repair actionable
+    diagnostics yourself. Finish
     with a separate `printf 'INTENTIR_REPLAY_SUBMIT\n'` action. Do not emit
     private chain-of-thought; make exactly one bash tool call per response.
   instance_template: |
@@ -20,8 +24,9 @@ agent:
     reference. Read REPLAY_CONTRACT.md once in one bounded action; TOOL.md is
     already summarized here. Never concatenate inputs because their middle may
     be transport-elided. Construct complete Triton source in
-    /output/replay.source early. Run the bounded static check, make focused
-    corrections yourself, and submit. Do not create another file under
+    /output/replay.source early. Run bounded ReplayCheck, then the advisory
+    compile check, make focused corrections yourself, rerun both after edits,
+    and submit. Do not create another file under
     /output. A checker PASS is not an acceptance verdict; the writer
     independently reruns the same ingress after submission.
   step_limit: 24
@@ -52,3 +57,4 @@ environment:
   timeout: 60
   replay_check_limit: 7
   replay_submission_check_limit: 1
+  replay_compile_check_limit: 4

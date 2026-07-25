@@ -1,4 +1,4 @@
-"""Source-blind Replay writers and the shared compiler-free ingress."""
+"""Source-blind Replay writers, ingress, and public synthetic compile probe."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from intentir.extraction.providers.client import (
     DEFAULT_RESPONSES_TIMEOUT_SECONDS,
@@ -17,6 +17,13 @@ from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 
 from .codegen import extract_python_module
+from .compiler import (
+    CompileCase,
+    CompileResult,
+    KernelSource,
+    RuntimeArgument,
+    TritonCompiler,
+)
 from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
@@ -30,10 +37,10 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v1"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v2"
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v1"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v2"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -103,7 +110,7 @@ class RecordedReplayWriter(ReplayWriter, Protocol):
 
 @dataclass(frozen=True)
 class ReplayIngressResult:
-    """Result of fixed, compiler-free Replay ingress validation."""
+    """Closed result of Replay ingress or its source-blind compile probe."""
 
     status: str
     code: str | None = field(default=None, repr=False)
@@ -834,6 +841,139 @@ def replay_source_ingress(
     )
 
 
+_SYNTHETIC_PROBE_DTYPES = {
+    "bf16": "bfloat16",
+    "f16": "float16",
+    "f32": "float32",
+    "f64": "float64",
+    "i1": "bool",
+    "i8": "int8",
+    "i16": "int16",
+    "i32": "int32",
+    "i64": "int64",
+    "u8": "uint8",
+}
+_COMPILE_LINE = re.compile(r"(?:CompilationError:\s*)?at\s+(\d+):\d+")
+_DIAGNOSTIC_HANDLE = re.compile(r"\b[pc][0-9]+\b")
+
+
+def _synthetic_probe_dtype(dtype: str) -> str:
+    normalized = dtype.removeprefix("torch.").casefold()
+    return _SYNTHETIC_PROBE_DTYPES.get(normalized, normalized)
+
+
+def _synthetic_probe_scalar(dtype: str) -> bool | int | float | str:
+    normalized = dtype.removeprefix("torch.").casefold()
+    if normalized in {"bool", "i1"}:
+        return True
+    if normalized.startswith("f") or normalized.startswith("float") or normalized in {
+        "bf16",
+        "bfloat16",
+        "half",
+        "double",
+    }:
+        return 1.0
+    if normalized in {"str", "string"}:
+        return "synthetic"
+    return 16
+
+
+def build_source_blind_replay_compile_case(
+    artifact: Gate1Artifact,
+) -> CompileCase:
+    """Build a public deterministic compile profile from J/C declarations.
+
+    The profile deliberately never reads ``C.values``, Source, Harness values,
+    the launch grid, or prior Gate evidence.  Tensor storage size is irrelevant
+    to Triton's pointer type during warmup, so every pointer uses one element;
+    public scalar/constexpr representatives are fixed by declared dtype.
+    """
+
+    arguments: dict[str, RuntimeArgument] = {}
+    schedule: dict[str, bool | int | float | str] = {}
+    for parameter in artifact.j.signature.parameters:
+        kind = parameter.kind.value
+        dtype = parameter.dtype or "i64"
+        if kind == "pointer":
+            arguments[parameter.name] = RuntimeArgument.tensor(
+                (1,), _synthetic_probe_dtype(dtype)
+            )
+        elif kind == "scalar":
+            arguments[parameter.name] = RuntimeArgument.scalar(
+                _synthetic_probe_scalar(dtype),
+                _synthetic_probe_dtype(dtype),
+            )
+        elif kind == "none":
+            arguments[parameter.name] = RuntimeArgument.none()
+        elif kind == "constexpr":
+            schedule[parameter.name] = _synthetic_probe_scalar(dtype)
+        else:  # pragma: no cover - closed enum defensive boundary
+            raise ValueError(f"unsupported Replay probe parameter kind {kind!r}")
+    for slot in artifact.c.slots:
+        if slot.kind.value != "constexpr":
+            continue
+        schedule[slot.name] = _synthetic_probe_scalar(slot.value_type)
+    return CompileCase(arguments, (1, 1, 1), schedule)
+
+
+def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
+    diagnostic = result.diagnostic or "Triton frontend rejected Replay"
+    lines = [line.strip() for line in diagnostic.splitlines() if line.strip()]
+    summary = re.sub(r"\s+", " ", lines[-1] if lines else diagnostic)[:2048]
+    line_matches = _COMPILE_LINE.findall(diagnostic)
+    handles = tuple(dict.fromkeys(_DIAGNOSTIC_HANDLE.findall(summary)))[:32]
+    return ReplayIngressResult(
+        "fail",
+        diagnostics=(
+            {
+                "rule_code": "synthetic_frontend_compile_failed",
+                "path": f"<synthetic-frontend-compile> {summary}",
+                "anonymous_handles": list(handles),
+                "line": int(line_matches[-1]) if line_matches else None,
+            },
+        ),
+    )
+
+
+def source_blind_replay_compile_check(
+    code: str,
+    artifact: Gate1Artifact,
+    function_name: str,
+    *,
+    compiler: TritonCompiler | None = None,
+) -> ReplayIngressResult:
+    """Compile Replay against the public synthetic profile, without an oracle.
+
+    This check has no acceptance authority.  Formal Gate1 recompiles the exact
+    submitted bytes against the real c0 after the agent episode ends.
+    """
+
+    selected_compiler = compiler or TritonCompiler(timeout=120.0)
+    try:
+        source = KernelSource.from_replay(code, function_name)
+        result = selected_compiler.compile(
+            source,
+            build_source_blind_replay_compile_case(artifact),
+        )
+    except Exception as exc:
+        result = CompileResult(
+            False,
+            diagnostic=f"{type(exc).__name__}: {exc}",
+        )
+    if not result.ok:
+        return _source_blind_compile_failure(result)
+    return ReplayIngressResult(
+        "pass",
+        code=code,
+        entry_function_name=function_name,
+    )
+
+
+ReplayCompileChecker = Callable[
+    [str, Gate1Artifact, str], ReplayIngressResult
+]
+
+
 def _usage(raw: Mapping[str, Any]) -> dict[str, int]:
     value = raw.get("usage")
     if not isinstance(value, Mapping):
@@ -966,16 +1106,25 @@ This is the complete immutable input allowlist for one fresh Replay episode.
   anonymous-handle search plus paged graph/realization views. It exposes only
   packet.json and never writes Replay.
 
-No Source or source slice, Harness/compiler view, actual C values, CompileCase,
-grid, Gate diff/TTIR, previous Replay, sibling trajectory, or network is
-available. Generate the entire source yourself. Fixed code only checks and
-rejects; it never generates, patches, or certifies source.
+No Source or source slice, Harness/compiler view, actual C values, real
+CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
+network is available. Generate the entire source yourself. Fixed code only
+checks and rejects; it never generates, patches, or certifies source.
 
 Start with `intentir_packet_query overview`; then follow its exact `abi`,
 `graph`, `realization`, and paged `edges` commands. These views expose the
 complete packet facts in bounded pages. Use `section PATH`
 only for one named omitted field; never concatenate inputs because the transport
 may elide its middle.
+
+After mandatory ReplayCheck, run
+`intentir_replay_compile_check /output/replay.source` for an advisory compile
+against one public synthetic profile: every pointer has one element,
+dtype-declared scalar and constexpr representatives are bool=true, integer=16,
+float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
+use the same public type representatives. This probe can expose frontend
+type/shape errors but never blocks submission or has Gate authority. Formal
+Gate1 recompiles the exact submitted bytes at c0.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including
@@ -988,14 +1137,20 @@ unconditional execution, current-shape guesses, or a second rounding formula.
 """
     tool = """# Replay tool contract
 
-Write exactly `/output/replay.source`. To request bounded static diagnostics,
-run exactly `intentir_replay_check /output/replay.source` as the complete shell
-action. The seven ordinary evaluations share one budget; submission has one
-reserved evaluation when exact current bytes have no prior PASS. Results contain
-only a closed protocol/status/rule/path plus anonymous handles or line number.
-No compiler, Gate1 observer, execution, or source oracle is run. A PASS has no
-acceptance authority. Submit with a separate `printf 'INTENTIR_REPLAY_SUBMIT\\n'`.
-The writer independently reruns the same ingress callable after submission.
+Write exactly `/output/replay.source`. Run exactly
+`intentir_replay_check /output/replay.source` for the mandatory bounded ingress
+check, then exactly
+`intentir_replay_compile_check /output/replay.source` for advisory synthetic
+frontend-compile diagnostics. ReplayCheck's seven ordinary evaluations share
+one budget; submission has one reserved evaluation when exact current bytes
+have no prior ingress PASS. The compile probe has four advisory evaluations and
+is never consulted by submission. Results contain only a closed
+protocol/status/rule/path plus anonymous handles or line number. No Source,
+Harness value, actual C value, Gate1 observer, or execution oracle is run. The
+compile profile is the public fixed synthetic profile in README.md. Neither
+check has acceptance authority. Submit with a separate
+`printf 'INTENTIR_REPLAY_SUBMIT\\n'`. The writer independently reruns the same
+compiler-free ingress callable after submission, and formal Gate1 compiles c0.
 """
     return (
         {
@@ -1127,13 +1282,14 @@ class ResponsesReplayWriter:
 
 @dataclass
 class MiniSWEReplayWriter:
-    """Fresh bounded multi-turn Replay agent; v1 is Triton-only."""
+    """Fresh bounded multi-turn Replay agent; v2 is Triton-only."""
 
     provider: ProviderConfig | None = None
     effort: str | None = None
     frontend: Frontend = Frontend.TRITON
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
+    compile_checker: ReplayCompileChecker | None = None
     _records: list[ReplayGeneration | ReplayAttempt] = field(
         default_factory=list, init=False, repr=False
     )
@@ -1147,7 +1303,7 @@ class MiniSWEReplayWriter:
     ) -> ReplayGeneration:
         if self.frontend is not Frontend.TRITON:
             raise ValueError(
-                "MiniSWE Replay v1 fails closed for non-Triton frontends"
+                "MiniSWE Replay v2 fails closed for non-Triton frontends"
             )
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
@@ -1201,8 +1357,9 @@ class MiniSWEReplayWriter:
             effective_worker_config,
         )
 
-        # This exact callable is used by every virtual check and once again by
-        # the writer after submission. It has no compiler or Source dependency.
+        # This exact callable is used by every virtual ingress check and once
+        # again by the writer after submission. It has no compiler or Source
+        # dependency.
         def ingress(source_text: str) -> ReplayIngressResult:
             return replay_source_ingress(
                 source_text,
@@ -1211,6 +1368,29 @@ class MiniSWEReplayWriter:
                 function_name=function_name,
                 packet=packet,
             )
+
+        probe_compiler = TritonCompiler(timeout=120.0)
+        compile_checker = self.compile_checker
+
+        def compile_check(source_text: str) -> dict[str, Any]:
+            ingress_result = ingress(source_text)
+            if ingress_result.status != "pass" or ingress_result.code is None:
+                return ingress_result.to_check_response()
+            compile_result = (
+                compile_checker(
+                    ingress_result.code,
+                    artifact,
+                    function_name,
+                )
+                if compile_checker is not None
+                else source_blind_replay_compile_check(
+                    ingress_result.code,
+                    artifact,
+                    function_name,
+                    compiler=probe_compiler,
+                )
+            )
+            return compile_result.to_check_response()
 
         workspace = IntentIRReplayWorkspace.create(files)
         result = None
@@ -1230,6 +1410,7 @@ class MiniSWEReplayWriter:
                 replay_checker=lambda source_text: ingress(
                     source_text
                 ).to_check_response(),
+                replay_compile_checker=compile_check,
             )
             assert result.source_text is not None
             formal_ingress = ingress(result.source_text)
@@ -1354,6 +1535,10 @@ class MiniSWEReplayWriter:
         replay_check = (
             info.get("replay_check", {}) if isinstance(info, Mapping) else {}
         )
+        replay_compile_check = (
+            info.get("replay_compile_check", {})
+            if isinstance(info, Mapping) else {}
+        )
         context_receipt = _context_receipt({}, packet["u_f"])
         context_receipt.update(
             {
@@ -1368,8 +1553,14 @@ class MiniSWEReplayWriter:
                     if isinstance(replay_check, Mapping)
                     else {}
                 ),
+                "replay_compile_check": (
+                    dict(replay_compile_check)
+                    if isinstance(replay_compile_check, Mapping)
+                    else {}
+                ),
                 "formal_ingress_recheck": True,
                 "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
+                "source_blind_synthetic_compile_probe": True,
                 "episode_contract_sha256": episode_contract_sha256,
             }
         )
@@ -1446,5 +1637,6 @@ __all__ = [
     "STATIC_REPLAY_BACKEND", "MiniSWEReplayWriter", "RecordedReplayWriter",
     "ReplayAttempt", "ReplayGeneration", "ReplayGenerationError",
     "ReplayIngressResult", "ReplayWriter", "ResponsesReplayWriter",
-    "StaticReplayWriter", "replay_source_ingress",
+    "StaticReplayWriter", "build_source_blind_replay_compile_case",
+    "replay_source_ingress", "source_blind_replay_compile_check",
 ]
