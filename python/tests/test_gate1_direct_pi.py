@@ -1090,7 +1090,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     normalized = " ".join(instructions.split())
 
     assert "supplied Responses schema is authoritative" in normalized
-    assert len(instructions) < 16_500
+    assert len(instructions) < 16_600
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized

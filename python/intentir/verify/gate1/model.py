@@ -377,6 +377,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                 _integer(dim, f"{tensor_path}.shape[{index}]", minimum=0)
 
     tensor_contracts: dict[str, tuple[str, list[int | str]]] = {}
+    tensor_collections: dict[str, str] = {}
     for collection in ("inputs", "outputs"):
         tensors = fn.get(collection, [])
         if not isinstance(tensors, list):
@@ -386,12 +387,25 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
             validate_tensor(tensor, tensor_path)
             tensor_object = _object(tensor, tensor_path)
             name = _string(tensor_object["name"], f"{tensor_path}.name")
-            if name in tensor_contracts:
-                raise SchemaError(f"{path}.intent_function has duplicate tensor {name!r}")
-            tensor_contracts[name] = (
+            contract = (
                 _string(tensor_object["dtype"], f"{tensor_path}.dtype"),
                 list(tensor_object["shape"]),
             )
+            previous = tensor_contracts.get(name)
+            if previous is not None:
+                if tensor_collections[name] == collection:
+                    raise SchemaError(
+                        f"{path}.intent_function has duplicate {collection} "
+                        f"tensor {name!r}"
+                    )
+                if previous != contract:
+                    raise SchemaError(
+                        f"{path}.intent_function inout tensor {name!r} must "
+                        "have identical input/output dtype and shape"
+                    )
+                continue
+            tensor_contracts[name] = contract
+            tensor_collections[name] = collection
 
     semantic_dimensions = {
         dim

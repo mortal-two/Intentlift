@@ -797,11 +797,13 @@ delete them merely to satisfy this rectangular profile. A fill_value is legal
 only on a load with an authored predicate or access_guard_relation.
 A computed Layer-A i1 access guard gets exactly one
 boundary.access_guard_relations item with increasing target-broadcast axes and
-closed polarity; do not copy it into the access predicate. A guarded load has a
-fill. A loop-carried guarded store authors mode=inout, typed input pre-state,
-and select(guard,candidate,current) when positive or
-select(guard,current,candidate) when negative; its result is carry.next_value.
-One carry has one guarded write.
+closed polarity; do not copy it into the predicate or boundary.broadcasts. A
+guarded load has a fill. Every guarded store targets one tensor authored as
+both input and output under one mode=inout plus explicit select. Outside a loop,
+inactive is that tensor and returns maps output to select result. Inside a loop,
+carry.init_value is that tensor, inactive is current, and select result is
+carry.next_value. Positive selects candidate/current; negative selects
+current/candidate. One carry has one guarded write.
 If a guard-free direct padding predicate and a complete zero-based rectangular
 domain use the same-axis bound as the typed tensor extent, and that masked axis
 is later eliminated by `reduce(fn=mean)`, a neutral zero fill closes only the

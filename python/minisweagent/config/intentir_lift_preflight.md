@@ -66,11 +66,17 @@ the artifact schema or external TypeCheck.
    `boundary.access_guard_relations` item, not copied into the access predicate.
    Its non-negative axes are strictly increasing access-target broadcast axes;
    for example a guard shaped `[M]` used by an access shaped `[M,N]` declares
-   `axes:[1]`. A relation-guarded load has an explicit fill. A relation-guarded
-   store inside a structured loop has an authored `mode=inout` output, a typed
-   input carry pre-state, and an explicit select merge. Positive polarity is
-   `select(guard,candidate,current)`; negative polarity is
-   `select(guard,current,candidate)`; the result is exactly `carry.next_value`.
+   `axes:[1]`. This relation is the select guard's unique axes authority: never
+   repeat the same access-node/value pair in `boundary.broadcasts`. A
+   relation-guarded load has an explicit fill. Every relation-guarded store
+   declares the target tensor identically in both J inputs and outputs and binds
+   it once with `mode=inout`; never use an unrelated same-typed input as its old
+   value. Outside a loop, anchor an explicit select whose inactive branch is the
+   target tensor and map/return the output from that select result. Inside a
+   loop, `carry.init_value` is exactly the target tensor, the inactive branch is
+   `body_argument`, and the select result is exactly `carry.next_value`.
+   Positive polarity is `select(guard,candidate,current)`; negative polarity is
+   `select(guard,current,candidate)`.
    One carry has at most one guarded write in this version. CandidateCheck only
    rejects bad declarations: it never inserts select, changes output to inout,
    derives axes/polarity, or asks pi to supply any missing semantic fact.

@@ -1328,7 +1328,8 @@ def _check_access_guard_relations(
 
         target_parameters = parameters_by_logical.get(access.tensor, [])
         has_real_inout = (
-            access.tensor in output_names
+            access.tensor in input_names
+            and access.tensor in output_names
             and len(target_parameters) == 1
             and target_parameters[0].mode is ParameterMode.INOUT
         )
@@ -1336,47 +1337,9 @@ def _check_access_guard_relations(
             reject(
                 index,
                 "access_ref",
-                "a relation-guarded store must target one J output bound by "
-                "exactly one mode=inout parameter; TypeCheck never upgrades "
-                "output to inout",
-                relation.access_ref,
-            )
-
-        if not loop_stack:
-            # A non-loop conditional effect is fully owned by the relation and
-            # the explicit inout pre-state.  The select-merge rule below is
-            # deliberately only for structured loop-carried writes.
-            continue
-        if len(matches) != 1:
-            reject(
-                index,
-                "access_ref",
-                "a relation-guarded store inside a structured loop must map "
-                "to exactly one enclosing carry result",
-                relation.access_ref,
-            )
-            continue
-
-        loop_path, carry_ordinal, carry = matches[0]
-        carry_relations.setdefault((loop_path, carry_ordinal), []).append(index)
-        init_value = carry.get("init_value")
-        init_type = (
-            value_types.get(init_value)
-            if isinstance(init_value, str)
-            else None
-        )
-        if (
-            not isinstance(init_value, str)
-            or init_value not in input_names
-            or init_type is None
-            or target_type is None
-            or init_type != target_type
-        ):
-            reject(
-                index,
-                "access_ref",
-                "the guarded carry must initialize from one explicit typed "
-                "Layer-A input pre-state matching the inout target",
+                "a relation-guarded store must target one tensor declared as "
+                "both J input and output and bound by exactly one mode=inout "
+                "parameter; TypeCheck never upgrades output to inout",
                 relation.access_ref,
             )
 
@@ -1394,18 +1357,11 @@ def _check_access_guard_relations(
             reject(
                 index,
                 "access_ref",
-                "a guarded loop-carried store must anchor one explicit "
+                "a relation-guarded store must anchor one explicit "
                 "three-operand Layer-A select merge",
                 relation.access_ref,
             )
             continue
-        if carry.get("next_value") != result:
-            reject(
-                index,
-                "access_ref",
-                "carry.next_value must be the explicit select merge result",
-                relation.access_ref,
-            )
         if operands[0] != relation.value_ref:
             reject(
                 index,
@@ -1414,7 +1370,58 @@ def _check_access_guard_relations(
                 relation.access_ref,
             )
 
-        current = carry.get("body_argument")
+        if loop_stack:
+            if len(matches) != 1:
+                reject(
+                    index,
+                    "access_ref",
+                    "a relation-guarded store inside a structured loop must "
+                    "map to exactly one enclosing carry result",
+                    relation.access_ref,
+                )
+                continue
+            loop_path, carry_ordinal, carry = matches[0]
+            carry_relations.setdefault(
+                (loop_path, carry_ordinal), []
+            ).append(index)
+            if carry.get("init_value") != access.tensor:
+                reject(
+                    index,
+                    "access_ref",
+                    "the guarded carry init_value must equal the exact inout "
+                    "access tensor pre-state",
+                    relation.access_ref,
+                )
+            if carry.get("next_value") != result:
+                reject(
+                    index,
+                    "access_ref",
+                    "carry.next_value must be the explicit select merge result",
+                    relation.access_ref,
+                )
+            current = carry.get("body_argument")
+        else:
+            current = access.tensor
+            matching_mappings = [
+                item
+                for item in j.boundary.output_mappings
+                if item.output == access.tensor
+                and item.value == result
+                and item.node_ref is not None
+                and nodes.get(item.node_ref) is operation
+            ]
+            if (
+                return_values.get(access.tensor) != result
+                or len(matching_mappings) != 1
+            ):
+                reject(
+                    index,
+                    "access_ref",
+                    "a non-loop guarded store output/return mapping must name "
+                    "the explicit select merge result exactly once",
+                    relation.access_ref,
+                )
+
         inactive_index = (
             2
             if relation.polarity is AccessGuardPolarity.POSITIVE
@@ -1438,29 +1445,18 @@ def _check_access_guard_relations(
                 relation.access_ref,
             )
 
-        select_guard_broadcasts = [
+        duplicate_guard_broadcasts = [
             item
             for item in j.boundary.broadcasts
             if item.operand == relation.value_ref
             and nodes.get(item.node_ref) is operation
         ]
-        if len(select_guard_broadcasts) > 1:
+        if duplicate_guard_broadcasts:
             reject(
                 index,
                 "axes",
-                "the select condition has multiple independent broadcast "
-                "declarations",
-                relation.access_ref,
-            )
-        elif (
-            select_guard_broadcasts
-            and tuple(select_guard_broadcasts[0].axes) != axes
-        ):
-            reject(
-                index,
-                "axes",
-                "the access-local guard axes disagree with the explicit "
-                "select-condition broadcast axes",
+                "access_guard_relations is the unique select-guard axes "
+                "authority; boundary.broadcasts must not duplicate it",
                 relation.access_ref,
             )
 

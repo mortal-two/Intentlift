@@ -735,7 +735,12 @@ def _node_results(j: Any) -> dict[str, tuple[str, ...]]:
 def _declared_broadcast_axes(
     j: Any,
 ) -> dict[str, dict[str, tuple[int, ...]]]:
-    """Resolve only the broadcast facts explicitly serialized in canonical J."""
+    """Resolve only broadcast facts explicitly serialized in canonical J.
+
+    An access-guard relation is the unique access-local authority for its
+    select condition.  It is consumed directly here rather than copied into a
+    second ``boundary.broadcasts`` declaration.
+    """
 
     by_path: dict[str, IntentOp] = {}
 
@@ -753,6 +758,32 @@ def _declared_broadcast_axes(
             nodes[node_id] = operation
 
     result: dict[str, dict[str, tuple[int, ...]]] = {}
+    guard_projection_keys: set[tuple[str, str]] = set()
+    accesses = {
+        access.access_id: access for access in j.boundary.accesses
+    }
+    for relation in j.boundary.access_guard_relations:
+        access = accesses.get(relation.access_ref)
+        operation = (
+            nodes.get(access.node_ref)
+            if access is not None and access.node_ref is not None
+            else None
+        )
+        if (
+            operation is None
+            or operation.op != "select"
+            or not isinstance(operation.result, str)
+            or len(operation.operands) != 3
+            or operation.operands[0] != relation.value_ref
+        ):
+            continue
+        axes = tuple(relation.axes)
+        key = (operation.result, relation.value_ref)
+        guard_projection_keys.add(key)
+        result.setdefault(operation.result, {}).setdefault(
+            relation.value_ref, axes
+        )
+
     for projection in j.boundary.broadcasts:
         operation = nodes.get(projection.node_ref)
         if operation is None or not isinstance(operation.result, str):
@@ -775,6 +806,11 @@ def _declared_broadcast_axes(
                 "canonical value typing requires integer broadcast axes"
             )
         axes = tuple(int(axis) for axis in projection.axes)
+        if (operation.result, projection.operand) in guard_projection_keys:
+            # TypeCheck rejects this double authority.  Keep the relation as
+            # the sole typing input so the diagnostic is not pre-empted by a
+            # conflicting legacy broadcast spelling.
+            continue
         previous = result.setdefault(operation.result, {}).get(
             projection.operand
         )

@@ -24,17 +24,6 @@ def _guarded_carry_payload() -> dict:
     """One generic conditional carry with an explicit inout pre-state."""
 
     payload = _canonical_j_carry_artifact().to_json()
-
-    def rename_output(value):
-        if isinstance(value, str):
-            return "t3" if value == "t1" else value
-        if isinstance(value, list):
-            return [rename_output(item) for item in value]
-        if isinstance(value, dict):
-            return {key: rename_output(item) for key, item in value.items()}
-        return value
-
-    payload = rename_output(payload)
     function = payload["j"]["intent"]["intent_function"]
     loop = function["body"][0]
     function["inputs"].extend(
@@ -44,7 +33,7 @@ def _guarded_carry_payload() -> dict:
         ]
     )
     function["body"] = [loop]
-    function["returns"] = [{"output": "t3", "value": "v0"}]
+    function["returns"] = [{"output": "t1", "value": "v0"}]
 
     loop["carry"][0]["init_value"] = "t1"
     loop["carry"][0]["next_value"] = "v5"
@@ -69,7 +58,7 @@ def _guarded_carry_payload() -> dict:
     boundary["accesses"][0]["node_ref"] = "n3"
     boundary["effects"][0]["node_ref"] = "n3"
     boundary["output_mappings"] = [
-        {"output": "t3", "value": "v0", "node_ref": "n0"}
+        {"output": "t1", "value": "v0", "node_ref": "n0"}
     ]
     boundary["access_guard_relations"] = [
         {
@@ -82,25 +71,15 @@ def _guarded_carry_payload() -> dict:
 
     parameters = payload["j"]["signature"]["parameters"]
     parameters[1]["mode"] = "inout"
-    parameters.extend(
-        [
-            {
-                "name": "p3",
-                "kind": "pointer",
-                "mode": "input",
-                "dtype": "f32",
-                "rank": 0,
-                "logical_ref": "t1",
-            },
-            {
-                "name": "p4",
-                "kind": "scalar",
-                "mode": "value",
-                "dtype": "i1",
-                "rank": 0,
-                "logical_ref": "t2",
-            },
-        ]
+    parameters.append(
+        {
+            "name": "p3",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "i1",
+            "rank": 0,
+            "logical_ref": "t2",
+        }
     )
 
     root, loop_scope = payload["j"]["scopes"]
@@ -122,6 +101,67 @@ def _guarded_carry_payload() -> dict:
 
 def _guarded_carry_artifact() -> Gate1Artifact:
     return Gate1Artifact.from_json(_guarded_carry_payload())
+
+
+def _use_same_typed_wrong_prestate(payload: dict) -> None:
+    function = payload["j"]["intent"]["intent_function"]
+    function["inputs"].append({"name": "t3", "dtype": "f32", "shape": []})
+    function["body"][0]["carry"][0]["init_value"] = "t3"
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p4",
+            "kind": "pointer",
+            "mode": "input",
+            "dtype": "f32",
+            "rank": 0,
+            "logical_ref": "t3",
+        }
+    )
+    payload["j"]["scopes"][0]["definitions"].append("t3")
+    captures = payload["j"]["scopes"][1]["captures"]
+    captures[captures.index("t1")] = "t3"
+    members = payload["j"]["storage"][0]["members"]
+    members[members.index("t1")] = "t3"
+    payload["pi"]["instances"][2]["semantic_ref"] = "t3"
+
+
+def _guarded_nonloop_payload() -> dict:
+    payload = _guarded_payload()
+    function = payload["j"]["intent"]["intent_function"]
+    function["inputs"].append(
+        {"name": "t2", "dtype": "f32", "shape": ["x0"]}
+    )
+    function["body"][1]["result"] = "v1"
+    function["body"].append(
+        {
+            "id": "n2",
+            "op": "select",
+            "result": "v2",
+            "operands": ["t1", "v1", "t2"],
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        }
+    )
+    function["returns"] = [{"output": "t2", "value": "v2"}]
+    payload["j"]["node_ids"] = {
+        "n0": "body[0]",
+        "n1": "body[1]",
+        "n2": "body[2]",
+    }
+    boundary = payload["j"]["boundary"]
+    boundary["accesses"][1]["node_ref"] = "n2"
+    boundary["output_mappings"] = [
+        {"output": "t2", "value": "v2", "node_ref": "n2"}
+    ]
+    boundary["access_guard_relations"] = [
+        {
+            "access_ref": "a1",
+            "value_ref": "t1",
+            "axes": [],
+            "polarity": "positive",
+        }
+    ]
+    payload["j"]["signature"]["parameters"][1]["mode"] = "inout"
+    return payload
 
 
 def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() -> None:
@@ -292,15 +332,8 @@ def test_guarded_carry_accepts_explicit_positive_select_merge() -> None:
     ("mutation", "detail"),
     [
         (
-            lambda payload: payload["j"]["signature"]["parameters"][1].update(
-                {"mode": "output"}
-            ),
-            "mode=inout",
-        ),
-        (
-            lambda payload: payload["j"]["intent"]["intent_function"]
-            ["body"][0]["carry"][0].update({"init_value": "ZERO"}),
-            "explicit typed Layer-A input pre-state",
+            _use_same_typed_wrong_prestate,
+            "exact inout access tensor pre-state",
         ),
         (
             lambda payload: payload["j"]["intent"]["intent_function"]
@@ -320,10 +353,6 @@ def test_guarded_carry_rejects_missing_prestate_or_wrong_merge(
 ) -> None:
     payload = _guarded_carry_payload()
     mutation(payload)
-    if detail == "explicit typed Layer-A input pre-state":
-        payload["j"]["scopes"][1]["captures"].remove("t1")
-        payload["j"]["storage"][0]["members"].remove("t1")
-        payload["pi"]["instances"][2]["semantic_ref"] = "s0"
     if detail == "carry.next_value":
         payload["j"]["intent"]["intent_function"]["body"][0]["yield"] = [
             "v4"
@@ -355,6 +384,110 @@ def test_guarded_carry_negative_polarity_reverses_inactive_branch() -> None:
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
+
+
+def test_guarded_store_target_requires_an_authored_inout_signature() -> None:
+    payload = _guarded_carry_payload()
+    payload["j"]["signature"]["parameters"][1]["mode"] = "output"
+    artifact = Gate1Artifact.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert any(
+        item.code is TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID
+        and "exactly one mode=inout parameter" in item.detail
+        for item in report.diagnostics
+    ), report.to_json()
+
+    mismatched = _guarded_carry_payload()
+    target_input = mismatched["j"]["intent"]["intent_function"]["inputs"][1]
+    target_input["shape"] = [1]
+    with pytest.raises(SchemaError, match="identical input/output dtype and shape"):
+        Gate1Artifact.from_json(mismatched)
+
+
+def test_guarded_store_rejects_multiple_signature_bindings_for_target() -> None:
+    payload = _guarded_carry_payload()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p4",
+            "kind": "pointer",
+            "mode": "inout",
+            "dtype": "f32",
+            "rank": 0,
+            "logical_ref": "t1",
+        }
+    )
+    artifact = Gate1Artifact.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert any(
+        item.code is TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID
+        and "exactly one mode=inout parameter" in item.detail
+        for item in report.diagnostics
+    ), report.to_json()
+
+
+def test_nonloop_guarded_store_accepts_explicit_select_and_return() -> None:
+    payload = _guarded_nonloop_payload()
+    artifact = Gate1Artifact.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "detail"),
+    [
+        (
+            lambda payload: payload["j"]["boundary"]["accesses"][1].update(
+                {"node_ref": "n1"}
+            ),
+            "explicit three-operand Layer-A select",
+        ),
+        (
+            lambda payload: payload["j"]["intent"]["intent_function"]
+            ["body"][2].update({"operands": ["t1", "t2", "v1"]}),
+            "inactive under the authored polarity",
+        ),
+        (
+            lambda payload: payload["j"]["intent"]["intent_function"].update(
+                {"returns": [{"output": "t2", "value": "v1"}]}
+            )
+            or payload["j"]["boundary"].update(
+                {
+                    "output_mappings": [
+                        {"output": "t2", "value": "v1", "node_ref": "n1"}
+                    ]
+                }
+            ),
+            "output/return mapping",
+        ),
+        (
+            lambda payload: payload["j"]["boundary"].update(
+                {"output_mappings": []}
+            ),
+            "output/return mapping",
+        ),
+    ],
+)
+def test_nonloop_guarded_store_rejects_implicit_or_wrong_merge(
+    mutation,
+    detail: str,
+) -> None:
+    payload = _guarded_nonloop_payload()
+    mutation(payload)
+    artifact = Gate1Artifact.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert any(
+        item.code is TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID
+        and detail in item.detail
+        for item in report.diagnostics
+    ), report.to_json()
 
 
 def test_access_guard_v1_rejects_multiple_writes_to_one_carry() -> None:
@@ -390,17 +523,14 @@ def test_access_guard_v1_rejects_multiple_writes_to_one_carry() -> None:
 def test_guarded_carry_rejects_duplicate_select_broadcast_authority() -> None:
     payload = _guarded_carry_payload()
     projection = {"node_ref": "n3", "operand": "t2", "axes": []}
-    payload["j"]["boundary"]["broadcasts"] = [
-        projection,
-        copy.deepcopy(projection),
-    ]
+    payload["j"]["boundary"]["broadcasts"] = [projection]
     artifact = Gate1Artifact.from_json(payload)
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert any(
         item.code is TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID
-        and "multiple independent broadcast declarations" in item.detail
+        and "unique select-guard axes authority" in item.detail
         for item in report.diagnostics
     ), report.to_json()
 
@@ -426,5 +556,8 @@ def test_lift_rules_keep_access_guard_authorship_explicit_and_generic() -> None:
     instructions = " ".join(build_scrc_lift_instructions().split())
 
     assert "exactly one boundary.access_guard_relations item" in instructions
-    assert "select(guard,candidate,current) when positive" in instructions
+    assert "predicate or boundary.broadcasts" in instructions
+    assert "both input and output under one mode=inout" in instructions
+    assert "inactive is that tensor" in instructions
+    assert "carry.init_value is that tensor" in instructions
     assert "One carry has one guarded write" in instructions
