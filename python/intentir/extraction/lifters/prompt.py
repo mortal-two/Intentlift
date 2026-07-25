@@ -37,6 +37,10 @@ Top-level JSON:
 Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
                {add,sub,mul,div,max,min,pow,atan2,gt,ge,lt,le,eq,ne}.
+               Operand dtype promotion follows the closed IntentIR numeric
+               lattice and the result type must be declared consistently;
+               this op-internal promotion is distinct from an explicit source
+               cast stage, which must remain a `cast` node.
                (atan2(y,x): the complex angle primitive, angle=atan2(imag,real);
                 the comparison fns gt/ge/lt/le/eq/ne produce an i1 tensor ->
                 feeds select; count_nonzero = sum(cast(x!=0, i64)).)

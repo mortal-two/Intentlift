@@ -419,6 +419,12 @@ u.target_dtype == Type(n.result)
 authorization 仍必须由 Lift 显式声明；Decode/Elaborate 和 TypeCheck 都不得从 cast node 自动创建它。
 每个 instance 至多拥有一个 refinement；重复项必须在 parser/TypeCheck 阶段 fail closed。
 
+这里的显式 `cast` stage 不等于 closed `map_binary` 的 op-internal dtype promotion。后者由 Lift 已声明的
+operand/result types 与全局固定 promotion lattice 唯一决定，属于该 J op 的 typed denotation；共享
+`J -> Intent MLIR` projection 可把它 materialize 为内部 `intent.cast`，但不得写回 J、创建
+authorization 或把 Source/π 信息带入 promotion。若 Source 中 cast 本身是独立 compiler-visible stage，
+Lift 仍必须显式生成 `cast` node 和 authorization，不能借 op-internal promotion 吞掉该 stage。
+
 ### 6.4 Lift 内的有界 CandidateCheck
 
 同一个 source-aware Lift agent 可以在一次生成动作内，对自己已经写出的完整 candidate 调用只读、

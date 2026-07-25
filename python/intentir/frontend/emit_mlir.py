@@ -1134,6 +1134,7 @@ class _Printer:
         axes: Sequence[int],
         indent: str,
         consumer_shape: Sequence[int] | None = None,
+        element_dtype: str | None = None,
     ) -> tuple[str, str]:
         source_shape = env[name]
         target_shape, inserted_axes = _broadcast_projection(
@@ -1141,11 +1142,23 @@ class _Printer:
         )
         assert target_shape is not None
         source_type = self._ttn(name, env)
-        target_type = self._ttn_shape(name, target_shape)
+        value = self.ssa[name]
+        projected_dtype = element_dtype or self.dtypes[name]
+        projected_source_type = _tt(source_shape, projected_dtype)
+        if projected_dtype != self.dtypes[name]:
+            self._n += 1
+            promoted = f"%{name}_promote_{self._n}"
+            self.lines.append(
+                f'{indent}{promoted} = intent.cast {value} '
+                f'{{to_dtype = "{projected_dtype}"}} : '
+                f'({source_type}) -> {projected_source_type}'
+            )
+            value = promoted
+        target_type = _tt(target_shape, projected_dtype)
         # Rank-0 tensors already broadcast through an empty affine input map;
         # no tensor.expand_shape is needed for explicit scalar axes.
         if not axes or not source_shape or target_shape == source_shape:
-            return self.ssa[name], source_type
+            return value, projected_source_type
         rank_gap = len(target_shape) - len(source_shape)
         standard_trailing_vector = (
             consumer_shape is not None
@@ -1159,7 +1172,7 @@ class _Printer:
             # it rank-1 so specialized row kernels can classify it as a column
             # parameter; non-trailing projections still materialize an explicit
             # expand_shape below.
-            return self.ssa[name], source_type
+            return value, projected_source_type
 
         inserted = set(inserted_axes)
         source_positions = [
@@ -1182,8 +1195,9 @@ class _Printer:
         self._n += 1
         result = f"%{name}_broadcast_{self._n}"
         self.lines.append(
-            f"{indent}{result} = tensor.expand_shape {self.ssa[name]} {groups} "
-            f"output_shape [{output_shape}] : {source_type} into {target_type}"
+            f"{indent}{result} = tensor.expand_shape {value} {groups} "
+            f"output_shape [{output_shape}] : {projected_source_type} "
+            f"into {target_type}"
         )
         return result, target_type
 
@@ -1359,6 +1373,20 @@ class _Printer:
         elif op.op == "map_binary":
             axes = _op_broadcast_axes(op, self.broadcast_axes)
             contraction = _broadcast_mul_contraction_subscripts(op, env, axes)
+            operand_dtype = _promote_dtype(
+                self.dtypes.get(op.operands[0]),
+                self.dtypes.get(op.operands[1]),
+            )
+            if operand_dtype is None:
+                raise ValueError(
+                    f"emit_mlir: map_binary {op.result!r} has no closed dtype "
+                    "promotion"
+                )
+            if self.dtypes[op.operands[0]] != self.dtypes[op.operands[1]]:
+                # The outer-product contraction spelling has its own mixed-
+                # precision accumulator rules.  A semantic map promotion is
+                # instead made explicit on each operand below.
+                contraction = None
             if contraction is not None:
                 x, y = (self.ssa[name] for name in op.operands)
                 tx, ty = (self._ttn(name, env) for name in op.operands)
@@ -1374,6 +1402,7 @@ class _Printer:
                     axes.get(op.operands[0], ()),
                     indent,
                     env[op.result],
+                    element_dtype=operand_dtype,
                 )
                 y, ty = self._broadcast_operand(
                     op.operands[1],
@@ -1381,6 +1410,7 @@ class _Printer:
                     axes.get(op.operands[1], ()),
                     indent,
                     env[op.result],
+                    element_dtype=operand_dtype,
                 )
                 self.lines.append(
                     f'{indent}{r} = intent.map_binary {x}, {y} '

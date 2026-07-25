@@ -247,6 +247,40 @@ def test_emit_scalar_broadcast_uses_empty_affine_map_without_rank_insertion() ->
     assert "tensor<4x1xf32>, tensor<f32>) -> tensor<4x1xf32>" in mlir
 
 
+@_needs_opt
+def test_map_binary_materializes_closed_float_integer_promotion() -> None:
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "float_integer_div",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": [2]},
+                {"name": "N", "dtype": "i32", "shape": []},
+            ],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": [2]}],
+            "body": [
+                {
+                    "op": "map_binary",
+                    "result": "Y",
+                    "operands": ["X", "N"],
+                    "attrs": {"fn": "div"},
+                    "type": {"dtype": "f32", "shape": [2]},
+                }
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {})
+
+    assert 'intent.cast %N {to_dtype = "f32"}' in mlir
+    assert "(tensor<i32>) -> tensor<f32>" in mlir
+    assert "intent.map_binary %X, %N_promote_" in mlir
+    lowered = _intent_opt(mlir, "-convert-intent-to-linalg")
+    assert "arith.sitofp" in lowered
+    assert "arith.divf" in lowered
+
+
 def test_emit_propagates_collapsed_output_shape_through_rms_chain() -> None:
     from intentir.frontend import emit_module
 

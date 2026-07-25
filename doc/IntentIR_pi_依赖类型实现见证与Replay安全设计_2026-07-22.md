@@ -684,6 +684,11 @@ closed，不能由工具或 Replay 选择其中一个。
 Decode/Elaborate、TypeCheck 与 Replay 都不得从 op 自动创建缺失的 authorization，也不得要求
 numeric-cast instance 改绑 cast 前的 tensor 而丢失显式 cast stage 的 J node anchor。
 
+显式 `cast` stage 与 closed `map_binary` 自身的 typed promotion 必须区分：后者只消费 Lift 已声明的
+operand/result types 和系统固定 promotion lattice，可由共享 projection 以内部 `intent.cast`
+materialize；它不创建 J node、authorization 或 π refinement。只有 Source/J 中独立可见的 cast stage
+才受上述 `numeric_cast` dependent type 约束，不能被 op-internal promotion 合并掉。
+
 ### 5.5 Effect realization
 
 π 可以决定如何 realization 一个 J-owned effect，不能决定 effect 是否存在或具有什么 conflict
