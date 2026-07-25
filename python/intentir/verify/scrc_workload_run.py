@@ -55,6 +55,7 @@ from intentir.verify.gate2.triton import (
 )
 from intentir.verify.scrc_batch import BatchClassification
 from intentir.verify.scrc_runner import (
+    LiftFeedback,
     MainStatus,
     SCRCGateRunner,
     SCRCGate1SearchReport,
@@ -665,6 +666,7 @@ def search_prepared_workload_gate1(
     prepared: PreparedTritonWorkload,
     *,
     provider: ProviderConfig,
+    initial_feedback: LiftFeedback | None = None,
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
@@ -695,6 +697,7 @@ def search_prepared_workload_gate1(
     try:
         report = runner.search_gate1(
             request,
+            initial_feedback=initial_feedback,
             stop_requested=stop_requested,
             progress_callback=progress_callback,
         )

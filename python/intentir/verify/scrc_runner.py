@@ -496,14 +496,44 @@ class SCRCGateRunner:
         self,
         request: SCRCRunRequest,
         *,
+        initial_feedback: LiftFeedback | None = None,
         stop_requested: Callable[[], int | None] | None = None,
         progress_callback: SCRCProgressCallback | None = None,
     ) -> SCRCGate1SearchReport:
-        """Search one isolated branch through TypeCheck and Gate1 only."""
+        """Search one isolated branch through TypeCheck and Gate1 only.
+
+        ``initial_feedback`` resumes from an externally preserved failed
+        Gate1 observation.  It is context for the first new Lift call only:
+        the runner never accepts, repairs, or otherwise promotes the previous
+        artifact, and all budgets count only work performed by this search.
+        """
+
+        if initial_feedback is not None:
+            if not isinstance(initial_feedback, LiftFeedback):
+                raise TypeError("initial_feedback must be LiftFeedback")
+            if initial_feedback.kind is not FeedbackKind.GATE1:
+                raise ValueError("initial_feedback must describe a Gate1 failure")
+            if (
+                not isinstance(initial_feedback.formal_round, int)
+                or initial_feedback.formal_round < 1
+            ):
+                raise ValueError(
+                    "initial Gate1 feedback requires a positive formal_round"
+                )
+            if initial_feedback.previous_artifact is None:
+                raise ValueError(
+                    "initial Gate1 feedback requires the exact previous artifact"
+                )
+            request.binding.validate_artifact(
+                initial_feedback.previous_artifact
+            )
 
         attempts: list[CandidateAttemptReport] = []
-        feedback: LiftFeedback | None = None
-        last_artifact: Gate1Artifact | None = None
+        feedback = initial_feedback
+        last_artifact = (
+            initial_feedback.previous_artifact
+            if initial_feedback is not None else None
+        )
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0

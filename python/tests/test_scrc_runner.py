@@ -453,6 +453,69 @@ def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None
     assert gate2.calls == 1
 
 
+def test_gate1_search_resumes_from_exact_failed_artifact_without_old_budget() -> None:
+    previous = make_reduce_artifact()
+    resumed = make_reduce_artifact()
+    seed = LiftFeedback(
+        FeedbackKind.GATE1,
+        {
+            "status": "no_closure",
+            "diagnostic": "saved observer mismatch",
+            "observer_diff": {"primary_difference_category": "dataflow"},
+        },
+        6,
+        previous,
+    )
+    lift = _Lift([resumed])
+    factory = _Gate1Factory([_gate1_result(closed=True)])
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        initial_feedback=seed,
+    )
+
+    assert search.closed
+    assert lift.feedbacks == [seed]
+    assert lift.feedbacks[0].previous_artifact is previous
+    assert search.call_budget.lift_calls == 1
+    assert search.call_budget.typecheck_calls == 1
+    assert search.call_budget.formal_gate1_rounds == 1
+    assert factory.rounds == [1]
+
+
+@pytest.mark.parametrize(
+    "seed, message",
+    [
+        (
+            LiftFeedback(
+                FeedbackKind.TYPECHECK,
+                {"typecheck": {"status": "fail"}},
+                None,
+                make_reduce_artifact(),
+            ),
+            "Gate1 failure",
+        ),
+        (
+            LiftFeedback(
+                FeedbackKind.GATE1,
+                {"diagnostic": "missing artifact"},
+                1,
+                None,
+            ),
+            "exact previous artifact",
+        ),
+    ],
+)
+def test_gate1_search_rejects_non_resumable_initial_feedback(
+    seed: LiftFeedback,
+    message: str,
+) -> None:
+    runner = _runner(_Lift([]), _Gate1Factory([]), _Gate2())
+
+    with pytest.raises(ValueError, match=message):
+        runner.search_gate1(_request(), initial_feedback=seed)
+
+
 def test_three_gate1_failures_end_as_no_closure_without_gate2() -> None:
     lift = _Lift([make_reduce_artifact() for _ in range(3)])
     factory = _Gate1Factory([_gate1_result(closed=False) for _ in range(3)])
