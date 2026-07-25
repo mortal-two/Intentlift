@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v26"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v27"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -233,6 +233,8 @@ This directory is the complete allowlisted input for one fresh Lift round.
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
   matches. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
+  Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
+  bounded read-only inspection over already-mounted data and the current draft.
   `bootstrap` copies an explicitly supplied previous artifact without editing
   it; no command constructs or repairs artifact fields.
 
@@ -246,6 +248,10 @@ Then inspect Source and Harness in separate actions with
 `python /input/tools/context_query.py feedback` before editing the candidate
 copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.
+Use `feedback --path diagnostics.KEY` for an exact unresolved Gate1 or
+CandidateCheck section; do not probe category names or parse the full file with
+ad-hoc scripts. Use `candidate --path j.PATH` and `candidate-find HANDLE` to
+inspect a large current draft without rewriting it.
 After writing or editing a complete draft, inspect the bounded public-ABI diff
 without paging the whole Harness again:
 

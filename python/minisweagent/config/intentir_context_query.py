@@ -143,18 +143,29 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             else None
         ),
         "observer_categories": _observer_categories(feedback),
+        "feedback_diagnostic_keys": (
+            list(feedback.get("diagnostics", {}))
+            if isinstance(feedback, dict)
+            and isinstance(feedback.get("diagnostics"), dict)
+            else []
+        ),
         "next": [
             f"Run `{QUERY_COMMAND} feedback` before repairing a prior candidate.",
+            f"Use `{QUERY_COMMAND} feedback --path diagnostics.KEY` for one exact diagnostic section.",
             "Read Source and Harness separately so neither can be transport-elided.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
+            f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
     _emit_json(overview)
 
 
-def _feedback(input_root: Path) -> None:
+def _feedback(input_root: Path, path: str | None = None) -> None:
     value = _feedback_without_candidate(input_root)
+    if path is not None:
+        _emit_json(_resolve_json_path(value, path))
+        return
     try:
         _emit_json(value)
     except ValueError:
@@ -251,6 +262,59 @@ def _harness(input_root: Path, path: str | None) -> None:
                 "query": f"{QUERY_COMMAND} harness --path KEY[.SUBKEY]",
             }
         )
+
+
+def _candidate(output_root: Path, path: str | None) -> None:
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        raise FileNotFoundError("/output/candidate.json does not exist")
+    value = _resolve_json_path(_load_json(candidate_path), path)
+    try:
+        _emit_json(value)
+    except ValueError:
+        if path is not None or not isinstance(value, dict):
+            raise
+        _emit_json(
+            {
+                "keys": list(value),
+                "query": f"{QUERY_COMMAND} candidate --path KEY[.SUBKEY]",
+            }
+        )
+
+
+def _candidate_find(output_root: Path, needle: str) -> None:
+    """List bounded exact-value occurrences in the current LLM draft."""
+
+    if not needle:
+        raise ValueError("candidate-find requires a non-empty exact value")
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        raise FileNotFoundError("/output/candidate.json does not exist")
+    value = _load_json(candidate_path)
+    paths: list[str] = []
+
+    def visit(item: Any, path: str) -> None:
+        if len(paths) >= 256:
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                visit(child, f"{path}.{key}" if path else str(key))
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(child, f"{path}.{index}" if path else str(index))
+        elif item == needle:
+            paths.append(path)
+
+    visit(value, "")
+    _emit_json(
+        {
+            "exact_value": needle,
+            "paths": paths,
+            "match_count": len(paths),
+            "truncated": len(paths) >= 256,
+            "authority": "read-only; candidate.json was not edited",
+        }
+    )
 
 
 def _candidate_abi(input_root: Path, output_root: Path) -> None:
@@ -589,7 +653,8 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, default=Path("/output"))
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("bootstrap")
-    subparsers.add_parser("feedback")
+    feedback = subparsers.add_parser("feedback")
+    feedback.add_argument("--path")
     category = subparsers.add_parser("feedback-category")
     category.add_argument("name")
     source = subparsers.add_parser("source")
@@ -597,6 +662,10 @@ def main() -> int:
     source.add_argument("--lines", type=int, default=160)
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
+    candidate = subparsers.add_parser("candidate")
+    candidate.add_argument("--path")
+    candidate_find = subparsers.add_parser("candidate-find")
+    candidate_find.add_argument("value")
     subparsers.add_parser("candidate-abi")
     knowledge = subparsers.add_parser("knowledge")
     knowledge.add_argument("query")
@@ -607,13 +676,17 @@ def main() -> int:
     if args.command == "bootstrap":
         _bootstrap(args.input_root, args.output_root)
     elif args.command == "feedback":
-        _feedback(args.input_root)
+        _feedback(args.input_root, args.path)
     elif args.command == "feedback-category":
         _feedback_category(args.input_root, args.name)
     elif args.command == "source":
         _source(args.input_root, args.start, args.lines)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
+    elif args.command == "candidate":
+        _candidate(args.output_root, args.path)
+    elif args.command == "candidate-find":
+        _candidate_find(args.output_root, args.value)
     elif args.command == "candidate-abi":
         _candidate_abi(args.input_root, args.output_root)
     elif args.command == "knowledge":

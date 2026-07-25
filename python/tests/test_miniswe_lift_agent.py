@@ -37,7 +37,13 @@ from intentir.verify.scrc_runner import (
     SCRCRunRequest,
     SourceProgram,
 )
-from minisweagent.config.intentir_context_query import _bootstrap, _candidate_abi
+from minisweagent.config.intentir_context_query import (
+    _bootstrap,
+    _candidate,
+    _candidate_abi,
+    _candidate_find,
+    _feedback,
+)
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
     INTENTIR_CANDIDATE_CHECK,
@@ -124,7 +130,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v26"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v27"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -359,6 +365,64 @@ def test_candidate_abi_query_reports_only_public_mechanical_differences(
         "j.signature.parameters[p1].dtype",
         "c.values",
     }
+
+
+def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    output_root.mkdir()
+    feedback = {
+        "failure_kind": "gate1",
+        "diagnostics": {
+            "unresolved_gate1": {
+                "diagnostic": "missing scf.for",
+                "round": 2,
+            },
+            "candidate_check_feedback": {
+                "rule_code": "scope_invalid",
+            },
+        },
+        "previous_artifact": {"omitted": True},
+    }
+    candidate = {
+        "j": {
+            "signature": {"parameters": [{"name": "p0"}]},
+            "scopes": [
+                {
+                    "scope_id": "q0",
+                    "definitions": ["t0", "v0"],
+                    "captures": [],
+                }
+            ],
+        },
+        "c": {"slots": [], "values": {}},
+        "pi": {"instances": [{"id": "i0", "semantic_ref": "v0"}]},
+    }
+    (input_root / "feedback.json").write_text(json.dumps(feedback))
+    candidate_path = output_root / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate))
+    before = candidate_path.read_bytes()
+
+    _feedback(input_root, "diagnostics.unresolved_gate1")
+    assert json.loads(capsys.readouterr().out) == {
+        "diagnostic": "missing scf.for",
+        "round": 2,
+    }
+
+    _candidate(output_root, "j.scopes.0")
+    assert json.loads(capsys.readouterr().out)["scope_id"] == "q0"
+
+    _candidate_find(output_root, "v0")
+    report = json.loads(capsys.readouterr().out)
+    assert report["paths"] == [
+        "j.scopes.0.definitions.1",
+        "pi.instances.0.semantic_ref",
+    ]
+    assert report["authority"].startswith("read-only")
+    assert candidate_path.read_bytes() == before
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
