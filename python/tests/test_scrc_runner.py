@@ -150,7 +150,7 @@ def _gate2_suite(*, passed: bool) -> Gate2SuiteResult:
     return Gate2SuiteResult("suite0", (case,), (("c0", 128),))
 
 
-def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
+def test_gate1_relift_diff_is_bounded_and_pseudonymizes_node_identity() -> None:
     class VerboseComparison:
         def to_dict(self):
             return {
@@ -225,11 +225,101 @@ def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
         },
     ]
     assert "00000000000000000000" not in str(compact)
-    assert dataflow["examples"][0]["item"][1] == "region[scf.for:node]"
-    assert dataflow["examples"][0]["item"][2] == "effect.trace[node]"
+    assert dataflow["examples"][0]["item"][1] == (
+        "region[scf.for:source_node_0]"
+    )
+    assert dataflow["examples"][0]["item"][2] == (
+        "effect.trace[source_node_1]"
+    )
+    assert dataflow["node_alias_scope"] == "this_feedback_only"
+    assert dataflow["node_witnesses"][0]["node"] == (
+        "effect.trace[source_node_1]"
+    )
     assert re.search(r"[0-9a-f]{12,}", str(compact)) is None
     assert "score" not in compact
     assert "components" not in compact
+
+
+def test_gate1_relift_node_witness_preserves_incident_edge_context() -> None:
+    source_add = "a" * 20
+    source_mul = "b" * 20
+    replay_add = "c" * 20
+    replay_mul = "d" * 20
+
+    class RewiredComparison:
+        def to_dict(self):
+            differences = []
+            for kind, add, mul, expected, actual in (
+                ("missing", source_add, source_mul, 1, 0),
+                ("unexpected", replay_add, replay_mul, 0, 1),
+            ):
+                differences.extend(
+                    [
+                        {
+                            "category": "dataflow",
+                            "kind": kind,
+                            "item": [
+                                "edge",
+                                "arg[0]:f32",
+                                f"arith.addf[{add}]",
+                                "operand[0]",
+                            ],
+                            "expected_count": expected,
+                            "actual_count": actual,
+                        },
+                        {
+                            "category": "dataflow",
+                            "kind": kind,
+                            "item": [
+                                "edge",
+                                f"arith.mulf[{mul}]",
+                                f"arith.addf[{add}]",
+                                "operand[1]",
+                            ],
+                            "expected_count": expected,
+                            "actual_count": actual,
+                        },
+                        {
+                            "category": "dataflow",
+                            "kind": kind,
+                            "item": [
+                                "edge",
+                                f"arith.addf[{add}]",
+                                "region[root]",
+                                "function.return[0]",
+                            ],
+                            "expected_count": expected,
+                            "actual_count": actual,
+                        },
+                    ]
+                )
+            return {
+                "hard_pass": False,
+                "hard_passes": {"dataflow": False},
+                "primary_difference_category": "dataflow",
+                "differences": differences,
+            }
+
+    compact = _compact_gate1_observer_diff(RewiredComparison())
+    dataflow = compact["categories"][0]
+    source = next(
+        item
+        for item in dataflow["node_witnesses"]
+        if item["node"] == "arith.addf[source_node_0]"
+    )
+    replay = next(
+        item
+        for item in dataflow["node_witnesses"]
+        if item["node"] == "arith.addf[replay_node_0]"
+    )
+
+    assert len(source["incident_differences"]) == 3
+    assert len(replay["incident_differences"]) == 3
+    assert {
+        edge["item"][3] for edge in source["incident_differences"]
+    } == {"operand[0]", "operand[1]", "function.return[0]"}
+    assert source_add not in str(compact)
+    assert replay_add not in str(compact)
 
 
 class _Lift:

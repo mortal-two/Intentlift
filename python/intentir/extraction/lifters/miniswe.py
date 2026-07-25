@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v31"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v32"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -262,6 +262,10 @@ Use `feedback --path diagnostics.KEY` for an exact unresolved Gate1 or
 CandidateCheck section; do not probe category names or parse the full file with
 ad-hoc scripts. Use `candidate --path j.PATH` and `candidate-find HANDLE` to
 inspect a large current draft without rewriting it.
+Gate1 `dataflow.node_witnesses` use `source_node_*`, `replay_node_*`, and
+`shared_node_*` aliases only to preserve repeated observer identity within that
+one feedback. Compare their incident producer/consumer roles to localize the
+earliest wiring divergence; never copy an observer alias into J/C/pi.
 After writing or editing a complete draft, inspect the bounded public-ABI diff
 without paging the whole Harness again:
 

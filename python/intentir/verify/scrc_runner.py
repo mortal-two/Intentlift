@@ -28,6 +28,8 @@ UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
 UNRESOLVED_GATE2_DIAGNOSTIC = "unresolved_gate2"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
+MAX_GATE1_FEEDBACK_NODE_WITNESSES = 6
+MAX_GATE1_FEEDBACK_EDGES_PER_NODE = 6
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -74,6 +76,146 @@ def _feedback_item(value: Any) -> Any:
     return value
 
 
+def _observer_fingerprints(value: Any) -> tuple[str, ...]:
+    """Return observer-only recursive node fingerprints in deterministic order."""
+
+    if isinstance(value, str):
+        return tuple(_OBSERVER_NODE_FINGERPRINT.findall(value))
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            fingerprint
+            for item in value
+            for fingerprint in _observer_fingerprints(item)
+        )
+    if isinstance(value, Mapping):
+        return tuple(
+            fingerprint
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            for fingerprint in _observer_fingerprints(item)
+        )
+    return ()
+
+
+def _observer_node_aliases(
+    differences: list[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Pseudonymize node identity while preserving within-feedback incidence."""
+
+    sides: dict[str, set[str]] = {}
+    for difference in differences:
+        side = (
+            "source"
+            if difference.get("kind") == "missing"
+            else "replay"
+            if difference.get("kind") == "unexpected"
+            else "shared"
+        )
+        for fingerprint in _observer_fingerprints(difference.get("item")):
+            sides.setdefault(fingerprint, set()).add(side)
+
+    counters = {"source": 0, "replay": 0, "shared": 0}
+    aliases: dict[str, str] = {}
+    for fingerprint in sorted(sides):
+        observed_sides = sides[fingerprint]
+        only_side = (
+            next(iter(observed_sides)) if len(observed_sides) == 1 else None
+        )
+        side = (
+            only_side
+            if only_side in {"source", "replay"}
+            else "shared"
+        )
+        aliases[fingerprint] = f"{side}_node_{counters[side]}"
+        counters[side] += 1
+    return aliases
+
+
+def _pseudonymize_observer_nodes(
+    value: Any,
+    aliases: Mapping[str, str],
+) -> Any:
+    """Replace opaque hashes with repeatable side-qualified local aliases."""
+
+    if isinstance(value, str):
+        return _OBSERVER_NODE_FINGERPRINT.sub(
+            lambda match: aliases.get(match.group(0), "node"),
+            value,
+        )
+    if isinstance(value, list):
+        return [_pseudonymize_observer_nodes(item, aliases) for item in value]
+    if isinstance(value, tuple):
+        return [_pseudonymize_observer_nodes(item, aliases) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _pseudonymize_observer_nodes(item, aliases)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    return value
+
+
+def _observer_node_witnesses(
+    differences: list[Mapping[str, Any]],
+    aliases: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    """Expose bounded incident-edge witnesses for the first divergent nodes."""
+
+    incident: dict[str, list[Mapping[str, Any]]] = {}
+    labels: dict[str, str] = {}
+    seeds: list[str] = []
+    for difference in differences:
+        item = difference.get("item")
+        if (
+            difference.get("category") != "dataflow"
+            or not isinstance(item, (list, tuple))
+            or len(item) != 4
+            or item[0] != "edge"
+        ):
+            continue
+        # Prefer the consumer: one changed consumer hash otherwise causes a
+        # cascade of indistinguishable family-only missing/unexpected edges.
+        ordered_endpoints = (item[2], item[1])
+        edge_tokens: list[str] = []
+        for endpoint in ordered_endpoints:
+            endpoint_tokens = _observer_fingerprints(endpoint)
+            for token in endpoint_tokens:
+                if token not in edge_tokens:
+                    edge_tokens.append(token)
+                labels.setdefault(
+                    token,
+                    str(_pseudonymize_observer_nodes(endpoint, aliases)),
+                )
+        for token in edge_tokens:
+            incident.setdefault(token, []).append(difference)
+            if token not in seeds and len(seeds) < MAX_GATE1_FEEDBACK_NODE_WITNESSES:
+                seeds.append(token)
+
+    witnesses: list[dict[str, Any]] = []
+    for token in seeds:
+        edges = incident.get(token, ())
+        witnesses.append(
+            {
+                "node": labels[token],
+                "incident_differences": [
+                    {
+                        key: _pseudonymize_observer_nodes(edge[key], aliases)
+                        for key in (
+                            "kind",
+                            "item",
+                            "expected_count",
+                            "actual_count",
+                        )
+                        if key in edge
+                    }
+                    for edge in edges[:MAX_GATE1_FEEDBACK_EDGES_PER_NODE]
+                ],
+                "truncated_count": max(
+                    0, len(edges) - MAX_GATE1_FEEDBACK_EDGES_PER_NODE
+                ),
+            }
+        )
+    return witnesses
+
+
 def _observer_edge_endpoint(value: Any) -> str:
     """Collapse an observer node label to a hash-free structural family."""
 
@@ -109,11 +251,13 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
     differences = raw.get("differences")
     if not isinstance(differences, list):
         return _feedback_item(raw)
+    mapped_differences = [
+        difference for difference in differences if isinstance(difference, Mapping)
+    ]
+    node_aliases = _observer_node_aliases(mapped_differences)
 
     grouped: dict[str, dict[str, Any]] = {}
-    for difference in differences:
-        if not isinstance(difference, Mapping):
-            continue
+    for difference in mapped_differences:
         category = str(difference.get("category", "unknown"))
         group = grouped.setdefault(
             category,
@@ -134,7 +278,9 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
             continue
         examples.append(
             {
-                key: _feedback_item(difference[key])
+                key: _pseudonymize_observer_nodes(
+                    difference[key], node_aliases
+                )
                 for key in ("kind", "item", "expected_count", "actual_count")
                 if key in difference
             }
@@ -158,6 +304,14 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
                     key=lambda item: (-item[1], item[0]),
                 )[:MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY]
             ]
+        if category == "dataflow":
+            witnesses = _observer_node_witnesses(
+                mapped_differences,
+                node_aliases,
+            )
+            if witnesses:
+                group["node_witnesses"] = witnesses
+                group["node_alias_scope"] = "this_feedback_only"
         group["truncated_count"] = max(
             0, group["difference_count"] - len(group["examples"])
         )
