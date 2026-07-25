@@ -315,7 +315,6 @@ def replay_source_ingress(
     try:
         code, entry = _extract_replay_code(
             source,
-            artifact=artifact,
             frontend=selected_frontend,
             function_name=function_name,
         )

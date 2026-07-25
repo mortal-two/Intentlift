@@ -927,7 +927,7 @@ def test_c_attachment_uses_closed_subject_dependent_axis_domain() -> None:
     assert view["c"]["slots"][0]["subject_ref"] == "n1"
     assert view["c"]["slots"][0]["axis_ref"] == 1
 
-    slot.subject_ref = "d0"
+    slot.subject_ref = "d1"
     slot.axis_ref = "x1"
     assert type_check(artifact.j, artifact.c, artifact.pi).passed
 
@@ -1082,7 +1082,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v8"
+    assert report.protocol == "intentir.scrc.typecheck.v10"
 
 
 @pytest.mark.parametrize(

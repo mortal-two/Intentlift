@@ -284,7 +284,7 @@ _REPLAY_COMPONENT_KEYS = {
     "j": frozenset(
         {
             "kernel_id", "intent", "node_ids", "boundary", "signature",
-            "scopes", "storage",
+            "scopes", "storage", "dimension_constraints",
         }
     ),
     "c": frozenset({"slots"}),
@@ -297,6 +297,7 @@ _REPLAY_COMPONENT_KEYS = {
             "sharing",
             "refinements",
             "iterations",
+            "loop_carriers",
         }
     ),
 }

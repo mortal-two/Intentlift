@@ -933,7 +933,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v8"
+    assert report.protocol == "intentir.scrc.typecheck.v10"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
         "public_frontend_context_v7"
     )
@@ -954,7 +954,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v8"
+    assert report.protocol == "intentir.scrc.typecheck.v10"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
