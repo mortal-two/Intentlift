@@ -2805,6 +2805,52 @@ def _operation_dependencies(op: IntentOp) -> tuple[str, ...]:
     return tuple(dependencies)
 
 
+def direct_logical_operand_sources(j: Any, op: IntentOp) -> tuple[str, ...]:
+    """Resolve one op's direct operands across authored region binders.
+
+    A structured-loop ``scan.name`` is a lexical alias for the complete
+    logical tensor named by ``scan.from``.  It is not a new load and it does
+    not erase the scanned axis.  Boundary consumers therefore need this small
+    J-only binder resolution when deciding whether a load feeds an operation
+    directly.  Carry values are intentionally not aliases: after an update
+    they no longer denote the original logical input.
+    """
+
+    j = elaborate_j(j)
+    resolved_by_operation: dict[int, tuple[str, ...]] = {}
+
+    def resolve(value: str, aliases: Mapping[str, str]) -> str:
+        current = value
+        seen: set[str] = set()
+        while current in aliases and current not in seen:
+            seen.add(current)
+            current = aliases[current]
+        return current
+
+    def visit(body: Sequence[IntentOp], aliases: Mapping[str, str]) -> None:
+        for operation in body:
+            dependencies: list[str] = []
+            for dependency in _operation_dependencies(operation):
+                source = resolve(dependency, aliases)
+                if source not in dependencies:
+                    dependencies.append(source)
+            resolved_by_operation[id(operation)] = tuple(dependencies)
+
+            nested_aliases = dict(aliases)
+            if operation.op == "loop":
+                for scan in operation.scan:
+                    nested_aliases[scan.name] = resolve(scan.source, aliases)
+            visit(operation.body, nested_aliases)
+            if operation.op in {"effect_if", "value_if"}:
+                assert operation.positive is not None
+                assert operation.negative is not None
+                visit(operation.positive.body, nested_aliases)
+                visit(operation.negative.body, nested_aliases)
+
+    visit(j.intent.body, {})
+    return resolved_by_operation.get(id(op), _operation_dependencies(op))
+
+
 def _consumer_dependency_path(
     j: Any,
     *,
@@ -3604,7 +3650,10 @@ def _project_functional_boundary(
         if access.kind.value == "load":
             if access.tensor not in input_names:
                 raise ValueError("functional load is not a J input")
-            if op is not None and access.tensor not in _operation_dependencies(op):
+            if (
+                op is not None
+                and access.tensor not in direct_logical_operand_sources(j, op)
+            ):
                 poststate = explicit_inout_poststate_reload_value(
                     j, access.access_id
                 )
@@ -4014,6 +4063,7 @@ __all__ = [
     "functional_boundary_closure_issues",
     "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",
+    "direct_logical_operand_sources",
     "explicit_inout_poststate_reload_value",
     "predicate_dominated_pointwise_load",
     "parse_direct_axes",

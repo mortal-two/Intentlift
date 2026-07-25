@@ -25,6 +25,7 @@ from intentir.ir.canonical_j import (
 )
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.functional_boundary import (
+    direct_logical_operand_sources,
     explicit_inout_poststate_reload_value,
     parse_direct_axes,
     predicate_dominated_pointwise_load,
@@ -730,7 +731,10 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 raise ValueError(
                     f"E_J load {access.access_id!r} is not a J input"
                 )
-            if op is not None and access.tensor not in op.operands:
+            if (
+                op is not None
+                and access.tensor not in direct_logical_operand_sources(j, op)
+            ):
                 if explicit_inout_poststate_reload_value(
                     j, access.access_id
                 ) is None:

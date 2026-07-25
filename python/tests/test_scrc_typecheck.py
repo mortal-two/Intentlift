@@ -881,6 +881,23 @@ def test_functional_boundary_v6_accepts_masked_and_padded_effect_contracts() -> 
     assert padded.j.boundary.to_json()["effects"] == padded_effects
 
 
+def test_reduction_boundary_cannot_supply_a_missing_semantic_reduce() -> None:
+    artifact = make_reduce_artifact()
+    artifact.j.boundary.reductions[0].node_ref = "n0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.REDUCTION_BOUNDARY_INVALID
+    ]
+    assert not report.passed
+    assert len(matching) == 1
+    assert matching[0].path == "j.boundary.reductions[0].node_ref"
+    assert matching[0].ref == "n0"
+
+
 @pytest.mark.parametrize(
     "guard",
     ["flag", "not flag"],

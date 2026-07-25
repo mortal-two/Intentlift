@@ -941,7 +941,7 @@ class _Evaluator:
         op: IntentOp,
         env: Mapping[str, np.ndarray],
     ) -> dict[str, np.ndarray]:
-        if op.operands or op.attrs or op.type is not None:
+        if op.operands or op.attrs:
             raise StructuredReferenceUnsupportedError(
                 "structured loop has unsupported ordinary-op fields"
             )
@@ -949,6 +949,18 @@ class _Evaluator:
             raise StructuredReferenceUnsupportedError(
                 "structured loop requires one trip and typed carries"
             )
+        if op.type is not None:
+            if len(op.carry) != 1 or op.carry[0].type is None:
+                raise StructuredReferenceUnsupportedError(
+                    "structured loop ordinary result type is only defined for "
+                    "one typed carry"
+                )
+            expected = op.carry[0].type.to_json()
+            if op.type != expected:
+                raise ValueError(
+                    "structured loop ordinary result type differs from its "
+                    "unique carry type"
+                )
         if any(child.op == "loop" for child in _walk_ops(op.body)):
             raise StructuredReferenceUnsupportedError(
                 "structured reference does not implement nested loops"

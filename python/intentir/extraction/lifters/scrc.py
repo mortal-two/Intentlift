@@ -846,6 +846,13 @@ an online or loop-carried recurrence with a global contraction/reduction and ask
 Replay to rediscover the missing update algorithm. Pi records only realization
 topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
 an omitted initialization, update formula, yield, or contraction orientation.
+Each scan name retains the complete logical tensor type of its `from` source;
+it is not a physical tile and does not remove the trip axis. Pointwise body ops
+retain that axis until an explicit J reduce/scan consumes it. Conversely, a
+physical strip-mined loop implementing an otherwise ordinary reduction is
+Layer C/pi realization rather than evidence for a semantic loop. A
+boundary.reductions entry describes an existing J reduce/scan and cannot attach
+to a loop to manufacture the missing semantic contraction.
 
 An effect-controlling binary Source branch is one Layer-A `effect_if`: one
 visible scalar-i1 predicate and explicit positive/negative `{{scope_id,body}}`

@@ -15,7 +15,11 @@ from intentir.backend.cpu.structured_reference import (
     execute_structured_reference,
 )
 from intentir.ir import IntentFunction, LoopStateBinding
-from intentir.ir.functional_boundary import project_functional_boundary
+from intentir.ir.canonical_j import CanonicalJError, elaborate_j, j_elaboration
+from intentir.ir.functional_boundary import (
+    direct_logical_operand_sources,
+    project_functional_boundary,
+)
 from intentir.verify.gate1 import Gate1Artifact, SchemaError, SemanticArchive
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.typecheck import TypeCheckErrorCode, type_check
@@ -287,6 +291,40 @@ def test_structured_refeval_executes_one_full_logical_axis_step() -> None:
     assert set(inspect.signature(execute_structured_reference).parameters) == {
         "j", "dims", "inputs", "broadcast_axes", "access_guard_relations",
     }
+
+
+def test_structured_loop_scan_binds_the_complete_logical_source_type() -> None:
+    accepted = elaborate_j(SemanticArchive.from_json(_loop_archive()))
+
+    value_types = j_elaboration(accepted).value_type_by_name
+
+    assert value_types["x_tile"].to_json() == {
+        "dtype": "f32",
+        "shape": ["N"],
+    }
+    assert value_types["acc_iter"].to_json() == {
+        "dtype": "f32",
+        "shape": [],
+    }
+    assert value_types["acc_next"] == value_types["acc_iter"]
+    reducer = accepted.intent.body[0].body[0]
+    assert direct_logical_operand_sources(accepted, reducer) == ("x",)
+
+
+def test_structured_loop_rejects_body_type_that_erases_the_scan_axis() -> None:
+    payload = _loop_archive()
+    pointwise = payload["intent"]["intent_function"]["body"][0]["body"][0]
+    pointwise.update(
+        {
+            "op": "map_unary",
+            "operands": ["x_tile"],
+            "attrs": {"fn": "identity"},
+            "type": {"dtype": "f32", "shape": []},
+        }
+    )
+
+    with pytest.raises(CanonicalJError, match="conflicting types"):
+        elaborate_j(SemanticArchive.from_json(payload))
 
 
 def test_structured_refeval_zero_trip_returns_typed_initializer() -> None:

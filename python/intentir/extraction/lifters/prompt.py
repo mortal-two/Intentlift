@@ -177,7 +177,7 @@ Structured loop (loop-carried recurrence, e.g. online softmax / scans):
    }, ...],
    "trip":{"axis":<semantic dim name being scanned>},
    "scan":[{"name":<slice name>,"from":<input>,"axis":<int>}, ...],
-   "body":[ <ops over scan slices + carries> ],
+   "body":[ <ops over complete logical scan values + carries> ],
    "yield":[<next-iteration carry values, one per carry>] }
   result must exactly equal carry.result_value order; yield must exactly equal
   carry.next_value order. Body sees scan names and body_argument names only;
@@ -185,6 +185,12 @@ Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   next_value must carry an explicit type exactly equal to the state type. Keep
   tile/block choices out of trip:
   they are Layer C, not J semantics.
+  Each scan name has the SAME complete logical tensor type as its `from`
+  source; scan does not remove the trip axis and is not one physical tile or
+  element. Preserve that axis through pointwise ops until an explicit J
+  reduce/scan consumes it. `boundary.reductions` only describes the local
+  padding algebra of an existing reduce/scan node; it cannot replace that
+  semantic node or attach to the loop itself.
   Use a loop ONLY for genuine loop-carried state; plain tiling is Layer C and
   should be re-rolled away (the math is the same whole-tensor op).
 
