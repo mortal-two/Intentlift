@@ -124,7 +124,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v24"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v25"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -273,6 +273,15 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
                 )
             }
         )
+        loop_carrier_result = environment.execute(
+            {
+                "command": (
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json "
+                    "section pi_loop_carrier"
+                )
+            }
+        )
     finally:
         workspace.cleanup()
 
@@ -294,6 +303,10 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "leave output_mappings empty" in output
     assert '"semantic_ref"' in output
     assert len(output.splitlines()) < 450
+    assert loop_carrier_result["returncode"] == 0
+    assert '"loop_instance"' in loop_carrier_result["output"]
+    assert '"state"' in loop_carrier_result["output"]
+    assert len(loop_carrier_result["output"].splitlines()) < 80
 
 
 def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
@@ -1790,6 +1803,85 @@ def test_worker_limit_carries_only_last_rule_paths_to_next_fresh_lift(
         "previous_artifact": None,
     }
     assert "observed_refs_or_types" not in json.dumps(captured_feedback[1])
+
+
+def test_worker_limit_continues_adjacent_complete_llm_draft(
+    monkeypatch,
+) -> None:
+    artifact = make_copy_artifact()
+    draft = artifact.to_json()
+    draft["pi"]["instances"][0]["semantic_ref"] = "n99"
+    captured_feedback: list[object] = []
+    roots: list[Path] = []
+
+    def fake_model(**kwargs):
+        del kwargs
+        return object()
+
+    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+        del model, config_overrides, candidate_checker
+        roots.append(workspace.root)
+        captured_feedback.append(
+            json.loads((workspace.input_dir / "feedback.json").read_text())
+        )
+        if len(captured_feedback) == 1:
+            workspace.candidate_path.write_text(json.dumps(draft))
+            result = IntentIRLiftRunResult(
+                None,
+                {"messages": [], "info": {"candidate_check": {}}},
+                "LimitsExceeded",
+                32,
+                20.0,
+            )
+            raise IntentIRLiftRunError(
+                "worker exhausted after writing a complete draft",
+                result=result,
+            )
+        return IntentIRLiftRunResult(
+            json.dumps(artifact.to_json()),
+            {"messages": []},
+            "Submitted",
+            2,
+            10.0,
+        )
+
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.create_intentir_lift_model", fake_model
+    )
+    monkeypatch.setattr(
+        "minisweagent.run.intentir_lift.run_intentir_lift", fake_run
+    )
+    adapter = MiniSWELiftAdapter(
+        provider=ProviderConfig(
+            "test",
+            "http://provider.invalid/v1",
+            "secret",
+            "test-model",
+            reasoning_effort="xhigh",
+        )
+    )
+    request = _adapter_request()
+
+    with pytest.raises(CandidateLiftError) as rejected:
+        adapter.lift(request, None)
+    repaired = adapter.lift(
+        request,
+        LiftFeedback(
+            FeedbackKind.LIFT,
+            rejected.value.diagnostics,
+            previous_artifact=artifact,
+        ),
+    )
+
+    assert repaired.artifact.to_json() == canonicalize_gate1_artifact(
+        artifact
+    ).to_json()
+    assert captured_feedback[1]["previous_artifact"] == draft
+    assert captured_feedback[1]["diagnostics"]["continuation_draft"][
+        "sha256"
+    ]
+    assert adapter.records[0].continuation_candidate == draft
+    assert all(not root.exists() for root in roots)
 
 
 def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(

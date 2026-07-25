@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v24"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v25"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -263,6 +263,9 @@ Lift submission and will be checked externally again.
 If current Lift/TypeCheck diagnostics contain `unresolved_gate1`, the enclosed
 Gate1 counterexample remains an open obligation across the intermediate
 construction failure; address both without inventing fields.
+If bootstrap copied a `continuation_draft`, it is only the adjacent prior
+worker's complete LLM-written JSON draft, not a decoded or accepted artifact.
+Continue its focused repair and rerun validator/CandidateCheck yourself.
 Write it to `/output/candidate.json`; then run:
 
 `python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`
@@ -365,6 +368,66 @@ class MiniSWELiftAdapter:
             return None
         return candidate
 
+    def _latest_continuation_candidate(
+        self,
+        diagnostics: Mapping[str, Any] | None,
+    ) -> Mapping[str, Any] | None:
+        """Return one adjacent LLM-written draft without accepting or editing it."""
+
+        if (
+            not self._records
+            or not isinstance(diagnostics, Mapping)
+            or diagnostics.get("failure_class") != "lift_worker_no_candidate"
+        ):
+            return None
+        receipt = diagnostics.get("continuation_draft")
+        if not isinstance(receipt, Mapping):
+            return None
+        expected_sha256 = receipt.get("sha256")
+        record = self._records[-1]
+        candidate = record.continuation_candidate
+        if (
+            record.relift_round != len(self._records)
+            or record.extraction is not None
+            or not isinstance(candidate, Mapping)
+            or not isinstance(expected_sha256, str)
+        ):
+            return None
+        encoded = json.dumps(
+            candidate,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+        if hashlib.sha256(encoded).hexdigest() != expected_sha256:
+            return None
+        return dict(candidate)
+
+    @staticmethod
+    def _read_continuation_candidate(workspace: Any) -> dict[str, Any] | None:
+        """Read a complete worker draft under the existing output policy."""
+
+        def reject_nonfinite(token: str) -> None:
+            raise ValueError(f"non-finite JSON number: {token}")
+
+        try:
+            candidate = json.loads(
+                workspace.read_candidate(),
+                parse_constant=reject_nonfinite,
+            )
+            if not isinstance(candidate, dict) or set(candidate) != {
+                "schema",
+                "j",
+                "c",
+                "pi",
+            }:
+                return None
+            json.dumps(candidate, sort_keys=True, allow_nan=False)
+        except (OSError, TypeError, ValueError, UnicodeError, RecursionError):
+            return None
+        return candidate
+
     def _relift_context(self, feedback: Any) -> SCRCReliftContext | None:
         if feedback is None:
             return None
@@ -376,6 +439,10 @@ class MiniSWELiftAdapter:
             if kind == "lift"
             else None
         )
+        if previous_candidate is None and kind == "lift":
+            previous_candidate = self._latest_continuation_candidate(
+                diagnostics
+            )
         if previous_candidate is None and hasattr(previous_artifact, "to_json"):
             previous_candidate = previous_artifact.to_json()
         return SCRCReliftContext(
@@ -451,12 +518,34 @@ class MiniSWELiftAdapter:
                 result.trajectory, provider.api_key
             )
             evidence = _worker_evidence(result, safe_trajectory)
+            continuation_candidate = self._read_continuation_candidate(
+                workspace
+            )
+            continuation_receipt = None
+            if continuation_candidate is not None:
+                continuation_bytes = json.dumps(
+                    continuation_candidate,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode()
+                continuation_receipt = {
+                    "sha256": hashlib.sha256(
+                        continuation_bytes
+                    ).hexdigest(),
+                    "bytes": len(continuation_bytes),
+                }
+                evidence["continuation_draft"] = dict(
+                    continuation_receipt
+                )
             diagnostic = str(exc)
             self._records.append(
                 SCRCReliftRecord(
                     round_index,
                     diagnostic=diagnostic,
                     backend_evidence=evidence,
+                    continuation_candidate=continuation_candidate,
                 )
             )
             if (
@@ -483,6 +572,10 @@ class MiniSWELiftAdapter:
             if candidate_check_feedback is not None:
                 rejected_diagnostics["candidate_check_feedback"] = (
                     candidate_check_feedback
+                )
+            if continuation_receipt is not None:
+                rejected_diagnostics["continuation_draft"] = dict(
+                    continuation_receipt
                 )
             raise CandidateLiftError(
                 rejected_diagnostics,

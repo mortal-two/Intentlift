@@ -46,6 +46,9 @@ agent:
        `diagnostics.unresolved_gate1` item: preserve the copied candidate and
        repair both the current mechanical diagnostic and that retained Gate1
        counterexample before submission.
+       A copied `continuation_draft` is merely the adjacent prior worker's
+       complete LLM-written JSON, never an accepted artifact; continue its
+       repair and rerun validator/CandidateCheck yourself.
        Never concatenate README, Source, Harness, feedback, contract, and
        preflight into one shell output: the transport may elide the middle.
        If no previous artifact exists but `candidate_check_feedback` is present,

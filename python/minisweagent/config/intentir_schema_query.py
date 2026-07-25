@@ -119,6 +119,15 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "index_bound": _array_item(boundary["index_bounds"]),
         "update": _array_item(boundary["updates"]),
         "result_relation": _array_item(boundary["result_relations"]),
+        "consumer_extension": _array_item(
+            boundary["consumer_extensions"]
+        ),
+        "access_guard_relation": _array_item(
+            boundary["access_guard_relations"]
+        ),
+        "value_dimension_relation": _array_item(
+            j["value_dimension_relations"]
+        ),
         "authorization": _array_item(
             boundary["realization_authorizations"]
         ),
@@ -129,6 +138,7 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_order": _array_item(pi["order"]),
         "pi_sharing": _array_item(pi["sharing"]),
         "pi_iteration": _array_item(pi["iterations"]),
+        "pi_loop_carrier": _array_item(pi["loop_carriers"]),
         "pi_refinement": _array_item(pi["refinements"]),
     }
 

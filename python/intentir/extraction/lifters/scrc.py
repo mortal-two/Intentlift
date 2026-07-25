@@ -200,6 +200,9 @@ class SCRCReliftRecord:
     diagnostic: str | None = None
     rejected_attempts: tuple["SCRCLiftAttempt", ...] = ()
     backend_evidence: Mapping[str, Any] | None = field(default=None, repr=False)
+    continuation_candidate: Mapping[str, Any] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass(frozen=True)
