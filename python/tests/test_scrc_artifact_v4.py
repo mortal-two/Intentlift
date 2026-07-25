@@ -68,7 +68,7 @@ def _legacy_payload(version: int) -> dict:
 
 def test_artifact_v6_requires_all_current_arrays_and_round_trips_them() -> None:
     payload = make_copy_artifact().to_json()
-    assert payload["schema"] == "intentir.scrc.artifact.v6"
+    assert payload["schema"] == "intentir.scrc.artifact.v7"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
     assert payload["j"]["boundary"]["access_guard_relations"] == []
     assert payload["j"]["dimension_constraints"] == []
@@ -1159,8 +1159,8 @@ def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> 
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v7"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v15"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v8"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v16"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

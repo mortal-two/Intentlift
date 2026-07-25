@@ -68,12 +68,12 @@ def _operation_sections(reference: str) -> dict[str, str]:
 def _catalog(reference: str) -> None:
     sections = _operation_sections(reference)
     print("ordinary operations: " + ", ".join(sections))
-    print("structured operations: loop, effect_if")
+    print("structured operations: loop, effect_if, value_if")
     print("Use `op NAME` to print only one operation contract.")
 
 
 def _op(schema: dict[str, Any], reference: str, name: str) -> None:
-    if name in {"loop", "effect_if"}:
+    if name in {"loop", "effect_if", "value_if"}:
         variants = schema["$defs"]["intent_op"]["anyOf"]
         for variant in variants:
             op_schema = variant.get("properties", {}).get("op", {})
@@ -85,7 +85,7 @@ def _op(schema: dict[str, Any], reference: str, name: str) -> None:
     if name not in sections:
         raise KeyError(
             f"unknown operation: {name}; choose {sorted(sections)} or "
-            "loop/effect_if"
+            "loop/effect_if/value_if"
         )
     print(sections[name])
 

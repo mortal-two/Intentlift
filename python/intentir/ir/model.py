@@ -231,6 +231,31 @@ class EffectIfArm:
 
 
 @dataclass
+class ValueIfArm:
+    """One explicit arm of a pure single-result value conditional."""
+
+    scope_id: str
+    body: list["IntentOp"] = field(default_factory=list)
+    yield_value: str = ""
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> "ValueIfArm":
+        _closed_keys(d, {"scope_id", "body", "yield_value"}, "ValueIfArm")
+        return cls(
+            scope_id=d["scope_id"],
+            body=[IntentOp.from_json(item) for item in d["body"]],
+            yield_value=d["yield_value"],
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "scope_id": self.scope_id,
+            "body": [item.to_json() for item in self.body],
+            "yield_value": self.yield_value,
+        }
+
+
+@dataclass
 class IntentOp:
     """One Layer-A semantic node, including closed structured regions."""
 
@@ -246,10 +271,10 @@ class IntentOp:
     scan: list[LoopScanInput] = field(default_factory=list)  # per-iter sliced inputs
     body: list["IntentOp"] = field(default_factory=list)
     yields: list[str] = field(default_factory=list)  # JSON key "yield"
-    # effect-only binary conditional fields (op == "effect_if")
+    # binary conditional fields (op == "effect_if" or "value_if")
     predicate: str | None = None
-    positive: EffectIfArm | None = None
-    negative: EffectIfArm | None = None
+    positive: EffectIfArm | ValueIfArm | None = None
+    negative: EffectIfArm | ValueIfArm | None = None
     node_id: str | None = None  # canonical stable Layer-A node id
 
     @classmethod
@@ -289,11 +314,19 @@ class IntentOp:
             yields=yields,
             predicate=d.get("predicate"),
             positive=(
-                EffectIfArm.from_json(d["positive"])
+                (
+                    ValueIfArm.from_json(d["positive"])
+                    if d.get("op") == "value_if"
+                    else EffectIfArm.from_json(d["positive"])
+                )
                 if d.get("positive") is not None else None
             ),
             negative=(
-                EffectIfArm.from_json(d["negative"])
+                (
+                    ValueIfArm.from_json(d["negative"])
+                    if d.get("op") == "value_if"
+                    else EffectIfArm.from_json(d["negative"])
+                )
                 if d.get("negative") is not None else None
             ),
         )
@@ -325,7 +358,7 @@ class IntentOp:
             d["body"] = [x.to_json() for x in self.body]
         if self.yields:
             d["yield"] = self.yields
-        if self.op == "effect_if":
+        if self.op in {"effect_if", "value_if"}:
             d["predicate"] = self.predicate
             d["positive"] = (
                 self.positive.to_json() if self.positive is not None else None

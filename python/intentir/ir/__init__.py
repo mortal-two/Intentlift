@@ -14,9 +14,11 @@ from .model import (
     LoopTrip,
     LoopValueType,
     Tensor,
+    ValueIfArm,
 )
 
 __all__ = [
     "EffectIfArm", "IntentFunction", "IntentOp", "IntentReturn", "LoopScanInput",
     "LoopStateBinding", "LoopTrip", "LoopValueType", "Tensor",
+    "ValueIfArm",
 ]

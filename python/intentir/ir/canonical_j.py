@@ -433,7 +433,7 @@ def _walk_ops(body: Sequence[IntentOp]) -> Iterable[IntentOp]:
     for op in body:
         yield op
         yield from _walk_ops(op.body)
-        if op.op == "effect_if":
+        if op.op in {"effect_if", "value_if"}:
             assert op.positive is not None and op.negative is not None
             yield from _walk_ops(op.positive.body)
             yield from _walk_ops(op.negative.body)
@@ -727,7 +727,7 @@ def _node_results(j: Any) -> dict[str, tuple[str, ...]]:
             path = f"{prefix}[{index}]"
             by_path[path] = _result_names(op)
             visit(op.body, f"{path}.body")
-            if op.op == "effect_if":
+            if op.op in {"effect_if", "value_if"}:
                 assert op.positive is not None and op.negative is not None
                 visit(op.positive.body, f"{path}.positive.body")
                 visit(op.negative.body, f"{path}.negative.body")
@@ -757,7 +757,7 @@ def _declared_broadcast_axes(
             path = f"{prefix}[{index}]"
             by_path[path] = operation
             visit(operation.body, f"{path}.body")
-            if operation.op == "effect_if":
+            if operation.op in {"effect_if", "value_if"}:
                 assert operation.positive is not None
                 assert operation.negative is not None
                 visit(

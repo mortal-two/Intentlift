@@ -204,6 +204,19 @@ Effect-only binary conditional region (guarded effects with parent continuation)
   Do not replace effect_if with select: select chooses a value, while effect_if
   controls whether accesses/effects occur.
 
+Pure single-result conditional region (a value-yielding Source scf.if):
+  {"op":"value_if","result":R,"type":{"dtype":DT,"shape":[...]},
+   "predicate":P,
+   "positive":{"scope_id":Q1,"body":[<pure ordinary ops>],"yield_value":V1},
+   "negative":{"scope_id":Q2,"body":[<pure ordinary ops>],"yield_value":V2}}
+  Both arms and yields are mandatory; either body may be empty and yield a
+  captured outer value. P is an already-visible scalar i1. V1 and V2 have
+  exactly the declared result type. Arm bodies contain no logical access,
+  effect, unknown op, or nested region, and arm-local SSA escapes only through
+  R. Q1/Q2 are distinct sibling branch_region scopes, each realized by pi in a
+  distinct sibling placement=branch region. value_if is not select and is not
+  effect_if; fixed code never derives one from another.
+
 Hard rules:
 - Do NOT invent ops or fns outside the lists above. If the kernel needs one,
   express it with the primitives (e.g. rsqrt = recip(sqrt(x)); a literal number

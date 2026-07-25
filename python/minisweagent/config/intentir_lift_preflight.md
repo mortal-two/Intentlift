@@ -146,7 +146,17 @@ the artifact schema or external TypeCheck.
    it never copies predicate or polarity. CandidateCheck only rejects missing or
    contradictory authorship and never inserts an arm, scope, predicate, polarity,
    or select.
-13. Every C-tiled physical region realizing a structured J `loop` has exactly
+13. A Source `scf.if` that yields one value is one Layer-A `value_if`, not a
+   `select` or `effect_if`. Author its visible scalar-`i1` predicate, one result
+   with a closed type, and explicit positive/negative
+   `{scope_id,body,yield_value}` arms. Either body may be empty and yield a
+   captured outer value. Both yields exactly match the result dtype/shape; only
+   that result escapes. Arms bind distinct sibling `branch_region` scopes and
+   contain only known pure ordinary ops—no access/effect, unknown op, or nested
+   region. Pi realizes both scopes in distinct sibling `placement=branch`
+   regions and never copies predicate/polarity/yields. Fixed code never fills or
+   converts this structure.
+14. Every C-tiled physical region realizing a structured J `loop` has exactly
    one `pi.iterations` relation. Its `loop_instance` anchors that J loop and its
    `tile_instance` anchors the matching C tile slot. Use `extent_step` for a
    zero-to-logical-extent induction space stepped by the tile. Use
@@ -162,36 +172,36 @@ the artifact schema or external TypeCheck.
    `tile_extent` and `reduction_tile_extent` only let TypeCheck detect a wholly
    missing relation. A custom/misclassified role does not invalidate an
    explicit relation, but complete omission remains visible only to Gate1.
-14. Every sensitive pi refinement `auth_ref` names an actually declared J
+15. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind. Attach it only to the instance where that exact
    Source conversion occurs; never copy it to sibling parameters, strides, or
    same-dtype instances. A signed/unsigned widen includes explicit source and
    target integer dtypes of matching signedness with strictly increasing width;
    missing or equal dtype pairs are not widenings.
-15. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
+16. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
    `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
    and only when that subject declares the referenced non-negative logical axis
    or `x*`; do not guess either attachment.
-16. C otherwise contains only the exact trusted scheduling slots and values
+17. C otherwise contains only the exact trusted scheduling slots and values
    from `harness_view.json`. It contains no operator, predicate, formula,
    strategy, source/API name, or semantic constant.
-17. For `numeric_cast`, authorization `subject_ref` names the explicit unary
+18. For `numeric_cast`, authorization `subject_ref` names the explicit unary
    cast node; `source_dtype` equals its operand dtype and `target_dtype` equals
    its result dtype. The matching pi instance uses that same semantic ref and
    at most one refinement may target an instance.
-18. A floating output depending on a transcendental op, floating reduction, or
+19. A floating output depending on a transcendental op, floating reduction, or
    reassociation declares `result_relation.kind=tolerance`, never default or
    explicit `exact`. J declares only the class; numeric thresholds remain in
    external Q.
-19. For a J reduction, `boundary.reductions.tile_axis` is the Source frontend's
+20. For a J reduction, `boundary.reductions.tile_axis` is the Source frontend's
    local tile axis after program/grid axes select the program instance. It is
    not `reduce.attrs.axes`' whole-tensor logical axis ordinal; do not copy or
    offset one to obtain the other.
-20. Pi contains anonymous realization relations only. It contains no dtype,
+21. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-21. Run the supplied static schema validator and then
+22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still
    repeats canonical Decode and dependent TypeCheck before Replay and Gates.
