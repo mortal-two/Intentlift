@@ -12,6 +12,7 @@ from intentir.ir.functional_boundary import (
     RUNTIME_PREDICATE_PROOF_PROTOCOL,
     functional_reduction_padding_issues,
     project_functional_boundary,
+    project_functional_boundary_for_refeval,
 )
 from intentir.ir.model import IntentFunction, IntentReturn
 from intentir.verify.gate1.compiler import KernelSource
@@ -26,6 +27,7 @@ from intentir.verify.gate1.model import (
     ParameterKind,
     ParameterMode,
     ReductionBoundary,
+    SemanticArchive,
     SignatureParameter,
     TypedOutsideValue,
 )
@@ -940,6 +942,64 @@ def _runtime_logical_mask_spec(artifact) -> ScalarLoweringSpec:
     )
 
 
+def _make_value_dimension_mask_artifact():
+    artifact = _make_masked_identity_artifact()
+    payload = artifact.j.to_json()
+    function = payload["intent"]["intent_function"]
+    function["inputs"].append(
+        {"name": "t2", "dtype": "i32", "shape": []}
+    )
+    extent_parameter = payload["signature"]["parameters"][2]
+    extent_parameter["rank"] = 0
+    extent_parameter["logical_ref"] = "t2"
+    for access in payload["boundary"]["accesses"]:
+        access["predicate"] = "i0 < t2"
+    payload["value_dimension_relations"] = [
+        {
+            "value_ref": "t2",
+            "dimension_ref": "x0",
+            "relation": "eq",
+        }
+    ]
+    artifact.j = SemanticArchive.from_json(payload)
+    return artifact
+
+
+def test_value_dimension_relation_closes_value_free_production_projection() -> None:
+    artifact = _make_value_dimension_mask_artifact()
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert projection.runtime_predicate_proofs == ()
+    assert projection.value_dimension_relations == (("t2", "x0"),)
+    assert (
+        "value_dimension:t2:x0:eq" in projection.consumed
+    )
+    assert dict(projection.predicates)["a0"].upper_bounds == (("i0", "x0"),)
+    assert projection.to_json()["value_dimension_relations"] == [
+        {
+            "value_ref": "t2",
+            "dimension_ref": "x0",
+            "relation": "eq",
+        }
+    ]
+
+
+def test_refeval_rejects_value_dimension_runtime_mismatch() -> None:
+    artifact = _make_value_dimension_mask_artifact()
+    inputs = {
+        "t0": np.arange(8, dtype=np.float32),
+        "t2": np.asarray(8, dtype=np.int32),
+    }
+
+    project_functional_boundary_for_refeval(artifact.j, inputs, {"x0": 8})
+    inputs["t2"] = np.asarray(13, dtype=np.int32)
+    with pytest.raises(ValueError, match="value.*dimension|dimension.*value"):
+        project_functional_boundary_for_refeval(
+            artifact.j, inputs, {"x0": 8}
+        )
+
+
 @pytest.mark.parametrize("limit", [8, 13])
 def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) -> None:
     artifact = _make_runtime_logical_mask_artifact()
@@ -963,7 +1023,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v5"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v6"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"

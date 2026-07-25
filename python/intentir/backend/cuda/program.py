@@ -19,6 +19,7 @@ from intentir.ir.functional_boundary import (
     project_functional_boundary,
 )
 from intentir.ir.model import IntentOp
+from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.verify.gate1.model import (
     DuplicatePolicy,
     ResultRelationKind,
@@ -226,6 +227,7 @@ class CudaJLowering:
     boundary_consumption: Mapping[str, Any]
     intent_mlir: str
     artifact: LoweredProgram
+    concrete_extents: tuple[tuple[str, int], ...]
 
     def __post_init__(self) -> None:
         if not self.boundary_consumption.get("supported", False):
@@ -237,6 +239,10 @@ class CudaJLowering:
     @property
     def mlir_sha256(self) -> str:
         return hashlib.sha256(self.intent_mlir.encode()).hexdigest()
+
+    @property
+    def concrete_extents_map(self) -> dict[str, int]:
+        return dict(self.concrete_extents)
 
     def conformance_record(
         self,
@@ -260,6 +266,7 @@ class CudaJLowering:
             "c_digest": self.request.c_digest,
             "target": self.request.target.to_dict(),
             "variant": self.request.variant,
+            "concrete_extents": self.concrete_extents_map,
             "mlir_sha256": self.mlir_sha256,
             "boundary_consumption": dict(self.boundary_consumption),
             "cuda": self.artifact.to_record(),
@@ -299,7 +306,13 @@ def lower_j_to_cuda(
         target=target,
         allow_specialized=request.variant == "auto",
     )
-    return CudaJLowering(request, consumption, mlir, artifact)
+    return CudaJLowering(
+        request,
+        consumption,
+        mlir,
+        artifact,
+        tuple(sorted(concrete_extents.items())),
+    )
 
 
 def execute_j_cuda(
@@ -339,6 +352,14 @@ def execute_j_cuda(
             "CUDA J execution inputs differ from J logical inputs: "
             + "; ".join(details)
         )
+    try:
+        validate_value_dimension_instantiation(
+            lowering.request.j,
+            lowering.concrete_extents_map,
+            {name: inputs[name] for name in expected_inputs},
+        )
+    except (TypeError, ValueError) as exc:
+        raise CudaJExecutionError(str(exc)) from exc
 
     runtime_outputs = execute_cuda_artifact(
         lowering.artifact,

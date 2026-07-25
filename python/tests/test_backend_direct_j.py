@@ -25,6 +25,7 @@ from intentir.verify.gate1.model import (
     ImplementationConfig,
     OutputMapping,
     ParameterMode,
+    SemanticArchive,
     TypedOutsideValue,
 )
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
@@ -107,6 +108,32 @@ def _make_masked_sum_artifact():
             "two_sided",
         )
     ]
+    return artifact
+
+
+def _make_value_dimension_copy_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.body[0].attrs["fn"] = "tanh"
+    _attach_dense_copy_boundary(artifact, "i0")
+    artifact.j.boundary.domains = {"d0": "0 <= i0 and i0 < x0"}
+    artifact.j.boundary.accesses[0].predicate = "i0 < t2"
+    artifact.j.boundary.accesses[0].fill_value = 0.0
+    artifact.j.boundary.accesses[1].predicate = "i0 < t2"
+    payload = artifact.j.to_json()
+    payload["intent"]["intent_function"]["inputs"].append(
+        {"name": "t2", "dtype": "i32", "shape": []}
+    )
+    extent_parameter = payload["signature"]["parameters"][2]
+    extent_parameter["rank"] = 0
+    extent_parameter["logical_ref"] = "t2"
+    payload["value_dimension_relations"] = [
+        {
+            "value_ref": "t2",
+            "dimension_ref": "x0",
+            "relation": "eq",
+        }
+    ]
+    artifact.j = SemanticArchive.from_json(payload)
     return artifact
 
 
@@ -235,6 +262,54 @@ def test_cuda_projects_supported_mask_profiles_before_codegen(
     assert lowered.boundary_consumption["supported"] is True
     assert projection["profile"] == profile
     assert operation in lowered.intent_mlir
+
+
+def test_cuda_materializes_and_guards_value_dimension_relation(
+    monkeypatch,
+) -> None:
+    artifact = _make_value_dimension_copy_artifact()
+
+    def fake_lower(source, *, target, allow_specialized):
+        del target, allow_specialized
+        return _FakeCudaArtifact(source)
+
+    monkeypatch.setattr(cuda_program, "lower_to_cuda", fake_lower)
+    lowered = cuda_program.lower_j_to_cuda(
+        LoweringRequest(
+            artifact.j,
+            cuda_program.cuda_target("sm_120a"),
+            "generic",
+            artifact.c,
+        ),
+        {"x0": 8},
+    )
+
+    assert lowered.concrete_extents_map == {"x0": 8}
+    assert "intent.scalar_equalities = array<i64: 1, 8>" in lowered.intent_mlir
+    assert "value_dimension:t2:x0:eq" in (
+        lowered.boundary_consumption["consumed"]
+    )
+
+    executed = False
+
+    def forbidden_execute(*args, **kwargs):
+        nonlocal executed
+        executed = True
+        raise AssertionError("runtime must not execute an out-of-domain input")
+
+    monkeypatch.setattr(cuda_program, "execute_cuda_artifact", forbidden_execute)
+    with pytest.raises(
+        cuda_program.CudaJExecutionError,
+        match="value.*dimension|dimension.*value",
+    ):
+        cuda_program.execute_j_cuda(
+            lowered,
+            {
+                "t0": np.arange(8, dtype=np.float32),
+                "t2": np.asarray(13, dtype=np.int32),
+            },
+        )
+    assert executed is False
 
 
 @pytest.mark.parametrize(

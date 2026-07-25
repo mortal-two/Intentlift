@@ -26,9 +26,13 @@ from intentir.ir.canonical_j import (
     parse_index_expression,
 )
 from intentir.ir.model import IntentOp
+from intentir.ir.value_dimension import (
+    validate_value_dimension_instantiation,
+    validate_value_dimension_relations,
+)
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v5"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v6"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -115,6 +119,7 @@ class FunctionalBoundaryProjection:
     erased_fill_count: int
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
+    value_dimension_relations: tuple[tuple[str, str], ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -158,6 +163,14 @@ class FunctionalBoundaryProjection:
             ],
             "consumer_extensions": [
                 relation.to_json() for relation in self.consumer_extensions
+            ],
+            "value_dimension_relations": [
+                {
+                    "value_ref": value_ref,
+                    "dimension_ref": dimension_ref,
+                    "relation": "eq",
+                }
+                for value_ref, dimension_ref in self.value_dimension_relations
             ],
         }
 
@@ -337,6 +350,53 @@ def _predicate_projection(
         frozenset(guards),
         frozenset(lower),
         tuple(sorted(upper.items())),
+    )
+
+
+def _value_dimension_pairs(j: Any) -> tuple[tuple[str, str], ...]:
+    """Return the validated J-owned symbolic value/dimension equalities."""
+
+    validate_value_dimension_relations(j)
+    return tuple(
+        (relation.value_ref, relation.dimension_ref)
+        for relation in j.value_dimension_relations
+    )
+
+
+def _substitute_value_dimension_bounds(
+    predicate: PredicateProjection,
+    value_dimensions: Mapping[str, str],
+) -> PredicateProjection:
+    """Canonicalize only exact upper-bound refs authorized by J equality."""
+
+    if not value_dimensions:
+        return predicate
+    return PredicateProjection(
+        predicate.guards,
+        predicate.lower_axes,
+        tuple(
+            (
+                axis,
+                value_dimensions.get(extent, extent)
+                if isinstance(extent, str)
+                else extent,
+            )
+            for axis, extent in predicate.upper_bounds
+        ),
+    )
+
+
+def _j_predicate_projection(
+    j: Any,
+    expression: ContractExpr,
+    *,
+    logical_guards: frozenset[str] = frozenset(),
+) -> PredicateProjection:
+    """Project a predicate under J's dependent value/dimension domain."""
+
+    return _substitute_value_dimension_bounds(
+        _predicate_projection(expression, logical_guards=logical_guards),
+        dict(_value_dimension_pairs(j)),
     )
 
 
@@ -527,8 +587,8 @@ def _full_domains(j: Any) -> dict[str, int | str]:
     logical_guards = _logical_boolean_guards(j)
     for domain_id, expression in j_elaboration(j).domains:
         try:
-            contract = _predicate_projection(
-                expression, logical_guards=logical_guards
+            contract = _j_predicate_projection(
+                j, expression, logical_guards=logical_guards
             )
         except NotImplementedError as exc:
             raise NotImplementedError(
@@ -639,7 +699,8 @@ def functional_boundary_closure_issues(
         if parsed_predicate is None:
             continue
         try:
-            predicate = _predicate_projection(
+            predicate = _j_predicate_projection(
+                j,
                 parsed_predicate,
                 logical_guards=logical_guards,
             )
@@ -951,7 +1012,8 @@ def _reduction_padding_analysis(
                 continue
         else:
             try:
-                predicate = _predicate_projection(
+                predicate = _j_predicate_projection(
+                    j,
                     parsed.predicate,
                     logical_guards=logical_guards,
                 )
@@ -2050,7 +2112,9 @@ def _project_functional_boundary(
 
         parsed = parsed_accesses[access.access_id].predicate
         predicate = (
-            _predicate_projection(parsed, logical_guards=logical_guards)
+            _j_predicate_projection(
+                j, parsed, logical_guards=logical_guards
+            )
             if parsed is not None else None
         )
         if predicate is not None:
@@ -2075,6 +2139,9 @@ def _project_functional_boundary(
                 )
                 if runtime_proof is not None:
                     predicate, receipt = runtime_proof
+                    predicate = _substitute_value_dimension_bounds(
+                        predicate, dict(_value_dimension_pairs(j))
+                    )
                     runtime_predicate_proofs.append(receipt)
             if predicate.guards:
                 raise NotImplementedError(
@@ -2293,6 +2360,7 @@ def _project_functional_boundary(
             if boundary.accesses
             else "structured_value_v1"
         )
+    value_dimension_pairs = _value_dimension_pairs(j)
     consumed = {
         *(f"domain:{name}" for name in boundary.domains),
         *(f"access:{item.access_id}" for item in boundary.accesses),
@@ -2307,6 +2375,10 @@ def _project_functional_boundary(
             "consumer_extension:"
             f"{item.consumer_ref}:{item.operand_index}:{item.access_ref}"
             for item in boundary.consumer_extensions
+        ),
+        *(
+            f"value_dimension:{value_ref}:{dimension_ref}:eq"
+            for value_ref, dimension_ref in value_dimension_pairs
         ),
         *(f"scope:{item}" for item in structured_scopes),
         *(f"storage:{item}" for item in structured_storage),
@@ -2327,7 +2399,19 @@ def _project_functional_boundary(
         ),
         proven_index_bounds=proven_bounds,
         consumed=tuple(sorted(consumed)),
-        boundary_digest=_digest(boundary.to_json()),
+        boundary_digest=_digest(
+            {
+                "boundary": boundary.to_json(),
+                "value_dimension_relations": [
+                    {
+                        "value_ref": value_ref,
+                        "dimension_ref": dimension_ref,
+                        "relation": "eq",
+                    }
+                    for value_ref, dimension_ref in value_dimension_pairs
+                ],
+            }
+        ),
         predicated_access_count=sum(
             item.predicate is not None for item in boundary.accesses
         ),
@@ -2336,6 +2420,7 @@ def _project_functional_boundary(
         ),
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
         consumer_extensions=consumer_extensions,
+        value_dimension_relations=value_dimension_pairs,
     )
 
 
@@ -2377,6 +2462,11 @@ def project_functional_boundary_for_refeval(
         raise ValueError(
             "RefEval runtime predicate proof requires exactly the J logical dimensions"
         )
+    validate_value_dimension_instantiation(
+        j,
+        logical_dimensions,
+        logical_input_values,
+    )
     return _project_functional_boundary(
         j,
         runtime_logical_inputs=dict(logical_input_values),

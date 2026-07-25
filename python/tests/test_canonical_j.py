@@ -70,6 +70,24 @@ def _stable_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def _value_dimension_j() -> SemanticArchive:
+    payload = make_copy_artifact().j.to_json()
+    payload["intent"]["intent_function"]["inputs"].append(
+        {"name": "t2", "dtype": "i32", "shape": []}
+    )
+    extent_parameter = payload["signature"]["parameters"][2]
+    extent_parameter["rank"] = 0
+    extent_parameter["logical_ref"] = "t2"
+    payload["value_dimension_relations"] = [
+        {
+            "value_ref": "t2",
+            "dimension_ref": "x0",
+            "relation": "eq",
+        }
+    ]
+    return SemanticArchive.from_json(payload)
+
+
 def test_equivalent_index_surface_forms_construct_one_j() -> None:
     comma = elaborate_j(_surface_j("i0,i1"))
     bracketed = elaborate_j(_surface_j(" [ i0, i1 ] "))
@@ -174,3 +192,12 @@ def test_reference_and_production_requests_share_canonical_mlir_front() -> None:
     assert reference.j is production.j
     expected = emit_j_module(reference.j, {"x0": 2, "x1": 4})
     assert expected == emit_j_module(production.j, {"x0": 2, "x1": 4})
+
+
+def test_canonical_emitter_projects_value_dimension_by_intent_input_order() -> None:
+    j = _value_dimension_j()
+
+    mlir = emit_j_module(j, {"x0": 8})
+
+    assert "intent.scalar_equalities = array<i64: 1, 8>" in mlir
+    assert mlir == emit_j_module(j, {"x0": 8})

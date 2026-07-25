@@ -20,6 +20,7 @@ from ...frontend.canonical_j import emit_j_module
 from ...frontend.emit_mlir import IndexBoundsProjection, emit_module
 from ...ir.canonical_j import elaborate_j
 from ...ir.model import IntentFunction
+from ...ir.value_dimension import validate_value_dimension_instantiation
 from .abi import (
     CPU_ENTRY_SYMBOL,
     CPUABIValidationError,
@@ -314,6 +315,15 @@ def execute_on_cpu_outputs(
         )
     validate_cpu_capability(fn)
     checked_dims = _checked_dims(dims)
+    if j is not None:
+        validate_value_dimension_instantiation(
+            j,
+            checked_dims,
+            {
+                tensor.name: value
+                for tensor, value in zip(fn.inputs, inputs, strict=True)
+            },
+        )
     (
         input_shapes,
         _input_element_types,

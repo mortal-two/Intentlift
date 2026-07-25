@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Mapping
 
 from intentir.ir.canonical_j import elaborate_j
+from intentir.ir.value_dimension import resolve_value_dimension_equalities
 
 from .emit_mlir import BroadcastAxes, IndexBoundsProjection, emit_module
 
@@ -24,6 +25,7 @@ def emit_j_module(
     """Emit MLIR only after the unique deterministic J elaboration boundary."""
 
     j = elaborate_j(j)
+    value_dimension_equalities = resolve_value_dimension_equalities(j, dims)
     return emit_module(
         j.intent,
         dict(dims),
@@ -31,6 +33,7 @@ def emit_j_module(
         func_name=func_name,
         broadcast_axes=broadcast_axes,
         proven_index_bounds=proven_index_bounds,
+        value_dimension_equalities=value_dimension_equalities,
     )
 
 

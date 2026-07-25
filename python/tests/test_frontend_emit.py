@@ -86,6 +86,26 @@ def _broadcast_binary_fn(
     })
 
 
+def _rank_zero_extent_fn(dtype: str = "i32") -> IntentFunction:
+    return IntentFunction.from_json({
+        "intent_function": {
+            "name": "rank_zero_extent",
+            "inputs": [
+                {"name": "X", "dtype": dtype, "shape": ["x0"]},
+                {"name": "extent", "dtype": dtype, "shape": []},
+            ],
+            "outputs": [{"name": "Y", "dtype": dtype, "shape": ["x0"]}],
+            "body": [{
+                "op": "map_binary",
+                "result": "Y",
+                "operands": ["X", "extent"],
+                "attrs": {"fn": "add"},
+                "type": {"dtype": dtype, "shape": ["x0"]},
+            }],
+        }
+    })
+
+
 def _intent_opt(mlir: str, *passes: str) -> str:
     p = subprocess.run([INTENT_OPT, *passes], input=mlir, capture_output=True,
                        text=True)
@@ -113,6 +133,49 @@ def test_emit_module_sanitizes_function_symbol(
     mlir = emit_module(_flat_fn(raw_name), {})
     assert f"func.func @{symbol}(" in mlir
     assert mlir == emit_module(_flat_fn(raw_name), {})  # stable across emissions
+
+
+def test_emit_materializes_j_value_dimension_equality_by_input_index() -> None:
+    from intentir.frontend import emit_module
+
+    fn = _rank_zero_extent_fn()
+    plain = emit_module(fn, {"x0": 64})
+    emitted = emit_module(
+        fn,
+        {"x0": 64},
+        value_dimension_equalities=((1, 64),),
+    )
+
+    assert "intent.scalar_equalities" not in plain
+    assert (
+        "intent.scalar_equalities = array<i64: 1, 64>" in emitted
+    )
+    assert emitted == emit_module(
+        fn,
+        {"x0": 64},
+        value_dimension_equalities=((1, 64),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("equalities", "message"),
+    [
+        (((0, 64),), "rank-0"),
+        (((1, 2**31),), "not representable"),
+        (((1, 64), (1, 64)), "duplicate"),
+    ],
+)
+def test_emit_rejects_invalid_value_dimension_function_attr(
+    equalities, message
+) -> None:
+    from intentir.frontend import emit_module
+
+    with pytest.raises(ValueError, match=message):
+        emit_module(
+            _rank_zero_extent_fn(),
+            {"x0": 64},
+            value_dimension_equalities=equalities,
+        )
 
 
 def test_emit_broadcast_keeps_existing_leading_singleton_axis() -> None:

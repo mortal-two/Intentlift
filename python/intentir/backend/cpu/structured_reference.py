@@ -21,6 +21,7 @@ from intentir.backend.cpu.abi import (
 )
 from intentir.backend.cpu.pipeline import CPUExecutionResult
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
+from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp, LoopStateBinding
 from intentir.verify.gate1.model import SemanticArchive
 
@@ -621,6 +622,7 @@ def execute_structured_reference(
         )
         for tensor, value in zip(j.intent.inputs, inputs, strict=True)
     }
+    validate_value_dimension_instantiation(j, checked_dims, checked_inputs)
     evaluator = _Evaluator(j, checked_dims, broadcast_axes or {})
     env = evaluator.sequence(j.intent.body, checked_inputs, allow_loop=True)
     returns = {item.output: item.value for item in j.intent.returns}
