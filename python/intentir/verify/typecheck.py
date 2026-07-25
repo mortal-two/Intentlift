@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v14"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v15"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -83,6 +83,7 @@ class TypeCheckErrorCode(str, Enum):
     LOGICAL_INPUT_UNUSED = "logical_input_unused"
     BOUNDARY_VALUE_NOT_DOMINATING = "boundary_value_not_dominating"
     ACCESS_GUARD_RELATION_INVALID = "access_guard_relation_invalid"
+    EFFECT_CONDITIONAL_INVALID = "effect_conditional_invalid"
     REPRESENTATION_CARRIER_J_USE_FORBIDDEN = (
         "representation_carrier_j_use_forbidden"
     )
@@ -184,6 +185,15 @@ def _walk_operations(
         body = operation.get("body")
         if isinstance(body, list):
             yield from _walk_operations(body, f"{path}.body")
+        if operation.get("op") == "effect_if":
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                arm_body = arm.get("body") if isinstance(arm, Mapping) else None
+                if isinstance(arm_body, list):
+                    yield from _walk_operations(
+                        arm_body,
+                        f"{path}.{polarity}.body",
+                    )
 
 
 def _explicit_type(operation: Mapping[str, Any]) -> _ValueType | None:
@@ -1026,6 +1036,24 @@ def _check_boundary_value_dominance(
                     )
                 all_values.update(nested_visible - current)
                 visit_sequence(nested, nested_visible, f"{path}.body")
+            if raw_operation.get("op") == "effect_if":
+                predicate = raw_operation.get("predicate")
+                if isinstance(predicate, str):
+                    all_values.add(predicate)
+                for polarity in ("positive", "negative"):
+                    arm = raw_operation.get(polarity)
+                    arm_body = (
+                        arm.get("body") if isinstance(arm, Mapping) else None
+                    )
+                    if isinstance(arm_body, list):
+                        # Branch-local definitions are collected for reference
+                        # diagnostics but deliberately do not enter the parent
+                        # continuation's visible set.
+                        visit_sequence(
+                            arm_body,
+                            set(current),
+                            f"{path}.{polarity}.body",
+                        )
             current.update(results)
         return current
 
@@ -1586,6 +1614,8 @@ def _operation_dependencies(operation: Mapping[str, Any]) -> tuple[str, ...]:
 
     for value in operation.get("operands", []):
         add(value)
+    if operation.get("op") == "effect_if":
+        add(operation.get("predicate"))
     if operation.get("op") == "loop":
         for item in operation.get("scan", []):
             if isinstance(item, Mapping):
@@ -1737,6 +1767,13 @@ def _rank_zero_semantic_live_values(j: SemanticArchive) -> set[str]:
         operation = nodes.get(node_ref)
         if operation is not None:
             semantic_refs.update(_operation_results(operation.get("result")))
+    for operation in operations.values():
+        if operation.get("op") == "effect_if" and isinstance(
+            operation.get("predicate"), str
+        ):
+            # A typed conditional predicate controls J-owned effects, so it is
+            # semantic liveness rather than a representation-only pi use.
+            semantic_refs.add(str(operation["predicate"]))
     return _semantic_value_dependency_closure(j, semantic_refs)
 
 
@@ -2093,6 +2130,382 @@ def _iteration_axis_matches(axis_ref: int | str | None, trip_axis: str) -> bool:
     """Recognize the two AxisRefs_v1 spellings of one loop trip axis."""
 
     return axis_ref == 0 or axis_ref == trip_axis
+
+
+def _check_effect_conditionals(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check authored binary effect regions without constructing control.
+
+    ``effect_if`` owns predicate polarity and lexical arms in Layer A.  The
+    bound ``branch_region`` scopes own effect membership, while pi only anchors
+    each scope in an existing ``placement=branch`` region.  This routine never
+    inserts an arm, selects a polarity, copies the predicate into pi, or rewrites
+    the conditional to an SSA ``select``.
+    """
+
+    intent = j.intent.to_json()["intent_function"]
+    conditionals = [
+        (path, operation)
+        for path, operation in _walk_operations(intent.get("body", []))
+        if operation.get("op") == "effect_if"
+    ]
+    if not conditionals:
+        return
+
+    value_types = j_elaboration(j).value_type_by_name
+    scopes = {scope.scope_id: scope for scope in j.scopes}
+    scope_children: dict[str, set[str]] = {scope_id: set() for scope_id in scopes}
+    for scope in j.scopes:
+        if scope.parent_scope is not None:
+            scope_children.setdefault(scope.parent_scope, set()).add(scope.scope_id)
+    effects = {
+        effect.effect_id: effect
+        for effect in j.boundary.effects
+        if effect.effect_id is not None
+    }
+
+    def scope_descendants(scope_id: str) -> set[str]:
+        result: set[str] = set()
+        pending = [scope_id]
+        while pending:
+            current = pending.pop()
+            if current in result:
+                continue
+            result.add(current)
+            pending.extend(scope_children.get(current, ()))
+        return result
+
+    def nearest_branch_scope(scope_id: str | None) -> str | None:
+        current = scope_id
+        while current is not None:
+            scope = scopes.get(current)
+            if scope is None:
+                return None
+            if scope.kind.value == "branch_region":
+                return current
+            current = scope.parent_scope
+        return None
+
+    # Record the nearest authored branch owner for every semantic handle that
+    # can later anchor pi.  This is a scope lookup, not inferred control: all
+    # scope/polarity choices have already been authored by effect_if and J.scopes.
+    path_to_node = {path: node for node, path in j.node_ids.items()}
+    semantic_branch_owner: dict[str, str] = {}
+
+    def collect_branch_handles(
+        body: Any,
+        *,
+        owner_scope: str,
+        prefix: str,
+    ) -> None:
+        if not isinstance(body, list):
+            return
+        for index, operation in enumerate(body):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            branch_owner = nearest_branch_scope(owner_scope)
+            if branch_owner is not None:
+                node_ref = path_to_node.get(path)
+                if node_ref is not None:
+                    semantic_branch_owner[node_ref] = branch_owner
+                for result in _operation_results(operation.get("result")):
+                    semantic_branch_owner[result] = branch_owner
+            if operation.get("op") == "loop":
+                loop_scope = operation.get("scope_id")
+                if isinstance(loop_scope, str):
+                    loop_branch = nearest_branch_scope(loop_scope)
+                    if loop_branch is not None:
+                        for scan in operation.get("scan", []):
+                            if isinstance(scan, Mapping) and isinstance(
+                                scan.get("name"), str
+                            ):
+                                semantic_branch_owner[str(scan["name"])] = loop_branch
+                        for carry in operation.get("carry", []):
+                            if not isinstance(carry, Mapping):
+                                continue
+                            for key in (
+                                "state_id",
+                                "body_argument",
+                                "next_value",
+                                "result_value",
+                            ):
+                                if isinstance(carry.get(key), str):
+                                    semantic_branch_owner[str(carry[key])] = loop_branch
+                    collect_branch_handles(
+                        operation.get("body"),
+                        owner_scope=loop_scope,
+                        prefix=f"{path}.body",
+                    )
+            elif operation.get("op") == "effect_if":
+                for polarity in ("positive", "negative"):
+                    arm = operation.get(polarity)
+                    if not isinstance(arm, Mapping) or not isinstance(
+                        arm.get("scope_id"), str
+                    ):
+                        continue
+                    collect_branch_handles(
+                        arm.get("body"),
+                        owner_scope=str(arm["scope_id"]),
+                        prefix=f"{path}.{polarity}.body",
+                    )
+
+    root_scope = next(
+        (
+            scope.scope_id
+            for scope in j.scopes
+            if scope.kind.value == "function" and scope.parent_scope is None
+        ),
+        "",
+    )
+    program_scope = next(
+        (
+            scope.scope_id
+            for scope in j.scopes
+            if scope.kind.value == "program_instance"
+            and scope.parent_scope == root_scope
+        ),
+        root_scope,
+    )
+    collect_branch_handles(
+        intent.get("body", []),
+        owner_scope=program_scope,
+        prefix="body",
+    )
+    for scope in j.scopes:
+        branch_owner = nearest_branch_scope(scope.scope_id)
+        if branch_owner is None:
+            continue
+        if scope.kind.value == "branch_region":
+            semantic_branch_owner[scope.scope_id] = scope.scope_id
+        for effect_ref in scope.effects:
+            semantic_branch_owner[effect_ref] = branch_owner
+            effect = effects.get(effect_ref)
+            if effect is not None and effect.access_ref is not None:
+                semantic_branch_owner[effect.access_ref] = branch_owner
+
+    arm_records: list[tuple[str, str, str]] = []
+    controlled_accesses: set[str] = set()
+    for path, operation in conditionals:
+        base = f"j.intent.intent_function.{path}"
+        predicate = operation.get("predicate")
+        predicate_type = (
+            value_types.get(predicate) if isinstance(predicate, str) else None
+        )
+        if (
+            predicate_type is None
+            or predicate_type.dtype.casefold() != "i1"
+            or predicate_type.shape
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    f"{base}.predicate",
+                    "effect_if predicate must be one dominating scalar i1 "
+                    "Layer-A value",
+                    predicate if isinstance(predicate, str) else None,
+                )
+            )
+
+        pair_effect_owners: dict[str, str] = {}
+        for polarity in ("positive", "negative"):
+            arm = operation.get(polarity)
+            scope_id = (
+                arm.get("scope_id") if isinstance(arm, Mapping) else None
+            )
+            if not isinstance(scope_id, str):
+                # The strict decoder owns this malformed wire shape.
+                continue
+            arm_records.append((path, polarity, scope_id))
+            descendants = scope_descendants(scope_id)
+            for descendant in descendants:
+                scope = scopes.get(descendant)
+                if scope is None:
+                    continue
+                for effect_ref in scope.effects:
+                    previous = pair_effect_owners.get(effect_ref)
+                    if previous is not None and previous != polarity:
+                        diagnostics.append(
+                            TypeCheckDiagnostic(
+                                TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                                f"{base}.{polarity}.scope_id",
+                                "one conditional effect cannot belong to both arms",
+                                effect_ref,
+                            )
+                        )
+                    pair_effect_owners[effect_ref] = polarity
+                    effect = effects.get(effect_ref)
+                    if effect is not None and effect.access_ref is not None:
+                        controlled_accesses.add(effect.access_ref)
+        if not pair_effect_owners:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "effect_if requires at least one J-owned effect across its "
+                    "two explicit arms",
+                )
+            )
+
+    guarded_accesses = {
+        relation.access_ref for relation in j.boundary.access_guard_relations
+    }
+    for access_ref in sorted(controlled_accesses & guarded_accesses):
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                "j.boundary.access_guard_relations",
+                "effect_if branch control and access_guard_relation cannot "
+                "both own one access predicate",
+                access_ref,
+            )
+        )
+
+    regions = {str(region["id"]): region for region in pi.regions}
+    branch_regions = {
+        region_id
+        for region_id, region in regions.items()
+        if region.get("placement") == "branch"
+    }
+    scope_anchor_regions: dict[str, str] = {}
+    for path, polarity, scope_id in arm_records:
+        matches = [
+            instance
+            for instance in pi.instances
+            if instance.get("semantic_ref") == scope_id
+            and instance.get("mechanism") == "realize"
+        ]
+        base = f"j.intent.intent_function.{path}.{polarity}.scope_id"
+        if len(matches) != 1:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "each effect_if arm scope requires exactly one pi realize "
+                    "instance anchor",
+                    scope_id,
+                )
+            )
+            continue
+        region_ref = str(matches[0]["region"])
+        region = regions.get(region_ref)
+        if region is None or region.get("placement") != "branch":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "effect_if arm scope instance must live in one "
+                    "placement=branch pi region",
+                    scope_id,
+                )
+            )
+            continue
+        if region_ref in scope_anchor_regions.values():
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "one pi branch region cannot anchor multiple effect_if arms",
+                    region_ref,
+                )
+            )
+        scope_anchor_regions[scope_id] = region_ref
+
+    def region_is_within(region_ref: str, ancestor_ref: str) -> bool:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            if current == ancestor_ref:
+                return True
+            seen.add(current)
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
+    for scope_id, region_ref in scope_anchor_regions.items():
+        parent_scope = scopes.get(scope_id).parent_scope if scope_id in scopes else None
+        ancestor_scope = nearest_branch_scope(parent_scope)
+        ancestor_region = (
+            scope_anchor_regions.get(ancestor_scope)
+            if ancestor_scope is not None else None
+        )
+        if ancestor_region is not None and not region_is_within(
+            region_ref, ancestor_region
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    "pi.regions",
+                    "nested effect_if branch region must remain inside its "
+                    "authored parent branch",
+                    region_ref,
+                )
+            )
+
+    for index, instance in enumerate(pi.instances):
+        semantic_ref = str(instance.get("semantic_ref"))
+        owner_scope = semantic_branch_owner.get(semantic_ref)
+        if owner_scope is None:
+            continue
+        owner_region = scope_anchor_regions.get(owner_scope)
+        instance_region = str(instance.get("region"))
+        if owner_region is not None and not region_is_within(
+            instance_region, owner_region
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    f"pi.instances[{index}].region",
+                    "branch-local semantic handle must be realized inside its "
+                    "authored effect_if arm region",
+                    semantic_ref,
+                )
+            )
+
+    for path, operation in conditionals:
+        arm_values = {
+            polarity: operation.get(polarity)
+            for polarity in ("positive", "negative")
+        }
+        scope_ids = {
+            polarity: (
+                arm.get("scope_id") if isinstance(arm, Mapping) else None
+            )
+            for polarity, arm in arm_values.items()
+        }
+        positive_region = scope_anchor_regions.get(str(scope_ids["positive"]))
+        negative_region = scope_anchor_regions.get(str(scope_ids["negative"]))
+        if positive_region is None or negative_region is None:
+            continue
+        positive_parent = regions[positive_region].get("parent")
+        negative_parent = regions[negative_region].get("parent")
+        if (
+            positive_region == negative_region
+            or positive_parent != negative_parent
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    f"j.intent.intent_function.{path}",
+                    "positive/negative pi branch regions must be distinct "
+                    "siblings with one common parent",
+                )
+            )
+
+    anchored_regions = set(scope_anchor_regions.values())
+    for region_ref in sorted(branch_regions - anchored_regions):
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                "pi.regions",
+                "placement=branch region is not anchored by an authored "
+                "effect_if arm scope",
+                region_ref,
+            )
+        )
 
 
 def _check_iteration_witness(
@@ -3029,6 +3442,7 @@ def type_check(
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     _check_boundary_value_dominance(j, diagnostics)
     _check_access_guard_relations(j, diagnostics)
+    _check_effect_conditionals(j, pi, diagnostics)
     diagnostics.extend(
         TypeCheckDiagnostic(
             TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,

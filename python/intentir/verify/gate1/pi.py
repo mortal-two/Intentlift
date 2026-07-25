@@ -33,6 +33,7 @@ REALIZATION_MECHANISMS: tuple[str, ...] = (
 ITERATION_BASES: tuple[str, ...] = (
     "extent_step",
     "tile_ordinal",
+    "rounded_extent_step",
 )
 
 REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
@@ -140,10 +141,14 @@ def render_realization_witness_wire_grammar() -> str:
         "entry relates one loop region to one instance anchored by its J loop "
         "and one instance anchored by the matching C tile slot. Its closed "
         "induction_basis records only whether the physical induction variable "
-        "is measured in logical extent units or tile ordinals. The global "
+        "is measured in logical extent units, rounded extent units, or tile "
+        "ordinals. The global "
         "source-neutral denotation is closed: extent_step means lower zero, "
         "upper equal to the J loop trip extent, and step equal to the matching "
-        "C tile; tile_ordinal means lower zero, upper equal to ceil_div of that "
+        "C tile; rounded_extent_step means lower zero, upper equal to "
+        "ceil_div(J loop trip extent, matching C tile) multiplied by that C "
+        "tile, and step equal to the matching C tile; "
+        "tile_ordinal means lower zero, upper equal to ceil_div of that "
         "J trip extent by that matching C tile, and unit step. Every frontend "
         "maps this same relation to its public constructs. The wire entry never "
         "carries a bound expression, value, operator, source fragment, or "

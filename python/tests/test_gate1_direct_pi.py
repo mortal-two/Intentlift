@@ -68,11 +68,16 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v5_preserves_v4_v3_v2_and_v1_legacy_contracts() -> None:
+def test_artifact_v6_preserves_v5_through_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v5"
+    assert current["schema"] == "intentir.scrc.artifact.v6"
 
-    legacy_v4 = copy.deepcopy(current)
+    legacy_v5 = copy.deepcopy(current)
+    legacy_v5["schema"] = "intentir.scrc.artifact.v5"
+    parsed_v5 = Gate1Artifact.from_json(legacy_v5)
+    assert parsed_v5.to_json() == legacy_v5
+
+    legacy_v4 = copy.deepcopy(legacy_v5)
     legacy_v4["schema"] = "intentir.scrc.artifact.v4"
     del legacy_v4["j"]["boundary"]["access_guard_relations"]
     parsed_v4 = Gate1Artifact.from_json(legacy_v4)
@@ -150,6 +155,7 @@ def test_artifact_v5_preserves_v4_v3_v2_and_v1_legacy_contracts() -> None:
         "intentir.scrc.artifact.v3",
         "intentir.scrc.artifact.v4",
         "intentir.scrc.artifact.v5",
+        "intentir.scrc.artifact.v6",
     ],
 )
 def test_every_artifact_wire_version_requires_explicit_pi_refinements(
@@ -166,7 +172,12 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
         del payload["j"]["value_dimension_relations"]
         del payload["j"]["boundary"]["consumer_extensions"]
         del payload["pi"]["loop_carriers"]
-    if wire_schema != Gate1Artifact.SCHEMA:
+    if wire_schema in {
+        "intentir.scrc.artifact.v1",
+        "intentir.scrc.artifact.v2",
+        "intentir.scrc.artifact.v3",
+        "intentir.scrc.artifact.v4",
+    }:
         del payload["j"]["boundary"]["access_guard_relations"]
     if wire_schema in {
         "intentir.scrc.artifact.v1",
@@ -948,7 +959,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v14"
+    assert report.protocol == "intentir.scrc.typecheck.v15"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
         "public_frontend_context_v7"
     )
@@ -969,7 +980,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v14"
+    assert report.protocol == "intentir.scrc.typecheck.v15"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1090,7 +1101,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     normalized = " ".join(instructions.split())
 
     assert "supplied Responses schema is authoritative" in normalized
-    assert len(instructions) < 16_600
+    assert len(instructions) < 17_200
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized
@@ -1110,6 +1121,9 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "strictly wider target_dtype" in normalized
     assert "local tile axis after program/grid axes" in normalized
     assert "not the whole-tensor logical axis number" in normalized
+    assert "effect-controlling binary Source branch is one Layer-A `effect_if`" in normalized
+    assert "scope.effects plus matching EffectSpec/access_ref is sole membership" in normalized
+    assert "`rounded_extent_step` uses the same lower/step" in normalized
 
 
 def test_lift_preserves_degenerate_program_coordinate_topology() -> None:

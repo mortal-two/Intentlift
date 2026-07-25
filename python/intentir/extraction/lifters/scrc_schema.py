@@ -110,6 +110,11 @@ def render_semantic_archive_wire_grammar() -> str:
         "keep the t* value and x* dimension distinct and explicitly declare "
         "their equality in value_dimension_relations; fixed code never creates it. "
         "Every semantic loop has exactly one corresponding loop_region scope. "
+        "Every effect_if has two explicit positive/negative arms bound to "
+        "distinct sibling branch_region scopes. Either arm body may be empty; "
+        "the conditional has no result/yield, branch-local SSA never escapes, "
+        "and scope.effects plus matching EffectSpec/access_ref is the sole "
+        "effect membership authority. "
         "The storage array may be empty: ordinary SSA temporaries do not have "
         "semantic storage or lifetime objects. Add StorageObject only when J "
         "semantics requires storage identity, such as an alias/destination or "
@@ -854,10 +859,15 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
                 "propertyNames": {"pattern": "^n[0-9]+$"},
                 "additionalProperties": {
                     "type": "string",
-                    "pattern": "^(intent_function\\.)?body\\[[0-9]+\\](\\.body\\[[0-9]+\\])*$",
+                    "pattern": (
+                        "^(intent_function\\.)?body\\[[0-9]+\\]"
+                        "((\\.body|\\.positive\\.body|\\.negative\\.body)"
+                        "\\[[0-9]+\\])*$"
+                    ),
                 },
                 "description": (
-                    "Map n0,n1,... to structural body paths such as body[0], "
+                    "Map n0,n1,... to structural paths such as body[0] or "
+                    "body[1].positive.body[0], "
                     "not to SSA/result handles such as v0."
                 ),
             },

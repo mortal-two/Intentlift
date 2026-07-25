@@ -418,6 +418,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         "false", "true",
     }
     declared_node_ids: set[str] = set()
+    branch_local_definitions: set[str] = set()
 
     def is_literal_reference(item: Any) -> bool:
         if item is None or isinstance(item, (bool, int, float)):
@@ -525,6 +526,44 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         for open_key in ("attrs", "type"):
             if open_key in op and op[open_key] is not None:
                 _json_value(op[open_key], f"{op_path}.{open_key}")
+
+        if op_name == "effect_if":
+            predicate = _string(op["predicate"], f"{op_path}.predicate")
+            if predicate not in visible:
+                raise SchemaError(
+                    f"{op_path}.predicate references non-visible value "
+                    f"{predicate!r}"
+                )
+            arm_definitions: dict[str, set[str]] = {}
+            for polarity in ("positive", "negative"):
+                arm_path = f"{op_path}.{polarity}"
+                arm = _strict_object(
+                    op[polarity],
+                    path=arm_path,
+                    allowed={"scope_id", "body"},
+                    required={"scope_id", "body"},
+                )
+                _string(arm["scope_id"], f"{arm_path}.scope_id")
+                _visible_after, definitions = validate_sequence(
+                    arm["body"],
+                    f"{arm_path}.body",
+                    set(visible),
+                    strict_operands=True,
+                )
+                arm_definitions[polarity] = definitions
+                branch_local_definitions.update(definitions)
+            duplicates = sorted(
+                arm_definitions["positive"] & arm_definitions["negative"]
+            )
+            if duplicates:
+                raise SchemaError(
+                    f"{op_path} arms define duplicate branch-local value(s): "
+                    + ", ".join(duplicates)
+                )
+            # The interface is effect-only.  Arm-local SSA is deliberately not
+            # added to the parent-visible set, so any continuation use is
+            # rejected by the ordinary lexical validator.
+            return []
 
         if op_name != "loop":
             return produced
@@ -721,14 +760,20 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
         },
         strict_operands=True,
     )
+    output_names = [
+        _string(tensor["name"], f"{path}.intent_function.outputs[{index}].name")
+        for index, tensor in enumerate(fn.get("outputs", []))
+    ]
+    escaped_outputs = sorted(set(output_names) & branch_local_definitions)
+    if escaped_outputs:
+        raise SchemaError(
+            "effect_if arm-local value(s) cannot implicitly define function "
+            "outputs: " + ", ".join(escaped_outputs)
+        )
     if "returns" in fn:
         returns = fn["returns"]
         if not isinstance(returns, list):
             raise SchemaError(f"{path}.intent_function.returns must be an array")
-        output_names = [
-            _string(tensor["name"], f"{path}.intent_function.outputs[{index}].name")
-            for index, tensor in enumerate(fn.get("outputs", []))
-        ]
         returned_outputs: list[str] = []
         for index, item in enumerate(returns):
             return_path = f"{path}.intent_function.returns[{index}]"
@@ -1958,6 +2003,10 @@ def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
             path = f"{prefix}[{index}]"
             by_path[path] = op
             visit(op.body, f"{path}.body")
+            if op.op == "effect_if":
+                assert op.positive is not None and op.negative is not None
+                visit(op.positive.body, f"{path}.positive.body")
+                visit(op.negative.body, f"{path}.negative.body")
 
     visit(archive.intent.body)
     nodes = dict(by_path)
@@ -2185,10 +2234,16 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         for op in _walk_intent_ops(top)
         if op.op == "loop"
     ]
+    conditional_ops = [
+        op
+        for top in archive.intent.body
+        for op in _walk_intent_ops(top)
+        if op.op == "effect_if"
+    ]
     if not archive.scopes:
-        if loop_ops:
+        if loop_ops or conditional_ops:
             raise SchemaError(
-                "SemanticArchive.scopes is required when J contains a semantic loop"
+                "SemanticArchive.scopes is required when J contains a semantic region"
             )
         if archive.storage:
             raise SchemaError(
@@ -2265,16 +2320,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             "SemanticArchive supports at most one top-level program_instance scope"
         )
     execution_scope = program_scopes[0] if program_scopes else root
-    branch_scopes = [
-        scope for scope in archive.scopes
-        if scope.kind is ScopeKind.BRANCH_REGION
-    ]
-    if branch_scopes:
-        raise SchemaError(
-            "branch_region scopes require a first-class IntentIR branch-region op; "
-            "the current schema fails closed instead of attaching orphan scopes"
-        )
-
     reverse_node_ids = {path: node_id for node_id, path in archive.node_ids.items()}
     required_definitions: dict[str, set[str]] = {
         scope.scope_id: set() for scope in archive.scopes
@@ -2305,6 +2350,7 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
     )
     state_records: list[tuple[Any, str, str]] = []
     referenced_loop_scopes: set[str] = set()
+    referenced_branch_scopes: set[str] = set()
     order = 0
 
     def operation_results(op: Any) -> list[str]:
@@ -2314,19 +2360,41 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             return [op.result]
         return list(op.result)
 
-    def local_loop_uses(loop: Any) -> set[str]:
-        local = {scan.name for scan in loop.scan}
-        local.update(state.body_argument for state in loop.carry)
+    def local_region_uses(
+        operations: list[Any], *, local_seed: set[str] | None = None
+    ) -> set[str]:
+        """Return outer values captured by one authored semantic region."""
+
+        local = set(local_seed or ())
         used: set[str] = set()
-        for body_op in loop.body:
+        for body_op in operations:
             for nested in _walk_intent_ops(body_op):
                 local.update(operation_results(nested))
                 used.update(nested.operands)
+                if nested.op == "effect_if" and nested.predicate is not None:
+                    used.add(nested.predicate)
+                if nested.op == "loop":
+                    local.update(scan.name for scan in nested.scan)
+                    local.update(
+                        state.body_argument for state in nested.carry
+                    )
+                    used.update(scan.source for scan in nested.scan)
+                    used.update(
+                        state.init_value
+                        for state in nested.carry
+                        if isinstance(state.init_value, str)
+                    )
         outer = {
             value
             for value in used - local
             if not _looks_like_semantic_literal(value)
         }
+        return outer
+
+    def local_loop_uses(loop: Any) -> set[str]:
+        seed = {scan.name for scan in loop.scan}
+        seed.update(state.body_argument for state in loop.carry)
+        outer = local_region_uses(loop.body, local_seed=seed)
         outer.update(scan.source for scan in loop.scan)
         outer.update(
             state.init_value
@@ -2356,13 +2424,68 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             event_ref = (SemanticEventKind.NODE, node_id or path)
             for value in [*produced, *op.operands]:
                 value_events.setdefault(value, set()).add(event_ref)
+            if op.op == "effect_if":
+                assert op.predicate is not None
+                assert op.positive is not None and op.negative is not None
+                value_events.setdefault(op.predicate, set()).add(event_ref)
+                arm_scopes = [op.positive.scope_id, op.negative.scope_id]
+                if len(set(arm_scopes)) != 2:
+                    raise SchemaError(
+                        f"effect_if {path!r} positive/negative scopes must be distinct"
+                    )
+                for polarity, arm in (
+                    ("positive", op.positive),
+                    ("negative", op.negative),
+                ):
+                    branch_scope_id = arm.scope_id
+                    if branch_scope_id not in scope_by_id:
+                        raise SchemaError(
+                            f"effect_if {path!r} {polarity} arm references "
+                            "unknown portable scope"
+                        )
+                    branch_scope = scope_by_id[branch_scope_id]
+                    if branch_scope_id in referenced_branch_scopes:
+                        raise SchemaError(
+                            f"portable branch scope {branch_scope_id!r} is "
+                            "referenced more than once"
+                        )
+                    referenced_branch_scopes.add(branch_scope_id)
+                    if branch_scope.kind is not ScopeKind.BRANCH_REGION:
+                        raise SchemaError(
+                            f"effect_if {path!r} {polarity} scope must have "
+                            "kind branch_region"
+                        )
+                    if branch_scope.parent_scope != owner_scope:
+                        raise SchemaError(
+                            f"effect_if {path!r} arm scopes must share parent "
+                            f"{owner_scope!r}"
+                        )
+                    branch_entry = (
+                        SemanticEventKind.SCOPE_ENTRY,
+                        branch_scope_id,
+                    )
+                    event_order[branch_entry] = event_order[path_event]
+                    event_scope[branch_entry] = branch_scope_id
+                    required_captures[branch_scope_id].update(
+                        local_region_uses(arm.body)
+                    )
+                    visit(
+                        arm.body,
+                        branch_scope_id,
+                        f"{path}.{polarity}.body",
+                    )
+                    branch_exit = (
+                        SemanticEventKind.SCOPE_EXIT,
+                        branch_scope_id,
+                    )
+                    event_order[branch_exit] = order
+                    event_scope[branch_exit] = branch_scope_id
+                continue
             if op.op != "loop":
                 if op.scope_id is not None:
                     raise SchemaError(
                         f"non-loop operation {path!r} must not declare scope_id"
                     )
-                if op.body:
-                    visit(op.body, owner_scope, f"{path}.body")
                 continue
 
             loop_scope_id = op.scope_id
@@ -2426,6 +2549,17 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         raise SchemaError(
             "portable loop scopes must be in one-to-one correspondence with J loops"
         )
+    declared_branch_scopes = {
+        scope.scope_id
+        for scope in archive.scopes
+        if scope.kind is ScopeKind.BRANCH_REGION
+    }
+    if referenced_branch_scopes != declared_branch_scopes:
+        raise SchemaError(
+            "branch_region scopes require a first-class IntentIR branch-region "
+            "op; portable branch scopes must be in one-to-one correspondence "
+            "with effect_if arms"
+        )
     event_order[(SemanticEventKind.SCOPE_EXIT, execution_scope.scope_id)] = order + 1
     event_scope[
         (SemanticEventKind.SCOPE_EXIT, execution_scope.scope_id)
@@ -2441,13 +2575,27 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         )
 
     valid_effect_refs: set[str] = set()
+    declared_effect_owner: dict[str, str] = {}
+    for scope in archive.scopes:
+        for effect_ref in scope.effects:
+            previous = declared_effect_owner.get(effect_ref)
+            if previous is not None and previous != scope.scope_id:
+                raise SchemaError(
+                    f"effect {effect_ref!r} belongs to multiple portable scopes"
+                )
+            declared_effect_owner[effect_ref] = scope.scope_id
     for effect in archive.boundary.effects:
         assert effect.effect_id is not None
         token = effect.effect_id
         valid_effect_refs.add(token)
         if effect.node_ref is None:
-            owner = execution_scope.scope_id
-            effect_order = order
+            # A node-less effect is owned by exactly the authored scope that
+            # lists it.  This is required for direct effects in an otherwise
+            # empty branch arm and never infers an arm from access spelling.
+            owner = declared_effect_owner.get(token, execution_scope.scope_id)
+            effect_order = event_order.get(
+                (SemanticEventKind.SCOPE_ENTRY, owner), order
+            )
         else:
             effect_path = archive.node_ids.get(effect.node_ref, effect.node_ref)
             owner = path_scope.get(effect_path, execution_scope.scope_id)
@@ -2456,6 +2604,16 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 event_order.get((SemanticEventKind.NODE, effect_path), order),
             )
         required_effects[owner].add(token)
+        if (
+            owner != execution_scope.scope_id
+            and effect.kind in {
+                EffectKind.READ,
+                EffectKind.READ_WRITE,
+                EffectKind.UPDATE,
+            }
+            and effect.target in valid_values
+        ):
+            required_captures[owner].add(effect.target)
         effect_event = (SemanticEventKind.EFFECT, token)
         event_order[effect_event] = effect_order
         event_scope[effect_event] = owner
@@ -2467,20 +2625,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
         AccessKind.UPDATE: EffectKind.UPDATE,
     }
     for access in archive.boundary.accesses:
-        if access.node_ref is None:
-            owner = execution_scope.scope_id
-            access_order = order
-        else:
-            access_path = archive.node_ids.get(access.node_ref, access.node_ref)
-            owner = path_scope.get(access_path, execution_scope.scope_id)
-            access_order = event_order.get(
-                (SemanticEventKind.NODE, access.node_ref),
-                event_order.get((SemanticEventKind.NODE, access_path), order),
-            )
-        access_event = (SemanticEventKind.ACCESS, access.access_id)
-        event_order[access_event] = access_order
-        event_scope[access_event] = owner
-        value_events.setdefault(access.tensor, set()).add(access_event)
         matches = [
             effect
             for effect in archive.boundary.effects
@@ -2494,6 +2638,18 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 f"boundary access {access.access_id!r} requires exactly one "
                 "matching EffectSpec"
             )
+        matching_effect = matches[0]
+        assert matching_effect.effect_id is not None
+        effect_event = (
+            SemanticEventKind.EFFECT,
+            matching_effect.effect_id,
+        )
+        owner = event_scope[effect_event]
+        access_order = event_order[effect_event]
+        access_event = (SemanticEventKind.ACCESS, access.access_id)
+        event_order[access_event] = access_order
+        event_scope[access_event] = owner
+        value_events.setdefault(access.tensor, set()).add(access_event)
 
     defined_owner: dict[str, str] = {}
     all_declared_values = set(valid_values)
@@ -2790,6 +2946,12 @@ def _walk_intent_ops(op: Any):
     yield op
     for child in op.body:
         yield from _walk_intent_ops(child)
+    if op.op == "effect_if":
+        assert op.positive is not None and op.negative is not None
+        for child in op.positive.body:
+            yield from _walk_intent_ops(child)
+        for child in op.negative.body:
+            yield from _walk_intent_ops(child)
 
 
 def _looks_like_semantic_literal(value: str) -> bool:
@@ -2871,6 +3033,11 @@ def _validate_access_guard_reference_closure(
             for state in operation.carry:
                 declared_values.add(state.body_argument)
             visit(operation.body)
+            if operation.op == "effect_if":
+                assert operation.positive is not None
+                assert operation.negative is not None
+                visit(operation.positive.body)
+                visit(operation.negative.body)
 
     visit(archive.intent.body)
     unknown_values = sorted(
@@ -2919,24 +3086,40 @@ class SemanticArchive(StrictJSONMixin):
         }
         if len(set(self.node_ids.values())) != len(self.node_ids):
             raise SchemaError("SemanticArchive.node_ids paths must be unique")
-        canonical_path = re.compile(r"^body\[\d+\](?:\.body\[\d+\])*$")
-        intent_json = self.intent.to_json()["intent_function"]
+        canonical_path = re.compile(
+            r"^body\[\d+\]"
+            r"(?:(?:\.body|\.positive\.body|\.negative\.body)\[\d+\])*$"
+        )
+        by_path: dict[str, Any] = {}
+
+        def record_paths(operations: list[Any], prefix: str = "body") -> None:
+            for index, operation in enumerate(operations):
+                path = f"{prefix}[{index}]"
+                by_path[path] = operation
+                record_paths(operation.body, f"{path}.body")
+                if operation.op == "effect_if":
+                    assert operation.positive is not None
+                    assert operation.negative is not None
+                    record_paths(
+                        operation.positive.body,
+                        f"{path}.positive.body",
+                    )
+                    record_paths(
+                        operation.negative.body,
+                        f"{path}.negative.body",
+                    )
+
+        record_paths(self.intent.body)
         for node_id, node_path in self.node_ids.items():
             if canonical_path.fullmatch(node_path) is None:
                 raise SchemaError(
                     f"SemanticArchive.node_ids.{node_id} must be a canonical "
-                    "body[i](.body[j])* JSON path"
+                    "body/loop/conditional-arm JSON path"
                 )
-            operations = intent_json.get("body", [])
-            indices = [int(value) for value in re.findall(r"body\[(\d+)\]", node_path)]
-            for depth, index in enumerate(indices):
-                if index >= len(operations):
-                    raise SchemaError(
-                        f"SemanticArchive.node_ids.{node_id} path is out of range"
-                    )
-                operation = operations[index]
-                if depth + 1 < len(indices):
-                    operations = operation.get("body", [])
+            if node_path not in by_path:
+                raise SchemaError(
+                    f"SemanticArchive.node_ids.{node_id} path is out of range"
+                )
         if not isinstance(self.boundary, Boundary):
             self.boundary = Boundary.from_json(self.boundary)
         if not isinstance(self.signature, LogicalSignature):
@@ -3291,6 +3474,16 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
                     _SchemaIssue(
                         f"{base}.mode",
                         "output signature parameter must bind a J output",
+                    )
+                )
+            if parameter.mode is ParameterMode.INOUT and not (
+                ref in input_refs and ref in output_refs
+            ):
+                issues.append(
+                    _SchemaIssue(
+                        f"{base}.mode",
+                        "inout signature parameter must bind the same logical "
+                        "tensor declared in both J inputs and J outputs",
                     )
                 )
             seen_logical.add(ref)
@@ -3724,13 +3917,14 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v5"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v6"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
             "intentir.scrc.artifact.v1",
             "intentir.scrc.artifact.v2",
             "intentir.scrc.artifact.v3",
             "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
         }
     )
 
@@ -3801,6 +3995,7 @@ class Gate1Artifact(StrictJSONMixin):
             )
         if self.wire_schema in {
             "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
             self.SCHEMA,
         } and any(
             item.masked_contribution is not None
@@ -3812,11 +4007,32 @@ class Gate1Artifact(StrictJSONMixin):
                 "masked_contribution"
             )
         if (
-            self.wire_schema != self.SCHEMA
+            self.wire_schema in {
+                "intentir.scrc.artifact.v1",
+                "intentir.scrc.artifact.v2",
+                "intentir.scrc.artifact.v3",
+                "intentir.scrc.artifact.v4",
+            }
             and self.j.boundary.access_guard_relations
         ):
             raise SchemaError(
                 "Gate1 artifact v1-v4 do not contain J access_guard_relations"
+            )
+        has_effect_if = any(
+            op.op == "effect_if"
+            for top in self.j.intent.body
+            for op in _walk_intent_ops(top)
+        )
+        if self.wire_schema != self.SCHEMA and has_effect_if:
+            raise SchemaError(
+                "Gate1 artifact v1-v5 do not contain J effect_if regions"
+            )
+        if self.wire_schema != self.SCHEMA and any(
+            item.get("induction_basis") == "rounded_extent_step"
+            for item in self.pi.iterations
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v5 do not contain rounded_extent_step"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -3877,6 +4093,7 @@ class Gate1Artifact(StrictJSONMixin):
         if schema in {
             "intentir.scrc.artifact.v3",
             "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
             cls.SCHEMA,
         } and (
             pi_value is not None and "iterations" not in pi_value
@@ -3891,7 +4108,11 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1/v2 do not contain pi iterations"
             )
-        if schema in {"intentir.scrc.artifact.v4", cls.SCHEMA}:
+        if schema in {
+            "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
+            cls.SCHEMA,
+        }:
             if j_value is not None and "dimension_constraints" not in j_value:
                 raise SchemaError(
                     "Gate1Artifact.j is missing required field: "
@@ -3936,7 +4157,7 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
-        if schema == cls.SCHEMA:
+        if schema in {"intentir.scrc.artifact.v5", cls.SCHEMA}:
             if (
                 boundary_value is not None
                 and "access_guard_relations" not in boundary_value
@@ -3973,7 +4194,12 @@ class Gate1Artifact(StrictJSONMixin):
             j_value["boundary"].pop("consumer_extensions", None)
             j_value.pop("dimension_constraints", None)
             j_value.pop("value_dimension_relations", None)
-        if self.wire_schema != self.SCHEMA:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+            "intentir.scrc.artifact.v4",
+        }:
             j_value["boundary"].pop("access_guard_relations", None)
         return {
             "schema": self.wire_schema,
@@ -3984,10 +4210,15 @@ class Gate1Artifact(StrictJSONMixin):
                 in {
                     "intentir.scrc.artifact.v3",
                     "intentir.scrc.artifact.v4",
+                    "intentir.scrc.artifact.v5",
                     self.SCHEMA,
                 },
                 include_loop_carriers=self.wire_schema
-                in {"intentir.scrc.artifact.v4", self.SCHEMA},
+                in {
+                    "intentir.scrc.artifact.v4",
+                    "intentir.scrc.artifact.v5",
+                    self.SCHEMA,
+                },
             ),
         }
 
@@ -4036,6 +4267,17 @@ def _intent_ops_with_paths(
         nested = op.get("body", [])
         if isinstance(nested, list):
             result.extend(_intent_ops_with_paths(nested, f"{path}.body"))
+        if op.get("op") == "effect_if":
+            for polarity in ("positive", "negative"):
+                arm = op.get(polarity)
+                arm_body = arm.get("body") if isinstance(arm, dict) else None
+                if isinstance(arm_body, list):
+                    result.extend(
+                        _intent_ops_with_paths(
+                            arm_body,
+                            f"{path}.{polarity}.body",
+                        )
+                    )
     return result
 
 
@@ -4142,6 +4384,13 @@ def _opaque_reference_data(
         occupied.update(_intent_result_names(op.get("result")))
         if isinstance(op.get("scope_id"), str):
             occupied.add(op["scope_id"])
+        if op.get("op") == "effect_if":
+            for polarity in ("positive", "negative"):
+                arm = op.get(polarity)
+                if isinstance(arm, dict) and isinstance(
+                    arm.get("scope_id"), str
+                ):
+                    occupied.add(arm["scope_id"])
         for state in op.get("carry", []):
             for key in (
                 "state_id", "body_argument", "next_value", "result_value",
@@ -4241,6 +4490,28 @@ def _opaque_reference_data(
                 "j_scope",
                 f"j.intent.{path}.scope_id",
             )
+        if op.get("op") == "effect_if":
+            for polarity in ("positive", "negative"):
+                arm = op.get(polarity)
+                if not isinstance(arm, dict) or not isinstance(
+                    arm.get("scope_id"), str
+                ):
+                    continue
+                arm_scope = arm["scope_id"]
+                scope_index = next(
+                    (
+                        index
+                        for index, scope in enumerate(artifact.j.scopes)
+                        if scope.scope_id == arm_scope
+                    ),
+                    0,
+                )
+                allocate(
+                    arm_scope,
+                    f"q{scope_index}",
+                    "j_scope",
+                    f"j.intent.{path}.{polarity}.scope_id",
+                )
         for scan_index, scan in enumerate(op.get("scan", [])):
             allocate(
                 scan["name"],
@@ -4386,6 +4657,16 @@ def _opaque_intent_op(
         result["body"] = [
             _opaque_intent_op(item, aliases) for item in result["body"]
         ]
+    if result.get("op") == "effect_if":
+        result["predicate"] = _opaque_reference(
+            result["predicate"], aliases
+        )
+        for polarity in ("positive", "negative"):
+            arm = result[polarity]
+            arm["scope_id"] = _opaque_reference(arm["scope_id"], aliases)
+            arm["body"] = [
+                _opaque_intent_op(item, aliases) for item in arm["body"]
+            ]
     return result
 
 
@@ -4847,6 +5128,23 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             masked_op: dict[str, Any] = {"op": "<masked>", "result": node_id}
             if getattr(op, "body", None):
                 masked_op["body"] = mask_ops(op.body, f"{path}.body")
+            if op.op == "effect_if":
+                assert op.positive is not None and op.negative is not None
+                masked_op["predicate"] = "<masked>"
+                masked_op["positive"] = {
+                    "scope_id": scope_map[op.positive.scope_id],
+                    "body": mask_ops(
+                        op.positive.body,
+                        f"{path}.positive.body",
+                    ),
+                }
+                masked_op["negative"] = {
+                    "scope_id": scope_map[op.negative.scope_id],
+                    "body": mask_ops(
+                        op.negative.body,
+                        f"{path}.negative.body",
+                    ),
+                }
             result.append(masked_op)
         return result
 

@@ -103,6 +103,24 @@ def _guarded_carry_artifact() -> Gate1Artifact:
     return Gate1Artifact.from_json(_guarded_carry_payload())
 
 
+def test_inout_logical_ref_requires_same_j_input_and_output() -> None:
+    valid = _guarded_carry_payload()
+    parsed = Gate1Artifact.from_json(valid)
+    inout = parsed.j.signature.parameters[1]
+    assert inout.mode.value == "inout"
+    assert inout.logical_ref in {item.name for item in parsed.j.intent.inputs}
+    assert inout.logical_ref in {item.name for item in parsed.j.intent.outputs}
+
+    input_only = copy.deepcopy(valid)
+    input_only["j"]["signature"]["parameters"][1]["logical_ref"] = "t0"
+    input_only["j"]["signature"]["parameters"][1]["rank"] = 1
+    with pytest.raises(
+        SchemaError,
+        match="inout signature parameter must bind the same logical tensor",
+    ):
+        Gate1Artifact.from_json(input_only)
+
+
 def _use_same_typed_wrong_prestate(payload: dict) -> None:
     function = payload["j"]["intent"]["intent_function"]
     function["inputs"].append({"name": "t3", "dtype": "f32", "shape": []})
@@ -170,7 +188,7 @@ def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v14"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v15"
 
 
 @pytest.mark.parametrize(

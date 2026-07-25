@@ -188,6 +188,22 @@ Structured loop (loop-carried recurrence, e.g. online softmax / scans):
   Use a loop ONLY for genuine loop-carried state; plain tiling is Layer C and
   should be re-rolled away (the math is the same whole-tensor op).
 
+Effect-only binary conditional region (guarded effects with parent continuation):
+  {"op":"effect_if",
+   "predicate":<already-visible scalar i1 value>,
+   "positive":{"scope_id":<branch_region scope>,"body":[<branch-local ops>]},
+   "negative":{"scope_id":<branch_region scope>,"body":[<branch-local ops>]}}
+  Both positive and negative arms are mandatory and explicit; either body may
+  be empty. The conditional itself has no result, operands, attrs, type, or
+  yield. Arm bodies may contain local pure computation, logical accesses/effects,
+  another effect_if, and structured loops. Their SSA values may feed effects in
+  that arm but never escape into the parent continuation or the sibling arm.
+  Each arm binds one distinct sibling branch_region scope. Effect/access
+  membership is declared exactly once by that scope's effects and the matching
+  top-level EffectSpec/access_ref; never duplicate an effect list in the arm.
+  Do not replace effect_if with select: select chooses a value, while effect_if
+  controls whether accesses/effects occur.
+
 Hard rules:
 - Do NOT invent ops or fns outside the lists above. If the kernel needs one,
   express it with the primitives (e.g. rsqrt = recip(sqrt(x)); a literal number

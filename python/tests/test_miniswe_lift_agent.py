@@ -123,7 +123,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v17"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v18"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -170,6 +170,11 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "result-axis orientation" in preflight
     assert "expect pi or Replay to recover it" in preflight
     assert "cannot carry or infer an initialization" in preflight
+    assert "one Layer-A `effect_if`, not a value `select`" in preflight
+    assert "positive and negative arms are both explicit" in preflight
+    assert "matching `EffectSpec.access_ref` are the only membership" in preflight
+    assert "`rounded_extent_step`" in preflight
+    assert "same tensor declared with identical type in both J inputs" in preflight
     assert "`boundary.access_guard_relations`" in preflight
     assert "guard shaped `[M]` used by an access shaped `[M,N]`" in preflight
     assert "`select(guard,candidate,current)`" in preflight
@@ -201,6 +206,8 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
                     "python /input/tools/schema_query.py "
                     "/input/schema/artifact.schema.json op map_binary; "
                     "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json op effect_if; "
+                    "python /input/tools/schema_query.py "
                     "/input/schema/artifact.schema.json section parameter; "
                     "python /input/tools/schema_query.py "
                     "/input/schema/artifact.schema.json section access; "
@@ -219,6 +226,8 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "root: required=['schema', 'j', 'c', 'pi']" in output
     assert "ordinary operations: map_binary, map_unary" in output
     assert 'fn in' in output
+    assert '"effect_if"' in output
+    assert '"positive"' in output and '"negative"' in output
     assert '"logical_ref"' in output
     assert "rank-0 J input" in output
     assert "never names a v* SSA value" in output
@@ -227,7 +236,7 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "fill_value is legal only on a load" in output
     assert "leave output_mappings empty" in output
     assert '"semantic_ref"' in output
-    assert len(output.splitlines()) < 350
+    assert len(output.splitlines()) < 430
 
 
 def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
@@ -1105,7 +1114,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v14"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v15"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -1577,9 +1586,9 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.artifact.to_json() == second.artifact.to_json()
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
-    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v5"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v6"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v14"
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v6"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v7"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v15"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0

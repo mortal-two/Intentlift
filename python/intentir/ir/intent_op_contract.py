@@ -1,8 +1,9 @@
 """Single structural contract for canonical Layer-A ``IntentOp`` JSON.
 
 The contract deliberately recognizes one structural discriminator only:
-``op == "loop"``.  Every present and future ordinary semantic op shares the
-same open-opcode/non-region shape; this is not an operation catalog.
+``op == "loop"`` and ``op == "effect_if"``.  Every present and future ordinary
+semantic op shares the same open-opcode/non-region shape; this is not an
+operation catalog.
 """
 
 from __future__ import annotations
@@ -19,9 +20,15 @@ COMMON_FIELDS = frozenset(
 LOOP_ONLY_FIELDS = frozenset(
     {"scope_id", "carry", "trip", "scan", "body", "yield"}
 )
+EFFECT_IF_ONLY_FIELDS = frozenset(
+    {"predicate", "positive", "negative"}
+)
 COMMON_REQUIRED_FIELDS = frozenset({"op"})
 LOOP_REQUIRED_FIELDS = frozenset(
     {"result", "scope_id", "carry", "trip", "scan", "body", "yield"}
+)
+EFFECT_IF_REQUIRED_FIELDS = frozenset(
+    {"predicate", "positive", "negative"}
 )
 
 
@@ -193,6 +200,26 @@ def _scan(value: Any, path: str) -> None:
     _nonnegative_integer(item["axis"], f"{path}.axis")
 
 
+def _effect_if_arm(value: Any, path: str, *, recursive: bool) -> None:
+    item = _exact_keys(
+        value,
+        path,
+        allowed=frozenset({"scope_id", "body"}),
+        required=frozenset({"scope_id", "body"}),
+    )
+    _nonempty_string(item["scope_id"], f"{path}.scope_id")
+    body = item["body"]
+    if not isinstance(body, list):
+        _fail(f"{path}.body", "must be an array")
+    if recursive:
+        for index, operation in enumerate(body):
+            validate_intent_op_structure(
+                operation,
+                path=f"{path}.body[{index}]",
+                recursive=True,
+            )
+
+
 def validate_intent_op_structure(
     value: Any,
     *,
@@ -208,19 +235,32 @@ def validate_intent_op_structure(
     item = _object(value, path)
     op = _nonempty_string(item.get("op"), f"{path}.op")
     is_loop = op == "loop"
-    allowed = COMMON_FIELDS | (LOOP_ONLY_FIELDS if is_loop else frozenset())
-    required = COMMON_REQUIRED_FIELDS | (
-        LOOP_REQUIRED_FIELDS if is_loop else frozenset()
+    is_effect_if = op == "effect_if"
+    structural_fields = (
+        LOOP_ONLY_FIELDS if is_loop
+        else EFFECT_IF_ONLY_FIELDS if is_effect_if
+        else frozenset()
     )
+    structural_required = (
+        LOOP_REQUIRED_FIELDS if is_loop
+        else EFFECT_IF_REQUIRED_FIELDS if is_effect_if
+        else frozenset()
+    )
+    # ``effect_if`` is effect-only at its interface: even common ordinary-op
+    # result/operand/attr/type fields are not legal on the region operation.
+    common_allowed = frozenset({"id", "op"}) if is_effect_if else COMMON_FIELDS
+    allowed = common_allowed | structural_fields
+    required = COMMON_REQUIRED_FIELDS | structural_required
     missing = sorted(required - set(item))
     unknown = sorted(set(item) - allowed)
     if missing:
         _fail(path, "is missing required key(s): " + ", ".join(missing))
     if unknown:
-        if not is_loop and set(unknown) <= LOOP_ONLY_FIELDS:
+        region_only = LOOP_ONLY_FIELDS | EFFECT_IF_ONLY_FIELDS
+        if not is_loop and not is_effect_if and set(unknown) <= region_only:
             _fail(
                 path,
-                "has loop-only key(s) on a non-loop op: " + ", ".join(unknown),
+                "has region-only key(s) on an ordinary op: " + ", ".join(unknown),
             )
         _fail(path, "has unknown key(s): " + ", ".join(unknown))
 
@@ -237,6 +277,15 @@ def validate_intent_op_structure(
         _object(item["type"], f"{path}.type")
         _json_value(item["type"], f"{path}.type")
 
+    if is_effect_if:
+        _nonempty_string(item["predicate"], f"{path}.predicate")
+        _effect_if_arm(
+            item["positive"], f"{path}.positive", recursive=recursive
+        )
+        _effect_if_arm(
+            item["negative"], f"{path}.negative", recursive=recursive
+        )
+        return
     if not is_loop:
         return
     _nonempty_string(item["scope_id"], f"{path}.scope_id")
@@ -350,7 +399,7 @@ def intent_op_json_schema() -> dict[str, Any]:
             "op": {
                 "type": "string",
                 "minLength": 1,
-                "pattern": "^(?!loop$).+$",
+                "pattern": "^(?!(?:loop|effect_if)$).+$",
             },
         },
         ("op",),
@@ -396,7 +445,27 @@ def intent_op_json_schema() -> dict[str, Any]:
             "yield",
         ),
     )
-    return {"anyOf": [non_loop, loop]}
+    arm = _closed_schema(
+        {
+            "scope_id": copy.deepcopy(string),
+            "body": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/intent_op"},
+            },
+        },
+        ("scope_id", "body"),
+    )
+    effect_if = _closed_schema(
+        {
+            "id": copy.deepcopy(string),
+            "op": {"type": "string", "enum": ["effect_if"]},
+            "predicate": copy.deepcopy(string),
+            "positive": copy.deepcopy(arm),
+            "negative": copy.deepcopy(arm),
+        },
+        ("op", "predicate", "positive", "negative"),
+    )
+    return {"anyOf": [non_loop, loop, effect_if]}
 
 
 def render_intent_op_wire_grammar() -> str:
@@ -410,6 +479,11 @@ def render_intent_op_wire_grammar() -> str:
         f"required: {required}. Every non-loop op must omit every loop-only "
         "field; null or an empty placeholder does not count as omission. A "
         "loop has a non-empty result list, carry list, body and yield list. "
+        "If and only if op is exactly 'effect_if', it has exactly id(optional), "
+        "op, predicate, positive and negative. Both arms are explicit closed "
+        "{scope_id,body} objects and either body may be empty. The conditional "
+        "itself has no result, operands, attrs, type or yield; arm-local values "
+        "may feed arm effects but never escape to the parent continuation. "
         "This is a structural rule, not an operation catalog."
     )
 
@@ -417,6 +491,8 @@ def render_intent_op_wire_grammar() -> str:
 __all__ = [
     "COMMON_FIELDS",
     "COMMON_REQUIRED_FIELDS",
+    "EFFECT_IF_ONLY_FIELDS",
+    "EFFECT_IF_REQUIRED_FIELDS",
     "IntentOpContractError",
     "LOOP_ONLY_FIELDS",
     "LOOP_REQUIRED_FIELDS",

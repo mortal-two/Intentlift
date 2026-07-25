@@ -75,20 +75,29 @@ def _request() -> SCRCLiftRequest:
     )
 
 
-def test_v5_access_guard_round_trip_and_decode_are_exact() -> None:
+def test_v6_preserves_v5_access_guard_round_trip_and_decode_exactness() -> None:
     payload = _guarded_payload()
-    assert payload["schema"] == "intentir.scrc.artifact.v5"
+    assert payload["schema"] == "intentir.scrc.artifact.v6"
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v6"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v7"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
-    assert decoded.wire_schema == "intentir.scrc.artifact.v5"
+    assert decoded.wire_schema == "intentir.scrc.artifact.v6"
     assert decoded.j.boundary.access_guard_relations[0].to_json() == {
         "access_ref": "a0",
         "value_ref": "t1",
         "axes": [1],
         "polarity": "positive",
     }
+
+
+def test_v5_access_guard_artifact_remains_field_exact_but_is_legacy_for_lift() -> None:
+    payload = _guarded_payload()
+    payload["schema"] = "intentir.scrc.artifact.v5"
+    parsed = Gate1Artifact.from_json(payload)
+    assert parsed.to_json() == payload
+    with pytest.raises(ValueError, match="this round requires"):
+        decode_scrc_lift_artifact(json.dumps(payload), _request())
 
 
 def test_v5_static_schema_requires_closed_access_guard_shape() -> None:

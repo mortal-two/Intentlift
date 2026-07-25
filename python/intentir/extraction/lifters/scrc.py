@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v6"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v7"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -744,8 +744,9 @@ Harness value, dtype, position, or observed shape. Capacity x* and active-length
 t* stay unrelated unless Source says otherwise; an extent-only scalar binds x*
 directly. Always emit the complete array, including []. Lift authors it; fixed
 code and Replay never add or repair it from pi, C, or runtime evidence.
-Never bind a value parameter to an output tensor merely to satisfy handle
-existence; tensor dtype, rank, and input/output mode must agree exactly.
+Never bind a value parameter to an output merely to satisfy handle existence;
+dtype/rank/mode must agree, and inout binds one tensor declared in both inputs
+and outputs.
 Conversely, a runtime scalar used only for representation/address realization
 is not logical data: declare it as a rank-0 scalar, mode value, with public
 dtype and no logical_ref or J input tensor; pi may reference its p* carrier.
@@ -842,6 +843,14 @@ Replay to rediscover the missing update algorithm. Pi records only realization
 topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
 an omitted initialization, update formula, yield, or contraction orientation.
 
+An effect-controlling binary Source branch is one Layer-A `effect_if`: one
+visible scalar-i1 predicate and explicit positive/negative `{{scope_id,body}}`
+arms (either may be empty) bound to distinct sibling branch_region scopes. It
+has no result/yield; arm-local SSA never escapes. scope.effects plus matching
+EffectSpec/access_ref is sole membership and cannot overlap access_guard. Pi
+only realizes each arm scope in sibling placement=branch regions; it never
+copies predicate/polarity or turns the branch into select.
+
 Preserve every compiler-visible sensitive representation event in the Source,
 including explicit or mandatory implicit integer widening, numeric cast,
 accumulation dtype, reassociation, and native/privatized update choice. J owns
@@ -880,8 +889,9 @@ For every physical loop region that realizes a structured J `loop` through a
 matching C tile slot, emit exactly one pi.iterations relation. The loop_instance
 must anchor that J loop and the tile_instance must anchor that C slot. Use
 `extent_step` when the physical induction space is zero-to-logical-extent with
-the C tile as its step. Use `tile_ordinal` when it is a zero-based unit-step tile
-ordinal whose trip count is the ceiling-divided logical extent. Preserve the
+the C tile as its step; `rounded_extent_step` uses the same lower/step but upper
+ceil_div(trip,tile)*tile. Use `tile_ordinal` for zero-based unit-step tile
+ordinals with ceiling-divided trip count. Preserve the
 source realization distinction even when the induction variable is unused.
 An explicit relation may use any role when its C slot is required,
 positive-integer, and attached to the same loop/trip axis; axis ordinal 0 and

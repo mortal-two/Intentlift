@@ -5,6 +5,7 @@ and target backends; it is intentionally not wrapped or re-serialized here.
 """
 
 from .model import (
+    EffectIfArm,
     IntentFunction,
     IntentOp,
     IntentReturn,
@@ -16,6 +17,6 @@ from .model import (
 )
 
 __all__ = [
-    "IntentFunction", "IntentOp", "IntentReturn", "LoopScanInput",
+    "EffectIfArm", "IntentFunction", "IntentOp", "IntentReturn", "LoopScanInput",
     "LoopStateBinding", "LoopTrip", "LoopValueType", "Tensor",
 ]

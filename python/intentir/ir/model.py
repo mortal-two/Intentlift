@@ -202,8 +202,37 @@ class LoopScanInput:
 
 
 @dataclass
+class EffectIfArm:
+    """One explicitly polarized arm of an effect-only conditional region.
+
+    The arm binds an existing portable ``branch_region`` scope.  Its body may
+    define branch-local SSA values, but the enclosing ``effect_if`` has no SSA
+    result or yield.  Effect/access membership remains solely in the bound
+    scope's ``effects`` list and the matching Layer-B records; it is deliberately
+    not duplicated here.
+    """
+
+    scope_id: str
+    body: list["IntentOp"] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> "EffectIfArm":
+        _closed_keys(d, {"scope_id", "body"}, "EffectIfArm")
+        return cls(
+            scope_id=d["scope_id"],
+            body=[IntentOp.from_json(item) for item in d["body"]],
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "scope_id": self.scope_id,
+            "body": [item.to_json() for item in self.body],
+        }
+
+
+@dataclass
 class IntentOp:
-    """One Layer-A semantic node, including the structured ``loop`` node."""
+    """One Layer-A semantic node, including closed structured regions."""
 
     op: str
     result: Any = None  # str | list[str]
@@ -217,6 +246,10 @@ class IntentOp:
     scan: list[LoopScanInput] = field(default_factory=list)  # per-iter sliced inputs
     body: list["IntentOp"] = field(default_factory=list)
     yields: list[str] = field(default_factory=list)  # JSON key "yield"
+    # effect-only binary conditional fields (op == "effect_if")
+    predicate: str | None = None
+    positive: EffectIfArm | None = None
+    negative: EffectIfArm | None = None
     node_id: str | None = None  # canonical stable Layer-A node id
 
     @classmethod
@@ -226,6 +259,7 @@ class IntentOp:
             {
                 "id", "op", "result", "operands", "attrs", "type",
                 "scope_id", "carry", "trip", "scan", "body", "yield",
+                "predicate", "positive", "negative",
             },
             "IntentOp",
         )
@@ -253,6 +287,15 @@ class IntentOp:
             scan=[LoopScanInput.from_json(item) for item in d.get("scan", [])],
             body=[cls.from_json(x) for x in d.get("body", [])],
             yields=yields,
+            predicate=d.get("predicate"),
+            positive=(
+                EffectIfArm.from_json(d["positive"])
+                if d.get("positive") is not None else None
+            ),
+            negative=(
+                EffectIfArm.from_json(d["negative"])
+                if d.get("negative") is not None else None
+            ),
         )
 
     def to_json(self) -> dict:
@@ -282,6 +325,14 @@ class IntentOp:
             d["body"] = [x.to_json() for x in self.body]
         if self.yields:
             d["yield"] = self.yields
+        if self.op == "effect_if":
+            d["predicate"] = self.predicate
+            d["positive"] = (
+                self.positive.to_json() if self.positive is not None else None
+            )
+            d["negative"] = (
+                self.negative.to_json() if self.negative is not None else None
+            )
         return d
 
 

@@ -66,9 +66,9 @@ def _legacy_payload(version: int) -> dict:
     return payload
 
 
-def test_artifact_v5_requires_all_current_arrays_and_round_trips_them() -> None:
+def test_artifact_v6_requires_all_current_arrays_and_round_trips_them() -> None:
     payload = make_copy_artifact().to_json()
-    assert payload["schema"] == "intentir.scrc.artifact.v5"
+    assert payload["schema"] == "intentir.scrc.artifact.v6"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
     assert payload["j"]["boundary"]["access_guard_relations"] == []
     assert payload["j"]["dimension_constraints"] == []
@@ -110,8 +110,8 @@ def test_artifact_v5_requires_all_current_arrays_and_round_trips_them() -> None:
         Gate1Artifact.from_json(missing_access_guards)
 
 
-@pytest.mark.parametrize("version", [1, 2, 3, 4])
-def test_artifact_v1_v4_round_trip_without_newer_fields(version: int) -> None:
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+def test_artifact_v1_v5_round_trip_without_newer_fields(version: int) -> None:
     payload = _legacy_payload(version)
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
@@ -155,15 +155,16 @@ def test_artifact_v1_v4_round_trip_without_newer_fields(version: int) -> None:
         ):
             Gate1Artifact.from_json(with_carrier)
 
-    with_access_guard = copy.deepcopy(payload)
-    with_access_guard["j"]["boundary"]["access_guard_relations"] = []
-    with pytest.raises(
-        SchemaError, match="v1-v4 do not contain J access_guard_relations"
-    ):
-        Gate1Artifact.from_json(with_access_guard)
+    if version < 5:
+        with_access_guard = copy.deepcopy(payload)
+        with_access_guard["j"]["boundary"]["access_guard_relations"] = []
+        with pytest.raises(
+            SchemaError, match="v1-v4 do not contain J access_guard_relations"
+        ):
+            Gate1Artifact.from_json(with_access_guard)
 
 
-def test_artifact_v5_rejects_the_duplicate_masked_contribution_authority() -> None:
+def test_artifact_v6_rejects_the_duplicate_masked_contribution_authority() -> None:
     payload = make_reduce_artifact().to_json()
     payload["j"]["boundary"]["reductions"][0]["masked_contribution"] = 0
 
@@ -171,7 +172,7 @@ def test_artifact_v5_rejects_the_duplicate_masked_contribution_authority() -> No
         Gate1Artifact.from_json(payload)
 
 
-def test_static_v5_schema_requires_current_arrays_and_forbids_old_reduction_field() -> None:
+def test_static_v6_schema_requires_current_arrays_and_forbids_old_reduction_field() -> None:
     schema = scrc_lift_core_json_schema()
     payload = make_reduce_artifact().to_json()
     boundary_schema = schema["properties"]["j"]["properties"]["boundary"]
@@ -1143,7 +1144,7 @@ def test_loop_carrier_wire_rejects_unknown_fields_and_reused_state_result_slots(
         RealizationWitness.from_json(payload)
 
 
-def test_candidate_check_uses_v5_v14_and_reports_missing_consumer_relation() -> None:
+def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> None:
     artifact = make_reduce_artifact()
     context = SCRCCandidateCheckContext(("p0", "p1", "p2"))
 
@@ -1158,8 +1159,8 @@ def test_candidate_check_uses_v5_v14_and_reports_missing_consumer_relation() -> 
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v6"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v14"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v7"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v15"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"
