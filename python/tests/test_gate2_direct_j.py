@@ -1133,6 +1133,29 @@ def test_refeval_runtime_boolean_guard_accepts_canonical_bool_alias() -> None:
     assert result.metadata["runtime_predicate_proof_count"] == 2
 
 
+def test_runtime_tautology_does_not_require_unobservable_load_fill() -> None:
+    artifact = _make_runtime_logical_mask_artifact(
+        predicate="flag and i0 < limit",
+        guard=True,
+    )
+    for access in artifact.j.boundary.accesses:
+        if access.kind.value == "load":
+            access.fill_value = None
+    spec = _runtime_logical_mask_spec(artifact)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32),
+            "hidden_limit": np.asarray(8, dtype=np.int32),
+            "hidden_flag": np.asarray(True, dtype=np.bool_),
+        },
+    )
+
+    assert result.ok, result.error
+    assert result.metadata["runtime_predicate_proof_count"] == 2
+
+
 @pytest.mark.parametrize(
     ("limit_dtype", "runtime_value"),
     [

@@ -2119,6 +2119,7 @@ def _project_functional_boundary(
             )
             if parsed is not None else None
         )
+        runtime_predicate_proved = False
         if predicate is not None:
             runtime_refs = {
                 *predicate.guards,
@@ -2145,6 +2146,7 @@ def _project_functional_boundary(
                         predicate, dict(_value_dimension_pairs(j))
                     )
                     runtime_predicate_proofs.append(receipt)
+                    runtime_predicate_proved = True
             if predicate.guards:
                 raise NotImplementedError(
                     "functional mask projection does not implement "
@@ -2183,6 +2185,7 @@ def _project_functional_boundary(
                 predicate.upper_bounds
                 and access.kind.value == "load"
                 and access.fill_value is None
+                and not runtime_predicate_proved
             ):
                 raise NotImplementedError(
                     "functional mask projection requires an explicit masked-load fill"
