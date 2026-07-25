@@ -54,19 +54,23 @@ def _codes(artifact: Gate1Artifact) -> set[TypeCheckErrorCode]:
 def _legacy_payload(version: int) -> dict:
     payload = make_copy_artifact().to_json()
     payload["schema"] = f"intentir.scrc.artifact.v{version}"
-    payload["j"].pop("dimension_constraints")
-    payload["j"].pop("value_dimension_relations")
-    payload["j"]["boundary"].pop("consumer_extensions")
-    payload["pi"].pop("loop_carriers")
+    if version < 5:
+        payload["j"]["boundary"].pop("access_guard_relations")
+    if version < 4:
+        payload["j"].pop("dimension_constraints")
+        payload["j"].pop("value_dimension_relations")
+        payload["j"]["boundary"].pop("consumer_extensions")
+        payload["pi"].pop("loop_carriers")
     if version < 3:
         payload["pi"].pop("iterations")
     return payload
 
 
-def test_artifact_v4_requires_all_new_arrays_and_round_trips_them() -> None:
+def test_artifact_v5_requires_all_current_arrays_and_round_trips_them() -> None:
     payload = make_copy_artifact().to_json()
-    assert payload["schema"] == "intentir.scrc.artifact.v4"
+    assert payload["schema"] == "intentir.scrc.artifact.v5"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
+    assert payload["j"]["boundary"]["access_guard_relations"] == []
     assert payload["j"]["dimension_constraints"] == []
     assert payload["j"]["value_dimension_relations"] == []
     assert payload["pi"]["loop_carriers"] == []
@@ -98,47 +102,68 @@ def test_artifact_v4_requires_all_new_arrays_and_round_trips_them() -> None:
     with pytest.raises(SchemaError, match="missing required field: loop_carriers"):
         Gate1Artifact.from_json(missing_carriers)
 
+    missing_access_guards = copy.deepcopy(payload)
+    missing_access_guards["j"]["boundary"].pop("access_guard_relations")
+    with pytest.raises(
+        SchemaError, match="missing required field: access_guard_relations"
+    ):
+        Gate1Artifact.from_json(missing_access_guards)
 
-@pytest.mark.parametrize("version", [1, 2, 3])
-def test_artifact_v1_v3_round_trip_exactly_without_v4_fields(version: int) -> None:
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4])
+def test_artifact_v1_v4_round_trip_without_newer_fields(version: int) -> None:
     payload = _legacy_payload(version)
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
-    assert parsed.j.boundary.consumer_extensions == []
-    assert parsed.j.dimension_constraints == []
-    assert parsed.j.value_dimension_relations == []
-    assert parsed.pi.loop_carriers == []
+    assert parsed.j.boundary.access_guard_relations == []
+    if version < 4:
+        assert parsed.j.boundary.consumer_extensions == []
+        assert parsed.j.dimension_constraints == []
+        assert parsed.j.value_dimension_relations == []
+        assert parsed.pi.loop_carriers == []
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     assert json.dumps(
         parsed.to_json(), sort_keys=True, separators=(",", ":")
     ) == encoded
 
-    with_dimensions = copy.deepcopy(payload)
-    with_dimensions["j"]["dimension_constraints"] = []
+    if version < 4:
+        with_dimensions = copy.deepcopy(payload)
+        with_dimensions["j"]["dimension_constraints"] = []
+        with pytest.raises(
+            SchemaError, match="v1-v3 do not contain J dimension_constraints"
+        ):
+            Gate1Artifact.from_json(with_dimensions)
+
+        with_value_dimensions = copy.deepcopy(payload)
+        with_value_dimensions["j"]["value_dimension_relations"] = []
+        with pytest.raises(
+            SchemaError, match="v1-v3 do not contain J value_dimension_relations"
+        ):
+            Gate1Artifact.from_json(with_value_dimensions)
+
+        with_consumer = copy.deepcopy(payload)
+        with_consumer["j"]["boundary"]["consumer_extensions"] = []
+        with pytest.raises(
+            SchemaError, match="v1-v3 do not contain J consumer_extensions"
+        ):
+            Gate1Artifact.from_json(with_consumer)
+
+        with_carrier = copy.deepcopy(payload)
+        with_carrier["pi"]["loop_carriers"] = []
+        with pytest.raises(
+            SchemaError, match="v1-v3 do not contain pi loop_carriers"
+        ):
+            Gate1Artifact.from_json(with_carrier)
+
+    with_access_guard = copy.deepcopy(payload)
+    with_access_guard["j"]["boundary"]["access_guard_relations"] = []
     with pytest.raises(
-        SchemaError, match="v1-v3 do not contain J dimension_constraints"
+        SchemaError, match="v1-v4 do not contain J access_guard_relations"
     ):
-        Gate1Artifact.from_json(with_dimensions)
-
-    with_value_dimensions = copy.deepcopy(payload)
-    with_value_dimensions["j"]["value_dimension_relations"] = []
-    with pytest.raises(
-        SchemaError, match="v1-v3 do not contain J value_dimension_relations"
-    ):
-        Gate1Artifact.from_json(with_value_dimensions)
-
-    with_consumer = copy.deepcopy(payload)
-    with_consumer["j"]["boundary"]["consumer_extensions"] = []
-    with pytest.raises(SchemaError, match="v1-v3 do not contain J consumer_extensions"):
-        Gate1Artifact.from_json(with_consumer)
-
-    with_carrier = copy.deepcopy(payload)
-    with_carrier["pi"]["loop_carriers"] = []
-    with pytest.raises(SchemaError, match="v1-v3 do not contain pi loop_carriers"):
-        Gate1Artifact.from_json(with_carrier)
+        Gate1Artifact.from_json(with_access_guard)
 
 
-def test_artifact_v4_rejects_the_duplicate_masked_contribution_authority() -> None:
+def test_artifact_v5_rejects_the_duplicate_masked_contribution_authority() -> None:
     payload = make_reduce_artifact().to_json()
     payload["j"]["boundary"]["reductions"][0]["masked_contribution"] = 0
 
@@ -146,7 +171,7 @@ def test_artifact_v4_rejects_the_duplicate_masked_contribution_authority() -> No
         Gate1Artifact.from_json(payload)
 
 
-def test_static_v4_schema_requires_new_arrays_and_forbids_old_reduction_field() -> None:
+def test_static_v5_schema_requires_current_arrays_and_forbids_old_reduction_field() -> None:
     schema = scrc_lift_core_json_schema()
     payload = make_reduce_artifact().to_json()
     boundary_schema = schema["properties"]["j"]["properties"]["boundary"]
@@ -159,6 +184,7 @@ def test_static_v4_schema_requires_new_arrays_and_forbids_old_reduction_field() 
         )
     )
     assert "consumer_extensions" in boundary_schema["required"]
+    assert "access_guard_relations" in boundary_schema["required"]
     assert "dimension_constraints" in schema["properties"]["j"]["required"]
     assert "value_dimension_relations" in schema["properties"]["j"]["required"]
     assert "loop_carriers" in schema["properties"]["pi"]["required"]
@@ -1117,7 +1143,7 @@ def test_loop_carrier_wire_rejects_unknown_fields_and_reused_state_result_slots(
         RealizationWitness.from_json(payload)
 
 
-def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> None:
+def test_candidate_check_uses_v5_v13_and_reports_missing_consumer_relation() -> None:
     artifact = make_reduce_artifact()
     context = SCRCCandidateCheckContext(("p0", "p1", "p2"))
 
@@ -1132,7 +1158,7 @@ def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> N
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v5"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v6"
     assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v13"
     assert result["status"] == "fail"
     assert any(

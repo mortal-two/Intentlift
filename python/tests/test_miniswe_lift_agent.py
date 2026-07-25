@@ -123,7 +123,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v16"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v17"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -1573,8 +1573,8 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.artifact.to_json() == second.artifact.to_json()
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
-    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v4"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v5"
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v5"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v6"
     assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v13"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3

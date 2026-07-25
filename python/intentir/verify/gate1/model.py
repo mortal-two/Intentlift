@@ -68,9 +68,13 @@ BOUNDARY_LEGACY_WIRE_FIELDS = (
     "result_relations",
     "realization_authorizations",
 )
-BOUNDARY_WIRE_FIELDS = (
+BOUNDARY_V4_WIRE_FIELDS = (
     *BOUNDARY_LEGACY_WIRE_FIELDS,
     "consumer_extensions",
+)
+BOUNDARY_WIRE_FIELDS = (
+    *BOUNDARY_V4_WIRE_FIELDS,
+    "access_guard_relations",
 )
 BOUNDARY_ACCESS_WIRE_FIELDS = (
     "access_id",
@@ -128,10 +132,13 @@ def render_boundary_access_wire_grammar() -> str:
         "producer carries an explicit result type equal to the J output. A "
         "direct same-handle output needs no output_mapping; output_mappings "
         "exist only for an explicit function returns rebinding and must match it. "
-        "consumer_extensions is the sole artifact.v4 authority for a physical "
+        "consumer_extensions is the sole artifact.v4+ authority for a physical "
         "outside-domain contribution to one sum/max/min reduce or scan operand. "
         "It references the predicate-bearing access instead of copying or "
-        "promoting that predicate into Layer-A SSA."
+        "promoting that predicate into Layer-A SSA. access_guard_relations is "
+        "the artifact.v5 J-owned relation between one boundary access and one "
+        "explicit Layer-A guard value; Lift must author every field and fixed "
+        "code never infers or inserts the relation."
     )
 
 
@@ -767,6 +774,11 @@ class AccessKind(str, Enum):
     UPDATE = "update"
 
 
+class AccessGuardPolarity(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
+
 class EffectKind(str, Enum):
     READ = "read"
     WRITE = "write"
@@ -951,6 +963,64 @@ class BroadcastSpec(StrictJSONMixin):
 
     def to_json(self) -> dict[str, Any]:
         return {"node_ref": self.node_ref, "operand": self.operand, "axes": list(self.axes)}
+
+
+@dataclass
+class AccessGuardRelation(StrictJSONMixin):
+    """One explicit J relation from a boundary access to a Layer-A guard."""
+
+    access_ref: str
+    value_ref: str
+    axes: list[int]
+    polarity: AccessGuardPolarity
+
+    def __post_init__(self) -> None:
+        self.access_ref = _string(
+            self.access_ref, "AccessGuardRelation.access_ref"
+        )
+        self.value_ref = _string(
+            self.value_ref, "AccessGuardRelation.value_ref"
+        )
+        if not isinstance(self.axes, list):
+            raise SchemaError("AccessGuardRelation.axes must be an array")
+        self.axes = [
+            _integer(
+                axis,
+                f"AccessGuardRelation.axes[{index}]",
+                minimum=0,
+            )
+            for index, axis in enumerate(self.axes)
+        ]
+        self.polarity = _enum(
+            AccessGuardPolarity,
+            self.polarity,
+            "AccessGuardRelation.polarity",
+        )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "AccessGuardRelation":
+        data = _strict_object(
+            value,
+            path="AccessGuardRelation",
+            allowed={"access_ref", "value_ref", "axes", "polarity"},
+            required={"access_ref", "value_ref", "axes", "polarity"},
+        )
+        if not isinstance(data["axes"], list):
+            raise SchemaError("AccessGuardRelation.axes must be an array")
+        return cls(
+            access_ref=data["access_ref"],
+            value_ref=data["value_ref"],
+            axes=list(data["axes"]),
+            polarity=data["polarity"],
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "access_ref": self.access_ref,
+            "value_ref": self.value_ref,
+            "axes": list(self.axes),
+            "polarity": self.polarity.value,
+        }
 
 
 @dataclass
@@ -1480,6 +1550,9 @@ class Boundary(StrictJSONMixin):
         default_factory=list
     )
     consumer_extensions: list[ConsumerExtension] = field(default_factory=list)
+    access_guard_relations: list[AccessGuardRelation] = field(
+        default_factory=list
+    )
 
     _KEYS: ClassVar[set[str]] = set(BOUNDARY_WIRE_FIELDS)
 
@@ -1553,6 +1626,12 @@ class Boundary(StrictJSONMixin):
             else ConsumerExtension.from_json(item)
             for item in self.consumer_extensions
         ]
+        self.access_guard_relations = [
+            item
+            if isinstance(item, AccessGuardRelation)
+            else AccessGuardRelation.from_json(item)
+            for item in self.access_guard_relations
+        ]
         _unique(self.accesses, "access_id", "Boundary.accesses")
         _unique(self.effects, "effect_id", "Boundary.effects")
         access_ids = {item.access_id for item in self.accesses}
@@ -1598,6 +1677,16 @@ class Boundary(StrictJSONMixin):
                 "Boundary.consumer_extensions references unknown access(es): "
                 + ", ".join(unknown_extension_accesses)
             )
+        unknown_guard_accesses = sorted(
+            item.access_ref
+            for item in self.access_guard_relations
+            if item.access_ref not in access_ids
+        )
+        if unknown_guard_accesses:
+            raise SchemaError(
+                "Boundary.access_guard_relations references unknown "
+                "access(es): " + ", ".join(unknown_guard_accesses)
+            )
         if [item.auth_id for item in self.realization_authorizations] != [
             f"u{index}" for index in range(len(self.realization_authorizations))
         ]:
@@ -1638,6 +1727,10 @@ class Boundary(StrictJSONMixin):
                 ConsumerExtension.from_json(item)
                 for item in data.get("consumer_extensions", [])
             ],
+            access_guard_relations=[
+                AccessGuardRelation.from_json(item)
+                for item in data.get("access_guard_relations", [])
+            ],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -1657,6 +1750,9 @@ class Boundary(StrictJSONMixin):
             ],
             "consumer_extensions": [
                 item.to_json() for item in self.consumer_extensions
+            ],
+            "access_guard_relations": [
+                item.to_json() for item in self.access_guard_relations
             ],
         }
 
@@ -2736,6 +2832,47 @@ class ValueDimensionRelation(StrictJSONMixin):
         }
 
 
+def _validate_access_guard_reference_closure(
+    archive: "SemanticArchive",
+) -> None:
+    """Require access-guard endpoints to name declarations in this exact J."""
+
+    declared_values = {
+        item.name for item in [*archive.intent.inputs, *archive.intent.outputs]
+    }
+
+    def visit(operations: list[Any]) -> None:
+        for operation in operations:
+            if isinstance(operation.result, str):
+                declared_values.add(operation.result)
+            elif isinstance(operation.result, list):
+                declared_values.update(operation.result)
+            declared_values.update(scan.name for scan in operation.scan)
+            for state in operation.carry:
+                declared_values.update(
+                    {
+                        state.body_argument,
+                        state.next_value,
+                        state.result_value,
+                    }
+                )
+            visit(operation.body)
+
+    visit(archive.intent.body)
+    unknown_values = sorted(
+        {
+            relation.value_ref
+            for relation in archive.boundary.access_guard_relations
+            if relation.value_ref not in declared_values
+        }
+    )
+    if unknown_values:
+        raise SchemaError(
+            "Boundary.access_guard_relations references unknown Layer-A "
+            "value(s): " + ", ".join(unknown_values)
+        )
+
+
 @dataclass
 class SemanticArchive(StrictJSONMixin):
     """The semantic archive ``J``: existing IntentFunction plus strict Layer B."""
@@ -2821,6 +2958,7 @@ class SemanticArchive(StrictJSONMixin):
         ]
         _validate_logical_signature(self)
         _validate_typed_boundary_relations(self)
+        _validate_access_guard_reference_closure(self)
         _validate_semantic_scopes_and_storage(self)
 
     @classmethod
@@ -3572,12 +3710,13 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v4"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v5"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
             "intentir.scrc.artifact.v1",
             "intentir.scrc.artifact.v2",
             "intentir.scrc.artifact.v3",
+            "intentir.scrc.artifact.v4",
         }
     )
 
@@ -3614,30 +3753,56 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1/v2 do not contain pi iterations"
             )
-        if self.wire_schema != self.SCHEMA and self.pi.loop_carriers:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        } and self.pi.loop_carriers:
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain pi loop_carriers"
             )
-        if self.wire_schema != self.SCHEMA and self.j.boundary.consumer_extensions:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        } and self.j.boundary.consumer_extensions:
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J consumer_extensions"
             )
-        if self.wire_schema != self.SCHEMA and self.j.dimension_constraints:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        } and self.j.dimension_constraints:
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J dimension_constraints"
             )
-        if self.wire_schema != self.SCHEMA and self.j.value_dimension_relations:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        } and self.j.value_dimension_relations:
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J value_dimension_relations"
             )
-        if self.wire_schema == self.SCHEMA and any(
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v4",
+            self.SCHEMA,
+        } and any(
             item.masked_contribution is not None
             for item in self.j.boundary.reductions
         ):
             raise SchemaError(
-                "artifact.v4 uses consumer_extensions as the unique physical "
+                "artifact.v4+ uses consumer_extensions as the unique physical "
                 "outside-domain authority; ReductionBoundary must omit "
                 "masked_contribution"
+            )
+        if (
+            self.wire_schema != self.SCHEMA
+            and self.j.boundary.access_guard_relations
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v4 do not contain J access_guard_relations"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -3695,7 +3860,11 @@ class Gate1Artifact(StrictJSONMixin):
             else None
         )
         j_value = data["j"] if isinstance(data["j"], dict) else None
-        if schema in {"intentir.scrc.artifact.v3", cls.SCHEMA} and (
+        if schema in {
+            "intentir.scrc.artifact.v3",
+            "intentir.scrc.artifact.v4",
+            cls.SCHEMA,
+        } and (
             pi_value is not None and "iterations" not in pi_value
         ):
             raise SchemaError(
@@ -3708,7 +3877,7 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1/v2 do not contain pi iterations"
             )
-        if schema == cls.SCHEMA:
+        if schema in {"intentir.scrc.artifact.v4", cls.SCHEMA}:
             if j_value is not None and "dimension_constraints" not in j_value:
                 raise SchemaError(
                     "Gate1Artifact.j is missing required field: "
@@ -3753,6 +3922,22 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
+        if schema == cls.SCHEMA:
+            if (
+                boundary_value is not None
+                and "access_guard_relations" not in boundary_value
+            ):
+                raise SchemaError(
+                    "Gate1Artifact.j.boundary is missing required field: "
+                    "access_guard_relations"
+                )
+        elif (
+            boundary_value is not None
+            and "access_guard_relations" in boundary_value
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v4 do not contain J access_guard_relations"
+            )
         try:
             pi = RealizationWitness.from_json(data["pi"])
         except RealizationWitnessError as exc:
@@ -3766,18 +3951,29 @@ class Gate1Artifact(StrictJSONMixin):
 
     def to_json(self) -> dict[str, Any]:
         j_value = self.j.to_json()
-        if self.wire_schema != self.SCHEMA:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+        }:
             j_value["boundary"].pop("consumer_extensions", None)
             j_value.pop("dimension_constraints", None)
             j_value.pop("value_dimension_relations", None)
+        if self.wire_schema != self.SCHEMA:
+            j_value["boundary"].pop("access_guard_relations", None)
         return {
             "schema": self.wire_schema,
             "j": j_value,
             "c": self.c.to_json(),
             "pi": self.pi.to_json(
                 include_iterations=self.wire_schema
-                in {"intentir.scrc.artifact.v3", self.SCHEMA},
-                include_loop_carriers=self.wire_schema == self.SCHEMA,
+                in {
+                    "intentir.scrc.artifact.v3",
+                    "intentir.scrc.artifact.v4",
+                    self.SCHEMA,
+                },
+                include_loop_carriers=self.wire_schema
+                in {"intentir.scrc.artifact.v4", self.SCHEMA},
             ),
         }
 
@@ -4480,6 +4676,15 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in boundary.consumer_extensions
         ],
+        "access_guard_relations": [
+            {
+                "access_ref": _opaque_reference(item.access_ref, aliases),
+                "value_ref": _opaque_reference(item.value_ref, aliases),
+                "axes": list(item.axes),
+                "polarity": item.polarity.value,
+            }
+            for item in boundary.access_guard_relations
+        ],
     }
 
     signature, c_view = _opaque_signature_and_c_view(artifact, aliases)
@@ -4794,6 +4999,15 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in artifact.j.boundary.consumer_extensions
         ],
+        "access_guard_relations": [
+            {
+                "access_ref": opaque_reference(item.access_ref),
+                "value_ref": opaque_reference(item.value_ref),
+                "axes": ["<masked>"],
+                "polarity": "<masked>",
+            }
+            for item in artifact.j.boundary.access_guard_relations
+        ],
     }
 
     # The anti-leakage arm masks J's semantic declarations.  Its logical
@@ -4867,9 +5081,11 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
 
 
 __all__ = [
-    "AccessKind", "AliasKind", "AliasSpec",
+    "AccessGuardPolarity", "AccessGuardRelation", "AccessKind",
+    "AliasKind", "AliasSpec",
     "BOUNDARY_ACCESS_REQUIRED_FIELDS", "BOUNDARY_ACCESS_WIRE_FIELDS",
-    "BOUNDARY_LEGACY_WIRE_FIELDS", "BOUNDARY_WIRE_FIELDS", "Boundary",
+    "BOUNDARY_LEGACY_WIRE_FIELDS", "BOUNDARY_V4_WIRE_FIELDS",
+    "BOUNDARY_WIRE_FIELDS", "Boundary",
     "BoundaryAccess", "BroadcastSpec", "CompileCase", "ConsumerExtension",
     "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",

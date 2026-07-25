@@ -5,6 +5,8 @@ does not re-export retired construction engines or experiment matrices.
 """
 
 from .model import (
+    AccessGuardPolarity,
+    AccessGuardRelation,
     AccessKind,
     AliasKind,
     AliasSpec,
@@ -57,7 +59,8 @@ from .pi import RealizationWitness, RealizationWitnessError
 from .profile import ObserverProfile, observer_profile_for
 
 __all__ = [
-    "AccessKind", "AliasKind", "AliasSpec", "Boundary", "BoundaryAccess",
+    "AccessGuardPolarity", "AccessGuardRelation", "AccessKind", "AliasKind",
+    "AliasSpec", "Boundary", "BoundaryAccess",
     "BroadcastSpec", "CompileCase", "ConsumerExtension", "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "Gate1Artifact", "Gate1Status", "ImplementationConfig",

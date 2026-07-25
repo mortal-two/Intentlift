@@ -226,6 +226,24 @@ def _boundary_schema() -> dict[str, Any]:
         },
         ("node_ref", "operand", "axes"),
     )
+    access_guard_relation = _closed_object(
+        {
+            "access_ref": _STRING,
+            "value_ref": _STRING,
+            "axes": _array({"type": "integer", "minimum": 0}),
+            "polarity": {
+                "type": "string",
+                "enum": ["positive", "negative"],
+            },
+        },
+        ("access_ref", "value_ref", "axes", "polarity"),
+        description=(
+            "LLM-authored J relation from one declared boundary access to one "
+            "declared Layer-A guard value. axes contains only JSON integer "
+            "access-axis ordinals and polarity is closed. Fixed code never "
+            "infers or inserts this relation."
+        ),
+    )
     alias = _closed_object(
         {
             "left": _STRING,
@@ -278,7 +296,7 @@ def _boundary_schema() -> dict[str, Any]:
         ("node_ref", "tile_axis", "identity"),
         description=(
             "Reduce or inclusive-scan algebra and frontend-local tile-axis "
-            "metadata. artifact.v4 forbids the historical "
+            "metadata. artifact.v4+ forbids the historical "
             "masked_contribution field: consumer_extensions is the unique "
             "authority for physical outside-domain contributions."
         ),
@@ -427,6 +445,7 @@ def _boundary_schema() -> dict[str, Any]:
             "result_relations": _array(result_relation),
             "realization_authorizations": _array(authorization),
             "consumer_extensions": _array(consumer_extension),
+            "access_guard_relations": _array(access_guard_relation),
         },
         BOUNDARY_WIRE_FIELDS,
         description=render_boundary_access_wire_grammar(),

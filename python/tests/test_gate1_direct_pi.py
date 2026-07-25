@@ -68,11 +68,17 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v4_preserves_v3_v2_and_v1_legacy_contracts() -> None:
+def test_artifact_v5_preserves_v4_v3_v2_and_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v4"
+    assert current["schema"] == "intentir.scrc.artifact.v5"
 
-    legacy_v3 = copy.deepcopy(current)
+    legacy_v4 = copy.deepcopy(current)
+    legacy_v4["schema"] = "intentir.scrc.artifact.v4"
+    del legacy_v4["j"]["boundary"]["access_guard_relations"]
+    parsed_v4 = Gate1Artifact.from_json(legacy_v4)
+    assert parsed_v4.to_json() == legacy_v4
+
+    legacy_v3 = copy.deepcopy(legacy_v4)
     legacy_v3["schema"] = "intentir.scrc.artifact.v3"
     del legacy_v3["j"]["dimension_constraints"]
     del legacy_v3["j"]["value_dimension_relations"]
@@ -143,6 +149,7 @@ def test_artifact_v4_preserves_v3_v2_and_v1_legacy_contracts() -> None:
         "intentir.scrc.artifact.v2",
         "intentir.scrc.artifact.v3",
         "intentir.scrc.artifact.v4",
+        "intentir.scrc.artifact.v5",
     ],
 )
 def test_every_artifact_wire_version_requires_explicit_pi_refinements(
@@ -150,10 +157,17 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
 ) -> None:
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
-    if wire_schema != Gate1Artifact.SCHEMA:
+    if wire_schema in {
+        "intentir.scrc.artifact.v1",
+        "intentir.scrc.artifact.v2",
+        "intentir.scrc.artifact.v3",
+    }:
         del payload["j"]["dimension_constraints"]
+        del payload["j"]["value_dimension_relations"]
         del payload["j"]["boundary"]["consumer_extensions"]
         del payload["pi"]["loop_carriers"]
+    if wire_schema != Gate1Artifact.SCHEMA:
+        del payload["j"]["boundary"]["access_guard_relations"]
     if wire_schema in {
         "intentir.scrc.artifact.v1",
         "intentir.scrc.artifact.v2",

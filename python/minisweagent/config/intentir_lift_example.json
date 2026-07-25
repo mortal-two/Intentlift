@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v4",
+  "schema": "intentir.scrc.artifact.v5",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {
@@ -108,7 +108,8 @@
           "target_dtype": "f32"
         }
       ],
-      "consumer_extensions": []
+      "consumer_extensions": [],
+      "access_guard_relations": []
     },
     "signature": {
       "parameters": [
