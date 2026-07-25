@@ -35,6 +35,8 @@ __all__ = [
     "MemoryEffect",
     "ReductionFingerprint",
     "RuntimeInterface",
+    "TerminalForkArmFingerprint",
+    "TerminalForkFingerprint",
     "TTIRFingerprint",
     "TTIR_FINGERPRINT_SCHEMA",
     "TTIRParseError",
@@ -45,7 +47,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v6"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v7"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -485,6 +487,44 @@ class LoopFingerprint:
 
 
 @dataclass(frozen=True)
+class TerminalForkArmFingerprint:
+    """One role-preserving arm of the closed terminal binary-fork profile."""
+
+    role: str
+    members: tuple[str, ...]
+    effect_order: tuple[str, ...]
+    structured_regions: tuple[str, ...]
+    terminal: str = "tt.return:void"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "members": list(self.members),
+            "effect_order": list(self.effect_order),
+            "structured_regions": list(self.structured_regions),
+            "terminal": self.terminal,
+        }
+
+
+@dataclass(frozen=True)
+class TerminalForkFingerprint:
+    """Hard evidence for one non-merging scalar conditional terminal fork."""
+
+    predicate: str
+    region_context: tuple[str, ...]
+    true_arm: TerminalForkArmFingerprint
+    false_arm: TerminalForkArmFingerprint
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "predicate": self.predicate,
+            "region_context": list(self.region_context),
+            "true_arm": self.true_arm.to_dict(),
+            "false_arm": self.false_arm.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class TTIRFingerprint:
     """Immutable Gate1 fingerprint.  All sequence fields are canonically sorted."""
 
@@ -497,6 +537,7 @@ class TTIRFingerprint:
     effect_multiset: tuple[tuple[str, int], ...]
     dots: tuple[DotFingerprint, ...]
     loops: tuple[LoopFingerprint, ...]
+    terminal_forks: tuple[TerminalForkFingerprint, ...] = ()
     schedule_view: tuple[tuple[str, str], ...] = ()
     schema_version: str = _SCHEMA_VERSION
 
@@ -516,6 +557,9 @@ class TTIRFingerprint:
             "effect_multiset": dict(self.effect_multiset),
             "dots": [item.to_dict() for item in self.dots],
             "loops": [item.to_dict() for item in self.loops],
+            "terminal_forks": [
+                item.to_dict() for item in self.terminal_forks
+            ],
             "schedule_view": {key: json.loads(value) for key, value in self.schedule_view},
         }
 
@@ -540,6 +584,16 @@ class _Operation:
     call_operand_types: tuple[str, ...] = ()
     call_result_types: tuple[str, ...] = ()
     terminator_types: tuple[str, ...] = ()
+    fork_id: int | None = None
+    fork_arm: str | None = None
+
+
+@dataclass
+class _TerminalFork:
+    fork_id: int
+    predicate: str
+    context: tuple[int, ...]
+    sequence_index: int
 
 
 @dataclass(frozen=True)
@@ -683,7 +737,7 @@ def _parse_function(text: str) -> _FunctionParts:
 
 
 def _validate_function_metadata_boundary(function: _FunctionParts) -> None:
-    """Validate the closed function-metadata boundary for TTIR v6."""
+    """Validate the closed function-metadata boundary for TTIR v7."""
 
     if function.visibility != "public":
         for position, (_, _, attributes) in enumerate(function.arguments):
@@ -965,7 +1019,7 @@ def _find_top_level_token(text: str, token: str, *, last: bool = False) -> int |
 def _validate_closed_type(type_text: str, *, context: str) -> str:
     """Validate the encodingless, alias-free type boundary observed by Gate1.
 
-    TTIR v6 deliberately does not interpret module-level type/encoding aliases.
+    TTIR v7 deliberately does not interpret module-level type/encoding aliases.
     Accepting only their use-site spelling would let two different alias
     definitions hard-pass, so every proof-relevant type must be self-contained.
     Pinned TTIR is pre-layout and therefore needs no ranked-tensor encoding.
@@ -977,7 +1031,7 @@ def _validate_closed_type(type_text: str, *, context: str) -> str:
     if re.search(r"#[A-Za-z_][A-Za-z0-9_.$-]*", normalized) is not None:
         raise TTIRParseError(
             f"{context} uses a module-level type/encoding alias; tensor "
-            "encodings are unsupported and Gate1 v6 requires self-contained "
+            "encodings are unsupported and Gate1 v7 requires self-contained "
             "encodingless TTIR types"
         )
     if re.search(r"\s", normalized) is not None:
@@ -995,7 +1049,7 @@ def _validate_closed_type(type_text: str, *, context: str) -> str:
         pieces = _split_top_level(normalized[opening + 1 : closing])
         if len(pieces) != 1:
             raise TTIRParseError(
-                f"{context} uses a ranked-tensor encoding; Gate1 v6 "
+                f"{context} uses a ranked-tensor encoding; Gate1 v7 "
                 "requires encodingless TTIR types"
             )
         cursor = closing + 1
@@ -1068,12 +1122,12 @@ def _ranked_tensor_contract(
     if not pieces:
         return None
     if len(pieces) != 1:
-        # Gate1 v6 does not parse module-level encoding aliases or prove their
+        # Gate1 v7 does not parse module-level encoding aliases or prove their
         # denotation.  Comparing only alias spellings would let two different
         # layouts hard-pass, so the pinned scan subset is explicitly
         # encodingless.
         raise TTIRParseError(
-            "tt.scan tensor encodings are unsupported by Gate1 v6; inputs "
+            "tt.scan tensor encodings are unsupported by Gate1 v7; inputs "
             "and results must be encodingless"
         )
     shaped = _split_top_level(pieces[0], delimiter="x")
@@ -1416,7 +1470,8 @@ def _scalar_constant(tail: str) -> float | None:
 def _bounded_normalize_operations(
     operations: list[_Operation],
     result_to_node: dict[str, int],
-) -> tuple[list[_Operation], dict[str, int]]:
+    terminal_forks: list[_TerminalFork],
+) -> tuple[list[_Operation], dict[str, int], list[_TerminalFork]]:
     """Apply the registered bounded rewrites after lexical SSA resolution.
 
     Gate1 deliberately keeps these false-reject normalizations narrow: neutral
@@ -1520,6 +1575,8 @@ def _bounded_normalize_operations(
         operation.region_results = [
             resolve(name) for name in operation.region_results
         ]
+    for terminal_fork in terminal_forks:
+        terminal_fork.predicate = resolve(terminal_fork.predicate)
 
     # Rule N2: direct 1 / sqrt(x) is represented as the same semantic node as
     # direct rsqrt(x).  This stays deliberately narrower than algebraic
@@ -1575,7 +1632,7 @@ def _bounded_normalize_operations(
         for operation in normalized
         for result in operation.result_names
     }
-    return normalized, normalized_result_to_node
+    return normalized, normalized_result_to_node, terminal_forks
 
 
 def _cmp_info(name: str, tail: str) -> tuple[str | None, bool]:
@@ -1677,6 +1734,11 @@ def _parse_for_header(
 _BLOCK_HEADER_RE = re.compile(
     r"\s*\^(?P<label>[A-Za-z0-9_.$-]+)"
     r"(?:\s*\((?P<args>.*)\))?\s*:\s*(?://.*)?$"
+)
+_TERMINAL_COND_BR_RE = re.compile(
+    r"cf\.cond_br\s+(?P<predicate>%[A-Za-z0-9_.$-]+)\s*,\s*"
+    r"\^(?P<true>[A-Za-z0-9_.$-]+)\s*,\s*"
+    r"\^(?P<false>[A-Za-z0-9_.$-]+)\s*$"
 )
 
 
@@ -1797,38 +1859,46 @@ class TTIRParser:
         # Module type aliases are definitions, while proof-relevant use sites
         # carry only the alias spelling.  Ignoring the definition would let a
         # source/replay pair keep ``!alias`` unchanged while changing its
-        # denotation.  Gate1 v6 does not elaborate MLIR aliases, so reject the
+        # denotation.  Gate1 v7 does not elaborate MLIR aliases, so reject the
         # entire closed profile before parsing any interface or operation type.
         if re.search(
             r"(?m)^\s*![A-Za-z_][A-Za-z0-9_.$-]*\s*=\s*type(?:\s|$)",
             cleaned,
         ) is not None:
             raise TTIRParseError(
-                "module-level type aliases are unsupported by Gate1 v6; "
+                "module-level type aliases are unsupported by Gate1 v7; "
                 "proof-relevant types must be self-contained"
             )
         functions = _parse_functions(cleaned)
         function = next(
             item for item in functions.values() if item.visibility == "public"
         )
-        operations, result_to_node, leaf_labels = self._expand_reachable_calls(
-            function, functions
+        operations, result_to_node, leaf_labels, terminal_forks = (
+            self._expand_reachable_calls(function, functions)
         )
-        operations, result_to_node = _bounded_normalize_operations(
-            operations, result_to_node
+        operations, result_to_node, terminal_forks = (
+            _bounded_normalize_operations(
+                operations, result_to_node, terminal_forks
+            )
         )
         return self._fingerprint(
             function,
             operations,
             result_to_node,
             leaf_labels,
+            terminal_forks,
             python_interface=python_interface,
             schedule=schedule,
         )
 
     def _parse_operations(
         self, function: _FunctionParts
-    ) -> tuple[list[_Operation], dict[str, int], dict[str, str]]:
+    ) -> tuple[
+        list[_Operation],
+        dict[str, int],
+        dict[str, str],
+        _TerminalFork | None,
+    ]:
         operations: list[_Operation] = []
         result_to_node: dict[str, int] = {}
         leaf_labels = {
@@ -1837,6 +1907,9 @@ class TTIRParser:
         }
         value_types: dict[str, str | None] = {
             name: type_text for name, type_text, _ in function.arguments
+        }
+        value_fork_arms: dict[str, str | None] = {
+            name: None for name, _, _ in function.arguments
         }
         region_stack: list[tuple[int, int]] = []
         region_block_counts: dict[int, int] = {}
@@ -1851,6 +1924,28 @@ class TTIRParser:
         scope_bindings: list[dict[str, str]] = [
             {name: name for name, _, _ in function.arguments}
         ]
+        has_cf_operation = re.search(
+            r'(?m)^\s*(?:"cf\.[A-Za-z0-9_.-]+"|cf\.[A-Za-z0-9_.-]+)\b',
+            function.body,
+        ) is not None
+        if has_cf_operation and function.results:
+            raise TTIRParseError(
+                "closed terminal binary fork requires a void tt.func"
+            )
+        if has_cf_operation and re.search(
+            r'(?m)^\s*(?:%[^=]+?\s*=\s*)?(?:"tt\.call"|tt\.call)\b',
+            function.body,
+        ) is not None:
+            raise TTIRParseError(
+                "a terminal-fork tt.func cannot contain tt.call; CFG helper "
+                "interprocedural expansion is unsupported"
+            )
+        terminal_fork: _TerminalFork | None = None
+        fork_targets: dict[str, str] = {}
+        active_fork_arm: str | None = None
+        seen_fork_arms: set[str] = set()
+        terminated_fork_arms: set[str] = set()
+        entry_terminated = False
 
         def qualified_name(name: str, owner_node: int | None) -> str:
             if owner_node is None:
@@ -1876,6 +1971,7 @@ class TTIRParser:
                 owner_node = region_stack[-1][0]
             qualified = qualified_name(name, owner_node)
             selected[name] = qualified
+            value_fork_arms[qualified] = active_fork_arm
             return qualified
 
         def resolve(name: str) -> str:
@@ -2249,6 +2345,43 @@ class TTIRParser:
             indent = len(line) - len(line.lstrip())
             if not stripped or stripped.startswith("//"):
                 continue
+            cond_br = _TERMINAL_COND_BR_RE.fullmatch(stripped)
+            if cond_br is not None:
+                if not has_cf_operation or terminal_fork is not None:
+                    raise TTIRParseError(
+                        f"line {line_number}: terminal binary fork must have "
+                        "exactly one cf.cond_br"
+                    )
+                if region_stack or active_fork_arm is not None:
+                    raise TTIRParseError(
+                        f"line {line_number}: cf.cond_br must terminate the "
+                        "function entry block"
+                    )
+                true_label = cond_br.group("true")
+                false_label = cond_br.group("false")
+                if true_label == false_label:
+                    raise TTIRParseError(
+                        "terminal binary fork requires two distinct successor arms"
+                    )
+                predicate = resolve(cond_br.group("predicate"))
+                if value_types.get(predicate) != "i1":
+                    raise TTIRParseError(
+                        "terminal binary fork predicate must be a scalar i1 SSA value"
+                    )
+                terminal_fork = _TerminalFork(
+                    0, predicate, (), len(operations)
+                )
+                fork_targets = {
+                    true_label: "true",
+                    false_label: "false",
+                }
+                entry_terminated = True
+                continue
+            if stripped.startswith(('cf.', '"cf.')):
+                raise TTIRParseError(
+                    f"line {line_number}: only the exact operand-free "
+                    "cf.cond_br terminal binary-fork shell is supported"
+                )
             if stripped.startswith(("})", "}")):
                 if not region_stack:
                     raise TTIRParseError(
@@ -2277,11 +2410,39 @@ class TTIRParser:
             block_header = _parse_block_header(line)
             if block_header is not None:
                 if not region_stack:
-                    raise TTIRParseError(
-                        f"line {line_number}: top-level block label "
-                        f"^{block_header[0]} is unsupported; Gate1 TTIR v6 "
-                        "cannot soundly flatten a function CFG"
-                    )
+                    label, block_arguments = block_header
+                    if terminal_fork is None or not entry_terminated:
+                        raise TTIRParseError(
+                            f"line {line_number}: top-level block label "
+                            f"^{label} is unsupported; Gate1 TTIR v7 only "
+                            "accepts the closed terminal binary-fork profile"
+                        )
+                    role = fork_targets.get(label)
+                    if role is None:
+                        raise TTIRParseError(
+                            f"line {line_number}: unexpected terminal-fork "
+                            f"block ^{label}"
+                        )
+                    if block_arguments:
+                        raise TTIRParseError(
+                            "terminal-fork successor blocks cannot take block "
+                            "arguments"
+                        )
+                    if role in seen_fork_arms:
+                        raise TTIRParseError(
+                            f"terminal-fork {role} arm is declared more than once"
+                        )
+                    if (
+                        active_fork_arm is not None
+                        and active_fork_arm not in terminated_fork_arms
+                    ):
+                        raise TTIRParseError(
+                            f"terminal-fork {active_fork_arm} arm does not end "
+                            "in void tt.return"
+                        )
+                    active_fork_arm = role
+                    seen_fork_arms.add(role)
+                    continue
                 block_args = [name for name, _ in block_header[1]]
                 block_arg_types = [type_text for _, type_text in block_header[1]]
                 parent_id = region_stack[-1][0]
@@ -2290,7 +2451,7 @@ class TTIRParser:
                     raise TTIRParseError(
                         f"line {line_number}: structured region "
                         f"{parent.name} has more than one block; Gate1 TTIR "
-                        "v6 supports only single-block structured regions"
+                        "v7 supports only single-block structured regions"
                     )
                 region_block_counts[parent_id] = 1
                 qualified_args = [
@@ -2307,6 +2468,17 @@ class TTIRParser:
                     leaf_labels[name] = f"region[{path}].arg[{index}]"
                 continue
 
+            if entry_terminated and active_fork_arm is None:
+                raise TTIRParseError(
+                    f"line {line_number}: only the two cf.cond_br target "
+                    "labels may follow the entry terminator"
+                )
+            if active_fork_arm in terminated_fork_arms:
+                raise TTIRParseError(
+                    f"line {line_number}: operation after terminal-fork "
+                    f"{active_fork_arm} arm tt.return"
+                )
+
             if region_stack and region_stack[-1][0] in region_terminator_types:
                 owner = operations[region_stack[-1][0]]
                 raise TTIRParseError(
@@ -2320,6 +2492,21 @@ class TTIRParser:
                     f"line: {stripped!r}"
                 )
             results, name, tail, quoted = head
+            if has_cf_operation and name == "tt.call":
+                raise TTIRParseError(
+                    "a terminal-fork tt.func cannot contain tt.call; CFG "
+                    "helper interprocedural expansion is unsupported"
+                )
+            if has_cf_operation and name == "tt.return":
+                if (
+                    terminal_fork is None
+                    or region_stack
+                    or active_fork_arm is None
+                ):
+                    raise TTIRParseError(
+                        "terminal binary fork permits tt.return only as the "
+                        "top-level terminator of an arm"
+                    )
             if (
                 name not in _REGION_OWNERS
                 and stripped.endswith("{")
@@ -2403,6 +2590,20 @@ class TTIRParser:
                     _parse_call_contract(tail)
                 )
             operands = [resolve(operand) for operand in raw_operands]
+            if active_fork_arm is not None:
+                for operand in operands:
+                    if operand not in value_fork_arms:
+                        raise TTIRParseError(
+                            f"line {line_number}: SSA value {operand} does "
+                            "not dominate its terminal-fork arm use"
+                        )
+                    defining_arm = value_fork_arms.get(operand)
+                    if defining_arm not in {None, active_fork_arm}:
+                        raise TTIRParseError(
+                            f"line {line_number}: terminal-fork "
+                            f"{active_fork_arm} arm uses SSA value from its "
+                            f"{defining_arm} sibling"
+                        )
             operand_types = tuple(value_types.get(operand) for operand in operands)
             if generic_contract is not None:
                 declared_generic_inputs = generic_contract[1]
@@ -2526,6 +2727,12 @@ class TTIRParser:
                 call_operand_types=call_operand_types,
                 call_result_types=call_result_types,
                 terminator_types=parsed_terminator_types,
+                fork_id=(
+                    terminal_fork.fork_id
+                    if active_fork_arm is not None
+                    else None
+                ),
+                fork_arm=active_fork_arm,
             )
             operations.append(operation)
             for result in qualified_results:
@@ -2560,6 +2767,14 @@ class TTIRParser:
                 if parent.name == "tt.scan":
                     scan_return_types[parent_id] = parsed_terminator_types
                 parent.region_results.extend(operands)
+
+            if name == "tt.return" and terminal_fork is not None:
+                assert active_fork_arm is not None
+                if results or operands or parsed_terminator_types:
+                    raise TTIRParseError(
+                        "terminal-fork arms must end in an empty void tt.return"
+                    )
+                terminated_fork_arms.add(active_fork_arm)
 
             if name in _REGION_OWNERS:
                 path = "/".join(
@@ -2606,19 +2821,39 @@ class TTIRParser:
 
         if region_stack:
             raise TTIRParseError("unterminated operation region")
+        if has_cf_operation:
+            if terminal_fork is None:
+                raise TTIRParseError(
+                    "reachable tt.func uses control flow outside the closed "
+                    "terminal binary-fork profile"
+                )
+            if seen_fork_arms != {"true", "false"}:
+                raise TTIRParseError(
+                    "terminal binary fork must declare exactly its true and "
+                    "false successor blocks"
+                )
+            if terminated_fork_arms != {"true", "false"}:
+                raise TTIRParseError(
+                    "each terminal-fork arm must end in an empty void tt.return"
+                )
         for operation in operations:
             for operand in [*operation.operands, *operation.region_results]:
                 if operand not in result_to_node and operand not in leaf_labels:
                     raise TTIRParseError(
                         f"unresolved SSA value {operand!r} used by {operation.name}"
                     )
-        return operations, result_to_node, leaf_labels
+        return operations, result_to_node, leaf_labels, terminal_fork
 
     def _expand_reachable_calls(
         self,
         public: _FunctionParts,
         functions: Mapping[str, _FunctionParts],
-    ) -> tuple[list[_Operation], dict[str, int], dict[str, str]]:
+    ) -> tuple[
+        list[_Operation],
+        dict[str, int],
+        dict[str, str],
+        list[_TerminalFork],
+    ]:
         """Inline the reachable acyclic ``tt.call`` graph into one SSA graph.
 
         This is a fingerprint-layer canonicalization, not a compiler rewrite:
@@ -2628,25 +2863,33 @@ class TTIRParser:
         while every reachable operation and memory effect remains observable.
 
         The current TTIR observer models structured
-        ``scf.for``/``tt.reduce``/``tt.scan`` regions.  It does not yet model
-        arbitrary multi-block CFG dominance or phi/block arguments.  A
-        reachable function containing CF branches is rejected explicitly
-        instead of flattening mutually exclusive blocks into a false proof.
-        Unreachable helpers are deliberately never parsed and cannot perturb
-        the fingerprint.
+        ``scf.for``/``tt.reduce``/``tt.scan`` regions and one closed terminal
+        binary-fork shape.  The latter is expanded as a synthetic conditional
+        control member whose true/false roles remain distinct; its arms are
+        never flattened into an unconditional sequence.  Arbitrary CFGs,
+        joins, phi/block arguments, backedges, and calls from a CFG helper
+        remain unsupported.  Unreachable helpers are deliberately never
+        parsed and cannot perturb the fingerprint.
         """
 
         parsed: dict[
             str,
-            tuple[list[_Operation], dict[str, int], dict[str, str]],
+            tuple[
+                list[_Operation],
+                dict[str, int],
+                dict[str, str],
+                _TerminalFork | None,
+            ],
         ] = {}
         expanded: list[_Operation] = []
         expanded_results: dict[str, int] = {}
+        expanded_terminal_forks: list[_TerminalFork] = []
         leaf_labels = {
             name: f"arg[{index}]:{type_text}"
             for index, (name, type_text, _) in enumerate(public.arguments)
         }
         value_serial = 0
+        fork_serial = 0
 
         def fresh_value() -> str:
             nonlocal value_serial
@@ -2656,22 +2899,16 @@ class TTIRParser:
 
         def parse_reachable(
             function: _FunctionParts,
-        ) -> tuple[list[_Operation], dict[str, int], dict[str, str]]:
+        ) -> tuple[
+            list[_Operation],
+            dict[str, int],
+            dict[str, str],
+            _TerminalFork | None,
+        ]:
             cached = parsed.get(function.name)
             if cached is not None:
                 return cached
             _validate_function_metadata_boundary(function)
-            if re.search(
-                r'^\s*(?:"cf\.(?:br|cond_br|switch)"|'
-                r"cf\.(?:br|cond_br|switch)\b)",
-                function.body,
-                flags=re.MULTILINE,
-            ):
-                raise TTIRParseError(
-                    "reachable tt.func "
-                    f"@{function.name} uses a multi-block CFG; "
-                    "Gate1 TTIR v6 cannot soundly canonicalize that helper"
-                )
             cached = self._parse_operations(function)
             parsed[function.name] = cached
             return cached
@@ -2743,6 +2980,7 @@ class TTIRParser:
             *,
             preserve_return: bool,
         ) -> tuple[str, ...]:
+            nonlocal fork_serial
             if function.name in stack:
                 cycle = " -> ".join((*stack, function.name))
                 raise TTIRParseError(
@@ -2755,7 +2993,13 @@ class TTIRParser:
                     f"{len(actual_arguments)}"
                 )
 
-            local_operations, _, _ = parse_reachable(function)
+            local_operations, _, _, local_terminal_fork = parse_reachable(
+                function
+            )
+            expanded_fork_id: int | None = None
+            if local_terminal_fork is not None:
+                expanded_fork_id = fork_serial
+                fork_serial += 1
             value_map = {
                 name: actual
                 for (name, _, _), actual in zip(
@@ -2766,9 +3010,15 @@ class TTIRParser:
             deferred_region_results: list[tuple[_Operation, tuple[str, ...]]] = []
             returned_values: list[tuple[str, ...]] = []
             saw_top_level_return = False
+            expanded_fork_sequence_index: int | None = None
 
             for operation in local_operations:
-                if saw_top_level_return:
+                if (
+                    operation.fork_id is not None
+                    and expanded_fork_sequence_index is None
+                ):
+                    expanded_fork_sequence_index = len(expanded)
+                if saw_top_level_return and local_terminal_fork is None:
                     if operation.name == "tt.return":
                         raise TTIRParseError(
                             f"tt.func @{function.name} has more than one "
@@ -2828,7 +3078,8 @@ class TTIRParser:
                             f"{len(function.results)}"
                         )
                     returned_values.append(tuple(mapped_operands))
-                    saw_top_level_return = True
+                    if local_terminal_fork is None:
+                        saw_top_level_return = True
                     if not preserve_return:
                         continue
 
@@ -2853,6 +3104,12 @@ class TTIRParser:
                     constant_value=operation.constant_value,
                     callee=None,
                     terminator_types=operation.terminator_types,
+                    fork_id=(
+                        expanded_fork_id
+                        if operation.fork_id is not None
+                        else None
+                    ),
+                    fork_arm=operation.fork_arm,
                 )
                 expanded.append(clone)
                 context_map[operation.node_id] = clone.node_id
@@ -2872,6 +3129,34 @@ class TTIRParser:
             for clone, local_results in deferred_region_results:
                 clone.region_results.extend(
                     mapped_value(value_map, value) for value in local_results
+                )
+
+            if local_terminal_fork is not None:
+                assert expanded_fork_id is not None
+                try:
+                    mapped_predicate = value_map[
+                        local_terminal_fork.predicate
+                    ]
+                    mapped_fork_context = context_prefix + tuple(
+                        context_map[parent]
+                        for parent in local_terminal_fork.context
+                    )
+                except KeyError as error:
+                    raise TTIRParseError(
+                        f"tt.func @{function.name} terminal fork lost its "
+                        "predicate or structured region context"
+                    ) from error
+                expanded_terminal_forks.append(
+                    _TerminalFork(
+                        expanded_fork_id,
+                        mapped_predicate,
+                        mapped_fork_context,
+                        (
+                            len(expanded)
+                            if expanded_fork_sequence_index is None
+                            else expanded_fork_sequence_index
+                        ),
+                    )
                 )
 
             if not returned_values:
@@ -2915,7 +3200,12 @@ class TTIRParser:
                         f"unresolved expanded SSA value {operand!r} used by "
                         f"{operation.name}"
                     )
-        return expanded, expanded_results, leaf_labels
+        return (
+            expanded,
+            expanded_results,
+            leaf_labels,
+            expanded_terminal_forks,
+        )
 
     def _fingerprint(
         self,
@@ -2923,6 +3213,7 @@ class TTIRParser:
         operations: list[_Operation],
         result_to_node: dict[str, int],
         leaf_labels: dict[str, str],
+        terminal_forks: list[_TerminalFork],
         *,
         python_interface: Mapping[str, Any] | None,
         schedule: Mapping[str, Any] | None,
@@ -2985,6 +3276,8 @@ class TTIRParser:
             for operation in operations
             if operation.name not in _TERMINATORS
         )
+        if terminal_forks:
+            op_counts["control.conditional"] += len(terminal_forks)
 
         edges: list[tuple[str, str, str]] = []
         for operation in operations:
@@ -3013,18 +3306,36 @@ class TTIRParser:
             for operation in operations
             if operation.name == "tt.return" and not operation.context
         ]
-        if len(public_returns) != 1:
-            raise TTIRParseError(
-                "expanded public tt.func must contain exactly one top-level tt.return"
-            )
-        for index, value in enumerate(public_returns[0].operands):
-            edges.append(
-                (
-                    operand_ref(value, semantic=True),
-                    "region[root]",
-                    f"function.return[{index}]",
+        fork_returns = [
+            operation
+            for operation in public_returns
+            if operation.fork_id is not None
+        ]
+        if fork_returns:
+            if (
+                len(public_returns) != 2
+                or {operation.fork_arm for operation in fork_returns}
+                != {"true", "false"}
+                or any(operation.operands for operation in fork_returns)
+            ):
+                raise TTIRParseError(
+                    "expanded public terminal fork must have exactly one void "
+                    "tt.return in each role-preserving arm"
                 )
-            )
+        else:
+            if len(public_returns) != 1:
+                raise TTIRParseError(
+                    "expanded public tt.func must contain exactly one "
+                    "top-level tt.return"
+                )
+            for index, value in enumerate(public_returns[0].operands):
+                edges.append(
+                    (
+                        operand_ref(value, semantic=True),
+                        "region[root]",
+                        f"function.return[{index}]",
+                    )
+                )
 
         # Region ownership is hard evidence.  A global operation multiset plus
         # descendant counts cannot distinguish non-isomorphic loop trees, and
@@ -3040,6 +3351,23 @@ class TTIRParser:
             for operation in operations
             if operation.name in _REGION_OWNERS
         }
+        terminal_fork_by_id = {
+            item.fork_id: item for item in terminal_forks
+        }
+        if len(terminal_fork_by_id) != len(terminal_forks):
+            raise TTIRParseError("expanded terminal-fork identities are not unique")
+        direct_terminal_forks: dict[int | None, list[_TerminalFork]] = {}
+        for terminal_fork in terminal_forks:
+            parent = (
+                terminal_fork.context[-1]
+                if terminal_fork.context
+                else None
+            )
+            if parent is not None and parent not in region_ids:
+                raise TTIRParseError(
+                    "terminal fork has a non-structured caller context"
+                )
+            direct_terminal_forks.setdefault(parent, []).append(terminal_fork)
         direct_children: dict[int | None, list[int]] = {}
         direct_members: dict[int | None, list[_Operation]] = {}
         direct_sequence: dict[int | None, list[_Operation]] = {}
@@ -3049,11 +3377,31 @@ class TTIRParser:
                 raise TTIRParseError(
                     f"operation {operation.name} has a non-region parent"
                 )
-            direct_sequence.setdefault(parent, []).append(operation)
-            if operation.node_id in region_ids:
-                direct_children.setdefault(parent, []).append(operation.node_id)
-            elif operation.name not in _TERMINATORS:
-                direct_members.setdefault(parent, []).append(operation)
+            terminal_fork = (
+                terminal_fork_by_id.get(operation.fork_id)
+                if operation.fork_id is not None
+                else None
+            )
+            if operation.fork_id is not None and terminal_fork is None:
+                raise TTIRParseError(
+                    "operation refers to an unknown expanded terminal fork"
+                )
+            if operation.fork_arm not in {None, "true", "false"}:
+                raise TTIRParseError("operation has an invalid terminal-fork role")
+            is_direct_fork_member = (
+                terminal_fork is not None
+                and operation.context == terminal_fork.context
+            )
+            # The two arms are mutually exclusive.  Their direct members are
+            # attached to the synthetic control node below, never flattened
+            # into the caller's ordinary region sequence.  Nested structured
+            # regions still retain their own internal membership graph.
+            if not is_direct_fork_member:
+                direct_sequence.setdefault(parent, []).append(operation)
+                if operation.node_id in region_ids:
+                    direct_children.setdefault(parent, []).append(operation.node_id)
+                elif operation.name not in _TERMINATORS:
+                    direct_members.setdefault(parent, []).append(operation)
 
             restricted_ancestor = next(
                 (
@@ -3076,6 +3424,14 @@ class TTIRParser:
 
         effectful_cache: dict[int, bool] = {}
 
+        def terminal_fork_has_effect(terminal_fork: _TerminalFork) -> bool:
+            return any(
+                operation.name not in _TERMINATORS
+                and _operation_has_effect(operation)
+                for operation in operations
+                if operation.fork_id == terminal_fork.fork_id
+            )
+
         def region_has_effect(region_id: int) -> bool:
             cached = effectful_cache.get(region_id)
             if cached is not None:
@@ -3086,22 +3442,127 @@ class TTIRParser:
             ) or any(
                 region_has_effect(child)
                 for child in direct_children.get(region_id, ())
+            ) or any(
+                terminal_fork_has_effect(terminal_fork)
+                for terminal_fork in direct_terminal_forks.get(region_id, ())
             )
             effectful_cache[region_id] = value
             return value
 
         region_ref_cache: dict[int, str] = {}
+        terminal_fork_fingerprint_cache: dict[
+            int, TerminalForkFingerprint
+        ] = {}
+        terminal_fork_ref_cache: dict[int, str] = {}
+
+        def terminal_fork_arm(
+            terminal_fork: _TerminalFork, role: str
+        ) -> TerminalForkArmFingerprint:
+            direct = [
+                operation
+                for operation in operations
+                if operation.fork_id == terminal_fork.fork_id
+                and operation.fork_arm == role
+                and operation.context == terminal_fork.context
+            ]
+            members = sorted(
+                node_ref(operation.node_id, semantic=True)
+                for operation in direct
+                if operation.node_id not in region_ids
+                and operation.name not in _TERMINATORS
+            )
+            structured_regions = sorted(
+                region_ref(operation.node_id)
+                for operation in direct
+                if operation.node_id in region_ids
+            )
+            effect_order: list[str] = []
+            for operation in direct:
+                if operation.node_id in region_ids:
+                    if region_has_effect(operation.node_id):
+                        effect_order.append(
+                            f"region:{region_ref(operation.node_id)}"
+                        )
+                elif (
+                    operation.name not in _TERMINATORS
+                    and _operation_has_effect(operation)
+                ):
+                    effect_order.append(
+                        f"{operation.name}:"
+                        f"{node_ref(operation.node_id, semantic=True)}"
+                    )
+            return TerminalForkArmFingerprint(
+                role=role,
+                members=tuple(members),
+                effect_order=tuple(effect_order),
+                structured_regions=tuple(structured_regions),
+            )
+
+        def terminal_fork_fingerprint(
+            terminal_fork: _TerminalFork,
+        ) -> TerminalForkFingerprint:
+            cached = terminal_fork_fingerprint_cache.get(
+                terminal_fork.fork_id
+            )
+            if cached is not None:
+                return cached
+            cached = TerminalForkFingerprint(
+                predicate=operand_ref(
+                    terminal_fork.predicate, semantic=True
+                ),
+                region_context=tuple(
+                    node_ref(owner, semantic=True)
+                    for owner in terminal_fork.context
+                ),
+                true_arm=terminal_fork_arm(terminal_fork, "true"),
+                false_arm=terminal_fork_arm(terminal_fork, "false"),
+            )
+            terminal_fork_fingerprint_cache[terminal_fork.fork_id] = cached
+            return cached
+
+        def terminal_fork_ref(terminal_fork: _TerminalFork) -> str:
+            cached = terminal_fork_ref_cache.get(terminal_fork.fork_id)
+            if cached is not None:
+                return cached
+            fingerprint = terminal_fork_fingerprint(terminal_fork)
+            cached = (
+                "control.conditional["
+                f"{_digest(fingerprint.to_dict())[:20]}]"
+            )
+            terminal_fork_ref_cache[terminal_fork.fork_id] = cached
+            return cached
+
+        def terminal_arm_ref(
+            arm: TerminalForkArmFingerprint,
+        ) -> str:
+            return (
+                f"control.arm[{arm.role}:"
+                f"{_digest(arm.to_dict())[:20]}]"
+            )
 
         def direct_effect_events(parent: int | None) -> list[str]:
             events: list[str] = []
-            for operation in direct_sequence.get(parent, ()):
-                if operation.node_id in region_ids:
-                    if region_has_effect(operation.node_id):
-                        events.append(f"region:{region_ref(operation.node_id)}")
-                elif _operation_has_effect(operation):
+            sequence: list[tuple[int, int, _Operation | _TerminalFork]] = [
+                (operation.node_id, 1, operation)
+                for operation in direct_sequence.get(parent, ())
+            ]
+            sequence.extend(
+                (terminal_fork.sequence_index, 0, terminal_fork)
+                for terminal_fork in direct_terminal_forks.get(parent, ())
+            )
+            for _, _, item in sorted(
+                sequence, key=lambda entry: (entry[0], entry[1])
+            ):
+                if isinstance(item, _TerminalFork):
+                    if terminal_fork_has_effect(item):
+                        events.append(f"control:{terminal_fork_ref(item)}")
+                elif item.node_id in region_ids:
+                    if region_has_effect(item.node_id):
+                        events.append(f"region:{region_ref(item.node_id)}")
+                elif _operation_has_effect(item):
                     events.append(
-                        f"{operation.name}:"
-                        f"{node_ref(operation.node_id, semantic=True)}"
+                        f"{item.name}:"
+                        f"{node_ref(item.node_id, semantic=True)}"
                     )
             return events
 
@@ -3117,6 +3578,14 @@ class TTIRParser:
             member_refs = sorted(
                 node_ref(member.node_id, semantic=True)
                 for member in direct_members.get(region_id, ())
+            )
+            member_refs.extend(
+                sorted(
+                    terminal_fork_ref(terminal_fork)
+                    for terminal_fork in direct_terminal_forks.get(
+                        region_id, ()
+                    )
+                )
             )
             payload = {
                 "owner": node_ref(region_id, semantic=True),
@@ -3139,6 +3608,33 @@ class TTIRParser:
                         node_ref(member.node_id, semantic=True),
                         "region.member",
                     )
+                )
+            for terminal_fork in direct_terminal_forks.get(parent, ()):
+                fingerprint = terminal_fork_fingerprint(terminal_fork)
+                control = terminal_fork_ref(terminal_fork)
+                edges.extend(
+                    [
+                        (
+                            fingerprint.predicate,
+                            control,
+                            "condition",
+                        ),
+                        (
+                            terminal_arm_ref(fingerprint.true_arm),
+                            control,
+                            "true",
+                        ),
+                        (
+                            terminal_arm_ref(fingerprint.false_arm),
+                            control,
+                            "false",
+                        ),
+                        (
+                            parent_ref,
+                            control,
+                            "region.member",
+                        ),
+                    ]
                 )
             effect_events = direct_effect_events(parent)
             if effect_events:
@@ -3266,8 +3762,23 @@ class TTIRParser:
                     )
             captured_values: set[str] = set()
             region_argument_use_counts: Counter[str] = Counter()
+            directly_nested_forks = [
+                terminal_fork
+                for terminal_fork in terminal_forks
+                if terminal_fork.context
+                and terminal_fork.context[-1] == operation.node_id
+            ]
+            directly_nested_fork_ids = {
+                terminal_fork.fork_id
+                for terminal_fork in directly_nested_forks
+            }
             for nested in operations:
                 if operation.node_id not in nested.context:
+                    continue
+                if nested.fork_id in directly_nested_fork_ids:
+                    # The mutually exclusive arms are summarized by one
+                    # role-preserving synthetic control member below.  Do not
+                    # turn them into an unconditional flat loop body.
                     continue
                 if nested.name not in _TERMINATORS:
                     body_ops[
@@ -3295,6 +3806,18 @@ class TTIRParser:
                     ] += 1
                 elif nested.name.startswith("tt.atomic"):
                     body_effects[nested.name] += 1
+            for terminal_fork in directly_nested_forks:
+                body_ops["control.conditional"] += 1
+                if terminal_fork_has_effect(terminal_fork):
+                    body_effects["control.conditional"] += 1
+                predicate = terminal_fork.predicate
+                producer_id = result_to_node.get(predicate)
+                if producer_id is None or operation.node_id not in node_by_id[
+                    producer_id
+                ].context:
+                    captured_values.add(
+                        operand_ref(predicate, semantic=True)
+                    )
             loops.append(
                 LoopFingerprint(
                     lower=header[0],
@@ -3361,6 +3884,13 @@ class TTIRParser:
         reductions.sort(key=lambda item: _stable_json(item.to_dict()))
         dots.sort(key=lambda item: _stable_json(item.to_dict()))
         loops.sort(key=lambda item: _stable_json(item.to_dict()))
+        terminal_fork_fingerprints = sorted(
+            (
+                terminal_fork_fingerprint(item)
+                for item in terminal_forks
+            ),
+            key=lambda item: _stable_json(item.to_dict()),
+        )
         mask_predicates = sorted(
             effect.predicate
             for effect in memory_effects
@@ -3380,6 +3910,7 @@ class TTIRParser:
             effect_multiset=tuple(sorted(effect_counts.items())),
             dots=tuple(dots),
             loops=tuple(loops),
+            terminal_forks=tuple(terminal_fork_fingerprints),
             schedule_view=_canonical_schedule(schedule),
         )
 

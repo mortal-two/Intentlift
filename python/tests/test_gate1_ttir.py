@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+
 import pytest
 
 from intentir.verify.gate1.compare import compare_fingerprints, compare_ttir
@@ -594,7 +598,7 @@ def test_typed_scan_and_heterogeneous_multi_scan_are_observed() -> None:
     single = fingerprint_ttir(SCAN_TTIR)
     multiple = fingerprint_ttir(MULTI_SCAN_TTIR)
 
-    assert single.schema_version == "triton-ttir-3.6-gate1-v6"
+    assert single.schema_version == "triton-ttir-3.6-gate1-v7"
     assert dict(single.op_multiset)["tt.scan"] == 1
     assert dict(multiple.op_multiset)["tt.scan"] == 1
     assert compare_ttir(SCAN_TTIR, SCAN_TTIR.replace("%lhs", "%renamed")).hard_pass
@@ -1494,7 +1498,7 @@ def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
 
     assert verdict.hard_pass, verdict.to_dict()
     fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v6"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v7"
     assert "tt.call" not in dict(fingerprint.op_multiset)
     assert dict(fingerprint.loops[0].body_op_multiset) == {
         "tt.addptr": 2,
@@ -1602,7 +1606,7 @@ def test_reachable_helper_with_unknown_region_fails_closed() -> None:
     unsupported = OUTLINED_NESTED_VALUE_HELPERS.replace(
         "    %two = arith.constant 2.000000e+00 : f32\n"
         "    %answer = arith.mulf %value, %two : f32",
-        "    %condition = arith.constant true\n"
+        "    %condition = arith.constant true : i1\n"
         "    %answer = scf.if %condition -> (f32) {\n"
         "      scf.yield %value : f32\n"
         "    } else {\n"
@@ -1614,16 +1618,396 @@ def test_reachable_helper_with_unknown_region_fails_closed() -> None:
         fingerprint_ttir(unsupported)
 
 
+TERMINAL_BINARY_FORK = r'''
+module {
+  tt.func public @terminal_fork(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i32) {
+    %zero_i32 = arith.constant 0 : i32
+    %condition = arith.cmpi eq, %flag, %zero_i32 : i32
+    cf.cond_br %condition, ^bb_true, ^bb_false
+  ^bb_true:
+    %value = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %value : !tt.ptr<f32>
+    tt.return
+  ^bb_false:
+    %zero_f32 = arith.constant 0.000000e+00 : f32
+    tt.store %output, %zero_f32 : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+OUTLINED_TERMINAL_FORK_IN_LOOP = r'''
+module {
+  tt.func public @caller(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      tt.call @terminal_helper(%input, %output, %iv) : (!tt.ptr<f32>, !tt.ptr<f32>, i32) -> ()
+      scf.yield
+    }
+    tt.return
+  }
+  tt.func private @terminal_helper(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %iv: i32) {
+    %c0 = arith.constant 0 : i32
+    %condition = arith.cmpi eq, %iv, %c0 : i32
+    cf.cond_br %condition, ^bb_empty, ^bb_copy
+  ^bb_empty:
+    %zero = arith.constant 0.000000e+00 : f32
+    tt.store %output, %zero : !tt.ptr<f32>
+    tt.return
+  ^bb_copy:
+    %value = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+OUTLINED_TERMINAL_FORK_AT_ROOT = r'''
+module {
+  tt.func public @caller(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i32) {
+    tt.call @terminal_helper(%input, %output, %flag) : (!tt.ptr<f32>, !tt.ptr<f32>, i32) -> ()
+    tt.return
+  }
+  tt.func private @terminal_helper(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i32) {
+    %zero_i32 = arith.constant 0 : i32
+    %condition = arith.cmpi eq, %flag, %zero_i32 : i32
+    cf.cond_br %condition, ^bb_true, ^bb_false
+  ^bb_true:
+    %value = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %value : !tt.ptr<f32>
+    tt.return
+  ^bb_false:
+    %zero_f32 = arith.constant 0.000000e+00 : f32
+    tt.store %output, %zero_f32 : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+def test_closed_terminal_binary_fork_preserves_roles_and_control_edges() -> None:
+    fingerprint = fingerprint_ttir(TERMINAL_BINARY_FORK)
+
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v7"
+    assert dict(fingerprint.op_multiset)["control.conditional"] == 1
+    assert len(fingerprint.terminal_forks) == 1
+    fork = fingerprint.terminal_forks[0]
+    assert fork.true_arm.role == "true"
+    assert fork.false_arm.role == "false"
+    assert fork.true_arm.terminal == "tt.return:void"
+    assert fork.false_arm.terminal == "tt.return:void"
+    assert [item.split("[", 1)[0] for item in fork.true_arm.effect_order] == [
+        "tt.load:tt.load",
+        "tt.store:tt.store",
+    ]
+    assert [item.split("[", 1)[0] for item in fork.false_arm.effect_order] == [
+        "tt.store:tt.store",
+    ]
+    roles = {
+        edge[2]
+        for edge in fingerprint.dataflow_edges
+        if "control.conditional" in edge[1]
+    }
+    assert {"condition", "true", "false"}.issubset(roles)
+
+
+def test_terminal_fork_physical_block_order_is_presentation_only() -> None:
+    before, true_block = TERMINAL_BINARY_FORK.split("  ^bb_true:", 1)
+    true_body, false_body = true_block.split("  ^bb_false:", 1)
+    reordered = (
+        before
+        + "  ^bb_false:"
+        + false_body.rsplit("  }", 1)[0]
+        + "  ^bb_true:"
+        + true_body
+        + "  }\n}\n"
+    )
+
+    assert compare_ttir(TERMINAL_BINARY_FORK, reordered).hard_pass
+
+
+def test_terminal_fork_arm_sorts_pure_members_but_orders_effects() -> None:
+    two_values = TERMINAL_BINARY_FORK.replace(
+        "    %value = tt.load %input : !tt.ptr<f32>\n"
+        "    tt.store %output, %value : !tt.ptr<f32>",
+        "    %one = arith.constant 1.000000e+00 : f32\n"
+        "    %two = arith.constant 2.000000e+00 : f32\n"
+        "    tt.store %output, %one : !tt.ptr<f32>\n"
+        "    tt.store %output, %two : !tt.ptr<f32>",
+    )
+    pure_reordered = two_values.replace(
+        "    %one = arith.constant 1.000000e+00 : f32\n"
+        "    %two = arith.constant 2.000000e+00 : f32",
+        "    %two = arith.constant 2.000000e+00 : f32\n"
+        "    %one = arith.constant 1.000000e+00 : f32",
+    )
+    effects_reordered = two_values.replace(
+        "    tt.store %output, %one : !tt.ptr<f32>\n"
+        "    tt.store %output, %two : !tt.ptr<f32>",
+        "    tt.store %output, %two : !tt.ptr<f32>\n"
+        "    tt.store %output, %one : !tt.ptr<f32>",
+    )
+
+    assert compare_ttir(two_values, pure_reordered).hard_pass
+    assert not compare_ttir(two_values, effects_reordered).hard_pass
+
+
+@pytest.mark.parametrize(
+    "mutated",
+    [
+        TERMINAL_BINARY_FORK.replace("arith.cmpi eq", "arith.cmpi ne"),
+        TERMINAL_BINARY_FORK.replace(
+            "cf.cond_br %condition, ^bb_true, ^bb_false",
+            "cf.cond_br %condition, ^bb_false, ^bb_true",
+        ),
+        TERMINAL_BINARY_FORK.replace(
+            "    %value = tt.load %input : !tt.ptr<f32>\n"
+            "    tt.store %output, %value : !tt.ptr<f32>",
+            "    %value = tt.load %input : !tt.ptr<f32>\n"
+            "    %again = tt.load %input : !tt.ptr<f32>\n"
+            "    tt.store %output, %again : !tt.ptr<f32>",
+        ),
+        TERMINAL_BINARY_FORK.replace(
+            "    %value = tt.load %input : !tt.ptr<f32>\n"
+            "    tt.store %output, %value : !tt.ptr<f32>",
+            "    %value = tt.load %input : !tt.ptr<f32>\n"
+            "    tt.store %output, %value : !tt.ptr<f32>\n"
+            "    tt.store %output, %value : !tt.ptr<f32>",
+        ),
+    ],
+)
+def test_terminal_fork_predicate_role_member_and_effect_mutations_fail_hard(
+    mutated: str,
+) -> None:
+    assert not compare_ttir(TERMINAL_BINARY_FORK, mutated).hard_pass
+
+
+def test_outlined_terminal_fork_inherits_call_site_structured_context() -> None:
+    fingerprint = fingerprint_ttir(OUTLINED_TERMINAL_FORK_IN_LOOP)
+
+    assert "tt.call" not in dict(fingerprint.op_multiset)
+    assert len(fingerprint.terminal_forks) == 1
+    assert len(fingerprint.terminal_forks[0].region_context) == 1
+    assert fingerprint.terminal_forks[0].region_context[0].startswith("scf.for[")
+    assert dict(fingerprint.loops[0].body_op_multiset) == {
+        "arith.constant": 1,
+        "arith.cmpi": 1,
+        "control.conditional": 1,
+    }
+    assert fingerprint.loops[0].body_effects == (
+        ("control.conditional", 1),
+    )
+
+
+def test_root_cfg_helper_expands_to_same_synthetic_control_as_inline_fork() -> None:
+    verdict = compare_ttir(
+        TERMINAL_BINARY_FORK,
+        OUTLINED_TERMINAL_FORK_AT_ROOT,
+    )
+
+    assert verdict.hard_pass, verdict.to_dict()
+    assert "tt.call" not in dict(
+        fingerprint_ttir(OUTLINED_TERMINAL_FORK_AT_ROOT).op_multiset
+    )
+
+
+@pytest.mark.parametrize(
+    ("malformed", "message"),
+    [
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "tt.func public @terminal_fork(\n",
+                "tt.func public @terminal_fork(\n",
+            ).replace(
+                "%input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i32) {",
+                "%input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i32) -> i32 {",
+            ),
+            "requires a void tt.func",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "cf.cond_br %condition, ^bb_true, ^bb_false",
+                "tt.return\n"
+                "    cf.cond_br %condition, ^bb_true, ^bb_false",
+            ),
+            "permits tt.return only.*arm",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "cf.cond_br %condition, ^bb_true, ^bb_false",
+                "cf.cond_br %condition, ^bb_true(%flag : i32), ^bb_false",
+            ),
+            "operand-free cf.cond_br",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace("  ^bb_true:", "  ^bb_true(%x: i32):"),
+            "cannot take block arguments",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "    tt.return\n  ^bb_false:",
+                "    cf.br ^bb_false\n  ^bb_false:",
+            ),
+            "only the exact operand-free",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "  ^bb_false:",
+                "  ^bb_extra:\n    tt.return\n  ^bb_false:",
+            ),
+            "unexpected terminal-fork block",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "    tt.return\n  ^bb_false:",
+                "  ^bb_false:",
+            ),
+            "true arm does not end",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "%condition = arith.cmpi eq, %flag, %zero_i32 : i32",
+                "%condition = tt.splat %flag : i32 -> tensor<1xi32>",
+            ),
+            "predicate must be a scalar i1",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "    tt.store %output, %zero_f32 : !tt.ptr<f32>",
+                "    tt.store %output, %value : !tt.ptr<f32>",
+            ),
+            "false arm uses SSA value from its true sibling",
+        ),
+        (
+            TERMINAL_BINARY_FORK.replace(
+                "    tt.return\n  ^bb_false:",
+                "    tt.return %flag : i32\n  ^bb_false:",
+            ),
+            "tt.return explicit types.*do not match",
+        ),
+    ],
+)
+def test_terminal_fork_rejects_every_shape_outside_closed_profile(
+    malformed: str,
+    message: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match=message):
+        fingerprint_ttir(malformed)
+
+
+def test_terminal_fork_helper_cannot_contain_an_interprocedural_call() -> None:
+    malformed = OUTLINED_TERMINAL_FORK_IN_LOOP.replace(
+        "    %c0 = arith.constant 0 : i32\n"
+        "    %condition = arith.cmpi eq, %iv, %c0 : i32",
+        "    %c0 = arith.constant 0 : i32\n"
+        "    tt.call @leaf() : () -> ()\n"
+        "    %condition = arith.cmpi eq, %iv, %c0 : i32",
+    ).replace(
+        "\n}\n",
+        "\n  tt.func private @leaf() {\n    tt.return\n  }\n}\n",
+    )
+
+    with pytest.raises(TTIRParseError, match="cannot contain tt.call"):
+        fingerprint_ttir(malformed)
+
+
+_SAVED_REAL_TERMINAL_FORK_CORPUS = (
+    (
+        "cross_entropy",
+        Path(
+            "/tmp/intentir-scrc-task11/"
+            "wave-20260725-b2-v7-v15-complex6-xhigh-01/liger_cross_entropy/"
+            "fanout-001/candidate-01/attempt-01/gate1.json"
+        ),
+        0,
+    ),
+    (
+        "flash_bwd_one_col",
+        Path(
+            "/tmp/intentir-scrc-task11/"
+            "wave-20260725-b2-v7-v15-complex6-xhigh-01/"
+            "flash_attn_flash_attn_triton_bwd_kernel_one_col_block/"
+            "fanout-001/candidate-01/attempt-01/gate1.json"
+        ),
+        0,
+    ),
+    (
+        "flash_full_bwd_helper",
+        Path(
+            "/tmp/intentir-scrc-task11/"
+            "wave-20260725-b3-v6-v14-frontier5-xhigh-01/"
+            "flash_attn_flash_attn_triton_bwd_kernel/"
+            "fanout-001/candidate-03/attempt-04/gate1.json"
+        ),
+        1,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "receipt_path", "expected_context_depth"),
+    _SAVED_REAL_TERMINAL_FORK_CORPUS,
+)
+def test_saved_real_terminal_fork_corpus_and_role_mutation(
+    case_name: str,
+    receipt_path: Path,
+    expected_context_depth: int,
+) -> None:
+    if not receipt_path.is_file():
+        pytest.skip(f"saved Task11 corpus is unavailable: {case_name}")
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    ttir = payload["source_compile"]["ttir"]
+
+    fingerprint = fingerprint_ttir(ttir)
+    assert len(fingerprint.terminal_forks) == 1
+    assert (
+        len(fingerprint.terminal_forks[0].region_context)
+        == expected_context_depth
+    )
+
+    branch = re.search(
+        r"cf\.cond_br\s+(%[A-Za-z0-9_.$-]+)\s*,\s*"
+        r"\^([A-Za-z0-9_.$-]+)\s*,\s*\^([A-Za-z0-9_.$-]+)",
+        ttir,
+    )
+    assert branch is not None
+    original = branch.group(0)
+    role_swapped = (
+        f"cf.cond_br {branch.group(1)}, ^{branch.group(3)}, "
+        f"^{branch.group(2)}"
+    )
+    mutated = ttir[: branch.start()] + role_swapped + ttir[branch.end() :]
+    verdict = compare_ttir(ttir, mutated)
+    assert not verdict.hard_pass, (case_name, verdict.to_dict())
+
+    with_successor_operand = original.replace(
+        f"^{branch.group(2)}",
+        f"^{branch.group(2)}({branch.group(1)} : i1)",
+        1,
+    )
+    malformed = ttir.replace(original, with_successor_operand, 1)
+    with pytest.raises(TTIRParseError, match="operand-free cf.cond_br"):
+        fingerprint_ttir(malformed)
+
+
 def test_reachable_multiblock_helper_is_explicitly_observer_unsupported() -> None:
     multiblock = OUTLINED_VOID_HELPER_IN_LOOP.replace(
         "    %source_at = tt.addptr %source, %index : !tt.ptr<f32>, i32",
-        "    %condition = arith.constant true\n"
+        "    %condition = arith.constant true : i1\n"
         "    cf.cond_br %condition, ^bb1, ^bb2\n"
         "  ^bb1:\n"
         "    %source_at = tt.addptr %source, %index : !tt.ptr<f32>, i32",
     )
 
-    with pytest.raises(TTIRParseError, match="multi-block CFG"):
+    with pytest.raises(TTIRParseError, match="exactly its true and false"):
         fingerprint_ttir(multiblock)
 
 
@@ -1631,7 +2015,7 @@ def test_public_multiblock_function_is_explicitly_observer_unsupported() -> None
     multiblock = r'''
 module {
   tt.func public @branch(%x: !tt.ptr<f32>, %out: !tt.ptr<f32>) {
-    %condition = arith.constant true
+    %condition = arith.constant true : i1
     cf.cond_br %condition, ^bb1, ^bb2
   ^bb1:
     %value = tt.load %x : !tt.ptr<f32>
@@ -1643,7 +2027,7 @@ module {
 }
 '''
 
-    with pytest.raises(TTIRParseError, match="reachable tt.func @branch.*multi-block CFG"):
+    with pytest.raises(TTIRParseError, match="only the exact operand-free"):
         fingerprint_ttir(multiblock)
 
 
