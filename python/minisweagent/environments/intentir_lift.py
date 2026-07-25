@@ -366,6 +366,20 @@ class IntentIRLiftEnvironment:
                     and isinstance(item.get("rule_code"), str)
                     and isinstance(item.get("path"), str)
                 ],
+                "rule_diagnostics": [
+                    {
+                        "rule_code": item.get("rule_code"),
+                        "path": item.get("path"),
+                        "observed_refs_or_types": list(
+                            item.get("observed_refs_or_types", [])
+                        ),
+                    }
+                    for item in diagnostics
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("rule_code"), str)
+                    and isinstance(item.get("path"), str)
+                    and isinstance(item.get("observed_refs_or_types"), list)
+                ],
             }
         )
         if status == "pass" and checker_evaluated and candidate_bytes is not None:

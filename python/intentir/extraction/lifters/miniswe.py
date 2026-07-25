@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v30"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v31"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -136,7 +136,7 @@ def _worker_evidence(
 def _last_candidate_check_feedback(
     evidence: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    """Return only the last evaluated source-free rule/path summary."""
+    """Return the last evaluated bounded, source-free diagnostic summary."""
 
     candidate_check = evidence.get("candidate_check")
     if not isinstance(candidate_check, Mapping):
@@ -152,13 +152,15 @@ def _last_candidate_check_feedback(
         ):
             continue
         protocol = result.get("protocol")
-        rule_paths = result.get("rule_paths")
+        rule_diagnostics = result.get("rule_diagnostics")
+        if not isinstance(rule_diagnostics, list):
+            rule_diagnostics = result.get("rule_paths")
         if protocol != CANDIDATE_CHECK_PROTOCOL or not isinstance(
-            rule_paths, list
+            rule_diagnostics, list
         ):
             continue
-        summary: list[dict[str, str]] = []
-        for item in rule_paths[:MAX_RELIFT_CHECK_FEEDBACK_ITEMS]:
+        summary: list[dict[str, Any]] = []
+        for item in rule_diagnostics[:MAX_RELIFT_CHECK_FEEDBACK_ITEMS]:
             if not isinstance(item, Mapping):
                 continue
             rule_code = item.get("rule_code")
@@ -169,12 +171,20 @@ def _last_candidate_check_feedback(
                 or rule_code == "check_budget_exhausted"
             ):
                 continue
-            summary.append(
-                {
-                    "rule_code": rule_code[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
-                    "path": path[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
-                }
-            )
+            bounded_item: dict[str, Any] = {
+                "rule_code": rule_code[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
+                "path": path[:MAX_RELIFT_CHECK_FEEDBACK_CHARS],
+            }
+            observed = item.get("observed_refs_or_types")
+            if isinstance(observed, list):
+                bounded_observed = [
+                    value[:MAX_RELIFT_CHECK_FEEDBACK_CHARS]
+                    for value in observed[:MAX_RELIFT_CHECK_FEEDBACK_ITEMS]
+                    if isinstance(value, str)
+                ]
+                if bounded_observed:
+                    bounded_item["observed_refs_or_types"] = bounded_observed
+            summary.append(bounded_item)
         if summary:
             return {"protocol": protocol, "diagnostics": summary}
     return None
@@ -212,7 +222,7 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
 - `feedback.json`: null on the first round, otherwise only the explicitly
   allowed previous parser/TypeCheck/Gate1/Gate2 feedback, previous candidate, or the
-  last worker's bounded source-free CandidateCheck rule/path summary.
+  last worker's bounded source-free CandidateCheck diagnostic summary.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.

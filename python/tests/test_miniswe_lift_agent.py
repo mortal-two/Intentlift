@@ -131,7 +131,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v30"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v31"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -153,7 +153,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     readme = " ".join(files["README.md"].split())
     assert "eleven-evaluation ordinary allowance" in readme
     assert "separately reserved submission preflight" in readme
-    assert "bounded source-free CandidateCheck rule/path summary" in readme
+    assert "bounded source-free CandidateCheck diagnostic summary" in readme
     assert "must be the entire shell action exactly as shown" in readme
     assert "Do not prepend `set`" in readme
     assert "never names a source/local or J-body v*" in (
@@ -828,6 +828,13 @@ def test_submission_preflight_returns_diagnostics_then_accepts_repair() -> None:
     assert [item["trigger"] for item in evidence["results"]] == [
         "submission", "submission"
     ]
+    assert evidence["results"][0]["rule_diagnostics"] == [
+        {
+            "rule_code": "candidate_invalid",
+            "path": "<candidate>",
+            "observed_refs_or_types": [],
+        }
+    ]
 
 
 def test_submission_has_one_check_after_ordinary_budget_is_exhausted() -> None:
@@ -1490,7 +1497,13 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
             {
                 "rule_code": "logical_input_unused",
                 "path": "j.signature.parameters[2].logical_ref",
-                "observed_refs_or_types": ["t1"],
+                "observed_refs_or_types": [
+                    "t1",
+                    "detail: rank-0 logical input does not contribute to any J "
+                    "output dependency or explicit boundary/shape semantic "
+                    "relation; a representation-only ABI parameter must use "
+                    "logical_ref=null and may be realized only through pi",
+                ],
             }
         ],
     }
@@ -1638,7 +1651,11 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
             {
                 "rule_code": "boundary_value_not_dominating",
                 "path": "j.boundary.accesses[0].predicate",
-                "observed_refs_or_types": ["a0"],
+                "observed_refs_or_types": [
+                    "a0",
+                    "detail: Layer-A value 'v0' does not dominate the access "
+                    "node 'n0'",
+                ],
             }
         ],
     }
@@ -1916,7 +1933,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     )
 
 
-def test_worker_limit_carries_only_last_rule_paths_to_next_fresh_lift(
+def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -1954,6 +1971,17 @@ def test_worker_limit_carries_only_last_rule_paths_to_next_fresh_lift(
                                     {
                                         "rule_code": "dependent_type_rejected",
                                         "path": "pi.instances[4].semantic_ref",
+                                    }
+                                ],
+                                "rule_diagnostics": [
+                                    {
+                                        "rule_code": "dependent_type_rejected",
+                                        "path": "pi.instances[4].semantic_ref",
+                                        "observed_refs_or_types": [
+                                            "i4",
+                                            "detail: loop_carrier route must bind "
+                                            "the declared carry result",
+                                        ],
                                     }
                                 ],
                             },
@@ -2035,13 +2063,17 @@ def test_worker_limit_carries_only_last_rule_paths_to_next_fresh_lift(
                     {
                         "rule_code": "dependent_type_rejected",
                         "path": "pi.instances[4].semantic_ref",
+                        "observed_refs_or_types": [
+                            "i4",
+                            "detail: loop_carrier route must bind the declared "
+                            "carry result",
+                        ],
                     }
                 ],
             },
         },
         "previous_artifact": None,
     }
-    assert "observed_refs_or_types" not in json.dumps(captured_feedback[1])
 
 
 def test_worker_limit_continues_adjacent_complete_llm_draft(

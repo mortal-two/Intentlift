@@ -1159,15 +1159,30 @@ def check_scrc_lift_candidate(
             {
                 "rule_code": item.code.value,
                 "path": _bounded_candidate_diagnostic_text(item.path),
-                "observed_refs_or_types": (
-                    [_bounded_candidate_diagnostic_text(item.ref)]
-                    if item.ref is not None
-                    else []
+                "observed_refs_or_types": _candidate_typecheck_observations(
+                    item.ref,
+                    item.detail,
                 ),
             }
             for item in report.diagnostics[:_CANDIDATE_DIAGNOSTIC_LIMIT]
         ],
     }
+
+
+def _candidate_typecheck_observations(
+    ref: str | None,
+    detail: str,
+) -> list[str]:
+    """Expose bounded artifact-only TypeCheck evidence without repairing it."""
+
+    observations: list[str] = []
+    if ref is not None:
+        observations.append(_bounded_candidate_diagnostic_text(ref))
+    if detail:
+        observations.append(
+            _bounded_candidate_diagnostic_text(f"detail: {detail}")
+        )
+    return observations
 
 
 def _candidate_decode_diagnostics(exc: Exception) -> list[dict[str, Any]]:
