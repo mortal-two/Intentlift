@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v22"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v23"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -198,6 +198,9 @@ def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
     schema_query = (
         Path(package_dir) / "config" / "intentir_schema_query.py"
     ).read_text(encoding="utf-8")
+    context_query = (
+        Path(package_dir) / "config" / "intentir_context_query.py"
+    ).read_text(encoding="utf-8")
     minimal_example = (
         Path(package_dir) / "config" / "intentir_lift_example.json"
     ).read_text(encoding="utf-8")
@@ -226,9 +229,22 @@ This directory is the complete allowlisted input for one fresh Lift round.
   it never repairs or certifies the artifact.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
+- `tools/context_query.py`: bounded lookup for bootstrap, exact external
+  feedback, paged Source, Harness JSON paths, and focused contract/preflight
+  matches. `bootstrap` copies an explicitly supplied previous artifact without
+  editing it; no command constructs or repairs artifact fields.
 
-Do not page through the raw schema. Read Source/Harness and the short contract,
-then use the example plus one compact query such as:
+Start with this single bounded command so long inputs cannot hide feedback:
+
+`python /input/tools/context_query.py bootstrap`
+
+Then inspect Source and Harness in separate actions with `context_query source`
+and `context_query harness`. On repair rounds, inspect `context_query feedback`
+before editing the candidate copied by bootstrap. Use
+`context_query feedback-category NAME`, `source --start N --lines M`,
+`harness --path PATH`, and `knowledge QUERY` for narrower views.
+
+Do not page through the raw schema. Use the example plus compact queries such as:
 
 `python /input/tools/schema_query.py /input/schema/artifact.schema.json top`
 
@@ -287,6 +303,7 @@ object, and a PASS still has no authority outside this worker.
         "knowledge/minimal_example.json": minimal_example,
         "tools/validate_candidate.py": validator,
         "tools/schema_query.py": schema_query,
+        "tools/context_query.py": context_query,
     }
 
 

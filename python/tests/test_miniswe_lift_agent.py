@@ -37,6 +37,7 @@ from intentir.verify.scrc_runner import (
     SCRCRunRequest,
     SourceProgram,
 )
+from minisweagent.config.intentir_context_query import _bootstrap
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
     INTENTIR_CANDIDATE_CHECK,
@@ -123,16 +124,18 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v22"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v23"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
+    assert "tools/context_query.py" in files
     assert "map_binary" in files["knowledge/intent_ops.md"]
     assert "contraction: binary einsum" in files["knowledge/intent_ops.md"]
     assert '"lhs,rhs->out" label string (no ellipsis)' in (
         files["knowledge/intent_ops.md"]
     )
     assert "Do not page through the raw schema" in files["README.md"]
+    assert "context_query.py bootstrap" in files["README.md"]
     assert "integral rank-0 scalar explicitly equated" in files["README.md"]
     assert "J-owned" in files["README.md"]
     assert "value_dimension_relations" in files["README.md"]
@@ -192,6 +195,49 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "never copy it to sibling parameters" in preflight
     assert "strictly increasing width" in preflight
     assert "local tile axis after program/grid axes" in preflight
+
+
+def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    previous = {"j": {"large": "x" * 30_000}, "c": {}, "pi": {}}
+    feedback = {
+        "kind": "gate1",
+        "round": 2,
+        "diagnostics": {
+            "observer_diff": {
+                "categories": [
+                    {
+                        "category": "op_multiset",
+                        "difference_count": 1,
+                        "examples": [
+                            {
+                                "kind": "missing",
+                                "item": "scf.for",
+                                "expected_count": 1,
+                                "actual_count": 0,
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+        "previous_artifact": previous,
+    }
+    (input_root / "feedback.json").write_text(json.dumps(feedback))
+    (input_root / "source.py").write_text("def source():\n    pass\n")
+    (input_root / "harness_view.json").write_text("{}\n")
+
+    _bootstrap(input_root, output_root)
+
+    observation = capsys.readouterr().out
+    assert len(observation) < 12_000
+    assert '"category": "op_multiset"' in observation
+    assert '"candidate_copied_to_output": true' in observation
+    assert json.loads((output_root / "candidate.json").read_text()) == previous
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
