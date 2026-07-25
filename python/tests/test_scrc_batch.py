@@ -188,6 +188,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
         "max_branch_workers": 6,
         "gate2_workers": 1,
         "gate1_rounds": 3,
+        "pre_replay_rejections": 3,
     }
     expected = dict(scheduling)
     report = ConcurrentSCRCBatchRunner(case_workers=2).run(
@@ -222,6 +223,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
                 "gate2_workers": 1,
                 "unexpected": 1,
                 "gate1_rounds": 3,
+                "pre_replay_rejections": 3,
             },
             "exactly",
         ),
@@ -232,6 +234,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
                 "max_branch_workers": 2,
                 "gate2_workers": 1,
                 "gate1_rounds": 3,
+                "pre_replay_rejections": 3,
             },
             "positive integer",
         ),
@@ -242,6 +245,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
                 "max_branch_workers": 3,
                 "gate2_workers": 1,
                 "gate1_rounds": 3,
+                "pre_replay_rejections": 3,
             },
             r"case_workers \* candidates",
         ),
@@ -252,6 +256,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
                 "max_branch_workers": 2,
                 "gate2_workers": 1,
                 "gate1_rounds": 3,
+                "pre_replay_rejections": 3,
             },
             "must equal runner",
         ),

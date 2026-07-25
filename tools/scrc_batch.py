@@ -498,6 +498,12 @@ def _parser() -> argparse.ArgumentParser:
         default=3,
         help="bounded formal relift/Replay/Gate1 rounds per candidate branch",
     )
+    parser.add_argument(
+        "--pre-replay-rejections",
+        type=int,
+        default=3,
+        help="bounded rejected Lift workers before a branch stops",
+    )
     parser.add_argument("--skip-masked-j", action="store_true")
     parser.add_argument(
         "--no-progress",
@@ -531,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         "--max-branch-workers",
         "--gate2-workers",
         "--gate1-rounds",
+        "--pre-replay-rejections",
     )
     explicitly_scheduled = any(
         token == option or token.startswith(option + "=")
@@ -557,6 +564,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if not 1 <= args.gate1_rounds <= 12:
         print("--gate1-rounds must be in [1, 12]", file=sys.stderr)
+        return 2
+    if not 0 <= args.pre_replay_rejections <= 12:
+        print(
+            "--pre-replay-rejections must be in [0, 12]",
+            file=sys.stderr,
+        )
         return 2
     if args.candidates != 1 and not args.run:
         print("--candidates > 1 is only valid with --run", file=sys.stderr)
@@ -686,6 +699,7 @@ def main(argv: list[str] | None = None) -> int:
             "max_branch_workers": args.max_branch_workers,
             "gate2_workers": args.gate2_workers,
             "gate1_rounds": args.gate1_rounds,
+            "pre_replay_rejections": args.pre_replay_rejections,
         }
         progress = _LiveProgressEmitter(
             enabled=not args.no_progress,
@@ -826,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
                     lift_backend=args.lift_backend,
                     replay_backend=args.replay_backend,
                     max_gate1_rounds=args.gate1_rounds,
+                    max_pre_replay_rejections=args.pre_replay_rejections,
                     progress_callback=callback,
                 )
             except Exception as exc:
@@ -994,6 +1009,9 @@ def main(argv: list[str] | None = None) -> int:
                         lift_backend=args.lift_backend,
                         replay_backend=args.replay_backend,
                         max_gate1_rounds=args.gate1_rounds,
+                        max_pre_replay_rejections=(
+                            args.pre_replay_rejections
+                        ),
                         progress_callback=callback,
                     )
                 except Exception as exc:

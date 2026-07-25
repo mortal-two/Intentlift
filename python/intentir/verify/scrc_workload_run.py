@@ -670,6 +670,7 @@ def search_prepared_workload_gate1(
     lift_backend: str = "responses",
     replay_backend: str = "responses",
     max_gate1_rounds: int | None = None,
+    max_pre_replay_rejections: int | None = None,
     stop_requested: Callable[[], int | None] | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadGate1Search:
@@ -686,6 +687,11 @@ def search_prepared_workload_gate1(
     request = prepared.request
     if max_gate1_rounds is not None:
         request = replace(request, max_gate1_rounds=max_gate1_rounds)
+    if max_pre_replay_rejections is not None:
+        request = replace(
+            request,
+            max_pre_replay_rejections=max_pre_replay_rejections,
+        )
     try:
         report = runner.search_gate1(
             request,

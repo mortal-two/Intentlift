@@ -24,6 +24,7 @@ _SCHEDULING_KEYS = (
     "max_branch_workers",
     "gate2_workers",
     "gate1_rounds",
+    "pre_replay_rejections",
 )
 
 

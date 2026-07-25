@@ -330,6 +330,20 @@ def test_batch_cli_gate1_round_budget_is_positive_and_bounded(capsys) -> None:
         assert "must be in [1, 12]" in capsys.readouterr().err
 
 
+def test_batch_cli_pre_replay_rejection_budget_is_bounded(capsys) -> None:
+    for rejections in ("-1", "13"):
+        assert scrc_batch.main(
+            [
+                "--run",
+                "--case",
+                "high_performance:liger_dyt",
+                "--pre-replay-rejections",
+                rejections,
+            ]
+        ) == 2
+        assert "must be in [0, 12]" in capsys.readouterr().err
+
+
 def test_batch_cli_parallel_controls_are_live_only_and_globally_bounded(
     tmp_path, capsys
 ) -> None:
@@ -406,7 +420,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        replay_backend, max_gate1_rounds,
+        replay_backend, max_gate1_rounds, max_pre_replay_rejections,
         stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
@@ -415,6 +429,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert lift_backend == "responses"
         assert replay_backend == "miniswe"
         assert max_gate1_rounds == 6
+        assert max_pre_replay_rejections == 8
         assert stop_requested is None
         assert progress_callback is not None
         barrier.wait()
@@ -492,6 +507,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "miniswe",
             "--gate1-rounds",
             "6",
+            "--pre-replay-rejections",
+            "8",
             "--run-root",
             str(tmp_path / "runs"),
             "--json",
@@ -507,6 +524,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         "max_branch_workers": 8,
         "gate2_workers": 1,
         "gate1_rounds": 6,
+        "pre_replay_rejections": 8,
     }
     assert payload["status_counts"] == {"scrc_certified": 1}
     assert len(payload["cases"]) == 1
@@ -622,6 +640,7 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         "max_branch_workers": 4,
         "gate2_workers": 2,
         "gate1_rounds": 3,
+        "pre_replay_rejections": 3,
     }
     assert [case["ordinal"] for case in payload["cases"]] == sorted(
         entry.ordinal for entry in selected_entries
