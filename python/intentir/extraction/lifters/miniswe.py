@@ -221,7 +221,7 @@ This directory is the complete allowlisted input for one fresh Lift round.
   handle, shape, value, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: bounded, read-only
-  Decode/TypeCheck diagnostics for the complete candidate (a seven-evaluation
+  Decode/TypeCheck diagnostics for the complete candidate (an eleven-evaluation
   ordinary allowance plus one separately reserved submission preflight);
   it never repairs or certifies the artifact.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,

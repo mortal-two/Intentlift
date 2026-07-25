@@ -141,7 +141,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
         files["README.md"]
     )
     readme = " ".join(files["README.md"].split())
-    assert "seven-evaluation ordinary allowance" in readme
+    assert "eleven-evaluation ordinary allowance" in readme
     assert "separately reserved submission preflight" in readme
     assert "bounded source-free CandidateCheck rule/path summary" in readme
     assert "must be the entire shell action exactly as shown" in readme
@@ -312,7 +312,9 @@ def test_value_dimension_equality_is_explicitly_authored_not_inferred(
 
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
-    assert load_intentir_lift_config()["agent"]["step_limit"] == 24
+    config = load_intentir_lift_config()
+    assert config["agent"]["step_limit"] == 32
+    assert config["environment"]["candidate_check_limit"] == 11
     model = create_intentir_lift_model(
         model_name="test",
         api_base="http://provider.invalid/v1",
@@ -330,13 +332,13 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 16, "step_limit": 24},
+        {"n_model_calls": 24, "step_limit": 32},
     )[0]
     rendered = json.loads(observation["output"])
 
     assert rendered["turn_budget"] == {
-        "used": 16,
-        "limit": 24,
+        "used": 24,
+        "limit": 32,
         "remaining": 8,
     }
     assert rendered["directive"].startswith("Stop browsing")

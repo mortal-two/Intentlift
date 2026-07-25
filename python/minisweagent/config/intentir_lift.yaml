@@ -49,13 +49,13 @@ agent:
        Source, combining those lookups in one shell action.
     3. Write the complete first candidate by turn 5.
     4. Run the static validator, then CandidateCheck. Repair only the reported
-       fields yourself, rerun within its seven-call ordinary allowance if
+       fields yourself, rerun within its eleven-call ordinary allowance if
        needed, and submit before the model-turn budget. Submission itself runs
        the same read-only preflight when the exact current bytes have no prior
        PASS; one separately reserved submission evaluation remains available
        after the ordinary allowance is exhausted. A failure returns diagnostics
        and does not deliver the candidate.
-  step_limit: 24
+  step_limit: 32
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 2
@@ -83,5 +83,5 @@ model:
   cost_tracking: ignore_errors
 environment:
   timeout: 60
-  candidate_check_limit: 7
+  candidate_check_limit: 11
   candidate_submission_check_limit: 1
