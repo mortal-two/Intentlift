@@ -430,13 +430,13 @@ def test_consumer_extension_accepts_scan_and_keeps_predicate_in_layer_b() -> Non
     consumer.type = {"dtype": "f32", "shape": ["x0", "x1"]}
     artifact.j.intent.outputs[0].shape = ["x0", "x1"]
     artifact.j.signature.parameters[1].rank = 2
-    artifact.j.boundary.accesses[1].index_expression = "[v0, v1]"
-    artifact.j.boundary.accesses[1].predicate = "v1 < x1"
+    artifact.j.boundary.accesses[1].index_expression = "[k0, k1]"
+    artifact.j.boundary.accesses[1].predicate = "k1 < x1"
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert artifact.j.boundary.accesses[0].predicate == "v1 < x1"
+    assert artifact.j.boundary.accesses[0].predicate == "k1 < x1"
     assert all(op.op != "select" for op in artifact.j.intent.body)
 
 
@@ -454,8 +454,8 @@ def test_consumer_extension_scan_local_axis_and_control_fail_closed(
     consumer.type = {"dtype": "f32", "shape": ["x0", "x1"]}
     artifact.j.intent.outputs[0].shape = ["x0", "x1"]
     artifact.j.signature.parameters[1].rank = 2
-    artifact.j.boundary.accesses[1].index_expression = "[v0, v1]"
-    artifact.j.boundary.accesses[1].predicate = "v1 < x1"
+    artifact.j.boundary.accesses[1].index_expression = "[k0, k1]"
+    artifact.j.boundary.accesses[1].predicate = "k1 < x1"
     if mutation == "extension_axis":
         artifact.j.boundary.consumer_extensions[0].tile_axis = 1
     elif mutation == "boundary_axis":
@@ -772,7 +772,7 @@ def test_consumer_extension_missing_and_node_less_ambiguity_are_diagnosed() -> N
             "a2",
             AccessKind.LOAD,
             "t0",
-            predicate="v1 < x1",
+            predicate="k1 < x1",
             fill_value=0,
             index_expression="v2",
         )
@@ -1133,7 +1133,7 @@ def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> N
     )
 
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v5"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v11"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v12"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

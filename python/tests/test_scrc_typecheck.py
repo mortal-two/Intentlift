@@ -140,7 +140,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v11"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v12"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -435,6 +435,101 @@ def _functional_masked_copy_artifact():
         EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
     ]
     return artifact
+
+
+def _computed_store_guard_artifact(*, guard_before_access: bool):
+    artifact = _functional_masked_copy_artifact()
+    copy = {
+        "id": "n1" if guard_before_access else "n0",
+        "op": "map_unary",
+        "result": "t1",
+        "operands": ["t0"],
+        "attrs": {"fn": "identity"},
+        "type": {"dtype": "f32", "shape": ["x0"]},
+    }
+    guard = {
+        "id": "n0" if guard_before_access else "n1",
+        "op": "const",
+        "result": "v0",
+        "attrs": {"value": True, "dtype": "i1", "shape": []},
+        "type": {"dtype": "i1", "shape": []},
+    }
+    ordered = [guard, copy] if guard_before_access else [copy, guard]
+    artifact.j.intent.body = [IntentOp.from_json(item) for item in ordered]
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    access_node = "n1" if guard_before_access else "n0"
+    for access in artifact.j.boundary.accesses:
+        access.node_ref = access_node
+    artifact.j.boundary.accesses[1].predicate = "v0 and i0 < x0"
+    for effect in artifact.j.boundary.effects:
+        effect.node_ref = access_node
+    pi = artifact.pi.to_json()
+    pi["instances"][0]["semantic_ref"] = access_node
+    artifact.pi = RealizationWitness.from_json(pi)
+    return artifact
+
+
+def test_typecheck_v12_accepts_dominating_computed_boundary_guard() -> None:
+    artifact = _computed_store_guard_artifact(guard_before_access=True)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_v12_rejects_forward_computed_boundary_guard() -> None:
+    artifact = _computed_store_guard_artifact(guard_before_access=False)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.BOUNDARY_VALUE_NOT_DOMINATING
+    ]
+
+    assert not report.passed
+    assert [item.path for item in matching] == [
+        "j.boundary.accesses[1].predicate"
+    ]
+    assert matching[0].ref == "a1"
+    assert "'v0' does not dominate the access node 'n0'" in matching[0].detail
+
+
+def test_typecheck_v12_rejects_forward_boundary_index_value() -> None:
+    artifact = _computed_store_guard_artifact(guard_before_access=False)
+    guard = artifact.j.intent.body[1]
+    guard.attrs = {"value": 0, "dtype": "i32", "shape": []}
+    guard.type = {"dtype": "i32", "shape": []}
+    artifact.j.boundary.accesses[1].predicate = "i0 < x0"
+    artifact.j.boundary.accesses[1].index_expression = "[v0]"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.BOUNDARY_VALUE_NOT_DOMINATING
+    ]
+
+    assert not report.passed
+    assert [item.path for item in matching] == [
+        "j.boundary.accesses[1].index_expression"
+    ]
+    assert matching[0].ref == "a1"
+
+
+def test_typecheck_v12_does_not_treat_k_axis_or_x_dimension_as_values() -> None:
+    artifact = _functional_masked_copy_artifact()
+    artifact.j.boundary.domains = {"d0": "0 <= k0 and k0 < x0"}
+    for access in artifact.j.boundary.accesses:
+        access.index_expression = "[k0]"
+        access.predicate = "k0 < x0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert TypeCheckErrorCode.BOUNDARY_VALUE_NOT_DOMINATING not in {
+        item.code for item in report.diagnostics
+    }
 
 
 def _functional_padded_reduction_artifact():
@@ -813,7 +908,7 @@ def test_reduce_contract_keeps_explicit_keepdims_and_result_shape_check() -> Non
     keepdims.j.intent.body[1].attrs["keepdims"] = True
     keepdims.j.intent.outputs[0].shape = ["x0", 1]
     keepdims.j.signature.parameters[1].rank = 2
-    keepdims.j.boundary.accesses[1].index_expression = "[v0, 0]"
+    keepdims.j.boundary.accesses[1].index_expression = "[k0, 0]"
     assert type_check(keepdims.j, keepdims.c, keepdims.pi).passed
 
     collapsed = make_reduce_artifact()
@@ -1285,7 +1380,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v11"
+    assert report.protocol == "intentir.scrc.typecheck.v12"
 
 
 @pytest.mark.parametrize(

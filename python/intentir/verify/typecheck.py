@@ -40,7 +40,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v11"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v12"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -73,6 +73,7 @@ class TypeCheckErrorCode(str, Enum):
     FUNCTIONAL_BOUNDARY_INCOMPLETE = "functional_boundary_incomplete"
     PADDED_MEAN_COUNT_UNPROVEN = "padded_mean_count_unproven"
     LOGICAL_INPUT_UNUSED = "logical_input_unused"
+    BOUNDARY_VALUE_NOT_DOMINATING = "boundary_value_not_dominating"
     REPRESENTATION_CARRIER_J_USE_FORBIDDEN = (
         "representation_carrier_j_use_forbidden"
     )
@@ -759,6 +760,121 @@ def _ordered_expression_refs(expression: Any) -> tuple[str, ...]:
 
     visit(expression)
     return tuple(result)
+
+
+def _check_boundary_value_dominance(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Require Layer-B access expressions to use visible Layer-A values.
+
+    ``SemanticArchive`` already checks ordinary Layer-A operands by walking
+    each operation sequence with an incrementally extended visible-value set.
+    Boundary index/predicate expressions are stored separately from that
+    sequence, so their Layer-A value references need the same source-free
+    use-order check at the access event selected by ``access.node_ref``.  Axis
+    and dimension references are excluded simply because they are not members
+    of the Layer-A value set; the checker does not infer an alternate meaning
+    from their position in an index expression.
+    """
+
+    function = j.intent.to_json()["intent_function"]
+    operations = function.get("body", [])
+    inputs = {
+        item.get("name")
+        for item in function.get("inputs", [])
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    all_values = set(inputs)
+    visible_before: dict[str, frozenset[str]] = {}
+
+    def operation_results(operation: Mapping[str, Any]) -> tuple[str, ...]:
+        return _operation_results(operation.get("result"))
+
+    def visit_sequence(
+        body: Any,
+        visible: set[str],
+        prefix: str,
+    ) -> set[str]:
+        if not isinstance(body, list):
+            return set(visible)
+        current = set(visible)
+        for index, raw_operation in enumerate(body):
+            if not isinstance(raw_operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            visible_before[path] = frozenset(current)
+            results = operation_results(raw_operation)
+            all_values.update(results)
+
+            nested = raw_operation.get("body")
+            if isinstance(nested, list):
+                nested_visible = set(current)
+                scans = raw_operation.get("scan")
+                if isinstance(scans, list):
+                    nested_visible.update(
+                        item.get("name")
+                        for item in scans
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("name"), str)
+                    )
+                carries = raw_operation.get("carry")
+                if isinstance(carries, list):
+                    nested_visible.update(
+                        item.get("body_argument")
+                        for item in carries
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("body_argument"), str)
+                    )
+                all_values.update(nested_visible - current)
+                visit_sequence(nested, nested_visible, f"{path}.body")
+            current.update(results)
+        return current
+
+    visible_at_function_exit = visit_sequence(operations, inputs, "body")
+    elaboration = j_elaboration(j)
+    for index, access in enumerate(j.boundary.accesses):
+        parsed = elaboration.access_by_id.get(access.access_id)
+        if parsed is None:
+            continue
+        if access.node_ref is None:
+            visible = visible_at_function_exit
+            event_ref = "function exit"
+        else:
+            path = j.node_ids.get(access.node_ref, access.node_ref)
+            visible = visible_before.get(path)
+            if visible is None:
+                # Ordinary reference checking owns unknown node handles.
+                continue
+            event_ref = f"access node {access.node_ref!r}"
+
+        expressions: list[tuple[str, Any]] = [
+            (
+                f"j.boundary.accesses[{index}].index_expression",
+                component,
+            )
+            for component in parsed.index.components
+        ]
+        if parsed.predicate is not None:
+            expressions.append(
+                (
+                    f"j.boundary.accesses[{index}].predicate",
+                    parsed.predicate,
+                )
+            )
+        for expression_path, expression in expressions:
+            for value_ref in _ordered_expression_refs(expression):
+                if value_ref not in all_values or value_ref in visible:
+                    continue
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.BOUNDARY_VALUE_NOT_DOMINATING,
+                        expression_path,
+                        f"Layer-A value {value_ref!r} does not dominate "
+                        f"the {event_ref}",
+                        access.access_id,
+                    )
+                )
 
 
 def _axis_refs_v1(
@@ -2305,6 +2421,7 @@ def type_check(
     _check_value_dimension_relations(j, diagnostics)
     _check_total_j_value_typing(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
+    _check_boundary_value_dominance(j, diagnostics)
     diagnostics.extend(
         TypeCheckDiagnostic(
             TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,

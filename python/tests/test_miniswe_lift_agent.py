@@ -1101,7 +1101,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v11"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v12"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -1271,6 +1271,53 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
         "j.boundary.accesses[0].predicate",
         "j.boundary.accesses[1].predicate",
     ]
+
+    forward_guard = artifact.to_json()
+    intent = forward_guard["j"]["intent"]["intent_function"]
+    intent["body"][0]["type"] = {"dtype": "f32", "shape": ["x0"]}
+    intent["body"].append(
+        {
+            "id": "n1",
+            "op": "const",
+            "result": "v0",
+            "attrs": {"value": True, "dtype": "i1", "shape": []},
+            "type": {"dtype": "i1", "shape": []},
+        }
+    )
+    forward_guard["j"]["node_ids"]["n1"] = "body[1]"
+    forward_guard["j"]["boundary"]["accesses"] = [
+        {
+            "access_id": "a0",
+            "kind": "store",
+            "tensor": "t1",
+            "predicate": "v0",
+            "node_ref": "n0",
+            "index_expression": "[k0]",
+        }
+    ]
+    forward_guard["j"]["boundary"]["effects"] = [
+        {
+            "effect_id": "e0",
+            "kind": "write",
+            "target": "t1",
+            "node_ref": "n0",
+            "access_ref": "a0",
+        }
+    ]
+    forward_rejection = check_scrc_lift_candidate(
+        json.dumps(forward_guard), context
+    )
+    assert forward_rejection == {
+        "protocol": CANDIDATE_CHECK_PROTOCOL,
+        "status": "fail",
+        "diagnostics": [
+            {
+                "rule_code": "boundary_value_not_dominating",
+                "path": "j.boundary.accesses[0].predicate",
+                "observed_refs_or_types": ["a0"],
+            }
+        ],
+    }
 
     stale = SCRCCandidateCheckContext(
         context.expected_parameters,
@@ -1528,7 +1575,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v4"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v5"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v11"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v12"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0

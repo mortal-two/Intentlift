@@ -57,18 +57,18 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
                 "a0",
                 AccessKind.LOAD,
                 "t0",
-                predicate="v1 < x1",
+                predicate="k1 < x1",
                 fill_value=0,
                 node_ref="n0",
-                index_expression="[v0, v1]",
+                index_expression="[k0, k1]",
             ),
             BoundaryAccess(
                 "a1",
                 AccessKind.STORE,
                 "t1",
-                predicate="v0 < x0",
+                predicate="k0 < x0",
                 node_ref="n1",
-                index_expression="v0",
+                index_expression="k0",
             ),
         ]
         if explicit_accesses
@@ -81,8 +81,8 @@ def make_reduce_artifact(*, explicit_accesses: bool = True) -> Gate1Artifact:
         boundary=Boundary(
             domains=(
                 {
-                    "d0": "0 <= v0 and v0 < x0",
-                    "d1": "0 <= v1 and v1 < x1",
+                    "d0": "0 <= k0 and k0 < x0",
+                    "d1": "0 <= k1 and k1 < x1",
                 }
                 if explicit_accesses
                 else {}
