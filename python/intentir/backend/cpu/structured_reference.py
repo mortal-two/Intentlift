@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v6"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v7"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -122,6 +122,10 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     for op in body:
         result.append(op)
         result.extend(_walk_ops(op.body))
+        if op.op in {"effect_if", "value_if"}:
+            assert op.positive is not None and op.negative is not None
+            result.extend(_walk_ops(op.positive.body))
+            result.extend(_walk_ops(op.negative.body))
     return tuple(result)
 
 
@@ -199,7 +203,10 @@ def requires_structured_reference(j: SemanticArchive) -> bool:
 
     accepted = elaborate_j(j)
     operations = _walk_ops(accepted.intent.body)
-    if any(op.op in {"loop", "scan", "tile"} for op in operations):
+    if any(
+        op.op in {"loop", "scan", "tile", "effect_if", "value_if"}
+        for op in operations
+    ):
         return True
     value_types = j_elaboration(accepted).value_type_by_name
     return any(
@@ -272,6 +279,8 @@ class _Evaluator:
         self.operation_count = 0
         self.scan_count = 0
         self.loop_count = 0
+        self.effect_if_count = 0
+        self.value_if_count = 0
         self.logical_loop_steps = 0
         self.zero_trip_loops = 0
 
@@ -767,6 +776,27 @@ class _Evaluator:
             )
         return value
 
+    def _control_predicate(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> bool:
+        if not isinstance(op.predicate, str) or not op.predicate:
+            raise StructuredReferenceUnsupportedError(
+                f"structured {op.op} requires one predicate value"
+            )
+        try:
+            predicate = np.asarray(env[op.predicate])
+        except KeyError as exc:
+            raise ValueError(
+                f"structured {op.op} predicate does not dominate its region"
+            ) from exc
+        if predicate.shape != () or predicate.dtype != np.dtype(np.bool_):
+            raise ValueError(
+                f"structured {op.op} predicate must be one rank-0 i1 value"
+            )
+        return bool(predicate.item())
+
     def _ordinary(
         self,
         op: IntentOp,
@@ -941,9 +971,15 @@ class _Evaluator:
         op: IntentOp,
         env: Mapping[str, np.ndarray],
     ) -> dict[str, np.ndarray]:
-        if op.operands or op.attrs:
+        if op.attrs:
             raise StructuredReferenceUnsupportedError(
-                "structured loop has unsupported ordinary-op fields"
+                "structured loop has unsupported ordinary attributes"
+            )
+        if len(op.operands) != len(set(op.operands)):
+            raise ValueError("structured loop capture operands must be unique")
+        if any(operand not in env for operand in op.operands):
+            raise ValueError(
+                "structured loop capture operand does not dominate the loop"
             )
         if op.trip is None or not op.carry:
             raise StructuredReferenceUnsupportedError(
@@ -1044,6 +1080,42 @@ class _Evaluator:
         result = dict(env)
         for op in body:
             self.operation_count += 1
+            if op.op in {"effect_if", "value_if"}:
+                if op.positive is None or op.negative is None:
+                    raise StructuredReferenceUnsupportedError(
+                        f"structured {op.op} requires two explicit arms"
+                    )
+                arm = (
+                    op.positive
+                    if self._control_predicate(op, result)
+                    else op.negative
+                )
+                branch = self.sequence(
+                    arm.body,
+                    result,
+                    allow_loop=allow_loop,
+                )
+                if op.op == "effect_if":
+                    self.effect_if_count += 1
+                    # effect_if exports no SSA value.  Branch-local values are
+                    # deliberately discarded; observable state must already be
+                    # represented by authored J outputs/carries.
+                    continue
+                self.value_if_count += 1
+                name = self._result_name(op)
+                try:
+                    yielded = branch[arm.yield_value]
+                except KeyError as exc:
+                    raise ValueError(
+                        "structured value_if selected arm did not produce its "
+                        "authored yield"
+                    ) from exc
+                result[name] = self._validate_value(
+                    yielded,
+                    name=name,
+                    declared=self._declared_type(name, op),
+                )
+                continue
             if op.op == "loop":
                 if not allow_loop:
                     raise StructuredReferenceUnsupportedError(
@@ -1087,7 +1159,8 @@ def execute_structured_reference(
             "outside the scalar CPU capability"
         )
     unsupported = sorted(
-        {op.op for op in _walk_ops(j.intent.body)} - (_ORDINARY_OPS | {"loop"})
+        {op.op for op in _walk_ops(j.intent.body)}
+        - (_ORDINARY_OPS | {"loop", "effect_if", "value_if"})
     )
     if unsupported:
         raise StructuredReferenceUnsupportedError(
@@ -1154,6 +1227,8 @@ def execute_structured_reference(
             "operation_count": evaluator.operation_count,
             "scan_count": evaluator.scan_count,
             "loop_count": evaluator.loop_count,
+            "effect_if_count": evaluator.effect_if_count,
+            "value_if_count": evaluator.value_if_count,
             "logical_loop_step_count": evaluator.logical_loop_steps,
             "zero_trip_loop_count": evaluator.zero_trip_loops,
             "access_guard_load_materialization_count": len(

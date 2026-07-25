@@ -415,11 +415,27 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
     return ()
 
 
+def _child_regions(op: IntentOp) -> tuple[tuple[str, Sequence[IntentOp]], ...]:
+    """Return every authored child region with its canonical path suffix."""
+
+    regions: list[tuple[str, Sequence[IntentOp]]] = [("body", op.body)]
+    if op.op in {"effect_if", "value_if"}:
+        assert op.positive is not None and op.negative is not None
+        regions.extend(
+            (
+                ("positive.body", op.positive.body),
+                ("negative.body", op.negative.body),
+            )
+        )
+    return tuple(regions)
+
+
 def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     result: list[IntentOp] = []
     for op in body:
         result.append(op)
-        result.extend(_walk_ops(op.body))
+        for _suffix, region_body in _child_regions(op):
+            result.extend(_walk_ops(region_body))
     return tuple(result)
 
 
@@ -456,7 +472,8 @@ def _store_result_reaches_output_through_enclosing_carry(
                 if candidate.op == "loop"
                 else enclosing
             )
-            visit(candidate.body, nested)
+            for _suffix, region_body in _child_regions(candidate):
+                visit(region_body, nested)
 
     visit(j.intent.body, ())
     if len(matches) != 1:
@@ -475,7 +492,8 @@ def _node_table(j: Any) -> dict[str, IntentOp]:
         for index, op in enumerate(body):
             path = f"{prefix}[{index}]"
             by_path[path] = op
-            visit(op.body, f"{path}.body")
+            for suffix, region_body in _child_regions(op):
+                visit(region_body, f"{path}.{suffix}")
 
     visit(j.intent.body)
     result = dict(by_path)
@@ -2367,7 +2385,8 @@ def _reduction_padding_analysis(
         for index, op in enumerate(body):
             path = f"{prefix}[{index}]"
             path_by_marker[id(op)] = path
-            record_paths(op.body, f"{path}.body")
+            for suffix, region_body in _child_regions(op):
+                record_paths(region_body, f"{path}.{suffix}")
 
     record_paths(j.intent.body)
     ref_by_path = {path: node_ref for node_ref, path in j.node_ids.items()}
@@ -2403,9 +2422,65 @@ def _reduction_padding_analysis(
             if axes
         }
 
-    for op in _walk_ops(j.intent.body):
+    def padding_events(
+        body: Sequence[IntentOp],
+    ) -> tuple[tuple[str, IntentOp], ...]:
+        events: list[tuple[str, IntentOp]] = []
+        for operation in body:
+            if operation.op == "loop":
+                events.append(("enter", operation))
+                events.extend(padding_events(operation.body))
+                events.append(("exit", operation))
+            elif operation.op in {"effect_if", "value_if"}:
+                assert operation.positive is not None
+                assert operation.negative is not None
+                events.append(("enter", operation))
+                events.extend(padding_events(operation.positive.body))
+                events.extend(padding_events(operation.negative.body))
+                events.append(("exit", operation))
+            else:
+                events.append(("ordinary", operation))
+        return tuple(events)
+
+    for phase, op in padding_events(j.intent.body):
         path = path_by_marker.get(id(op), "body")
         node_ref = ref_by_path.get(path)
+        if phase == "enter":
+            if op.op == "loop":
+                for scan in op.scan:
+                    padding_positions[scan.name] = padding_positions.get(
+                        scan.source, {}
+                    ).copy()
+                for state in op.carry:
+                    padding_positions[state.body_argument] = (
+                        padding_positions.get(state.init_value, {}).copy()
+                        if isinstance(state.init_value, str)
+                        else {}
+                    )
+            continue
+        if phase == "exit":
+            if op.op == "loop":
+                for state in op.carry:
+                    padding_positions[state.result_value] = (
+                        padding_positions.get(state.next_value, {}).copy()
+                    )
+            elif op.op == "value_if":
+                assert isinstance(op.result, str)
+                assert op.positive is not None and op.negative is not None
+                merged: dict[str, set[int]] = {}
+                for yielded in (
+                    op.positive.yield_value,
+                    op.negative.yield_value,
+                ):
+                    merge_projected(
+                        merged,
+                        padding_positions.get(yielded, {}),
+                    )
+                padding_positions[op.result] = freeze(merged)
+            # effect_if has no SSA result; its branch-local padding facts do
+            # not escape the authored regions.  Access/effect consumption is
+            # checked independently through their exact nested node refs.
+            continue
         padded_operands = tuple(
             operand
             for operand in op.operands
@@ -2802,6 +2877,12 @@ def _operation_dependencies(op: IntentOp) -> tuple[str, ...]:
             add(carry.next_value)
         for value in op.yields:
             add(value)
+    if op.op in {"effect_if", "value_if"}:
+        add(op.predicate)
+    if op.op == "value_if":
+        assert op.positive is not None and op.negative is not None
+        add(op.positive.yield_value)
+        add(op.negative.yield_value)
     return tuple(dependencies)
 
 
@@ -2840,12 +2921,8 @@ def direct_logical_operand_sources(j: Any, op: IntentOp) -> tuple[str, ...]:
             if operation.op == "loop":
                 for scan in operation.scan:
                     nested_aliases[scan.name] = resolve(scan.source, aliases)
-            visit(operation.body, nested_aliases)
-            if operation.op in {"effect_if", "value_if"}:
-                assert operation.positive is not None
-                assert operation.negative is not None
-                visit(operation.positive.body, nested_aliases)
-                visit(operation.negative.body, nested_aliases)
+            for _suffix, region_body in _child_regions(operation):
+                visit(region_body, nested_aliases)
 
     visit(j.intent.body, {})
     return resolved_by_operation.get(id(op), _operation_dependencies(op))
@@ -2868,7 +2945,8 @@ def _consumer_dependency_path(
         for index, op in enumerate(body):
             path = f"{prefix}[{index}]"
             path_by_marker[id(op)] = path
-            record_paths(op.body, f"{path}.body")
+            for suffix, region_body in _child_regions(op):
+                record_paths(region_body, f"{path}.{suffix}")
 
     record_paths(j.intent.body)
     producers: dict[str, tuple[str | None, IntentOp]] = {}
@@ -2879,6 +2957,13 @@ def _consumer_dependency_path(
 
     memo: dict[str, tuple[bool, tuple[IntentOp, ...]]] = {}
     active: set[str] = set()
+
+    def path_score(path: tuple[IntentOp, ...]) -> tuple[int, int, tuple[str, ...]]:
+        return (
+            sum(op.op not in _CONSUMER_EXTENSION_OPS for op in path),
+            len(path),
+            tuple(op.op for op in path),
+        )
 
     def visit(value: str) -> tuple[bool, tuple[IntentOp, ...]]:
         if access_node_ref is None and value == access_tensor:
@@ -2896,16 +2981,22 @@ def _consumer_dependency_path(
             if access_node_ref is not None and node_ref == access_node_ref:
                 result = (True, (operation,))
             else:
-                selected: list[IntentOp] = []
-                found = False
+                candidates: list[tuple[IntentOp, ...]] = []
                 for dependency in _operation_dependencies(operation):
                     child_found, child_path = visit(dependency)
                     if child_found:
-                        found = True
-                        selected.extend(child_path)
-                if found:
-                    selected.append(operation)
-                result = (found, tuple(selected))
+                        candidates.append((*child_path, operation))
+                # One access can reach a pointwise operand through both a
+                # direct padded branch and an already-consumed statistic
+                # branch.  A provenance witness is one path, not the union of
+                # every semantic dependency path.  Prefer the closed path; if
+                # every path crosses an unsupported op, retain one such path so
+                # validation still fails closed (notably for scan -> reduce).
+                result = (
+                    (True, min(candidates, key=path_score))
+                    if candidates
+                    else (False, ())
+                )
         active.remove(value)
         memo[value] = result
         return result

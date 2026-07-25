@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 
+import numpy as np
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -23,6 +24,7 @@ from intentir.verify.gate1.prompt import (
     build_normal_rewriter_view,
 )
 from intentir.verify.gate1.replay import replay_source_ingress
+from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.typecheck import TYPECHECK_PROTOCOL, TypeCheckErrorCode, type_check
 from test_scrc_typed_control_core import _effect_if_payload, _request
 from test_gate1_loop_schema import _tiled_loop_artifact
@@ -170,6 +172,33 @@ def test_value_if_typecheck_and_candidate_check_share_acceptance() -> None:
         SCRCCandidateCheckContext(expected_parameters=("p0", "p1", "p2")),
     )
     assert report["status"] == "pass", report
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_structured_refeval_executes_typed_value_if(flag: bool) -> None:
+    artifact = Gate1Artifact.from_json(_value_if_payload())
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={},
+        input_bindings={"t0": "input", "t1": "flag"},
+        output_bindings={"t2": "output"},
+    )
+    value = np.arange(128, dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": value,
+            "flag": np.asarray(flag, dtype=np.bool_),
+        },
+    )
+
+    assert result.ok, result.error
+    expected = value * value * (2 if flag else 1)
+    np.testing.assert_array_equal(result.outputs["output"], expected)
+    evidence = result.metadata["execution_evidence"]
+    assert evidence["value_if_count"] == 1
+    assert evidence["effect_if_count"] == 0
 
 
 def test_value_if_normal_and_masked_views_preserve_control_and_yields() -> None:
