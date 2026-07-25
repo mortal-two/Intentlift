@@ -1085,7 +1085,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v14"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v15"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1305,7 +1305,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v13"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v14"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1674,7 +1674,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v14"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v15"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -1858,6 +1858,80 @@ def test_scalar_e_j_erases_2d_pointwise_full_domain_mask() -> None:
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
     assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
+
+
+def _make_value_proved_row_major_artifact():
+    artifact = _make_masked_2d_pointwise_artifact()
+    payload = artifact.j.to_json()
+    function = payload["intent"]["intent_function"]
+    function["inputs"].append(
+        {"name": "t2", "dtype": "i64", "shape": []}
+    )
+    payload["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "i64",
+            "rank": 0,
+            "logical_ref": "t2",
+        }
+    )
+    for access in payload["boundary"]["accesses"]:
+        access["index_expression"] = "[(i0 * t2) + i1]"
+    payload["value_dimension_relations"] = [
+        {
+            "value_ref": "t2",
+            "dimension_ref": "x1",
+            "relation": "eq",
+        }
+    ]
+    artifact.j = SemanticArchive.from_json(payload)
+    return artifact
+
+
+def test_scalar_e_j_projects_j_proved_row_major_stride() -> None:
+    artifact = _make_value_proved_row_major_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input", "t2": "row_stride"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"input": value, "row_stride": np.asarray(4, dtype=np.int64)},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+    assert dict(result.metadata["boundary_projection"]["access_coordinates"])[
+        "a0"
+    ] == ["i0", "i1"]
+
+
+def test_scalar_e_j_rejects_unproved_row_major_stride() -> None:
+    artifact = _make_value_proved_row_major_artifact()
+    artifact.j.value_dimension_relations = []
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input", "t2": "row_stride"},
+        output_bindings={"t1": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {
+            "input": np.arange(8, dtype=np.float32).reshape(2, 4),
+            "row_stride": np.asarray(4, dtype=np.int64),
+        },
+    )
+
+    assert not result.ok
+    assert "direct ordered axis vector" in (result.error or "")
 
 
 @pytest.mark.parametrize("mutation", ["unbracketed", "missing_type", "redundant_mapping"])
