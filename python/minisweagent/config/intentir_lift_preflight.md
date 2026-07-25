@@ -23,15 +23,19 @@ the artifact schema or external TypeCheck.
    A runtime scalar used only for representation/address realization is a
    rank-0 `mode=value` scalar with public dtype but no `logical_ref` or J input;
    pi may reference its p* carrier. Decide from Source use, never name/position.
-   Classify across all uses of one scalar. If it both bounds a predicate/index
-   and enters arithmetic or boolean dataflow, bind one dtype-matching rank-0
-   J input `t*` and reuse that same `t*` in every such use. Do not split it into
-   `x*` plus `t*`/null, specialize it to a constant, or synthesize a count.
+   Classify across all uses of one scalar. If it both bounds an active-domain
+   predicate/index and enters arithmetic or boolean dataflow, bind one
+   dtype-matching rank-0 J input `t*` and reuse that same `t*` in every such
+   use. Do not split it into `x*` plus `t*`/null, specialize it to a constant,
+   or synthesize a count. This is representable only when tensor capacity/shape
+   is a separately established `x*`. If Source requires the scalar value itself
+   to strictly determine that J shape dimension, the current artifact cannot
+   express `value(t*) = x*`: do not submit and fail closed. TypeCheck cannot
+   infer this Source-use equality from `(J,C,pi)`.
    One physical Harness `p*` has exactly one `logical_ref`; never duplicate or
    alias that scalar into a second `p*` so one copy owns `t*` and another owns
-   `x*`. For a dual-use scalar, its one `p*` binds the rank-0 `t*`; any `x*` in
-   other shapes is a distinct symbolic dimension, not another binding of that
-   physical scalar.
+   `x*`. A separately bound capacity `x*` may coexist with an active-length
+   rank-0 `t*` only when Source does not require equality between them.
    Bind `x*` only when every use is extent/index/domain-only.
    This null-carrier form is runtime-scalar-only. Every
    `bound_constexpr_values` entry is logical: bind logical data to a

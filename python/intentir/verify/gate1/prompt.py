@@ -151,11 +151,16 @@ PUBLIC_FRONTEND_CONTEXT = {
     },
 }
 
-# Replay receipts are evidence about the exact public context that a historical
-# generation call saw.  Keep old digests auditable, but never reinterpret an old
-# receipt as if it had used the active context.
+# Stored packet public-context digests and historical receipt digests are
+# different evidence domains.  Existing receipt policies all hash the complete
+# u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
-    {"triton": "public_frontend_context_v7"}
+    {
+        "triton": "public_frontend_context_v7",
+        "cute": "public_frontend_context_v1",
+        "tilelang": "public_frontend_context_v1",
+        "cuda": "public_frontend_context_v1",
+    }
 )
 PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
     {
@@ -168,7 +173,88 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                     "2f71b09d4cf3d25cb413b24252a59720822dd3a42b9f8af9eb606a36bfee9613"
                 ),
             }
-        )
+        ),
+        "cute": MappingProxyType(
+            {
+                "public_frontend_context_v1": (
+                    "469bcb400c5f377d3b92a68a870189f0698bdd05a2154ccba16feed0502716dc"
+                )
+            }
+        ),
+        "tilelang": MappingProxyType(
+            {
+                "public_frontend_context_v1": (
+                    "41d26224d6682b12f7761e6a4c6f61f3f9e29d5ad5bd4b3b473bdfdacbcf91f5"
+                )
+            }
+        ),
+        "cuda": MappingProxyType(
+            {
+                "public_frontend_context_v1": (
+                    "97d17ef646dacef8b198afd70d09221a6c59aed6816e89ee19559aff3a22f1b3"
+                )
+            }
+        ),
+    }
+)
+PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
+    {
+        "triton": MappingProxyType(
+            {
+                "public_frontend_context_v6": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "33f1d58a4c1e762fae6b8ff27c100adfef21bcc1d8a149409f85f8b4c7a281ec"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v7": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "91eb3db3fb27a166c2fecb3e02c05ac8131be3b93fa7576272814d3050e388c6"
+                        ),
+                    }
+                ),
+            }
+        ),
+        "cute": MappingProxyType(
+            {
+                "public_frontend_context_v1": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "13c3f240eb4bd19bfbbc6982e3058ebb4ecc37c139a1e483cff0cff6a811bb37"
+                        ),
+                    }
+                )
+            }
+        ),
+        "tilelang": MappingProxyType(
+            {
+                "public_frontend_context_v1": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "b54d1d1e65f5ad35a39b47aa43b7bee9eb68e4067c82d32e1b7739bc99c2660e"
+                        ),
+                    }
+                )
+            }
+        ),
+        "cuda": MappingProxyType(
+            {
+                "public_frontend_context_v1": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "83d5c95bd2c9bc28329e42987c4eb9628395990a5b2bb8c4d07aad81fb13a530"
+                        ),
+                    }
+                )
+            }
+        ),
     }
 )
 
@@ -229,19 +315,23 @@ _U_F_KEYS = frozenset(
 _U_F_PACKET_KEYS = frozenset({"protocol", "frontend", "replay_function"})
 
 
-def public_frontend_context_digest(context: Mapping[str, Any]) -> str:
-    """Return the canonical digest recorded by Replay context receipts."""
-
-    if not isinstance(context, Mapping):
-        raise SchemaError("public frontend context must be an object")
+def _canonical_mapping_digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(
-            dict(context),
+            dict(value),
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         ).encode()
     ).hexdigest()
+
+
+def public_frontend_context_digest(context: Mapping[str, Any]) -> str:
+    """Digest public-context content independently of any receipt convention."""
+
+    if not isinstance(context, Mapping):
+        raise SchemaError("public frontend context must be an object")
+    return _canonical_mapping_digest(context)
 
 
 def audit_public_frontend_context_receipt(
@@ -256,18 +346,19 @@ def audit_public_frontend_context_receipt(
         frontend = Frontend(frontend)
     except (TypeError, ValueError) as exc:
         raise SchemaError("public frontend context receipt has unknown frontend") from exc
-    history = PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY.get(frontend.value)
+    history = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY.get(frontend.value)
     if history is None:
         raise SchemaError(
             "public frontend context receipt has no versioned digest ledger for "
             f"{frontend.value!r}"
         )
-    expected = history.get(context_policy)
-    if expected is None:
+    policy = history.get(context_policy)
+    if policy is None:
         raise SchemaError(
             "public frontend context receipt has unknown context_policy "
             f"{context_policy!r}"
         )
+    expected = str(policy["context_sha256"])
     if context_sha256 != expected:
         raise SchemaError(
             "public frontend context receipt digest does not match its declared "
@@ -278,6 +369,39 @@ def audit_public_frontend_context_receipt(
         "frontend": frontend.value,
         "context_policy": context_policy,
         "context_sha256": context_sha256,
+        "receipt_hash_basis": str(policy["receipt_hash_basis"]),
+        "status": "current" if context_policy == active else "historical",
+    }
+
+
+def audit_public_frontend_context_payload(
+    *,
+    frontend: Frontend | str,
+    context_policy: str,
+    public_context_sha256: str,
+) -> dict[str, str]:
+    """Audit public context embedded in a stored packet, not its old receipt."""
+
+    try:
+        frontend = Frontend(frontend)
+    except (TypeError, ValueError) as exc:
+        raise SchemaError("public frontend context payload has unknown frontend") from exc
+    history = PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY.get(frontend.value)
+    if history is None or context_policy not in history:
+        raise SchemaError(
+            "public frontend context payload has unknown context_policy "
+            f"{context_policy!r}"
+        )
+    if public_context_sha256 != history[context_policy]:
+        raise SchemaError(
+            "public frontend context payload digest does not match its declared "
+            f"policy {context_policy!r}"
+        )
+    active = PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY[frontend.value]
+    return {
+        "frontend": frontend.value,
+        "context_policy": context_policy,
+        "public_context_sha256": public_context_sha256,
         "status": "current" if context_policy == active else "historical",
     }
 
@@ -291,10 +415,10 @@ def _assert_active_public_frontend_context(frontend: Frontend) -> None:
         raise SchemaError(
             f"active public frontend context policy drifted for {frontend.value!r}"
         )
-    audit_public_frontend_context_receipt(
+    audit_public_frontend_context_payload(
         frontend=frontend,
         context_policy=active,
-        context_sha256=public_frontend_context_digest(context),
+        public_context_sha256=public_frontend_context_digest(context),
     )
 
 
@@ -304,6 +428,47 @@ def _public_context_from_u_f(u_f: Mapping[str, Any]) -> dict[str, Any]:
         for key, value in u_f.items()
         if key not in _U_F_PACKET_KEYS
     }
+
+
+def build_public_frontend_context_receipt(
+    u_f: Mapping[str, Any],
+) -> dict[str, str]:
+    """Build a receipt using the hash basis frozen for its declared policy."""
+
+    if not isinstance(u_f, Mapping):
+        raise SchemaError("public frontend context receipt input must be an object")
+    try:
+        frontend = Frontend(u_f.get("frontend"))
+    except (TypeError, ValueError) as exc:
+        raise SchemaError("public frontend context receipt has unknown frontend") from exc
+    context_policy = u_f.get("context_policy")
+    if not isinstance(context_policy, str):
+        raise SchemaError("public frontend context receipt requires context_policy")
+    history = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY.get(frontend.value)
+    policy = history.get(context_policy) if history is not None else None
+    if policy is None:
+        raise SchemaError(
+            "public frontend context receipt has unknown context_policy "
+            f"{context_policy!r}"
+        )
+    public_context = _public_context_from_u_f(u_f)
+    audit_public_frontend_context_payload(
+        frontend=frontend,
+        context_policy=context_policy,
+        public_context_sha256=public_frontend_context_digest(public_context),
+    )
+    basis = str(policy["receipt_hash_basis"])
+    if basis == "full_u_f":
+        digest = _canonical_mapping_digest(u_f)
+    elif basis == "public_context":
+        digest = public_frontend_context_digest(public_context)
+    else:  # pragma: no cover - frozen ledger construction invariant
+        raise SchemaError(f"unknown Replay receipt hash basis {basis!r}")
+    return audit_public_frontend_context_receipt(
+        frontend=frontend,
+        context_policy=context_policy,
+        context_sha256=digest,
+    )
 
 def _walk(value: Any, path: str = "$" ):
     yield path, value
@@ -372,16 +537,20 @@ def _validate_source_isolated_payload(
                 "Replay payload u_f does not match the fixed public frontend "
                 f"context field(s): {modified_context}"
             )
+        if frontend.value in PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY:
+            receipt = build_public_frontend_context_receipt(u_f)
+            if receipt["status"] != "current":  # pragma: no cover
+                raise SchemaError("fresh Replay payload uses a historical context")
     else:
         context_policy = u_f.get("context_policy")
         if not isinstance(context_policy, str):
             raise SchemaError(
                 "historical Replay payload u_f requires context_policy"
             )
-        audit_public_frontend_context_receipt(
+        audit_public_frontend_context_payload(
             frontend=frontend,
             context_policy=context_policy,
-            context_sha256=public_frontend_context_digest(
+            public_context_sha256=public_frontend_context_digest(
                 _public_context_from_u_f(u_f)
             ),
         )
@@ -432,14 +601,14 @@ def audit_replay_packet_digest(
     if actual != expected_digest:
         raise SchemaError("stored Replay packet digest mismatch")
     u_f = payload["u_f"]
-    receipt = audit_public_frontend_context_receipt(
+    context_audit = audit_public_frontend_context_payload(
         frontend=str(u_f["frontend"]),
         context_policy=str(u_f["context_policy"]),
-        context_sha256=public_frontend_context_digest(
+        public_context_sha256=public_frontend_context_digest(
             _public_context_from_u_f(u_f)
         ),
     )
-    return {**receipt, "packet_sha256": actual}
+    return {**context_audit, "packet_sha256": actual}
 
 
 @dataclass(frozen=True)
@@ -654,12 +823,15 @@ def replay_packet_digest(payload: Mapping[str, Any]) -> str:
 
 __all__ = [
     "PUBLIC_FRONTEND_CONTEXT", "PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY",
-    "PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY", "REPLAY_PACKET_SCHEMA",
-    "ReplayPacket", "audit_public_frontend_context_receipt",
+    "PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY",
+    "PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY", "REPLAY_PACKET_SCHEMA",
+    "ReplayPacket", "audit_public_frontend_context_payload",
+    "audit_public_frontend_context_receipt",
     "assert_source_isolated_payload", "audit_replay_packet_digest",
     "build_masked_rewriter_prompt",
     "build_masked_rewriter_view", "build_normal_rewriter_prompt",
     "build_normal_rewriter_view", "build_rewriter_payload",
-    "build_rewriter_packet", "build_rewriter_prompt",
+    "build_public_frontend_context_receipt", "build_rewriter_packet",
+    "build_rewriter_prompt",
     "public_frontend_context_digest", "replay_packet_digest",
 ]

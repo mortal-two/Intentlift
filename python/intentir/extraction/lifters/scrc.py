@@ -733,17 +733,16 @@ Every J.signature logical_ref names only a declared J input/output t* handle or
 a symbolic dimension x*; it never names a source/local or J-body v* SSA value.
 When a runtime scalar or bound semantic constexpr is logical data used in an
 arithmetic/boolean operator or result, declare one dtype-matching rank-0 J input
-tensor with shape [] and bind that p* parameter to its t* handle. If the same
-Source scalar also bounds an index or padding predicate, reuse that same t* in
-the predicate and arithmetic dataflow; never split one Source value between x*,
-t*, null carriers, constants, or a synthesized count. Only a scalar whose every
-Source use is extent/index/domain-only and which never enters logical arithmetic
-or boolean dataflow may bind an x* dimension.
-One physical Harness p* parameter has exactly one logical_ref. Never duplicate
-or alias that physical scalar into a second p* merely to give one copy a rank-0
-t* and the other an x*. For a dual-use scalar, its one p* binds the rank-0 t*;
-any x* appearing elsewhere in tensor shapes is a distinct symbolic dimension,
-not a second binding or alternate identity for that same physical scalar.
+tensor and bind its p* to t*. If it also controls an active-domain predicate,
+reuse that same t* in the predicate and arithmetic dataflow; never split one
+Source value across t*, x*, or null. This is representable only with
+independently bound x* capacity.
+If Source requires exact value(t*) = x*, the current artifact cannot express it:
+do not submit and fail closed. TypeCheck cannot infer that Source-use equality
+from (J,C,pi). Only a scalar whose every Source use is extent/index/domain-only
+may bind x*. Each physical p* has exactly one logical_ref; never duplicate it to
+own both t* and x*. A separate capacity x* and active-length t* may coexist only
+without that equality.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
 Conversely, a runtime scalar used only for representation/address realization

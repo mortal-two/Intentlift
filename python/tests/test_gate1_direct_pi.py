@@ -37,10 +37,13 @@ from intentir.verify.gate1.pi import (
 from intentir.verify.gate1.prompt import (
     PUBLIC_FRONTEND_CONTEXT,
     PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY,
+    PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY,
     ReplayPacket,
     assert_source_isolated_payload,
+    audit_public_frontend_context_payload,
     audit_public_frontend_context_receipt,
     audit_replay_packet_digest,
+    build_public_frontend_context_receipt,
     build_normal_rewriter_prompt,
     build_masked_rewriter_view,
     build_normal_rewriter_view,
@@ -711,25 +714,44 @@ def _historical_triton_v6_payload() -> dict[str, object]:
 
 def test_public_frontend_context_history_is_read_only_and_exact() -> None:
     history = PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"]
+    receipt_history = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY["triton"]
     current_digest = public_frontend_context_digest(
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
     assert current_digest == history["public_frontend_context_v7"]
-    assert audit_public_frontend_context_receipt(
+    current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
+        "triton"
+    ]["public_frontend_context_v7"]["context_sha256"]
+    current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
         context_policy="public_frontend_context_v7",
-        context_sha256=current_digest,
-    )["status"] == "current"
-    assert audit_public_frontend_context_receipt(
+        context_sha256=current_receipt_digest,
+    )
+    assert current_receipt["status"] == "current"
+    assert current_receipt["receipt_hash_basis"] == "full_u_f"
+    historical_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
         context_policy="public_frontend_context_v6",
-        context_sha256=history["public_frontend_context_v6"],
+        context_sha256=receipt_history["public_frontend_context_v6"][
+            "context_sha256"
+        ],
+    )
+    assert historical_receipt["status"] == "historical"
+    assert historical_receipt["receipt_hash_basis"] == "full_u_f"
+    assert audit_public_frontend_context_payload(
+        frontend="triton",
+        context_policy="public_frontend_context_v6",
+        public_context_sha256=history["public_frontend_context_v6"],
     )["status"] == "historical"
     with pytest.raises(TypeError):
         history["public_frontend_context_v7"] = "mutated"  # type: ignore[index]
     with pytest.raises(TypeError):
         PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"] = {}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        receipt_history["public_frontend_context_v6"][
+            "receipt_hash_basis"
+        ] = "public_context"  # type: ignore[index]
     with pytest.raises(SchemaError, match="unknown context_policy"):
         audit_public_frontend_context_receipt(
             frontend="triton",
@@ -740,7 +762,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         audit_public_frontend_context_receipt(
             frontend="triton",
             context_policy="public_frontend_context_v7",
-            context_sha256="0" * 64,
+            context_sha256=current_digest,
+        )
+    with pytest.raises(SchemaError, match="digest does not match"):
+        audit_public_frontend_context_receipt(
+            frontend="triton",
+            context_policy="public_frontend_context_v6",
+            context_sha256=history["public_frontend_context_v6"],
         )
 
 
@@ -768,6 +796,11 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         expected_digest=stored_digest,
     )
     assert receipt["status"] == "historical"
+    assert receipt["public_context_sha256"] == (
+        PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"][
+            "public_frontend_context_v6"
+        ]
+    )
     assert receipt["packet_sha256"] == stored_digest
     with pytest.raises(SchemaError, match="fixed public frontend context"):
         assert_source_isolated_payload(payload)
@@ -778,6 +811,64 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
     ] == "public_frontend_context_v7"
+
+
+def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
+    u_f = _historical_triton_v6_payload()["u_f"]
+    receipt = build_public_frontend_context_receipt(u_f)
+
+    assert receipt == {
+        "frontend": "triton",
+        "context_policy": "public_frontend_context_v6",
+        "context_sha256": (
+            "33f1d58a4c1e762fae6b8ff27c100adfef21bcc1d8a149409f85f8b4c7a281ec"
+        ),
+        "receipt_hash_basis": "full_u_f",
+        "status": "historical",
+    }
+    assert receipt["context_sha256"] != (
+        PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"][
+            "public_frontend_context_v6"
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("frontend", "expected_digest"),
+    [
+        (
+            Frontend.TRITON,
+            "91eb3db3fb27a166c2fecb3e02c05ac8131be3b93fa7576272814d3050e388c6",
+        ),
+        (
+            Frontend.CUTE,
+            "13c3f240eb4bd19bfbbc6982e3058ebb4ecc37c139a1e483cff0cff6a811bb37",
+        ),
+        (
+            Frontend.TILELANG,
+            "b54d1d1e65f5ad35a39b47aa43b7bee9eb68e4067c82d32e1b7739bc99c2660e",
+        ),
+        (
+            Frontend.CUDA,
+            "83d5c95bd2c9bc28329e42987c4eb9628395990a5b2bb8c4d07aad81fb13a530",
+        ),
+    ],
+)
+def test_existing_frontend_receipts_keep_the_full_u_f_hash_basis(
+    frontend: Frontend,
+    expected_digest: str,
+) -> None:
+    u_f = build_normal_rewriter_view(
+        make_reduce_artifact(), frontend=frontend
+    )["u_f"]
+    independently_hashed = hashlib.sha256(
+        json.dumps(u_f, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt = build_public_frontend_context_receipt(u_f)
+
+    assert independently_hashed == expected_digest
+    assert receipt["context_sha256"] == expected_digest
+    assert receipt["receipt_hash_basis"] == "full_u_f"
 
 
 def test_one_physical_scalar_cannot_bind_rank0_value_and_dimension() -> None:
@@ -1195,9 +1286,12 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "use it in every affected J tensor shape" in instructions
     assert "not SSA values" in instructions
     assert "never list x* in portable scope definitions/captures" in instructions
-    assert "One physical Harness p* parameter has exactly one logical_ref" in instructions
-    assert "Never duplicate or alias that physical scalar" in instructions
-    assert "not a second binding or alternate identity" in instructions
+    assert "Each physical p* has exactly one logical_ref" in instructions
+    assert "never duplicate it to own both t* and x*" in instructions
+    assert "current artifact cannot express it" in instructions
+    assert "value(t*) = x*" in instructions
+    assert "do not submit and fail closed" in instructions
+    assert "TypeCheck cannot infer that Source-use equality" in instructions
 
 
 def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:

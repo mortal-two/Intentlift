@@ -15,8 +15,8 @@ from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
 from .prompt import (
+    build_public_frontend_context_receipt,
     build_rewriter_prompt,
-    public_frontend_context_digest,
     replay_packet_digest,
 )
 from .tilelang_codegen import extract_tilelang_module
@@ -143,16 +143,10 @@ def _context_receipt(raw: Mapping[str, Any], context: Mapping[str, Any]) -> dict
                         "id": item.get("id") if isinstance(item.get("id"), str) else "",
                     }
                 )
-    public_context = {
-        key: value
-        for key, value in context.items()
-        if key not in {"protocol", "frontend", "replay_function"}
-    }
+    receipt = build_public_frontend_context_receipt(context)
     return {
         "replay_input_protocol": str(context.get("protocol", "")),
-        "context_policy": str(context.get("context_policy", "")),
-        "frontend": str(context.get("frontend", "")),
-        "context_sha256": public_frontend_context_digest(public_context),
+        **receipt,
         "retrieval_trace": trace,
     }
 

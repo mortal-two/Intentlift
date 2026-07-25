@@ -133,7 +133,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
         files["knowledge/intent_ops.md"]
     )
     assert "Do not page through the raw schema" in files["README.md"]
-    assert "dual-use rank-0 scalar" in files["README.md"]
+    assert "active-length rank-0 scalar" in files["README.md"]
+    assert "separately bound capacity dimension" in files["README.md"]
     assert "explicit sum-then-div stages" in files["README.md"]
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
@@ -237,7 +238,8 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
     preflight = " ".join(files["knowledge/preflight.md"].split())
     assert "exactly one `logical_ref`" in preflight
     assert "never duplicate or" in preflight
-    assert "not another binding of that physical scalar" in preflight
+    assert "current artifact cannot express `value(t*) = x*`" in preflight
+    assert "do not submit and fail closed" in preflight
     assert "t1" in payload["j"]["boundary"]["accesses"][0]["predicate"]
     assert payload["j"]["intent"]["intent_function"]["body"][0]["attrs"][
         "fn"
@@ -270,6 +272,25 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
 
     assert result["returncode"] == 0, result
     assert "static schema: PASS" in result["output"]
+
+
+def test_value_dimension_equality_is_lift_fail_closed_not_typecheck_inference(
+) -> None:
+    files = _real_lift_input_files()
+    payload = json.loads(files["knowledge/minimal_example.json"])
+    artifact = Gate1Artifact.from_json(payload)
+    contract = " ".join(files["knowledge/lift_contract.md"].split())
+    preflight = " ".join(files["knowledge/preflight.md"].split())
+
+    # This artifact validly denotes independent active-length and capacity
+    # handles.  The same bytes cannot also prove an unencoded Source equality.
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+    assert payload["j"]["signature"]["parameters"][2]["logical_ref"] == "t1"
+    assert payload["j"]["signature"]["parameters"][3]["logical_ref"] == "x0"
+    assert "value(t*) = x*" in contract
+    assert "do not submit and fail closed" in contract
+    assert "TypeCheck cannot infer that Source-use equality" in contract
+    assert "current artifact cannot express `value(t*) = x*`" in preflight
 
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
