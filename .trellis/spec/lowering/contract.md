@@ -27,16 +27,19 @@ verdict，也不能自行接受未通过上游协议的 response。
 response JSON -> Decode/Elaborate -> J
                                     |
                                     v
-                               Intent MLIR
-                                |       |
-                                |       `-> Attach_C(M0,C,t) -> target search/lowering
-                                `-> scalar CPU RefEval(J)
+                     canonical J + functional projection
+                         |                         |
+                         |                         `-> RefEval(J): scalar Intent MLIR
+                         |                                           or closed structured reference
+                         `-> Emit_v(J) -> Intent MLIR
+                                      -> Attach_C(M0,C,t) -> target search/lowering
 ```
 
 Decode/Elaborate 将 access index、predicate/domain ContractExpr、唯一可推导 result type 与恒等 output
 binding 变成 typed canonical form。RefEval 和 production backend 均不得重新读取或各自解释响应中的
-字符串；`J -> Intent MLIR` 只有一个共享入口。未接受的响应 JSON 不进入 lowering，解析缓存也
-不是另一份 J，不增加 artifact、Agent 或 Gate。
+字符串；production 的 `J -> Intent MLIR` 只有一个共享入口，RefEval 的 closed structured path 也只
+读取同一个 canonical J 与同一 functional projection。未接受的响应 JSON 不进入 lowering，解析
+缓存或 structured execution state 都不是另一份 J，不增加 artifact、Agent 或 Gate。
 
 ## 共享 Functional Boundary Projection
 
@@ -67,9 +70,15 @@ functional、full-logical-domain mask erasure，以及由每个 reduction contra
 functional graph。任何
 affine-as-dense、predicate/domain mismatch、effect mismatch、alias/inout 或未实现的 mutable relation
 都在进入 codegen 前 fail closed。π 专用的 `realization_authorizations` 不属于该 functional
-projection。RefEval 与 CUDA analyzer 使用同一 protocol/core output structure；v10 RefEval record
+projection。RefEval 与 CUDA analyzer 使用同一 protocol/core output structure；v11 RefEval record
 可以额外含 invocation-local runtime-proof subreceipt，production record 必须为空。二者不能各自
 保留第二套 wire parser 或 B-consumption 判定。
+
+当前 fresh artifact 的 typed relations 同样进入这一唯一消费边界：v4 的
+`value_dimension_relations` 与 `consumer_extensions`、v5 的 `access_guard_relations` 全部由 Lift LLM
+显式写入 J。shared core 只能验证并投影已声明 relation；不得从相等 runtime value、reducer/fill、
+Source、C、π 或 target pattern 补造 relation。对任一 active relation，consumer 必须产生明确 receipt
+或返回 unsupported/error，不能在发射 A 时静默丢弃 B。
 
 投影成功的准确含义只是：当前 logical Intent MLIR 可以完整代表这些 B relation；它不自动证明任意
 目标物理调度安全。若 target lowerer后来把精确 logical domain 扩张为 padded launch，必须在自己的
@@ -84,7 +93,7 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
 - 不使用 case-specific tolerance、Source/Replay 输出或 C value 决定结果；
 - 输出只交给外部比较政策 Q 构造的 Gate2 comparator 裁决；Q 不进入 RefEval。
 
-当前 scalar RefEval 对显式内存边界实现三个保守投影：
+当前 RefEval 对显式内存边界与 typed J graph 实现以下保守投影：
 
 - 每个 access 满足 canonical fill 合同：`fill_value != null` 蕴含它是带非空 predicate 的 load；
   无条件 access 的 predicate/fill 均为空。orphan fill 是非法 J，必须由 TypeCheck 及消费者 fail closed，
@@ -102,7 +111,7 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
   fill，每个 output 独立 store 一次，且 observable store producer 的 elaborated result type 与 output
   完全一致。该类型可以由 closed op signature 唯一物化，不要求 Lift 重复填写。rank-0 logical
   scalar/guard 仍可构成合法 J；value-free production projector 对 guard-bearing access predicate
-  继续显式 unsupported。RefEval v10 只在当前 invocation 中按 J predicate 的真实极性、closed axis
+  继续显式 unsupported。RefEval v11 继承 v10，只在当前 invocation 中按 J predicate 的真实极性、closed axis
   与 dimension extent 证明其全域恒真后才可擦除；operand membership 不能替代该 proof；
 - `logical_domain_reduction_padding_v2` 不再把合法图限制为单 input、单 output、唯一单轴 `sum`。
   每个带 physical predicate 的 direct access 必须为自身每个非常量 `0` 的 axis 显式声明完整零起点
@@ -110,11 +119,12 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
   predicated load 必须显式给出 fill，且 access/effect/output relation 仍完整唯一。被 reduction 消去的
   axis 不要求出现在降秩 output store 上；仍存在于 output 的 masked axis 必须继续由 store predicate
   保护；
-- padded graph 中每个 logical `reduce` 必须恰有一个 `ReductionBoundary`。`identity` 若存在必须是该
-  reducer 的代数单位元，`masked_contribution` 必须显式存在且为单位元；当前闭合集合包括
+- padded graph 中每个 logical `reduce` 必须恰有一个 `ReductionBoundary`。legacy v1-v3 artifact 的
+  `identity` 若存在必须是该 reducer 的代数单位元，`masked_contribution` 必须显式存在且为单位元；
+  v4+ 的逐 consumer authority 改由下述 `consumer_extensions` 承担。当前 legacy 闭合集合包括
   `sum/prod/max/min/any/all`，其中 max/min 接收封闭的 JSON-safe infinity sentinel。若 J-only
   access/dataflow 能证明被 mask 的 axis 最终由 `mean` 消去，则因缺少 logical count contract 继续
-  unsupported。`masked_contribution` 按 J 的既有定义记录经过任意普通
+  unsupported。legacy `masked_contribution` 按 J 的既有定义记录经过任意普通
   pointwise/broadcast dataflow 后到达该 reduction 的有效 masked contribution，因此 projector 不从
   Source、C、hidden input 或 Kernel 公式重新推导它；
 - 每个 pointwise operand 必须按 closed value type 满足普通 NumPy broadcast，或消费 J 中显式的
@@ -125,6 +135,32 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
   consumer-unsupported，不能静默停止传播后让下游 `mean` 或 output 被当成无 mask；
 - 不能满足上述 full-domain/access/reduction/broadcast relation 的 incomplete padding、update padding、
   affine/gathered access、alias/inout、一般 mutable storage与 padded mean 仍显式 unsupported。
+
+artifact.v4/v5 的新增 closed profile 继续遵守同一规则：
+
+- `value_dimension_relations` 在 invocation 时检查已声明 integral rank-0 J value 与 symbolic dimension
+  valuation 精确相等；不从 valuation coincidence 反向生成 relation；
+- `consumer_extensions` 是 `sum|max|min` reduce/scan 的逐 consumer 域外 typed two-sided identity，
+  必须闭合 access provenance、operand ordinal、local tile axis 和 dtype。artifact.v4+ 不再使用 legacy
+  `ReductionBoundary.masked_contribution` 作为另一份 authority；
+- 每个 `access_guard_relations` 必须被消费或显式 unsupported。当前 RefEval 只执行 Layer A 已经
+  显式写出的 guarded-store `select`：relation 提供该 select guard 的唯一 broadcast axes 和 audit
+  receipt，不做隐式 merge。目标必须是精确 input/output/inout tensor；loop carry 的 init/current/next
+  或 non-loop return/output mapping 必须已经由 J/TypeCheck 闭合。guarded load/update 的 access-local
+  pre-execution materialization 尚未实现，当前 RefEval 明确 unsupported；
+- 多个无 predicate point store 可以形成 `unit_width_direct_store_partition`，但只在它们引用同一个
+  producer 与完整 observable typed result、沿一个静态 axis 用常量 unit slices 无重叠无缺口覆盖
+  全部 extent、其余 axes 完整一致时成立。multi-axis、symbolic、wide、predicated 或不同 producer
+  不会被猜测成 partition；
+- 当 common scalar Intent-to-Linalg 当前不能消去一个 typed contraction 时，Gate2 可以整图选择 closed
+  structured J-only reference。该 executor 只接受 closed op table 和 binary einsum contract，核对
+  operand/result rank、label extent、declared shape/dtype，并按 declared result/accumulator dtype 执行；
+  不支持或不闭合的图 fail closed，不能在图中途 fallback。
+
+最后两项是通用 **Gate2 reference consumer capability**：direct-store receipt 证明 RefEval 可以恢复
+完整 logical output，mixed contraction path 使当前 J denotation 可执行。它们都不规定 production
+CUDA 应使用 point stores、NumPy einsum 或某个 contraction algorithm，也不构成 pass admission、
+target permission 或 kernel-specific lowering recipe。
 
 这不是忽略 access/effect 后直接运行 A：mask erasure 必须先证明所有被擦除 lane 位于 J logical
 domain 外、没有未保护的可观察写入，且每个 reduction 的 masked contribution 为显式中性元素；
@@ -138,17 +174,23 @@ seed 上传播 padded provenance：predicated direct load 不含 logical guard�
 pointwise/broadcast 路径被 `mean` 消去时才映射为 `padded_mean_count_unproven`。该必要条件与
 consumer capability 仍分离：guard-bearing 与 cross-axis/general predicate 不成为 TypeCheck padding
 seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 guard/cross-axis 访问或 masked
-provenance 进入未知 op 均显式 consumer-unsupported。v10 只增加上述 invocation-local、可证明全真的
+provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v3`，scalar RefEval 为
-`j_scalar_cpu_mlir_v10`。v10 完整继承 v9 的唯一 node-less logical-input load 与通用 multi-reduction
-padding closure，只新增当前 Gate2 invocation 的 runtime predicate tautology proof。v3 projection 中
-对应的 invocation-local proof subreceipt 只含
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v9`，scalar RefEval 为
+`j_scalar_cpu_mlir_v11`，closed structured reference 为
+`intentir.j-structured-cpu-reference.v3`。v11/v9 完整继承 v10/v3 的唯一 node-less logical-input load、
+通用 multi-reduction padding closure 与当前 Gate2 invocation 的 runtime predicate tautology proof，
+并增加上述 v4/v5 relations、direct-store partition 与 closed typed contraction consumer。runtime
+predicate 对应的 invocation-local proof subreceipt 仍只含
 protocol、access id、J predicate digest、logical input refs 与 domain axes，不含 raw runtime value 或
 value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2
 receipt、functional-boundary v1/v2 与
-`logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v10/v3 追认或重判。
+`logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v11/v9 追认或重判。
+
+修复上述 RefEval capability 后，可以对 parent 中 `replay_closed` 的精确 artifact/Replay 做零模型调用
+Gate2-only recheck；它写独立 evidence 且 `changes_parent_verdict=false`。这只证明当前 reference
+consumer 如何执行同一个 J，不更新旧 receipt，也不提供 production legality 或 lowering recipe。
 
 CPU host pipeline 另在共享 `J -> Intent MLIR -> Intent-to-Linalg` 之后调度
 `expand-rsqrt-for-libm`，只将 `math.rsqrt(x)` 展开为 `1 / math.sqrt(x)`，以使用标准 host libm
@@ -167,6 +209,9 @@ sqrt/sqrtf ABI。这是 CPU-only compatibility pass；共享 Intent lowering 与
   依靠 role-first、π 或 Source 猜测作用点；
 - alias/effect、logical update 与当前 `exact/tolerance/one_of_updates` obligation 中所有影响 target
   denotation、safety 或 ABI 的 backend-relevant B facts 必须实际实现或拒绝；
+- 当前 production J+C 路径即使能取得 shared `access_guard_relations` receipt，也没有通用
+  access-local guard materializer，必须以 `access_guard_materialization_not_implemented` fail closed。
+  Layer A 已有 `select` 只足以让 RefEval 执行 value semantics，不授权 production 擦除该 B relation；
 - `realization_authorizations` 的既有 consumer 是 SCRC TypeCheck/π；backend 只识别其 SCRC-only
   身份，不把它当 target permission，也不因其存在自动 unsupported；
 - production backend 不读取 π、Gate/Q、Source、kernel name 或 per-kernel RuleCard；

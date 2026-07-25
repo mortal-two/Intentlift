@@ -12,6 +12,13 @@ J 拥有 logical values/state relation、domain、predicate、fill、logical ind
 result relation 以及 logical signature。signature 中的 input、output、runtime scalar、destination、
 dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
+当前 fresh-run wire 是 `intentir.scrc.artifact.v5`，固定 Decode 是
+`intentir.scrc.decode.v6`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
+引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
+J-owned `boundary.access_guard_relations`。旧 v1-v4 wire 仍按各自字段集合读取，不通过附加空数组或
+新 relation 静默升级。
+
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
 `None`，没有 logical denotation。Lift 必须显式生成这个 signature handle，并且不得把它作为 π
 instance 的 `semantic_ref`、realization authorization 的 `subject_ref`，或 refinement 的 carrier；
@@ -71,6 +78,75 @@ cross-axis/general predicate、domain/extent 不闭合、mask 位于未消去轴
 TypeCheck；guard/cross-axis/unknown-op 由 functional consumer 明确 unsupported。checker 不读取
 Source/C/π，也不把 mean 自动重写为 sum/div。
 
+### `artifact.v4` 的 value/dimension 与 consumer-context relation
+
+当同一个 Source scalar 同时是 integral rank-0 logical data 和 symbolic shape extent 时，Lift 必须
+分别保留 `t*` 与 `x*`，并显式声明：
+
+```json
+{"value_ref": "t0", "dimension_ref": "x0", "relation": "eq"}
+```
+
+`value_ref` 必须是 integral rank-0 J input，`dimension_ref` 必须是 J shape 中已声明的 `x*`，当前
+relation 只允许 `eq`。TypeCheck、CandidateCheck、Replay、RefEval 与 production projection 只能
+检查或消费这条已声明等式；不得因两者当前 valuation、dtype、位置或 shape 恰好相同而自动建立
+relation。一个 extent-only scalar 仍直接绑定 `x*`，不需要伪造 rank-0 data value。
+
+`boundary.consumer_extensions` 是 predicated load 到一个 `sum|max|min` reduce/scan operand 的
+J-owned consumer-context relation：
+
+```json
+{
+  "consumer_ref": "n4",
+  "operand_index": 0,
+  "access_ref": "a0",
+  "tile_axis": 0,
+  "outside": {"dtype": "f32", "value": 0.0},
+  "identity_law": "two_sided"
+}
+```
+
+它声明该特定 consumer 在被引用 access 的 predicate 域外看到的 typed two-sided identity；predicate
+仍只由该 `BoundaryAccess` 拥有，不能被 fixed code 提升成 Layer-A SSA。TypeCheck 必须检查 consumer
+种类与 operand ordinal、access provenance、local tile axis、dtype 和 identity law，并对需要而缺失、
+重复或矛盾的 relation fail closed。`artifact.v4+` 中它是这一 consumer-specific 域外贡献的唯一
+authority；旧 `ReductionBoundary.masked_contribution` 不得与它并存。
+
+### `artifact.v5` 的 access-local computed guard relation
+
+computed Layer-A boolean guard 与 boundary access 的关系由 Lift 显式声明：
+
+```json
+{
+  "access_ref": "a2",
+  "value_ref": "v7",
+  "axes": [0],
+  "polarity": "positive"
+}
+```
+
+`value_ref` 必须是支配该 access 的 typed `i1` Layer-A declaration；`axes` 是严格递增且唯一的 target
+broadcast axis ordinals；`polarity` 只取 `positive|negative`。一个 access 当前最多一条 relation。
+relation-bound guard 不得同时复制进 access predicate；对于同一 `select` guard，
+`access_guard_relations.axes` 是唯一 broadcast authority，`boundary.broadcasts` 不能重复声明，即使
+轴完全相同也拒绝。
+
+该 relation 不拥有 merge value，也不授权 fixed code 插入控制流。relation-guarded store 必须由
+Layer A 自己显式写出三 operand `select`，且目标 tensor 同时是 J input/output，并由唯一
+`mode=inout` signature parameter 绑定；TypeCheck 永不把 output 自动升级为 inout。非 loop store 的
+精确 pre-state 是该 access tensor 本身，函数 return 与唯一 `output_mapping` 必须指向 select result。
+loop store 的 `carry.init_value` 必须精确等于该 access tensor，inactive branch 必须是当前
+`body_argument`，select result 必须精确成为 `carry.next_value`。`positive` 表示
+`select(guard,candidate,current)`，`negative` 表示 `select(guard,current,candidate)`；不能仅凭相同
+dtype/shape 接受另一个 input 充当 pre-state。guarded load 还必须显式声明 fill；v1 relation 对
+guarded update 没有闭合 merge contract，因而 TypeCheck fail closed。
+
+Gate2 functional projection 对每一条 access guard 必须产生明确 receipt 或返回 consumer
+unsupported，不能忽略 relation 后只运行 A。当前 RefEval 支持上述显式-select guarded store；guarded
+load/update 的 access-local pre-execution materialization 尚未实现。production J+C 当前对任何
+access guard 以 `access_guard_materialization_not_implemented` fail closed，即使 shared projection
+已经能检查 relation，也不能把 RefEval 能力当成 target permission。
+
 ## J 的构造与标准化
 
 模型先返回尚未接受的 response JSON；固定 decoder/elaborator 成功后才构造出 J：
@@ -111,7 +187,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v3` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v5` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -228,7 +304,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此当前 `artifact.v3` 要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v5` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -328,16 +404,21 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 线索，也不证明 J 或 realization 的行为正确。
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
-typing 与显式 non-trailing broadcast 合同已由 `typecheck.v4` 建立；canonical reduce/
-contraction fail-early 与 absent `opaque(mode=value,dtype=none)` semantic-use rejection 形成 v5；
-functional logical-domain closure 的 source-free fail-early 形成 v6；rank-0 logical-input liveness 与
-representation-only scalar 合同并入 `typecheck.v7`；物理迭代基底 relation 使 fresh-run wire/decode
-合同窄升为 `artifact.v3 / decode.v3`。`candidate-check.v1` 的 closed envelope 本来就
+typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立；canonical reduce/
+contraction fail-early、functional logical-domain closure、rank-0 logical-input liveness 与
+representation-only scalar 合同也保持原有版本化历史。物理迭代基底 relation 曾使 fresh-run
+wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
+`value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
+`access_guard_relations`。当前 active 合同为
+`artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`；v14 对上述 v4/v5 relation 执行
+source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式
+select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-check.v1` 的 closed envelope
+本来就
 允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经
 判定出的独立机械错误按稳定顺序返回，统一最多 20 项且每段文本最多 2048 字符；checker 不为继续
 检查而修补 artifact，也不在前置对象解析失败时猜测 dependent error。`candidate-check.v1` 共享
 正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
-也不能携带 v2 引入的 C attachment。旧 receipt/证书不由 v3 静默重写或追认；已闭合的 DYT 与 SwiGLU
-保留其原版本证据，无需仅因 wire 升级重跑，也不得被表述成 fresh v3 认证。
+也不能携带 v2 引入的 C attachment；v1-v3 禁止 v4 字段，v1-v4 禁止 v5 access guard。旧
+receipt/证书不由新 wire 静默重写、追认或刷新。

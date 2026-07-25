@@ -386,7 +386,8 @@ tile_ordinal: lower=0, upper=ceil_div(Trip(J.loop),Tile), step=1
 ```
 
 两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。旧 π 没有该
-区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。当前 `artifact.v3` 因此要求：
+区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。`artifact.v3` 因此引入、当前
+`artifact.v5` 继续要求：
 
 ```text
 pi.iterations[*] = {
@@ -420,10 +421,31 @@ region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 han
 该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
 `pi.iterations` 限制或选择自己的 `Impl(J)` lowering/search。
 
-Linear 剩余的 pointer-carry topology 是否需要新的 temporal relation 仍属未来设计；若后续独立审查
-确认不可表达，它只能进入未来 `artifact.v4/decode.v4` 并在新的 fresh session 生效。当前
-`artifact.v3/decode.v3` 仍只含本节已实现的 `pi.iterations`，既有 wire/receipt 不变；本文此处不定义
-未来 relation schema。
+后续落地的 wire 仍遵守这条版本纪律：artifact.v4 增加 J-owned
+`value_dimension_relations`、`boundary.consumer_extensions` 等 typed relations，artifact.v5 增加
+J-owned `boundary.access_guard_relations`；当前 decode 为 v6。它们没有进入 π，也没有让 π 获得
+value/dimension、consumer context 或 access-control 语义。旧 v1-v4 wire/receipt 仍按原字段集合读取，
+不由当前 parser 附加空数组、刷新或追认。
+
+### 4.3.2 Consumer context 与 access guard 仍属于 J
+
+artifact.v4 的 `value_dimension_relations` 由 Lift 显式声明 integral rank-0 logical value 与 symbolic
+dimension 的 `eq`；`consumer_extensions` 由 Lift 显式声明某个 predicate-bearing load 到某个
+`sum|max|min` reduce/scan operand 的 typed two-sided outside identity。artifact.v5 的
+`access_guard_relations` 则把一个 boundary access 绑定到一个支配它的 Layer-A `i1` guard，并声明
+唯一 broadcast axes 与 polarity。这些都是 J/B fact，不是 π topology，也不能由 π route、C slot 或
+当前 runtime valuation 补齐。
+
+尤其 guarded store 的 merge 必须已经在 A 中显式写为三 operand `select`：目标 tensor 精确同时为
+J input/output，并由唯一 `mode=inout` parameter 绑定；loop 的 `init_value/current/next_value` 或
+non-loop 的 tensor pre-state/return/output mapping 必须精确闭合。relation axes 是同一 select guard
+的唯一 authority，不能由 `boundary.broadcasts` 或 π 重复。TypeCheck/CandidateCheck 只拒绝、诊断，
+不插入 select、不升级 inout、不选择 axes/polarity，也不接受仅同 dtype/shape 的替代 pre-state。
+
+Replay 从 J 读取这些 relation，从 π 读取 realization；Gate2 RefEval 对每个 relation 必须消费或明确
+unsupported。当前 RefEval 可执行 A 中已有 select 的 guarded store，但 guarded load/update 的
+access-local pre-execution materialization 仍 unsupported。production backend 仍只读 J+C，且当前对
+任何 access guard 显式 fail closed；它不得借 π 或 RefEval receipt 补 target materialization。
 
 ### 4.4 对 semantic labels 参数化
 
@@ -770,13 +792,12 @@ Replay LLM 应遵守以下过程合同：
 13. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v6` 与 `intentir.lift-knowledge.v15`；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v6` 与 `intentir.lift-knowledge.v17`；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v3 / intentir.scrc.decode.v3`；v3 相对 v2 只把
-上述 `pi.iterations` 变为 required closed field。v1/v2 历史 artifact 保持原始序列化与 digest，禁止
-静默附加空数组或重标 v3。DYT 与 SwiGLU 的既有闭合证据继续按原 receipt 成立，不因版本升级重跑，
-也不得被描述为 fresh v3 证书。
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v5 / intentir.scrc.decode.v6`；v3 历史上把上述
+`pi.iterations` 变为 required closed field，v4/v5 再增加前述 J-owned typed relations。v1-v4 历史
+artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
 
@@ -1151,10 +1172,12 @@ reserve；receipt 分别记录 `shared_budget`/`submission_reserve` 以及每种
 evaluation 的 20 条 `rule_code/path`；observed value、候选 patch、Source/Gate/hidden/sibling 信息均
 不得携带。该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。
 
-numeric-cast 与 result-relation compatibility 的新增检查必须随下一 TypeCheck protocol version
-生效并写入 receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
+numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
+TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
+活动 fresh-run 使用 `typecheck.v14`。v14 完整继承下述 v7 及其前序合同，并检查 authored
+value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造
+artifact。历史 v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A value typing total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
 才能被消费。v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行
 canonical fail-early，拒绝别名、缺失/非法 canonical attrs 及可机械判定的 axis/rank/shape
@@ -1168,7 +1191,7 @@ v7 又只对 rank-0 signature logical input 增加 source-free liveness：绑定
 和合法 boundary-only 路径保留，dead node 或 π route 不冒充 logical contribution。仅用于
 representation/address 的 runtime scalar 必须显式取 `logical_ref=null`，不创建 J input、不进入 J
 semantics，但其 p* carrier 可以由 π realization 引用。checker 不从名称/位置推断，不自动解绑或
-修补；一般 tensor liveness 也不在 v7 中臆测。对应 Lift knowledge 为 v15。上述拒绝不会给 π、CandidateCheck 或
+修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v17 继承。上述拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。
 
 上述 null-carrier 只允许 runtime scalar。`bound_constexpr_values` 必须是逻辑语义 constexpr：logical
@@ -1187,8 +1210,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v10`，共享
-`intentir.j-functional-boundary.v3`：v10 继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v11`，共享
+`intentir.j-functional-boundary.v9`：它们继承 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1207,6 +1230,13 @@ projection 能力边界，不由 π 补证，也不扩大 TypeCheck legality。C
 libm compatibility pass 位于共享 Intent-to-Linalg 之后，不改变共享/GPU lowering。
 既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8/v9`、functional-boundary v1/v2 receipt 与
 Softmax/RMS verdict 均不追认。
+
+v11/v9 还逐项消费 v4/v5 J relation；可证明同 producer/observable value、单静态轴、常量
+unit-width、无 predicate、无重叠无缺口的 direct-store partition，并通过 closed structured J-only
+reference 执行 common scalar lowering 尚不支持的 mixed typed binary contraction。两者都只扩展
+Gate2 reference consumer，不是 production recipe，也不让 π 获得 store/contraction 语义。修复这类
+consumer 后可对 exact Gate1-closed artifact/Replay 做零模型调用的 Gate2-only recheck；结果写独立
+evidence 且 `changes_parent_verdict=false`，不刷新旧 receipt。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

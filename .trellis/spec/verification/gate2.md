@@ -18,9 +18,12 @@ Source 与 Replay 使用同一个 C 对象和实际 valuation `c0`。该证书�
 Source/Replay。所有 output、inout、alias/writeback 与声明的 observable effect 都必须裁决。
 
 Gate2 不直接消费未接受的 Lift response。固定 Decode/Elaborate 成功后只产生一个 typed J；
-RefEval 与 production lowering 使用同一个 `J -> Intent MLIR` 入口。于是 `k1,k0` 与
-`[k1,k0]`、可唯一推导的 result type、冗余 identity output mapping 不会由 RefEval 再次解释或拒绝；
-general affine、缺 predicate/effect 或类型冲突仍在准确边界 fail closed。
+RefEval 与 production lowering 使用同一个 canonical-J elaboration 与 functional-boundary core；
+production 走共享 `J -> Intent MLIR` materialization，RefEval 则可在 scalar Intent-MLIR 与 closed
+structured J-only reference 之间按全局 capability 选择。于是 `k1,k0` 与 `[k1,k0]`、可唯一推导的
+result type、冗余 identity output mapping 不会由消费者再次私自解释；general affine、缺
+predicate/effect、类型冲突或不在 closed reference op table 内的图仍在准确边界 fail closed。两条
+reference 执行路径都不是 production target lowering，也不产生第二份 J。
 
 RefEval 与 CUDA production analyzer 共享同一个 deterministic functional-boundary core，但入口权限
 不同：production 只可调用 value-free 的 `ProjectFunctionalBoundary(J)`；当前 Gate2 winner 的 RefEval
@@ -108,11 +111,50 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v10`，shared functional projection receipt 为
-`intentir.j-functional-boundary.v3`。v10 完整继承 v9 的 source-neutral multi-reduction functional
-closure；v3 只新增 invocation-local runtime predicate tautology profile。旧 v7/v8/v9 与
-functional-boundary v1/v2 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由
-v10/v3 追认或覆盖。
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v11`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v9`，structured reference 为
+`intentir.j-structured-cpu-reference.v3`。这些版本在 v10/v3 的 source-neutral multi-reduction 与
+invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed relations、闭合 direct-store
+partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
+旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
+consumer 追认、覆盖或静默刷新。
+
+当前 consumer 对新 relation 的权限是“逐项消费或显式 unsupported”，不是忽略：
+
+- 对 `J.value_dimension_relations`，RefEval 在 invocation 上同时检查 integral rank-0 logical value 与
+  closed symbolic dimension valuation 的已声明 `eq`；缺值、冲突或不可表示均在执行前拒绝。relation
+  只能来自 J，consumer 不从相等的 runtime 数字反推 relation；
+- 对 `J.boundary.consumer_extensions`，projection 检查 relation 精确锚定一个 predicate-bearing load
+  到一个 `sum|max|min` reduce/scan operand，验证 provenance、local tile axis、operand dtype 与
+  two-sided identity，再按该特定 consumer 的域外贡献执行。它不把 access predicate 提升为 A value，
+  也不从 reducer/fill 猜缺失 relation；
+- 对 `J.boundary.access_guard_relations`，projection 必须消费每一项并写出
+  `authored_access_guard_relation` receipt，或在执行前返回 unsupported/error。当前 RefEval 支持的
+  guarded store 已经由 Layer A 显式 `select` 完成 merge：目标是精确 inout tensor，loop/non-loop
+  pre-state、observable result、polarity 和唯一 broadcast axes 均由 J/TypeCheck 闭合；projection 只
+  将 relation 的 axes 提供给这个既有 select condition 并记录 receipt，不执行隐式 post-merge。
+  guarded load/update 需要尚未实现的 access-local pre-execution materialization，当前显式
+  unsupported；TypeCheck 另要求 guarded load 有 fill，并拒绝当前无 merge contract 的 guarded update。
+
+production J+C 当前即使能读取 shared access-guard receipt，也没有通用 target materializer，必须以
+`access_guard_materialization_not_implemented` fail closed；不能把 RefEval 对显式 select 的执行能力
+当成擦除 B relation 的许可。
+
+`intentir.j-functional-boundary.v9` 还接受一个窄、通用的 direct-store partition：多个 store 必须都
+无 predicate、引用同一个 producer 与同一个完整 observable typed result，只沿一个静态 output axis
+使用常量、无重复且无缺口的 unit-width point slices 覆盖全部 extent；非 partition axes 必须完整
+覆盖且一致。成功时产生 `unit_width_direct_store_partition` receipt。多轴、symbolic extent、wide、
+predicated、不同 producer、缺口或重叠不会被猜测修复，而是 contradiction 或 consumer unsupported。
+该证明不检查 Kernel 名或 producer opcode，是 Gate2 对完整 logical output 的通用消费能力；receipt
+不是 CUDA/production 的 store lowering recipe，也不授权 target 复制这一物理写法。
+
+当 J 含 `loop|scan|tile`，或存在 common scalar Intent-to-Linalg 当前不能消去的 typed contraction 时，
+RefEval 整图选择 closed structured J-only executor，不在图中途 fallback。mixed typed contraction 只
+接受两个 operand、唯一 typed result 和 closed binary einsum `subscripts`；它机械核对 label/rank/
+extent/result shape，将 numeric operands 按 J 已声明的 result/accumulator dtype 转换后执行，并验证
+结果 dtype。integer result 不接受 floating operand，未知 op 或不闭合 graph 全部 fail closed。该
+路径解决的是 `RefEval(J,x)` 的可执行 denotation，不修改 production compiler 的 contraction lowering，
+也不把当前 CPU compatibility limitation 写成 J 或 target recipe。
 
 主 SCRC runner 必须先按 pre-Gate2 规则选定唯一 winner，再为当前 Gate2 invocation 绑定 logical
 inputs/dimensions 并调用 RefEval-only projection；projection/RefEval library 本身不选择 winner，也没有
@@ -138,7 +180,7 @@ Harness 给 Source/Replay 绑定前端标量，同时给 `RefEval(J,x)` 提供�
 显式 boundary/shape semantics 使用；direct identity 与 boundary-only 合法路径保留。仅服务
 representation/address 的 runtime scalar 不属于 RefEval logical inputs，必须显式为 rank-0
 `logical_ref=null` carrier，并只可由 π realization 引用。checker 不读取 Source 名称/位置、不自动
-解绑，也不把该窄规则冒充一般 tensor liveness proof；该 TypeCheck judgement 与 RefEval v10 的消费
+解绑，也不把该窄规则冒充一般 tensor liveness proof；该 TypeCheck judgement 与 RefEval v11 的消费
 能力仍彼此独立。
 
 这个 null-carrier 例外不适用于 bound constexpr：只有 implementation-selection 后果的 constexpr
@@ -147,7 +189,8 @@ Harness invalid，不能让 RefEval 忽略、让 π 单独消费。
 
 但只有在 J 自身已经足以机械证明“无 logical guard 的 predicated direct load 具有完整零起点矩形
 index/domain、predicate bound 与同轴 typed tensor extent 相等，且该 masked axis 经已建模 closed
-pointwise/broadcast 传播后被 `reduce(mean)` 消去”时，`typecheck.v7` 才会在 RefEval 前以
+pointwise/broadcast 传播后被 `reduce(mean)` 消去”时，当前 `typecheck.v14` 保留 v7 的窄必要条件，
+并在 RefEval 前以
 `padded_mean_count_unproven` 拒绝：`masked_contribution` 只闭合分子，当前 boundary 不表达 logical
 valid denominator。dense/unpredicated mean、guard-bearing 或 cross-axis/general predicate、
 domain/extent 不闭合、mask 位于该 reduction 未消去轴或未知 op 阻断传播时不触发 TypeCheck。
@@ -161,16 +204,17 @@ unsupported 偷换成 J 非法，也不自动改图。
 - observable output 是直接、无 update/alias/inout 的 functional value；
 - memory access 与 J 的 logical tensor/domain 直接锚定；每个 predicated direct access 为全部非
   常量 `0` axis 显式声明完整零起点 logical domain，各 bound 与 typed shape 一致；
-- rank-0 `i1` guard 可以是合法 J input；v10 仅在当前 winner invocation 中按 J predicate 的实际极性
+- rank-0 `i1` guard 可以是合法 J input；v11 继承 v10，只在当前 winner invocation 中按 J predicate 的实际极性
   证明它在完整 logical domain 恒真。value-free production projection 与无法完成该 proof 的 RefEval
   仍显式 unsupported；operand membership 不能区分 `flag`/`not flag`，也不能替代该证明；
 - direct singleton index `[0]` 只允许对应 logical extent 确为 1；
 - 所有仍携带某个 masked axis 的 access 使用同一个 full-domain predicate；predicated load 有显式
   fill，output store 若已由 reduction 删除该 axis 则不需要伪造 predicate；
-- padded graph 的每个 logical reduction 恰有一个 J-owned `ReductionBoundary`，显式
-  `masked_contribution` 与可选 `identity` 都是 reducer 的中性元素；`sum/prod/max/min/any/all` 进入
-  当前闭合集合；若上述窄 rectangular access/dataflow provenance 能证明 masked axis 由 `mean` 消去，因缺少 logical count
-  contract 继续 unsupported；
+- padded graph 的每个 logical reduction 恰有一个 J-owned `ReductionBoundary`。legacy v1-v3 中
+  `masked_contribution` 与可选 `identity` 必须是 reducer 的中性元素；artifact.v4+ 则由逐 consumer
+  的 `consumer_extensions` 唯一声明 `sum|max|min` 的 typed two-sided identity，不能与 legacy 字段
+  并存。若上述窄 rectangular access/dataflow provenance 能证明 masked axis 由 `mean` 消去，因缺少
+  logical count contract 继续 unsupported；
 - 普通 trailing broadcast 由 closed value type 决定，non-trailing broadcast 只能消费 J 中显式的
   `boundary.broadcasts`，缺失、错轴或未消费 relation 均在执行前 fail closed。
 - masked provenance 若进入 contraction 或其他当前 provenance analysis 未建模的 executor op，必须在
@@ -178,14 +222,16 @@ unsupported 偷换成 J 非法，也不自动改图。
 
 因此 `logical_domain_reduction_padding_v2` 可以消费任意由上述通用构造组成的 pointwise/broadcast/
 multi-reduce DAG，例如 max → sub → exp → sum → div；实现不检查 Kernel 名称，也不含 Softmax
-公式。`masked_contribution` 是 J 中已有的有效贡献合同，projector 只验证它与 reducer neutral 一致，
-不从 Source、C、π、runtime/hidden input 或 named op 重新推导。update、alias/inout、不一致 bound、
+公式。legacy `masked_contribution` 或 v4+ `consumer_extensions` 都必须已经由 J 声明，projector 只
+验证其 consumer-local identity 与 provenance，不从 Source、C、π、runtime/hidden input 或 named op
+重新推导。update、一般 alias/inout、不一致 bound、
 未锚定 guard、padded mean 或其他未闭合 topology 必须明确返回 `REFERENCE_UNSUPPORTED`/fail closed。
 
-active `typecheck.v7` 已复用 J-only `functional_reduction_padding_issues(J)`，用于精确报告上述窄
+active `typecheck.v14` 保留 J-only `functional_reduction_padding_issues(J)`，用于精确报告上述窄
 rectangular seed 下已建模 provenance 的 masked-axis → `mean` 缺口。它不把 guard-bearing、
-cross-axis/general access 或未知-op consumer capability blanket 判成非法 J；v9 projector 对这些
-无法声度擦除的 topology 明确拒绝；v10 只为可按当前 J logical valuation 完整证明的 guard/runtime
+cross-axis/general access 或未知-op consumer capability blanket 判成非法 J；当前 v9 projector 对这些
+无法消去的 topology 明确拒绝；v11 继承 v10，只为可按当前 J logical valuation 完整证明的
+predicate 中 logical guard/runtime
 bound 新增上述 invocation-local 例外，并继续在 masked provenance 首次进入未知 op 时拒绝。
 CandidateCheck 不另写一套规则，fixed code 也不补造 count contract。
 
@@ -193,6 +239,16 @@ CandidateCheck 不另写一套规则，fixed code 也不补造 count contract。
 
 Gate2 失败结束本次实验，不在同一实验中把结果反馈给 Lift/Replay 做局部修补。实验结束后可以
 聚合失败、修改系统，再从新实验开始。
+
+若 parent evidence 已经证明某一精确 `(J,C,π,Replay)` 为 `replay_closed`，而失败被归类为当前
+RefEval/functional-boundary 的通用 capability 缺口，可以在修复 consumer 后执行
+`intentir.scrc.gate2-capability-recheck.v1`：它必须核对 artifact 位于 parent evidence 内、Replay
+bytes 与 receipt digest 一致、case/source lineage 匹配，然后以 **零模型调用**复用同一 artifact 和
+同一 Replay，只重新执行当前 Gate2 三腿。输出写入独立 `gate2-recheck-NNN` evidence，并显式记录
+`reuses_exact_gate1_artifact=true`、`reuses_exact_gate1_replay=true`、`model_calls=0` 与
+`changes_parent_verdict=false`。它不 relift、不修 J、不重做或伪造 Gate1，也不覆盖 parent 的既有
+verdict；新的结果只是在所记录 consumer/Q/test/environment 版本下，对该 exact parent artifact 的
+独立 Gate2 capability evidence。
 
 ```text
 SCRC_CERTIFIED

@@ -211,7 +211,22 @@ CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也
 CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol version 实现并写入 receipt；
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
-当前新 fresh-run 合同使用 `typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
+当前已落地的 fresh-run 合同为
+`artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`。Lift LLM 仍完整生成全部
+`(J,C,π)`：artifact.v4 的 `J.value_dimension_relations` 与
+`J.boundary.consumer_extensions`、artifact.v5 的
+`J.boundary.access_guard_relations` 都是 J-owned authored facts；Decode、TypeCheck 与
+CandidateCheck 只解析、验证、拒绝和诊断，不补造 relation、axes、polarity、pre-state、inout 或
+Layer-A op。v1-v4 仍按各自 wire/receipt 解释，不因当前 schema 增加空数组或被重标。
+
+对 v5 guarded store，Layer A 必须显式包含 `select`；目标 tensor 必须精确同时作为 J input/output，
+并由唯一 `mode=inout` parameter 绑定。loop 的 `carry.init_value` 必须是该 tensor，inactive branch
+必须是 current body argument，select result 必须成为 `next_value`；非 loop 的 inactive pre-state
+就是该 tensor，return/output mapping 必须指向 select result。relation 的 `axes` 是同一 select guard
+的唯一 broadcast authority，不能在 `boundary.broadcasts` 重复。TypeCheck 不会因 dtype/shape 相同
+而接受另一个 input 代替 pre-state，也不会插入 merge。
+
+`typecheck.v14` 完整继承下面 v7 及其前序合同。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
 具有 closed total type，`map_binary` 默认严格服从 NumPy broadcast，非 trailing 轴只能消费
 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation。v5 新增已知 `reduce` 与 binary
@@ -257,10 +272,10 @@ rank-0 J input，integral extent-only 绑定 declared `x*`。只影响 layout/ti
 selection 的 constexpr 应由 Harness 分类为 C slot；既无 J denotation、又不能合法归入 C 的 case
 是 Harness invalid，不能把 constexpr 以 `logical_ref=null` 留在 π-only topology 中。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v10`，shared functional projection 使用
-`intentir.j-functional-boundary.v3`。v10 完整继承 v9 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v11`，shared functional projection 使用
+`intentir.j-functional-boundary.v9`。它们完整继承 v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
-每个 logical reduction 的唯一中性 `masked_contribution` contract，以及 pointwise operand 的 closed
+每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
 不再被旧 single-sum topology 人为拒绝。
 
@@ -282,6 +297,14 @@ membership 当控制证明）；masked provenance 进入 contraction/其他未�
 在共享 Intent-to-Linalg 之后单独展开 `rsqrt -> 1/sqrt`；共享/GPU lowering 不调度该 pass。
 既有 typecheck.v3/v4/v5/v6、`j_scalar_cpu_mlir_v7/v8/v9` 与 functional-boundary v1/v2 receipt 及
 Softmax/RMS 历史 verdict 保持原解释，不由 v10/v3 追认或重判。
+
+v11/v9 进一步逐项消费 v4/v5 J relation：检查 value/dimension `eq`，验证并应用
+consumer-specific typed outside identity，并对每个 access guard 产生 receipt 或明确 unsupported。
+当前 guarded store 只执行 A 中已有的显式 `select`，不由 relation 隐式 merge；guarded load/update
+尚无 RefEval pre-execution materializer。v9 还可证明同 producer、同完整 observable typed value、
+单静态轴、常量 unit-width、无 predicate、无重叠无缺口的 direct-store partition。v11 的 closed
+structured J-only reference 可执行 common scalar lowering 尚不支持的 mixed typed binary
+contraction。后两项只扩展 Gate2 reference consumer，不是 production target recipe 或 permission。
 
 ### 2.6 显式语义所有权投影
 
@@ -400,7 +423,7 @@ name, kind, role, value_type, required
 artifact 已出现两个 `role=tile_extent` 对应不同结构位置的情况；production backend 又不能读取
 Source/π，因此 role-only 不能一般性消歧。
 
-`artifact.v2` 已在上述五个字段之外增加两个可选 closed attachment，当前 `artifact.v3` 原样保留：
+`artifact.v2` 已在上述五个字段之外增加两个可选 closed attachment，当前 `artifact.v5` 原样保留：
 
 ```text
 subject_ref : optional member of CSubject_v1(J)
@@ -859,6 +882,11 @@ c_access = forbidden_by_interface
 
 该记录只说明接口权限，不向 `RefEval` 提供 C。
 
+如果 exact parent artifact 与 Replay 已经 Gate1 closed，而失败来自 RefEval 的通用 capability，允许
+零模型调用的 Gate2-only exact-artifact recheck。它复用同一 J/C/π 与 Replay、写入独立 evidence，
+并显式声明 `changes_parent_verdict=false`；不得把 consumer 修复伪装成 relift、刷新旧证书或改写
+parent verdict。
+
 ## 11. Production lowering
 
 ### 11.1 当前唯一接口
@@ -894,6 +922,12 @@ production。两种 view 都不改写 J、不读取 C/π/Source、不单独序�
 artifact。投影成功只说明相应 Layer-B relation 已被 logical Intent MLIR 完整表示；若目标 lowering
 引入 padded physical execution，仍须自行物化 mask/bounds 或给出目标侧等价保证，不能把该投影或
 runtime-proof subreceipt 冒充 production correctness 证明。
+
+当前 production J+C 路径对任何 `access_guard_relations` 都显式 fail closed：shared projection 可以
+验证 relation 并形成 receipt，但 target path 尚无通用 access-local guard materializer；A 中已有
+`select` 不能授权 backend 擦除 B relation。Gate2 的 direct-store partition 与 mixed typed
+contraction reference 同样只是通用 RefEval 消费能力，不规定 CUDA 的 store 形式、contraction
+算法或搜索候选。
 
 若当前阶段验证 backend：
 
@@ -1052,9 +1086,9 @@ slots + values
 Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正是 `C=(Sigma_C,nu_C)` 与
 `MaskC(C)` 的基本实现，应保留。
 
-当前 strict slot schema 已要求 `name/kind/role/value_type/required`，但尚无
-`subject_ref/axis_ref`。因此 role-only 的历史 artifact 仍按原版本解释；两个新 attachment 只有在
-schema/parser/TypeCheck/CandidateCheck/receipt 同步升级后才对 fresh run 生效。
+当前 strict slot schema 已要求 `name/kind/role/value_type/required`，并已支持可选
+`subject_ref/axis_ref`；二者由 Lift 显式生成，由同一 TypeCheck/CandidateCheck core 检查。role-only
+历史 artifact 仍按原版本解释，不由当前 schema 静默增加 attachment 或刷新 receipt。
 
 ### 14.2 需要修正或审计的部分
 
@@ -1065,7 +1099,8 @@ schema/parser/TypeCheck/CandidateCheck/receipt 同步升级后才对 fresh run �
 5. Replay packet 是否严格只有 `J + pi + MaskC(C) + fixed U_f`；
 6. Gate2 RefEval 类型是否机械禁止 C；
 7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi；
-8. 下一版本是否由 Lift 显式产生 C attachment、由同一 TypeCheck 检查，而非 Harness/normalizer 补造。
+8. production 对含混或未消费 C attachment 的 receipt 是否始终保持安全 ignore/fail-closed，而不由
+   Harness/normalizer 猜测作用点。
 
 ## 15. 当前阶段明确不做
 

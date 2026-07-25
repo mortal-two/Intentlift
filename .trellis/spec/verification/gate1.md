@@ -8,6 +8,14 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 使用同一个 C 对象、同一份实际 valuation `c0 = Bind_H(C)` 与相同 specialization/runtime
 conditions。该 Gate1 claim 只针对这个 c0。
 
+当前 fresh-run artifact/decode/typecheck 组合为
+`intentir.scrc.artifact.v5 / intentir.scrc.decode.v6 / intentir.scrc.typecheck.v14`。Lift LLM 是完整
+artifact 的唯一作者：v4 的 `value_dimension_relations`、`consumer_extensions` 与 v5 的
+`access_guard_relations` 都必须由模型显式提交。Decode、CandidateCheck 与 TypeCheck 只能做 closed
+解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
+output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外部 Runner 仍对同一完整 bytes
+重跑权威 TypeCheck。
+
 ## 裁决关系
 
 对前端 f 和声明的 observer profile p：
@@ -18,6 +26,12 @@ G1 = [F_(f,p)(Compile_H(Source,c0)) == F_(f,p)(Compile_H(Replay,c0))]
 
 Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行数值语义、不读取 Gate2
 结果，也不通过 composer/RuleCard 构造 Replay。
+
+Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
+consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology。特别地，
+v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inout/pre-state、polarity 与 axes 已
+通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
+比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得
 删除会改变必要 realization closure 的 op、def-use、predicate/fill、effect、region、order、
@@ -80,6 +94,10 @@ diff 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或只修改 
 同一 Source/c0 启动 `B=5` 个独立 branch，每 branch 最多 `K=3` 个正式候选；diff 只返回产生它的
 branch。并行 wave 结束后，仅根据 TypeCheck/Gate1 evidence 按固定 branch/round 顺序选择一个
 Gate1-closed winner；未选 closed branch 不进入 Gate2。
+
+若 Gate1 已闭合而失败只发生在 Gate2 的 J reference consumer，保留这份精确 artifact 与 Replay；
+修复通用 RefEval 能力后走 Gate2-only exact-artifact recheck，不重新 Lift 或重新 Gate1。该复查的
+结果属于新的独立 evidence，不能覆盖或改写 parent Gate1/Gate2 verdict。
 
 全部完整 branch 都失败才是 `NO_CLOSURE_(B,K)`；该状态只说明本次有界搜索未找到 closure，不能
 解释为合法 witness 不存在。provider/infrastructure 未完成的 branch 不得计作 Gate1 失败。

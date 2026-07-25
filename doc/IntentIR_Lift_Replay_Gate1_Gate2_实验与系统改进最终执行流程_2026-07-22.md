@@ -338,6 +338,21 @@ v1 没有“更强 exact contract”例外；未来若需要，必须新增版�
 使用自由文本豁免。这里的 reassociation authorization 只触发 SCRC comparison-class 检查，不授权
 production backend 改变 reduction tree。具体 tolerance 阈值继续只由 Q 提供。
 
+`artifact.v4` 引入、当前 v5 保留由 Lift 显式作者的 `J.value_dimension_relations` 与
+`J.boundary.consumer_extensions`：前者只表达 integral rank-0 J input 与 declared `x*` 的 closed
+`eq`，后者只表达某一 predicate-bearing load 到某一 `sum|max|min` reduce/scan operand 的 typed
+two-sided outside identity。`artifact.v5` 再要求完整 `J.boundary.access_guard_relations` 数组；每项把
+一个 boundary access 绑定到一个支配它的 typed Layer-A `i1` guard，并显式给出严格递增唯一 axes 与
+`positive|negative` polarity。所有数组包括空数组都由 Lift 写出，fixed code 不根据相等 runtime
+value、reducer/fill、Source、C、π 或 Gate evidence 生成 relation。
+
+relation-guarded store 不是 B 驱动的隐式控制流：Layer A 必须显式作者三 operand `select`，目标 tensor
+必须精确同时为 J input/output 并由唯一 `mode=inout` parameter 绑定。loop 的 init/current/next 与
+non-loop 的 tensor pre-state/return/output mapping 必须精确闭合；相同 dtype/shape 的其他 input 不算
+pre-state。`access_guard_relations.axes` 是同一 select guard 的唯一 broadcast authority，不能再由
+`boundary.broadcasts` 重复。TypeCheck/CandidateCheck 只拒绝和报告这些 dependent error，不插入
+select、不升级 inout、不选择 polarity/axes，也不修 candidate。
+
 ### 6.2 C 检查
 
 检查 C 的：
@@ -503,7 +518,11 @@ Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round �
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v7`。它完整继承 v6；v6 继承 v5，v5 保留 v4 的 rank-0 closed signature、
+当前 fresh-run 版本为 `typecheck.v14`。它完整继承下述 v7 及其前序合同，并增加当前 v4/v5 typed
+relations 的 source-free dependent checking：value/dimension 与 consumer provenance/identity 必须
+闭合；access guard 必须满足支配、i1、唯一 axes authority，以及 guarded-store 的显式 select、精确
+inout/pre-state 和 observable merge。checker 仍不构造任何 artifact fact。历史 v7 完整继承 v6；
+v6 继承 v5，v5 保留 v4 的 rank-0 closed signature、
 Layer-A total typing 与显式 non-trailing broadcast 合同，并新增已知 `reduce` 与 binary `contraction` 的 canonical
 fail-early：reduce 必须显式给出合法 `fn + axes + assoc`；`kind` 别名、缺失/冲突字段、非法
 reducer/axis/associativity 均在进入 RefEval/emitter 前拒绝。contraction 必须只给出 canonical
@@ -542,7 +561,7 @@ runtime scalar 若只服务 representation/address realization，Lift 应声明
 `kind=scalar,mode=value,rank=0,logical_ref=null`，不创建 J input；该 p* carrier 只可进入 π，不可回流
 J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，TypeCheck 只验证；两者都不按
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
-`intentir.lift-knowledge.v15`。
+`intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
 该 null-carrier 例外只适用于 runtime scalar，不适用于 `bound_constexpr_values`。后者按 Harness
 合同必须已经是逻辑语义 constexpr：若作为 logical value/predicate/result，绑定 dtype-compatible
@@ -551,8 +570,8 @@ implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而�
 留在 π-only 形态；既不具有 J denotation、又不能合法归入 C 的 constexpr 使 Harness/case invalid，
 不得交给 Lift 用 `logical_ref=null` 猜测兜底。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v10`，shared functional projection 为
-`intentir.j-functional-boundary.v3`。v10 完整继承 v9；v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v11`，shared functional projection 为
+`intentir.j-functional-boundary.v9`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -580,6 +599,17 @@ TypeCheck evidence、v7/v8/v9 RefEval 与 functional-boundary v1/v2 evidence 以
 Softmax/RMS run 不被 v10/v3 静默改写。只有尚未闭合、或确受该能力影响且要声明
 v10/functional-boundary.v3 结论的 case 才必须 fresh relift/fresh run；已经成立的 Softmax
 v9/v2/v5 证书继续有效并计入覆盖，不要求重跑或重标。
+
+v11/v9 新增的当前消费边界是：逐项验证/消费 v4 value-dimension equality 与 per-consumer outside
+identity；每个 v5 access guard 要么形成 receipt，要么显式 unsupported，guarded store 只运行 A 已有
+select，guarded load/update 当前不做 access-local pre-execution materialization；同 producer、同完整
+observable typed value、单静态轴、无 predicate、常量 unit-width 且无重叠无缺口的多 store 可形成
+通用 direct-store partition。另一个 closed structured J-only reference 可整图执行 common scalar
+lowering 尚未支持的 mixed typed binary contraction。direct-store 与 mixed contraction 都是 Gate2
+consumer capability，不是 production recipe，也不按 Kernel 名称分支。
+production J+C 入口当前对任何 access guard 仍以
+`access_guard_materialization_not_implemented` fail closed，不能因 RefEval 已能执行显式 select 就
+静默擦除该 B relation。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式
@@ -627,14 +657,15 @@ Replay 不得：
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
 `public_frontend_context_v6` 与 source-aware MiniSWE
-`intentir.lift-knowledge.v15`；fresh evidence 必须保存实际 receipt，旧版本 run 不能被新组合追认。
+`intentir.lift-knowledge.v17`；fresh evidence 必须保存实际 receipt，旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
-当前新 Lift response 使用 `intentir.scrc.artifact.v3`，固定 decode 使用
-`intentir.scrc.decode.v3`；v3 仅新增 required closed `pi.iterations`，不让 fixed code 构造 artifact。
-`artifact.v1/v2` 保持原 wire bytes/digest 并禁止该字段，不静默升级。DYT/SwiGLU 的既有通过 receipt
-继续保留且无需重跑，但不能写成 fresh v3 结论。
+当前新 Lift response 使用 `intentir.scrc.artifact.v5`，固定 decode 使用
+`intentir.scrc.decode.v6`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+`value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
+`access_guard_relations`。每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。
+`artifact.v1-v4` 保持各自 wire bytes/digest 与字段集合，不静默升级、刷新或追认。
 
 当前 `replay-input.v1` 不包含任何 pad-discharge derived hint。若 J 只有 symbolic input
 extent、literal pad 与 static output extent，却没有闭合三者的 dependent equality，U_f 不能读取
@@ -794,7 +825,7 @@ TypeCheck
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v7`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v14`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把
@@ -802,6 +833,16 @@ parent verdict 改成当前协议的正式结论。provider 调用前必须核�
 request、parent source projection/source bytes，以及 parent Gate1 receipt 中的 artifact digest；错
 case、错 artifact、错 Source 或缺失旧 lineage 字段均 fail closed。protocol/context/knowledge 改变后
 的认证仍必须 fresh rerun。
+
+### 10.1.2 固定 Gate1-closed artifact 的 Gate2 capability recheck
+
+若 parent 已有 `replay_closed` 的精确 artifact 与 Replay，而失败仅来自通用 RefEval consumer 缺口，
+修复系统后可执行 `intentir.scrc.gate2-capability-recheck.v1`。该路径核对 artifact 位于 parent evidence
+中、Replay bytes/digest、case 与 Source lineage，随后以 `model_calls=0` 复用 exact artifact/Replay，
+只重跑当前 Gate2 三腿并写入独立 `gate2-recheck-NNN` 目录。receipt 必须记录
+`reuses_exact_gate1_artifact=true`、`reuses_exact_gate1_replay=true` 与
+`changes_parent_verdict=false`。它不 relift、不重新生成 Replay、不重做 Gate1，也不改写 parent
+verdict；新的结果只属于记录的当前 RefEval/Q/test/environment capability evidence。
 
 ### 10.2 branch 数与 relift 预算
 
@@ -1029,6 +1070,10 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 
 如果 Source、Replay 和 J 的行为比较不完整，或者前端编译/执行工具失败，应修复对应通用工具，再重新实验。
 
+分类时先保留 Gate1-closed exact artifact：若 J 本身及 Replay 仍可信、失败只是 RefEval 对一个已声明
+relation/op 的通用消费缺口，修复 consumer 后执行 10.1.2 的 Gate2-only recheck；只有证据表明 J
+语义/类型/关系本身错误时才 fresh relift。consumer 修复不得按 Kernel 写死 J→reference recipe。
+
 不能用 Gate1 通过代替 Gate2，也不能用 production lowering 代替 `RefEval(J)`。
 
 ## 15. 实验结果记录
@@ -1063,9 +1108,10 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，fresh MiniSWE Lift knowledge 当前升为
-`intentir.lift-knowledge.v15`。v15 继承 v14 的 generic functional logical-domain 闭合提示、有界
-CandidateCheck 预算与跨 fresh Lift 机械摘要，并增加 rank-0 logical-data 与 representation-only
-scalar 的 source-use 分类合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
+`intentir.lift-knowledge.v17`。v17 继承 v15 的 generic functional logical-domain 闭合提示、有界
+CandidateCheck 预算、跨 fresh Lift 机械摘要，以及 rank-0 logical-data/representation-only scalar
+分类合同；并加入 value/dimension equality、consumer extension 与 access guard 的完整 authored
+合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
 `declared` 只表示 Harness/source ABI 有闭合配置，不构成 TypeCheck、Gate 或 SCRC 终态。
 
 对上述 absent carrier，TypeCheck 分别拒绝其成为 π instance 的 `semantic_ref`、J/B realization

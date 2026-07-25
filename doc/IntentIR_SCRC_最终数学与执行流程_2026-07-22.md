@@ -378,6 +378,17 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
 
+v14 还检查 v4/v5 authored relations。`value_dimension_relations` 只允许 integral rank-0 J input 与
+declared symbolic dimension 的 `eq`；`consumer_extensions` 必须闭合 predicate-bearing load 到
+`sum|max|min` reduce/scan operand 的 provenance、local axis、dtype 与 two-sided identity。
+`access_guard_relations` 必须锚定支配 access 的 typed `i1` Layer-A value，并以严格递增唯一 axes 和
+closed polarity 声明；这些 axes 是同一 select guard 的唯一 broadcast authority。
+
+guarded store 必须已经由 A 显式写出三 operand `select`，目标 tensor 精确同时是 J input/output 且由
+唯一 `mode=inout` parameter 绑定。loop 的 init/current/next 或 non-loop 的 tensor
+pre-state/return/output mapping 都必须精确闭合；同 dtype/shape 的另一 input 不能替代 pre-state。
+固定核不插入 select、不升级 inout、不选择 axes/polarity，也不从 Source/C/π/运行值修补 relation。
+
 ## 4.2 C 检查
 
 - slot 匿名且唯一；
@@ -419,10 +430,13 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1`；Replay packet envelope
-仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v6`，Lift knowledge 为 v15。
-v1/v2 artifact 保持原 wire bytes/digest 并禁止 `pi.iterations`，不得静默升级。DYT 与 SwiGLU 的既有
-证书继续按原 receipt 成立，无需仅因 v3 重跑，也不得被重新标成 fresh v3。SCRC 后 π 停止，
+当前合并协议为 `artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`；Replay packet envelope
+仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v6`，Lift knowledge 为 v17。
+v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
+`consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`。每个当前字段都由
+Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
+和诊断，不补造 relation 或 artifact。v1-v4 保持各自 wire bytes/digest 与字段集合，不得静默升级、
+刷新或追认。SCRC 后 π 停止，
 production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
 ## 4.4 Lift 内的非认证 CandidateCheck
@@ -471,7 +485,9 @@ value、patch、Source/Gate/hidden/sibling 信息。该摘要与 submission `PAS
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v7`。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
+当前 fresh-run 取 `v_TC = typecheck.v14`。v14 完整继承下述 v7 及其前序合同，并增加上述 v4/v5
+relation 的 source-free dependent checks；仍不赋予 fixed core artifact 构造权。历史 v7 完整继承 v6；
+v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
 rank-0/普通 result type，缺失的 broadcast axis relation 必须拒绝，不能由 checker 猜测。
 v5 又在 RefEval/emitter 前对已知 `reduce` 与 binary `contraction` 执行 canonical fail-early，
@@ -505,8 +521,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v10`，shared projection 为
-`intentir.j-functional-boundary.v3`。v10 完整继承 v9；v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v11`，shared projection 为
+`intentir.j-functional-boundary.v9`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -532,6 +548,15 @@ fail closed；已有 masked provenance 进入 contraction/其他未建模 op 时
 operand membership 或静默停止传播来证明 mask erasure。两者是 consumer 能力边界，不新增
 TypeCheck 非法 J 条件。CPU host 只在共享 Intent-to-Linalg 之后调度 `rsqrt -> 1/sqrt` 的标准 libm
 ABI compatibility pass，不改变共享/GPU lowering。
+
+v11/v9 进一步要求 RefEval 对每个 v4/v5 relation 消费或明确 unsupported：检查 value/dimension
+equality，应用 consumer-specific outside identity，并只对 A 已显式 select、精确 inout/pre-state 的
+guarded store 形成 access-guard receipt；guarded load/update 当前无 access-local pre-execution
+materializer。v9 可证明同 producer、同完整 observable typed value、单静态 axis、无 predicate、
+常量 unit-width 且无重叠无缺口的 direct-store partition；v11 的 closed structured J-only reference
+可执行 common scalar lowering 尚未支持的 mixed typed binary contraction。后两者只扩展通用 Gate2
+reference consumer，不是 production recipe、pass permission 或 Kernel 特判。production J+C 当前对
+任何 access guard 仍显式 fail closed。
 
 ---
 
@@ -831,6 +856,12 @@ G_2^{\eta}(S,R,J,c_0,T)
 1. Source–Replay：Replay 的实际行为是否保持 Source；
 2. Source–J：Lift 得到的 J 是否与 Source 在测试域内一致；
 3. Replay–J：Replay 是否同时符合 J 的可执行语义。
+
+当 exact parent `(J,C,π,Replay)` 已有 `replay_closed` evidence，而失败被证明属于通用 RefEval
+capability，可以在 consumer 修复后以零模型调用重跑唯一 Gate2。该
+`gate2-capability-recheck.v1` 必须核对 artifact/Replay digest 与 case/source lineage，复用同一 bytes，
+写入独立 evidence，并记录 `changes_parent_verdict=false`。它不 relift、不重新 Gate1、不刷新旧
+receipt；新结果只是在记录的当前 evaluator/Q/test/environment 下对 exact artifact 的独立 evidence。
 
 ## 8.4 真正集合值的非确定性语义
 
