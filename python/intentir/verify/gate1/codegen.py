@@ -26,7 +26,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
-from typing import Mapping, NoReturn
+from typing import NoReturn
 
 __all__ = [
     "CodeExtractionError",
@@ -34,7 +34,6 @@ __all__ = [
     "UnsafeReplayCodeError",
     "extract_python_code",
     "extract_python_module",
-    "validate_triton_artifact_uses",
     "validate_replay_module",
     "validate_triton_module",
 ]
@@ -556,84 +555,6 @@ def validate_triton_module(
             f"required Triton function {required_function!r} is missing"
         )
     return ModuleValidation(functions, tree)
-
-
-def validate_triton_artifact_uses(
-    code: str,
-    *,
-    required_function: str,
-    forbidden_body_parameters: frozenset[str] = frozenset(),
-    unrefined_cast_parameters: frozenset[str] = frozenset(),
-    parameter_cast_targets: Mapping[str, frozenset[str]] | None = None,
-) -> ModuleValidation:
-    """Check source-free artifact-use necessities on the Replay entry body.
-
-    This deliberately checks only direct, unambiguous syntax.  Gate1 remains
-    responsible for general realization topology and compiler equivalence.
-    """
-
-    parameter_cast_targets = parameter_cast_targets or {}
-    validation = validate_triton_module(
-        code,
-        required_function=required_function,
-    )
-    function = next(
-        node
-        for node in validation.tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == required_function
-    )
-    body_nodes = [
-        child
-        for statement in function.body
-        for child in ast.walk(statement)
-    ]
-    for child in body_nodes:
-        if (
-            isinstance(child, ast.Name)
-            and isinstance(child.ctx, ast.Load)
-            and child.id in forbidden_body_parameters
-        ):
-            _fail(
-                child,
-                f"parameter {child.id!r} has logical_ref=null and no routed "
-                "pi realization; its ABI slot must remain unused",
-            )
-        if not (
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Attribute)
-            and child.func.attr == "to"
-            and isinstance(child.func.value, ast.Name)
-            and (
-                child.func.value.id in unrefined_cast_parameters
-                or child.func.value.id in parameter_cast_targets
-            )
-        ):
-            continue
-        parameter = child.func.value.id
-        expected_targets = parameter_cast_targets.get(parameter)
-        if expected_targets is not None:
-            target = child.args[0] if child.args else None
-            if not (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == "tl"
-                and target.attr in expected_targets
-            ):
-                rendered = ", ".join(
-                    f"tl.{item}" for item in sorted(expected_targets)
-                )
-                _fail(
-                    child,
-                    f"parameter {parameter!r} must use the exact artifact "
-                    f"refinement target from {{{rendered}}}",
-                )
-            continue
-        _fail(
-            child,
-            f"parameter {parameter!r} has no exact typed pi "
-            "refinement; Replay must not guess a stride/index conversion",
-        )
-    return validation
 
 
 # Naming used by the Gate1 design document and early callers.

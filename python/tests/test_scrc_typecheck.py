@@ -1013,6 +1013,114 @@ def test_typed_authorization_source_must_match_its_j_carrier() -> None:
     assert TypeCheckErrorCode.REFINEMENT_AUTH_TYPE_MISMATCH in _codes(artifact)
 
 
+def _integer_widen_artifact(
+    *,
+    kind: RefinementKind,
+    source_dtype: str | None,
+    target_dtype: str | None,
+):
+    artifact = make_reduce_artifact()
+    carrier_dtype = source_dtype or (
+        "i32" if kind is RefinementKind.SIGNED_WIDEN else "u32"
+    )
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            carrier_dtype,
+            rank=0,
+            logical_ref=None,
+        )
+    )
+    artifact.j.boundary.realization_authorizations = [
+        RealizationAuthorization(
+            "u0",
+            kind,
+            "p3",
+            source_dtype,
+            target_dtype,
+        )
+    ]
+    payload = artifact.pi.to_json()
+    payload["instances"].append(
+        {
+            "id": "i4",
+            "semantic_ref": "p3",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    payload["routes"].append(
+        {"source": "i4", "target": "i0", "slots": [0]}
+    )
+    payload["refinements"].append(
+        {"instance": "i4", "kind": kind.value, "auth_ref": "u0"}
+    )
+    artifact.pi = RealizationWitness.from_json(payload)
+    return artifact
+
+
+@pytest.mark.parametrize(
+    ("kind", "source_dtype", "target_dtype"),
+    [
+        (RefinementKind.SIGNED_WIDEN, "i32", "i64"),
+        (RefinementKind.UNSIGNED_WIDEN, "u32", "u64"),
+    ],
+)
+def test_authoritative_typecheck_accepts_strict_integer_widen(
+    kind: RefinementKind,
+    source_dtype: str,
+    target_dtype: str,
+) -> None:
+    artifact = _integer_widen_artifact(
+        kind=kind,
+        source_dtype=source_dtype,
+        target_dtype=target_dtype,
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert report.protocol == "intentir.scrc.typecheck.v8"
+
+
+@pytest.mark.parametrize(
+    ("kind", "source_dtype", "target_dtype"),
+    [
+        (RefinementKind.SIGNED_WIDEN, "i32", "i32"),
+        (RefinementKind.SIGNED_WIDEN, "i64", "i32"),
+        (RefinementKind.SIGNED_WIDEN, None, None),
+        (RefinementKind.SIGNED_WIDEN, "u32", "u64"),
+        (RefinementKind.SIGNED_WIDEN, "f32", "f64"),
+        (RefinementKind.UNSIGNED_WIDEN, "i32", "i64"),
+    ],
+)
+def test_authoritative_typecheck_rejects_invalid_integer_widen(
+    kind: RefinementKind,
+    source_dtype: str | None,
+    target_dtype: str | None,
+) -> None:
+    artifact = _integer_widen_artifact(
+        kind=kind,
+        source_dtype=source_dtype,
+        target_dtype=target_dtype,
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.REFINEMENT_AUTH_INVALID_WIDEN
+    ]
+
+    assert not report.passed
+    assert [item.path for item in matching] == [
+        "j.boundary.realization_authorizations[0]"
+    ]
+    assert matching[0].ref == "u0"
+
+
 def test_absent_none_carrier_cannot_gain_realization_semantics() -> None:
     artifact = make_copy_artifact()
     artifact.j.signature.parameters.append(

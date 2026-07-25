@@ -5,7 +5,6 @@ import pytest
 from intentir.verify.gate1._triton_worker import _normalize_deprecated_triton_dot
 from intentir.verify.gate1.codegen import (
     UnsafeReplayCodeError,
-    validate_triton_artifact_uses,
     validate_triton_module,
 )
 
@@ -74,46 +73,6 @@ def test_global_frontend_policy_is_not_expandable_per_kernel() -> None:
         validate_triton_module(
             _module("libdevice.private_canary(tl.load(p0 + v0))"),
             required_function="scrc_k0",
-        )
-
-
-def _artifact_use_module(expression: str | None) -> str:
-    use = f"    v1 = {expression}\n" if expression is not None else ""
-    return f"""import triton
-import triton.language as tl
-
-@triton.jit
-def scrc_k0(p0, p1, p2, c0: tl.constexpr):
-    v0 = tl.arange(0, c0)
-{use}    v2 = tl.load(p0 + v0)
-    tl.store(p1 + v0, v2)
-"""
-
-
-def test_artifact_use_checker_accepts_an_unused_null_carrier() -> None:
-    validate_triton_artifact_uses(
-        _artifact_use_module(None),
-        required_function="scrc_k0",
-        forbidden_body_parameters=frozenset({"p2"}),
-        unrefined_cast_parameters=frozenset({"p2"}),
-    )
-
-
-def test_artifact_use_checker_rejects_null_carrier_without_pi_route() -> None:
-    with pytest.raises(UnsafeReplayCodeError, match="no routed pi realization"):
-        validate_triton_artifact_uses(
-            _artifact_use_module("p2 + v0"),
-            required_function="scrc_k0",
-            forbidden_body_parameters=frozenset({"p2"}),
-        )
-
-
-def test_artifact_use_checker_rejects_unrefined_direct_parameter_cast() -> None:
-    with pytest.raises(UnsafeReplayCodeError, match="must not guess"):
-        validate_triton_artifact_uses(
-            _artifact_use_module("p2.to(tl.int64)"),
-            required_function="scrc_k0",
-            unrefined_cast_parameters=frozenset({"p2"}),
         )
 
 

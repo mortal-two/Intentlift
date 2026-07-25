@@ -26,7 +26,6 @@ from intentir.verify.gate1.model import (
     ScheduleSlot,
     SchemaError,
 )
-from intentir.verify.gate1.codegen import UnsafeReplayCodeError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
@@ -36,14 +35,20 @@ from intentir.verify.gate1.pi import (
     render_realization_witness_wire_grammar,
 )
 from intentir.verify.gate1.prompt import (
+    PUBLIC_FRONTEND_CONTEXT,
+    PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY,
     ReplayPacket,
     assert_source_isolated_payload,
+    audit_public_frontend_context_receipt,
+    audit_replay_packet_digest,
     build_normal_rewriter_prompt,
     build_masked_rewriter_view,
     build_normal_rewriter_view,
     build_rewriter_packet,
+    public_frontend_context_digest,
+    replay_packet_digest,
 )
-from intentir.verify.gate1.replay import StaticReplayWriter
+from intentir.verify.typecheck import type_check
 
 
 
@@ -675,6 +680,114 @@ def test_replay_packet_is_source_isolated() -> None:
     assert_source_isolated_payload(payload)
 
 
+def _historical_triton_v6_payload() -> dict[str, object]:
+    payload = build_normal_rewriter_view(make_reduce_artifact())
+    u_f = payload["u_f"]
+    u_f["context_policy"] = "public_frontend_context_v6"
+    contract = u_f["compile_entry_contract"]
+    contract = contract.replace(
+        " It is the local tile axis after program/grid axes select a program "
+        "instance, not the whole-tensor logical ordinal in J reduce.attrs.axes; "
+        "never copy or offset that logical ordinal to guess it.",
+        "",
+    )
+    contract = contract.replace(
+        "the explicitly authorized target_dtype; preserve distinct refined "
+        "stages and do not algebraically remove or move the conversion. Never "
+        "propagate one refinement to a sibling parameter/instance that merely "
+        "shares a dtype or address expression. Signature dtypes are otherwise "
+        "authoritative: do not guess a stride/index widening or emit `.to` for "
+        "a p* carrier without its own routed refinement or an explicit J cast."
+        " A J.signature p* with logical_ref=null has no logical denotation. It "
+        "may affect the body only through an instance anchored to that p* and "
+        "a declared route to its realization consumer; if no such route exists, "
+        "keep the ABI parameter but do not read it in the kernel body.",
+        "the authorized target_dtype; preserve distinct refined stages and do "
+        "not algebraically remove or move the conversion.",
+    )
+    u_f["compile_entry_contract"] = contract
+    return payload
+
+
+def test_public_frontend_context_history_is_read_only_and_exact() -> None:
+    history = PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"]
+    current_digest = public_frontend_context_digest(
+        PUBLIC_FRONTEND_CONTEXT["triton"]
+    )
+
+    assert current_digest == history["public_frontend_context_v7"]
+    assert audit_public_frontend_context_receipt(
+        frontend="triton",
+        context_policy="public_frontend_context_v7",
+        context_sha256=current_digest,
+    )["status"] == "current"
+    assert audit_public_frontend_context_receipt(
+        frontend="triton",
+        context_policy="public_frontend_context_v6",
+        context_sha256=history["public_frontend_context_v6"],
+    )["status"] == "historical"
+    with pytest.raises(TypeError):
+        history["public_frontend_context_v7"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"] = {}  # type: ignore[index]
+    with pytest.raises(SchemaError, match="unknown context_policy"):
+        audit_public_frontend_context_receipt(
+            frontend="triton",
+            context_policy="public_frontend_context_v5",
+            context_sha256="0" * 64,
+        )
+    with pytest.raises(SchemaError, match="digest does not match"):
+        audit_public_frontend_context_receipt(
+            frontend="triton",
+            context_policy="public_frontend_context_v7",
+            context_sha256="0" * 64,
+        )
+
+
+def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> None:
+    payload = _historical_triton_v6_payload()
+    public_context = {
+        key: value
+        for key, value in payload["u_f"].items()
+        if key not in {"protocol", "frontend", "replay_function"}
+    }
+    assert public_frontend_context_digest(public_context) == (
+        PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY["triton"][
+            "public_frontend_context_v6"
+        ]
+    )
+    stored_digest = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    receipt = audit_replay_packet_digest(
+        payload,
+        expected_digest=stored_digest,
+    )
+    assert receipt["status"] == "historical"
+    assert receipt["packet_sha256"] == stored_digest
+    with pytest.raises(SchemaError, match="fixed public frontend context"):
+        assert_source_isolated_payload(payload)
+    with pytest.raises(SchemaError, match="fixed public frontend context"):
+        replay_packet_digest(payload)
+    with pytest.raises(SchemaError, match="packet digest mismatch"):
+        audit_replay_packet_digest(payload, expected_digest="0" * 64)
+    assert build_rewriter_packet(make_reduce_artifact()).u_f[
+        "context_policy"
+    ] == "public_frontend_context_v7"
+
+
+def test_one_physical_scalar_cannot_bind_rank0_value_and_dimension() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"][2]["logical_ref"] = ["t1", "x0"]
+
+    with pytest.raises(SchemaError, match="logical_ref"):
+        Gate1Artifact.from_json(payload)
+
+
 def _artifact_with_typed_representation_widen(
     *,
     source_dtype: str | None,
@@ -727,86 +840,19 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
         target_dtype="i64",
     )
 
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    assert report.passed
+    assert report.protocol == "intentir.scrc.typecheck.v8"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
         "public_frontend_context_v7"
     )
 
 
-def _replay_with_representation_scalar(expression: str | None) -> str:
-    use = f"    v1 = {expression}\n" if expression is not None else ""
-    return f"""import triton
-import triton.language as tl
-
-@triton.jit
-def scrc_k0(p0, p1, p2, p3, c0: tl.constexpr):
-    v0 = tl.arange(0, c0)
-{use}    v2 = tl.load(p0 + v0, mask=v0 < p2, other=0.0)
-    tl.store(p1 + v0, v2, mask=v0 < p2)
-"""
-
-
-def test_static_replay_keeps_unrouted_null_carrier_as_unused_abi_only() -> None:
-    payload = make_reduce_artifact().to_json()
-    payload["j"]["signature"]["parameters"].append(
-        {
-            "name": "p3",
-            "kind": "scalar",
-            "mode": "value",
-            "dtype": "i32",
-            "rank": 0,
-            "logical_ref": None,
-        }
-    )
-    artifact = Gate1Artifact.from_json(payload)
-
-    StaticReplayWriter(_replay_with_representation_scalar(None)).generate(
-        artifact
-    )
-    with pytest.raises(UnsafeReplayCodeError, match="must remain unused"):
-        StaticReplayWriter(
-            _replay_with_representation_scalar("p3 + v0")
-        ).generate(artifact)
-
-
-def test_static_replay_allows_only_the_exact_routed_typed_widen() -> None:
-    artifact = _artifact_with_typed_representation_widen(
-        source_dtype="i32",
-        target_dtype="i64",
-    )
-
-    generation = StaticReplayWriter(
-        _replay_with_representation_scalar("p3.to(tl.int64)")
-    ).generate(artifact)
-
-    assert "p3.to(tl.int64)" in generation.code
-    receipt = generation.context_receipt
-    assert receipt["replay_input_protocol"] == "intentir.scrc.replay-input.v1"
-    assert receipt["context_policy"] == "public_frontend_context_v7"
-    assert receipt["frontend"] == "triton"
-    assert len(receipt["context_sha256"]) == 64
-    assert receipt["retrieval_trace"] == []
-
-    with pytest.raises(UnsafeReplayCodeError, match="exact artifact refinement"):
-        StaticReplayWriter(
-            _replay_with_representation_scalar("p3.to(tl.int32)")
-        ).generate(artifact)
-
-
-def test_historical_same_dtype_widen_canary_fails_before_replay() -> None:
-    artifact = _artifact_with_typed_representation_widen(
-        source_dtype="i32",
-        target_dtype="i32",
-    )
-
-    with pytest.raises(SchemaError, match="strictly increasing width"):
-        build_rewriter_packet(artifact)
-
-
 @pytest.mark.parametrize(
     ("source_dtype", "target_dtype"),
-    [(None, None), ("u32", "u64")],
+    [("i32", "i32"), (None, None), ("u32", "u64")],
 )
-def test_replay_contract_rejects_non_widening_or_untyped_signed_widen(
+def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
     source_dtype: str | None,
     target_dtype: str | None,
 ) -> None:
@@ -815,7 +861,13 @@ def test_replay_contract_rejects_non_widening_or_untyped_signed_widen(
         target_dtype=target_dtype,
     )
 
-    with pytest.raises(SchemaError, match="strictly increasing width"):
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    assert not report.passed
+    assert report.protocol == "intentir.scrc.typecheck.v8"
+    assert "refinement_auth_invalid_widen" in {
+        item.code.value for item in report.diagnostics
+    }
+    with pytest.raises(SchemaError, match="refinement_auth_invalid_widen"):
         build_rewriter_packet(artifact)
 
 
@@ -1143,6 +1195,9 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "use it in every affected J tensor shape" in instructions
     assert "not SSA values" in instructions
     assert "never list x* in portable scope definitions/captures" in instructions
+    assert "One physical Harness p* parameter has exactly one logical_ref" in instructions
+    assert "Never duplicate or alias that physical scalar" in instructions
+    assert "not a second binding or alternate identity" in instructions
 
 
 def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:

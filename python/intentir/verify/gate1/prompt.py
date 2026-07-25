@@ -5,8 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import re
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
@@ -151,6 +151,27 @@ PUBLIC_FRONTEND_CONTEXT = {
     },
 }
 
+# Replay receipts are evidence about the exact public context that a historical
+# generation call saw.  Keep old digests auditable, but never reinterpret an old
+# receipt as if it had used the active context.
+PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
+    {"triton": "public_frontend_context_v7"}
+)
+PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
+    {
+        "triton": MappingProxyType(
+            {
+                "public_frontend_context_v6": (
+                    "5e180f9389fb124735f92ab4c5728e10121fa42bb51bb239902f9676e7f63339"
+                ),
+                "public_frontend_context_v7": (
+                    "2f71b09d4cf3d25cb413b24252a59720822dd3a42b9f8af9eb606a36bfee9613"
+                ),
+            }
+        )
+    }
+)
+
 _FORBIDDEN_KEYS = frozenset(
     {
         "source_code",
@@ -205,45 +226,84 @@ _U_F_KEYS = frozenset(
         "compile_entry_contract",
     }
 )
+_U_F_PACKET_KEYS = frozenset({"protocol", "frontend", "replay_function"})
 
-_INTEGER_DTYPE = re.compile(r"^(?P<signedness>[iu])(?P<bits>[1-9][0-9]*)$")
+
+def public_frontend_context_digest(context: Mapping[str, Any]) -> str:
+    """Return the canonical digest recorded by Replay context receipts."""
+
+    if not isinstance(context, Mapping):
+        raise SchemaError("public frontend context must be an object")
+    return hashlib.sha256(
+        json.dumps(
+            dict(context),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
 
 
-def _assert_replay_refinement_contract(artifact: Gate1Artifact) -> None:
-    """Reject only refinement shapes whose closed tag cannot denote its name."""
+def audit_public_frontend_context_receipt(
+    *,
+    frontend: Frontend | str,
+    context_policy: str,
+    context_sha256: str,
+) -> dict[str, str]:
+    """Audit an exact historical receipt without upgrading its context version."""
 
-    authorizations = {
-        item.auth_id: item
-        for item in artifact.j.boundary.realization_authorizations
+    try:
+        frontend = Frontend(frontend)
+    except (TypeError, ValueError) as exc:
+        raise SchemaError("public frontend context receipt has unknown frontend") from exc
+    history = PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY.get(frontend.value)
+    if history is None:
+        raise SchemaError(
+            "public frontend context receipt has no versioned digest ledger for "
+            f"{frontend.value!r}"
+        )
+    expected = history.get(context_policy)
+    if expected is None:
+        raise SchemaError(
+            "public frontend context receipt has unknown context_policy "
+            f"{context_policy!r}"
+        )
+    if context_sha256 != expected:
+        raise SchemaError(
+            "public frontend context receipt digest does not match its declared "
+            f"policy {context_policy!r}"
+        )
+    active = PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY[frontend.value]
+    return {
+        "frontend": frontend.value,
+        "context_policy": context_policy,
+        "context_sha256": context_sha256,
+        "status": "current" if context_policy == active else "historical",
     }
-    for index, refinement in enumerate(artifact.pi.refinements):
-        kind = str(refinement["kind"])
-        if kind not in {"signed_widen", "unsigned_widen"}:
-            continue
-        authorization = authorizations.get(str(refinement.get("auth_ref")))
-        if authorization is None:
-            # The authoritative TypeCheck reports unresolved auth_ref first.
-            continue
-        source = authorization.source_dtype
-        target = authorization.target_dtype
-        source_match = _INTEGER_DTYPE.fullmatch(source or "")
-        target_match = _INTEGER_DTYPE.fullmatch(target or "")
-        expected_signedness = "i" if kind == "signed_widen" else "u"
-        if (
-            source_match is None
-            or target_match is None
-            or source_match.group("signedness") != expected_signedness
-            or target_match.group("signedness") != expected_signedness
-            or int(target_match.group("bits"))
-            <= int(source_match.group("bits"))
-        ):
-            raise SchemaError(
-                "Replay refinement contract rejects "
-                f"pi.refinements[{index}]: {kind} requires explicit "
-                "same-signedness integer source/target dtypes with strictly "
-                "increasing width"
-            )
 
+
+def _assert_active_public_frontend_context(frontend: Frontend) -> None:
+    active = PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY.get(frontend.value)
+    if active is None:
+        return
+    context = PUBLIC_FRONTEND_CONTEXT.get(frontend.value)
+    if not isinstance(context, Mapping) or context.get("context_policy") != active:
+        raise SchemaError(
+            f"active public frontend context policy drifted for {frontend.value!r}"
+        )
+    audit_public_frontend_context_receipt(
+        frontend=frontend,
+        context_policy=active,
+        context_sha256=public_frontend_context_digest(context),
+    )
+
+
+def _public_context_from_u_f(u_f: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(value)
+        for key, value in u_f.items()
+        if key not in _U_F_PACKET_KEYS
+    }
 
 def _walk(value: Any, path: str = "$" ):
     yield path, value
@@ -255,9 +315,11 @@ def _walk(value: Any, path: str = "$" ):
             yield from _walk(item, f"{path}[{index}]")
 
 
-def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
-    """Fail closed if a Replay packet contains a privileged side channel."""
-
+def _validate_source_isolated_payload(
+    payload: Mapping[str, Any],
+    *,
+    require_active_context: bool,
+) -> None:
     if not isinstance(payload, Mapping):
         raise SchemaError("Replay payload must be an object")
     if set(payload) != {"j", "c", "pi", "u_f"}:
@@ -279,7 +341,7 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
         raise SchemaError(
             f"Replay payload u_f has unknown field(s): {unknown_u_f}"
         )
-    required_u_f = {"protocol", "frontend", "replay_function"}
+    required_u_f = set(_U_F_PACKET_KEYS)
     missing_u_f = sorted(required_u_f - set(u_f))
     if missing_u_f:
         raise SchemaError(
@@ -293,19 +355,35 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
         raise SchemaError("Replay payload u_f has an unsupported frontend") from exc
     if u_f["replay_function"] != "scrc_k0":
         raise SchemaError("Replay payload u_f must use canonical replay_function")
-    fixed_context = PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {})
-    missing_context = sorted(set(fixed_context) - set(u_f))
-    if missing_context:
-        raise SchemaError(
-            f"Replay payload u_f is missing fixed context field(s): {missing_context}"
+    if require_active_context:
+        _assert_active_public_frontend_context(frontend)
+        fixed_context = PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {})
+        missing_context = sorted(set(fixed_context) - set(u_f))
+        if missing_context:
+            raise SchemaError(
+                "Replay payload u_f is missing fixed context field(s): "
+                f"{missing_context}"
+            )
+        modified_context = sorted(
+            key for key, value in fixed_context.items() if u_f.get(key) != value
         )
-    modified_context = sorted(
-        key for key, value in fixed_context.items() if u_f.get(key) != value
-    )
-    if modified_context:
-        raise SchemaError(
-            "Replay payload u_f does not match the fixed public frontend "
-            f"context field(s): {modified_context}"
+        if modified_context:
+            raise SchemaError(
+                "Replay payload u_f does not match the fixed public frontend "
+                f"context field(s): {modified_context}"
+            )
+    else:
+        context_policy = u_f.get("context_policy")
+        if not isinstance(context_policy, str):
+            raise SchemaError(
+                "historical Replay payload u_f requires context_policy"
+            )
+        audit_public_frontend_context_receipt(
+            frontend=frontend,
+            context_policy=context_policy,
+            context_sha256=public_frontend_context_digest(
+                _public_context_from_u_f(u_f)
+            ),
         )
     for path, value in _walk(dict(payload)):
         if isinstance(value, dict):
@@ -328,6 +406,40 @@ def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
     ):
         if token in encoded:
             raise SchemaError("Replay payload contains retired control-plane data")
+
+
+def assert_source_isolated_payload(payload: Mapping[str, Any]) -> None:
+    """Fail closed if a fresh Replay packet is not source-isolated and current."""
+
+    _validate_source_isolated_payload(payload, require_active_context=True)
+
+
+def _canonical_replay_packet_digest(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def audit_replay_packet_digest(
+    payload: Mapping[str, Any],
+    *,
+    expected_digest: str,
+) -> dict[str, str]:
+    """Audit a stored current or historical packet without accepting it as fresh."""
+
+    _validate_source_isolated_payload(payload, require_active_context=False)
+    actual = _canonical_replay_packet_digest(payload)
+    if actual != expected_digest:
+        raise SchemaError("stored Replay packet digest mismatch")
+    u_f = payload["u_f"]
+    receipt = audit_public_frontend_context_receipt(
+        frontend=str(u_f["frontend"]),
+        context_policy=str(u_f["context_policy"]),
+        context_sha256=public_frontend_context_digest(
+            _public_context_from_u_f(u_f)
+        ),
+    )
+    return {**receipt, "packet_sha256": actual}
 
 
 @dataclass(frozen=True)
@@ -375,9 +487,9 @@ def build_rewriter_packet(
             f"{item.code.value}@{item.path}" for item in report.diagnostics
         )
         raise SchemaError("Replay requires TypeCheck(J,C,pi)=PASS: " + summary)
-    _assert_replay_refinement_contract(artifact)
     view = artifact.rewriter_view(masked=masked)
     frontend = Frontend(frontend)
+    _assert_active_public_frontend_context(frontend)
     context = copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {}))
     context.update(
         {
@@ -537,15 +649,17 @@ def build_masked_rewriter_prompt(
 
 def replay_packet_digest(payload: Mapping[str, Any]) -> str:
     assert_source_isolated_payload(payload)
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return _canonical_replay_packet_digest(payload)
 
 
 __all__ = [
-    "PUBLIC_FRONTEND_CONTEXT", "REPLAY_PACKET_SCHEMA", "ReplayPacket",
-    "assert_source_isolated_payload", "build_masked_rewriter_prompt",
+    "PUBLIC_FRONTEND_CONTEXT", "PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY",
+    "PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY", "REPLAY_PACKET_SCHEMA",
+    "ReplayPacket", "audit_public_frontend_context_receipt",
+    "assert_source_isolated_payload", "audit_replay_packet_digest",
+    "build_masked_rewriter_prompt",
     "build_masked_rewriter_view", "build_normal_rewriter_prompt",
     "build_normal_rewriter_view", "build_rewriter_payload",
-    "build_rewriter_packet", "build_rewriter_prompt", "replay_packet_digest",
+    "build_rewriter_packet", "build_rewriter_prompt",
+    "public_frontend_context_digest", "replay_packet_digest",
 ]

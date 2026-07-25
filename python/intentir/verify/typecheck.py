@@ -46,6 +46,7 @@ _REDUCE_ASSOCIATIVITY = frozenset(
 _REDUCE_ATTRS = frozenset({"fn", "axes", "assoc", "keepdims"})
 _CONTRACTION_ATTRS = frozenset({"subscripts"})
 _EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
+_INTEGER_DTYPE = re.compile(r"^(?P<signedness>[iu])(?P<bits>[1-9][0-9]*)$")
 
 
 class TypeCheckStatus(str, Enum):
@@ -95,6 +96,7 @@ class TypeCheckErrorCode(str, Enum):
     REFINEMENT_AUTH_KIND_MISMATCH = "refinement_auth_kind_mismatch"
     REFINEMENT_AUTH_SUBJECT_MISMATCH = "refinement_auth_subject_mismatch"
     REFINEMENT_AUTH_TYPE_MISMATCH = "refinement_auth_type_mismatch"
+    REFINEMENT_AUTH_INVALID_WIDEN = "refinement_auth_invalid_widen"
     GLOBAL_SAFE_AUTH_FORBIDDEN = "global_safe_auth_forbidden"
 
 
@@ -2606,6 +2608,40 @@ def type_check(
                     )
                 )
             continue
+        if authorization.kind in {
+            RefinementKind.SIGNED_WIDEN,
+            RefinementKind.UNSIGNED_WIDEN,
+        }:
+            source_match = _INTEGER_DTYPE.fullmatch(
+                authorization.source_dtype or ""
+            )
+            target_match = _INTEGER_DTYPE.fullmatch(
+                authorization.target_dtype or ""
+            )
+            expected_signedness = (
+                "i"
+                if authorization.kind is RefinementKind.SIGNED_WIDEN
+                else "u"
+            )
+            valid_widen = (
+                source_match is not None
+                and target_match is not None
+                and source_match.group("signedness") == expected_signedness
+                and target_match.group("signedness") == expected_signedness
+                and int(target_match.group("bits"))
+                > int(source_match.group("bits"))
+            )
+            if not valid_widen:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.REFINEMENT_AUTH_INVALID_WIDEN,
+                        f"j.boundary.realization_authorizations[{index}]",
+                        f"{authorization.kind.value} requires explicit "
+                        "same-signedness integer source/target dtype with "
+                        "strictly increasing width",
+                        authorization.auth_id,
+                    )
+                )
         if (
             authorization.source_dtype is not None
             and subject is not None

@@ -27,6 +27,11 @@ the artifact schema or external TypeCheck.
    and enters arithmetic or boolean dataflow, bind one dtype-matching rank-0
    J input `t*` and reuse that same `t*` in every such use. Do not split it into
    `x*` plus `t*`/null, specialize it to a constant, or synthesize a count.
+   One physical Harness `p*` has exactly one `logical_ref`; never duplicate or
+   alias that scalar into a second `p*` so one copy owns `t*` and another owns
+   `x*`. For a dual-use scalar, its one `p*` binds the rank-0 `t*`; any `x*` in
+   other shapes is a distinct symbolic dimension, not another binding of that
+   physical scalar.
    Bind `x*` only when every use is extent/index/domain-only.
    This null-carrier form is runtime-scalar-only. Every
    `bound_constexpr_values` entry is logical: bind logical data to a

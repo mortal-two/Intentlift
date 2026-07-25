@@ -231,6 +231,13 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
     assert artifact.to_json()["j"]["scopes"][0]["scope_id"] == "q0"
     assert type_check(artifact.j, artifact.c, artifact.pi).passed
     assert payload["j"]["signature"]["parameters"][2]["logical_ref"] == "t1"
+    assert payload["j"]["signature"]["parameters"][2]["name"] == "p2"
+    assert payload["j"]["signature"]["parameters"][3]["logical_ref"] == "x0"
+    assert payload["j"]["signature"]["parameters"][3]["name"] == "p3"
+    preflight = " ".join(files["knowledge/preflight.md"].split())
+    assert "exactly one `logical_ref`" in preflight
+    assert "never duplicate or" in preflight
+    assert "not another binding of that physical scalar" in preflight
     assert "t1" in payload["j"]["boundary"]["accesses"][0]["predicate"]
     assert payload["j"]["intent"]["intent_function"]["body"][0]["attrs"][
         "fn"

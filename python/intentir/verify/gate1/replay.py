@@ -10,29 +10,16 @@ from typing import Any, Mapping, Protocol
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 
-from .codegen import extract_python_module, validate_triton_artifact_uses
+from .codegen import extract_python_module
 from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
-from .prompt import build_rewriter_prompt, replay_packet_digest
+from .prompt import (
+    build_rewriter_prompt,
+    public_frontend_context_digest,
+    replay_packet_digest,
+)
 from .tilelang_codegen import extract_tilelang_module
-
-
-_TRITON_DTYPE_ATTRIBUTES = {
-    "bf16": "bfloat16",
-    "f16": "float16",
-    "f32": "float32",
-    "f64": "float64",
-    "i1": "int1",
-    "i8": "int8",
-    "i16": "int16",
-    "i32": "int32",
-    "i64": "int64",
-    "u8": "uint8",
-    "u16": "uint16",
-    "u32": "uint32",
-    "u64": "uint64",
-}
 
 
 @dataclass(frozen=True)
@@ -87,83 +74,17 @@ class ReplayWriter(Protocol):
 def _extract_replay_code(
     response: str,
     *,
-    artifact: Gate1Artifact,
     frontend: Frontend,
     function_name: str,
 ) -> tuple[str, str | None]:
     if frontend is Frontend.TRITON:
-        code = extract_python_module(
-            response,
-            required_function=function_name,
-        )
-        instances = {
-            str(item["id"]): str(item["semantic_ref"])
-            for item in artifact.pi.instances
-        }
-        routed_sources = {
-            str(item["source"])
-            for item in artifact.pi.routes
-        }
-        routed_carriers = {
-            instances[instance]
-            for instance in routed_sources
-            if instance in instances
-        }
-        typed_refinement_kinds = {
-            "signed_widen",
-            "unsigned_widen",
-            "numeric_cast",
-            "accumulation_dtype",
-        }
-        typed_refined_instances = {
-            str(item["instance"])
-            for item in artifact.pi.refinements
-            if str(item["kind"]) in typed_refinement_kinds
-        }
-        authorizations = {
-            item.auth_id: item
-            for item in artifact.j.boundary.realization_authorizations
-        }
-        typed_refined_targets: dict[str, set[str]] = {}
-        for refinement in artifact.pi.refinements:
-            instance = str(refinement["instance"])
-            if (
-                instance not in typed_refined_instances
-                or instance not in instances
-            ):
-                continue
-            authorization = authorizations.get(str(refinement.get("auth_ref")))
-            target = (
-                _TRITON_DTYPE_ATTRIBUTES.get(authorization.target_dtype)
-                if authorization is not None
-                else None
-            )
-            if target is not None:
-                typed_refined_targets.setdefault(instances[instance], set()).add(
-                    target
-                )
-        typed_refined_carriers = set(typed_refined_targets)
-        null_parameters = {
-            item.name
-            for item in artifact.j.signature.parameters
-            if item.logical_ref is None
-        }
-        validate_triton_artifact_uses(
-            code,
-            required_function=function_name,
-            forbidden_body_parameters=frozenset(
-                null_parameters - routed_carriers
+        return (
+            extract_python_module(
+                response,
+                required_function=function_name,
             ),
-            unrefined_cast_parameters=frozenset(
-                null_parameters - typed_refined_carriers
-            ),
-            parameter_cast_targets={
-                parameter: frozenset(targets)
-                for parameter, targets in typed_refined_targets.items()
-                if parameter in null_parameters
-            },
+            None,
         )
-        return code, None
     if frontend is Frontend.CUTE:
         entry = "scrc_entry"
         return (
@@ -222,13 +143,16 @@ def _context_receipt(raw: Mapping[str, Any], context: Mapping[str, Any]) -> dict
                         "id": item.get("id") if isinstance(item.get("id"), str) else "",
                     }
                 )
+    public_context = {
+        key: value
+        for key, value in context.items()
+        if key not in {"protocol", "frontend", "replay_function"}
+    }
     return {
         "replay_input_protocol": str(context.get("protocol", "")),
         "context_policy": str(context.get("context_policy", "")),
         "frontend": str(context.get("frontend", "")),
-        "context_sha256": hashlib.sha256(
-            json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
+        "context_sha256": public_frontend_context_digest(public_context),
         "retrieval_trace": trace,
     }
 
@@ -279,7 +203,6 @@ class ResponsesReplayWriter:
         try:
             code, entry_function_name = _extract_replay_code(
                 reply.text,
-                artifact=artifact,
                 frontend=frontend,
                 function_name=function_name,
             )
@@ -365,7 +288,6 @@ class StaticReplayWriter:
         frontend = Frontend(u_f["frontend"])
         code, entry_function_name = _extract_replay_code(
             self.code,
-            artifact=artifact,
             frontend=frontend,
             function_name=function_name,
         )

@@ -739,6 +739,11 @@ the predicate and arithmetic dataflow; never split one Source value between x*,
 t*, null carriers, constants, or a synthesized count. Only a scalar whose every
 Source use is extent/index/domain-only and which never enters logical arithmetic
 or boolean dataflow may bind an x* dimension.
+One physical Harness p* parameter has exactly one logical_ref. Never duplicate
+or alias that physical scalar into a second p* merely to give one copy a rank-0
+t* and the other an x*. For a dual-use scalar, its one p* binds the rank-0 t*;
+any x* appearing elsewhere in tensor shapes is a distinct symbolic dimension,
+not a second binding or alternate identity for that same physical scalar.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
 Conversely, a runtime scalar used only for representation/address realization
