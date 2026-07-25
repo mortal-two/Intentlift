@@ -1444,7 +1444,7 @@ def _validate_source_identifier_privacy(
     visible_strings: list[str] = []
     literal_fields = {
         "dtype", "fn", "frontend", "kind", "mechanism", "mode", "op",
-        "placement", "producer", "role", "value_type",
+        "placement", "producer", "role", "subscripts", "value_type",
     }
 
     def collect_strings(value: Any, field_name: str | None = None) -> None:

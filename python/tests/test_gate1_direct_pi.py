@@ -1485,6 +1485,19 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     scrc._validate_source_identifier_privacy(artifact, binding)
 
 
+def test_source_privacy_does_not_confuse_einsum_label_with_private_name() -> None:
+    source = """@triton.jit
+def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
+    k = tl.arange(0, BLOCK_SIZE)
+    tl.store(Y + k, tl.load(X + k))
+"""
+    _anonymous, binding, _mapping = anonymize_source(source)
+    artifact = make_reduce_artifact()
+    artifact.j.intent.body[0].attrs["subscripts"] = "k,abhsq->abhsqk"
+
+    scrc._validate_source_identifier_privacy(artifact, binding)
+
+
 def test_source_privacy_still_rejects_private_name_in_open_expression() -> None:
     source = """@triton.jit
 def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
