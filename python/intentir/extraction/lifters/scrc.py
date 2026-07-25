@@ -1426,6 +1426,13 @@ def _validate_source_identifier_privacy(
     for source_name, opaque in binding.source_to_opaque:
         if source_name == opaque:
             continue
+        # These are protocol-public, declaration-ordered handles/binders.  A
+        # private Source local may coincidentally have the same spelling, but
+        # seeing that spelling in canonical J/C/pi carries no Source identity.
+        if re.fullmatch(
+            r"(?:scrc_[jk][0-9]+|[abcdeiknpqrtuvx][0-9]+)", source_name
+        ):
+            continue
         pattern = rf"(?<![A-Za-z0-9_]){re.escape(source_name)}(?![A-Za-z0-9_])"
         if any(re.search(pattern, item) for item in visible_strings):
             raise ValueError("Lift response retained a source identifier")

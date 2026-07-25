@@ -1398,6 +1398,19 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     scrc._validate_source_identifier_privacy(artifact, binding)
 
 
+def test_source_privacy_does_not_confuse_canonical_index_with_private_name() -> None:
+    source = """@triton.jit
+def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
+    k0 = tl.arange(0, BLOCK_SIZE)
+    tl.store(Y + k0, tl.load(X + k0))
+"""
+    _anonymous, binding, _mapping = anonymize_source(source)
+    artifact = make_reduce_artifact()
+    artifact.j.boundary.accesses[0].index_expression = "[k0, k1]"
+
+    scrc._validate_source_identifier_privacy(artifact, binding)
+
+
 def test_source_privacy_still_rejects_private_name_in_open_expression() -> None:
     source = """@triton.jit
 def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
