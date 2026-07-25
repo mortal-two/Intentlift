@@ -26,6 +26,7 @@ MAX_GATE1_ROUNDS = 3
 MAX_PRE_REPLAY_REJECTIONS = 3
 UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
+MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -72,6 +73,34 @@ def _feedback_item(value: Any) -> Any:
     return value
 
 
+def _observer_edge_endpoint(value: Any) -> str:
+    """Collapse an observer node label to a hash-free structural family."""
+
+    normalized = str(_feedback_item(value))
+    if normalized.startswith("region["):
+        payload = normalized.removeprefix("region[").split("]", 1)[0]
+        return "region[" + payload.split(":", 1)[0] + "]"
+    if normalized.startswith("arg["):
+        return normalized
+    return normalized.split("[", 1)[0]
+
+
+def _observer_edge_pattern(difference: Mapping[str, Any]) -> tuple[str, ...] | None:
+    item = difference.get("item")
+    if (
+        not isinstance(item, (list, tuple))
+        or len(item) != 4
+        or item[0] != "edge"
+    ):
+        return None
+    return (
+        str(difference.get("kind", "unknown")),
+        _observer_edge_endpoint(item[1]),
+        _observer_edge_endpoint(item[2]),
+        str(_feedback_item(item[3])),
+    )
+
+
 def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
     """Keep full evidence on disk while sending Lift a bounded actionable diff."""
 
@@ -87,9 +116,18 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
         category = str(difference.get("category", "unknown"))
         group = grouped.setdefault(
             category,
-            {"category": category, "difference_count": 0, "examples": []},
+            {
+                "category": category,
+                "difference_count": 0,
+                "examples": [],
+                "_edge_patterns": {},
+            },
         )
         group["difference_count"] += 1
+        pattern = _observer_edge_pattern(difference)
+        if pattern is not None:
+            patterns = group["_edge_patterns"]
+            patterns[pattern] = patterns.get(pattern, 0) + 1
         examples = group["examples"]
         if len(examples) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
             continue
@@ -104,6 +142,21 @@ def _compact_gate1_observer_diff(comparison: Any) -> dict[str, Any]:
     categories = []
     for category in sorted(grouped):
         group = grouped[category]
+        raw_patterns = group.pop("_edge_patterns")
+        if raw_patterns:
+            group["edge_patterns"] = [
+                {
+                    "kind": pattern[0],
+                    "source": pattern[1],
+                    "target": pattern[2],
+                    "role": pattern[3],
+                    "count": count,
+                }
+                for pattern, count in sorted(
+                    raw_patterns.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY]
+            ]
         group["truncated_count"] = max(
             0, group["difference_count"] - len(group["examples"])
         )

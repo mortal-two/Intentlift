@@ -173,8 +173,9 @@ def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
                             (
                                 f"effect.trace[{index + 1:020x}]"
                                 if index == 0
-                                else "operand[0]"
+                                else f"tt.load[{index + 1:020x}]"
                             ),
+                            "effect.order" if index == 0 else "operand[0]",
                         ],
                         "expected_count": 1,
                         "actual_count": 0,
@@ -207,6 +208,22 @@ def test_gate1_relift_diff_is_bounded_actionable_and_has_no_node_ids() -> None:
     assert dataflow["difference_count"] == 12
     assert len(dataflow["examples"]) == 8
     assert dataflow["truncated_count"] == 4
+    assert dataflow["edge_patterns"][:2] == [
+        {
+            "kind": "missing",
+            "source": "tt.addptr",
+            "target": "tt.load",
+            "role": "operand[0]",
+            "count": 11,
+        },
+        {
+            "kind": "missing",
+            "source": "region[scf.for]",
+            "target": "effect.trace",
+            "role": "effect.order",
+            "count": 1,
+        },
+    ]
     assert "00000000000000000000" not in str(compact)
     assert dataflow["examples"][0]["item"][1] == "region[scf.for:node]"
     assert dataflow["examples"][0]["item"][2] == "effect.trace[node]"
