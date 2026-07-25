@@ -721,6 +721,20 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " For induction_basis=rounded_extent_step, use the same zero lower "
+        "and matching C tile step as extent_step, but use exactly "
+        "ceil_div(the declared J trip extent, that C tile) multiplied by "
+        "that C tile as the upper bound. Do not use the current tensor shape, "
+        "a launch value, or an invented rounding formula."
+        " Every J effect_if is mandatory effect control. Emit one real "
+        "runtime `if` with explicit positive and negative arms, preserve "
+        "predicate polarity, lexical arm scope, nested operation/effect order, "
+        "and an explicitly empty arm. Never replace effect_if with tl.where, "
+        "a value select, predicated unconditional effects, or compile-time "
+        "control. Read the predicate and both arms only from J.",
+        "",
+    )
+    contract = contract.replace(
         " It is the local tile axis after program/grid axes select a program "
         "instance, not the whole-tensor logical ordinal in J reduce.attrs.axes; "
         "never copy or offset that logical ordinal to guess it.",
@@ -751,13 +765,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v7"]
+    assert current_digest == history["public_frontend_context_v8"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v7"]["context_sha256"]
+    ]["public_frontend_context_v8"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v7",
+        context_policy="public_frontend_context_v8",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -842,7 +856,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v7"
+    ] == "public_frontend_context_v8"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -870,7 +884,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "91eb3db3fb27a166c2fecb3e02c05ac8131be3b93fa7576272814d3050e388c6",
+            "79e3af0228c349639b52f5e763a9bf07e01669d470de24caeb7826e7c31d2466",
         ),
         (
             Frontend.CUTE,
@@ -967,7 +981,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
     assert report.passed
     assert report.protocol == "intentir.scrc.typecheck.v16"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v7"
+        "public_frontend_context_v8"
     )
 
 
@@ -999,7 +1013,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v7"
+    assert context["context_policy"] == "public_frontend_context_v8"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract

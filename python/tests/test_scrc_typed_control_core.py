@@ -18,12 +18,14 @@ from intentir.extraction.lifters.scrc import (
     decode_scrc_lift_artifact,
 )
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
-from intentir.verify.gate1.model import Gate1Artifact, SchemaError
+from intentir.verify.gate1.model import Frontend, Gate1Artifact, SchemaError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.prompt import (
+    build_normal_rewriter_prompt,
     build_masked_rewriter_view,
     build_normal_rewriter_view,
 )
+from intentir.verify.gate1.replay import replay_source_ingress
 from intentir.verify.typecheck import (
     TYPECHECK_PROTOCOL,
     TypeCheckErrorCode,
@@ -318,6 +320,111 @@ def test_effect_if_normal_and_masked_views_preserve_binary_structure() -> None:
     assert "predicate" not in masked["pi"]["regions"][1]
 
 
+def test_effect_if_replay_contract_is_source_neutral_and_requires_runtime_control() -> None:
+    artifact = Gate1Artifact.from_json(_effect_if_payload())
+    instructions, packet = build_normal_rewriter_prompt(artifact)
+
+    assert "one real runtime if" in instructions
+    assert "explicit positive and negative arms" in instructions
+    assert "Never lower effect_if to tl.where/select" in instructions
+    encoded = instructions + packet
+    for forbidden in (
+        "source_kernel",
+        "zero_centered_weight",
+        "flash_attn",
+        "Gate1 diff",
+    ):
+        assert forbidden not in encoded
+
+
+def test_effect_if_replay_check_requires_runtime_dual_arm_polarity() -> None:
+    artifact = Gate1Artifact.from_json(_effect_if_payload())
+    accepted = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    if c0:
+        marker = 0
+    if p2:
+        value = tl.load(p0)
+        tl.store(p1, value)
+    else:
+        pass
+"""
+    folded = accepted.replace(
+        "    if p2:\n"
+        "        value = tl.load(p0)\n"
+        "        tl.store(p1, value)\n"
+        "    else:\n"
+        "        pass\n",
+        "    value = tl.load(p0)\n"
+        "    selected = tl.where(p2, value, value)\n"
+        "    tl.store(p1, selected)\n",
+    )
+    swapped = accepted.replace(
+        "    if p2:\n"
+        "        value = tl.load(p0)\n"
+        "        tl.store(p1, value)\n"
+        "    else:\n"
+        "        pass\n",
+        "    if p2:\n"
+        "        pass\n"
+        "    else:\n"
+        "        value = tl.load(p0)\n"
+        "        tl.store(p1, value)\n",
+    )
+    missing_negative = accepted.replace(
+        "    else:\n"
+        "        pass\n",
+        "",
+    )
+
+    assert replay_source_ingress(
+        accepted, artifact=artifact, frontend=Frontend.TRITON
+    ).status == "pass"
+    folded_result = replay_source_ingress(
+        folded, artifact=artifact, frontend=Frontend.TRITON
+    )
+    swapped_result = replay_source_ingress(
+        swapped, artifact=artifact, frontend=Frontend.TRITON
+    )
+    missing_negative_result = replay_source_ingress(
+        missing_negative, artifact=artifact, frontend=Frontend.TRITON
+    )
+    assert folded_result.to_check_response()["diagnostics"][0][
+        "rule_code"
+    ] == "effect_if_runtime_count"
+    assert swapped_result.to_check_response()["diagnostics"][0][
+        "rule_code"
+    ] == "effect_if_arm_polarity"
+    assert missing_negative_result.to_check_response()["diagnostics"][0][
+        "rule_code"
+    ] == "effect_if_explicit_negative_arm"
+
+
+def test_effect_if_replay_check_does_not_guess_control_kind_from_arm_shape() -> None:
+    artifact = Gate1Artifact.from_json(_effect_if_payload())
+    packet = build_normal_rewriter_view(artifact)
+    operation = packet["j"]["intent"]["intent_function"]["body"][0]
+    operation["op"] = "value_if"
+    source_without_runtime_if = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    value = tl.load(p0)
+    tl.store(p1, value)
+"""
+
+    assert replay_source_ingress(
+        source_without_runtime_if,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    ).status == "pass"
+
+
 def test_effect_if_requires_dominating_scalar_i1() -> None:
     non_boolean = _effect_if_payload()
     non_boolean["j"]["intent"]["intent_function"]["inputs"][1]["dtype"] = "i32"
@@ -531,3 +638,72 @@ def test_rounded_extent_step_is_closed_wire_only_and_typechecked() -> None:
     unknown["pi"]["iterations"][0]["upper"] = "ceil_div(x0,c0)*c0"
     with pytest.raises(SchemaError, match="forbidden fields"):
         Gate1Artifact.from_json(unknown)
+
+
+def test_rounded_extent_step_views_and_prompt_preserve_declared_basis_only() -> None:
+    artifact = _tiled_loop_artifact(basis="rounded_extent_step")
+    normal = artifact.rewriter_view(masked=False)
+    masked = artifact.rewriter_view(masked=True)
+    instructions, _packet = build_normal_rewriter_prompt(
+        Gate1Artifact.from_json(_effect_if_payload())
+    )
+
+    for view in (normal, masked):
+        assert view["pi"]["iterations"][0]["induction_basis"] == (
+            "rounded_extent_step"
+        )
+        assert not ({"lower", "upper", "step", "formula"} & set(
+            view["pi"]["iterations"][0]
+        ))
+    assert "upper exactly ceil_div(trip extent, C tile) * C tile" in instructions
+    assert "current shapes/values" in instructions
+    assert "ceil_div(x0,c0)*c0" not in json.dumps(normal, sort_keys=True)
+
+
+def test_rounded_extent_step_replay_check_requires_declared_extent_tile_formula() -> None:
+    artifact = _tiled_loop_artifact(basis="rounded_extent_step")
+    view = artifact.rewriter_view(masked=False)
+    packet = {
+        **view,
+        "u_f": build_normal_rewriter_view(make_reduce_artifact())["u_f"],
+    }
+    valid = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    rounded = tl.cdiv(p2, c0) * c0
+    for offset in range(0, rounded, c0):
+        pass
+"""
+    extent_only = valid.replace(
+        "    rounded = tl.cdiv(p2, c0) * c0\n", ""
+    ).replace("rounded", "p2")
+    guessed_constant = valid.replace(
+        "rounded = tl.cdiv(p2, c0) * c0", "rounded = 64"
+    )
+
+    accepted = replay_source_ingress(
+        valid,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    )
+    extent_result = replay_source_ingress(
+        extent_only,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    )
+    guessed_result = replay_source_ingress(
+        guessed_constant,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+        packet=packet,
+    )
+
+    assert accepted.status == "pass", accepted.to_check_response()
+    for result in (extent_result, guessed_result):
+        diagnostic = result.to_check_response()["diagnostics"][0]
+        assert diagnostic["rule_code"] == "rounded_extent_step_contract"
+        assert diagnostic["anonymous_handles"] == ["p2", "c0"]

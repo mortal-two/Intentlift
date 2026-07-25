@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v7",
+        "context_policy": "public_frontend_context_v8",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -85,6 +85,17 @@ PUBLIC_FRONTEND_CONTEXT = {
             "the induction variable itself is unused: never insert or remove the "
             "trip-count ceiling division, and never choose a basis from an op "
             "family, concrete value, name, or frontend convention."
+            " For induction_basis=rounded_extent_step, use the same zero lower "
+            "and matching C tile step as extent_step, but use exactly "
+            "ceil_div(the declared J trip extent, that C tile) multiplied by "
+            "that C tile as the upper bound. Do not use the current tensor shape, "
+            "a launch value, or an invented rounding formula."
+            " Every J effect_if is mandatory effect control. Emit one real "
+            "runtime `if` with explicit positive and negative arms, preserve "
+            "predicate polarity, lexical arm scope, nested operation/effect order, "
+            "and an explicitly empty arm. Never replace effect_if with tl.where, "
+            "a value select, predicated unconditional effects, or compile-time "
+            "control. Read the predicate and both arms only from J."
             " Every pi.refinements entry is mandatory realization topology. "
             "Resolve its auth_ref in J.boundary.realization_authorizations and "
             "materialize the authorized kind at that exact instance before its "
@@ -156,7 +167,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v7",
+        "triton": "public_frontend_context_v8",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -171,6 +182,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v7": (
                     "2f71b09d4cf3d25cb413b24252a59720822dd3a42b9f8af9eb606a36bfee9613"
+                ),
+                "public_frontend_context_v8": (
+                    "060ddb29e6acdc024b69a122eccd8a3151f3205c909799e5a9356128f1ba67e5"
                 ),
             }
         ),
@@ -214,6 +228,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "91eb3db3fb27a166c2fecb3e02c05ac8131be3b93fa7576272814d3050e388c6"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v8": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "79e3af0228c349639b52f5e763a9bf07e01669d470de24caeb7826e7c31d2466"
                         ),
                     }
                 ),
@@ -785,6 +807,16 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "
+        "Treat each J effect_if as effect control, not a value expression: emit "
+        "one real runtime if with explicit positive and negative arms in the "
+        "authored polarity, keep every arm-local operation/effect in authored "
+        "order, and spell an authored empty arm explicitly. Never lower effect_if "
+        "to tl.where/select or execute either arm unconditionally under a mask. "
+        "For every pi.iterations rounded_extent_step relation, resolve its "
+        "loop_instance to the J loop trip extent and tile_instance to the matching "
+        "C slot; use lower 0, step equal to that C tile, and upper exactly "
+        "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
+        "shapes/values or invent another rounding formula. "
         + frontend_realization_clause
         + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "

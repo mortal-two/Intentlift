@@ -204,6 +204,452 @@ def _check_triton_exact_abi(
             )
 
 
+def _packet_effect_if_arms(packet: Mapping[str, Any]) -> list[tuple[bool, bool]]:
+    """Return authored positive/negative non-emptiness in lexical preorder."""
+
+    result: list[tuple[bool, bool]] = []
+
+    def visit(body: Any) -> None:
+        if not isinstance(body, list):
+            return
+        for operation in body:
+            if not isinstance(operation, Mapping):
+                continue
+            positive = operation.get("positive")
+            negative = operation.get("negative")
+            if operation.get("op") == "effect_if":
+                positive_body = positive.get("body", [])
+                negative_body = negative.get("body", [])
+                result.append((bool(positive_body), bool(negative_body)))
+                visit(positive_body)
+                visit(negative_body)
+            visit(operation.get("body"))
+
+    intent = packet.get("j", {}).get("intent", {})
+    function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
+    visit(function.get("body") if isinstance(function, Mapping) else None)
+    return result
+
+
+def _expression_is_runtime(
+    expression: ast.AST,
+    dependencies: Mapping[str, bool],
+) -> bool:
+    if isinstance(expression, ast.Name):
+        return dependencies.get(expression.id, True)
+    if isinstance(expression, ast.Constant):
+        return False
+    if isinstance(expression, ast.Call):
+        function_name = (
+            expression.func.attr
+            if isinstance(expression.func, ast.Attribute)
+            else expression.func.id
+            if isinstance(expression.func, ast.Name)
+            else ""
+        )
+        if function_name in {"load", "program_id", "atomic_add", "atomic_cas"}:
+            return True
+    return any(
+        _expression_is_runtime(child, dependencies)
+        for child in ast.iter_child_nodes(expression)
+    )
+
+
+def _runtime_if_nodes(
+    function: ast.FunctionDef,
+    *,
+    runtime_parameters: set[str],
+    constexpr_parameters: set[str],
+) -> list[ast.If]:
+    """Collect runtime ``if`` nodes while excluding closed constexpr control."""
+
+    initial = {
+        **{name: True for name in runtime_parameters},
+        **{name: False for name in constexpr_parameters},
+    }
+    result: list[ast.If] = []
+
+    def bind_target(target: ast.AST, value: bool, env: dict[str, bool]) -> None:
+        if isinstance(target, ast.Name):
+            env[target.id] = value
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                bind_target(item, value, env)
+
+    def visit(statements: list[ast.stmt], env: dict[str, bool]) -> None:
+        for statement in statements:
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                value = statement.value
+                dependency = (
+                    _expression_is_runtime(value, env)
+                    if value is not None
+                    else False
+                )
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else [statement.target]
+                )
+                for target in targets:
+                    bind_target(target, dependency, env)
+                continue
+            if isinstance(statement, ast.If):
+                if _expression_is_runtime(statement.test, env):
+                    result.append(statement)
+                visit(statement.body, dict(env))
+                visit(statement.orelse, dict(env))
+                continue
+            if isinstance(statement, (ast.For, ast.While)):
+                visit(statement.body, dict(env))
+                visit(statement.orelse, dict(env))
+
+    visit(function.body, initial)
+    return result
+
+
+def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
+    return bool(statements) and all(isinstance(item, ast.Pass) for item in statements)
+
+
+def _check_triton_effect_if_contract(
+    code: str,
+    packet: Mapping[str, Any],
+    function_name: str,
+) -> None:
+    """Check only the packet-declared runtime binary-control shell.
+
+    Gate1 remains authoritative for operation/dataflow/effect identity and order;
+    this compiler-free preflight merely prevents Replay from erasing an authored
+    ``effect_if`` into select/predicated unconditional execution.
+    """
+
+    expected = _packet_effect_if_arms(packet)
+    if not expected:
+        return
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    j_parameters = packet["j"]["signature"]["parameters"]
+    runtime_parameters = {
+        str(item["name"])
+        for item in j_parameters
+        if item.get("kind") != "constexpr"
+    }
+    constexpr_parameters = {
+        str(item["name"])
+        for item in j_parameters
+        if item.get("kind") == "constexpr"
+    } | {str(item["name"]) for item in packet["c"]["slots"]}
+    actual = _runtime_if_nodes(
+        function,
+        runtime_parameters=runtime_parameters,
+        constexpr_parameters=constexpr_parameters,
+    )
+    if len(actual) != len(expected):
+        raise _ReplayABIViolation(
+            "effect_if_runtime_count",
+            path="<typed-control>",
+            line=(actual[0].lineno if actual else function.lineno),
+        )
+    for index, (node, (positive_nonempty, negative_nonempty)) in enumerate(
+        zip(actual, expected, strict=True)
+    ):
+        if not node.orelse:
+            raise _ReplayABIViolation(
+                "effect_if_explicit_negative_arm",
+                path=f"<effect_if:{index}>",
+                line=node.lineno,
+            )
+        positive_empty = _arm_is_explicitly_empty(node.body)
+        negative_empty = _arm_is_explicitly_empty(node.orelse)
+        if positive_empty == positive_nonempty or negative_empty == negative_nonempty:
+            raise _ReplayABIViolation(
+                "effect_if_arm_polarity",
+                path=f"<effect_if:{index}>",
+                line=node.lineno,
+            )
+
+
+def _packet_intent_ops_by_path(packet: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+
+    def visit(body: Any, prefix: str) -> None:
+        if not isinstance(body, list):
+            return
+        for index, operation in enumerate(body):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            result[path] = operation
+            visit(operation.get("body"), f"{path}.body")
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                if isinstance(arm, Mapping):
+                    visit(arm.get("body"), f"{path}.{polarity}.body")
+
+    intent = packet.get("j", {}).get("intent", {})
+    function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
+    visit(function.get("body") if isinstance(function, Mapping) else None, "body")
+    return result
+
+
+def _packet_rounded_iteration_contracts(
+    packet: Mapping[str, Any],
+) -> list[tuple[str, str, str]]:
+    """Resolve source-neutral rounded relations to packet ABI handles."""
+
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping):
+        return []
+    instances = {
+        str(item.get("id")): str(item.get("semantic_ref"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+    }
+    node_paths = packet.get("j", {}).get("node_ids", {})
+    operations = _packet_intent_ops_by_path(packet)
+    signature = packet.get("j", {}).get("signature", {})
+    parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    relations = packet.get("j", {}).get("value_dimension_relations", [])
+    c_slots = {
+        str(item.get("name"))
+        for item in packet.get("c", {}).get("slots", [])
+        if isinstance(item, Mapping)
+    }
+    result: list[tuple[str, str, str]] = []
+    for index, relation in enumerate(pi.get("iterations", [])):
+        if not isinstance(relation, Mapping) or relation.get(
+            "induction_basis"
+        ) != "rounded_extent_step":
+            continue
+        loop_ref = instances.get(str(relation.get("loop_instance")))
+        tile_ref = instances.get(str(relation.get("tile_instance")))
+        path = node_paths.get(loop_ref) if isinstance(node_paths, Mapping) else None
+        if isinstance(path, str) and path.startswith("intent_function."):
+            path = path.removeprefix("intent_function.")
+        operation = operations.get(path) if isinstance(path, str) else None
+        trip = operation.get("trip") if isinstance(operation, Mapping) else None
+        axis = trip.get("axis") if isinstance(trip, Mapping) else None
+        if not isinstance(axis, str) or tile_ref not in c_slots:
+            # Masked-J deliberately removes the trip semantics.  Do not guess
+            # them from shape, C, or pi; the ablation may then fail Gate1.
+            continue
+        extent_refs = {axis}
+        for item in relations if isinstance(relations, list) else []:
+            if (
+                isinstance(item, Mapping)
+                and item.get("relation") == "eq"
+                and item.get("dimension_ref") == axis
+                and isinstance(item.get("value_ref"), str)
+            ):
+                extent_refs.add(str(item["value_ref"]))
+        extent_parameters = [
+            str(item["name"])
+            for item in parameters
+            if isinstance(item, Mapping)
+            and item.get("logical_ref") in extent_refs
+            and item.get("kind") in {"scalar", "constexpr"}
+        ]
+        if len(extent_parameters) != 1:
+            continue
+        result.append(
+            (extent_parameters[0], str(tile_ref), f"pi.iterations[{index}]")
+        )
+    return result
+
+
+def _for_nodes_with_assignments(
+    function: ast.FunctionDef,
+) -> list[tuple[ast.For, dict[str, ast.AST]]]:
+    result: list[tuple[ast.For, dict[str, ast.AST]]] = []
+
+    def bind(target: ast.AST, value: ast.AST, env: dict[str, ast.AST]) -> None:
+        if isinstance(target, ast.Name):
+            env[target.id] = value
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                bind(item, value, env)
+
+    def visit(statements: list[ast.stmt], env: dict[str, ast.AST]) -> None:
+        for statement in statements:
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    bind(target, statement.value, env)
+            elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+                bind(statement.target, statement.value, env)
+            elif isinstance(statement, ast.For):
+                result.append((statement, dict(env)))
+                visit(statement.body, dict(env))
+                visit(statement.orelse, dict(env))
+            elif isinstance(statement, ast.If):
+                visit(statement.body, dict(env))
+                visit(statement.orelse, dict(env))
+
+    visit(function.body, {})
+    return result
+
+
+def _resolved_expression(
+    expression: ast.AST,
+    assignments: Mapping[str, ast.AST],
+    active: frozenset[str] = frozenset(),
+) -> ast.AST:
+    if (
+        isinstance(expression, ast.Name)
+        and expression.id in assignments
+        and expression.id not in active
+    ):
+        return _resolved_expression(
+            assignments[expression.id], assignments, active | {expression.id}
+        )
+    return expression
+
+
+def _is_named(
+    expression: ast.AST,
+    name: str,
+    assignments: Mapping[str, ast.AST],
+) -> bool:
+    expression = _resolved_expression(expression, assignments)
+    return isinstance(expression, ast.Name) and expression.id == name
+
+
+def _is_ceil_div(
+    expression: ast.AST,
+    extent: str,
+    tile: str,
+    assignments: Mapping[str, ast.AST],
+) -> bool:
+    expression = _resolved_expression(expression, assignments)
+    if isinstance(expression, ast.Call) and len(expression.args) == 2:
+        function = expression.func
+        name = (
+            function.attr
+            if isinstance(function, ast.Attribute)
+            else function.id
+            if isinstance(function, ast.Name)
+            else ""
+        )
+        return name in {"cdiv", "ceil_div"} and _is_named(
+            expression.args[0], extent, assignments
+        ) and _is_named(expression.args[1], tile, assignments)
+    if not isinstance(expression, ast.BinOp) or not isinstance(
+        expression.op, ast.FloorDiv
+    ):
+        return False
+    if not _is_named(expression.right, tile, assignments):
+        return False
+    numerator = _resolved_expression(expression.left, assignments)
+    if not isinstance(numerator, ast.BinOp) or not isinstance(
+        numerator.op, ast.Sub
+    ):
+        return False
+    if not isinstance(numerator.right, ast.Constant) or numerator.right.value != 1:
+        return False
+    summed = _resolved_expression(numerator.left, assignments)
+    return (
+        isinstance(summed, ast.BinOp)
+        and isinstance(summed.op, ast.Add)
+        and (
+            _is_named(summed.left, extent, assignments)
+            and _is_named(summed.right, tile, assignments)
+            or _is_named(summed.left, tile, assignments)
+            and _is_named(summed.right, extent, assignments)
+        )
+    )
+
+
+def _is_rounded_upper(
+    expression: ast.AST,
+    extent: str,
+    tile: str,
+    assignments: Mapping[str, ast.AST],
+) -> bool:
+    expression = _resolved_expression(expression, assignments)
+    if not isinstance(expression, ast.BinOp) or not isinstance(
+        expression.op, ast.Mult
+    ):
+        return False
+    return (
+        _is_ceil_div(expression.left, extent, tile, assignments)
+        and _is_named(expression.right, tile, assignments)
+        or _is_named(expression.left, tile, assignments)
+        and _is_ceil_div(expression.right, extent, tile, assignments)
+    )
+
+
+def _for_matches_rounded_contract(
+    node: ast.For,
+    assignments: Mapping[str, ast.AST],
+    *,
+    extent: str,
+    tile: str,
+) -> bool:
+    iterator = _resolved_expression(node.iter, assignments)
+    if not isinstance(iterator, ast.Call) or len(iterator.args) != 3:
+        return False
+    function = iterator.func
+    name = (
+        function.attr
+        if isinstance(function, ast.Attribute)
+        else function.id
+        if isinstance(function, ast.Name)
+        else ""
+    )
+    return (
+        name == "range"
+        and isinstance(iterator.args[0], ast.Constant)
+        and iterator.args[0].value == 0
+        and _is_rounded_upper(iterator.args[1], extent, tile, assignments)
+        and _is_named(iterator.args[2], tile, assignments)
+    )
+
+
+def _check_triton_rounded_iteration_contract(
+    code: str,
+    packet: Mapping[str, Any],
+    function_name: str,
+) -> None:
+    expected = _packet_rounded_iteration_contracts(packet)
+    if not expected:
+        return
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    available = _for_nodes_with_assignments(function)
+    consumed: set[int] = set()
+    for extent, tile, path in expected:
+        match = next(
+            (
+                index
+                for index, (node, assignments) in enumerate(available)
+                if index not in consumed
+                and _for_matches_rounded_contract(
+                    node, assignments, extent=extent, tile=tile
+                )
+            ),
+            None,
+        )
+        if match is None:
+            raise _ReplayABIViolation(
+                "rounded_extent_step_contract",
+                path=path,
+                handles=(extent, tile),
+                line=function.lineno,
+            )
+        consumed.add(match)
+
+
 def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
     """Project an exception to bounded source-free rule/path metadata."""
 
@@ -323,6 +769,8 @@ def replay_source_ingress(
             function_name=function_name,
         )
         _check_triton_exact_abi(code, packet, function_name)
+        _check_triton_effect_if_contract(code, packet, function_name)
+        _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
         return ReplayIngressResult(
             "fail", diagnostics=(_closed_ingress_diagnostic(exc),)
@@ -467,6 +915,13 @@ No Source or source slice, Harness/compiler view, actual C values, CompileCase,
 grid, Gate diff/TTIR, previous Replay, sibling trajectory, or network is
 available. Generate the entire source yourself. Fixed code only checks and
 rejects; it never generates, patches, or certifies source.
+
+Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
+must remain one runtime `if` with explicit polarity-preserving arms (including
+an explicit empty arm), and every pi `rounded_extent_step` must use its declared
+J trip extent and matching C tile as `range(0, ceil_div(extent,tile)*tile,
+tile)`. Never substitute select/predicated unconditional effects, current-shape
+guesses, or a second rounding formula.
 """
     tool = """# Replay tool contract
 
