@@ -591,7 +591,10 @@ def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
     assert (replay_dir / "masked_j_replay_rejected.txt").read_text() == (
         "exact masked rejection\n"
     )
-    for prefix, digest in (("replay", "a" * 64), ("masked_j_replay", "b" * 64)):
+    for prefix, digest in (
+        ("replay", "a" * 64),
+        ("masked_j_replay", "b" * 64),
+    ):
         receipt = json.loads(
             (replay_dir / f"{prefix}_receipt.json").read_text()
         )
@@ -600,6 +603,37 @@ def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
         )
         assert receipt["episode_contract_sha256"] == digest
         assert (replay_dir / f"{prefix}_trajectory.json").is_file()
+
+
+def test_unaccepted_lift_continuation_is_persisted_as_draft_only(
+    tmp_path,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+    from intentir.extraction.lifters.scrc import SCRCReliftRecord
+
+    draft = {"schema": "draft", "j": {}, "c": {}, "pi": {}}
+    lift = SimpleNamespace(
+        records=(SCRCReliftRecord(1, continuation_candidate=draft),)
+    )
+    attempt = SimpleNamespace(
+        formal_round=None,
+        artifact=None,
+        typecheck=None,
+        gate1=None,
+    )
+    lifecycle_dir = tmp_path / "draft-lifecycle"
+    lifecycle_dir.mkdir()
+
+    workload_run._save_attempt_evidence(
+        lifecycle_dir,
+        (attempt,),
+        lift,
+        (),
+    )
+
+    path = lifecycle_dir / "attempt-01/unaccepted_lift_continuation.json"
+    assert json.loads(path.read_text()) == draft
+    assert not (lifecycle_dir / "attempt-01/artifact.json").exists()
 
 
 def test_replay_evidence_rejects_trajectory_hash_or_secret_before_source_write(

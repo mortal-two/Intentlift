@@ -1376,6 +1376,11 @@ def _save_attempt_evidence(
                     and record.extraction.provenance.trajectory is not None
                 ):
                     _write_json(attempt_dir / "lift_trajectory.json", trajectory)
+            if record.continuation_candidate is not None:
+                _write_json(
+                    attempt_dir / "unaccepted_lift_continuation.json",
+                    dict(record.continuation_candidate),
+                )
     formal_attempts = [
         (run_dir / f"attempt-{index:02d}", attempt)
         for index, attempt in enumerate(attempts, start=1)
@@ -1564,6 +1569,11 @@ def save_workload_failure(
                 _write_json(call_dir / "worker.json", worker)
                 if trajectory is not None and not (call_dir / "trajectory.json").exists():
                     _write_json(call_dir / "trajectory.json", trajectory)
+            if record.continuation_candidate is not None:
+                _write_json(
+                    call_dir / "unaccepted_lift_continuation.json",
+                    dict(record.continuation_candidate),
+                )
         for writer_index, writer in enumerate(
             runtime.replay_writers, start=1
         ):
