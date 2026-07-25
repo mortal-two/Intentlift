@@ -259,6 +259,81 @@ def _unit_concat_partition_j(*, width: int = 1) -> SemanticArchive:
     )
 
 
+def _unit_direct_store_partition_j() -> SemanticArchive:
+    function = IntentFunction.from_json(
+        {
+            "name": "unit_direct_store_partition",
+            "inputs": [
+                {"name": name, "dtype": "f32", "shape": [2, 3]}
+                for name in ("A", "B")
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": [2, 3]}
+            ],
+            "body": [
+                {
+                    "id": "n0", "op": "map_binary", "result": "Y",
+                    "operands": ["A", "B"], "attrs": {"fn": "add"},
+                    "type": {"dtype": "f32", "shape": [2, 3]},
+                }
+            ],
+        }
+    )
+    loads = [
+        BoundaryAccess(
+            f"a{index}", AccessKind.LOAD, tensor, node_ref="n0",
+            index_expression="[k0, k1]",
+        )
+        for index, tensor in enumerate(("A", "B"))
+    ]
+    stores = [
+        BoundaryAccess(
+            f"a{index + 2}", AccessKind.STORE, "Y", node_ref="n0",
+            index_expression=f"[k0, {index}]",
+        )
+        for index in range(3)
+    ]
+    effects = [
+        EffectSpec(
+            EffectKind.READ, tensor, "n0", f"e{index}", f"a{index}",
+        )
+        for index, tensor in enumerate(("A", "B"))
+    ] + [
+        EffectSpec(
+            EffectKind.WRITE, "Y", "n0", f"e{index + 2}", f"a{index + 2}",
+        )
+        for index in range(3)
+    ]
+    return SemanticArchive(
+        "unit_direct_store_partition",
+        function,
+        {"n0": "body[0]"},
+        Boundary(
+            domains={
+                "d0": "0 <= k0 and k0 < 2",
+                "d1": "0 <= k1 and k1 < 3",
+            },
+            accesses=[*loads, *stores],
+            effects=effects,
+        ),
+        LogicalSignature(
+            [
+                *[
+                    SignatureParameter(
+                        f"p{index}", ParameterKind.POINTER,
+                        ParameterMode.INPUT, "f32", 2, logical_ref=tensor,
+                    )
+                    for index, tensor in enumerate(("A", "B"))
+                ],
+                SignatureParameter(
+                    "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                    "f32", 2, logical_ref="Y",
+                ),
+            ]
+        ),
+    )
+
+
 def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     artifact = make_reduce_artifact(explicit_accesses=False)
     x = np.arange(8, dtype=np.float32).reshape(2, 4)
@@ -1207,7 +1282,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v7"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v8"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1926,6 +2001,106 @@ def test_wide_concat_point_stores_remain_unsupported() -> None:
     j = _unit_concat_partition_j(width=2)
 
     with pytest.raises(NotImplementedError, match="unit-width operands"):
+        project_functional_boundary(j)
+
+
+def test_direct_stores_form_auditable_complete_output_partition() -> None:
+    j = _unit_direct_store_partition_j()
+    projection = project_functional_boundary(j)
+
+    assert projection.concat_store_partitions == ()
+    assert projection.to_json()["direct_store_partitions"] == [
+        {
+            "proof": "unit_width_direct_store_partition",
+            "output": "Y",
+            "value_ref": "Y",
+            "producer_ref": "n0",
+            "axis": 1,
+            "slices": [
+                {"access_id": "a2", "start": 0, "width": 1},
+                {"access_id": "a3", "start": 1, "width": 1},
+                {"access_id": "a4", "start": 2, "width": 1},
+            ],
+        }
+    ]
+
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={},
+        input_bindings={"A": "a", "B": "b"},
+        output_bindings={"Y": "out"},
+    )
+    values = {
+        "a": np.arange(6, dtype=np.float32).reshape(2, 3),
+        "b": np.full((2, 3), 2.0, dtype=np.float32),
+    }
+    result = ScalarLoweringRunner().run(spec, values)
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["out"], values["a"] + values["b"])
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "missing", "nonpartition"])
+def test_direct_store_partition_rejects_closed_contradictions(mutation) -> None:
+    j = _unit_direct_store_partition_j()
+    if mutation == "duplicate":
+        j.boundary.accesses[3].index_expression = "[k0, 0]"
+        expected = "duplicate slices"
+    elif mutation == "missing":
+        j.boundary.accesses.pop()
+        j.boundary.effects.pop()
+        expected = "missing or extra store"
+    else:
+        for access in j.boundary.accesses[2:]:
+            access.index_expression = access.index_expression.replace("k0", "0")
+        expected = "do not cover a non-partition extent"
+
+    with pytest.raises(ValueError, match=expected):
+        project_functional_boundary(j)
+
+
+def test_multi_axis_direct_stores_remain_consumer_unsupported() -> None:
+    j = _unit_direct_store_partition_j()
+    for tensor in j.intent.inputs:
+        tensor.shape = [2, 2]
+    j.intent.outputs[0].shape = [2, 2]
+    j.intent.body[0].type = {"dtype": "f32", "shape": [2, 2]}
+    j.boundary.domains["d1"] = "0 <= k1 and k1 < 2"
+    j.boundary.accesses = j.boundary.accesses[:2] + [
+        BoundaryAccess(
+            f"a{index + 2}", AccessKind.STORE, "Y", node_ref="n0",
+            index_expression=f"[{row}, {column}]",
+        )
+        for index, (row, column) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1)))
+    ]
+    j.boundary.effects = j.boundary.effects[:2] + [
+        EffectSpec(
+            EffectKind.WRITE, "Y", "n0", f"e{index + 2}", f"a{index + 2}",
+        )
+        for index in range(4)
+    ]
+
+    with pytest.raises(NotImplementedError, match="exactly one partition axis"):
+        project_functional_boundary(j)
+
+
+def test_predicated_direct_stores_remain_consumer_unsupported() -> None:
+    j = _unit_direct_store_partition_j()
+    for access in j.boundary.accesses[2:]:
+        access.predicate = "0 <= k0 and k0 < 2"
+
+    with pytest.raises(NotImplementedError, match="requires unpredicated stores"):
+        project_functional_boundary(j)
+
+
+def test_symbolic_axis_direct_stores_remain_consumer_unsupported() -> None:
+    j = _unit_direct_store_partition_j()
+    for tensor in [*j.intent.inputs, *j.intent.outputs]:
+        tensor.shape[1] = "x0"
+    j.intent.body[0].type = {"dtype": "f32", "shape": [2, "x0"]}
+    j.boundary.domains["d1"] = "0 <= k1 and k1 < x0"
+
+    with pytest.raises(NotImplementedError, match="static (tensor|output) extent"):
         project_functional_boundary(j)
 
 

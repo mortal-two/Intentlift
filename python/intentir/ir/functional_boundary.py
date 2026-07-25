@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v7"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v8"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -162,6 +162,43 @@ class ConcatStorePartitionProjection:
 
 
 @dataclass(frozen=True)
+class DirectStoreSliceProjection:
+    """One unit-width point store into a complete producer result."""
+
+    access_id: str
+    start: int
+    width: int = 1
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "access_id": self.access_id,
+            "start": self.start,
+            "width": self.width,
+        }
+
+
+@dataclass(frozen=True)
+class DirectStorePartitionProjection:
+    """One exhaustive point-store partition of the same complete J value."""
+
+    output: str
+    value_ref: str
+    producer_ref: str
+    axis: int
+    slices: tuple[DirectStoreSliceProjection, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "unit_width_direct_store_partition",
+            "output": self.output,
+            "value_ref": self.value_ref,
+            "producer_ref": self.producer_ref,
+            "axis": self.axis,
+            "slices": [item.to_json() for item in self.slices],
+        }
+
+
+@dataclass(frozen=True)
 class FunctionalBoundaryProjection:
     """One ephemeral proof that Layer B projects to logical tensor execution."""
 
@@ -185,6 +222,7 @@ class FunctionalBoundaryProjection:
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
+    direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -250,6 +288,9 @@ class FunctionalBoundaryProjection:
             ],
             "concat_store_partitions": [
                 proof.to_json() for proof in self.concat_store_partitions
+            ],
+            "direct_store_partitions": [
+                proof.to_json() for proof in self.direct_store_partitions
             ],
         }
 
@@ -618,6 +659,175 @@ def _project_concat_store_partition(
         for start in range(len(typed_operands))
     )
     return ConcatStorePartitionProjection(output, producer_ref, axis, slices)
+
+
+def _project_direct_store_partition(
+    j: Any,
+    *,
+    output: str,
+    stores: Sequence[Any],
+    coordinates_by_access: Mapping[str, tuple[str | int, ...]],
+    predicates: Mapping[str, PredicateProjection | None],
+    observable_value: str,
+) -> DirectStorePartitionProjection:
+    """Prove point stores exhaust one static axis of one complete J value.
+
+    This relation is deliberately independent of the producer opcode.  The
+    stores must all name the same producer and its complete observable result;
+    no Source, C, pi, declaration order, or target lowering is consulted.
+    """
+
+    producer_refs = {access.node_ref for access in stores}
+    if len(producer_refs) != 1 or None in producer_refs:
+        raise NotImplementedError(
+            "functional direct store partition requires one common producer"
+        )
+    producer_ref = next(iter(producer_refs))
+    assert producer_ref is not None
+    operation = _canonical_nodes(j).get(producer_ref)
+    if operation is None:
+        raise NotImplementedError(
+            "functional direct store partition requires a J producer"
+        )
+    if any(predicates[access.access_id] is not None for access in stores):
+        raise NotImplementedError(
+            "functional direct store partition requires unpredicated stores"
+        )
+    if observable_value not in _result_names(operation):
+        raise ValueError(
+            "functional direct store partition does not store its observable J value"
+        )
+
+    value_types = j_elaboration(j).value_type_by_name
+    output_type = value_types.get(output)
+    result_type = value_types.get(observable_value)
+    if output_type is None or result_type is None:
+        raise ValueError("functional direct store partition lacks a closed type")
+    if (
+        result_type.dtype != output_type.dtype
+        or result_type.shape != output_type.shape
+    ):
+        raise ValueError(
+            "functional direct store partition producer type differs from output"
+        )
+
+    coordinates = [
+        coordinates_by_access[access.access_id] for access in stores
+    ]
+    rank = len(output_type.shape)
+    if any(len(item) != rank for item in coordinates):
+        raise ValueError(
+            "functional direct store partition rank differs from output"
+        )
+    varying_axes = [
+        axis
+        for axis in range(rank)
+        if len({item[axis] for item in coordinates}) > 1
+    ]
+    if not varying_axes:
+        raise ValueError(
+            "functional boundary requires exactly one store per logical output"
+        )
+    if len(varying_axes) != 1:
+        raise NotImplementedError(
+            "functional direct stores require exactly one partition axis"
+        )
+    axis = varying_axes[0]
+    starts = [item[axis] for item in coordinates]
+    if any(not isinstance(start, int) for start in starts):
+        raise NotImplementedError(
+            "functional direct store partition requires constant coordinates"
+        )
+    extent = output_type.shape[axis]
+    if type(extent) is not int:
+        raise NotImplementedError(
+            "functional direct store partition requires a static output extent"
+        )
+
+    for dimension in range(rank):
+        if dimension == axis:
+            continue
+        coordinate = coordinates[0][dimension]
+        if any(item[dimension] != coordinate for item in coordinates[1:]):
+            raise ValueError(
+                "functional direct stores disagree on non-partition coordinates"
+            )
+        dimension_extent = output_type.shape[dimension]
+        if isinstance(coordinate, int) and not (
+            coordinate == 0 and dimension_extent == 1
+        ):
+            raise ValueError(
+                "functional direct stores do not cover a non-partition extent"
+            )
+
+    if len(stores) != extent:
+        raise ValueError(
+            "functional direct store partition has a missing or extra store"
+        )
+    by_start: dict[int, Any] = {}
+    for access, start in zip(stores, starts, strict=True):
+        assert isinstance(start, int)
+        if start in by_start:
+            raise ValueError(
+                "functional direct store partition has duplicate slices"
+            )
+        by_start[start] = access
+    if set(by_start) != set(range(extent)):
+        raise ValueError(
+            "functional direct store partition has a gap or out-of-range slice"
+        )
+    slices = tuple(
+        DirectStoreSliceProjection(by_start[start].access_id, start)
+        for start in range(extent)
+    )
+    return DirectStorePartitionProjection(
+        output,
+        observable_value,
+        producer_ref,
+        axis,
+        slices,
+    )
+
+
+def _project_store_partition(
+    j: Any,
+    *,
+    output: str,
+    stores: Sequence[Any],
+    coordinates_by_access: Mapping[str, tuple[str | int, ...]],
+    predicates: Mapping[str, PredicateProjection | None],
+    observable_value: str,
+) -> ConcatStorePartitionProjection | DirectStorePartitionProjection:
+    """Dispatch one multi-store output to its narrow J-only proof profile."""
+
+    producer_refs = {access.node_ref for access in stores}
+    producer_ref = (
+        next(iter(producer_refs))
+        if len(producer_refs) == 1 and None not in producer_refs
+        else None
+    )
+    operation = (
+        _canonical_nodes(j).get(producer_ref)
+        if isinstance(producer_ref, str)
+        else None
+    )
+    if operation is not None and operation.op == "concat":
+        return _project_concat_store_partition(
+            j,
+            output=output,
+            stores=stores,
+            coordinates_by_access=coordinates_by_access,
+            predicates=predicates,
+            observable_value=observable_value,
+        )
+    return _project_direct_store_partition(
+        j,
+        output=output,
+        stores=stores,
+        coordinates_by_access=coordinates_by_access,
+        predicates=predicates,
+        observable_value=observable_value,
+    )
 
 
 def _flatten_conjunction(expression: ContractExpr) -> tuple[ContractExpr, ...]:
@@ -1229,7 +1439,7 @@ def functional_boundary_closure_issues(
         if access.kind.value == "store":
             stores_by_output.setdefault(access.tensor, []).append(access)
     for output, stores in stores_by_output.items():
-        if not stores:
+        if len(stores) < 2:
             continue
         producer_refs = {access.node_ref for access in stores}
         if len(producer_refs) != 1 or None in producer_refs:
@@ -1238,35 +1448,11 @@ def functional_boundary_closure_issues(
         assert producer_ref is not None
         operation = nodes.get(producer_ref)
         output_type = value_types.get(output)
-        if operation is None or operation.op != "concat" or output_type is None:
+        if operation is None or output_type is None:
             continue
-        axis = operation.attrs.get("axis")
-        operand_types = [value_types.get(name) for name in operation.operands]
         if (
-            not isinstance(axis, int)
-            or isinstance(axis, bool)
-            or axis < 0
-            or axis >= len(output_type.shape)
-            or not operand_types
-            or any(item is None for item in operand_types)
-            or any(access.predicate is not None for access in stores)
+            any(access.predicate is not None for access in stores)
             or any(access.access_id not in direct_coordinates for access in stores)
-        ):
-            continue
-        typed_operands = [item for item in operand_types if item is not None]
-        if any(
-            len(item.shape) != len(output_type.shape)
-            or type(item.shape[axis]) is not int
-            or item.shape[axis] != 1
-            for item in typed_operands
-        ):
-            # General/wide concat slicing is a consumer capability, not J
-            # illegality under the current direct-coordinate relation.
-            continue
-        if any(
-            len(direct_coordinates[access.access_id]) != len(output_type.shape)
-            or not isinstance(direct_coordinates[access.access_id][axis], int)
-            for access in stores
         ):
             continue
         observable_value = returns.get(output, output)
@@ -1274,7 +1460,7 @@ def functional_boundary_closure_issues(
         if mapping is not None:
             observable_value = mapping.value
         try:
-            _project_concat_store_partition(
+            _project_store_partition(
                 j,
                 output=output,
                 stores=stores,
@@ -1283,8 +1469,8 @@ def functional_boundary_closure_issues(
                 observable_value=observable_value,
             )
         except NotImplementedError:
-            # A recognized producer can still use a boundary profile outside
-            # unit-width direct stores.  Keep that distinction as capability.
+            # General/wide/multi-axis/symbolic/predicated store profiles remain
+            # valid J and are a consumer capability question.
             continue
         except ValueError as exc:
             first_index = access_positions[stores[0].access_id]
@@ -2889,6 +3075,7 @@ def _project_functional_boundary(
             )
 
     concat_store_partitions: list[ConcatStorePartitionProjection] = []
+    direct_store_partitions: list[DirectStorePartitionProjection] = []
     for output, stores in stores_by_output.items():
         if not boundary.accesses:
             continue
@@ -2915,16 +3102,18 @@ def _project_functional_boundary(
         mapping = mappings.get(output)
         if mapping is not None:
             observable_value = mapping.value
-        concat_store_partitions.append(
-            _project_concat_store_partition(
-                j,
-                output=output,
-                stores=stores,
-                coordinates_by_access=coordinates_by_access,
-                predicates=predicates,
-                observable_value=observable_value,
-            )
+        partition = _project_store_partition(
+            j,
+            output=output,
+            stores=stores,
+            coordinates_by_access=coordinates_by_access,
+            predicates=predicates,
+            observable_value=observable_value,
         )
+        if isinstance(partition, ConcatStorePartitionProjection):
+            concat_store_partitions.append(partition)
+        else:
+            direct_store_partitions.append(partition)
     if consumed_domain_axes != set(domains):
         raise NotImplementedError(
             "functional boundary has an unconsumed domain axis"
@@ -3083,6 +3272,7 @@ def _project_functional_boundary(
         value_dimension_relations=value_dimension_pairs,
         constant_gathers=tuple(constant_gathers),
         concat_store_partitions=tuple(concat_store_partitions),
+        direct_store_partitions=tuple(direct_store_partitions),
     )
 
 
@@ -3143,6 +3333,8 @@ __all__ = [
     "ConstantGatherProjection",
     "ConcatStorePartitionProjection",
     "ConcatStoreSliceProjection",
+    "DirectStorePartitionProjection",
+    "DirectStoreSliceProjection",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
     "ConsumerOutsideProjection",

@@ -142,6 +142,54 @@ def _concat_partition_artifact(*, width: int = 1):
     return artifact
 
 
+def _direct_store_partition_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = [2, 3]
+    artifact.j.intent.outputs[0].shape = [2, 3]
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0", "op": "map_binary", "result": "t1",
+                "operands": ["t0", "t0"], "attrs": {"fn": "add"},
+                "type": {"dtype": "f32", "shape": [2, 3]},
+            }
+        )
+    ]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    artifact.j.boundary.domains = {
+        "d0": "0 <= k0 and k0 < 2",
+        "d1": "0 <= k1 and k1 < 3",
+    }
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[k0, k1]",
+        ),
+        *[
+            BoundaryAccess(
+                f"a{index + 1}", AccessKind.STORE, "t1", node_ref="n0",
+                index_expression=f"[k0, {index}]",
+            )
+            for index in range(3)
+        ],
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        *[
+            EffectSpec(
+                EffectKind.WRITE, "t1", "n0", f"e{index + 1}",
+                f"a{index + 1}",
+            )
+            for index in range(3)
+        ],
+    ]
+    artifact.j.boundary.output_mappings = []
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    return artifact
+
+
 def _tile_artifact(
     *,
     input_shape=(2,),
@@ -396,6 +444,78 @@ def test_typecheck_does_not_make_wide_concat_consumer_capability_illegal() -> No
 
     assert report.passed, report.to_json()
     with pytest.raises(NotImplementedError, match="unit-width operands"):
+        project_functional_boundary(artifact.j)
+
+
+def test_typecheck_accepts_complete_direct_store_partition() -> None:
+    artifact = _direct_store_partition_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "missing", "nonpartition"])
+def test_typecheck_rejects_direct_store_partition_contradiction(mutation) -> None:
+    artifact = _direct_store_partition_artifact()
+    if mutation == "duplicate":
+        artifact.j.boundary.accesses[2].index_expression = "[k0, 0]"
+        expected = "duplicate slices"
+    elif mutation == "missing":
+        artifact.j.boundary.accesses.pop()
+        artifact.j.boundary.effects.pop()
+        expected = "missing or extra store"
+    else:
+        for access in artifact.j.boundary.accesses[1:]:
+            access.index_expression = access.index_expression.replace("k0", "0")
+        expected = "do not cover a non-partition extent"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    matching = [
+        item for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE
+    ]
+
+    assert not report.passed
+    assert any(expected in item.detail for item in matching)
+
+
+def test_typecheck_keeps_predicated_direct_partition_as_consumer_capability() -> None:
+    artifact = _direct_store_partition_artifact()
+    for access in artifact.j.boundary.accesses[1:]:
+        access.predicate = "0 <= k0 and k0 < 2"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="requires unpredicated stores"):
+        project_functional_boundary(artifact.j)
+
+
+def test_typecheck_keeps_multi_axis_direct_partition_as_consumer_capability() -> None:
+    artifact = _direct_store_partition_artifact()
+    artifact.j.intent.inputs[0].shape = [2, 2]
+    artifact.j.intent.outputs[0].shape = [2, 2]
+    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": [2, 2]}
+    artifact.j.boundary.domains["d1"] = "0 <= k1 and k1 < 2"
+    artifact.j.boundary.accesses = artifact.j.boundary.accesses[:1] + [
+        BoundaryAccess(
+            f"a{index + 1}", AccessKind.STORE, "t1", node_ref="n0",
+            index_expression=f"[{row}, {column}]",
+        )
+        for index, (row, column) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1)))
+    ]
+    artifact.j.boundary.effects = artifact.j.boundary.effects[:1] + [
+        EffectSpec(
+            EffectKind.WRITE, "t1", "n0", f"e{index + 1}", f"a{index + 1}",
+        )
+        for index in range(4)
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    with pytest.raises(NotImplementedError, match="exactly one partition axis"):
         project_functional_boundary(artifact.j)
 
 
