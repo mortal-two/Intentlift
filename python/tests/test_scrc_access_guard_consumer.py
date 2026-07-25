@@ -24,6 +24,7 @@ from intentir.verify.gate1.model import (
     LogicalSignature,
     ParameterKind,
     ParameterMode,
+    OutputMapping,
     SemanticArchive,
     SignatureParameter,
 )
@@ -33,24 +34,25 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpe
 def _guarded_select_j(
     polarity: AccessGuardPolarity = AccessGuardPolarity.POSITIVE,
 ) -> SemanticArchive:
-    active = "Candidate" if polarity is AccessGuardPolarity.POSITIVE else "Current"
-    inactive = "Current" if polarity is AccessGuardPolarity.POSITIVE else "Candidate"
+    active = "Candidate" if polarity is AccessGuardPolarity.POSITIVE else "Y"
+    inactive = "Y" if polarity is AccessGuardPolarity.POSITIVE else "Candidate"
     function = IntentFunction.from_json(
         {
             "name": "guarded_select",
             "inputs": [
                 {"name": "Candidate", "dtype": "f32", "shape": [2, 3]},
-                {"name": "Current", "dtype": "f32", "shape": [2, 3]},
+                {"name": "Y", "dtype": "f32", "shape": [2, 3]},
                 {"name": "Guard", "dtype": "i1", "shape": [2]},
             ],
             "outputs": [
                 {"name": "Y", "dtype": "f32", "shape": [2, 3]},
             ],
+            "returns": [{"output": "Y", "value": "v0"}],
             "body": [
                 {
                     "id": "n0",
                     "op": "select",
-                    "result": "Y",
+                    "result": "v0",
                     "operands": ["Guard", active, inactive],
                     "type": {"dtype": "f32", "shape": [2, 3]},
                 }
@@ -63,7 +65,7 @@ def _guarded_select_j(
             index_expression="[k0, k1]",
         ),
         BoundaryAccess(
-            "a1", AccessKind.LOAD, "Current", node_ref="n0",
+            "a1", AccessKind.LOAD, "Y", node_ref="n0",
             index_expression="[k0, k1]",
         ),
         BoundaryAccess(
@@ -77,7 +79,7 @@ def _guarded_select_j(
     ]
     effects = [
         EffectSpec(EffectKind.READ, "Candidate", "n0", "e0", "a0"),
-        EffectSpec(EffectKind.READ, "Current", "n0", "e1", "a1"),
+        EffectSpec(EffectKind.READ, "Y", "n0", "e1", "a1"),
         EffectSpec(EffectKind.READ, "Guard", "n0", "e2", "a2"),
         EffectSpec(EffectKind.WRITE, "Y", "n0", "e3", "a3"),
     ]
@@ -92,6 +94,7 @@ def _guarded_select_j(
             },
             accesses=accesses,
             effects=effects,
+            output_mappings=[OutputMapping("Y", "v0", "n0")],
             access_guard_relations=[
                 AccessGuardRelation("a3", "Guard", [1], polarity),
             ],
@@ -103,16 +106,12 @@ def _guarded_select_j(
                     "f32", 2, logical_ref="Candidate",
                 ),
                 SignatureParameter(
-                    "p1", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "f32", 2, logical_ref="Current",
+                    "p1", ParameterKind.POINTER, ParameterMode.INOUT,
+                    "f32", 2, logical_ref="Y",
                 ),
                 SignatureParameter(
                     "p2", ParameterKind.POINTER, ParameterMode.INPUT,
                     "i1", 1, logical_ref="Guard",
-                ),
-                SignatureParameter(
-                    "p3", ParameterKind.POINTER, ParameterMode.INOUT,
-                    "f32", 2, logical_ref="Y",
                 ),
             ]
         ),
@@ -122,15 +121,15 @@ def _guarded_select_j(
 def test_access_guard_projects_authored_relation_and_unique_broadcast() -> None:
     projection = project_functional_boundary(_guarded_select_j())
 
-    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v10"
-    assert projection.emitter_broadcast_axes() == {"Y": {"Guard": (1,)}}
+    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v11"
+    assert projection.emitter_broadcast_axes() == {"v0": {"Guard": (1,)}}
     assert projection.to_json()["access_guard_relations"] == [
         {
             "proof": "authored_access_guard_relation",
             "access_ref": "a3",
             "value_ref": "Guard",
             "node_ref": "n0",
-            "consumer_result": "Y",
+            "consumer_result": "v0",
             "axes": [1],
             "polarity": "positive",
         }
@@ -157,7 +156,7 @@ def test_access_guard_refeval_uses_only_authored_select(
         dims={},
         input_bindings={
             "Candidate": "candidate",
-            "Current": "current",
+            "Y": "current",
             "Guard": "guard",
         },
         output_bindings={"Y": "output"},
@@ -208,7 +207,7 @@ def test_access_guard_broadcast_is_shared_with_structured_reference() -> None:
         dims={},
         input_bindings={
             "Candidate": "candidate",
-            "Current": "current",
+            "Y": "current",
             "Guard": "guard",
         },
         output_bindings={"Y": "output"},
@@ -256,7 +255,7 @@ def test_access_guard_refeval_api_has_no_c_or_pi_authority() -> None:
         dims={},
         input_bindings={
             "Candidate": "candidate",
-            "Current": "current",
+            "Y": "current",
             "Guard": "guard",
         },
         output_bindings={"Y": "output"},

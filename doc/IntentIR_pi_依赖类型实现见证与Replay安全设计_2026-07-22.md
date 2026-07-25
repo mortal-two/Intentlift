@@ -1211,8 +1211,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v11`，共享
-`intentir.j-functional-boundary.v9`：它们继承 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v12`，共享
+`intentir.j-functional-boundary.v11`：它们继承 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1238,6 +1238,11 @@ reference 执行 common scalar lowering 尚不支持的 mixed typed binary contr
 Gate2 reference consumer，不是 production recipe，也不让 π 获得 store/contraction 语义。修复这类
 consumer 后可对 exact Gate1-closed artifact/Replay 做零模型调用的 Gate2-only recheck；结果写独立
 evidence 且 `changes_parent_verdict=false`，不刷新旧 receipt。
+
+v12/v11 只扩展 J 已显式闭合的 logical inout：同一 typed `t*` 同时是 input/output、由唯一 inout
+参数绑定，pre-state load、post-state store、effect 和 return/output mapping 均来自 J。π 不声明也不
+补 alias；`alias_of`/`boundary.aliases` 继续 unsupported。RefEval 分别消费 input/output binding，不
+据 Harness 地址相等猜测语义。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

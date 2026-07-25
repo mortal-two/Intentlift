@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v10"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v11"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -2929,15 +2929,9 @@ def _project_functional_boundary(
         raise ValueError(closure_issues[0].detail)
     boundary = j.boundary
     access_by_id = {item.access_id: item for item in boundary.accesses}
-    guarded_store_outputs = {
-        access_by_id[relation.access_ref].tensor
-        for relation in boundary.access_guard_relations
-        if relation.access_ref in access_by_id
-        and access_by_id[relation.access_ref].kind.value == "store"
-    }
     if any(parameter.alias_of is not None for parameter in j.signature.parameters):
         raise NotImplementedError(
-            "functional boundary does not implement inout/alias ABI"
+            "functional boundary does not implement physical alias ABI"
         )
     if boundary.aliases:
         raise NotImplementedError("functional boundary does not implement aliases")
@@ -2949,15 +2943,6 @@ def _project_functional_boundary(
     projected_guarded_store_accesses = {
         item.access_ref for item in access_guard_relations
     }
-    if any(
-        parameter.mode.value == "inout"
-        and parameter.logical_ref not in guarded_store_outputs
-        for parameter in j.signature.parameters
-    ):
-        raise NotImplementedError(
-            "functional boundary does not implement inout/alias ABI outside "
-            "authored access guards"
-        )
     structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
     domains = _full_domains(j) if boundary.accesses else {}

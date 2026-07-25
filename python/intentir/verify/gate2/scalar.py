@@ -44,7 +44,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v11"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v12"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -546,11 +546,11 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     elaboration = j_elaboration(j)
     boundary = j.boundary
     if any(
-        parameter.mode is ParameterMode.INOUT or parameter.alias_of is not None
+        parameter.alias_of is not None
         for parameter in j.signature.parameters
     ):
         raise NotImplementedError(
-            "E_J dense functional boundary does not implement inout/alias ABI"
+            "E_J dense functional boundary does not implement physical alias ABI"
         )
     if not boundary.accesses:
         if boundary.domains or boundary.effects:

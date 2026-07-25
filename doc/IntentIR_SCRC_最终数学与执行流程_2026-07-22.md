@@ -522,8 +522,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v11`，shared projection 为
-`intentir.j-functional-boundary.v9`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v12`，shared projection 为
+`intentir.j-functional-boundary.v11`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -558,6 +558,11 @@ materializer。v9 可证明同 producer、同完整 observable typed value、单
 可执行 common scalar lowering 尚未支持的 mixed typed binary contraction。后两者只扩展通用 Gate2
 reference consumer，不是 production recipe、pass permission 或 Kernel 特判。production J+C 当前对
 任何 access guard 仍显式 fail closed。
+
+v12/v11 进一步消费显式 logical inout：同一 `t*` 以相同类型同时出现在 inputs/outputs，由唯一
+`mode=inout` parameter 绑定，且 J 已完整声明 pre-state load、post-state store、effect 与
+return/output mapping。Gate2 用 input binding 执行旧值语义、用 output binding 比较新值；物理
+`alias_of`/`boundary.aliases` 仍 unsupported，RefEval 不补 merge、不复制 J 字段。
 
 ---
 

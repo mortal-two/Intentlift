@@ -571,8 +571,8 @@ implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而�
 留在 π-only 形态；既不具有 J denotation、又不能合法归入 C 的 constexpr 使 Harness/case invalid，
 不得交给 Lift 用 `logical_ref=null` 猜测兜底。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v11`，shared functional projection 为
-`intentir.j-functional-boundary.v9`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v12`，shared functional projection 为
+`intentir.j-functional-boundary.v11`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -611,6 +611,11 @@ consumer capability，不是 production recipe，也不按 Kernel 名称分支�
 production J+C 入口当前对任何 access guard 仍以
 `access_guard_materialization_not_implemented` fail closed，不能因 RefEval 已能执行显式 select 就
 静默擦除该 B relation。
+
+v12/v11 对 J-owned logical inout 作通用消费：同一 `t*` 必须在 input/output 两端复用、由唯一 inout
+parameter 绑定，并以完整 load/store/effect/return/output mapping 区分 pre-state 与 post-state；
+RefEval 分别读取 input binding、写出 output binding。物理 `alias_of` 和 `boundary.aliases` 仍 fail
+closed，固定代码不生成 select/merge、不改 J，也不从 Harness 或 π 推导 alias。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式
