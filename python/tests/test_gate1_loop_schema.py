@@ -903,8 +903,15 @@ def test_storage_lifetime_and_loop_state_membership_are_fail_closed() -> None:
         "kind": "state",
         "ref": "state0",
     }
-    with pytest.raises(SchemaError, match="use outside declared lifetime"):
+    with pytest.raises(SchemaError) as rejected_lifetime:
         SemanticArchive.from_json(truncated_lifetime)
+    assert (
+        "member(s) ['acc_iter', 'acc_next'] use node event "
+        "'body[0].body[1]'"
+    ) in str(rejected_lifetime.value)
+    assert "outside declared lifetime [state:'state0', state:'state0']" in str(
+        rejected_lifetime.value
+    )
 
     unrelated_last = _loop_archive_with_store_effect()
     unrelated_last["storage"][0]["last_use_event"] = {

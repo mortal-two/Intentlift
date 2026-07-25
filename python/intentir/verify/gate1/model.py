@@ -2878,11 +2878,25 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             raise SchemaError(
                 f"storage {item.storage_id!r} last_use_event is unrelated to its members"
             )
-        for observed_event in observed:
+        for observed_event in sorted(
+            observed,
+            key=lambda event: (event_order[event], event),
+        ):
             observed_order = event_order[observed_event]
             if not (init_order <= observed_order <= last_order):
+                offending_members = sorted(
+                    member
+                    for member in item.members
+                    if observed_event in value_events.get(member, set())
+                )
                 raise SchemaError(
-                    f"storage {item.storage_id!r} has use outside declared lifetime"
+                    f"storage {item.storage_id!r} member(s) "
+                    f"{offending_members!r} use "
+                    f"{observed_event[0]} event {observed_event[1]!r} outside "
+                    "declared lifetime "
+                    f"[{item.init_event.kind.value}:{item.init_event.ref!r}, "
+                    f"{item.last_use_event.kind.value}:"
+                    f"{item.last_use_event.ref!r}]"
                 )
             owner_scope = event_scope.get(observed_event)
             if (
