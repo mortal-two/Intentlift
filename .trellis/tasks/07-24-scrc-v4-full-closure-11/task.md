@@ -452,6 +452,80 @@ interface/op-multiset/dataflow/reduction/predicate-effect 五类全过，RefEval
 
 DYT 与 SwiGLU 的既有通过证据不属于 B1，也未在 B1 重跑。
 
+### decode.v9 / RefEval v14 RMSNorm-add current certificate checkpoint（2026-07-25）
+
+`decode.v9` 修复 canonical logical inout handle 的首次声明编号后，xFormers
+`_rms_norm_add_kernel` 在 fresh `B=2` run 中由 branch 1/formal round 2 形成当前有效 Gate1 closure；
+artifact digest 为 `e89066867f5918fbeb11126307d3b1b1fa53043ac0ced956f19e0c589abe340c`，
+parent evidence 为
+`/tmp/scrc_task11_v9_rmsnorm_add_inoutfix_20260725_02/xformers_ops_triton_rmsnorm_kernels_rms_norm_add_kernel/fanout-001/candidate-01/attempt-03`。
+该 artifact/Replay 随后只做零模型 Gate2 capability recheck，不重新 Lift、不改 J、不 fallback：
+
+- `j_scalar_cpu_mlir_v13 + functional-boundary.v12` 先消费唯一 output mapping、同 index/predicate 的
+  inout producer store/load 与 store-before-load effect order，把 physical post-state reload 投影回 J 已有
+  `v0`；
+- `j_scalar_cpu_mlir_v14 + functional-boundary.v13` 再证明 weight masked load 的 outside-domain value
+  仅流经 pointwise `map_binary/select`，且唯一 observable store 使用同 predicate，因此缺省 physical
+  fill 不可观察；reduce/scan/loop/transpose/pad、不同 predicate 与未知 effect 仍拒绝；
+- shared J→Intent MLIR emitter、CUDA analysis 与 structured reference v5 消费 canonical
+  `JElaboration.output_bindings`。`returns` 或
+  `output_mapping` 任一可唯一给出 destination，两者同时出现必须一致；这不补造 artifact 字段。
+
+最终以全部 canonical consumers 同步后的 immutable evidence 为
+`/tmp/scrc_task11_v14_rmsnorm_add_canonical_consumers_recheck_20260725_01/xformers_ops_triton_rmsnorm_kernels_rms_norm_add_kernel/gate2-recheck-001`，
+`model_calls=0`、复用 exact artifact 与 replay，status=`scrc_certified`。Source–Replay 的 `x/h1`
+最大误差均为 0；Source–J 与 Replay–J 的 `x` 最大误差为 0，`h1` 最大误差均为
+`1.1920928955078125e-07`，exact/tolerance policy 全部通过。projection receipt 明确包含
+`inout_poststate_reload:a3:t0:v0` 与 `predicate_dominated_load:a4:k1 < x0`。
+
+因此当前严格独立覆盖为 **12/28**：此前 11 项加 xFormers RMSNorm-add。该 recheck 不回写 parent
+Gate2 failure；新证书只由独立 capability-recheck evidence 承担。
+
+后续 fresh Lift 的通用 instruction/schema/preflight 以 `intentir.lift-knowledge.v21` 明示 canonical
+output binding 可由 `returns` 或 `output_mapping` 任一唯一给出、双写必须一致。正在/已经运行的 v20
+batch 保留原 prompt receipt 与 verdict，不由 v21 追认；v21 也不自动插入 binding。
+
+### decode.v9 / knowledge.v20 四批横向 terminal checkpoint（2026-07-25）
+
+以下四个 report 均已完整落盘并终止，运行中的进程为 0；所有 verdict 保持其启动时的 v20 prompt、
+decode.v9 与 observer v10，不由上节 v21 追认：
+
+- `/tmp/scrc_task11_v9_dataflow_fresh_b3_20260725_01-report.json`；
+- `/tmp/scrc_task11_v9_control_inoutfix_b2_20260725_01-report.json`；
+- `/tmp/scrc_task11_v9_gate1_horizontal_b2_20260725_01-report.json`；
+- `/tmp/scrc_task11_v9_remaining_horizontal_b2_20260725_01-report.json`。
+
+| case group | immutable terminal；Lift/physical、TC/Gate1、Gate2 |
+|---|---|
+| KLDiv | `NO_CLOSURE_(3,3)`；`15/306`、`9/9`、`0` |
+| TVD | `NO_CLOSURE_(3,3)`；`14/301`、`9/9`、`0` |
+| SplitK reduce backward | `NO_CLOSURE_(3,3)`；`9/191`、`9/9`、`0` |
+| Llama4 RoPE | `NO_CLOSURE_(2,3)`；`6/162`、`6/6`、`0` |
+| Flash backward one-col | `NO_CLOSURE_(2,3)`；`8/167`、`6/6`、`0` |
+| full Flash backward | `NO_CLOSURE_(2,3)`；`9/224`、`6/6`、`0` |
+| Liger RoPE | `NO_CLOSURE_(2,3)`；`8/190`、`6/6`、`0` |
+| Flash linear | `NO_CLOSURE_(2,3)`；`6/89`、`3/3`、`0`；另一 branch 无 well-typed J |
+| full Flash forward | `NO_CLOSURE_(2,3)`；`7/127`、`3/3`、`0`；另一 branch 无 well-typed J |
+| SplitK reduce | `NO_CLOSURE_(2,3)`；`7/170`、`6/6`、`0` |
+| CrossEntropy | `NO_CLOSURE_(2,3)`；`6/128`、`6/6`、`0` |
+| GroupNorm | `NO_CLOSURE_(2,3)`；`8/187`、`6/6`、`0` |
+| Qwen2VL mRoPE | `NO_CLOSURE_(2,3)`；`8/199`、`6/6`、`0` |
+| Sparsemax | branch 1/formal round 2 `replay_closed` 后唯一 Gate2=`REFERENCE_UNSUPPORTED`；`6/167`、`2/2`、`1` |
+| SplitK forward | `NO_CLOSURE_(2,3)`；`6/115`、`3/3`、`0`；另一 branch 无 well-typed J |
+
+Sparsemax 当前 exact parent 是
+`/tmp/scrc_task11_v9_remaining_horizontal_b2_20260725_01/liger_sparsemax/fanout-001/candidate-01/attempt-03`，
+artifact digest=`f6284b7c38b58089b96c9c26bc04e768fac571122289a68c5f36e533914670e1`。
+Source–Replay output `o` 最大误差为 0；current v14 zero-model recheck 仍在 J execution 前以
+`functional padded reduce/scan requires one local-axis algebra contract for every affected consumer` 拒绝。
+artifact 的 scan `n4` 没有 `boundary.reductions` entry，且 predicate-bearing load 到 scan/reduce 的
+outside-domain consumer paths 没有 `consumer_extensions`。这不是 consumer 可从 Source/运行值补造的
+字段；下一 fresh Lift 必须由通用合同明确要求 reduce/scan algebra 与 per-consumer typed outside
+identity，再复用既有通用 TypeCheck/RefEval 消费，不对该 kernel 写专用提示。
+
+因此本 checkpoint 后的严格覆盖是 **12/28**，另有 Sparsemax 一个当前有效 Gate1-only artifact。
+Flash LayerNorm 的旧 value-if artifact 在 Replay v9 diagnostic recheck 仍为 no-closure，不计入该一项。
+
 P1 的 adapter readiness 以本节上方 checkpoint 的 declared=28/pending=0 为准。Backward 被移除的
 autotune `pre_hook` 对 DQ 的清零由通用 closed buffer initializer 保留；本地 helper keyword 的匿名化
 只对静态解析的 slice-local callee 生效，不改写 `tl.*`、library、attribute 或动态调用。这里没有加入

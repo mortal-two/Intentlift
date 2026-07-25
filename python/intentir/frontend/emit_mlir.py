@@ -1846,6 +1846,7 @@ def emit_module(
     broadcast_axes: BroadcastAxes | None = None,
     proven_index_bounds: IndexBoundsProjection | None = None,
     value_dimension_equalities: Sequence[tuple[int, int]] = (),
+    output_values: Mapping[str, str] | None = None,
 ) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
@@ -1860,9 +1861,21 @@ def emit_module(
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
         env[t.name] = _resolve(t.shape, extents)[fold:]
-    return_values = {item.output: item.value for item in fn.returns}
-    if len(return_values) != len(fn.returns):
+    authored_return_values = {item.output: item.value for item in fn.returns}
+    if len(authored_return_values) != len(fn.returns):
         raise ValueError("emit_module: duplicate logical return output")
+    if output_values is None:
+        return_values = authored_return_values
+    else:
+        return_values = dict(output_values)
+        if any(
+            output in authored_return_values
+            and authored_return_values[output] != value
+            for output, value in return_values.items()
+        ):
+            raise ValueError(
+                "emit_module: canonical output binding conflicts with logical return"
+            )
     unknown_return_outputs = sorted(
         set(return_values) - {item.name for item in fn.outputs}
     )

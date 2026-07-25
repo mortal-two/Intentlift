@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Mapping
 
-from intentir.ir.canonical_j import elaborate_j
+from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.value_dimension import resolve_value_dimension_equalities
 
 from .emit_mlir import BroadcastAxes, IndexBoundsProjection, emit_module
@@ -26,6 +26,10 @@ def emit_j_module(
 
     j = elaborate_j(j)
     value_dimension_equalities = resolve_value_dimension_equalities(j, dims)
+    output_values = {
+        binding.output: binding.value
+        for binding in j_elaboration(j).output_bindings
+    }
     return emit_module(
         j.intent,
         dict(dims),
@@ -34,6 +38,7 @@ def emit_j_module(
         broadcast_axes=broadcast_axes,
         proven_index_bounds=proven_index_bounds,
         value_dimension_equalities=value_dimension_equalities,
+        output_values=output_values,
     )
 
 

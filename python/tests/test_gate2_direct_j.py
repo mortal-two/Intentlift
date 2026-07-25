@@ -11,6 +11,7 @@ from intentir.ir.functional_boundary import (
     FUNCTIONAL_BOUNDARY_PROTOCOL,
     RUNTIME_PREDICATE_PROOF_PROTOCOL,
     functional_reduction_padding_issues,
+    predicate_dominated_pointwise_load,
     project_functional_boundary,
     project_functional_boundary_for_refeval,
 )
@@ -845,7 +846,6 @@ def test_scalar_e_j_rejects_guard_with_only_dead_dataflow_membership() -> None:
         ),
         ("non_sum", "neutral 'max' identity"),
         ("padded_mean", "physical denominator"),
-        ("missing_output_mapping", "destination relation is incomplete"),
         ("missing_reduction_contract", "contract for every affected consumer"),
     ],
 )
@@ -869,8 +869,6 @@ def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None
         artifact.j.intent.body[1].attrs["fn"] = "max"
     elif mutation == "padded_mean":
         artifact.j.intent.body[1].attrs["fn"] = "mean"
-    elif mutation == "missing_output_mapping":
-        artifact.j.boundary.output_mappings = []
     elif mutation == "missing_reduction_contract":
         artifact.j.boundary.reductions = []
     else:  # pragma: no cover - parametrization is closed above
@@ -888,6 +886,31 @@ def test_scalar_e_j_masked_sum_mutations_fail_closed(mutation, expected) -> None
 
     assert not result.ok
     assert expected in (result.error or "")
+
+
+@pytest.mark.parametrize("binding_source", ["return_only", "mapping_only"])
+def test_scalar_e_j_accepts_one_complete_output_binding_source(
+    binding_source,
+) -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    if binding_source == "return_only":
+        artifact.j.boundary.output_mappings = []
+    else:
+        artifact.j.intent.returns = []
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.sum(value * value, axis=1)
+    )
 
 
 def test_padded_mean_issue_is_j_only_and_does_not_ban_dense_mean() -> None:
@@ -1062,7 +1085,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v12"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v14"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1282,7 +1305,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v11"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v13"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1651,8 +1674,58 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v12"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v14"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def test_scalar_e_j_erases_unobservable_pointwise_masked_load_fill() -> None:
+    artifact = _make_masked_identity_artifact()
+    operation = make_copy_artifact().j.intent.body[0]
+    operation.result = "v0"
+    operation.attrs["fn"] = "tanh"
+    operation.type = {"dtype": "f32", "shape": ["x0"]}
+    artifact.j.intent.body = [operation]
+    artifact.j.intent.returns = [IntentReturn("t1", "v0")]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    for access in artifact.j.boundary.accesses:
+        access.node_ref = "n0"
+    artifact.j.boundary.accesses[0].fill_value = None
+    for effect in artifact.j.boundary.effects:
+        effect.node_ref = "n0"
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v0", "n0")
+    ]
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 8},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(8, dtype=np.float32)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+    assert "predicate_dominated_load:a0:i0 < x0" in result.metadata[
+        "boundary_projection"
+    ]["consumed"]
+
+    artifact.j.boundary.accesses[1].predicate = "i0 < 7"
+    assert not predicate_dominated_pointwise_load(artifact.j, "a0")
+    rejected = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "input"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input": value},
+    )
+    assert not rejected.ok
+    assert "predicate differs from the full logical domain" in (
+        rejected.error or ""
+    )
 
 
 def _make_node_less_input_load_artifact():
@@ -2173,20 +2246,37 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
     artifact.j.intent = IntentFunction.from_json(
         {
             "name": "scrc_j0",
-            "inputs": [{"name": "t0", "dtype": "f32", "shape": ["x0"]}],
-            "outputs": [{"name": "t0", "dtype": "f32", "shape": ["x0"]}],
-            "returns": [{"output": "t0", "value": "v0"}],
+            "inputs": [
+                {"name": "t0", "dtype": "f32", "shape": ["x0"]},
+                {"name": "t1", "dtype": "f32", "shape": ["x0"]},
+            ],
+            "outputs": [
+                {"name": "t0", "dtype": "f32", "shape": ["x0"]},
+                {"name": "t2", "dtype": "f32", "shape": ["x0"]},
+            ],
+            "returns": [
+                {"output": "t0", "value": "v0"},
+                {"output": "t2", "value": "v1"},
+            ],
             "body": [
                 {
                     "id": "n0",
-                    "op": "map_unary",
+                    "op": "map_binary",
                     "result": "v0",
-                    "operands": ["t0"],
+                    "operands": ["t0", "t1"],
+                    "attrs": {"fn": "add"},
+                },
+                {
+                    "id": "n1",
+                    "op": "map_unary",
+                    "result": "v1",
+                    "operands": ["v0"],
                     "attrs": {"fn": "neg"},
-                }
+                },
             ],
         }
     )
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
     artifact.j.signature = LogicalSignature(
         [
             SignatureParameter(
@@ -2194,7 +2284,15 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
                 "f32", 1, logical_ref="t0",
             ),
             SignatureParameter(
-                "p1", ParameterKind.SCALAR, ParameterMode.VALUE, "i32",
+                "p1", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 1, logical_ref="t1",
+            ),
+            SignatureParameter(
+                "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                "f32", 1, logical_ref="t2",
+            ),
+            SignatureParameter(
+                "p3", ParameterKind.SCALAR, ParameterMode.VALUE, "i32",
                 logical_ref="x0",
             ),
         ]
@@ -2209,22 +2307,63 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
                 "a1", AccessKind.STORE, "t0", node_ref="n0",
                 index_expression="[i0]",
             ),
+            BoundaryAccess(
+                "a2", AccessKind.LOAD, "t1", node_ref="n0",
+                index_expression="[i0]",
+            ),
+            BoundaryAccess(
+                "a3", AccessKind.LOAD, "t0", node_ref="n1",
+                index_expression="[i0]",
+            ),
+            BoundaryAccess(
+                "a4", AccessKind.STORE, "t2", node_ref="n1",
+                index_expression="[i0]",
+            ),
         ],
         effects=[
             EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.WRITE, "t0", "n0", "e1", "a1"),
+            EffectSpec(EffectKind.READ, "t1", "n0", "e1", "a2"),
+            EffectSpec(EffectKind.WRITE, "t0", "n0", "e2", "a1"),
+            EffectSpec(EffectKind.READ, "t0", "n1", "e3", "a3"),
+            EffectSpec(EffectKind.WRITE, "t2", "n1", "e4", "a4"),
         ],
-        output_mappings=[OutputMapping("t0", "v0", "n0")],
+        output_mappings=[
+            OutputMapping("t0", "v0", "n0"),
+            OutputMapping("t2", "v1", "n1"),
+        ],
     )
     spec = ScalarLoweringSpec.create(
         artifact.j,
         dims={"x0": 8},
-        input_bindings={"t0": "prestate"},
-        output_bindings={"t0": "poststate"},
+        input_bindings={"t0": "prestate", "t1": "delta"},
+        output_bindings={"t0": "poststate", "t2": "derived"},
     )
     prestate = np.arange(8, dtype=np.float32)
+    delta = np.full(8, 0.5, dtype=np.float32)
 
-    result = ScalarLoweringRunner().run(spec, {"prestate": prestate})
+    result = ScalarLoweringRunner().run(
+        spec, {"prestate": prestate, "delta": delta}
+    )
 
     assert result.ok, result.error
-    np.testing.assert_array_equal(result.outputs["poststate"], -prestate)
+    np.testing.assert_array_equal(result.outputs["poststate"], prestate + delta)
+    np.testing.assert_array_equal(result.outputs["derived"], -(prestate + delta))
+    assert "inout_poststate_reload:a3:t0:v0" in result.metadata[
+        "boundary_projection"
+    ]["consumed"]
+
+    artifact.j.boundary.effects[2], artifact.j.boundary.effects[3] = (
+        artifact.j.boundary.effects[3],
+        artifact.j.boundary.effects[2],
+    )
+    rejected = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "prestate", "t1": "delta"},
+            output_bindings={"t0": "poststate", "t2": "derived"},
+        ),
+        {"prestate": prestate, "delta": delta},
+    )
+    assert not rejected.ok
+    assert "not a direct J operand" in (rejected.error or "")

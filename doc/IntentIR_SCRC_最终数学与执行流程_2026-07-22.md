@@ -522,8 +522,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v12`，shared projection 为
-`intentir.j-functional-boundary.v11`。它们完整继承 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v14`，shared projection 为
+`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -561,8 +561,22 @@ reference consumer，不是 production recipe、pass permission 或 Kernel 特�
 
 v12/v11 进一步消费显式 logical inout：同一 `t*` 以相同类型同时出现在 inputs/outputs，由唯一
 `mode=inout` parameter 绑定，且 J 已完整声明 pre-state load、post-state store、effect 与
-return/output mapping。Gate2 用 input binding 执行旧值语义、用 output binding 比较新值；物理
+canonical output binding。Gate2 用 input binding 执行旧值语义、用 output binding 比较新值；物理
 `alias_of`/`boundary.aliases` 仍 unsupported，RefEval 不补 merge、不复制 J 字段。
+
+v13/v12 只把 J 已证明的 physical inout post-state reload 投影回既有 post-state SSA：唯一 mapping、
+唯一 producer store、同 tensor/index/predicate、后继 dataflow 与 boundary/scoped store-before-load effect
+order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream 都是
+`map_unary/map_binary/select/cast`，且每个 observable store 都由同一 predicate 支配时证明 physical
+outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
+fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
+
+函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
+一致。shared J→Intent MLIR 入口及 structured reference v5 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与
+production materialization 使用同一个 J-owned destination；不要求 Lift 复制相同字段，也不从物理
+地址反推结果绑定。
+Lift/schema/preflight 同步为 `intentir.lift-knowledge.v21`；它仅取消同一 binding 的冗余双写，仍由
+LLM 完整选择 `returns`/`output_mapping` 中至少一个非 identity authored relation，checker 不补值。
 
 ---
 

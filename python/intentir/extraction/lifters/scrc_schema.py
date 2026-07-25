@@ -292,9 +292,10 @@ def _boundary_schema() -> dict[str, Any]:
         },
         ("output", "value"),
         description=(
-            "Declare only when IntentFunction.returns explicitly rebinds an "
-            "output to another J value; it must match that return exactly. "
-            "When an op directly produces the same output handle, leave "
+            "One authored canonical output binding. It may be the sole "
+            "non-identity destination relation; when IntentFunction.returns "
+            "also binds this output, both values must agree exactly. When an "
+            "op directly produces the same output handle, leave "
             "output_mappings empty."
         ),
     )

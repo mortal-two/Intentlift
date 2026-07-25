@@ -827,11 +827,10 @@ redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,
 the observable store-producing op's result type must be uniquely determined by
 the closed op signature and J value graph; an explicit type is optional but, if
-present, must agree. A direct same-handle output may omit its identity
-output_mapping or spell that redundant identity explicitly; deterministic J
-elaboration produces one omission form. Emit a non-identity output_mapping only
-when an explicit IntentFunction.returns binding maps an output to a different
-value, and make the two relations exactly identical.
+present, must agree. A direct same-handle output needs no identity
+output_mapping. Otherwise author `returns` or `output_mapping`; one suffices and
+both must agree. Deterministic J elaboration checks this binding but never
+chooses its value.
 
 When Source contains a compiler-visible semantic recurrence, J must state that
 recurrence rather than only an algebraically equivalent final tensor formula.

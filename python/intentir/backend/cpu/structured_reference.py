@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v4"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v5"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -1033,10 +1033,13 @@ def execute_structured_reference(
     validate_value_dimension_instantiation(j, checked_dims, checked_inputs)
     evaluator = _Evaluator(j, checked_dims, broadcast_axes or {})
     env = evaluator.sequence(j.intent.body, checked_inputs, allow_loop=True)
-    returns = {item.output: item.value for item in j.intent.returns}
+    output_values = {
+        item.output: item.value
+        for item in j_elaboration(j).output_bindings
+    }
     outputs: dict[str, np.ndarray] = {}
     for tensor in j.intent.outputs:
-        value_ref = returns.get(tensor.name, tensor.name)
+        value_ref = output_values[tensor.name]
         if value_ref not in env:
             raise ValueError(
                 f"structured reference did not produce output {tensor.name!r}"

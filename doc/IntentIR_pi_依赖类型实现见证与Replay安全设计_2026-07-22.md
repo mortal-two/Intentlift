@@ -1211,8 +1211,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v12`，共享
-`intentir.j-functional-boundary.v11`：它们继承 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v14`，共享
+`intentir.j-functional-boundary.v13`：它们继承 v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1240,9 +1240,21 @@ consumer 后可对 exact Gate1-closed artifact/Replay 做零模型调用的 Gate
 evidence 且 `changes_parent_verdict=false`，不刷新旧 receipt。
 
 v12/v11 只扩展 J 已显式闭合的 logical inout：同一 typed `t*` 同时是 input/output、由唯一 inout
-参数绑定，pre-state load、post-state store、effect 和 return/output mapping 均来自 J。π 不声明也不
+参数绑定，pre-state load、post-state store、effect 和 canonical output binding 均来自 J。π 不声明也不
 补 alias；`alias_of`/`boundary.aliases` 继续 unsupported。RefEval 分别消费 input/output binding，不
 据 Harness 地址相等猜测语义。
+
+v13/v12 的 post-state reload proof 还要求唯一 inout output mapping、同 index/predicate 的唯一 store、
+后继 load 对 post-state SSA 的依赖以及 boundary/scoped store-before-load effect order。v14/v13 的
+missing-fill proof 只接受全 downstream pointwise 且所有 observable store 被同 predicate 支配的情形；
+reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
+π 不携带、不授权也不修补这些关系。
+
+canonical output binding 可以由 `returns` 或 `output_mapping` 唯一给出，同时存在时必须一致；共享
+J→Intent MLIR 入口与 structured reference v5 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
+symbol-table view，不是另一个 artifact，也不使 π 获得 destination 语义。
+该 authored 规则由 `intentir.lift-knowledge.v21` 明示；至少一个 binding 仍由 Lift 选择，fixed code
+不会从 π route、store effect、Source 或 Harness 地址补造 destination value。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

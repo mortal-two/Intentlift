@@ -447,8 +447,17 @@ def test_guarded_store_rejects_multiple_signature_bindings_for_target() -> None:
     ), report.to_json()
 
 
-def test_nonloop_guarded_store_accepts_explicit_select_and_return() -> None:
+@pytest.mark.parametrize(
+    "binding_source", ["both", "return_only", "mapping_only"]
+)
+def test_nonloop_guarded_store_accepts_explicit_select_and_return(
+    binding_source: str,
+) -> None:
     payload = _guarded_nonloop_payload()
+    if binding_source == "return_only":
+        payload["j"]["boundary"]["output_mappings"] = []
+    elif binding_source == "mapping_only":
+        payload["j"]["intent"]["intent_function"].pop("returns")
     artifact = Gate1Artifact.from_json(payload)
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
@@ -481,13 +490,14 @@ def test_nonloop_guarded_store_accepts_explicit_select_and_return() -> None:
                     ]
                 }
             ),
-            "output/return mapping",
+            "canonical output binding",
         ),
         (
-            lambda payload: payload["j"]["boundary"].update(
-                {"output_mappings": []}
+            lambda payload: (
+                payload["j"]["boundary"].update({"output_mappings": []}),
+                payload["j"]["intent"]["intent_function"].pop("returns"),
             ),
-            "output/return mapping",
+            "canonical output binding",
         ),
     ],
 )
