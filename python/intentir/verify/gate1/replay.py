@@ -894,7 +894,7 @@ def build_source_blind_replay_compile_case(
     for parameter in artifact.j.signature.parameters:
         kind = parameter.kind.value
         dtype = parameter.dtype or "i64"
-        if kind == "pointer":
+        if kind in {"pointer", "tensor"}:
             arguments[parameter.name] = RuntimeArgument.tensor(
                 (1,), _synthetic_probe_dtype(dtype)
             )
@@ -903,7 +903,7 @@ def build_source_blind_replay_compile_case(
                 _synthetic_probe_scalar(dtype),
                 _synthetic_probe_dtype(dtype),
             )
-        elif kind == "none":
+        elif kind in {"none", "opaque"}:
             arguments[parameter.name] = RuntimeArgument.none()
         elif kind == "constexpr":
             schedule[parameter.name] = _synthetic_probe_scalar(dtype)

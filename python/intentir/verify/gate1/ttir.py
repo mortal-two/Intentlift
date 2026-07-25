@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v10"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v11"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -185,6 +185,7 @@ _KNOWN_PURE_OPS = {
     "tt.dot",
     "tt.expand_dims",
     "tt.fp_to_fp",
+    "tt.gather",
     "tt.get_num_programs",
     "tt.get_program_id",
     "tt.join",

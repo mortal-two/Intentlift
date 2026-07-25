@@ -603,7 +603,7 @@ def test_typed_scan_and_heterogeneous_multi_scan_are_observed() -> None:
     single = fingerprint_ttir(SCAN_TTIR)
     multiple = fingerprint_ttir(MULTI_SCAN_TTIR)
 
-    assert single.schema_version == "triton-ttir-3.6-gate1-v10"
+    assert single.schema_version == "triton-ttir-3.6-gate1-v11"
     assert dict(single.op_multiset)["tt.scan"] == 1
     assert dict(multiple.op_multiset)["tt.scan"] == 1
     assert compare_ttir(SCAN_TTIR, SCAN_TTIR.replace("%lhs", "%renamed")).hard_pass
@@ -1376,7 +1376,7 @@ module {
 def test_value_scf_if_records_arm_dataflow_yields_and_result_use() -> None:
     fingerprint = fingerprint_ttir(VALUE_SCF_IF)
 
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v10"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v11"
     assert dict(fingerprint.op_multiset)["control.scf.if"] == 1
     conditional = fingerprint.structured_ifs[0]
     assert conditional.ordinal == 0
@@ -1671,7 +1671,7 @@ module {
 def test_effect_only_scf_if_is_a_strong_continuing_control_fingerprint() -> None:
     fingerprint = fingerprint_ttir(EFFECT_ONLY_SCF_IF)
 
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v10"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v11"
     assert dict(fingerprint.op_multiset)["control.scf.if"] == 1
     assert len(fingerprint.structured_ifs) == 1
     conditional = fingerprint.structured_ifs[0]
@@ -2072,7 +2072,7 @@ def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
 
     assert verdict.hard_pass, verdict.to_dict()
     fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v10"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v11"
     assert "tt.call" not in dict(fingerprint.op_multiset)
     assert dict(fingerprint.loops[0].body_op_multiset) == {
         "tt.addptr": 2,
@@ -2499,7 +2499,7 @@ def test_repeated_effectful_region_instances_have_distinct_event_paths() -> None
 def test_closed_terminal_binary_fork_preserves_roles_and_control_edges() -> None:
     fingerprint = fingerprint_ttir(TERMINAL_BINARY_FORK)
 
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v10"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v11"
     assert dict(fingerprint.op_multiset)["control.conditional"] == 1
     assert len(fingerprint.terminal_forks) == 1
     fork = fingerprint.terminal_forks[0]
@@ -3351,3 +3351,23 @@ module {
 
     assert not verdict.hard_pass
     assert not verdict.hard_passes["dataflow"]
+
+
+def test_ttir_gather_is_closed_pure_dataflow_not_an_observer_gap() -> None:
+    ttir = r'''
+module {
+  tt.func public @gathered(%values: tensor<1x64xf32>, %indices: tensor<1x1xi64>) -> tensor<1x1xf32> {
+    %result = tt.gather %values[%indices] {axis = 1 : i32} : (tensor<1x64xf32>, tensor<1x1xi64>) -> tensor<1x1xf32>
+    tt.return %result : tensor<1x1xf32>
+  }
+}
+'''
+
+    fingerprint = fingerprint_ttir(ttir)
+
+    assert dict(fingerprint.op_multiset)["tt.gather"] == 1
+    assert fingerprint.effect_multiset == ()
+    assert any(
+        edge[1].startswith("tt.gather[")
+        for edge in fingerprint.dataflow_edges
+    )

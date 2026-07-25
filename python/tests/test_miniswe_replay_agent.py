@@ -10,7 +10,7 @@ from direct_fixtures import make_reduce_artifact
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1 import replay as replay_module
 from intentir.verify.gate1.compiler import CompileResult
-from intentir.verify.gate1.model import Frontend
+from intentir.verify.gate1.model import Frontend, Gate1Artifact
 from intentir.verify.gate1.prompt import assert_source_isolated_payload
 from intentir.verify.gate1.replay import (
     MINISWE_REPLAY_BACKEND,
@@ -215,6 +215,17 @@ def test_synthetic_compile_profile_never_reads_c0_or_harness_values() -> None:
         for argument in case.arguments.values()
         if argument.kind == "tensor"
     )
+
+
+def test_synthetic_compile_profile_accepts_legacy_tensor_signature_kind() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"][0]["kind"] = "tensor"
+    artifact = Gate1Artifact.from_json(payload)
+
+    case = build_source_blind_replay_compile_case(artifact)
+
+    assert case.arguments["p0"].kind == "tensor"
+    assert case.arguments["p0"].shape == (1,)
 
 
 def test_synthetic_compile_check_returns_actionable_own_code_diagnostic() -> None:
