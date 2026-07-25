@@ -11,6 +11,10 @@ import numpy as np
 
 from intentir.backend.cpu.abi import CPUABIValidationError, CPUBackendUnsupportedError
 from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
+from intentir.backend.cpu.structured_reference import (
+    execute_structured_reference,
+    requires_structured_reference,
+)
 from intentir.ir.canonical_j import (
     ContractExpr,
     ContractSort,
@@ -38,7 +42,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v10"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v11"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1010,12 +1014,22 @@ class ScalarLoweringRunner:
             boundary_digest = projection.boundary_digest
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = projection.emitter_broadcast_axes()
-            execution = execute_on_cpu_outputs(
-                spec.j,
-                spec.dims_map,
-                inputs,
-                broadcast_axes=broadcast_axes,
-                proven_index_bounds=projection.proven_index_bounds,
+            structured = requires_structured_reference(spec.j)
+            execution = (
+                execute_structured_reference(
+                    spec.j,
+                    spec.dims_map,
+                    inputs,
+                    broadcast_axes=broadcast_axes,
+                )
+                if structured
+                else execute_on_cpu_outputs(
+                    spec.j,
+                    spec.dims_map,
+                    inputs,
+                    broadcast_axes=broadcast_axes,
+                    proven_index_bounds=projection.proven_index_bounds,
+                )
             )
             output_bindings = spec.output_binding_map
             outputs = {
@@ -1030,7 +1044,11 @@ class ScalarLoweringRunner:
                 outputs,
                 metadata={
                     "protocol": SCALAR_LOWERING_PROTOCOL,
-                    "path": "canonical J -> intent MLIR -> scalar CPU",
+                    "path": (
+                        "canonical J -> typed structured CPU reference"
+                        if structured
+                        else "canonical J -> intent MLIR -> scalar CPU"
+                    ),
                     "function": spec.j.intent.name,
                     "j_digest": spec.j_digest,
                     "boundary_digest": boundary_digest,

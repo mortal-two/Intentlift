@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 
+import numpy as np
 import pytest
 
+from direct_fixtures import make_reduce_artifact
+from intentir.backend.cpu.structured_reference import (
+    STRUCTURED_CPU_REFERENCE_PROTOCOL,
+    execute_structured_reference,
+)
 from intentir.ir import IntentFunction, LoopStateBinding
 from intentir.verify.gate1 import Gate1Artifact, SchemaError, SemanticArchive
+from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.typecheck import TypeCheckErrorCode, type_check
 
 
@@ -159,6 +167,117 @@ def _loop_archive() -> dict:
             },
         ],
     }
+
+
+def _refeval_loop_archive() -> SemanticArchive:
+    payload = _loop_archive()
+    payload["boundary"]["accesses"] = []
+    payload["boundary"]["effects"] = []
+    payload["scopes"][0]["effects"] = []
+    payload["storage"] = payload["storage"][:1]
+    return SemanticArchive.from_json(payload)
+
+
+def test_structured_refeval_executes_one_full_logical_axis_step() -> None:
+    archive = _refeval_loop_archive()
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 5},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(5, dtype=np.float32)}
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.asarray(10, dtype=np.float32)
+    )
+    evidence = result.metadata["execution_evidence"]
+    assert evidence["protocol"] == STRUCTURED_CPU_REFERENCE_PROTOCOL
+    assert evidence["authority"] == "canonical_J_only"
+    assert evidence["logical_loop_step_count"] == 1
+    assert result.metadata["boundary_profile"] == "structured_value_v1"
+    assert "storage:storage0" in result.metadata["boundary_projection"]["consumed"]
+    assert set(inspect.signature(execute_structured_reference).parameters) == {
+        "j", "dims", "inputs", "broadcast_axes",
+    }
+
+
+def test_structured_refeval_zero_trip_returns_typed_initializer() -> None:
+    archive = _refeval_loop_archive()
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 0},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.empty((0,), dtype=np.float32)}
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.asarray(0, dtype=np.float32)
+    )
+    evidence = result.metadata["execution_evidence"]
+    assert evidence["logical_loop_step_count"] == 0
+    assert evidence["zero_trip_loop_count"] == 1
+
+
+def test_structured_refeval_executes_closed_flat_scan() -> None:
+    artifact = make_reduce_artifact(explicit_accesses=False)
+    scan = artifact.j.intent.body[1]
+    scan.op = "scan"
+    scan.attrs = {"fn": "sum", "axis": 1}
+    scan.type = {"dtype": "f32", "shape": ["x0", "x1"]}
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[1].rank = 2
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 2, "x1": 3},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(6, dtype=np.float32).reshape(2, 3)
+
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.cumsum(value * value, axis=1)
+    )
+    assert result.metadata["execution_evidence"]["scan_count"] == 1
+
+
+def test_structured_refeval_rejects_unsupported_body_op_explicitly() -> None:
+    payload = _loop_archive()
+    payload["boundary"]["accesses"] = []
+    payload["boundary"]["effects"] = []
+    payload["scopes"][0]["effects"] = []
+    payload["storage"] = payload["storage"][:1]
+    payload["intent"]["intent_function"]["body"][0]["body"][1]["op"] = (
+        "future_recurrence"
+    )
+    payload["intent"]["intent_function"]["body"][0]["body"][1]["attrs"] = {}
+    archive = SemanticArchive.from_json(payload)
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 3},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(3, dtype=np.float32)}
+    )
+
+    assert not result.ok
+    assert result.unsupported
+    assert "future_recurrence" in (result.error or "")
 
 
 def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:

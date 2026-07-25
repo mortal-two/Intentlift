@@ -17,6 +17,7 @@ import re
 from typing import Any, Mapping, Sequence
 
 from intentir.ir.canonical_j import (
+    CanonicalValueType,
     ContractExpr,
     ContractSort,
     elaborate_j,
@@ -27,7 +28,7 @@ from intentir.ir.canonical_j import (
 from intentir.ir.model import IntentOp
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v4"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v5"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -809,6 +810,52 @@ def _validate_broadcast_closure(
     """Prove every pointwise operand reaches its declared result shape."""
 
     value_types = j_elaboration(j).value_type_by_name
+    for loop in (op for op in _walk_ops(j.intent.body) if op.op == "loop"):
+        for scan in loop.scan:
+            source = value_types.get(scan.source)
+            if source is not None:
+                value_types[scan.name] = source
+        for state in loop.carry:
+            if state.type is None:
+                continue
+            state_type = CanonicalValueType(
+                state.type.dtype, tuple(state.type.shape)
+            )
+            value_types[state.body_argument] = state_type
+            value_types[state.next_value] = state_type
+            value_types[state.result_value] = state_type
+        for child in loop.body:
+            if not isinstance(child.result, str):
+                continue
+            if isinstance(child.type, dict):
+                dtype = child.type.get("dtype")
+                shape = child.type.get("shape")
+                if isinstance(dtype, str) and isinstance(shape, list):
+                    value_types[child.result] = CanonicalValueType(
+                        dtype, tuple(shape)
+                    )
+                    continue
+            if child.op in {"map_unary", "cast", "scan"} and child.operands:
+                source = value_types.get(child.operands[0])
+                if source is not None:
+                    value_types[child.result] = source
+            elif child.op == "reduce" and child.operands:
+                source = value_types.get(child.operands[0])
+                axes = child.attrs.get("axes")
+                if source is not None and isinstance(axes, list):
+                    normalized = {
+                        axis if axis >= 0 else len(source.shape) + axis
+                        for axis in axes
+                        if isinstance(axis, int) and not isinstance(axis, bool)
+                    }
+                    value_types[child.result] = CanonicalValueType(
+                        source.dtype,
+                        tuple(
+                            dimension
+                            for index, dimension in enumerate(source.shape)
+                            if index not in normalized
+                        ),
+                    )
     operations = _walk_ops(j.intent.body)
     consumers = {
         op.result: op
@@ -1786,6 +1833,81 @@ def _validate_reduction_padding_closure(
             )
 
 
+def _structured_loop_boundary_refs(
+    j: Any,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Validate the narrow semantic storage consumed by structured RefEval."""
+
+    loops = tuple(op for op in _walk_ops(j.intent.body) if op.op == "loop")
+    mutable = tuple(
+        item for item in j.storage if item.mutability.value == "mutable"
+    )
+    if not loops:
+        if mutable:
+            raise NotImplementedError(
+                "functional boundary does not implement general mutable storage"
+            )
+        return frozenset(), frozenset()
+
+    state_contracts: dict[str, tuple[IntentOp, Any]] = {}
+    for loop in loops:
+        if loop.scope_id is None:
+            raise ValueError("structured loop requires one semantic loop scope")
+        for state in loop.carry:
+            state_contracts[state.state_id] = (loop, state)
+
+    consumed_storage: set[str] = set()
+    consumed_scopes: set[str] = set()
+    for state_id, (loop, state) in state_contracts.items():
+        required_members = {
+            state.state_id,
+            state.body_argument,
+            state.next_value,
+            state.result_value,
+        }
+        if isinstance(state.init_value, str) and state.init_value not in {
+            "NEG_INF", "POS_INF", "ZERO", "ONE", "zeros", "ones",
+            "false", "true",
+        }:
+            try:
+                float(state.init_value)
+            except ValueError:
+                required_members.add(state.init_value)
+        owners = [
+            item
+            for item in j.storage
+            if state_id in item.members
+            and required_members.issubset(item.members)
+        ]
+        if len(owners) != 1:
+            raise ValueError(
+                "structured loop state requires one complete semantic storage owner"
+            )
+        owner = owners[0]
+        if (
+            owner.mutability.value != "mutable"
+            or owner.scope_id != loop.scope_id
+            or not owner.crosses_iteration
+            or not owner.escapes
+        ):
+            raise ValueError(
+                "structured loop carry storage must be mutable, loop-scoped, "
+                "cross-iteration, and escaping as the loop result"
+            )
+        consumed_storage.add(owner.storage_id)
+        consumed_scopes.add(loop.scope_id)
+
+    unexplained_mutable = {
+        item.storage_id for item in mutable
+    } - consumed_storage
+    if unexplained_mutable:
+        raise NotImplementedError(
+            "functional boundary does not implement mutable storage outside "
+            "typed structured-loop carries"
+        )
+    return frozenset(consumed_scopes), frozenset(consumed_storage)
+
+
 def _project_functional_boundary(
     j: Any,
     *,
@@ -1811,10 +1933,7 @@ def _project_functional_boundary(
         )
     if boundary.aliases:
         raise NotImplementedError("functional boundary does not implement aliases")
-    if any(item.mutability.value == "mutable" for item in j.storage):
-        raise NotImplementedError(
-            "functional boundary does not implement general mutable storage"
-        )
+    structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
     domains = _full_domains(j) if boundary.accesses else {}
     if not boundary.accesses and (boundary.domains or boundary.effects):
@@ -1840,7 +1959,7 @@ def _project_functional_boundary(
     graph_operands = {
         operand
         for operation in _node_table(j).values()
-        for operand in operation.operands
+        for operand in _operation_dependencies(operation)
     }
     loads_by_tensor: dict[str, list[Any]] = {}
     for access in boundary.accesses:
@@ -2023,7 +2142,7 @@ def _project_functional_boundary(
         if access.kind.value == "load":
             if access.tensor not in input_names:
                 raise ValueError("functional load is not a J input")
-            if op is not None and access.tensor not in op.operands:
+            if op is not None and access.tensor not in _operation_dependencies(op):
                 raise ValueError("functional load is not a direct J operand")
             if op is None:
                 if len(loads_by_tensor[access.tensor]) != 1:
@@ -2168,6 +2287,12 @@ def _project_functional_boundary(
                 )
             )
         )
+    if structured_storage:
+        profile = (
+            "structured_dense_functional_v1"
+            if boundary.accesses
+            else "structured_value_v1"
+        )
     consumed = {
         *(f"domain:{name}" for name in boundary.domains),
         *(f"access:{item.access_id}" for item in boundary.accesses),
@@ -2183,6 +2308,8 @@ def _project_functional_boundary(
             f"{item.consumer_ref}:{item.operand_index}:{item.access_ref}"
             for item in boundary.consumer_extensions
         ),
+        *(f"scope:{item}" for item in structured_scopes),
+        *(f"storage:{item}" for item in structured_storage),
     }
     return FunctionalBoundaryProjection(
         profile=profile,
