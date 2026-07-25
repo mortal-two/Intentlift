@@ -16,6 +16,7 @@ from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.dim_expr import validate_dimension_instantiation
+from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
@@ -1255,6 +1256,7 @@ def _validate_compiler_view(
         for item in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
     }
     dimensions: dict[str, int] = {}
+    logical_values: dict[str, Any] = {}
 
     def bind_dimension(name: str, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -1311,6 +1313,13 @@ def _validate_compiler_view(
             and re.fullmatch(r"x[0-9]+", parameter.logical_ref)
         ):
             bind_dimension(parameter.logical_ref, argument.get("value"))
+        if (
+            argument["kind"] == "scalar"
+            and isinstance(parameter.logical_ref, str)
+            and parameter.logical_ref in j_tensors
+            and not j_tensors[parameter.logical_ref].shape
+        ):
+            logical_values[parameter.logical_ref] = argument.get("value")
         expected_mode = argument.get("mode")
         if expected_mode is not None and parameter.mode.value != expected_mode:
             raise ValueError("Lift changed a trusted compiler argument mode")
@@ -1322,9 +1331,19 @@ def _validate_compiler_view(
             and re.fullmatch(r"x[0-9]+", parameter.logical_ref)
         ):
             bind_dimension(parameter.logical_ref, value)
+        if (
+            parameter is not None
+            and isinstance(parameter.logical_ref, str)
+            and parameter.logical_ref in j_tensors
+            and not j_tensors[parameter.logical_ref].shape
+        ):
+            logical_values[parameter.logical_ref] = value
 
     try:
         validate_dimension_instantiation(artifact.j, dimensions)
+        validate_value_dimension_instantiation(
+            artifact.j, dimensions, logical_values
+        )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
     # Grid/source positions are Harness coordinates.  They are retained in the

@@ -105,8 +105,11 @@ def render_semantic_archive_wire_grammar() -> str:
         "as pad must state symbolic lo/hi expressions such as x1-x0 in Layer A; "
         "both dimensions remain declared when Source exposes both. Fixed code "
         "only parses and proves the authored relation and never reads a "
-        "Harness dimension to repair it. Every semantic loop has exactly one "
-        "corresponding loop_region scope. "
+        "Harness dimension to repair it. "
+        "When one Source scalar is both logical rank-0 data and a shape extent, "
+        "keep the t* value and x* dimension distinct and explicitly declare "
+        "their equality in value_dimension_relations; fixed code never creates it. "
+        "Every semantic loop has exactly one corresponding loop_region scope. "
         "The storage array may be empty: ordinary SSA temporaries do not have "
         "semantic storage or lifetime objects. Add StorageObject only when J "
         "semantics requires storage identity, such as an alias/destination or "
@@ -125,6 +128,25 @@ def _tensor_schema() -> dict[str, Any]:
             "shape": _array(_INT_OR_STRING),
         },
         ("name", "dtype", "shape"),
+    )
+
+
+def _value_dimension_relation_schema() -> dict[str, Any]:
+    return _closed_object(
+        {
+            "value_ref": _TENSOR_HANDLE,
+            "dimension_ref": {
+                "type": "string",
+                "pattern": r"^x[0-9]+$",
+            },
+            "relation": {"type": "string", "enum": ["eq"]},
+        },
+        ("value_ref", "dimension_ref", "relation"),
+        description=(
+            "LLM-authored equality between one integral rank-0 logical J input "
+            "t* and one declared symbolic shape dimension x*. Fixed code checks "
+            "the equality but never infers or inserts this relation."
+        ),
     )
 
 
@@ -830,6 +852,9 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             "storage": _array(_storage_schema()),
             "dimension_constraints": _array(
                 _DIMENSION_CONSTRAINT_STRING
+            ),
+            "value_dimension_relations": _array(
+                _value_dimension_relation_schema()
             ),
         },
         SEMANTIC_ARCHIVE_WIRE_FIELDS,

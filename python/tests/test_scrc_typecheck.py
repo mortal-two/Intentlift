@@ -43,7 +43,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v10"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v11"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 

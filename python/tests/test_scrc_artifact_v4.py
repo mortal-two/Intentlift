@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 
+import numpy as np
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -14,6 +15,11 @@ from intentir.extraction.lifters.scrc import (
 )
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
 from intentir.ir.model import IntentOp
+from intentir.ir.value_dimension import (
+    ValueDimensionRelationError,
+    resolve_value_dimension_equalities,
+    validate_value_dimension_instantiation,
+)
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
@@ -27,8 +33,9 @@ from intentir.verify.gate1.model import (
     SignatureParameter,
     TypedOutsideValue,
 )
+from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
-from intentir.verify.gate2.scalar import ScalarLoweringSpec
+from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.typecheck import (
     TYPECHECK_PROTOCOL,
     TypeCheckErrorCode,
@@ -48,6 +55,7 @@ def _legacy_payload(version: int) -> dict:
     payload = make_copy_artifact().to_json()
     payload["schema"] = f"intentir.scrc.artifact.v{version}"
     payload["j"].pop("dimension_constraints")
+    payload["j"].pop("value_dimension_relations")
     payload["j"]["boundary"].pop("consumer_extensions")
     payload["pi"].pop("loop_carriers")
     if version < 3:
@@ -60,6 +68,7 @@ def test_artifact_v4_requires_all_new_arrays_and_round_trips_them() -> None:
     assert payload["schema"] == "intentir.scrc.artifact.v4"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
     assert payload["j"]["dimension_constraints"] == []
+    assert payload["j"]["value_dimension_relations"] == []
     assert payload["pi"]["loop_carriers"] == []
     assert Gate1Artifact.from_json(payload).to_json() == payload
 
@@ -77,6 +86,13 @@ def test_artifact_v4_requires_all_new_arrays_and_round_trips_them() -> None:
     ):
         Gate1Artifact.from_json(missing_dimensions)
 
+    missing_value_dimensions = copy.deepcopy(payload)
+    missing_value_dimensions["j"].pop("value_dimension_relations")
+    with pytest.raises(
+        SchemaError, match="missing required field: value_dimension_relations"
+    ):
+        Gate1Artifact.from_json(missing_value_dimensions)
+
     missing_carriers = copy.deepcopy(payload)
     missing_carriers["pi"].pop("loop_carriers")
     with pytest.raises(SchemaError, match="missing required field: loop_carriers"):
@@ -90,7 +106,12 @@ def test_artifact_v1_v3_round_trip_exactly_without_v4_fields(version: int) -> No
     assert parsed.to_json() == payload
     assert parsed.j.boundary.consumer_extensions == []
     assert parsed.j.dimension_constraints == []
+    assert parsed.j.value_dimension_relations == []
     assert parsed.pi.loop_carriers == []
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    assert json.dumps(
+        parsed.to_json(), sort_keys=True, separators=(",", ":")
+    ) == encoded
 
     with_dimensions = copy.deepcopy(payload)
     with_dimensions["j"]["dimension_constraints"] = []
@@ -98,6 +119,13 @@ def test_artifact_v1_v3_round_trip_exactly_without_v4_fields(version: int) -> No
         SchemaError, match="v1-v3 do not contain J dimension_constraints"
     ):
         Gate1Artifact.from_json(with_dimensions)
+
+    with_value_dimensions = copy.deepcopy(payload)
+    with_value_dimensions["j"]["value_dimension_relations"] = []
+    with pytest.raises(
+        SchemaError, match="v1-v3 do not contain J value_dimension_relations"
+    ):
+        Gate1Artifact.from_json(with_value_dimensions)
 
     with_consumer = copy.deepcopy(payload)
     with_consumer["j"]["boundary"]["consumer_extensions"] = []
@@ -132,6 +160,7 @@ def test_static_v4_schema_requires_new_arrays_and_forbids_old_reduction_field() 
     )
     assert "consumer_extensions" in boundary_schema["required"]
     assert "dimension_constraints" in schema["properties"]["j"]["required"]
+    assert "value_dimension_relations" in schema["properties"]["j"]["required"]
     assert "loop_carriers" in schema["properties"]["pi"]["required"]
 
     old_reduction = copy.deepcopy(payload["j"]["boundary"]["reductions"][0])
@@ -142,6 +171,224 @@ def test_static_v4_schema_requires_new_arrays_and_forbids_old_reduction_field() 
     assert any(
         "masked_contribution" in error.message
         for error in reduction_validator.iter_errors(old_reduction)
+    )
+
+
+def _make_value_dimension_artifact(
+    *,
+    dtype: str = "i32",
+    dimensions: tuple[str, ...] = ("x0",),
+) -> Gate1Artifact:
+    payload = make_copy_artifact().to_json()
+    function = payload["j"]["intent"]["intent_function"]
+    function["inputs"].append({"name": "t1", "dtype": dtype, "shape": []})
+    function["outputs"][0]["name"] = "t2"
+    function["body"][0]["result"] = "t2"
+    payload["j"]["signature"]["parameters"][1]["logical_ref"] = "t2"
+    payload["j"]["signature"]["parameters"][2].update(
+        {"dtype": dtype, "rank": 0, "logical_ref": "t1"}
+    )
+    payload["j"]["value_dimension_relations"] = [
+        {"value_ref": "t1", "dimension_ref": dimension, "relation": "eq"}
+        for dimension in dimensions
+    ]
+    return Gate1Artifact.from_json(payload)
+
+
+def _value_dimension_compiler_view(
+    *, tensor_extent: int, scalar_value: int
+) -> dict:
+    return {
+        "schedule_values": {"c0": 1024},
+        "bound_constexpr_values": {},
+        "compiler_slots": [],
+        "compiler_roles": {},
+        "aliases": [],
+        "arguments": [
+            {
+                "name": "p0",
+                "kind": "tensor",
+                "dtype": "f32",
+                "shape": [tensor_extent],
+                "mode": "input",
+            },
+            {
+                "name": "p1",
+                "kind": "tensor",
+                "dtype": "f32",
+                "shape": [tensor_extent],
+                "mode": "output",
+            },
+            {
+                "name": "p2",
+                "kind": "scalar",
+                "dtype": "i32",
+                "value": scalar_value,
+                "mode": "value",
+            },
+        ],
+        "grid": [],
+        "grid_contract": [],
+        "parameter_order": ["p0", "p1", "p2", "c0"],
+        "constexpr_parameters": ["c0"],
+    }
+
+
+def test_value_dimension_relation_closes_typecheck_and_resolves_stably() -> None:
+    artifact = _make_value_dimension_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert resolve_value_dimension_equalities(
+        artifact.j, {"x0": 17}
+    ) == ((1, 17),)
+
+
+def test_value_dimension_equalities_are_a_general_relation_set() -> None:
+    artifact = _make_value_dimension_artifact(dimensions=("x0", "x1"))
+    artifact.j.intent.inputs[0].shape = ["x0", "x1"]
+    artifact.j.intent.outputs[0].shape = ["x0", "x1"]
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert resolve_value_dimension_equalities(
+        artifact.j, {"x0": 4, "x1": 4}
+    ) == ((1, 4),)
+    with pytest.raises(ValueDimensionRelationError, match="conflicting"):
+        resolve_value_dimension_equalities(
+            artifact.j, {"x0": 4, "x1": 5}
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["ranked_value", "floating_value", "output_value", "unknown_dimension", "duplicate"],
+)
+def test_value_dimension_relation_static_errors_fail_closed(mutation: str) -> None:
+    artifact = _make_value_dimension_artifact()
+    relation = artifact.j.value_dimension_relations[0]
+    if mutation == "ranked_value":
+        relation = type(relation)("t0", "x0", "eq")
+        artifact.j.value_dimension_relations = [relation]
+    elif mutation == "floating_value":
+        artifact.j.intent.inputs[1].dtype = "f32"
+        artifact.j.signature.parameters[2].dtype = "f32"
+    elif mutation == "output_value":
+        relation = type(relation)("t2", "x0", "eq")
+        artifact.j.value_dimension_relations = [relation]
+    elif mutation == "unknown_dimension":
+        relation = type(relation)("t1", "x9", "eq")
+        artifact.j.value_dimension_relations = [relation]
+    elif mutation == "duplicate":
+        artifact.j.value_dimension_relations.append(relation)
+    else:  # pragma: no cover
+        raise AssertionError(mutation)
+
+    assert TypeCheckErrorCode.VALUE_DIMENSION_RELATION_INVALID in _codes(artifact)
+
+
+def test_value_dimension_relation_wire_rejects_open_relation_kind() -> None:
+    payload = _make_value_dimension_artifact().to_json()
+    payload["j"]["value_dimension_relations"][0]["relation"] = "le"
+
+    with pytest.raises(SchemaError, match="relation must be 'eq'"):
+        Gate1Artifact.from_json(payload)
+
+
+def test_candidate_check_validates_authored_value_dimension_equality() -> None:
+    artifact = _make_value_dimension_artifact()
+    accepted = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json(), sort_keys=True),
+        SCRCCandidateCheckContext(
+            ("p0", "p1", "p2"),
+            anonymous_compiler_view=_value_dimension_compiler_view(
+                tensor_extent=8, scalar_value=8
+            ),
+        ),
+    )
+    rejected = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json(), sort_keys=True),
+        SCRCCandidateCheckContext(
+            ("p0", "p1", "p2"),
+            anonymous_compiler_view=_value_dimension_compiler_view(
+                tensor_extent=8, scalar_value=7
+            ),
+        ),
+    )
+
+    assert accepted["status"] == "pass", accepted
+    assert rejected["status"] == "fail"
+    assert "equality mismatch" in rejected["diagnostics"][0][
+        "observed_refs_or_types"
+    ][0]
+
+
+def test_refeval_validates_value_dimension_before_execution() -> None:
+    artifact = _make_value_dimension_artifact()
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 4},
+        input_bindings={"t0": "input", "t1": "extent"},
+        output_bindings={"t2": "output"},
+    )
+    value = np.arange(4, dtype=np.float32)
+
+    validate_value_dimension_instantiation(
+        artifact.j,
+        {"x0": 4},
+        {"t1": np.asarray(4, dtype=np.int32)},
+    )
+    rejected = ScalarLoweringRunner().run(
+        spec, {"input": value, "extent": np.asarray(3, dtype=np.int32)}
+    )
+
+    assert not rejected.ok
+    assert "equality mismatch" in rejected.error
+
+
+def test_runtime_value_dimension_validation_accepts_torch_rank_zero_integral() -> None:
+    torch = pytest.importorskip("torch")
+    artifact = _make_value_dimension_artifact()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    validate_value_dimension_instantiation(
+        artifact.j,
+        {"x0": 4},
+        {"t1": torch.tensor(4, dtype=torch.int32, device=device)},
+    )
+    with pytest.raises(ValueDimensionRelationError, match="integral rank-0"):
+        validate_value_dimension_instantiation(
+            artifact.j,
+            {"x0": 4},
+            {"t1": torch.tensor(4.0, dtype=torch.float32, device=device)},
+        )
+
+
+def test_value_dimension_relation_is_in_rewriter_views_and_artifact_digest() -> None:
+    artifact = _make_value_dimension_artifact()
+    payload = artifact.to_json()
+    payload["j"]["value_dimension_relations"] = []
+    baseline = Gate1Artifact.from_json(payload)
+
+    normal = artifact.rewriter_view()
+    masked = artifact.rewriter_view(masked=True)
+
+    assert normal["j"]["value_dimension_relations"] == [
+        {"value_ref": "t1", "dimension_ref": "x0", "relation": "eq"}
+    ]
+    assert masked["j"]["value_dimension_relations"] == [
+        {
+            "value_ref": "t1",
+            "dimension_ref": "x0",
+            "relation": "<masked>",
+        }
+    ]
+    assert canonical_artifact_digest(artifact) != canonical_artifact_digest(
+        baseline
     )
 
 
@@ -886,7 +1133,7 @@ def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> N
     )
 
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v5"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v10"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v11"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

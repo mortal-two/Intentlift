@@ -53,6 +53,7 @@ SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS = (
 SEMANTIC_ARCHIVE_WIRE_FIELDS = (
     *SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS,
     "dimension_constraints",
+    "value_dimension_relations",
 )
 BOUNDARY_LEGACY_WIRE_FIELDS = (
     "domains",
@@ -2694,6 +2695,47 @@ def _looks_like_semantic_literal(value: str) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class ValueDimensionRelation(StrictJSONMixin):
+    """One J-authored equality between a rank-0 value and a shape dimension."""
+
+    value_ref: str
+    dimension_ref: str
+    relation: str = "eq"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "value_ref", _string(self.value_ref, "ValueDimensionRelation.value_ref")
+        )
+        object.__setattr__(
+            self,
+            "dimension_ref",
+            _string(self.dimension_ref, "ValueDimensionRelation.dimension_ref"),
+        )
+        object.__setattr__(
+            self, "relation", _string(self.relation, "ValueDimensionRelation.relation")
+        )
+        if self.relation != "eq":
+            raise SchemaError("ValueDimensionRelation.relation must be 'eq'")
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "ValueDimensionRelation":
+        data = _strict_object(
+            value,
+            path="ValueDimensionRelation",
+            allowed={"value_ref", "dimension_ref", "relation"},
+            required={"value_ref", "dimension_ref", "relation"},
+        )
+        return cls(data["value_ref"], data["dimension_ref"], data["relation"])
+
+    def to_json(self) -> dict[str, str]:
+        return {
+            "value_ref": self.value_ref,
+            "dimension_ref": self.dimension_ref,
+            "relation": self.relation,
+        }
+
+
 @dataclass
 class SemanticArchive(StrictJSONMixin):
     """The semantic archive ``J``: existing IntentFunction plus strict Layer B."""
@@ -2706,6 +2748,9 @@ class SemanticArchive(StrictJSONMixin):
     scopes: list[PortableScope] = field(default_factory=list)
     storage: list[StorageObject] = field(default_factory=list)
     dimension_constraints: list[str] = field(default_factory=list)
+    value_dimension_relations: list[ValueDimensionRelation] = field(
+        default_factory=list
+    )
 
     def __post_init__(self) -> None:
         self.kernel_id = _string(self.kernel_id, "SemanticArchive.kernel_id")
@@ -2764,6 +2809,16 @@ class SemanticArchive(StrictJSONMixin):
             )
             for index, expression in enumerate(self.dimension_constraints)
         ]
+        if not isinstance(self.value_dimension_relations, list):
+            raise SchemaError(
+                "SemanticArchive.value_dimension_relations must be an array"
+            )
+        self.value_dimension_relations = [
+            item
+            if isinstance(item, ValueDimensionRelation)
+            else ValueDimensionRelation.from_json(item)
+            for item in self.value_dimension_relations
+        ]
         _validate_logical_signature(self)
         _validate_typed_boundary_relations(self)
         _validate_semantic_scopes_and_storage(self)
@@ -2792,6 +2847,10 @@ class SemanticArchive(StrictJSONMixin):
             scopes=[PortableScope.from_json(item) for item in scopes],
             storage=[StorageObject.from_json(item) for item in storage],
             dimension_constraints=data.get("dimension_constraints", []),
+            value_dimension_relations=[
+                ValueDimensionRelation.from_json(item)
+                for item in data.get("value_dimension_relations", [])
+            ],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -2804,6 +2863,9 @@ class SemanticArchive(StrictJSONMixin):
             "scopes": [item.to_json() for item in self.scopes],
             "storage": [item.to_json() for item in self.storage],
             "dimension_constraints": list(self.dimension_constraints),
+            "value_dimension_relations": [
+                item.to_json() for item in self.value_dimension_relations
+            ],
         }
 
 
@@ -3564,6 +3626,10 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J dimension_constraints"
             )
+        if self.wire_schema != self.SCHEMA and self.j.value_dimension_relations:
+            raise SchemaError(
+                "Gate1 artifact v1-v3 do not contain J value_dimension_relations"
+            )
         if self.wire_schema == self.SCHEMA and any(
             item.masked_contribution is not None
             for item in self.j.boundary.reductions
@@ -3648,6 +3714,11 @@ class Gate1Artifact(StrictJSONMixin):
                     "Gate1Artifact.j is missing required field: "
                     "dimension_constraints"
                 )
+            if j_value is not None and "value_dimension_relations" not in j_value:
+                raise SchemaError(
+                    "Gate1Artifact.j is missing required field: "
+                    "value_dimension_relations"
+                )
             if pi_value is not None and "loop_carriers" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: loop_carriers"
@@ -3665,6 +3736,11 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J "
                     "dimension_constraints"
+                )
+            if j_value is not None and "value_dimension_relations" in j_value:
+                raise SchemaError(
+                    "Gate1 artifact v1-v3 do not contain J "
+                    "value_dimension_relations"
                 )
             if pi_value is not None and "loop_carriers" in pi_value:
                 raise SchemaError(
@@ -3693,6 +3769,7 @@ class Gate1Artifact(StrictJSONMixin):
         if self.wire_schema != self.SCHEMA:
             j_value["boundary"].pop("consumer_extensions", None)
             j_value.pop("dimension_constraints", None)
+            j_value.pop("value_dimension_relations", None)
         return {
             "schema": self.wire_schema,
             "j": j_value,
@@ -4429,6 +4506,16 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 _opaque_expression(expression, aliases)
                 for expression in artifact.j.dimension_constraints
             ],
+            "value_dimension_relations": [
+                {
+                    "value_ref": _opaque_reference(item.value_ref, aliases),
+                    "dimension_ref": _opaque_reference(
+                        item.dimension_ref, aliases
+                    ),
+                    "relation": item.relation,
+                }
+                for item in artifact.j.value_dimension_relations
+            ],
         },
         "c": c_view,
         "pi": _opaque_pi_json(artifact.pi, aliases),
@@ -4482,6 +4569,17 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         storage.storage_id: f"b{index}"
         for index, storage in enumerate(artifact.j.storage)
     }
+    dimension_names = list(
+        dict.fromkeys(
+            dimension
+            for tensor in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
+            for dimension in tensor.shape
+            if isinstance(dimension, str)
+        )
+    )
+    dimension_map = {
+        name: f"x{index}" for index, name in enumerate(dimension_names)
+    }
 
     opaque_function, parameter_map, schedule_map = opaque_replay_abi(artifact)
     abi_map = {**parameter_map, **schedule_map}
@@ -4489,7 +4587,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     reference_map = {
         **tensor_map, **node_map, **access_map, **domain_map, **effect_map,
         **authorization_map,
-        **scope_map, **storage_map,
+        **scope_map, **storage_map, **dimension_map,
     }
     fallback_reference_map: dict[str, str] = {}
 
@@ -4754,6 +4852,14 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             "dimension_constraints": [
                 "<masked>" for _ in artifact.j.dimension_constraints
             ],
+            "value_dimension_relations": [
+                {
+                    "value_ref": opaque_reference(item.value_ref),
+                    "dimension_ref": opaque_reference(item.dimension_ref),
+                    "relation": "<masked>",
+                }
+                for item in artifact.j.value_dimension_relations
+            ],
         },
         "c": opaque_c,
         "pi": _opaque_pi_json(artifact.pi, normal_aliases),
@@ -4781,7 +4887,7 @@ __all__ = [
     "render_gate1_artifact_envelope_grammar", "RuntimeArgument",
     "ScheduleSlot", "ScheduleSlotKind", "SchemaError", "SignatureParameter",
     "ScopeKind", "SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS",
-    "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive",
+    "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive", "ValueDimensionRelation",
     "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
     "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",

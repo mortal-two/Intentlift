@@ -25,6 +25,10 @@ from intentir.ir.functional_boundary import (
     functional_reduction_padding_issues,
     resolve_consumer_local_tile_axis,
 )
+from intentir.ir.value_dimension import (
+    ValueDimensionRelationError,
+    validate_value_dimension_relations,
+)
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     ParameterKind,
@@ -36,7 +40,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v10"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v11"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -83,6 +87,7 @@ class TypeCheckErrorCode(str, Enum):
     CONSUMER_EXTENSION_INVALID = "consumer_extension_invalid"
     CONSUMER_EXTENSION_MISSING = "consumer_extension_missing"
     DIMENSION_CONSTRAINT_INVALID = "dimension_constraint_invalid"
+    VALUE_DIMENSION_RELATION_INVALID = "value_dimension_relation_invalid"
     PAD_SHAPE_INVALID = "pad_shape_invalid"
     PAD_SHAPE_CONSTRAINT_MISSING = "pad_shape_constraint_missing"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
@@ -357,6 +362,22 @@ def _check_dimension_and_pad_contracts(
                         ref,
                     )
                 )
+
+
+def _check_value_dimension_relations(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    try:
+        validate_value_dimension_relations(j)
+    except ValueDimensionRelationError as exc:
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.VALUE_DIMENSION_RELATION_INVALID,
+                "j.value_dimension_relations",
+                str(exc),
+            )
+        )
 
 
 def _check_known_operation_contracts(
@@ -986,6 +1007,9 @@ def _rank_zero_semantic_live_values(j: SemanticArchive) -> set[str]:
             for dimension in tensor.shape
             if isinstance(dimension, str)
         )
+    for relation in j.value_dimension_relations:
+        semantic_refs.add(relation.value_ref)
+        semantic_refs.add(relation.dimension_ref)
 
     for node_ref in node_seed_refs:
         operation = nodes.get(node_ref)
@@ -2278,6 +2302,7 @@ def type_check(
 
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_dimension_and_pad_contracts(j, diagnostics)
+    _check_value_dimension_relations(j, diagnostics)
     _check_total_j_value_typing(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     diagnostics.extend(

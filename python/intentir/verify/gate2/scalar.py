@@ -30,6 +30,7 @@ from intentir.ir.functional_boundary import (
     project_functional_boundary_for_refeval,
     project_predicate_text,
 )
+from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
     AccessKind,
@@ -995,13 +996,31 @@ ScalarLoweringRequest = ScalarLoweringSpec | ScalarLoweringUnavailable
 class ScalarLoweringRunner:
     def run(self, spec: ScalarLoweringSpec, values: Mapping[str, Any]) -> ExecutionResult:
         try:
-            inputs = [
-                np.asarray(values[spec.input_binding_map[tensor.name]])
+            raw_inputs = [
+                values[spec.input_binding_map[tensor.name]]
                 for tensor in spec.j.intent.inputs
             ]
         except KeyError as exc:
             return ExecutionResult("j", False, error=f"missing E_J input {exc.args[0]!r}")
         try:
+            raw_inputs_by_ref = {
+                tensor.name: value
+                for tensor, value in zip(
+                    spec.j.intent.inputs, raw_inputs, strict=True
+                )
+            }
+            validate_value_dimension_instantiation(
+                spec.j, spec.dims_map, raw_inputs_by_ref
+            )
+            inputs = [
+                (
+                    value.detach().cpu().numpy()
+                    if type(value).__module__.startswith("torch")
+                    and hasattr(value, "detach")
+                    else np.asarray(value)
+                )
+                for value in raw_inputs
+            ]
             inputs_by_ref = {
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)

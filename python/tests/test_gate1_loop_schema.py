@@ -303,6 +303,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
     ]
     archive["boundary"]["consumer_extensions"] = []
     archive["dimension_constraints"] = []
+    archive["value_dimension_relations"] = []
     return Gate1Artifact.from_json(
         {
             "schema": Gate1Artifact.SCHEMA,
