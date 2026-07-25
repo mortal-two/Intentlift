@@ -603,7 +603,7 @@ def test_typed_scan_and_heterogeneous_multi_scan_are_observed() -> None:
     single = fingerprint_ttir(SCAN_TTIR)
     multiple = fingerprint_ttir(MULTI_SCAN_TTIR)
 
-    assert single.schema_version == "triton-ttir-3.6-gate1-v8"
+    assert single.schema_version == "triton-ttir-3.6-gate1-v9"
     assert dict(single.op_multiset)["tt.scan"] == 1
     assert dict(multiple.op_multiset)["tt.scan"] == 1
     assert compare_ttir(SCAN_TTIR, SCAN_TTIR.replace("%lhs", "%renamed")).hard_pass
@@ -1310,7 +1310,7 @@ def test_value_defined_in_one_sibling_region_is_not_visible_in_another() -> None
         fingerprint_ttir(malformed)
 
 
-def test_unregistered_region_operation_fails_closed_instead_of_flattening_scope() -> None:
+def test_result_bearing_scf_if_fails_closed_instead_of_weakening_scope() -> None:
     unsupported = r'''
 module {
   tt.func public @branch(%x: f32, %cond: i1) -> f32 {
@@ -1326,9 +1326,342 @@ module {
 
     with pytest.raises(
         TTIRParseError,
-        match="unsupported region-bearing TTIR operation 'scf.if'",
+        match="scf.if must not define SSA results",
     ):
         fingerprint_ttir(unsupported)
+
+
+EFFECT_ONLY_SCF_IF = r'''
+module {
+  tt.func public @continuing_if(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %flag0: i1, %flag1: i1) {
+    scf.if %flag0 {
+      %one = arith.constant 1.000000e+00 : f32
+      %two = arith.constant 2.000000e+00 : f32
+      %value = tt.load %input : !tt.ptr<f32>
+      %scaled = arith.mulf %value, %two : f32
+      %sum = arith.addf %scaled, %one : f32
+      tt.store %output, %sum : !tt.ptr<f32>
+      tt.store %output, %value : !tt.ptr<f32>
+    }
+    %after = arith.constant 3.000000e+00 : f32
+    tt.store %output, %after : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+TWO_EFFECT_ONLY_SCF_IFS = r'''
+module {
+  tt.func public @two_continuing_ifs(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %flag0: i1, %flag1: i1) {
+    scf.if %flag0 {
+      %first = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %first : !tt.ptr<f32>
+    }
+    scf.if %flag1 {
+      %second = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %second : !tt.ptr<f32>
+    }
+    tt.return
+  }
+}
+'''
+
+
+SCF_IF_IN_LOOP = r'''
+module {
+  tt.func public @loop_continuing_if(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %flag: i1, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %n step %c1 : i32 {
+      scf.if %flag {
+        %value = tt.load %input : !tt.ptr<f32>
+        tt.store %output, %value : !tt.ptr<f32>
+      }
+      scf.yield
+    }
+    tt.return
+  }
+}
+'''
+
+
+SCF_IF_IN_TERMINAL_FORK = r'''
+module {
+  tt.func public @fork_then_continuing_if(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %terminal_flag: i1, %continuing_flag: i1) {
+    cf.cond_br %terminal_flag, ^bb_true, ^bb_false
+  ^bb_true:
+    tt.return
+  ^bb_false:
+    scf.if %continuing_flag {
+      %value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %value : !tt.ptr<f32>
+    }
+    scf.if %continuing_flag {
+      %again = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %again : !tt.ptr<f32>
+    }
+    tt.return
+  }
+}
+'''
+
+
+TERMINAL_CONTROL_WITH_MATCHING_ABI = r'''
+module {
+  tt.func public @terminal_only(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %flag0: i1, %flag1: i1) {
+    cf.cond_br %flag0, ^bb_true, ^bb_false
+  ^bb_true:
+    %value = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %value : !tt.ptr<f32>
+    tt.return
+  ^bb_false:
+    tt.return
+  }
+}
+'''
+
+
+def test_effect_only_scf_if_is_a_strong_continuing_control_fingerprint() -> None:
+    fingerprint = fingerprint_ttir(EFFECT_ONLY_SCF_IF)
+
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v9"
+    assert dict(fingerprint.op_multiset)["control.scf.if"] == 1
+    assert len(fingerprint.structured_ifs) == 1
+    conditional = fingerprint.structured_ifs[0]
+    assert conditional.ordinal == 0
+    assert conditional.continuation == "parent"
+    assert conditional.enclosing_terminal_arm is None
+    assert conditional.positive_arm.role == "positive"
+    assert conditional.negative_arm.role == "negative"
+    assert conditional.positive_arm.terminal == "scf.yield:void"
+    assert conditional.negative_arm.terminal == "scf.yield:void"
+    assert not conditional.negative_arm.members
+    assert [
+        item.split(":", 1)[0]
+        for item in conditional.positive_arm.effect_order
+    ] == ["tt.load", "tt.store", "tt.store"]
+
+
+def test_implicit_and_explicit_empty_scf_if_yields_are_identical() -> None:
+    explicit = EFFECT_ONLY_SCF_IF.replace(
+        "      tt.store %output, %value : !tt.ptr<f32>\n    }",
+        "      tt.store %output, %value : !tt.ptr<f32>\n"
+        "      scf.yield\n"
+        "    } else {\n"
+        "      scf.yield\n"
+        "    }",
+    )
+
+    assert compare_ttir(EFFECT_ONLY_SCF_IF, explicit).hard_pass
+
+
+def test_scf_if_sorts_pure_members_but_preserves_arm_effect_order() -> None:
+    pure_reordered = EFFECT_ONLY_SCF_IF.replace(
+        "      %one = arith.constant 1.000000e+00 : f32\n"
+        "      %two = arith.constant 2.000000e+00 : f32",
+        "      %two = arith.constant 2.000000e+00 : f32\n"
+        "      %one = arith.constant 1.000000e+00 : f32",
+    )
+    effects_reordered = EFFECT_ONLY_SCF_IF.replace(
+        "      tt.store %output, %sum : !tt.ptr<f32>\n"
+        "      tt.store %output, %value : !tt.ptr<f32>",
+        "      tt.store %output, %value : !tt.ptr<f32>\n"
+        "      tt.store %output, %sum : !tt.ptr<f32>",
+    )
+
+    assert compare_ttir(EFFECT_ONLY_SCF_IF, pure_reordered).hard_pass
+    assert not compare_ttir(EFFECT_ONLY_SCF_IF, effects_reordered).hard_pass
+
+
+def test_scf_if_polarity_and_predicate_are_hard_evidence() -> None:
+    moved_to_negative = EFFECT_ONLY_SCF_IF.replace(
+        "    scf.if %flag0 {",
+        "    scf.if %flag0 {\n"
+        "      scf.yield\n"
+        "    } else {",
+        1,
+    )
+    changed_predicate = EFFECT_ONLY_SCF_IF.replace(
+        "scf.if %flag0", "scf.if %flag1", 1
+    )
+
+    assert not compare_ttir(EFFECT_ONLY_SCF_IF, moved_to_negative).hard_pass
+    assert not compare_ttir(EFFECT_ONLY_SCF_IF, changed_predicate).hard_pass
+
+
+def test_multiple_scf_ifs_preserve_parent_local_sequence_ordinals() -> None:
+    fingerprint = fingerprint_ttir(TWO_EFFECT_ONLY_SCF_IFS)
+
+    assert [item.ordinal for item in fingerprint.structured_ifs] == [0, 1]
+    swapped = TWO_EFFECT_ONLY_SCF_IFS.replace(
+        "scf.if %flag0", "scf.if %temporary", 1
+    ).replace(
+        "scf.if %flag1", "scf.if %flag0", 1
+    ).replace(
+        "scf.if %temporary", "scf.if %flag1", 1
+    )
+    assert not compare_ttir(TWO_EFFECT_ONLY_SCF_IFS, swapped).hard_pass
+
+
+def test_scf_if_preserves_structured_and_terminal_arm_parent_contexts() -> None:
+    in_loop = fingerprint_ttir(SCF_IF_IN_LOOP)
+    in_terminal_arm = fingerprint_ttir(SCF_IF_IN_TERMINAL_FORK)
+
+    assert len(in_loop.structured_ifs[0].region_context) == 1
+    assert in_loop.structured_ifs[0].region_context[0].startswith("scf.for[")
+    assert dict(in_loop.loops[0].body_op_multiset) == {
+        "control.scf.if": 1,
+    }
+    assert in_loop.loops[0].body_effects == (("control.scf.if", 1),)
+    assert [item.ordinal for item in in_terminal_arm.structured_ifs] == [0, 1]
+    assert all(
+        item.enclosing_terminal_arm == "false"
+        for item in in_terminal_arm.structured_ifs
+    )
+    assert len(in_terminal_arm.terminal_forks) == 1
+    assert any(
+        item.startswith("region[scf.if:")
+        for item in in_terminal_arm.terminal_forks[0].false_arm.structured_regions
+    )
+
+
+def test_continuing_scf_if_cannot_equal_a_terminal_fork() -> None:
+    continuing = r'''
+module {
+  tt.func public @continuing(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>,
+      %flag0: i1, %flag1: i1) {
+    scf.if %flag0 {
+      %value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %value : !tt.ptr<f32>
+    }
+    tt.return
+  }
+}
+'''
+    continuing_fingerprint = fingerprint_ttir(continuing)
+    terminal_fingerprint = fingerprint_ttir(TERMINAL_CONTROL_WITH_MATCHING_ABI)
+
+    assert continuing_fingerprint.structured_ifs
+    assert not continuing_fingerprint.terminal_forks
+    assert terminal_fingerprint.terminal_forks
+    assert not terminal_fingerprint.structured_ifs
+    assert not compare_fingerprints(
+        continuing_fingerprint, terminal_fingerprint
+    ).hard_pass
+
+
+def test_scf_if_arm_scopes_allow_same_local_ssa_spelling() -> None:
+    both_arms = r'''
+module {
+  tt.func public @two_arms(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %flag: i1) {
+    scf.if %flag {
+      %value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %value : !tt.ptr<f32>
+      scf.yield
+    } else {
+      %value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %value : !tt.ptr<f32>
+      scf.yield
+    }
+    tt.return
+  }
+}
+'''
+    fingerprint = fingerprint_ttir(both_arms)
+
+    assert len(fingerprint.structured_ifs[0].positive_arm.effect_order) == 2
+    assert len(fingerprint.structured_ifs[0].negative_arm.effect_order) == 2
+
+
+@pytest.mark.parametrize(
+    ("malformed", "message"),
+    [
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "%flag0: i1", "%flag0: tensor<1xi1>", 1
+            ),
+            "predicate must be a scalar i1",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "    scf.if %flag0 {",
+                "    scf.if %flag0 {\n      ^bb0:",
+                1,
+            ),
+            "implicit single block",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "    scf.if %flag0 {",
+                "    scf.if %flag0 {\n      scf.if %flag1 {\n      }",
+                1,
+            ),
+            "nested scf.if is unsupported",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "      %one = arith.constant 1.000000e+00 : f32",
+                "      scf.yield %flag0 : i1\n"
+                "      %one = arith.constant 1.000000e+00 : f32",
+                1,
+            ),
+            "zero-operand scf.yield",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "      %one = arith.constant 1.000000e+00 : f32",
+                "      scf.yield\n"
+                "      %one = arith.constant 1.000000e+00 : f32",
+                1,
+            ),
+            "operation after scf.if positive arm scf.yield",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "    scf.if %flag0 {",
+                "    scf.if %flag0 attributes {test = true} {",
+                1,
+            ),
+            "must be result-free and use exactly one scalar predicate",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "    %after = arith.constant 3.000000e+00 : f32",
+                "    %after = arith.addf %value, %value : f32",
+                1,
+            ),
+            "unresolved SSA value .*value",
+        ),
+        (
+            EFFECT_ONLY_SCF_IF.replace(
+                "      %one = arith.constant 1.000000e+00 : f32",
+                "      scf.while %flag1 {\n      }\n"
+                "      %one = arith.constant 1.000000e+00 : f32",
+                1,
+            ),
+            "unsupported region-bearing TTIR operation 'scf.while'",
+        ),
+    ],
+)
+def test_malformed_or_out_of_profile_scf_if_fails_closed(
+    malformed: str,
+    message: str,
+) -> None:
+    with pytest.raises(TTIRParseError, match=message):
+        fingerprint_ttir(malformed)
 
 
 def test_duplicate_ssa_definition_in_the_same_region_is_still_rejected() -> None:
@@ -1503,7 +1836,7 @@ def test_private_void_helper_and_equivalent_inline_loop_hard_pass() -> None:
 
     assert verdict.hard_pass, verdict.to_dict()
     fingerprint = fingerprint_ttir(OUTLINED_VOID_HELPER_IN_LOOP)
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v8"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v9"
     assert "tt.call" not in dict(fingerprint.op_multiset)
     assert dict(fingerprint.loops[0].body_op_multiset) == {
         "tt.addptr": 2,
@@ -1619,7 +1952,7 @@ def test_reachable_helper_with_unknown_region_fails_closed() -> None:
         "    }",
     )
 
-    with pytest.raises(TTIRParseError, match="unsupported region-bearing"):
+    with pytest.raises(TTIRParseError, match="scf.if must not define SSA results"):
         fingerprint_ttir(unsupported)
 
 
@@ -1926,7 +2259,7 @@ def test_repeated_effectful_region_instances_have_distinct_event_paths() -> None
 def test_closed_terminal_binary_fork_preserves_roles_and_control_edges() -> None:
     fingerprint = fingerprint_ttir(TERMINAL_BINARY_FORK)
 
-    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v8"
+    assert fingerprint.schema_version == "triton-ttir-3.6-gate1-v9"
     assert dict(fingerprint.op_multiset)["control.conditional"] == 1
     assert len(fingerprint.terminal_forks) == 1
     fork = fingerprint.terminal_forks[0]

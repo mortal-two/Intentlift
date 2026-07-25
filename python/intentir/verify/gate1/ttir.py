@@ -35,6 +35,8 @@ __all__ = [
     "MemoryEffect",
     "ReductionFingerprint",
     "RuntimeInterface",
+    "StructuredIfArmFingerprint",
+    "StructuredIfFingerprint",
     "TerminalForkArmFingerprint",
     "TerminalForkFingerprint",
     "TTIRFingerprint",
@@ -47,7 +49,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v8"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v9"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -74,12 +76,13 @@ _COMMUTATIVE_OPS = {
     "arith.ori",
     "arith.xori",
 }
-_REGION_OWNERS = {"tt.reduce", "tt.scan", "scf.for"}
+_REGION_OWNERS = {"tt.reduce", "tt.scan", "scf.for", "scf.if"}
 _REGION_TERMINATORS = {"tt.reduce.return", "tt.scan.return", "scf.yield"}
 _EXPECTED_REGION_TERMINATOR = {
     "tt.reduce": "tt.reduce.return",
     "tt.scan": "tt.scan.return",
     "scf.for": "scf.yield",
+    "scf.if": "scf.yield",
 }
 _TERMINATORS = {"tt.return", *_REGION_TERMINATORS}
 _KNOWN_PURE_OPS = {
@@ -165,6 +168,7 @@ _KNOWN_PURE_OPS = {
     # Structured owners are pure only when every operation in their nested
     # region is accepted by this same closed check.
     "scf.for",
+    "scf.if",
     "tt.reduce",
     "tt.scan",
     "tt.return",
@@ -487,6 +491,50 @@ class LoopFingerprint:
 
 
 @dataclass(frozen=True)
+class StructuredIfArmFingerprint:
+    """One polarity-preserving arm of a continuing effect-only ``scf.if``."""
+
+    role: str
+    members: tuple[str, ...]
+    effect_order: tuple[str, ...]
+    structured_regions: tuple[str, ...]
+    terminal: str = "scf.yield:void"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "members": list(self.members),
+            "effect_order": list(self.effect_order),
+            "structured_regions": list(self.structured_regions),
+            "terminal": self.terminal,
+        }
+
+
+@dataclass(frozen=True)
+class StructuredIfFingerprint:
+    """Hard evidence for one scalar, result-free conditional continuation."""
+
+    ordinal: int
+    predicate: str
+    region_context: tuple[str, ...]
+    enclosing_terminal_arm: str | None
+    positive_arm: StructuredIfArmFingerprint
+    negative_arm: StructuredIfArmFingerprint
+    continuation: str = "parent"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ordinal": self.ordinal,
+            "predicate": self.predicate,
+            "region_context": list(self.region_context),
+            "enclosing_terminal_arm": self.enclosing_terminal_arm,
+            "positive_arm": self.positive_arm.to_dict(),
+            "negative_arm": self.negative_arm.to_dict(),
+            "continuation": self.continuation,
+        }
+
+
+@dataclass(frozen=True)
 class TerminalForkArmFingerprint:
     """One role-preserving arm of the closed terminal binary-fork profile."""
 
@@ -537,6 +585,7 @@ class TTIRFingerprint:
     effect_multiset: tuple[tuple[str, int], ...]
     dots: tuple[DotFingerprint, ...]
     loops: tuple[LoopFingerprint, ...]
+    structured_ifs: tuple[StructuredIfFingerprint, ...] = ()
     terminal_forks: tuple[TerminalForkFingerprint, ...] = ()
     schedule_view: tuple[tuple[str, str], ...] = ()
     schema_version: str = _SCHEMA_VERSION
@@ -557,6 +606,9 @@ class TTIRFingerprint:
             "effect_multiset": dict(self.effect_multiset),
             "dots": [item.to_dict() for item in self.dots],
             "loops": [item.to_dict() for item in self.loops],
+            "structured_ifs": [
+                item.to_dict() for item in self.structured_ifs
+            ],
             "terminal_forks": [
                 item.to_dict() for item in self.terminal_forks
             ],
@@ -586,6 +638,8 @@ class _Operation:
     terminator_types: tuple[str, ...] = ()
     fork_id: int | None = None
     fork_arm: str | None = None
+    structured_if_id: int | None = None
+    structured_if_arm: str | None = None
 
 
 @dataclass
@@ -1741,6 +1795,20 @@ def _parse_for_header(
     return operands, block_args, induction_type, result_types
 
 
+def _parse_effect_only_if_header(tail: str) -> str:
+    """Parse the one closed continuing ``scf.if`` header accepted by Gate1."""
+
+    match = re.fullmatch(
+        r"(?P<predicate>%[A-Za-z0-9_.$-]+)\s*\{",
+        tail.strip(),
+    )
+    if match is None:
+        raise TTIRParseError(
+            "scf.if must be result-free and use exactly one scalar predicate"
+        )
+    return match.group("predicate")
+
+
 _BLOCK_HEADER_RE = re.compile(
     r"\s*\^(?P<label>[A-Za-z0-9_.$-]+)"
     r"(?:\s*\((?P<args>.*)\))?\s*:\s*(?://.*)?$"
@@ -1833,6 +1901,11 @@ def _effect_occurrence_identities(
         for operation in operations
         if operation.name in _REGION_OWNERS
     }
+    structured_if_ids = {
+        operation.node_id
+        for operation in operations
+        if operation.name == "scf.if"
+    }
     terminal_fork_by_id = {
         terminal_fork.fork_id: terminal_fork
         for terminal_fork in terminal_forks
@@ -1843,6 +1916,7 @@ def _effect_occurrence_identities(
     direct_sequence: dict[int | None, list[_Operation]] = {}
     direct_terminal_forks: dict[int | None, list[_TerminalFork]] = {}
     direct_fork_arms: dict[tuple[int, str], list[_Operation]] = {}
+    direct_if_arms: dict[tuple[int, str], list[_Operation]] = {}
 
     for terminal_fork in terminal_forks:
         parent = (
@@ -1881,6 +1955,18 @@ def _effect_occurrence_identities(
             assert operation.fork_arm is not None
             direct_fork_arms.setdefault(
                 (terminal_fork.fork_id, operation.fork_arm), []
+            ).append(operation)
+        elif parent in structured_if_ids:
+            if (
+                operation.structured_if_id != parent
+                or operation.structured_if_arm
+                not in {"positive", "negative"}
+            ):
+                raise TTIRParseError(
+                    "direct scf.if member lost its polarity during expansion"
+                )
+            direct_if_arms.setdefault(
+                (parent, operation.structured_if_arm), []
             ).append(operation)
         else:
             direct_sequence.setdefault(parent, []).append(operation)
@@ -1945,6 +2031,24 @@ def _effect_occurrence_identities(
 
             if item.node_id in region_ids:
                 if not region_has_effect(item.node_id):
+                    continue
+                if item.node_id in structured_if_ids:
+                    event_path = (
+                        *scope_path,
+                        f"effect[{effect_ordinal}]:control.scf.if",
+                    )
+                    effect_ordinal += 1
+                    for role in ("positive", "negative"):
+                        arm_items = [
+                            (operation.node_id, 1, operation)
+                            for operation in direct_if_arms.get(
+                                (item.node_id, role), ()
+                            )
+                        ]
+                        visit_items(
+                            arm_items,
+                            (*event_path, f"arm[{role}]"),
+                        )
                     continue
                 event_path = (
                     *scope_path,
@@ -2105,6 +2209,9 @@ class TTIRParser:
         region_block_counts: dict[int, int] = {}
         scan_return_types: dict[int, tuple[str, ...]] = {}
         region_terminator_types: dict[int, tuple[str, ...]] = {}
+        structured_if_arms: dict[int, str] = {}
+        structured_if_seen_else: set[int] = set()
+        structured_if_terminated_arms: set[tuple[int, str]] = set()
         # One lexical binding map for the function and one for every active
         # operation region.  MLIR SSA names need only be unique within their
         # region; sibling scf.for/tt.reduce/tt.scan bodies may legally reuse
@@ -2140,10 +2247,18 @@ class TTIRParser:
         def qualified_name(name: str, owner_node: int | None) -> str:
             if owner_node is None:
                 return name
+            arm_suffix = ""
+            if (
+                owner_node < len(operations)
+                and operations[owner_node].name == "scf.if"
+            ):
+                role = structured_if_arms.get(owner_node)
+                if role in {"positive", "negative"}:
+                    arm_suffix = f"$a{role}"
             if "#" in name:
                 base, suffix = name.rsplit("#", 1)
-                return f"{base}$r{owner_node}#{suffix}"
-            return f"{name}$r{owner_node}"
+                return f"{base}$r{owner_node}{arm_suffix}#{suffix}"
+            return f"{name}$r{owner_node}{arm_suffix}"
 
         def define(
             name: str,
@@ -2172,6 +2287,17 @@ class TTIRParser:
             # Preserve the original spelling so the existing final unresolved
             # check emits a deterministic parse error with useful context.
             return name
+
+        def enclosing_structured_if() -> tuple[int, str] | None:
+            for owner_id, _ in reversed(region_stack):
+                if operations[owner_id].name == "scf.if":
+                    role = structured_if_arms.get(owner_id)
+                    if role not in {"positive", "negative"}:
+                        raise TTIRParseError(
+                            "active scf.if has no well-formed arm polarity"
+                        )
+                    return owner_id, role
+            return None
 
         def close_scan_region(
             owner_id: int, closing_text: str, *, line_number: int
@@ -2511,6 +2637,24 @@ class TTIRParser:
                     "types must close positionally"
                 )
 
+        def close_if_region(
+            owner_id: int, closing_text: str, *, line_number: int
+        ) -> None:
+            if closing_text.strip() != "}":
+                raise TTIRParseError(
+                    f"line {line_number}: scf.if has malformed closing syntax"
+                )
+            operation = operations[owner_id]
+            if operation.result_names or operation.region_results:
+                raise TTIRParseError(
+                    "closed scf.if must not return or yield SSA values"
+                )
+            if structured_if_arms.get(owner_id) not in {
+                "positive",
+                "negative",
+            }:
+                raise TTIRParseError("scf.if closed without an active arm")
+
         def close_region(
             owner_id: int, closing_text: str, *, line_number: int
         ) -> None:
@@ -2527,6 +2671,10 @@ class TTIRParser:
                 close_for_region(
                     owner_id, closing_text, line_number=line_number
                 )
+            elif owner.name == "scf.if":
+                close_if_region(
+                    owner_id, closing_text, line_number=line_number
+                )
             else:  # pragma: no cover - region owner set is closed above
                 raise TTIRParseError(f"unsupported region owner {owner.name}")
 
@@ -2534,6 +2682,29 @@ class TTIRParser:
             stripped = line.strip()
             indent = len(line) - len(line.lstrip())
             if not stripped or stripped.startswith("//"):
+                continue
+            if re.fullmatch(r"}\s*else\s*{", stripped) is not None:
+                if not region_stack:
+                    raise TTIRParseError(
+                        f"line {line_number}: scf.if else appears outside its region"
+                    )
+                owner_id, owner_indent = region_stack[-1]
+                owner = operations[owner_id]
+                if owner.name != "scf.if" or indent != owner_indent:
+                    raise TTIRParseError(
+                        f"line {line_number}: scf.if else must directly switch "
+                        "the active single-block positive arm"
+                    )
+                if owner_id in structured_if_seen_else:
+                    raise TTIRParseError("scf.if has more than one negative arm")
+                if structured_if_arms.get(owner_id) != "positive":
+                    raise TTIRParseError(
+                        "scf.if else can only follow its positive arm"
+                    )
+                structured_if_seen_else.add(owner_id)
+                structured_if_arms[owner_id] = "negative"
+                scope_bindings.pop()
+                scope_bindings.append({})
                 continue
             cond_br = _TERMINAL_COND_BR_RE.fullmatch(stripped)
             if cond_br is not None:
@@ -2637,6 +2808,11 @@ class TTIRParser:
                 block_arg_types = [type_text for _, type_text in block_header[1]]
                 parent_id = region_stack[-1][0]
                 parent = operations[parent_id]
+                if parent.name == "scf.if":
+                    raise TTIRParseError(
+                        f"line {line_number}: scf.if arms must use the implicit "
+                        "single block and cannot declare a block header"
+                    )
                 if region_block_counts.get(parent_id, 0) >= 1:
                     raise TTIRParseError(
                         f"line {line_number}: structured region "
@@ -2674,6 +2850,16 @@ class TTIRParser:
                 raise TTIRParseError(
                     f"line {line_number}: operation after {owner.name} terminator"
                 )
+            if region_stack and operations[region_stack[-1][0]].name == "scf.if":
+                owner_id = region_stack[-1][0]
+                role = structured_if_arms.get(owner_id)
+                if role is not None and (
+                    owner_id, role
+                ) in structured_if_terminated_arms:
+                    raise TTIRParseError(
+                        f"line {line_number}: operation after scf.if {role} "
+                        "arm scf.yield"
+                    )
 
             head = _operation_head(line)
             if head is None:
@@ -2737,6 +2923,16 @@ class TTIRParser:
                     for_induction_type,
                     for_result_types,
                 ) = _parse_for_header(tail)
+            elif name == "scf.if":
+                if results:
+                    raise TTIRParseError(
+                        "closed scf.if must not define SSA results"
+                    )
+                if enclosing_structured_if() is not None:
+                    raise TTIRParseError(
+                        "nested scf.if is unsupported by the Gate1 v9 closed profile"
+                    )
+                raw_operands = [_parse_effect_only_if_header(tail)]
             elif name == "tt.reduce":
                 if not quoted:
                     raise TTIRParseError(
@@ -2854,6 +3050,11 @@ class TTIRParser:
                     raise TTIRParseError(
                         "scf.for SSA result arity must match its iter_args"
                     )
+            if name == "scf.if":
+                if len(operand_types) != 1 or operand_types[0] != "i1":
+                    raise TTIRParseError(
+                        "scf.if predicate must be a scalar i1 SSA value"
+                    )
             if name == "tt.return":
                 declared_returns = parsed_terminator_types
                 if declared_returns != function.results:
@@ -2891,6 +3092,7 @@ class TTIRParser:
             ):
                 value_types[result] = type_text
             axis_match = re.search(r"\baxis\s*=\s*(-?[0-9]+)", tail)
+            enclosing_if = enclosing_structured_if()
             operation = _Operation(
                 node_id=len(operations),
                 name=name,
@@ -2923,6 +3125,12 @@ class TTIRParser:
                     else None
                 ),
                 fork_arm=active_fork_arm,
+                structured_if_id=(
+                    enclosing_if[0] if enclosing_if is not None else None
+                ),
+                structured_if_arm=(
+                    enclosing_if[1] if enclosing_if is not None else None
+                ),
             )
             operations.append(operation)
             for result in qualified_results:
@@ -2948,15 +3156,32 @@ class TTIRParser:
                     raise TTIRParseError(
                         f"line {line_number}: region terminator {name} cannot define SSA results"
                     )
-                if parent_id in region_terminator_types:
+                if parent.name == "scf.if":
+                    role = structured_if_arms.get(parent_id)
+                    if role not in {"positive", "negative"}:
+                        raise TTIRParseError(
+                            "scf.if yield has no active arm polarity"
+                        )
+                    if operands or parsed_terminator_types:
+                        raise TTIRParseError(
+                            "effect-only scf.if requires a zero-operand scf.yield"
+                        )
+                    key = (parent_id, role)
+                    if key in structured_if_terminated_arms:
+                        raise TTIRParseError(
+                            f"scf.if {role} arm has more than one scf.yield"
+                        )
+                    structured_if_terminated_arms.add(key)
+                elif parent_id in region_terminator_types:
                     raise TTIRParseError(
                         f"line {line_number}: {parent.name} has more than one "
                         f"{expected}"
                     )
-                region_terminator_types[parent_id] = parsed_terminator_types
-                if parent.name == "tt.scan":
-                    scan_return_types[parent_id] = parsed_terminator_types
-                parent.region_results.extend(operands)
+                else:
+                    region_terminator_types[parent_id] = parsed_terminator_types
+                    if parent.name == "tt.scan":
+                        scan_return_types[parent_id] = parsed_terminator_types
+                    parent.region_results.extend(operands)
 
             if name == "tt.return" and terminal_fork is not None:
                 assert active_fork_arm is not None
@@ -3001,6 +3226,8 @@ class TTIRParser:
                     leaf_labels[block_name] = f"region[{path}].arg[{index}]"
                 region_stack.append((operation.node_id, indent))
                 scope_bindings.append(child_bindings)
+                if name == "scf.if":
+                    structured_if_arms[operation.node_id] = "positive"
                 # Custom ``scf.for`` assembly declares its one body block via
                 # the induction variable/iter_args in the operation header.
                 # ``tt.reduce``/``tt.scan`` declare their block on the
@@ -3169,6 +3396,7 @@ class TTIRParser:
             stack: tuple[str, ...],
             *,
             preserve_return: bool,
+            inherited_structured_if: tuple[int, str] | None = None,
         ) -> tuple[str, ...]:
             nonlocal fork_serial
             if function.name in stack:
@@ -3186,6 +3414,17 @@ class TTIRParser:
             local_operations, _, _, local_terminal_fork = parse_reachable(
                 function
             )
+            if inherited_structured_if is not None and (
+                local_terminal_fork is not None
+                or any(
+                    operation.name == "scf.if"
+                    for operation in local_operations
+                )
+            ):
+                raise TTIRParseError(
+                    "nested conditional control introduced by tt.call inside "
+                    "scf.if is unsupported by the Gate1 v9 closed profile"
+                )
             expanded_fork_id: int | None = None
             if local_terminal_fork is not None:
                 expanded_fork_id = fork_serial
@@ -3228,6 +3467,27 @@ class TTIRParser:
                         "does not dominate it"
                     ) from error
 
+                if operation.structured_if_id is not None:
+                    try:
+                        mapped_structured_if = (
+                            context_map[operation.structured_if_id],
+                            operation.structured_if_arm,
+                        )
+                    except KeyError as error:
+                        raise TTIRParseError(
+                            f"tt.func @{function.name} has an scf.if arm whose "
+                            "owner does not dominate it"
+                        ) from error
+                else:
+                    mapped_structured_if = inherited_structured_if
+                if mapped_structured_if is not None and (
+                    mapped_structured_if[1]
+                    not in {"positive", "negative"}
+                ):
+                    raise TTIRParseError(
+                        "expanded scf.if member has an invalid arm polarity"
+                    )
+
                 if operation.name == "tt.call":
                     callee = validate_call(operation, function)
                     actuals = tuple(
@@ -3240,6 +3500,7 @@ class TTIRParser:
                         mapped_context,
                         (*stack, function.name),
                         preserve_return=False,
+                        inherited_structured_if=mapped_structured_if,
                     )
                     if len(returned) != len(operation.result_names):
                         raise TTIRParseError(
@@ -3300,6 +3561,16 @@ class TTIRParser:
                         else None
                     ),
                     fork_arm=operation.fork_arm,
+                    structured_if_id=(
+                        mapped_structured_if[0]
+                        if mapped_structured_if is not None
+                        else None
+                    ),
+                    structured_if_arm=(
+                        mapped_structured_if[1]
+                        if mapped_structured_if is not None
+                        else None
+                    ),
                 )
                 expanded.append(clone)
                 context_map[operation.node_id] = clone.node_id
@@ -3368,6 +3639,7 @@ class TTIRParser:
             (),
             (),
             preserve_return=True,
+            inherited_structured_if=None,
         )
 
         # Reconstruct region leaves from the expanded graph so an outlined
@@ -3547,6 +3819,11 @@ class TTIRParser:
             for operation in operations
             if operation.name in _REGION_OWNERS
         }
+        structured_if_ids = {
+            operation.node_id
+            for operation in operations
+            if operation.name == "scf.if"
+        }
         terminal_fork_by_id = {
             item.fork_id: item for item in terminal_forks
         }
@@ -3567,6 +3844,7 @@ class TTIRParser:
         direct_children: dict[int | None, list[int]] = {}
         direct_members: dict[int | None, list[_Operation]] = {}
         direct_sequence: dict[int | None, list[_Operation]] = {}
+        direct_if_arms: dict[tuple[int, str], list[_Operation]] = {}
         for operation in operations:
             parent = operation.context[-1] if operation.context else None
             if parent is not None and parent not in region_ids:
@@ -3584,6 +3862,22 @@ class TTIRParser:
                 )
             if operation.fork_arm not in {None, "true", "false"}:
                 raise TTIRParseError("operation has an invalid terminal-fork role")
+            if operation.structured_if_id is not None:
+                if (
+                    operation.structured_if_id not in structured_if_ids
+                    or operation.structured_if_id not in operation.context
+                    or operation.structured_if_arm
+                    not in {"positive", "negative"}
+                ):
+                    raise TTIRParseError(
+                        "operation has an invalid structured scf.if ancestry"
+                    )
+            elif any(
+                owner in structured_if_ids for owner in operation.context
+            ):
+                raise TTIRParseError(
+                    "operation inside scf.if lost its arm polarity"
+                )
             is_direct_fork_member = (
                 terminal_fork is not None
                 and operation.context == terminal_fork.context
@@ -3593,7 +3887,17 @@ class TTIRParser:
             # into the caller's ordinary region sequence.  Nested structured
             # regions still retain their own internal membership graph.
             if not is_direct_fork_member:
-                direct_sequence.setdefault(parent, []).append(operation)
+                if parent in structured_if_ids:
+                    if operation.structured_if_id != parent:
+                        raise TTIRParseError(
+                            "direct scf.if member is bound to the wrong owner"
+                        )
+                    assert operation.structured_if_arm is not None
+                    direct_if_arms.setdefault(
+                        (parent, operation.structured_if_arm), []
+                    ).append(operation)
+                else:
+                    direct_sequence.setdefault(parent, []).append(operation)
                 if operation.node_id in region_ids:
                     direct_children.setdefault(parent, []).append(operation.node_id)
                 elif operation.name not in _TERMINATORS:
@@ -3646,10 +3950,95 @@ class TTIRParser:
             return value
 
         region_ref_cache: dict[int, str] = {}
+        structured_if_fingerprint_cache: dict[
+            int, StructuredIfFingerprint
+        ] = {}
         terminal_fork_fingerprint_cache: dict[
             int, TerminalForkFingerprint
         ] = {}
         terminal_fork_ref_cache: dict[int, str] = {}
+
+        structured_if_ordinals: dict[int, int] = {}
+        structured_if_containers: dict[
+            tuple[tuple[int, ...], int | None, str | None], list[int]
+        ] = {}
+        for owner_id in structured_if_ids:
+            owner = node_by_id[owner_id]
+            key = (owner.context, owner.fork_id, owner.fork_arm)
+            structured_if_containers.setdefault(key, []).append(owner_id)
+        for owners in structured_if_containers.values():
+            for ordinal, owner_id in enumerate(sorted(owners)):
+                structured_if_ordinals[owner_id] = ordinal
+
+        def structured_if_arm(
+            owner_id: int, role: str
+        ) -> StructuredIfArmFingerprint:
+            direct = direct_if_arms.get((owner_id, role), ())
+            members = sorted(
+                node_ref(operation.node_id, semantic=True)
+                for operation in direct
+                if operation.node_id not in region_ids
+                and operation.name not in _TERMINATORS
+            )
+            structured_regions = sorted(
+                region_ref(operation.node_id)
+                for operation in direct
+                if operation.node_id in region_ids
+            )
+            effect_order: list[str] = []
+            for operation in direct:
+                if operation.node_id in region_ids:
+                    if region_has_effect(operation.node_id):
+                        effect_order.append(
+                            f"region:{region_ref(operation.node_id)}"
+                        )
+                elif (
+                    operation.name not in _TERMINATORS
+                    and _operation_has_effect(operation)
+                ):
+                    effect_order.append(
+                        f"{operation.name}:"
+                        f"{node_ref(operation.node_id, semantic=True)}"
+                    )
+            return StructuredIfArmFingerprint(
+                role=role,
+                members=tuple(members),
+                effect_order=tuple(effect_order),
+                structured_regions=tuple(structured_regions),
+            )
+
+        def structured_if_fingerprint(
+            owner_id: int,
+        ) -> StructuredIfFingerprint:
+            cached = structured_if_fingerprint_cache.get(owner_id)
+            if cached is not None:
+                return cached
+            owner = node_by_id[owner_id]
+            if len(owner.operands) != 1 or owner.result_names:
+                raise TTIRParseError(
+                    "expanded scf.if is not scalar-predicate/result-free"
+                )
+            cached = StructuredIfFingerprint(
+                ordinal=structured_if_ordinals[owner_id],
+                predicate=operand_ref(owner.operands[0], semantic=True),
+                region_context=tuple(
+                    node_ref(ancestor, semantic=True)
+                    for ancestor in owner.context
+                ),
+                enclosing_terminal_arm=owner.fork_arm,
+                positive_arm=structured_if_arm(owner_id, "positive"),
+                negative_arm=structured_if_arm(owner_id, "negative"),
+            )
+            structured_if_fingerprint_cache[owner_id] = cached
+            return cached
+
+        def structured_if_arm_ref(
+            arm: StructuredIfArmFingerprint,
+        ) -> str:
+            return (
+                f"control.scf.if.arm[{arm.role}:"
+                f"{_digest(arm.to_dict())[:20]}]"
+            )
 
         def terminal_fork_arm(
             terminal_fork: _TerminalFork, role: str
@@ -3737,6 +4126,11 @@ class TTIRParser:
             )
 
         def direct_effect_events(parent: int | None) -> list[str]:
+            if parent in structured_if_ids:
+                raise TTIRParseError(
+                    "scf.if arm effects must be observed by polarity, not "
+                    "flattened into one region sequence"
+                )
             events: list[str] = []
             sequence: list[tuple[int, int, _Operation | _TerminalFork]] = [
                 (operation.node_id, 1, operation)
@@ -3767,6 +4161,14 @@ class TTIRParser:
             if cached is not None:
                 return cached
             operation = node_by_id[region_id]
+            if region_id in structured_if_ids:
+                fingerprint = structured_if_fingerprint(region_id)
+                cached = (
+                    "region[scf.if:"
+                    f"{_digest(fingerprint.to_dict())[:20]}]"
+                )
+                region_ref_cache[region_id] = cached
+                return cached
             child_refs = sorted(
                 region_ref(child)
                 for child in direct_children.get(region_id, ())
@@ -3795,6 +4197,25 @@ class TTIRParser:
 
         for parent in [None, *sorted(region_ids)]:
             parent_ref = "region[root]" if parent is None else region_ref(parent)
+            if parent in structured_if_ids:
+                fingerprint = structured_if_fingerprint(parent)
+                control = region_ref(parent)
+                edges.extend(
+                    [
+                        (fingerprint.predicate, control, "condition"),
+                        (
+                            structured_if_arm_ref(fingerprint.positive_arm),
+                            control,
+                            "positive",
+                        ),
+                        (
+                            structured_if_arm_ref(fingerprint.negative_arm),
+                            control,
+                            "negative",
+                        ),
+                    ]
+                )
+                continue
             for child in direct_children.get(parent, ()):
                 edges.append((parent_ref, region_ref(child), "region.child"))
             for member in direct_members.get(parent, ()):
@@ -3930,6 +4351,8 @@ class TTIRParser:
                 effect_counts[operation.name] += 1
             elif operation.name == "scf.for":
                 effect_counts["control.scf.for"] += 1
+            elif operation.name == "scf.if":
+                effect_counts["control.scf.if"] += 1
 
         dots = [
             DotFingerprint(
@@ -3968,6 +4391,13 @@ class TTIRParser:
                 terminal_fork.fork_id
                 for terminal_fork in directly_nested_forks
             }
+            nested_structured_if_ids = {
+                nested.node_id
+                for nested in operations
+                if nested.name == "scf.if"
+                and operation.node_id in nested.context
+                and nested.fork_id not in directly_nested_fork_ids
+            }
             for nested in operations:
                 if operation.node_id not in nested.context:
                     continue
@@ -3976,7 +4406,10 @@ class TTIRParser:
                     # role-preserving synthetic control member below.  Do not
                     # turn them into an unconditional flat loop body.
                     continue
-                if nested.name not in _TERMINATORS:
+                inside_structured_if = (
+                    nested.structured_if_id in nested_structured_if_ids
+                )
+                if nested.name not in _TERMINATORS and not inside_structured_if:
                     body_ops[
                         _semantic_op_name(
                             nested, node_by_id, result_to_node
@@ -3992,6 +4425,11 @@ class TTIRParser:
                         if operation.node_id in producer.context:
                             continue
                     captured_values.add(operand_ref(operand, semantic=True))
+                if inside_structured_if:
+                    # Arm-local operations are represented by the strong,
+                    # polarity-preserving StructuredIfFingerprint.  Counting
+                    # them here would flatten mutually exclusive execution.
+                    continue
                 if nested.name == "tt.load":
                     body_effects[
                         "read.masked" if nested.header_operand_count >= 2 else "read"
@@ -4014,6 +4452,9 @@ class TTIRParser:
                     captured_values.add(
                         operand_ref(predicate, semantic=True)
                     )
+            for owner_id in nested_structured_if_ids:
+                if region_has_effect(owner_id):
+                    body_effects["control.scf.if"] += 1
             loops.append(
                 LoopFingerprint(
                     lower=header[0],
@@ -4087,6 +4528,13 @@ class TTIRParser:
             ),
             key=lambda item: _stable_json(item.to_dict()),
         )
+        structured_if_fingerprints = sorted(
+            (
+                structured_if_fingerprint(owner_id)
+                for owner_id in structured_if_ids
+            ),
+            key=lambda item: _stable_json(item.to_dict()),
+        )
         mask_predicates = sorted(
             effect.predicate
             for effect in memory_effects
@@ -4106,6 +4554,7 @@ class TTIRParser:
             effect_multiset=tuple(sorted(effect_counts.items())),
             dots=tuple(dots),
             loops=tuple(loops),
+            structured_ifs=tuple(structured_if_fingerprints),
             terminal_forks=tuple(terminal_fork_fingerprints),
             schedule_view=_canonical_schedule(schedule),
         )
@@ -4278,6 +4727,8 @@ def _semantic_op_name(
         return "tt.load.masked" if operation.header_operand_count >= 2 else "tt.load"
     if operation.name == "tt.store":
         return "tt.store.masked" if operation.header_operand_count >= 3 else "tt.store"
+    if operation.name == "scf.if":
+        return "control.scf.if"
     return operation.name
 
 

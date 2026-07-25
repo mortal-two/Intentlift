@@ -272,6 +272,8 @@ def _dataflow_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
         items[("dot", _stable_json(dot.to_dict()))] += 1
     for loop in fingerprint.loops:
         items[("loop", _stable_json(loop.to_dict()))] += 1
+    for structured_if in fingerprint.structured_ifs:
+        items[("structured_if", _stable_json(structured_if.to_dict()))] += 1
     for terminal_fork in fingerprint.terminal_forks:
         items[("terminal_fork", _stable_json(terminal_fork.to_dict()))] += 1
     return items
