@@ -26,6 +26,14 @@ class IntentIRLiftRunResult:
     exit_status: str
     model_calls: int
     elapsed_ms: float
+    physical_provider_calls: int | None = None
+    transport_retries: int = 0
+
+    def __post_init__(self) -> None:
+        if self.physical_provider_calls is None:
+            object.__setattr__(
+                self, "physical_provider_calls", self.model_calls
+            )
 
 
 class IntentIRLiftRunError(RuntimeError):
@@ -123,6 +131,10 @@ def run_intentir_lift(
         exit_status=exit_status,
         model_calls=agent.n_calls,
         elapsed_ms=elapsed_ms,
+        physical_provider_calls=getattr(
+            model, "physical_provider_calls", agent.n_calls
+        ),
+        transport_retries=getattr(model, "transport_retries", 0),
     )
     if caught is not None:
         raise IntentIRLiftRunError(

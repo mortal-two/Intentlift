@@ -120,8 +120,8 @@ def _worker_evidence(
         "knowledge_profile": MINISWE_LIFT_KNOWLEDGE,
         "exit_status": result.exit_status,
         "model_turns": result.model_calls,
-        "physical_provider_calls": result.model_calls,
-        "transport_retries": 0,
+        "physical_provider_calls": result.physical_provider_calls,
+        "transport_retries": result.transport_retries,
         "elapsed_ms": result.elapsed_ms,
         "fresh_session": True,
         "candidate_check": (
@@ -465,7 +465,7 @@ class MiniSWELiftAdapter:
                 )
             raise CandidateLiftError(
                 rejected_diagnostics,
-                physical_calls=result.model_calls,
+                physical_calls=result.physical_provider_calls,
             ) from exc
         except Exception as exc:
             self._records.append(
@@ -534,7 +534,7 @@ class MiniSWELiftAdapter:
                     "diagnostic": attempt.diagnostic,
                     "failure_class": "lift_response",
                 },
-                physical_calls=result.model_calls,
+                physical_calls=result.physical_provider_calls,
             ) from exc
 
         provenance = SCRCProvenance(
@@ -572,7 +572,7 @@ class MiniSWELiftAdapter:
 
         return LiftCallResult(
             artifact,
-            physical_calls=result.model_calls,
+            physical_calls=result.physical_provider_calls,
             metadata={
                 "backend": MINISWE_LIFT_BACKEND,
                 "knowledge_profile": MINISWE_LIFT_KNOWLEDGE,
@@ -582,7 +582,8 @@ class MiniSWELiftAdapter:
                 "usage": usage,
                 "elapsed_ms": result.elapsed_ms,
                 "agent_steps": result.model_calls,
-                "transport_retries": 0,
+                "physical_provider_calls": result.physical_provider_calls,
+                "transport_retries": result.transport_retries,
                 "fresh_session": True,
                 "artifact_schema": artifact.wire_schema,
                 "decode_protocol": candidate_check_context.decode_protocol,

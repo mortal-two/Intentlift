@@ -179,6 +179,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert len(digest) == 64
     assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
     assert default_config["agent"].get("output_path") is None
+    assert default_config["model"]["retry_attempts"] == 3
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
@@ -430,7 +431,11 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
     assert normal.context_receipt["fresh_session"] is True
     assert normal.context_receipt["formal_ingress_recheck"] is True
     assert normal.context_receipt["model_calls"] == 3
+    assert normal.context_receipt["physical_provider_calls"] == 3
+    assert normal.context_receipt["transport_retries"] == 0
     assert normal.attempts == 3
+    assert normal.physical_provider_calls == 3
+    assert normal.transport_retries == 0
     assert normal.context_receipt["replay_check"]["evaluations"] == 1
     assert normal.context_receipt["packet_digest"] == normal.packet_digest
     assert normal.context_receipt["episode_contract_sha256"] == (

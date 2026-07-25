@@ -418,7 +418,9 @@ class Gate1Runner:
             generation = self.writer.generate(artifact, masked=masked)
         except Exception as exc:
             attempt = getattr(exc, "attempt", None)
-            physical_calls = getattr(attempt, "attempts", 0)
+            physical_calls = getattr(attempt, "physical_provider_calls", 0)
+            if not physical_calls:
+                physical_calls = getattr(attempt, "attempts", 0)
             return Gate1ArmEvidence(
                 mode, None, None, None, None,
                 f"generation failed: {type(exc).__name__}: {exc}",
@@ -427,12 +429,15 @@ class Gate1Runner:
         replay_source = KernelSource.from_replay(
             generation.code, generation.function_name
         )
+        physical_calls = (
+            generation.physical_provider_calls or generation.attempts
+        )
         compile_result = self.compiler.compile(replay_source, replay_case)
         if not compile_result.ok or compile_result.ttir is None:
             return Gate1ArmEvidence(
                 mode, generation, compile_result, None, None,
                 compile_result.diagnostic or "replay compilation failed",
-                generation.attempts,
+                physical_calls,
             )
         try:
             replay_fingerprint = fingerprint_ttir(
@@ -446,7 +451,7 @@ class Gate1Runner:
             return Gate1ArmEvidence(
                 mode, generation, compile_result, None, None,
                 f"replay observation failed: {type(exc).__name__}: {exc}",
-                generation.attempts,
+                physical_calls,
             )
         comparison = self.comparator.compare(
             source_fingerprint, replay_fingerprint
@@ -457,7 +462,7 @@ class Gate1Runner:
             compile_result,
             replay_fingerprint,
             comparison,
-            physical_calls=generation.attempts,
+            physical_calls=physical_calls,
         )
 
     def run(

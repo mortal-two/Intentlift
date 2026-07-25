@@ -76,7 +76,9 @@ model:
     num_retries: 0
     max_retries: 0
     parallel_tool_calls: false
-  retry_attempts: 1
+  # Same agent turn and exact message packet; retries are transport recovery,
+  # not new Lift turns or semantic relifts.
+  retry_attempts: 3
   use_global_model_stats: false
   cost_tracking: ignore_errors
 environment:

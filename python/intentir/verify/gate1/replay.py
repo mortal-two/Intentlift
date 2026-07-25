@@ -59,6 +59,8 @@ class ReplayGeneration:
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
     episode_contract_sha256: str = ""
+    physical_provider_calls: int = 0
+    transport_retries: int = 0
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,8 @@ class ReplayAttempt:
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
     episode_contract_sha256: str = ""
+    physical_provider_calls: int = 0
+    transport_retries: int = 0
 
 
 class ReplayGenerationError(RuntimeError):
@@ -560,6 +564,8 @@ class ResponsesReplayWriter:
                 raw_response_sha256=reply.raw_response_sha256,
                 raw_response=reply.raw_response,
                 attempts=reply.attempts,
+                physical_provider_calls=reply.attempts,
+                transport_retries=max(0, reply.attempts - 1),
                 elapsed_ms=reply.elapsed_ms,
             )
             self._records.append(attempt)
@@ -593,6 +599,8 @@ class ResponsesReplayWriter:
             response_text=reply.text,
             raw_response=reply.raw_response,
             attempts=reply.attempts,
+            physical_provider_calls=reply.attempts,
+            transport_retries=max(0, reply.attempts - 1),
             elapsed_ms=reply.elapsed_ms,
         )
         self._records.append(generation)
@@ -735,6 +743,8 @@ class MiniSWEReplayWriter:
                 raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
+                physical_provider_calls=result.physical_provider_calls,
+                transport_retries=result.transport_retries,
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
@@ -771,6 +781,12 @@ class MiniSWEReplayWriter:
                 raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls if result is not None else 0,
+                physical_provider_calls=(
+                    result.physical_provider_calls if result is not None else 0
+                ),
+                transport_retries=(
+                    result.transport_retries if result is not None else 0
+                ),
                 elapsed_ms=result.elapsed_ms if result is not None else 0.0,
                 trajectory=infrastructure_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
@@ -807,6 +823,8 @@ class MiniSWEReplayWriter:
                 raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
+                physical_provider_calls=result.physical_provider_calls,
+                transport_retries=result.transport_retries,
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
@@ -824,8 +842,8 @@ class MiniSWEReplayWriter:
                 "backend_protocol": MINISWE_REPLAY_BACKEND,
                 "fresh_session": True,
                 "model_calls": result.model_calls,
-                "physical_provider_calls": result.model_calls,
-                "transport_retries": 0,
+                "physical_provider_calls": result.physical_provider_calls,
+                "transport_retries": result.transport_retries,
                 "packet_digest": packet_digest,
                 "replay_check": (
                     dict(replay_check)
@@ -856,6 +874,8 @@ class MiniSWEReplayWriter:
             response_text=result.source_text,
             raw_response=raw_trajectory,
             attempts=result.model_calls,
+            physical_provider_calls=result.physical_provider_calls,
+            transport_retries=result.transport_retries,
             elapsed_ms=result.elapsed_ms,
             trajectory=safe_trajectory,
             backend_protocol=MINISWE_REPLAY_BACKEND,

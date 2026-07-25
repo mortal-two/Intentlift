@@ -25,6 +25,16 @@ class LitellmResponseModelConfig(LitellmModelConfig):
 class LitellmResponseModel(LitellmModel):
     def __init__(self, *, config_class: Callable = LitellmResponseModelConfig, **kwargs):
         super().__init__(config_class=config_class, **kwargs)
+        self._physical_provider_calls = 0
+        self._transport_retries = 0
+
+    @property
+    def physical_provider_calls(self) -> int:
+        return self._physical_provider_calls
+
+    @property
+    def transport_retries(self) -> int:
+        return self._transport_retries
 
     def _prepare_messages_for_api(self, messages: list[dict]) -> list[dict]:
         """Flatten response objects into their output items for stateless API calls."""
@@ -56,6 +66,9 @@ class LitellmResponseModel(LitellmModel):
             max_attempts=self.config.retry_attempts,
         ):
             with attempt:
+                self._physical_provider_calls += 1
+                if attempt.retry_state.attempt_number > 1:
+                    self._transport_retries += 1
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
         cost_output = self._calculate_cost(response)
         if self.config.use_global_model_stats:

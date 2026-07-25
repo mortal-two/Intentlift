@@ -133,8 +133,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
         files["knowledge/intent_ops.md"]
     )
     assert "Do not page through the raw schema" in files["README.md"]
-    assert "active-length rank-0 scalar" in files["README.md"]
-    assert "separately bound capacity dimension" in files["README.md"]
+    assert "integral rank-0 scalar explicitly equated" in files["README.md"]
+    assert "J-owned" in files["README.md"]
+    assert "value_dimension_relations" in files["README.md"]
     assert "explicit sum-then-div stages" in files["README.md"]
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
@@ -233,13 +234,15 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
     assert type_check(artifact.j, artifact.c, artifact.pi).passed
     assert payload["j"]["signature"]["parameters"][2]["logical_ref"] == "t1"
     assert payload["j"]["signature"]["parameters"][2]["name"] == "p2"
-    assert payload["j"]["signature"]["parameters"][3]["logical_ref"] == "x0"
-    assert payload["j"]["signature"]["parameters"][3]["name"] == "p3"
+    assert len(payload["j"]["signature"]["parameters"]) == 3
+    assert payload["j"]["value_dimension_relations"] == [
+        {"value_ref": "t1", "dimension_ref": "x0", "relation": "eq"}
+    ]
     preflight = " ".join(files["knowledge/preflight.md"].split())
     assert "exactly one `logical_ref`" in preflight
     assert "never duplicate or" in preflight
-    assert "current artifact cannot express `value(t*) = x*`" in preflight
-    assert "do not submit and fail closed" in preflight
+    assert "author one `J.value_dimension_relations` item" in preflight
+    assert "fixed code, Replay, C, and pi never add or repair" in preflight
     assert "t1" in payload["j"]["boundary"]["accesses"][0]["predicate"]
     assert payload["j"]["intent"]["intent_function"]["body"][0]["attrs"][
         "fn"
@@ -274,7 +277,7 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
     assert "static schema: PASS" in result["output"]
 
 
-def test_value_dimension_equality_is_lift_fail_closed_not_typecheck_inference(
+def test_value_dimension_equality_is_explicitly_authored_not_inferred(
 ) -> None:
     files = _real_lift_input_files()
     payload = json.loads(files["knowledge/minimal_example.json"])
@@ -282,15 +285,17 @@ def test_value_dimension_equality_is_lift_fail_closed_not_typecheck_inference(
     contract = " ".join(files["knowledge/lift_contract.md"].split())
     preflight = " ".join(files["knowledge/preflight.md"].split())
 
-    # This artifact validly denotes independent active-length and capacity
-    # handles.  The same bytes cannot also prove an unencoded Source equality.
+    # The physical scalar still binds only t1; the explicit J relation, rather
+    # than a duplicated p* or Harness coincidence, connects it to x0.
     assert type_check(artifact.j, artifact.c, artifact.pi).passed
     assert payload["j"]["signature"]["parameters"][2]["logical_ref"] == "t1"
-    assert payload["j"]["signature"]["parameters"][3]["logical_ref"] == "x0"
-    assert "value(t*) = x*" in contract
-    assert "do not submit and fail closed" in contract
-    assert "TypeCheck cannot infer that Source-use equality" in contract
-    assert "current artifact cannot express `value(t*) = x*`" in preflight
+    assert payload["j"]["value_dimension_relations"] == [
+        {"value_ref": "t1", "dimension_ref": "x0", "relation": "eq"}
+    ]
+    assert "J.value_dimension_relations" in contract
+    assert "Author it only from exact Source identity" in contract
+    assert "author one `J.value_dimension_relations` item" in preflight
+    assert "Do not infer equality from a current Harness value" in preflight
 
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
@@ -857,6 +862,41 @@ def test_litellm_model_has_one_explicit_attempt(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="transport failed"):
         model.query([])
     assert calls == 1
+    assert model.physical_provider_calls == 1
+    assert model.transport_retries == 0
+
+
+def test_litellm_model_retries_one_agent_turn_without_changing_messages(
+    monkeypatch,
+) -> None:
+    calls: list[list[dict]] = []
+
+    def fail_twice(messages, **kwargs):
+        del kwargs
+        calls.append(list(messages))
+        if len(calls) < 3:
+            raise RuntimeError("transient transport failure")
+        return {"output": []}
+
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        retry_attempts=3,
+        cost_tracking="ignore_errors",
+    )
+    monkeypatch.setattr(model, "_query", fail_twice)
+    monkeypatch.setattr(model, "_calculate_cost", lambda _response: {"cost": 0.0})
+    monkeypatch.setattr(model, "_parse_actions", lambda _response: [])
+
+    result = model.query([{"role": "user", "content": "same packet"}])
+
+    assert result["extra"]["actions"] == []
+    assert calls == [
+        [{"role": "user", "content": "same packet"}],
+        [{"role": "user", "content": "same packet"}],
+        [{"role": "user", "content": "same packet"}],
+    ]
+    assert model.physical_provider_calls == 3
+    assert model.transport_retries == 2
 
 
 def test_non_string_shell_action_is_a_model_format_error() -> None:
@@ -904,7 +944,7 @@ def test_model_serialization_redacts_provider_key() -> None:
     serialized = json.dumps(model.serialize())
     assert "not-for-evidence" not in serialized
     assert "<redacted>" in serialized
-    assert model.config.retry_attempts == 1
+    assert model.config.retry_attempts == 3
     assert model.config.use_global_model_stats is False
     assert model.config.model_kwargs["num_retries"] == 0
 
@@ -996,7 +1036,7 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
     assert GLOBAL_MODEL_STATS.n_calls == global_calls_before
 
 
-def test_cpa_http_failure_is_not_retried_by_litellm_or_openai() -> None:
+def test_cpa_transient_http_failure_uses_bounded_transport_retries() -> None:
     request_count = 0
 
     class Handler(BaseHTTPRequestHandler):
@@ -1035,7 +1075,9 @@ def test_cpa_http_failure_is_not_retried_by_litellm_or_openai() -> None:
         thread.join(timeout=5)
         server.server_close()
 
-    assert request_count == 1
+    assert request_count == 3
+    assert model.physical_provider_calls == 3
+    assert model.transport_retries == 2
 
 
 def _adapter_request() -> SCRCRunRequest:
@@ -1488,6 +1530,8 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v5"
     assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v11"
     assert first.metadata["candidate_check"] == {}
+    assert first.metadata["physical_provider_calls"] == 3
+    assert first.metadata["transport_retries"] == 0
     assert captured[0][0] != captured[1][0]
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "gate1"

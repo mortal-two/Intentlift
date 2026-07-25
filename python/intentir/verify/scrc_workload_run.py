@@ -1017,6 +1017,8 @@ def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
         "response_id": record.response_id,
         "usage": dict(record.usage),
         "attempts": record.attempts,
+        "physical_provider_calls": record.physical_provider_calls,
+        "transport_retries": record.transport_retries,
         "elapsed_ms": record.elapsed_ms,
         "request_sha256": record.request_sha256,
         "response_sha256": record.response_sha256,

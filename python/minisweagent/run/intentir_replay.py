@@ -57,6 +57,14 @@ class IntentIRReplayRunResult:
     exit_status: str
     model_calls: int
     elapsed_ms: float
+    physical_provider_calls: int | None = None
+    transport_retries: int = 0
+
+    def __post_init__(self) -> None:
+        if self.physical_provider_calls is None:
+            object.__setattr__(
+                self, "physical_provider_calls", self.model_calls
+            )
 
 
 class IntentIRReplayRunError(RuntimeError):
@@ -157,7 +165,12 @@ def intentir_replay_episode_contract_sha256(
         raise ValueError("Replay episode digest requires the exact input allowlist")
     agent = config.get("agent")
     environment = config.get("environment")
-    if not isinstance(agent, Mapping) or not isinstance(environment, Mapping):
+    model = config.get("model")
+    if (
+        not isinstance(agent, Mapping)
+        or not isinstance(environment, Mapping)
+        or not isinstance(model, Mapping)
+    ):
         raise TypeError("Replay episode digest requires a validated config")
     policy = {
         "protocol": "intentir.miniswe-replay-episode-contract.v1",
@@ -196,6 +209,7 @@ def intentir_replay_episode_contract_sha256(
             "replay_submission_check_limit": environment.get(
                 "replay_submission_check_limit"
             ),
+            "transport_attempts_per_turn": model.get("retry_attempts"),
         },
     }
     hasher = hashlib.sha256()
@@ -267,6 +281,10 @@ def run_intentir_replay(
         exit_status=exit_status,
         model_calls=agent.n_calls,
         elapsed_ms=elapsed_ms,
+        physical_provider_calls=getattr(
+            model, "physical_provider_calls", agent.n_calls
+        ),
+        transport_retries=getattr(model, "transport_retries", 0),
     )
     if caught is not None:
         raise IntentIRReplayRunError(
