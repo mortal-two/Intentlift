@@ -21,6 +21,7 @@ from minisweagent.exceptions import Submitted
 
 INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
+INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v1"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
@@ -87,7 +88,211 @@ MAX_WORKSPACE_DEPTH = 64
 MAX_CHECK_FIELD_CHARS = 4096
 MAX_CHECK_HANDLES = 32
 MAX_CHECK_RESULT_BYTES = 128 * 1024
+MAX_PACKET_QUERY_OUTPUT_BYTES = 10_000
 _SANDBOX_START_MARKER = b"__INTENTIR_REPLAY_SANDBOX_STARTED__\n"
+
+
+def _packet_json_chars(value: Any) -> int:
+    return len(
+        json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+
+
+def _packet_path(value: Any, path: str) -> Any:
+    current = value
+    if path in {"", "."}:
+        return current
+    for component in path.split("."):
+        if isinstance(current, Mapping):
+            if component not in current:
+                raise KeyError(
+                    f"unknown path component {component!r}; "
+                    f"choose {list(current)}"
+                )
+            current = current[component]
+        elif isinstance(current, list) and component.isdigit():
+            index = int(component)
+            if index >= len(current):
+                raise IndexError(
+                    f"list index {index} out of range 0..{len(current) - 1}"
+                )
+            current = current[index]
+        else:
+            raise KeyError(f"cannot descend through {component!r}")
+    return current
+
+
+def _packet_children(value: Any, path: str) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        items = value.items()
+    elif isinstance(value, list):
+        items = enumerate(value)
+    else:
+        return {}
+    result = {
+        str(key): {
+            "type": type(item).__name__,
+            "json_chars": _packet_json_chars(item),
+            "query": f"{INTENTIR_PACKET_QUERY} section {path}.{key}".replace(
+                "..", "."
+            ),
+        }
+        for key, item in list(items)[:96]
+    }
+    total = len(value)
+    if total > len(result):
+        result["<omitted>"] = {"count": total - len(result)}
+    return result
+
+
+def _packet_ops(body: Any, prefix: str) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    if not isinstance(body, list):
+        return result
+    for index, operation in enumerate(body):
+        if not isinstance(operation, Mapping):
+            continue
+        path = f"{prefix}.{index}"
+        result.append(
+            {
+                "path": path,
+                "op": operation.get("op"),
+                "result": operation.get("result"),
+                "operands": operation.get("operands"),
+                "scope_id": operation.get("scope_id"),
+            }
+        )
+        result.extend(_packet_ops(operation.get("body"), f"{path}.body"))
+        for arm in ("positive", "negative"):
+            branch = operation.get(arm)
+            if isinstance(branch, Mapping):
+                result.extend(
+                    _packet_ops(branch.get("body"), f"{path}.{arm}.body")
+                )
+    return result
+
+
+def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
+    j = packet.get("j", {})
+    intent = j.get("intent", {}) if isinstance(j, Mapping) else {}
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    boundary = j.get("boundary", {}) if isinstance(j, Mapping) else {}
+    pi = packet.get("pi", {})
+    c = packet.get("c", {})
+    u_f = packet.get("u_f", {})
+    signature = j.get("signature", {}) if isinstance(j, Mapping) else {}
+    operations = _packet_ops(
+        function.get("body", []) if isinstance(function, Mapping) else [],
+        "j.intent.intent_function.body",
+    )
+    return {
+        "root_sections": {
+            key: {
+                "json_chars": _packet_json_chars(value),
+                "query": f"{INTENTIR_PACKET_QUERY} section {key}",
+            }
+            for key, value in packet.items()
+        },
+        "entry": u_f.get("replay_function") if isinstance(u_f, Mapping) else None,
+        "frontend": u_f.get("frontend") if isinstance(u_f, Mapping) else None,
+        "j_parameters": [
+            {
+                key: parameter.get(key)
+                for key in ("name", "kind", "mode", "dtype", "rank")
+            }
+            for parameter in signature.get("parameters", [])
+            if isinstance(parameter, Mapping)
+        ],
+        "operation_count": len(operations),
+        "operations": operations[:32],
+        "operations_omitted": max(0, len(operations) - 32),
+        "boundary_counts": {
+            key: len(value)
+            for key, value in boundary.items()
+            if isinstance(value, list)
+        }
+        if isinstance(boundary, Mapping)
+        else {},
+        "pi_counts": {
+            key: len(value)
+            for key, value in pi.items()
+            if isinstance(value, list)
+        }
+        if isinstance(pi, Mapping)
+        else {},
+        "c_slots": c.get("slots", []) if isinstance(c, Mapping) else [],
+        "next": [
+            f"Query `{INTENTIR_PACKET_QUERY} section j`, `section pi`, "
+            "`section c`, and `section u_f` separately.",
+            "A large section returns child paths; query one of those paths.",
+            f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
+        ],
+    }
+
+
+def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
+    matches: list[dict[str, Any]] = []
+
+    def visit(value: Any, path: str) -> None:
+        if len(matches) >= 96:
+            return
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                visit(item, f"{path}.{key}" if path else str(key))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f"{path}.{index}")
+        elif needle.casefold() in str(value).casefold():
+            visible = value
+            if isinstance(value, str) and len(value) > 512:
+                visible = value[:512] + "...[truncated]"
+            matches.append({"path": path, "value": visible})
+
+    visit(packet, "")
+    return {
+        "query": needle,
+        "match_count_shown": len(matches),
+        "matches": matches,
+    }
+
+
+def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
+    if arguments == [INTENTIR_PACKET_QUERY, "overview"]:
+        return _packet_overview(packet)
+    if len(arguments) == 3 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "section",
+    ]:
+        path = arguments[2]
+        value = _packet_path(packet, path)
+        rendered = json.dumps(
+            value, indent=2, sort_keys=True, ensure_ascii=False
+        )
+        if len(rendered) <= MAX_PACKET_QUERY_OUTPUT_BYTES:
+            return value
+        return {
+            "path": path,
+            "json_chars": _packet_json_chars(value),
+            "children": _packet_children(value, path),
+        }
+    if (
+        len(arguments) == 3
+        and arguments[:2] == [INTENTIR_PACKET_QUERY, "find"]
+        and 0 < len(arguments[2]) <= 128
+    ):
+        return _packet_find(packet, arguments[2])
+    raise ValueError(
+        "usage: intentir_packet_query overview | section PATH | find HANDLE"
+    )
 
 
 def _remove_path_iterative(path: Path) -> None:
@@ -614,6 +819,38 @@ class IntentIRReplayEnvironment:
             "exception_info": "",
         }
 
+    def _execute_packet_query(self, arguments: list[str]) -> dict[str, Any]:
+        try:
+            packet = json.loads(
+                (self.config.input_dir / "packet.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            if not isinstance(packet, Mapping) or set(packet) != {
+                "j",
+                "c",
+                "pi",
+                "u_f",
+            }:
+                raise ValueError("Replay packet has an invalid closed root")
+            value = _query_packet(packet, arguments)
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_PACKET_QUERY_OUTPUT_BYTES:
+                raise ValueError("query result is too large; use a narrower path")
+        except Exception as exc:
+            return {
+                "output": f"packet query rejected: {type(exc).__name__}: {exc}\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
     def _writable_usage(self) -> tuple[int, int, int]:
         entries = 0
         size = 0
@@ -657,6 +894,8 @@ class IntentIRReplayEnvironment:
             check_arguments = shlex.split(command)
         except ValueError:
             check_arguments = []
+        if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
+            return self._execute_packet_query(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
         bounded_shell = (
@@ -850,6 +1089,7 @@ class IntentIRReplayEnvironment:
 
 
 __all__ = [
+    "INTENTIR_PACKET_QUERY",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_SUBMIT",
     "REPLAY_CHECK_PROTOCOL",

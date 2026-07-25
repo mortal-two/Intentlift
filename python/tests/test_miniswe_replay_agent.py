@@ -18,6 +18,7 @@ from intentir.verify.gate1.replay import (
     replay_source_ingress,
 )
 from minisweagent.environments.intentir_replay import (
+    INTENTIR_PACKET_QUERY,
     INTENTIR_REPLAY_CHECK,
     INTENTIR_REPLAY_SUBMIT,
     REPLAY_CHECK_PROTOCOL,
@@ -133,6 +134,44 @@ def test_replay_input_is_exact_source_isolated_allowlist() -> None:
 
     with pytest.raises(ValueError, match="fixed allowlisted files"):
         IntentIRReplayWorkspace.create({**files, "source.py": "forbidden"})
+
+
+def test_packet_query_exposes_bounded_source_blind_views() -> None:
+    files, packet, _ = _replay_input_files(
+        make_reduce_artifact(), frontend=Frontend.TRITON, masked=False
+    )
+    assert INTENTIR_PACKET_QUERY in files["README.md"]
+    workspace = IntentIRReplayWorkspace.create(files)
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        overview = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} overview"}
+        )
+        j_view = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} section j"}
+        )
+        handle = str(next(iter(packet["j"]["node_ids"])))
+        references = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} find {handle}"}
+        )
+        rejected_compound = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} overview; cat /input/packet.json"}
+        )
+    finally:
+        workspace.cleanup()
+
+    assert overview["returncode"] == 0
+    assert len(overview["output"].encode()) <= 10_000
+    assert '"operations"' in overview["output"]
+    assert j_view["returncode"] == 0
+    assert '"intent_function"' in j_view["output"]
+    assert references["returncode"] == 0
+    assert handle in references["output"]
+    assert rejected_compound["returncode"] == 1
 
 
 @pytest.mark.parametrize(
