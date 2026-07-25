@@ -13,7 +13,11 @@ from enum import Enum
 import re
 from typing import Any, Iterable, Mapping
 
-from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
+from intentir.ir.canonical_j import (
+    CanonicalValueType,
+    canonicalize_semantic_archive,
+    j_elaboration,
+)
 from intentir.ir.dim_expr import (
     DimExprError,
     DimensionConstraintSet,
@@ -40,7 +44,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v12"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v13"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -49,6 +53,7 @@ _REDUCE_ASSOCIATIVITY = frozenset(
 )
 _REDUCE_ATTRS = frozenset({"fn", "axes", "assoc", "keepdims"})
 _CONTRACTION_ATTRS = frozenset({"subscripts"})
+_TILE_ATTRS = frozenset({"reps"})
 _EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
 _INTEGER_DTYPE = re.compile(r"^(?P<signedness>[iu])(?P<bits>[1-9][0-9]*)$")
 
@@ -91,6 +96,7 @@ class TypeCheckErrorCode(str, Enum):
     VALUE_DIMENSION_RELATION_INVALID = "value_dimension_relation_invalid"
     PAD_SHAPE_INVALID = "pad_shape_invalid"
     PAD_SHAPE_CONSTRAINT_MISSING = "pad_shape_constraint_missing"
+    TILE_SHAPE_INVALID = "tile_shape_invalid"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
@@ -185,6 +191,30 @@ def _explicit_type(operation: Mapping[str, Any]) -> _ValueType | None:
     if not isinstance(dtype, str) or not isinstance(shape, list):
         return None
     return _ValueType(dtype, len(shape))
+
+
+def _surface_value_types(j: SemanticArchive) -> dict[str, CanonicalValueType]:
+    """Read only explicitly authored value types without elaborating J."""
+
+    result = {
+        tensor.name: CanonicalValueType(tensor.dtype, tuple(tensor.shape))
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+    }
+    intent = j.intent.to_json()["intent_function"]
+    for _path, operation in _walk_operations(intent.get("body", [])):
+        names = _operation_results(operation.get("result"))
+        declared = operation.get("type")
+        if (
+            len(names) != 1
+            or not isinstance(declared, Mapping)
+            or not isinstance(declared.get("dtype"), str)
+            or not isinstance(declared.get("shape"), list)
+        ):
+            continue
+        result[names[0]] = CanonicalValueType(
+            declared["dtype"], tuple(declared["shape"])
+        )
+    return result
 
 
 def _declared_dimensions(j: SemanticArchive) -> frozenset[str]:
@@ -386,32 +416,196 @@ def _check_known_operation_contracts(
 ) -> tuple[TypeCheckDiagnostic, ...]:
     """Reject malformed attrs for the small set of closed known-op contracts.
 
-    v5 deliberately closes only ``reduce`` and ``contraction`` here.  In
-    particular, this checker validates the model-authored spelling; it never
-    translates aliases such as ``kind`` or ``lhs_contract_axes`` into the
-    canonical fields consumed by RefEval/Emit.
+    This checker validates the model-authored spelling; it never translates
+    aliases or repairs dependent result types into the canonical fields
+    consumed by RefEval/Emit.
     """
 
     diagnostics: list[TypeCheckDiagnostic] = []
     try:
         value_types = j_elaboration(j).value_type_by_name
-    except ValueError:
+    except (IndexError, KeyError, TypeError, ValueError):
         # Canonical elaboration below remains authoritative for graph/type
-        # errors.  The known-op pass can still report closed attr diagnostics.
-        value_types = {}
+        # errors.  Explicitly authored types are still sufficient for local
+        # dependent-contract diagnostics; they are never completed here.
+        value_types = _surface_value_types(j)
 
     intent = j.intent.to_json()["intent_function"]
     for operation_path, operation in _walk_operations(
         intent.get("body", [])
     ):
         op_name = operation.get("op")
-        if op_name not in {"reduce", "contraction"}:
+        if op_name not in {"reduce", "contraction", "tile"}:
             continue
         base = f"j.intent.intent_function.{operation_path}"
         ref_value = operation.get("id")
         ref = ref_value if isinstance(ref_value, str) else operation_path
         attrs_value = operation.get("attrs")
         attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+
+        if op_name == "tile":
+            for key in sorted(set(attrs) - _TILE_ATTRS):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.attrs.{key}",
+                        f"tile attrs contain unsupported key {key!r}",
+                        ref,
+                    )
+                )
+            if set(attrs) != _TILE_ATTRS:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.attrs",
+                        "tile requires exactly the closed attr reps",
+                        ref,
+                    )
+                )
+
+            operands = operation.get("operands")
+            operand_refs = operands if isinstance(operands, list) else []
+            result = operation.get("result")
+            valid_arity = (
+                len(operand_refs) == 1
+                and isinstance(operand_refs[0], str)
+                and isinstance(result, str)
+                and bool(result)
+            )
+            if not valid_arity:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.operands",
+                        "tile requires exactly one value operand and one result",
+                        ref,
+                    )
+                )
+
+            reps = attrs.get("reps")
+            valid_reps = isinstance(reps, list) and all(
+                type(repetition) is int and repetition >= 0
+                for repetition in reps
+            )
+            if not valid_reps:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.attrs.reps",
+                        "tile reps must be a closed array of non-negative "
+                        "integers",
+                        ref,
+                    )
+                )
+
+            if not valid_arity or not valid_reps:
+                continue
+            assert isinstance(result, str)
+            operand_type = value_types.get(operand_refs[0])
+            result_type = value_types.get(result)
+            if operand_type is None or result_type is None:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.type",
+                        "tile operand and result require closed J value types",
+                        ref,
+                    )
+                )
+                continue
+            if operand_type.dtype != result_type.dtype:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.type.dtype",
+                        "tile preserves the operand dtype",
+                        ref,
+                    )
+                )
+            rank = len(operand_type.shape)
+            if len(result_type.shape) != rank or len(reps) != rank:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                        f"{base}.attrs.reps",
+                        "tile reps length and result rank must equal the "
+                        "operand rank",
+                        ref,
+                    )
+                )
+                continue
+
+            dimensions = _declared_dimensions(j)
+            try:
+                constraints = DimensionConstraintSet.parse(
+                    j.dimension_constraints,
+                    dimensions=dimensions,
+                )
+            except DimExprError:
+                # The dedicated dimension pass owns malformed constraints.
+                constraints = None
+            for axis, (input_dim, repetition, output_dim) in enumerate(
+                zip(
+                    operand_type.shape,
+                    reps,
+                    result_type.shape,
+                    strict=True,
+                )
+            ):
+                try:
+                    input_form = parse_affine_dim_expr(
+                        input_dim,
+                        dimensions=dimensions,
+                        context=f"{base}.operand_shape[{axis}]",
+                    )
+                    output_form = parse_affine_dim_expr(
+                        output_dim,
+                        dimensions=dimensions,
+                        context=f"{base}.result_shape[{axis}]",
+                    )
+                    expected = input_form.scaled(
+                        repetition,
+                        context=f"{base}.shape[{axis}]",
+                    )
+                except DimExprError as exc:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                            f"{base}.type.shape[{axis}]",
+                            str(exc),
+                            ref,
+                        )
+                    )
+                    continue
+                if expected == output_form:
+                    continue
+                difference = output_form.plus(
+                    expected,
+                    factor=-1,
+                    context=f"{base}.shape[{axis}]",
+                )
+                proven_equal = (
+                    constraints is not None
+                    and constraints.proves_nonnegative(difference)
+                    and constraints.proves_nonnegative(
+                        difference.scaled(
+                            -1,
+                            context=f"{base}.shape[{axis}]",
+                        )
+                    )
+                )
+                if not proven_equal:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.TILE_SHAPE_INVALID,
+                            f"{base}.type.shape[{axis}]",
+                            "tile shape equation is not proven: input * reps "
+                            f"normalizes to {expected.to_text()!r}, but result "
+                            f"is {output_form.to_text()!r}",
+                            ref,
+                        )
+                    )
+            continue
 
         if op_name == "contraction":
             for key in sorted(set(attrs) - _CONTRACTION_ATTRS):

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
+from intentir.extraction.lifters.scrc import (
+    SCRCCandidateCheckContext,
+    check_scrc_lift_candidate,
+)
 from intentir.ir.functional_boundary import project_functional_boundary
 from intentir.ir.model import IntentOp, IntentReturn, Tensor
 from intentir.verify.gate1.model import (
@@ -136,13 +142,180 @@ def _concat_partition_artifact(*, width: int = 1):
     return artifact
 
 
+def _tile_artifact(
+    *,
+    input_shape=(2,),
+    output_shape=(4,),
+    reps=(2,),
+    input_dtype: str = "f32",
+    output_dtype: str = "f32",
+    dimension_constraints=(),
+):
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = list(input_shape)
+    artifact.j.intent.inputs[0].dtype = input_dtype
+    artifact.j.intent.outputs[0].shape = list(output_shape)
+    artifact.j.intent.outputs[0].dtype = output_dtype
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "tile",
+                "result": "t1",
+                "operands": ["t0"],
+                "attrs": {"reps": list(reps)},
+                "type": {
+                    "dtype": output_dtype,
+                    "shape": list(output_shape),
+                },
+            }
+        )
+    ]
+    artifact.j.node_ids = {"n0": "body[0]"}
+    artifact.j.dimension_constraints = list(dimension_constraints)
+    dimensions = sorted(
+        {
+            dimension
+            for shape in (input_shape, output_shape)
+            for dimension in shape
+            if isinstance(dimension, str)
+        }
+    )
+    artifact.j.signature.parameters = artifact.j.signature.parameters[:2]
+    artifact.j.signature.parameters[0].dtype = input_dtype
+    artifact.j.signature.parameters[0].rank = len(input_shape)
+    artifact.j.signature.parameters[1].dtype = output_dtype
+    artifact.j.signature.parameters[1].rank = len(output_shape)
+    artifact.j.signature.parameters.extend(
+        SignatureParameter(
+            f"p{index + 2}",
+            ParameterKind.SCALAR,
+            ParameterMode.VALUE,
+            "i32",
+            logical_ref=dimension,
+        )
+        for index, dimension in enumerate(dimensions)
+    )
+    return artifact
+
+
 def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v12"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v13"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def test_typecheck_accepts_static_tile_dependent_shape() -> None:
+    artifact = _tile_artifact()
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_accepts_zero_tile_repetition_and_zero_extent() -> None:
+    artifact = _tile_artifact(
+        input_shape=(2, 3),
+        output_shape=(0, 3),
+        reps=(0, 1),
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+def test_typecheck_accepts_symbolic_tile_shape_proved_by_j_constraint() -> None:
+    artifact = _tile_artifact(
+        input_shape=("x0",),
+        output_shape=("x1",),
+        reps=(2,),
+        dimension_constraints=("x1 == 2*x0",),
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
+@pytest.mark.parametrize(
+    ("input_shape", "output_shape", "reps", "detail"),
+    [
+        ((2,), (1, 2), (1, 1), "result rank"),
+        ((2,), (5,), (2,), "shape equation is not proven"),
+        ((2,), (0,), (-1,), "non-negative integers"),
+        ((2,), (4,), (True,), "non-negative integers"),
+        ((2, 3), (4, 3), (2,), "reps length"),
+    ],
+)
+def test_typecheck_rejects_invalid_tile_dependent_contract(
+    input_shape,
+    output_shape,
+    reps,
+    detail: str,
+) -> None:
+    artifact = _tile_artifact(
+        input_shape=input_shape,
+        output_shape=output_shape,
+        reps=reps,
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert {item.code for item in report.diagnostics} == {
+        TypeCheckErrorCode.TILE_SHAPE_INVALID
+    }
+    assert any(detail in item.detail for item in report.diagnostics)
+
+
+def test_typecheck_rejects_unproved_symbolic_tile_shape() -> None:
+    artifact = _tile_artifact(
+        input_shape=("x0",),
+        output_shape=("x1",),
+        reps=(2,),
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert report.diagnostics[0].code is TypeCheckErrorCode.TILE_SHAPE_INVALID
+    assert "2*x0" in report.diagnostics[0].detail
+
+
+def test_typecheck_rejects_tile_dtype_change() -> None:
+    artifact = _tile_artifact(output_dtype="f64")
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert report.diagnostics[0].code is TypeCheckErrorCode.TILE_SHAPE_INVALID
+    assert report.diagnostics[0].path.endswith("type.dtype")
+
+
+def test_candidate_check_reuses_tile_dependent_typecheck() -> None:
+    artifact = _tile_artifact(
+        input_shape=(2,),
+        output_shape=(1, 2),
+        reps=(1, 1),
+    )
+    context = SCRCCandidateCheckContext(
+        tuple(parameter.name for parameter in artifact.j.signature.parameters)
+    )
+
+    result = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json(), sort_keys=True),
+        context,
+    )
+
+    assert result["status"] == "fail"
+    assert any(
+        item["rule_code"] == TypeCheckErrorCode.TILE_SHAPE_INVALID.value
+        for item in result["diagnostics"]
+    )
 
 
 def test_typecheck_accepts_matching_constant_gather_boundary() -> None:
@@ -1380,7 +1553,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v12"
+    assert report.protocol == "intentir.scrc.typecheck.v13"
 
 
 @pytest.mark.parametrize(

@@ -10,7 +10,7 @@ and output type.  Its API deliberately has no C or pi parameter.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -23,10 +23,12 @@ from intentir.backend.cpu.pipeline import CPUExecutionResult
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp, LoopStateBinding
-from intentir.verify.gate1.model import SemanticArchive
+
+if TYPE_CHECKING:
+    from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v1"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v2"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -36,14 +38,17 @@ class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
 _ORDINARY_OPS = frozenset(
     {
         "cast",
+        "concat",
         "const",
         "contraction",
+        "gather",
         "map_binary",
         "map_unary",
         "pad",
         "reduce",
         "scan",
         "select",
+        "tile",
         "transpose",
     }
 )
@@ -108,9 +113,15 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
 
 
 def requires_structured_reference(j: SemanticArchive) -> bool:
-    """Return whether J contains a semantic loop or value scan."""
+    """Return whether J needs the J-only typed reference denotation.
 
-    return any(op.op in {"loop", "scan"} for op in _walk_ops(j.intent.body))
+    ``tile`` selects this path because the scalar Intent-to-Linalg executor does
+    not lower it.  The structured evaluator consequently owns a closed ordinary
+    op table as well as loops/scans; it never falls back into a second consumer
+    halfway through a graph.
+    """
+
+    return any(op.op in {"loop", "scan", "tile"} for op in _walk_ops(j.intent.body))
 
 
 def _resolved_shape(shape: Sequence[Any], dims: Mapping[str, int]) -> tuple[int, ...]:
@@ -301,6 +312,160 @@ class _Evaluator:
             f"structured scan has unsupported fn {fn!r}"
         )
 
+    def _concat(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if set(op.attrs) != {"axis"} or not op.operands:
+            raise StructuredReferenceUnsupportedError(
+                "structured concat requires one axis and at least one operand"
+            )
+        axis = op.attrs.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise StructuredReferenceUnsupportedError(
+                "structured concat axis must be a closed integer"
+            )
+        values = [self._operand(op, env, index) for index in range(len(op.operands))]
+        rank = values[0].ndim
+        if axis < 0 or axis >= rank:
+            raise ValueError("structured concat axis is outside operand rank")
+        if any(value.ndim != rank for value in values[1:]):
+            raise ValueError("structured concat operands must have one common rank")
+        if any(value.dtype != values[0].dtype for value in values[1:]):
+            raise ValueError("structured concat operands must have one common dtype")
+        for dimension in range(rank):
+            if dimension == axis:
+                continue
+            if any(
+                value.shape[dimension] != values[0].shape[dimension]
+                for value in values[1:]
+            ):
+                raise ValueError(
+                    "structured concat operands disagree at a non-concat dimension"
+                )
+        expected = self._declared_type(self._result_name(op), op)
+        if expected is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured concat requires one closed result type"
+            )
+        expected_dtype, expected_shape = expected
+        inferred_shape = list(values[0].shape)
+        inferred_shape[axis] = sum(value.shape[axis] for value in values)
+        if expected_shape != tuple(inferred_shape):
+            raise ValueError("structured concat result shape is not the axis sum")
+        if numpy_dtype(expected_dtype) != values[0].dtype:
+            raise ValueError("structured concat result dtype differs from its inputs")
+        return np.concatenate(values, axis=axis)
+
+    def _gather(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if set(op.attrs) != {"axis", "mode"} or len(op.operands) != 2:
+            raise StructuredReferenceUnsupportedError(
+                "structured gather requires exactly axis/mode and two operands"
+            )
+        data = self._operand(op, env, 0)
+        index = self._operand(op, env, 1)
+        axis = op.attrs.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise StructuredReferenceUnsupportedError(
+                "structured gather axis must be a closed integer"
+            )
+        if axis < 0 or axis >= data.ndim:
+            raise ValueError("structured gather axis is outside data rank")
+        if index.dtype.kind not in {"i", "u"}:
+            raise ValueError("structured gather index must have an integer dtype")
+        if index.size and (
+            bool(np.any(index < 0))
+            or bool(np.any(index >= data.shape[axis]))
+        ):
+            raise ValueError("structured gather index is outside the data extent")
+        expected = self._declared_type(self._result_name(op), op)
+        if expected is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured gather requires one closed result type"
+            )
+        expected_dtype, expected_shape = expected
+        if numpy_dtype(expected_dtype) != data.dtype:
+            raise ValueError("structured gather result dtype differs from data")
+        mode = op.attrs.get("mode")
+        if mode == "along_axis":
+            if index.ndim != data.ndim:
+                raise ValueError(
+                    "structured along_axis gather index rank must equal data rank"
+                )
+            if any(
+                index.shape[dimension] > data.shape[dimension]
+                for dimension in range(data.ndim)
+                if dimension != axis
+            ):
+                raise ValueError(
+                    "structured along_axis gather index exceeds a non-axis extent"
+                )
+            inferred_shape = index.shape
+            if expected_shape != inferred_shape:
+                raise ValueError(
+                    "structured along_axis gather result must be shaped like index"
+                )
+            return np.take_along_axis(data, index, axis=axis)
+        if mode == "take":
+            inferred_shape = (
+                *data.shape[:axis],
+                *index.shape,
+                *data.shape[axis + 1 :],
+            )
+            if expected_shape != inferred_shape:
+                raise ValueError(
+                    "structured take gather result shape differs from data/index"
+                )
+            return np.take(data, index, axis=axis)
+        raise StructuredReferenceUnsupportedError(
+            f"structured gather has unsupported mode {mode!r}"
+        )
+
+    def _tile(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if set(op.attrs) != {"reps"} or len(op.operands) != 1:
+            raise StructuredReferenceUnsupportedError(
+                "structured tile requires exactly reps and one operand"
+            )
+        value = self._operand(op, env, 0)
+        reps = op.attrs.get("reps")
+        if not isinstance(reps, list) or any(
+            isinstance(rep, bool) or not isinstance(rep, int) for rep in reps
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured tile reps must be closed integers"
+            )
+        if any(rep < 0 for rep in reps):
+            raise ValueError("structured tile reps must be non-negative")
+        if len(reps) != value.ndim:
+            raise ValueError(
+                "structured tile requires one repetition for every input dimension"
+            )
+        expected = self._declared_type(self._result_name(op), op)
+        if expected is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured tile requires one closed result type"
+            )
+        expected_dtype, expected_shape = expected
+        inferred_shape = tuple(
+            extent * rep for extent, rep in zip(value.shape, reps, strict=True)
+        )
+        if len(expected_shape) != value.ndim or expected_shape != inferred_shape:
+            raise ValueError(
+                "structured tile result shape must equal input shape times reps"
+            )
+        if numpy_dtype(expected_dtype) != value.dtype:
+            raise ValueError("structured tile result dtype differs from its input")
+        return np.tile(value, tuple(reps))
+
     def _ordinary(
         self,
         op: IntentOp,
@@ -323,6 +488,10 @@ class _Evaluator:
                 )
             dtype, shape = declared
             return np.full(shape, op.attrs.get("value"), dtype=numpy_dtype(dtype))
+        if op.op == "concat":
+            return self._concat(op, env)
+        if op.op == "gather":
+            return self._gather(op, env)
         if op.op == "map_binary":
             if set(op.attrs) != {"fn"} or len(op.operands) != 2:
                 raise StructuredReferenceUnsupportedError(
@@ -433,6 +602,8 @@ class _Evaluator:
                 mode="constant",
                 constant_values=op.attrs["value"],
             )
+        if op.op == "tile":
+            return self._tile(op, env)
         raise AssertionError(op.op)  # pragma: no cover - closed above
 
     def _carry_type(self, state: LoopStateBinding) -> tuple[str, tuple[int, ...]]:
@@ -597,7 +768,7 @@ def execute_structured_reference(
     j = elaborate_j(j)
     if not requires_structured_reference(j):
         raise StructuredReferenceUnsupportedError(
-            "structured reference requires at least one loop or scan"
+            "structured reference requires at least one loop, scan, or tile"
         )
     if len(inputs) != len(j.intent.inputs):
         raise ValueError("structured reference input arity differs from J")
