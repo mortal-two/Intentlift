@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v9"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v10"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -406,6 +406,51 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
         result.append(op)
         result.extend(_walk_ops(op.body))
     return tuple(result)
+
+
+def _store_result_reaches_output_through_enclosing_carry(
+    j: Any,
+    *,
+    operation: IntentOp,
+    producer_value: str,
+    observable_value: str,
+) -> bool:
+    """Recognize one explicit body-result -> enclosing-loop-result edge.
+
+    Boundary stores are anchored at their actual Layer-A access event.  For a
+    store inside a structured loop, that event can produce ``carry.next_value``
+    while the observable function output is ``carry.result_value``.  This is
+    not an inferred merge: both ends and their enclosing loop are authored in
+    J.  Refuse missing, cross-scope, or ambiguous edges.
+    """
+
+    matches: list[tuple[IntentOp, Any]] = []
+
+    def visit(body: Sequence[IntentOp], enclosing: tuple[IntentOp, ...]) -> None:
+        for candidate in body:
+            if candidate is operation:
+                for loop in enclosing:
+                    for state in loop.carry:
+                        if (
+                            state.next_value == producer_value
+                            and state.result_value == observable_value
+                        ):
+                            matches.append((loop, state))
+            nested = (
+                (*enclosing, candidate)
+                if candidate.op == "loop"
+                else enclosing
+            )
+            visit(candidate.body, nested)
+
+    visit(j.intent.body, ())
+    if len(matches) != 1:
+        return False
+    value_types = j_elaboration(j).value_type_by_name
+    return (
+        value_types.get(producer_value) is not None
+        and value_types.get(producer_value) == value_types.get(observable_value)
+    )
 
 
 def _node_table(j: Any) -> dict[str, IntentOp]:
@@ -1799,16 +1844,15 @@ def _project_access_guard_relations(
             access.tensor,
             returns.get(access.tensor, access.tensor),
         )
-        if observable_value != operation.result:
-            carry_edges = [
-                (state.next_value, state.result_value)
-                for loop in _walk_ops(j.intent.body)
-                if loop.op == "loop"
-                for state in loop.carry
-                if state.next_value == operation.result
-                and state.result_value == observable_value
-            ]
-            if len(carry_edges) != 1:
+        if (
+            observable_value != operation.result
+            and not _store_result_reaches_output_through_enclosing_carry(
+                j,
+                operation=operation,
+                producer_value=operation.result,
+                observable_value=observable_value,
+            )
+        ):
                 raise ValueError(
                     "functional guarded store select does not reach its "
                     "observable output through one explicit carry edge"
@@ -3235,7 +3279,21 @@ def _project_functional_boundary(
                 observable_value not in _result_names(op)
                 and access.access_id not in projected_guarded_store_accesses
             ):
-                raise ValueError("functional store is not produced by its J node")
+                carry_results = [
+                    result
+                    for result in _result_names(op)
+                    if _store_result_reaches_output_through_enclosing_carry(
+                        j,
+                        operation=op,
+                        producer_value=result,
+                        observable_value=observable_value,
+                    )
+                ]
+                if len(carry_results) != 1:
+                    raise ValueError(
+                        "functional store is not produced by its J node or one "
+                        "unique enclosing loop carry"
+                    )
             if has_predicate_or_fill and (
                 op.type is None
                 or op.type.get("dtype") != tensor.dtype

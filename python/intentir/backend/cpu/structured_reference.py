@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v3"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v4"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -875,9 +875,9 @@ class _Evaluator:
             raise StructuredReferenceUnsupportedError(
                 "structured loop has unsupported ordinary-op fields"
             )
-        if op.trip is None or not op.scan or not op.carry:
+        if op.trip is None or not op.carry:
             raise StructuredReferenceUnsupportedError(
-                "structured loop requires trip, scan inputs, and typed carries"
+                "structured loop requires one trip and typed carries"
             )
         if any(child.op == "loop" for child in _walk_ops(op.body)):
             raise StructuredReferenceUnsupportedError(
@@ -897,6 +897,7 @@ class _Evaluator:
         carries = {
             state.body_argument: self._carry_init(state, env)
             for state in op.carry
+            if state.init_value is not None
         }
         scan_values: dict[str, np.ndarray] = {}
         for scan in op.scan:
@@ -918,6 +919,10 @@ class _Evaluator:
 
         self.loop_count += 1
         if extent == 0:
+            if len(carries) != len(op.carry):
+                raise StructuredReferenceUnsupportedError(
+                    "zero-trip structured loop cannot return a null-initialized carry"
+                )
             self.zero_trip_loops += 1
             final_carries = carries
         else:

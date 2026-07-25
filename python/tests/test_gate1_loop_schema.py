@@ -15,6 +15,7 @@ from intentir.backend.cpu.structured_reference import (
     execute_structured_reference,
 )
 from intentir.ir import IntentFunction, LoopStateBinding
+from intentir.ir.functional_boundary import project_functional_boundary
 from intentir.verify.gate1 import Gate1Artifact, SchemaError, SemanticArchive
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.typecheck import TypeCheckErrorCode, type_check
@@ -178,6 +179,88 @@ def _refeval_loop_archive() -> SemanticArchive:
     return SemanticArchive.from_json(payload)
 
 
+def _loop_carry_store_archive() -> SemanticArchive:
+    """One output store anchored at the body value feeding a loop result."""
+
+    payload = _loop_archive()
+    function = payload["intent"]["intent_function"]
+    loop = function["body"][0]
+    function["body"] = [loop]
+    loop["scan"] = []
+    loop["body"][0]["operands"] = ["x"]
+    loop["result"] = ["y"]
+    loop["carry"][0]["result_value"] = "y"
+    payload["node_ids"] = {
+        "n0": "body[0]",
+        "n1": "body[0].body[0]",
+        "n2": "body[0].body[1]",
+    }
+    payload["boundary"]["accesses"] = [
+        {
+            "access_id": "a0",
+            "kind": "load",
+            "tensor": "x",
+            "node_ref": "n1",
+            "index_expression": "[k0]",
+        },
+        {
+            "access_id": "a1",
+            "kind": "store",
+            "tensor": "y",
+            "node_ref": "n2",
+            "index_expression": "[]",
+        },
+    ]
+    payload["boundary"]["effects"] = [
+        {
+            "effect_id": "e0",
+            "kind": "read",
+            "target": "x",
+            "node_ref": "n1",
+            "access_ref": "a0",
+        },
+        {
+            "effect_id": "e1",
+            "kind": "write",
+            "target": "y",
+            "node_ref": "n2",
+            "access_ref": "a1",
+        },
+    ]
+    payload["scopes"][0]["definitions"] = ["x", "y"]
+    payload["scopes"][0]["effects"] = []
+    payload["scopes"][1]["captures"] = ["x"]
+    payload["scopes"][1]["definitions"] = [
+        "acc_iter", "tile_sum", "acc_next",
+    ]
+    payload["scopes"][1]["effects"] = ["e0", "e1"]
+    payload["storage"] = [payload["storage"][0]]
+    payload["storage"][0]["members"] = [
+        "state0", "acc_iter", "acc_next", "y",
+    ]
+    payload["storage"][0]["last_use_event"] = {
+        "kind": "scope_exit", "ref": "scope0",
+    }
+    return SemanticArchive.from_json(payload)
+
+
+def test_functional_store_consumes_unique_enclosing_loop_carry_edge() -> None:
+    archive = _loop_carry_store_archive()
+
+    projection = project_functional_boundary(archive)
+
+    assert "access:a1" in projection.consumed
+
+
+def test_functional_store_rejects_body_value_without_matching_carry_edge() -> None:
+    archive = _loop_carry_store_archive()
+    archive.boundary.accesses[1].node_ref = "n1"
+    archive.boundary.effects[1].node_ref = "n1"
+
+    with pytest.raises(ValueError, match="unique enclosing loop carry"):
+        project_functional_boundary(archive)
+
+
 def test_structured_refeval_executes_one_full_logical_axis_step() -> None:
     archive = _refeval_loop_archive()
     spec = ScalarLoweringSpec.create(
@@ -226,6 +309,63 @@ def test_structured_refeval_zero_trip_returns_typed_initializer() -> None:
     evidence = result.metadata["execution_evidence"]
     assert evidence["logical_loop_step_count"] == 0
     assert evidence["zero_trip_loop_count"] == 1
+
+
+def _scanless_write_only_loop_archive() -> SemanticArchive:
+    payload = _loop_archive()
+    loop = payload["intent"]["intent_function"]["body"][0]
+    loop["scan"] = []
+    loop["carry"][0]["init_value"] = None
+    loop["body"][0]["operands"] = ["x"]
+    loop["body"][1]["op"] = "map_unary"
+    loop["body"][1]["operands"] = ["tile_sum"]
+    loop["body"][1]["attrs"] = {"fn": "identity"}
+    payload["scopes"][1]["definitions"].remove("x_tile")
+    payload["boundary"]["accesses"] = []
+    payload["boundary"]["effects"] = []
+    payload["scopes"][0]["effects"] = []
+    payload["storage"] = payload["storage"][:1]
+    return SemanticArchive.from_json(payload)
+
+
+def test_structured_refeval_executes_scanless_write_only_loop() -> None:
+    archive = _scanless_write_only_loop_archive()
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 5},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(5, dtype=np.float32)}
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.asarray(10, dtype=np.float32)
+    )
+    assert (
+        result.metadata["execution_evidence"]["protocol"]
+        == STRUCTURED_CPU_REFERENCE_PROTOCOL
+    )
+
+
+def test_structured_refeval_rejects_zero_trip_null_initialized_carry() -> None:
+    archive = _scanless_write_only_loop_archive()
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 0},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.empty((0,), dtype=np.float32)}
+    )
+
+    assert not result.ok
+    assert "zero-trip structured loop" in str(result.error)
 
 
 def test_structured_refeval_executes_closed_flat_scan() -> None:
