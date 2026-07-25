@@ -238,11 +238,12 @@ Start with this single bounded command so long inputs cannot hide feedback:
 
 `python /input/tools/context_query.py bootstrap`
 
-Then inspect Source and Harness in separate actions with `context_query source`
-and `context_query harness`. On repair rounds, inspect `context_query feedback`
-before editing the candidate copied by bootstrap. Use
-`context_query feedback-category NAME`, `source --start N --lines M`,
-`harness --path PATH`, and `knowledge QUERY` for narrower views.
+Then inspect Source and Harness in separate actions with
+`python /input/tools/context_query.py source` and
+`python /input/tools/context_query.py harness`. On repair rounds, inspect
+`python /input/tools/context_query.py feedback` before editing the candidate
+copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
+and `knowledge` subcommands for narrower views.
 
 Do not page through the raw schema. Use the example plus compact queries such as:
 

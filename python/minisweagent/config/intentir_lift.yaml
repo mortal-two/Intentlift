@@ -40,17 +40,19 @@ agent:
        `python /input/tools/context_query.py bootstrap`
        It inventories the mounted inputs and, on a repair round, copies the
        explicitly supplied previous artifact to `/output/candidate.json`
-       without editing it. Then run `context_query feedback` before repair.
+       without editing it. Then run
+       `python /input/tools/context_query.py feedback` before repair.
        Never concatenate README, Source, Harness, feedback, contract, and
        preflight into one shell output: the transport may elide the middle.
        If no previous artifact exists but `candidate_check_feedback` is present,
        use only its bounded rule/path list to focus the new construction; it is
        not a patch and you must still construct the complete candidate yourself.
     2. Read Source and Harness in separate bounded actions using
-       `context_query source` and `context_query harness`. Use its paging/path,
-       feedback-category, and knowledge lookup commands to discover only the
-       additional context needed. Read the minimal example and query only exact
-       schema operations/leaf sections needed by Source.
+       `python /input/tools/context_query.py source` and
+       `python /input/tools/context_query.py harness`. Use its paging/path,
+       feedback-category, and knowledge lookup subcommands to discover only
+       the additional context needed. Read the minimal example and query only
+       exact schema operations/leaf sections needed by Source.
     3. Write the complete first candidate by turn 8.
     4. Run the static validator, then CandidateCheck. Repair only the reported
        fields yourself, rerun within its eleven-call ordinary allowance if

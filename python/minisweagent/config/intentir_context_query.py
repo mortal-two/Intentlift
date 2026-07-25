@@ -15,6 +15,7 @@ from typing import Any
 
 
 MAX_OUTPUT_CHARS = 10_000
+QUERY_COMMAND = "python /input/tools/context_query.py"
 
 
 def _load_json(path: Path) -> Any:
@@ -111,9 +112,9 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
         files[relative] = {
             "bytes": path.stat().st_size,
             "read_command": {
-                "source.py": "context_query source --start 1 --lines 160",
-                "harness_view.json": "context_query harness",
-                "feedback.json": "context_query feedback",
+                "source.py": f"{QUERY_COMMAND} source --start 1 --lines 160",
+                "harness_view.json": f"{QUERY_COMMAND} harness",
+                "feedback.json": f"{QUERY_COMMAND} feedback",
             }[relative],
         }
     overview = {
@@ -127,9 +128,9 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
         ),
         "observer_categories": _observer_categories(feedback),
         "next": [
-            "Run `context_query feedback` before repairing a prior candidate.",
+            f"Run `{QUERY_COMMAND} feedback` before repairing a prior candidate.",
             "Read Source and Harness separately so neither can be transport-elided.",
-            "Use `context_query knowledge QUERY` and schema_query for focused lookup.",
+            f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
     _emit_json(overview)
@@ -150,7 +151,7 @@ def _feedback(input_root: Path) -> None:
             reduced["diagnostics"] = reduced_diagnostics
         reduced["observer_categories"] = _observer_categories(value)
         reduced["narrow_query"] = (
-            "context_query feedback-category CATEGORY"
+            f"{QUERY_COMMAND} feedback-category CATEGORY"
         )
         _emit_json(reduced)
 
@@ -194,7 +195,7 @@ def _source(input_root: Path, start: int, line_count: int) -> None:
     next_line = start + len(selected)
     if next_line <= len(lines):
         print(
-            f"\n[source continues: run `context_query source --start "
+            f"\n[source continues: run `{QUERY_COMMAND} source --start "
             f"{next_line} --lines {line_count}`]"
         )
 
@@ -230,7 +231,7 @@ def _harness(input_root: Path, path: str | None) -> None:
         _emit_json(
             {
                 "keys": list(value),
-                "query": "context_query harness --path KEY[.SUBKEY]",
+                "query": f"{QUERY_COMMAND} harness --path KEY[.SUBKEY]",
             }
         )
 
