@@ -736,18 +736,14 @@ When a runtime scalar or bound semantic constexpr is logical data used in an
 arithmetic/boolean operator or result, declare one dtype-matching rank-0 J input
 tensor and bind its p* to t*. If it also controls an active-domain predicate,
 reuse that same t* in the predicate and arithmetic dataflow; never split one
-Source value across t*, x*, or null. When Source makes that same integral scalar
-the exact logical shape/extent x*, author one J.value_dimension_relations entry
-with value_ref=t*, dimension_ref=x*, and relation=eq. The physical p* still binds
-only t*: never duplicate or alias it merely to bind x*. Emit this relation only
-for an exact Source-required value/dimension identity, never from a coincident
-Harness value, matching dtype, parameter position, or observed shape. A separate
-capacity x* and active-length t* remain distinct and carry no relation unless
-Source explicitly requires equality. A scalar whose every Source use is
-extent/index/domain-only binds x* directly and needs no rank-0 t* relation.
-Always emit the complete value_dimension_relations array, including [] when no
-such equality exists. Lift authors it as part of J; fixed code and Replay never
-synthesize, repair, weaken, or strengthen it from pi, C, or runtime evidence.
+Source value across t*, x*, or null. If Source also requires value(t*)=x*, author
+{{value_ref:t*, dimension_ref:x*, relation:eq}} in J.value_dimension_relations.
+Each physical p* has exactly one logical_ref and still binds only t*; the relation
+connects it to x*. Author it only from exact Source identity, never a coincident
+Harness value, dtype, position, or observed shape. Capacity x* and active-length
+t* stay unrelated unless Source says otherwise; an extent-only scalar binds x*
+directly. Always emit the complete array, including []. Lift authors it; fixed
+code and Replay never add or repair it from pi, C, or runtime evidence.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
 Conversely, a runtime scalar used only for representation/address realization

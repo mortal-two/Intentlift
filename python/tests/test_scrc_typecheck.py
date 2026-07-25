@@ -1082,7 +1082,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v10"
+    assert report.protocol == "intentir.scrc.typecheck.v11"
 
 
 @pytest.mark.parametrize(

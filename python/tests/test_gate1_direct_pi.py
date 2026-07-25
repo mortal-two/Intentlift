@@ -75,6 +75,7 @@ def test_artifact_v4_preserves_v3_v2_and_v1_legacy_contracts() -> None:
     legacy_v3 = copy.deepcopy(current)
     legacy_v3["schema"] = "intentir.scrc.artifact.v3"
     del legacy_v3["j"]["dimension_constraints"]
+    del legacy_v3["j"]["value_dimension_relations"]
     del legacy_v3["j"]["boundary"]["consumer_extensions"]
     del legacy_v3["pi"]["loop_carriers"]
     parsed_v3 = Gate1Artifact.from_json(legacy_v3)
@@ -933,7 +934,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v10"
+    assert report.protocol == "intentir.scrc.typecheck.v11"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
         "public_frontend_context_v7"
     )
@@ -954,7 +955,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v10"
+    assert report.protocol == "intentir.scrc.typecheck.v11"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1088,7 +1089,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "distinct instances/refinements for distinct source stages" in normalized
     assert "reuse that same t* in the predicate and arithmetic dataflow" in normalized
     assert "never split one Source value" in normalized
-    assert "whose every Source use is extent/index/domain-only" in normalized
+    assert "an extent-only scalar binds x* directly" in normalized
     assert "explicit Source `reduce(sum)` followed by division" in normalized
     assert "generated `reduce(sum)` over ones" in normalized
     assert "never propagate one conversion to sibling parameters" in normalized
@@ -1287,11 +1288,10 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "not SSA values" in instructions
     assert "never list x* in portable scope definitions/captures" in instructions
     assert "Each physical p* has exactly one logical_ref" in instructions
-    assert "never duplicate it to own both t* and x*" in instructions
-    assert "current artifact cannot express it" in instructions
-    assert "value(t*) = x*" in instructions
-    assert "do not submit and fail closed" in instructions
-    assert "TypeCheck cannot infer that Source-use equality" in instructions
+    assert "value(t*)=x*" in instructions
+    assert "J.value_dimension_relations" in instructions
+    assert "Author it only from exact Source identity" in instructions
+    assert "fixed code and Replay never add or repair it" in instructions
 
 
 def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:
