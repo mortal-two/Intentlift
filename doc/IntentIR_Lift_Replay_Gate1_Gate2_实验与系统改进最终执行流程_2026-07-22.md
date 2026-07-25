@@ -631,6 +631,10 @@ J-owned destination，不从 Source/Harness/π 猜测。
 对应 Lift/schema/preflight 为 `intentir.lift-knowledge.v21`：模型仍完整生成 binding，只是不再为同一
 destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v5 与
 shared materializer 都消费唯一 canonical binding。
+后续 `intentir.lift-knowledge.v22` 只补齐已有 grammar 的通用 completeness 提示：`reduce` 与 inclusive
+`scan` 均需自己的 `boundary.reductions` local-axis algebra；predicate-bearing load 到
+sum/max/min reduce/scan 的每条 physical outside-domain 路径需由 Lift 写 per-consumer typed
+`consumer_extensions`。它不读取具体 kernel 名称，也不允许 ConstructionCheck/TypeCheck 自动补 relation。
 
 Task 11 随后的旧 `public_frontend_context_v2`、`W=4/B=1` xhigh 横向波中，Softmax、RMSNorm、
 attention row reduction 与 linear contraction 均形成完整 `NO_CLOSURE_(1,K)` evidence，且所有正式

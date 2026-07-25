@@ -327,6 +327,10 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 `JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
 Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored
 binding；该版本只删除互相重复的双写要求，不允许 fixed code 从 store、Source 或地址关系猜 value。
+`intentir.lift-knowledge.v22` 再明确：每个 semantic reduce/inclusive-scan 都由 Lift 写自己的 local-axis
+algebra boundary；predicate-bearing load 的 physical outside lanes 若沿 closed pointwise path 到达
+sum/max/min reduce/scan，Lift 还须逐 consumer/operand/access 写 typed `consumer_extensions`。load fill
+或 reduction identity 不能替代该关系，checker/consumer 仍不自动推导。
 
 ### 2.6 显式语义所有权投影
 

@@ -1255,6 +1255,9 @@ J→Intent MLIR 入口与 structured reference v5 消费 deterministic elaborati
 symbol-table view，不是另一个 artifact，也不使 π 获得 destination 语义。
 该 authored 规则由 `intentir.lift-knowledge.v21` 明示；至少一个 binding 仍由 Lift 选择，fixed code
 不会从 π route、store effect、Source 或 Harness 地址补造 destination value。
+`intentir.lift-knowledge.v22` 同时明确 reduce/inclusive-scan 的 local-axis algebra 与
+predicate-bearing load→sum/max/min consumer 的 typed outside identity 都由 J/B 的 Lift authoring
+承担；π instance/route、C tile、load fill 或 reduction identity 都不能替代 `consumer_extensions`。
 
 ### 14.2 Mechanism enum 正在走向第二套 ontology
 

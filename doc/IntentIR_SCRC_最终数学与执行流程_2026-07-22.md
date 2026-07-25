@@ -577,6 +577,10 @@ production materialization 使用同一个 J-owned destination；不要求 Lift 
 地址反推结果绑定。
 Lift/schema/preflight 同步为 `intentir.lift-knowledge.v21`；它仅取消同一 binding 的冗余双写，仍由
 LLM 完整选择 `returns`/`output_mapping` 中至少一个非 identity authored relation，checker 不补值。
+`intentir.lift-knowledge.v22` 再把已有 B grammar 的闭合义务写清：每个 reduce/inclusive-scan 拥有
+local-axis algebra entry；predicate-bearing load 的 outside lanes 到达 sum/max/min consumer 时，逐
+consumer/operand/access author typed `consumer_extensions`。fill、reduction identity、C/π 或 runtime
+巧合都不构成替代证明。
 
 ---
 

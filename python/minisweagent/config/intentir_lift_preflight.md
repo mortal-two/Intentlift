@@ -98,6 +98,16 @@ the artifact schema or external TypeCheck.
    This stage rule is general: explicit Source `sum` then division remains two
    J nodes even when the divisor equals an extent. Never rewrite it to `mean`
    or replace the divisor with a generated `sum(ones)` count.
+   Every semantic `reduce` and inclusive `scan` has its own
+   `boundary.reductions` entry with the Source-local tile axis and algebraic
+   identity. When a predicate-bearing load's physical outside lanes reach a
+   `sum`/`max`/`min` reduce or scan through closed pointwise dataflow, author
+   one `consumer_extensions` relation for each affected consumer/operand/access:
+   it carries that consumer's local tile axis, typed two-sided outside identity,
+   and the original predicate-bearing `access_ref`. A reduction identity or
+   load fill is not a substitute for this per-consumer relation. Author it only
+   when Source establishes the outside value; never guess or derive it from C,
+   pi, Harness values, or a coincident dtype.
 8. If a pure-functional boundary contains any predicate/fill, the observable
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;

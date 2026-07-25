@@ -874,8 +874,8 @@ expression. A signed/unsigned widen states explicit source_dtype and a strictly
 wider target_dtype of the same signedness; equal-width or missing dtype pairs do
 not denote a widening refinement.
 
-For each J reduction, boundary.reductions.tile_axis is the Source frontend's
-local tile axis after program/grid axes have selected the program instance. It
+For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
+Source frontend's local tile axis after program/grid axes select the program instance. It
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
 observed local axis; do not copy a logical rank axis or add program axes to it.
 

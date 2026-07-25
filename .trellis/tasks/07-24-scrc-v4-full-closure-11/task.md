@@ -523,6 +523,11 @@ outside-domain consumer paths 没有 `consumer_extensions`。这不是 consumer 
 字段；下一 fresh Lift 必须由通用合同明确要求 reduce/scan algebra 与 per-consumer typed outside
 identity，再复用既有通用 TypeCheck/RefEval 消费，不对该 kernel 写专用提示。
 
+该通用提示现在版本化为 `intentir.lift-knowledge.v22`：每个 semantic reduce/inclusive-scan 都须由
+Lift author `boundary.reductions`，predicate-bearing load 到 sum/max/min reduce/scan 的每个 affected
+consumer/operand/access 须 author typed two-sided `consumer_extensions`；fill、reduction identity、C/π
+均不是替代品。v22 没有 Sparsemax 名称、模板 J 或自动 field construction。
+
 因此本 checkpoint 后的严格覆盖是 **12/28**，另有 Sparsemax 一个当前有效 Gate1-only artifact。
 Flash LayerNorm 的旧 value-if artifact 在 Replay v9 diagnostic recheck 仍为 no-closure，不计入该一项。
 
