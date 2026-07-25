@@ -136,7 +136,13 @@ the artifact schema or external TypeCheck.
    update; add a transpose only for a real logical transformation. Never replace
    the recurrence with an algebraically equivalent global formula and expect pi or
    Replay to recover it. Pi has topology/routes only and cannot carry or infer an
-   initialization, update formula, yield, or contraction orientation.
+   initialization, update formula, yield, or contraction orientation. A scan name
+   has exactly the complete logical tensor type of its `from` source: it is not a
+   physical tile and does not erase the trip axis. Pointwise body ops retain that
+   axis until an explicit J reduce/scan consumes it. A physical strip-mined loop
+   around an otherwise ordinary reduction is Layer C/pi realization, not by itself
+   a semantic recurrence. `boundary.reductions` must reference the actual J
+   reduce/scan and cannot manufacture a missing reduction at the loop node.
 12. A Source binary conditional that controls whether accesses/effects occur
    and then reaches a parent continuation is one Layer-A `effect_if`, not a
    value `select`. Its already-visible predicate is scalar `i1`; positive and

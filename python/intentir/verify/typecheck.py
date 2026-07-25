@@ -78,6 +78,7 @@ class TypeCheckErrorCode(str, Enum):
     C_SUBJECT_UNKNOWN = "c_subject_unknown"
     C_AXIS_INVALID = "c_axis_invalid"
     INVALID_ACCESS_FILL = "invalid_access_fill"
+    REDUCTION_BOUNDARY_INVALID = "reduction_boundary_invalid"
     FUNCTIONAL_BOUNDARY_INCOMPLETE = "functional_boundary_incomplete"
     PADDED_MEAN_COUNT_UNPROVEN = "padded_mean_count_unproven"
     LOGICAL_INPUT_UNUSED = "logical_input_unused"
@@ -3164,6 +3165,46 @@ def _validate_consumer_path(
     return None
 
 
+def _check_reduction_boundaries(
+    j: SemanticArchive,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Keep Layer-B algebra contracts attached to semantic consumers.
+
+    ``ReductionBoundary`` describes padding/algebra for an existing Layer-A
+    reduce or inclusive scan.  It cannot manufacture a reduction for a loop or
+    any other node.  Enforcing that ownership here prevents a physically
+    matching Replay from hiding a missing semantic contraction in J.
+    """
+
+    seen: set[str] = set()
+    for index, reduction in enumerate(j.boundary.reductions):
+        path = f"j.boundary.reductions[{index}]"
+        operation = node_operations.get(reduction.node_ref)
+        if operation is None or operation.get("op") not in {"reduce", "scan"}:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.REDUCTION_BOUNDARY_INVALID,
+                    f"{path}.node_ref",
+                    "reduction boundary must reference an existing semantic "
+                    "reduce or inclusive scan node",
+                    reduction.node_ref,
+                )
+            )
+        if reduction.node_ref in seen:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.REDUCTION_BOUNDARY_INVALID,
+                    path,
+                    "one semantic reduce/scan may have at most one reduction "
+                    "boundary contract",
+                    reduction.node_ref,
+                )
+            )
+        seen.add(reduction.node_ref)
+
+
 def _check_consumer_extensions(
     j: SemanticArchive,
     node_operations: Mapping[str, Mapping[str, Any]],
@@ -3858,6 +3899,7 @@ def type_check(
             )
 
     anchors, node_operations = _build_anchors(j, c, diagnostics)
+    _check_reduction_boundaries(j, node_operations, diagnostics)
     _check_consumer_extensions(j, node_operations, diagnostics)
     absent_signature_refs = {
         parameter.name

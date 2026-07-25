@@ -662,6 +662,59 @@ def _elaborate_function_types(
     for _ in range(len(operations) + 3):
         changed = False
         for op in operations:
+            if op.op == "loop":
+                # Structured-loop binders are ordinary typed J values.  A scan
+                # name denotes the complete logical source tensor (physical
+                # tiling belongs to C/pi), while every carry role has exactly
+                # the authored carry type.  Seed these facts before checking
+                # the loop body so an explicit body type cannot hide a shape
+                # contradiction at the region boundary.
+                for scan in op.scan:
+                    source_type = known.get(scan.source)
+                    if source_type is None:
+                        continue
+                    if scan.axis < 0 or scan.axis >= len(source_type.shape):
+                        raise CanonicalJError(
+                            f"IntentOp {op.node_id or op.op!r} scan axis "
+                            f"{scan.axis} is outside source rank "
+                            f"{len(source_type.shape)}"
+                        )
+                    changed |= _merge_type(
+                        known,
+                        scan.name,
+                        source_type,
+                        context=f"IntentOp {op.node_id or op.op} scan",
+                    )
+                for state in op.carry:
+                    if state.type is None:
+                        continue
+                    carry_type = CanonicalValueType(
+                        state.type.dtype, tuple(state.type.shape)
+                    )
+                    for role, name in (
+                        ("body_argument", state.body_argument),
+                        ("next_value", state.next_value),
+                        ("result_value", state.result_value),
+                    ):
+                        changed |= _merge_type(
+                            known,
+                            name,
+                            carry_type,
+                            context=(
+                                f"IntentOp {op.node_id or op.op} carry.{role}"
+                            ),
+                        )
+                    if (
+                        isinstance(state.init_value, str)
+                        and state.init_value in known
+                        and known[state.init_value] != carry_type
+                    ):
+                        raise CanonicalJError(
+                            f"IntentOp {op.node_id or op.op!r} carry initializer "
+                            f"{state.init_value!r} has type "
+                            f"{known[state.init_value].to_json()} but the carry "
+                            f"declares {carry_type.to_json()}"
+                        )
             names = _result_names(op)
             declared: CanonicalValueType | None = None
             if op.type is not None:
