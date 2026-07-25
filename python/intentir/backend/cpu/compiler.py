@@ -16,7 +16,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
-from ..toolchain.tools import CLANG, INTENT_OPT, MLIR_OPT, MLIR_TRANSLATE
+from ..toolchain.tools import (
+    CLANG,
+    INTENT_OPT,
+    LLVM_LIB,
+    MLIR_OPT,
+    MLIR_TRANSLATE,
+)
 from .abi import CPU_MEMREF_ABI_PROTOCOL
 
 
@@ -65,6 +71,27 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _file_identity(path: Path) -> dict[str, Any]:
+    resolved = path.resolve(strict=True)
+    stat = resolved.stat()
+    return {
+        "path": str(resolved),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": _sha256_file(resolved),
+    }
+
+
+def _c_runner_utils() -> Path:
+    try:
+        return (LLVM_LIB / "libmlir_c_runner_utils.so").resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "required MLIR C runner utility library is unavailable: "
+            f"{LLVM_LIB / 'libmlir_c_runner_utils.so'}"
+        ) from exc
 
 
 def _canonical_digest(value: Any) -> str:
@@ -129,6 +156,7 @@ def _toolchain_identity() -> dict[str, Any]:
         "mlir_opt": _tool_identity(str(MLIR_OPT)),
         "mlir_translate": _tool_identity(str(MLIR_TRANSLATE)),
         "clang": _tool_identity(str(CLANG)),
+        "mlir_c_runner_utils": _file_identity(_c_runner_utils()),
     }
 
 
@@ -202,6 +230,15 @@ def compile_cpu_module(source: str) -> CompiledCPUModule:
         raise ValueError("CPU compilation requires non-empty MLIR source")
 
     source_digest = _sha256_text(source)
+    c_runner_utils = _c_runner_utils()
+    runtime_link_flags = (
+        # ``-x ir`` in the fixed stdin flags otherwise also classifies the
+        # following shared library as textual LLVM IR.
+        "-x",
+        "none",
+        str(c_runner_utils),
+        f"-Wl,-rpath,{c_runner_utils.parent}",
+    )
     pipeline_identity = {
         "compiler_protocol": CPU_COMPILER_PROTOCOL,
         "abi_protocol": CPU_MEMREF_ABI_PROTOCOL,
@@ -211,6 +248,7 @@ def compile_cpu_module(source: str) -> CompiledCPUModule:
         ],
         "mlir_pipeline": list(CPU_LOWERING_PIPELINE),
         "clang_flags": list(_CLANG_FLAGS),
+        "runtime_link_flags": list(runtime_link_flags),
     }
     lowering_pipeline_digest = _canonical_digest(pipeline_identity)
     tools = _toolchain_identity()
@@ -289,6 +327,7 @@ def compile_cpu_module(source: str) -> CompiledCPUModule:
                     [
                         str(_resolve_tool(str(CLANG))),
                         *_CLANG_FLAGS,
+                        *runtime_link_flags,
                         "-o",
                         str(temporary),
                     ],

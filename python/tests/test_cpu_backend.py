@@ -99,6 +99,55 @@ def test_collapsed_row_sum_output_runs_on_cpu() -> None:
     np.testing.assert_allclose(actual, x.sum(axis=1), rtol=1.0e-6, atol=1.0e-6)
 
 
+def test_collapsed_intermediate_reduce_then_pad_runs_on_cpu() -> None:
+    from intentir.backend.cpu.pipeline import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "intent_function": {
+                "name": "row_sum_then_pad",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [1, "M", 3, 4]}
+                ],
+                "outputs": [
+                    {"name": "Y", "dtype": "f32", "shape": [1, "M", 5]}
+                ],
+                "body": [
+                    {
+                        "op": "reduce",
+                        "result": "R",
+                        "operands": ["X"],
+                        "attrs": {
+                            "fn": "sum",
+                            "axes": [3],
+                            "assoc": "float_nondeterministic",
+                        },
+                        "type": {"dtype": "f32", "shape": [1, "M", 3]},
+                    },
+                    {
+                        "op": "pad",
+                        "result": "Y",
+                        "operands": ["R"],
+                        "attrs": {
+                            "lo": [0, 0, 0],
+                            "hi": [0, 0, 2],
+                            "value": 0.0,
+                        },
+                        "type": {"dtype": "f32", "shape": [1, "M", 5]},
+                    },
+                ],
+            }
+        }
+    )
+    value = np.arange(24, dtype=np.float32).reshape(1, 2, 3, 4)
+
+    actual = run_on_cpu(fn, {"M": 2}, [value])
+
+    expected = np.pad(value.sum(axis=3), ((0, 0), (0, 0), (0, 2)))
+    np.testing.assert_allclose(actual, expected, rtol=1.0e-6, atol=1.0e-6)
+
+
 def test_rsqrt_uses_standard_host_sqrt_abi() -> None:
     from intentir.backend.cpu.pipeline import run_on_cpu
     from intentir.ir.model import IntentFunction

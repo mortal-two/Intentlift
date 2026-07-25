@@ -881,6 +881,51 @@ def test_transpose_and_pad_reject_invalid_shape_contracts() -> None:
         emit_module(negative_pad, {})
 
 
+def test_intermediate_reduce_type_disambiguates_collapsed_shape_before_pad() -> None:
+    """A checked intermediate type must beat the legacy keepdims default."""
+    from intentir.frontend import emit_module
+
+    fn = IntentFunction.from_json({
+        "intent_function": {
+            "name": "collapsed_reduce_then_pad",
+            "inputs": [
+                {"name": "X", "dtype": "f32", "shape": [1, "M", 33, 16]}
+            ],
+            "outputs": [
+                {"name": "Y", "dtype": "f32", "shape": [1, "M", 64]}
+            ],
+            "body": [
+                {
+                    "op": "reduce",
+                    "result": "R",
+                    "operands": ["X"],
+                    "attrs": {
+                        "fn": "sum",
+                        "axes": [3],
+                        "assoc": "float_nondeterministic",
+                    },
+                    "type": {"dtype": "f32", "shape": [1, "M", 33]},
+                },
+                {
+                    "op": "pad",
+                    "result": "Y",
+                    "operands": ["R"],
+                    "attrs": {
+                        "lo": [0, 0, 0],
+                        "hi": [0, 0, 31],
+                        "value": 0.0,
+                    },
+                    "type": {"dtype": "f32", "shape": [1, "M", 64]},
+                },
+            ],
+        }
+    })
+
+    mlir = emit_module(fn, {"M": 2})
+    assert "tensor<1x2x33x16xf32>) -> tensor<1x2x33xf32>" in mlir
+    assert "tensor<1x2x33xf32>)" in mlir
+
+
 torch = pytest.importorskip("torch")
 
 

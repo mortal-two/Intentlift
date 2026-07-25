@@ -452,7 +452,12 @@ def _infer_op(
         for ax in axes:
             keepdims[ax] = 1
         collapsed = [dim for index, dim in enumerate(shp) if index not in axes]
-        declared = env.get(op.result)
+        # Canonical J carries a checked result type for every operation.  Use
+        # that declaration to disambiguate collapsed versus keepdims reductions
+        # even when the reduction is an intermediate value.  Looking only at
+        # ``env`` loses the declaration until a downstream consumer happens to
+        # constrain it and can silently choose the legacy keepdims default.
+        declared = _op_target_shape(op, env, fold, extents)
         explicit_keepdims = op.attrs.get("keepdims")
         if explicit_keepdims is not None:
             if not isinstance(explicit_keepdims, bool):
