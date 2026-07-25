@@ -504,6 +504,48 @@ def _infer_shape(
             and sorted(permutation) == list(range(len(operand_shapes[0])))
         ):
             return tuple(operand_shapes[0][axis] for axis in permutation)
+    if op.op == "concat" and len(operand_shapes) == len(op.operands):
+        if not operand_shapes:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op!r} concat requires an operand"
+            )
+        axis = op.attrs.get("axis")
+        rank = len(operand_shapes[0])
+        if (
+            not isinstance(axis, int)
+            or isinstance(axis, bool)
+            or axis < 0
+            or axis >= rank
+        ):
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op!r} concat axis {axis!r} is "
+                f"out of range for rank-{rank} operands"
+            )
+        if any(len(shape) != rank for shape in operand_shapes[1:]):
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op!r} concat operands must have "
+                "one common rank"
+            )
+        first = operand_shapes[0]
+        for dimension in range(rank):
+            if dimension == axis:
+                continue
+            expected = first[dimension]
+            if any(shape[dimension] != expected for shape in operand_shapes[1:]):
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op!r} concat operands disagree "
+                    f"at non-concat dimension {dimension}"
+                )
+        axis_extents = [shape[axis] for shape in operand_shapes]
+        if all(isinstance(extent, int) and not isinstance(extent, bool)
+               for extent in axis_extents):
+            result = list(first)
+            result[axis] = sum(axis_extents)
+            return tuple(result)
+        # Symbolic sums are not guessed by the elaborator.  The checks above
+        # still reject rank/axis/non-concat contradictions; an explicit closed
+        # result type remains authoritative for the unresolved concat extent.
+        return None
     if op.op in {"reduce", "arg_reduce"} and operand_shapes:
         axes_value = op.attrs.get("axes", [op.attrs.get("axis")])
         if isinstance(axes_value, list) and all(

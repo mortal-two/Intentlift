@@ -7,7 +7,7 @@ import pytest
 from direct_fixtures import make_copy_artifact
 from intentir.backend.protocol import BackendTarget, LoweringRequest
 from intentir.frontend.canonical_j import emit_j_module
-from intentir.ir.model import IntentOp
+from intentir.ir.model import IntentOp, Tensor
 from intentir.ir.canonical_j import (
     CanonicalJError,
     elaborate_j,
@@ -138,6 +138,56 @@ def test_explicit_result_type_conflict_fails_closed() -> None:
 
     with pytest.raises(CanonicalJError, match="conflicting types"):
         elaborate_j(j)
+
+
+def _concat_j(*, operand_shape: list[int], result_shape: list[int], axis: int):
+    j = make_copy_artifact().j
+    j.intent.inputs[0].shape = list(operand_shape)
+    j.intent.inputs.append(Tensor("t2", "f32", list(operand_shape)))
+    j.intent.outputs[0].shape = list(result_shape)
+    j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "concat",
+                "operands": ["t0", "t2"],
+                "result": "t1",
+                "attrs": {"axis": axis},
+                "type": {"dtype": "f32", "shape": list(result_shape)},
+            }
+        )
+    ]
+    j.node_ids = {"n0": "body[0]"}
+    j.boundary.domains = {}
+    j.boundary.accesses = []
+    j.boundary.effects = []
+    j.boundary.output_mappings = []
+    return j
+
+
+def test_concat_axis_must_exist_in_every_operand_rank() -> None:
+    j = _concat_j(operand_shape=[2], result_shape=[2, 2], axis=1)
+
+    with pytest.raises(CanonicalJError, match="out of range for rank-1"):
+        elaborate_j(j)
+
+
+def test_concat_static_extent_must_match_declared_result() -> None:
+    j = _concat_j(operand_shape=[2, 1], result_shape=[2, 3], axis=1)
+
+    with pytest.raises(CanonicalJError, match="conflicting types"):
+        elaborate_j(j)
+
+
+def test_concat_valid_static_shape_elaborates() -> None:
+    j = _concat_j(operand_shape=[2, 1], result_shape=[2, 2], axis=1)
+
+    elaborated = elaborate_j(j)
+
+    assert elaborated.intent.body[0].type == {
+        "dtype": "f32",
+        "shape": [2, 2],
+    }
 
 
 def test_rank_zero_closed_signature_is_materialized() -> None:
