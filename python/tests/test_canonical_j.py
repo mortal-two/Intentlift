@@ -17,6 +17,7 @@ from intentir.ir.canonical_j import (
 from intentir.verify.gate1.model import (
     AccessKind,
     BoundaryAccess,
+    BroadcastSpec,
     EffectKind,
     EffectSpec,
     OutputMapping,
@@ -196,6 +197,47 @@ def test_concat_valid_static_shape_elaborates() -> None:
     assert elaborated.intent.body[0].type == {
         "dtype": "f32",
         "shape": [2, 2],
+    }
+
+
+def _nontrailing_select_j() -> SemanticArchive:
+    j = make_copy_artifact().j
+    j.intent.inputs[0].shape = ["x0", "x1"]
+    j.intent.inputs.append(Tensor("t2", "i1", ["x0"]))
+    j.intent.outputs[0].shape = ["x0", "x1"]
+    j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "select",
+                "result": "t1",
+                "operands": ["t2", "t0", "t0"],
+                "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+            }
+        )
+    ]
+    j.node_ids = {"n0": "body[0]"}
+    j.boundary.domains = {}
+    j.boundary.accesses = []
+    j.boundary.effects = []
+    j.boundary.output_mappings = []
+    return j
+
+
+def test_select_nontrailing_condition_broadcast_must_be_authored() -> None:
+    with pytest.raises(CanonicalJError, match="non-trailing broadcast"):
+        elaborate_j(_nontrailing_select_j())
+
+
+def test_select_explicit_nontrailing_condition_broadcast_closes() -> None:
+    j = _nontrailing_select_j()
+    j.boundary.broadcasts = [BroadcastSpec("n0", "t2", [1])]
+
+    accepted = elaborate_j(j)
+
+    assert accepted.intent.body[0].type == {
+        "dtype": "f32",
+        "shape": ["x0", "x1"],
     }
 
 

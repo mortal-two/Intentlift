@@ -72,6 +72,11 @@ Atomic ops (each is one JSON object in a "body" list):
      {"op":"contraction","result":R,"operands":[A,B],"attrs":{"subscripts":S}}
   select     : elementwise where(cond, x, y).
      {"op":"select","result":R,"operands":[COND,X,Y]}
+               All three operands follow NumPy trailing broadcast. If an
+               operand such as [rows] projects across a non-trailing axis of
+               [rows,cols], author boundary.broadcasts for that exact select
+               node/operand (here axes:[1]); an explicit result type never
+               authorizes silently erasing the mismatch.
   cast       : dtype cast.  {"op":"cast","result":R,"operands":[A],"attrs":{"to_dtype":DT}}
   transpose  : {"op":"transpose","result":R,"operands":[A],"attrs":{"perm":[...]}}
   gather     : data-dependent addressing. `index` is an INTEGER tensor; `axis`

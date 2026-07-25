@@ -85,6 +85,11 @@ the artifact schema or external TypeCheck.
    One carry has at most one guarded write in this version. CandidateCheck only
    rejects bad declarations: it never inserts select, changes output to inout,
    derives axes/polarity, or asks pi to supply any missing semantic fact.
+   Ordinary `select(cond,x,y)` still obeys closed NumPy trailing broadcast for
+   all three operands. If `[rows]` projects across `[rows,cols]`, author the
+   exact non-trailing `boundary.broadcasts` axes (for example `[1]`) unless an
+   access_guard_relation is already the unique axes authority for that same
+   select guard. An explicit result type cannot erase a broadcast mismatch.
    If a guard-free direct padding predicate and a complete zero-based
    rectangular domain use the same-axis bound as the typed tensor extent, and
    that masked axis is eliminated by `reduce(mean)`, zero fill proves only the

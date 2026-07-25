@@ -518,7 +518,7 @@ def _infer_shape(
             for operand, shape in zip(op.operands, operand_shapes, strict=True)
         )
         inferred = _broadcast_shape(projected)
-        if inferred is None and op.op == "map_binary":
+        if inferred is None and op.op in {"map_binary", "select"}:
             raise CanonicalJError(
                 f"IntentOp {op.node_id or op.op!r} operands have incompatible "
                 "NumPy broadcast shapes; a non-trailing broadcast must be "
