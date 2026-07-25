@@ -342,6 +342,30 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
     }
 
 
+def test_static_ingress_reports_all_independent_constexpr_annotation_errors() -> None:
+    artifact = make_reduce_artifact()
+    two_errors = INVALID_CONSTEXPR_REPLAY.replace(
+        "def scrc_k0(p0,",
+        "def scrc_k0(p0: tl.constexpr,",
+    )
+
+    rejected = replay_source_ingress(
+        two_errors,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+    )
+
+    assert [
+        item["rule_code"] for item in rejected.to_check_response()["diagnostics"]
+    ] == [
+        "constexpr_annotation_forbidden",
+        "constexpr_annotation_required",
+    ]
+    assert [
+        item["path"] for item in rejected.to_check_response()["diagnostics"]
+    ] == ["<parameter:p0>", "<parameter:c0>"]
+
+
 def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(
     monkeypatch,
 ) -> None:

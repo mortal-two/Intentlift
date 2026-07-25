@@ -145,7 +145,7 @@ def _check_triton_exact_abi(
     code: str,
     packet: Mapping[str, Any],
     function_name: str,
-) -> None:
+) -> tuple[_ReplayABIViolation, ...]:
     """Check the exact packet-derived ABI where Triton syntax is unambiguous."""
 
     tree = ast.parse(code, mode="exec")
@@ -188,6 +188,7 @@ def _check_triton_exact_abi(
         if item.get("kind") == "constexpr"
     }
     expected_constexpr = j_constexpr | {str(item["name"]) for item in c_slots}
+    violations: list[_ReplayABIViolation] = []
     for argument in function.args.args:
         is_constexpr = (
             isinstance(argument.annotation, ast.Attribute)
@@ -196,19 +197,24 @@ def _check_triton_exact_abi(
             and argument.annotation.attr == "constexpr"
         )
         if argument.arg in expected_constexpr and not is_constexpr:
-            raise _ReplayABIViolation(
-                "constexpr_annotation_required",
-                path=f"<parameter:{argument.arg}>",
-                handles=(argument.arg,),
-                line=argument.lineno,
+            violations.append(
+                _ReplayABIViolation(
+                    "constexpr_annotation_required",
+                    path=f"<parameter:{argument.arg}>",
+                    handles=(argument.arg,),
+                    line=argument.lineno,
+                )
             )
         if argument.arg not in expected_constexpr and is_constexpr:
-            raise _ReplayABIViolation(
-                "constexpr_annotation_forbidden",
-                path=f"<parameter:{argument.arg}>",
-                handles=(argument.arg,),
-                line=argument.lineno,
+            violations.append(
+                _ReplayABIViolation(
+                    "constexpr_annotation_forbidden",
+                    path=f"<parameter:{argument.arg}>",
+                    handles=(argument.arg,),
+                    line=argument.lineno,
+                )
             )
+    return tuple(violations[:20])
 
 
 @dataclass(frozen=True)
@@ -827,7 +833,15 @@ def replay_source_ingress(
             frontend=selected_frontend,
             function_name=function_name,
         )
-        _check_triton_exact_abi(code, packet, function_name)
+        abi_violations = _check_triton_exact_abi(code, packet, function_name)
+        if abi_violations:
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=tuple(
+                    _closed_ingress_diagnostic(item)
+                    for item in abi_violations
+                ),
+            )
         _check_triton_typed_control_contract(code, packet, function_name)
         _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
