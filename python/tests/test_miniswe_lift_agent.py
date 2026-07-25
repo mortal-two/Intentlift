@@ -559,6 +559,49 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
     assert candidate_path.read_bytes() == before
 
 
+def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
+    workspace = IntentIRLiftWorkspace.create(_real_lift_input_files())
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        copied = environment.execute(
+            {
+                "command": (
+                    "cp /input/knowledge/minimal_example.json "
+                    "/output/candidate.json"
+                )
+            }
+        )
+        assert copied["returncode"] == 0, copied
+        before = workspace.candidate_path.read_bytes()
+        result = environment.execute(
+            {
+                "command": (
+                    "python /input/tools/context_query.py source-find mask "
+                    "--context 1; "
+                    "python /input/tools/context_query.py candidate-nodes "
+                    "--start 1 --count 2; "
+                    "python /input/tools/context_query.py candidate-node n0"
+                )
+            }
+        )
+        after = workspace.candidate_path.read_bytes()
+    finally:
+        workspace.cleanup()
+
+    assert result["returncode"] == 0, result
+    assert "--- source.py:" in result["output"]
+    assert ">" in result["output"] and " < " in result["output"]
+    assert result["output"].count(
+        '"protocol": "intentir.lift-candidate-node-query.v1"'
+    ) == 2
+    assert '"id": "n0"' in result["output"]
+    assert after == before
+
+
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     workspace = IntentIRLiftWorkspace.create(_real_lift_input_files())
     environment = IntentIRLiftEnvironment(
