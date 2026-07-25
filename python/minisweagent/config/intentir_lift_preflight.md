@@ -187,6 +187,14 @@ the artifact schema or external TypeCheck.
    `tile_extent` and `reduction_tile_extent` only let TypeCheck detect a wholly
    missing relation. A custom/misclassified role does not invalidate an
    explicit relation, but complete omission remains visible only to Gate1.
+   Pi region placement is lexical lifetime, not consumer membership. A
+   compiler-visible physical producer that Source defines before the loop and
+   reuses inside it stays in the parent program region—for example a lane basis,
+   invariant pointer base, or other induction-independent realization. Only a
+   producer defined in the loop or dependent on its induction/carried state
+   belongs in `placement=loop`. Conversely, never hoist a loop-variant producer.
+   Determine this from Source definition scope and dependencies; a routed use by
+   a loop-body consumer does not move the producer into that consumer's region.
 15. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
    prose authorization kind. Attach it only to the instance where that exact
