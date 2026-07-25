@@ -1693,6 +1693,231 @@ module {
 '''
 
 
+TERMINAL_FORK_REPEATED_LOAD_CONSUMER = r'''
+module {
+  tt.func public @repeated_load_consumer(
+      %input: !tt.ptr<f32>, %scratch: !tt.ptr<f32>,
+      %output: !tt.ptr<f32>, %flag: i1) {
+    cf.cond_br %flag, ^bb_true, ^bb_false
+  ^bb_true:
+    %first = tt.load %input : !tt.ptr<f32>
+    %zero = arith.constant 0.000000e+00 : f32
+    tt.store %scratch, %zero : !tt.ptr<f32>
+    %second = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %first : !tt.ptr<f32>
+    tt.return
+  ^bb_false:
+    tt.return
+  }
+}
+'''
+
+
+TERMINAL_FORK_REPEATED_LOAD_PREDICATE = r'''
+module {
+  tt.func public @repeated_load_predicate(
+      %predicate: !tt.ptr<i1>, %scratch: !tt.ptr<i1>) {
+    %first = tt.load %predicate : !tt.ptr<i1>
+    %false = arith.constant false : i1
+    tt.store %scratch, %false : !tt.ptr<i1>
+    %second = tt.load %predicate : !tt.ptr<i1>
+    cf.cond_br %first, ^bb_true, ^bb_false
+  ^bb_true:
+    tt.return
+  ^bb_false:
+    tt.return
+  }
+}
+'''
+
+
+OUTLINED_REPEATED_LOAD_RETURN = r'''
+module {
+  tt.func public @caller(
+      %input: !tt.ptr<f32>, %scratch: !tt.ptr<f32>,
+      %output: !tt.ptr<f32>) {
+    %chosen = tt.call @choose(%input, %scratch) : (!tt.ptr<f32>, !tt.ptr<f32>) -> f32
+    tt.store %output, %chosen : !tt.ptr<f32>
+    tt.return
+  }
+  tt.func private @choose(
+      %input: !tt.ptr<f32>, %scratch: !tt.ptr<f32>) -> f32 {
+    %first = tt.load %input : !tt.ptr<f32>
+    %zero = arith.constant 0.000000e+00 : f32
+    tt.store %scratch, %zero : !tt.ptr<f32>
+    %second = tt.load %input : !tt.ptr<f32>
+    tt.return %first : f32
+  }
+}
+'''
+
+
+REPEATED_ATOMIC_RESULT_CONSUMER = r'''
+module {
+  tt.func public @repeated_atomic_result(
+      %counter: !tt.ptr<f32>, %scratch: !tt.ptr<f32>,
+      %output: !tt.ptr<f32>) {
+    %one = arith.constant 1.000000e+00 : f32
+    %first = tt.atomic_rmw add, %counter, %one : (!tt.ptr<f32>, f32) -> f32
+    tt.store %scratch, %one : !tt.ptr<f32>
+    %second = tt.atomic_rmw add, %counter, %one : (!tt.ptr<f32>, f32) -> f32
+    tt.store %output, %first : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+REPEATED_LOAD_PUBLIC_RETURN = r'''
+module {
+  tt.func public @repeated_load_return(
+      %input: !tt.ptr<f32>, %scratch: !tt.ptr<f32>) -> f32 {
+    %first = tt.load %input : !tt.ptr<f32>
+    %zero = arith.constant 0.000000e+00 : f32
+    tt.store %scratch, %zero : !tt.ptr<f32>
+    %second = tt.load %input : !tt.ptr<f32>
+    tt.return %first : f32
+  }
+}
+'''
+
+
+@pytest.mark.parametrize(
+    ("source", "replay"),
+    [
+        (
+            TERMINAL_FORK_REPEATED_LOAD_CONSUMER,
+            TERMINAL_FORK_REPEATED_LOAD_CONSUMER.replace(
+                "tt.store %output, %first", "tt.store %output, %second"
+            ),
+        ),
+        (
+            TERMINAL_FORK_REPEATED_LOAD_PREDICATE,
+            TERMINAL_FORK_REPEATED_LOAD_PREDICATE.replace(
+                "cf.cond_br %first", "cf.cond_br %second"
+            ),
+        ),
+        (
+            OUTLINED_REPEATED_LOAD_RETURN,
+            OUTLINED_REPEATED_LOAD_RETURN.replace(
+                "tt.return %first : f32", "tt.return %second : f32"
+            ),
+        ),
+        (
+            REPEATED_ATOMIC_RESULT_CONSUMER,
+            REPEATED_ATOMIC_RESULT_CONSUMER.replace(
+                "tt.store %output, %first", "tt.store %output, %second"
+            ),
+        ),
+        (
+            REPEATED_LOAD_PUBLIC_RETURN,
+            REPEATED_LOAD_PUBLIC_RETURN.replace(
+                "tt.return %first : f32", "tt.return %second : f32"
+            ),
+        ),
+    ],
+    ids=[
+        "terminal-arm-consumer",
+        "entry-predicate",
+        "private-helper-return",
+        "atomic-result-consumer",
+        "public-return-edge",
+    ],
+)
+def test_effectful_producer_occurrences_do_not_content_hash_collapse(
+    source: str, replay: str
+) -> None:
+    assert not compare_ttir(source, replay).hard_pass
+
+
+PURE_IDENTICAL_PRODUCERS = r'''
+module {
+  tt.func public @pure_identical(
+      %input: f32, %output: !tt.ptr<f32>) {
+    %first = arith.addf %input, %input : f32
+    %second = arith.addf %input, %input : f32
+    tt.store %output, %first : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+INLINE_REPEATED_LOAD_RETURN = r'''
+module {
+  tt.func public @caller(
+      %input: !tt.ptr<f32>, %scratch: !tt.ptr<f32>,
+      %output: !tt.ptr<f32>) {
+    %first = tt.load %input : !tt.ptr<f32>
+    %zero = arith.constant 0.000000e+00 : f32
+    tt.store %scratch, %zero : !tt.ptr<f32>
+    %second = tt.load %input : !tt.ptr<f32>
+    tt.store %output, %first : !tt.ptr<f32>
+    tt.return
+  }
+}
+'''
+
+
+REPEATED_EFFECTFUL_REGIONS = r'''
+module {
+  tt.func public @repeated_effectful_regions(
+      %input: !tt.ptr<f32>, %output: !tt.ptr<f32>, %n: i32) {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %first_iv = %c0 to %n step %c1 : i32 {
+      %first_value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %first_value : !tt.ptr<f32>
+      scf.yield
+    }
+    scf.for %second_iv = %c0 to %n step %c1 : i32 {
+      %second_value = tt.load %input : !tt.ptr<f32>
+      tt.store %output, %second_value : !tt.ptr<f32>
+      scf.yield
+    }
+    tt.return
+  }
+}
+'''
+
+
+def test_pure_identical_producers_remain_content_equivalent() -> None:
+    replay = PURE_IDENTICAL_PRODUCERS.replace(
+        "tt.store %output, %first", "tt.store %output, %second"
+    )
+
+    verdict = compare_ttir(PURE_IDENTICAL_PRODUCERS, replay)
+    assert verdict.hard_pass, verdict.to_dict()
+
+
+def test_effect_occurrences_are_assigned_after_interprocedural_expansion() -> None:
+    verdict = compare_ttir(
+        OUTLINED_REPEATED_LOAD_RETURN,
+        INLINE_REPEATED_LOAD_RETURN,
+    )
+
+    assert verdict.hard_pass, verdict.to_dict()
+
+
+def test_repeated_effectful_region_instances_have_distinct_event_paths() -> None:
+    fingerprint = fingerprint_ttir(REPEATED_EFFECTFUL_REGIONS)
+    root_children = {
+        target
+        for source, target, role in fingerprint.dataflow_edges
+        if source == "region[root]" and role == "region.child"
+    }
+
+    assert len(root_children) == 2
+    assert all("region[scf.for:" in child for child in root_children)
+    event_producers = {
+        source
+        for source, _, _ in fingerprint.dataflow_edges
+        if source.startswith("tt.load[")
+    }
+    assert len(event_producers) == 2
+    assert all("@event[root/" in producer for producer in event_producers)
+
+
 def test_closed_terminal_binary_fork_preserves_roles_and_control_edges() -> None:
     fingerprint = fingerprint_ttir(TERMINAL_BINARY_FORK)
 

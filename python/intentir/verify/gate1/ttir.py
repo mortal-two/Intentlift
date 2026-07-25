@@ -1800,6 +1800,186 @@ def _operation_has_effect(operation: _Operation) -> bool:
     )
 
 
+def _effect_occurrence_identities(
+    operations: list[_Operation],
+    terminal_forks: list[_TerminalFork],
+) -> dict[int, str]:
+    """Assign a canonical identity to every effectful operation occurrence.
+
+    Content hashes cannot identify effect *events*: two otherwise identical
+    loads separated by a store denote different observations, and consumers
+    must retain which observation they use.  Identities are therefore derived
+    from the closed effect trace after reachable calls have been expanded and
+    bounded normalization has run.  Each path consists only of structured
+    region kinds, terminal-fork roles, and ordinals within an effect trace.
+
+    Raw node ids are used only to traverse the already-expanded lexical order;
+    they never enter the resulting identity.  Pure operations receive no
+    occurrence suffix, so identical pure nodes remain content-equivalent.
+    """
+
+    region_ids = {
+        operation.node_id
+        for operation in operations
+        if operation.name in _REGION_OWNERS
+    }
+    terminal_fork_by_id = {
+        terminal_fork.fork_id: terminal_fork
+        for terminal_fork in terminal_forks
+    }
+    if len(terminal_fork_by_id) != len(terminal_forks):
+        raise TTIRParseError("expanded terminal-fork identities are not unique")
+
+    direct_sequence: dict[int | None, list[_Operation]] = {}
+    direct_terminal_forks: dict[int | None, list[_TerminalFork]] = {}
+    direct_fork_arms: dict[tuple[int, str], list[_Operation]] = {}
+
+    for terminal_fork in terminal_forks:
+        parent = (
+            terminal_fork.context[-1]
+            if terminal_fork.context
+            else None
+        )
+        if parent is not None and parent not in region_ids:
+            raise TTIRParseError(
+                "terminal fork has a non-structured caller context"
+            )
+        direct_terminal_forks.setdefault(parent, []).append(terminal_fork)
+
+    for operation in operations:
+        parent = operation.context[-1] if operation.context else None
+        if parent is not None and parent not in region_ids:
+            raise TTIRParseError(
+                f"operation {operation.name} has a non-region parent"
+            )
+        terminal_fork = (
+            terminal_fork_by_id.get(operation.fork_id)
+            if operation.fork_id is not None
+            else None
+        )
+        if operation.fork_id is not None and terminal_fork is None:
+            raise TTIRParseError(
+                "operation refers to an unknown expanded terminal fork"
+            )
+        if operation.fork_arm not in {None, "true", "false"}:
+            raise TTIRParseError("operation has an invalid terminal-fork role")
+        is_direct_fork_member = (
+            terminal_fork is not None
+            and operation.context == terminal_fork.context
+        )
+        if is_direct_fork_member:
+            assert operation.fork_arm is not None
+            direct_fork_arms.setdefault(
+                (terminal_fork.fork_id, operation.fork_arm), []
+            ).append(operation)
+        else:
+            direct_sequence.setdefault(parent, []).append(operation)
+
+    region_effect_cache: dict[int, bool] = {}
+    fork_effect_cache: dict[int, bool] = {}
+
+    def region_has_effect(region_id: int) -> bool:
+        cached = region_effect_cache.get(region_id)
+        if cached is not None:
+            return cached
+        cached = any(
+            operation.name not in _TERMINATORS
+            and _operation_has_effect(operation)
+            for operation in operations
+            if region_id in operation.context
+        )
+        region_effect_cache[region_id] = cached
+        return cached
+
+    def terminal_fork_has_effect(terminal_fork: _TerminalFork) -> bool:
+        cached = fork_effect_cache.get(terminal_fork.fork_id)
+        if cached is not None:
+            return cached
+        cached = any(
+            operation.name not in _TERMINATORS
+            and _operation_has_effect(operation)
+            for operation in operations
+            if operation.fork_id == terminal_fork.fork_id
+        )
+        fork_effect_cache[terminal_fork.fork_id] = cached
+        return cached
+
+    identities: dict[int, str] = {}
+
+    def visit_items(
+        items: list[tuple[int, int, _Operation | _TerminalFork]],
+        scope_path: tuple[str, ...],
+    ) -> None:
+        effect_ordinal = 0
+        for _, _, item in sorted(items, key=lambda entry: (entry[0], entry[1])):
+            if isinstance(item, _TerminalFork):
+                if not terminal_fork_has_effect(item):
+                    continue
+                event_path = (
+                    *scope_path,
+                    f"effect[{effect_ordinal}]:control.conditional",
+                )
+                effect_ordinal += 1
+                for role in ("true", "false"):
+                    arm_items = [
+                        (operation.node_id, 1, operation)
+                        for operation in direct_fork_arms.get(
+                            (item.fork_id, role), ()
+                        )
+                    ]
+                    visit_items(
+                        arm_items,
+                        (*event_path, f"arm[{role}]"),
+                    )
+                continue
+
+            if item.node_id in region_ids:
+                if not region_has_effect(item.node_id):
+                    continue
+                event_path = (
+                    *scope_path,
+                    f"effect[{effect_ordinal}]:region[{item.name}]",
+                )
+                effect_ordinal += 1
+                visit_scope(item.node_id, event_path)
+                continue
+
+            if item.name in _TERMINATORS or not _operation_has_effect(item):
+                continue
+            event_path = (
+                *scope_path,
+                f"effect[{effect_ordinal}]:{item.name}",
+            )
+            effect_ordinal += 1
+            identities[item.node_id] = f"event[{'/'.join(event_path)}]"
+
+    def visit_scope(parent: int | None, scope_path: tuple[str, ...]) -> None:
+        items: list[tuple[int, int, _Operation | _TerminalFork]] = [
+            (operation.node_id, 1, operation)
+            for operation in direct_sequence.get(parent, ())
+        ]
+        items.extend(
+            (terminal_fork.sequence_index, 0, terminal_fork)
+            for terminal_fork in direct_terminal_forks.get(parent, ())
+        )
+        visit_items(items, scope_path)
+
+    visit_scope(None, ("root",))
+
+    expected = {
+        operation.node_id
+        for operation in operations
+        if operation.name not in _TERMINATORS
+        and _operation_has_effect(operation)
+    }
+    if identities.keys() != expected:
+        raise TTIRParseError(
+            "closed effect trace did not assign exactly one identity to every "
+            "effectful operation occurrence"
+        )
+    return identities
+
+
 def _canonical_python_interface(
     metadata: Mapping[str, Any] | None,
 ) -> tuple[tuple[str, str], ...]:
@@ -3219,6 +3399,9 @@ class TTIRParser:
         schedule: Mapping[str, Any] | None,
     ) -> TTIRFingerprint:
         node_by_id = {operation.node_id: operation for operation in operations}
+        effect_occurrences = _effect_occurrence_identities(
+            operations, terminal_forks
+        )
         structural_cache: dict[int, str] = {}
         semantic_cache: dict[int, str] = {}
 
@@ -3268,6 +3451,9 @@ class TTIRParser:
                 # are compared in their dedicated hard components.
                 local = _semantic_op_name(operation, node_by_id, result_to_node)
             label = f"{operation.name}[{_digest([local, refs])[:20]}]"
+            occurrence = effect_occurrences.get(node_id)
+            if occurrence is not None:
+                label = f"{label}@{occurrence}"
             cache[node_id] = label
             return label
 
