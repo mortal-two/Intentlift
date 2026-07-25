@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v8"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v9"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -199,6 +199,29 @@ class DirectStorePartitionProjection:
 
 
 @dataclass(frozen=True)
+class AccessGuardProjection:
+    """One consumed J-authored access-local guard relation."""
+
+    access_ref: str
+    value_ref: str
+    node_ref: str
+    consumer_result: str
+    axes: tuple[int, ...]
+    polarity: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "authored_access_guard_relation",
+            "access_ref": self.access_ref,
+            "value_ref": self.value_ref,
+            "node_ref": self.node_ref,
+            "consumer_result": self.consumer_result,
+            "axes": list(self.axes),
+            "polarity": self.polarity,
+        }
+
+
+@dataclass(frozen=True)
 class FunctionalBoundaryProjection:
     """One ephemeral proof that Layer B projects to logical tensor execution."""
 
@@ -223,6 +246,7 @@ class FunctionalBoundaryProjection:
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
+    access_guard_relations: tuple[AccessGuardProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -291,6 +315,9 @@ class FunctionalBoundaryProjection:
             ],
             "direct_store_partitions": [
                 proof.to_json() for proof in self.direct_store_partitions
+            ],
+            "access_guard_relations": [
+                proof.to_json() for proof in self.access_guard_relations
             ],
         }
 
@@ -1700,6 +1727,142 @@ def _validate_broadcast_closure(
                 )
 
 
+def _project_access_guard_relations(
+    j: Any,
+    broadcasts: dict[str, dict[str, tuple[int, ...]]],
+) -> tuple[AccessGuardProjection, ...]:
+    """Consume every v5 access guard without creating value semantics.
+
+    A guarded store is executable only when its Layer-A producer is already an
+    explicit ``select``.  The relation supplies the select condition's unique
+    broadcast mapping and an audit receipt; polarity remains an authored fact
+    and never triggers a post-execution merge.  Guarded loads and updates need
+    access-local pre-execution materialization, which this consumer does not
+    implement and therefore rejects explicitly.
+    """
+
+    if not j.boundary.access_guard_relations:
+        return ()
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    nodes = _node_table(j)
+    value_types = j_elaboration(j).value_type_by_name
+    outputs = {item.name for item in j.intent.outputs}
+    returns = {item.output: item.value for item in j.intent.returns}
+    mappings = {item.output: item.value for item in j.boundary.output_mappings}
+    inout_by_output: dict[str, int] = {}
+    for parameter in j.signature.parameters:
+        if parameter.mode.value != "inout" or parameter.logical_ref is None:
+            continue
+        inout_by_output[parameter.logical_ref] = (
+            inout_by_output.get(parameter.logical_ref, 0) + 1
+        )
+
+    receipts: list[AccessGuardProjection] = []
+    seen_accesses: set[str] = set()
+    for relation in j.boundary.access_guard_relations:
+        access = accesses.get(relation.access_ref)
+        if access is None:
+            raise ValueError("functional access guard references an unknown access")
+        if relation.access_ref in seen_accesses:
+            raise ValueError(
+                "functional access guard requires exactly one relation per access"
+            )
+        seen_accesses.add(relation.access_ref)
+        if access.kind.value in {"load", "update"}:
+            raise NotImplementedError(
+                "functional access guard does not implement pre-execution "
+                f"materialization for guarded {access.kind.value} access"
+            )
+        if access.kind.value != "store":  # pragma: no cover - closed enum
+            raise ValueError("functional access guard has an unknown access kind")
+        if access.tensor not in outputs or inout_by_output.get(access.tensor) != 1:
+            raise ValueError(
+                "functional guarded store requires exactly one explicit inout output"
+            )
+        if access.node_ref is None:
+            raise NotImplementedError(
+                "functional guarded store requires an explicit Layer-A select"
+            )
+        operation = nodes.get(access.node_ref)
+        if (
+            operation is None
+            or operation.op != "select"
+            or not isinstance(operation.result, str)
+            or len(operation.operands) != 3
+            or operation.operands[0] != relation.value_ref
+        ):
+            raise NotImplementedError(
+                "functional guarded store requires an explicit Layer-A select "
+                "whose condition is relation.value_ref"
+            )
+        observable_value = mappings.get(
+            access.tensor,
+            returns.get(access.tensor, access.tensor),
+        )
+        if observable_value != operation.result:
+            carry_edges = [
+                (state.next_value, state.result_value)
+                for loop in _walk_ops(j.intent.body)
+                if loop.op == "loop"
+                for state in loop.carry
+                if state.next_value == operation.result
+                and state.result_value == observable_value
+            ]
+            if len(carry_edges) != 1:
+                raise ValueError(
+                    "functional guarded store select does not reach its "
+                    "observable output through one explicit carry edge"
+                )
+
+        guard_type = value_types.get(relation.value_ref)
+        target_type = value_types.get(access.tensor)
+        result_type = value_types.get(operation.result)
+        if guard_type is None or target_type is None or result_type is None:
+            raise ValueError("functional access guard lacks a closed Layer-A type")
+        if guard_type.dtype.casefold() != "i1":
+            raise ValueError("functional access guard value must have dtype i1")
+        if result_type != target_type:
+            raise ValueError(
+                "functional guarded store select type differs from its output"
+            )
+        axes = tuple(relation.axes)
+        if axes != tuple(sorted(set(axes))):
+            raise ValueError(
+                "functional access guard axes must be strictly increasing and unique"
+            )
+        if not _shape_can_broadcast_on_axes(
+            guard_type.shape,
+            target_type.shape,
+            axes,
+        ):
+            raise ValueError(
+                "functional access guard axes cannot project the guard to its output"
+            )
+
+        prior = broadcasts.setdefault(operation.result, {}).get(
+            relation.value_ref
+        )
+        if prior is not None and prior != axes:
+            raise ValueError(
+                "functional access guard conflicts with another broadcast mapping"
+            )
+        broadcasts[operation.result][relation.value_ref] = axes
+        receipts.append(
+            AccessGuardProjection(
+                relation.access_ref,
+                relation.value_ref,
+                access.node_ref,
+                operation.result,
+                axes,
+                relation.polarity.value,
+            )
+        )
+
+    if len(receipts) != len(j.boundary.access_guard_relations):
+        raise ValueError("functional access guard left an authored relation unconsumed")
+    return tuple(receipts)
+
+
 def _reduction_padding_analysis(
     j: Any,
     *,
@@ -2721,15 +2884,36 @@ def _project_functional_boundary(
         # consumers preserve their established exception surface.
         raise ValueError(closure_issues[0].detail)
     boundary = j.boundary
-    if any(
-        parameter.mode.value == "inout" or parameter.alias_of is not None
-        for parameter in j.signature.parameters
-    ):
+    access_by_id = {item.access_id: item for item in boundary.accesses}
+    guarded_store_outputs = {
+        access_by_id[relation.access_ref].tensor
+        for relation in boundary.access_guard_relations
+        if relation.access_ref in access_by_id
+        and access_by_id[relation.access_ref].kind.value == "store"
+    }
+    if any(parameter.alias_of is not None for parameter in j.signature.parameters):
         raise NotImplementedError(
             "functional boundary does not implement inout/alias ABI"
         )
     if boundary.aliases:
         raise NotImplementedError("functional boundary does not implement aliases")
+    broadcast_axes = _broadcast_axes(j)
+    access_guard_relations = _project_access_guard_relations(
+        j,
+        broadcast_axes,
+    )
+    projected_guarded_store_accesses = {
+        item.access_ref for item in access_guard_relations
+    }
+    if any(
+        parameter.mode.value == "inout"
+        and parameter.logical_ref not in guarded_store_outputs
+        for parameter in j.signature.parameters
+    ):
+        raise NotImplementedError(
+            "functional boundary does not implement inout/alias ABI outside "
+            "authored access guards"
+        )
     structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
     domains = _full_domains(j) if boundary.accesses else {}
@@ -2798,6 +2982,12 @@ def _project_functional_boundary(
     constant_gathers: list[ConstantGatherProjection] = []
     constant_gather_edges: dict[str, dict[tuple[str, int], str]] = {}
     logical_scalar_inputs = _logical_scalar_inputs(j)
+    access_guard_input_refs = {
+        relation.value_ref
+        for relation in boundary.access_guard_relations
+        if relation.value_ref in input_names
+        and relation.value_ref not in logical_scalar_inputs
+    }
     logical_guards = _logical_boolean_guards(j)
     logical_input_types = {
         item.name: item.dtype
@@ -3034,10 +3224,17 @@ def _project_functional_boundary(
         mapping = mappings.get(access.tensor)
         if mapping is not None:
             observable_value = mapping.value
-            if mapping.node_ref is not None and nodes.get(mapping.node_ref) is not op:
+            if (
+                mapping.node_ref is not None
+                and nodes.get(mapping.node_ref) is not op
+                and access.access_id not in projected_guarded_store_accesses
+            ):
                 raise ValueError("functional store disagrees with output mapping")
         if op is not None:
-            if observable_value not in _result_names(op):
+            if (
+                observable_value not in _result_names(op)
+                and access.access_id not in projected_guarded_store_accesses
+            ):
                 raise ValueError("functional store is not produced by its J node")
             if has_predicate_or_fill and (
                 op.type is None
@@ -3055,7 +3252,10 @@ def _project_functional_boundary(
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")
-    if boundary.accesses and loaded != input_names - set(logical_scalar_inputs):
+    if boundary.accesses and (
+        loaded | access_guard_input_refs
+        != input_names - set(logical_scalar_inputs)
+    ):
         raise NotImplementedError(
             "functional boundary must cover every logical tensor input"
         )
@@ -3136,7 +3336,6 @@ def _project_functional_boundary(
                         "on every access of a masked axis"
                     )
 
-    broadcast_axes = _broadcast_axes(j)
     _validate_broadcast_closure(j, broadcast_axes)
     (
         padding_issues,
@@ -3225,6 +3424,12 @@ def _project_functional_boundary(
             for item in boundary.consumer_extensions
         ),
         *(
+            "access_guard:"
+            f"{item.access_ref}:{item.value_ref}:"
+            f"{','.join(str(axis) for axis in item.axes)}:{item.polarity}"
+            for item in access_guard_relations
+        ),
+        *(
             f"value_dimension:{value_ref}:{dimension_ref}:eq"
             for value_ref, dimension_ref in value_dimension_pairs
         ),
@@ -3273,6 +3478,7 @@ def _project_functional_boundary(
         constant_gathers=tuple(constant_gathers),
         concat_store_partitions=tuple(concat_store_partitions),
         direct_store_partitions=tuple(direct_store_partitions),
+        access_guard_relations=access_guard_relations,
     )
 
 
@@ -3329,6 +3535,7 @@ def project_functional_boundary_for_refeval(
 __all__ = [
     "FUNCTIONAL_BOUNDARY_PROTOCOL",
     "RUNTIME_PREDICATE_PROOF_PROTOCOL",
+    "AccessGuardProjection",
     "ConsumerExtensionRequirement",
     "ConstantGatherProjection",
     "ConcatStorePartitionProjection",

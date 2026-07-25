@@ -93,6 +93,12 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
         unsupported.append(str(exc))
     else:
         consumed.extend(projection.consumed)
+    if j.boundary.access_guard_relations:
+        # The backend may inspect the shared J-only receipt, but its current
+        # target path has no general access-local guard materializer.  An
+        # explicit Layer-A select is sufficient for RefEval value semantics;
+        # it is not permission to erase the authored boundary relation here.
+        unsupported.append("access_guard_materialization_not_implemented")
     if j.boundary.aliases:
         unsupported.append("alias_relation")
     if any(item.mutability.value == "mutable" for item in j.storage):
