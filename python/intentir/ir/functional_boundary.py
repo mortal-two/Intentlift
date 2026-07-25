@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v13"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v14"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -208,9 +208,13 @@ class AccessGuardProjection:
     consumer_result: str
     axes: tuple[int, ...]
     polarity: str
+    access_kind: str = "store"
+    tensor: str | None = None
+    operand_index: int | None = None
+    fill_value: Any = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        result = {
             "proof": "authored_access_guard_relation",
             "access_ref": self.access_ref,
             "value_ref": self.value_ref,
@@ -219,6 +223,17 @@ class AccessGuardProjection:
             "axes": list(self.axes),
             "polarity": self.polarity,
         }
+        if self.access_kind == "load":
+            result.update(
+                {
+                    "access_kind": "load",
+                    "tensor": self.tensor,
+                    "operand_index": self.operand_index,
+                    "fill_value": self.fill_value,
+                    "materialization": "access_local_pre_execution_select",
+                }
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -1243,6 +1258,72 @@ def _value_dimension_pairs(j: Any) -> tuple[tuple[str, str], ...]:
     )
 
 
+def _functional_access_coordinates(
+    j: Any,
+    index: Any,
+    target_shape: Sequence[Any],
+) -> tuple[str | int, ...] | None:
+    """Project direct or J-proved rank-2 row-major access coordinates.
+
+    The affine case is deliberately narrow: one component must be exactly
+    ``row * stride + column`` (up to commutative operand order), and the stride
+    must be equated by J's value-dimension relation to the target's trailing
+    extent.  General affine expressions remain unsupported.
+    """
+
+    direct = index.direct_coordinates
+    if direct is not None:
+        return direct
+    if len(target_shape) != 2 or len(index.components) != 1:
+        return None
+    expression = index.components[0]
+    if expression.op != "add" or len(expression.args) != 2:
+        return None
+    trailing_extent = target_shape[1]
+    value_dimensions = dict(_value_dimension_pairs(j))
+
+    def ref_name(term: ContractExpr) -> str | None:
+        return (
+            term.value
+            if term.op == "ref" and isinstance(term.value, str)
+            else None
+        )
+
+    def is_stride(term: ContractExpr) -> bool:
+        if (
+            term.op == "int"
+            and isinstance(term.value, int)
+            and not isinstance(term.value, bool)
+        ):
+            return type(trailing_extent) is int and term.value == trailing_extent
+        name = ref_name(term)
+        return (
+            name is not None
+            and isinstance(trailing_extent, str)
+            and value_dimensions.get(name) == trailing_extent
+        )
+
+    candidates: set[tuple[str, str]] = set()
+    for product, column_term in (
+        (expression.args[0], expression.args[1]),
+        (expression.args[1], expression.args[0]),
+    ):
+        column = ref_name(column_term)
+        if column is None or product.op != "mul" or len(product.args) != 2:
+            continue
+        for row_term, stride_term in (
+            (product.args[0], product.args[1]),
+            (product.args[1], product.args[0]),
+        ):
+            row = ref_name(row_term)
+            if row is None or row == column or not is_stride(stride_term):
+                continue
+            candidates.add((row, column))
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates))
+
+
 def _substitute_value_dimension_bounds(
     predicate: PredicateProjection,
     value_dimensions: Mapping[str, str],
@@ -2035,11 +2116,10 @@ def _project_access_guard_relations(
     """Consume every v5 access guard without creating value semantics.
 
     A guarded store is executable only when its Layer-A producer is already an
-    explicit ``select``.  The relation supplies the select condition's unique
-    broadcast mapping and an audit receipt; polarity remains an authored fact
-    and never triggers a post-execution merge.  Guarded loads and updates need
-    access-local pre-execution materialization, which this consumer does not
-    implement and therefore rejects explicitly.
+    explicit ``select``.  A guarded load is projected to exactly one direct
+    operand edge of its authored consumer; RefEval uses that receipt to apply
+    the authored guard, polarity and fill before evaluating the consumer.
+    Ambiguous repeated operands and guarded updates remain unsupported.
     """
 
     if not j.boundary.access_guard_relations:
@@ -2069,10 +2149,80 @@ def _project_access_guard_relations(
                 "functional access guard requires exactly one relation per access"
             )
         seen_accesses.add(relation.access_ref)
-        if access.kind.value in {"load", "update"}:
+        guard_type = value_types.get(relation.value_ref)
+        target_type = value_types.get(access.tensor)
+        if guard_type is None or target_type is None:
+            raise ValueError("functional access guard lacks a closed Layer-A type")
+        if guard_type.dtype.casefold() != "i1":
+            raise ValueError("functional access guard value must have dtype i1")
+        axes = tuple(relation.axes)
+        if axes != tuple(sorted(set(axes))):
+            raise ValueError(
+                "functional access guard axes must be strictly increasing and unique"
+            )
+        if not _shape_can_broadcast_on_axes(
+            guard_type.shape,
+            target_type.shape,
+            axes,
+        ):
+            raise ValueError(
+                "functional access guard axes cannot project the guard to its target"
+            )
+
+        if access.kind.value == "load":
+            if access.fill_value is None:
+                raise ValueError("functional guarded load requires an explicit fill")
+            if access.node_ref is None:
+                raise NotImplementedError(
+                    "functional guarded load requires one explicit consumer node"
+                )
+            operation = nodes.get(access.node_ref)
+            if operation is None or not isinstance(operation.result, str):
+                raise NotImplementedError(
+                    "functional guarded load requires one single-result consumer"
+                )
+            operand_indices = [
+                index
+                for index, operand in enumerate(operation.operands)
+                if operand == access.tensor
+            ]
+            if len(operand_indices) != 1:
+                raise NotImplementedError(
+                    "functional guarded load requires one unambiguous direct "
+                    "consumer operand"
+                )
+            operation_type = value_types.get(operation.result)
+            if (
+                relation.value_ref in operation.operands
+                and operation_type == target_type
+            ):
+                prior = broadcasts.setdefault(operation.result, {}).get(
+                    relation.value_ref
+                )
+                if prior is not None and prior != axes:
+                    raise ValueError(
+                        "functional guarded load conflicts with another "
+                        "broadcast mapping"
+                    )
+                broadcasts[operation.result][relation.value_ref] = axes
+            receipts.append(
+                AccessGuardProjection(
+                    relation.access_ref,
+                    relation.value_ref,
+                    access.node_ref,
+                    operation.result,
+                    axes,
+                    relation.polarity.value,
+                    access_kind="load",
+                    tensor=access.tensor,
+                    operand_index=operand_indices[0],
+                    fill_value=access.fill_value,
+                )
+            )
+            continue
+        if access.kind.value == "update":
             raise NotImplementedError(
-                "functional access guard does not implement pre-execution "
-                f"materialization for guarded {access.kind.value} access"
+                "functional access guard does not implement guarded update access"
             )
         if access.kind.value != "store":  # pragma: no cover - closed enum
             raise ValueError("functional access guard has an unknown access kind")
@@ -2114,21 +2264,12 @@ def _project_access_guard_relations(
                     "observable output through one explicit carry edge"
                 )
 
-        guard_type = value_types.get(relation.value_ref)
-        target_type = value_types.get(access.tensor)
         result_type = value_types.get(operation.result)
-        if guard_type is None or target_type is None or result_type is None:
+        if result_type is None:
             raise ValueError("functional access guard lacks a closed Layer-A type")
-        if guard_type.dtype.casefold() != "i1":
-            raise ValueError("functional access guard value must have dtype i1")
         if result_type != target_type:
             raise ValueError(
                 "functional guarded store select type differs from its output"
-            )
-        axes = tuple(relation.axes)
-        if axes != tuple(sorted(set(axes))):
-            raise ValueError(
-                "functional access guard axes must be strictly increasing and unique"
             )
         if not _shape_can_broadcast_on_axes(
             guard_type.shape,
@@ -3245,7 +3386,14 @@ def _project_functional_boundary(
         broadcast_axes,
     )
     projected_guarded_store_accesses = {
-        item.access_ref for item in access_guard_relations
+        item.access_ref
+        for item in access_guard_relations
+        if item.access_kind == "store"
+    }
+    projected_guarded_load_accesses = {
+        item.access_ref
+        for item in access_guard_relations
+        if item.access_kind == "load"
     }
     structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
@@ -3353,7 +3501,11 @@ def _project_functional_boundary(
             raise ValueError(
                 f"functional access {access.access_id!r} has unknown tensor"
             )
-        coordinates = parsed_accesses[access.access_id].index.direct_coordinates
+        coordinates = _functional_access_coordinates(
+            j,
+            parsed_accesses[access.access_id].index,
+            tensor.shape,
+        )
         if coordinates is None:
             raise NotImplementedError(
                 "functional dense access requires a direct ordered axis vector "
@@ -3494,7 +3646,10 @@ def _project_functional_boundary(
                 predicate_dominated_loads.add(
                     (access.access_id, access.predicate)
                 )
-        elif access.fill_value is not None:
+        elif (
+            access.fill_value is not None
+            and access.access_id not in projected_guarded_load_accesses
+        ):
             raise ValueError("functional unpredicated access must not declare fill")
         predicates[access.access_id] = predicate
         if access.kind.value != "load" and access.fill_value is not None:
@@ -3846,7 +4001,9 @@ def _project_functional_boundary(
             item.predicate is not None for item in boundary.accesses
         ),
         erased_fill_count=sum(
-            item.fill_value is not None for item in boundary.accesses
+            item.fill_value is not None
+            and item.access_id not in projected_guarded_load_accesses
+            for item in boundary.accesses
         ),
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
         consumer_extensions=consumer_extensions,

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v5"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v6"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -75,6 +75,12 @@ _BINARY = {
     "le": np.less_equal,
     "eq": np.equal,
     "ne": np.not_equal,
+    "and": np.logical_and,
+    "or": np.logical_or,
+    "xor": np.logical_xor,
+    "logical_and": np.logical_and,
+    "logical_or": np.logical_or,
+    "logical_xor": np.logical_xor,
 }
 
 _UNARY = {
@@ -235,6 +241,7 @@ class _Evaluator:
         j: SemanticArchive,
         dims: Mapping[str, int],
         broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]],
+        access_guard_relations: Sequence[Any] = (),
     ) -> None:
         self.j = j
         self.dims = dict(dims)
@@ -246,6 +253,29 @@ class _Evaluator:
             for result, operands in broadcast_axes.items()
         }
         self.value_types = j_elaboration(j).value_type_by_name
+        self.access_guard_loads: dict[tuple[str, int], Any] = {}
+        for relation in access_guard_relations:
+            if getattr(relation, "access_kind", None) != "load":
+                continue
+            node_ref = getattr(relation, "node_ref", None)
+            operand_index = getattr(relation, "operand_index", None)
+            tensor = getattr(relation, "tensor", None)
+            if (
+                not isinstance(node_ref, str)
+                or isinstance(operand_index, bool)
+                or not isinstance(operand_index, int)
+                or operand_index < 0
+                or not isinstance(tensor, str)
+            ):
+                raise ValueError(
+                    "structured guarded-load receipt is not mechanically closed"
+                )
+            key = (node_ref, operand_index)
+            if key in self.access_guard_loads:
+                raise ValueError(
+                    "structured guarded-load receipts duplicate one operand edge"
+                )
+            self.access_guard_loads[key] = relation
         self.operation_count = 0
         self.scan_count = 0
         self.loop_count = 0
@@ -313,6 +343,46 @@ class _Evaluator:
             raise ValueError(
                 f"structured op {op.op!r} has an unavailable operand"
             ) from exc
+        materialization = self.access_guard_loads.get((op.node_id, index))
+        if materialization is not None:
+            if name != materialization.tensor:
+                raise ValueError(
+                    "structured guarded-load receipt names a different operand"
+                )
+            try:
+                condition = np.asarray(env[materialization.value_ref])
+            except KeyError as exc:
+                raise ValueError(
+                    "structured guarded-load guard does not dominate its consumer"
+                ) from exc
+            if condition.dtype != np.dtype(np.bool_):
+                raise ValueError("structured guarded-load guard must have dtype i1")
+            for axis in sorted(materialization.axes):
+                if axis < 0 or axis > condition.ndim:
+                    raise ValueError(
+                        "structured guarded-load broadcast axis is outside target rank"
+                    )
+                condition = np.expand_dims(condition, axis=axis)
+            if materialization.polarity == "positive":
+                active = condition
+            elif materialization.polarity == "negative":
+                active = np.logical_not(condition)
+            else:
+                raise ValueError("structured guarded-load polarity is unknown")
+            try:
+                fill = np.asarray(
+                    materialization.fill_value,
+                    dtype=value.dtype,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise StructuredReferenceUnsupportedError(
+                    "structured guarded-load fill has no typed NumPy denotation"
+                ) from exc
+            value = np.asarray(np.where(active, value, fill))
+            if value.shape != env[name].shape or value.dtype != env[name].dtype:
+                raise ValueError(
+                    "structured guarded-load materialization changed operand type"
+                )
         result = self._result_name(op)
         axes = self.broadcast_axes.get(result, {}).get(name, ())
         projected = value
@@ -1066,6 +1136,7 @@ def execute_structured_reference(
     inputs: Sequence[np.ndarray],
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
+    access_guard_relations: Sequence[Any] = (),
 ) -> CPUExecutionResult:
     """Execute the restricted typed denotation of one canonical J.
 
@@ -1074,7 +1145,12 @@ def execute_structured_reference(
     """
 
     j = elaborate_j(j)
-    if not requires_structured_reference(j):
+    guarded_loads = tuple(
+        relation
+        for relation in access_guard_relations
+        if getattr(relation, "access_kind", None) == "load"
+    )
+    if not requires_structured_reference(j) and not guarded_loads:
         raise StructuredReferenceUnsupportedError(
             "structured reference requires a structured op or a contraction "
             "outside the scalar CPU capability"
@@ -1113,7 +1189,12 @@ def execute_structured_reference(
         for tensor, value in zip(j.intent.inputs, inputs, strict=True)
     }
     validate_value_dimension_instantiation(j, checked_dims, checked_inputs)
-    evaluator = _Evaluator(j, checked_dims, broadcast_axes or {})
+    evaluator = _Evaluator(
+        j,
+        checked_dims,
+        broadcast_axes or {},
+        guarded_loads,
+    )
     env = evaluator.sequence(j.intent.body, checked_inputs, allow_loop=True)
     output_values = {
         item.output: item.value
@@ -1147,6 +1228,9 @@ def execute_structured_reference(
             "value_if_count": evaluator.value_if_count,
             "logical_loop_step_count": evaluator.logical_loop_steps,
             "zero_trip_loop_count": evaluator.zero_trip_loops,
+            "access_guard_load_materialization_count": len(
+                evaluator.access_guard_loads
+            ),
             "input_count": len(checked_inputs),
             "output_count": len(outputs),
         },

@@ -46,7 +46,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v14"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v15"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1043,13 +1043,21 @@ class ScalarLoweringRunner:
             boundary_digest = projection.boundary_digest
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = projection.emitter_broadcast_axes()
-            structured = requires_structured_reference(spec.j)
+            guarded_loads = tuple(
+                item
+                for item in projection.access_guard_relations
+                if item.access_kind == "load"
+            )
+            structured = requires_structured_reference(spec.j) or bool(
+                guarded_loads
+            )
             execution = (
                 execute_structured_reference(
                     spec.j,
                     spec.dims_map,
                     inputs,
                     broadcast_axes=broadcast_axes,
+                    access_guard_relations=guarded_loads,
                 )
                 if structured
                 else execute_on_cpu_outputs(

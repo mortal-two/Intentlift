@@ -121,7 +121,7 @@ def _guarded_select_j(
 def test_access_guard_projects_authored_relation_and_unique_broadcast() -> None:
     projection = project_functional_boundary(_guarded_select_j())
 
-    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v13"
+    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v14"
     assert projection.emitter_broadcast_axes() == {"v0": {"Guard": (1,)}}
     assert projection.to_json()["access_guard_relations"] == [
         {
@@ -229,20 +229,62 @@ def test_access_guard_broadcast_is_shared_with_structured_reference() -> None:
     )
 
 
-@pytest.mark.parametrize("kind", [AccessKind.LOAD, AccessKind.UPDATE])
-def test_access_guard_load_and_update_are_explicitly_unsupported(kind) -> None:
+def test_access_guard_load_materializes_one_authored_consumer_edge() -> None:
     j = copy.deepcopy(_guarded_select_j())
     relation = j.boundary.access_guard_relations[0]
-    if kind is AccessKind.LOAD:
-        relation.access_ref = "a0"
-        j.boundary.accesses[0].fill_value = 0.0
-    else:
-        j.boundary.accesses[3].kind = AccessKind.UPDATE
-        j.boundary.effects[3].kind = EffectKind.UPDATE
+    relation.access_ref = "a0"
+    relation.polarity = AccessGuardPolarity.NEGATIVE
+    j.boundary.accesses[0].fill_value = 5.0
+
+    projection = project_functional_boundary(j)
+    receipt = projection.access_guard_relations[0]
+
+    assert receipt.access_kind == "load"
+    assert receipt.tensor == "Candidate"
+    assert receipt.operand_index == 1
+    assert receipt.fill_value == 5.0
+    assert receipt.to_json()["materialization"] == (
+        "access_local_pre_execution_select"
+    )
+
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={},
+        input_bindings={
+            "Candidate": "candidate",
+            "Y": "current",
+            "Guard": "guard",
+        },
+        output_bindings={"Y": "output"},
+    )
+    candidate = np.arange(6, dtype=np.float32).reshape(2, 3)
+    current = np.full((2, 3), -7.0, dtype=np.float32)
+    guard = np.asarray([True, False], dtype=np.bool_)
+
+    result = ScalarLoweringRunner().run(
+        spec,
+        {"candidate": candidate, "current": current, "guard": guard},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"],
+        np.where(guard[:, None], np.float32(5.0), current),
+    )
+    assert result.metadata["execution_evidence"][
+        "access_guard_load_materialization_count"
+    ] == 1
+
+
+def test_access_guard_update_is_explicitly_unsupported() -> None:
+    j = copy.deepcopy(_guarded_select_j())
+    relation = j.boundary.access_guard_relations[0]
+    j.boundary.accesses[3].kind = AccessKind.UPDATE
+    j.boundary.effects[3].kind = EffectKind.UPDATE
 
     with pytest.raises(
         NotImplementedError,
-        match=f"guarded {kind.value} access",
+        match="guarded update access",
     ):
         project_functional_boundary(j)
 
