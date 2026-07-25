@@ -45,6 +45,9 @@
       }
     },
     "node_ids": {"n0": "body[0]", "n1": "body[1]", "n2": "body[2]"},
+    "value_dimension_relations": [
+      {"value_ref": "t1", "dimension_ref": "x0", "relation": "eq"}
+    ],
     "boundary": {
       "domains": {"d0": "0 <= k0 and k0 < x0"},
       "accesses": [
@@ -52,7 +55,7 @@
           "access_id": "a0",
           "kind": "load",
           "tensor": "t0",
-          "predicate": "k0 < x0 and t1 > 0",
+          "predicate": "k0 < t1",
           "fill_value": 0,
           "node_ref": "n0",
           "index_expression": "k0"
@@ -132,13 +135,6 @@
           "dtype": "i32",
           "rank": 0,
           "logical_ref": "t1"
-        },
-        {
-          "name": "p3",
-          "kind": "scalar",
-          "mode": "value",
-          "dtype": "i32",
-          "logical_ref": "x0"
         }
       ]
     },

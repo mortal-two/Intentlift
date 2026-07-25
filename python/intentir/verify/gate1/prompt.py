@@ -285,6 +285,7 @@ _REPLAY_COMPONENT_KEYS = {
         {
             "kernel_id", "intent", "node_ids", "boundary", "signature",
             "scopes", "storage", "dimension_constraints",
+            "value_dimension_relations",
         }
     ),
     "c": frozenset({"slots"}),
@@ -301,6 +302,9 @@ _REPLAY_COMPONENT_KEYS = {
         }
     ),
 }
+_HISTORICAL_J_KEYS_WITHOUT_VALUE_DIMENSION_RELATIONS = (
+    _REPLAY_COMPONENT_KEYS["j"] - {"value_dimension_relations"}
+)
 _U_F_KEYS = frozenset(
     {
         "protocol",
@@ -494,7 +498,15 @@ def _validate_source_isolated_payload(
         )
     for component, expected in _REPLAY_COMPONENT_KEYS.items():
         value = payload[component]
-        if not isinstance(value, Mapping) or set(value) != expected:
+        actual = set(value) if isinstance(value, Mapping) else set()
+        historical_j = (
+            not require_active_context
+            and component == "j"
+            and actual == _HISTORICAL_J_KEYS_WITHOUT_VALUE_DIMENSION_RELATIONS
+        )
+        if not isinstance(value, Mapping) or (
+            actual != expected and not historical_j
+        ):
             raise SchemaError(
                 f"Replay payload {component} must contain exactly "
                 + ", ".join(sorted(expected))
@@ -758,7 +770,14 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "logical operators, predicates, fills, constants, index relations and "
         "effects only from J. Preserve explicit J stages: reduce(sum) followed by "
         "division remains sum then division, never mean or a generated sum-of-ones "
-        "count. A boundary access with no predicate is unconditional: "
+        "count. Treat every J.value_dimension_relations item as an already "
+        "J-certified precondition: relation=eq permits the declared integral "
+        "rank-0 value_ref and dimension_ref to denote the same logical extent. "
+        "Consume only the declared relation where J shapes, domains, predicates, "
+        "or operators require it. Never infer, create, delete, repair, weaken, or "
+        "strengthen a value/dimension relation from concrete values, parameter "
+        "positions, C, pi, Harness conventions, or frontend behavior. A boundary "
+        "access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "
         + frontend_realization_clause

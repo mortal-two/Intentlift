@@ -27,15 +27,16 @@ the artifact schema or external TypeCheck.
    predicate/index and enters arithmetic or boolean dataflow, bind one
    dtype-matching rank-0 J input `t*` and reuse that same `t*` in every such
    use. Do not split it into `x*` plus `t*`/null, specialize it to a constant,
-   or synthesize a count. This is representable only when tensor capacity/shape
-   is a separately established `x*`. If Source requires the scalar value itself
-   to strictly determine that J shape dimension, the current artifact cannot
-   express `value(t*) = x*`: do not submit and fail closed. TypeCheck cannot
-   infer this Source-use equality from `(J,C,pi)`.
+   or synthesize a count. If Source also makes this exact integral value the J
+   shape dimension `x*`, author one `J.value_dimension_relations` item exactly
+   `{value_ref: t*, dimension_ref: x*, relation: eq}`. The one physical `p*`
+   still binds only `t*`; the relation records the Source-owned equality.
    One physical Harness `p*` has exactly one `logical_ref`; never duplicate or
    alias that scalar into a second `p*` so one copy owns `t*` and another owns
-   `x*`. A separately bound capacity `x*` may coexist with an active-length
-   rank-0 `t*` only when Source does not require equality between them.
+   `x*`. Do not infer equality from a current Harness value, dtype, position, or
+   observed shape. A separately bound capacity `x*` may coexist with an
+   active-length rank-0 `t*` without a relation. Emit the complete relation array,
+   including `[]`; fixed code, Replay, C, and pi never add or repair its members.
    Bind `x*` only when every use is extent/index/domain-only.
    This null-carrier form is runtime-scalar-only. Every
    `bound_constexpr_values` entry is logical: bind logical data to a

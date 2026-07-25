@@ -214,10 +214,10 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
 - `knowledge/preflight.md`: short source-neutral handle/ownership checklist.
-- `knowledge/minimal_example.json`: source-neutral wire/ownership example for an
-  active-length rank-0 scalar with a separately bound capacity dimension,
-  explicit sum-then-div stages, one exact cast refinement, and a local reduction
-  axis; replace every case-specific semantic,
+- `knowledge/minimal_example.json`: source-neutral wire/ownership example for one
+  integral rank-0 scalar explicitly equated to a logical dimension by a J-owned
+  value_dimension_relations entry, explicit sum-then-div stages, one exact cast
+  refinement, and a local reduction axis; replace every case-specific semantic,
   handle, shape, value, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: bounded, read-only
