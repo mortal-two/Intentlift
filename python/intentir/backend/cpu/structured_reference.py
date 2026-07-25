@@ -10,12 +10,14 @@ and output type.  Its API deliberately has no C or pi parameter.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from intentir.backend.cpu.abi import (
     CPUBackendUnsupportedError,
+    mlir_element_type,
     numpy_dtype,
     validate_array,
 )
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v2"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v3"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -42,6 +44,7 @@ _ORDINARY_OPS = frozenset(
         "const",
         "contraction",
         "gather",
+        "iota",
         "map_binary",
         "map_unary",
         "pad",
@@ -52,6 +55,10 @@ _ORDINARY_OPS = frozenset(
         "transpose",
     }
 )
+
+_FLOAT_ELEMENT_TYPES = frozenset({"f16", "bf16", "f32", "f64"})
+_INTEGER_ELEMENT_TYPES = frozenset({"i1", "i8", "i16", "i32", "i64"})
+_EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
 
 _BINARY = {
     "add": np.add,
@@ -112,16 +119,88 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
+def _element_class(dtype: str) -> str | None:
+    """Mirror the element classes consumed by ContractionLowering."""
+
+    try:
+        element_type = mlir_element_type(dtype)
+    except CPUBackendUnsupportedError:
+        return None
+    if element_type in _FLOAT_ELEMENT_TYPES:
+        return "float"
+    if element_type in _INTEGER_ELEMENT_TYPES:
+        return "integer"
+    return None
+
+
+def _scalar_cpu_lowers_contraction(
+    op: IntentOp,
+    value_types: Mapping[str, Any],
+) -> bool:
+    """Return the exact typed subset eliminated by ContractionLowering.
+
+    This mirrors ``ConvertIntentToLinalg`` rather than predicting whether a
+    target compiler might happen to accept an unlowered ``intent`` op.  The
+    common lowering accepts arbitrary widths within the floating class, but it
+    rejects mixed integer/float operands and mixed-width integer contractions.
+    Malformed or incompletely typed contractions are conservatively outside
+    the scalar capability and will fail closed in the structured evaluator.
+    """
+
+    if (
+        set(op.attrs) != {"subscripts"}
+        or len(op.operands) != 2
+        or not isinstance(op.result, str)
+    ):
+        return False
+    operand_types = [value_types.get(name) for name in op.operands]
+    result_type = value_types.get(op.result)
+    if result_type is None or any(value is None for value in operand_types):
+        return False
+    operand_dtypes = [str(value.dtype) for value in operand_types]
+    result_dtype = str(result_type.dtype)
+    try:
+        operand_element_types = [
+            mlir_element_type(dtype) for dtype in operand_dtypes
+        ]
+        result_element_type = mlir_element_type(result_dtype)
+    except CPUBackendUnsupportedError:
+        return False
+    operand_classes = [_element_class(dtype) for dtype in operand_dtypes]
+    result_class = _element_class(result_dtype)
+    if result_class is None or any(kind is None for kind in operand_classes):
+        return False
+    if any(kind != result_class for kind in operand_classes):
+        return False
+    if result_class == "integer" and any(
+        element_type != result_element_type
+        for element_type in operand_element_types
+    ):
+        return False
+    return True
+
+
 def requires_structured_reference(j: SemanticArchive) -> bool:
     """Return whether J needs the J-only typed reference denotation.
 
     ``tile`` selects this path because the scalar Intent-to-Linalg executor does
-    not lower it.  The structured evaluator consequently owns a closed ordinary
-    op table as well as loops/scans; it never falls back into a second consumer
-    halfway through a graph.
+    not lower it.  A typed contraction selects the same path only when the
+    common scalar lowering cannot eliminate that contraction.  The structured
+    evaluator consequently owns a closed ordinary op table as well as
+    loops/scans; it never falls back into a second consumer halfway through a
+    graph.
     """
 
-    return any(op.op in {"loop", "scan", "tile"} for op in _walk_ops(j.intent.body))
+    accepted = elaborate_j(j)
+    operations = _walk_ops(accepted.intent.body)
+    if any(op.op in {"loop", "scan", "tile"} for op in operations):
+        return True
+    value_types = j_elaboration(accepted).value_type_by_name
+    return any(
+        op.op == "contraction"
+        and not _scalar_cpu_lowers_contraction(op, value_types)
+        for op in operations
+    )
 
 
 def _resolved_shape(shape: Sequence[Any], dims: Mapping[str, int]) -> tuple[int, ...]:
@@ -466,6 +545,158 @@ class _Evaluator:
             raise ValueError("structured tile result dtype differs from its input")
         return np.tile(value, tuple(reps))
 
+    def _iota(self, op: IntentOp) -> np.ndarray:
+        if op.operands or set(op.attrs) not in ({"n"}, {"n", "dtype"}):
+            raise StructuredReferenceUnsupportedError(
+                "structured iota requires no operands and one closed extent"
+            )
+        expected = self._declared_type(self._result_name(op), op)
+        if expected is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured iota requires one closed result type"
+            )
+        expected_dtype, expected_shape = expected
+        raw_extent = op.attrs.get("n")
+        if isinstance(raw_extent, bool):
+            raise StructuredReferenceUnsupportedError(
+                "structured iota extent must be a closed integer or dimension"
+            )
+        if isinstance(raw_extent, int):
+            extent = raw_extent
+        elif isinstance(raw_extent, str) and raw_extent in self.dims:
+            extent = self.dims[raw_extent]
+        else:
+            raise StructuredReferenceUnsupportedError(
+                "structured iota extent must be a closed integer or dimension"
+            )
+        if extent < 0:
+            raise ValueError("structured iota extent must be non-negative")
+        if expected_shape != (extent,):
+            raise ValueError(
+                "structured iota result must be rank one with its declared extent"
+            )
+        attribute_dtype = op.attrs.get("dtype", expected_dtype)
+        if not isinstance(attribute_dtype, str):
+            raise StructuredReferenceUnsupportedError(
+                "structured iota dtype must be a closed string"
+            )
+        expected_numpy_dtype = numpy_dtype(expected_dtype)
+        if expected_numpy_dtype.kind not in {"i", "u"}:
+            raise StructuredReferenceUnsupportedError(
+                "structured iota result dtype must be a non-boolean integer"
+            )
+        if numpy_dtype(attribute_dtype) != expected_numpy_dtype:
+            raise ValueError(
+                "structured iota result dtype differs from its declared dtype"
+            )
+        return np.arange(extent, dtype=expected_numpy_dtype)
+
+    def _contraction(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if set(op.attrs) != {"subscripts"} or len(op.operands) != 2:
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction requires exactly two operands and one "
+                "subscripts relation"
+            )
+        result = self._result_name(op)
+        expected = self._declared_type(result, op)
+        if expected is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction requires one closed declared result type"
+            )
+        expected_dtype, expected_shape = expected
+        subscripts = op.attrs.get("subscripts")
+        if not isinstance(subscripts, str):
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction subscripts must be a closed string"
+            )
+        compact = "".join(subscripts.split())
+        parts = compact.split("->")
+        input_terms = parts[0].split(",") if len(parts) == 2 else []
+        if (
+            len(parts) != 2
+            or len(input_terms) != 2
+            or not all(_EINSUM_TERM.fullmatch(term) for term in input_terms)
+            or _EINSUM_TERM.fullmatch(parts[-1]) is None
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction requires the closed binary einsum grammar"
+            )
+        lhs_labels, rhs_labels = input_terms
+        output_labels = parts[1]
+        if len(set(output_labels)) != len(output_labels):
+            raise ValueError("structured contraction output labels must be unique")
+        if not set(output_labels).issubset(set(lhs_labels) | set(rhs_labels)):
+            raise ValueError(
+                "structured contraction output labels must occur in an input"
+            )
+
+        operands = [self._operand(op, env, index) for index in range(2)]
+        label_extents: dict[str, int] = {}
+        for index, (labels, value) in enumerate(
+            zip((lhs_labels, rhs_labels), operands, strict=True)
+        ):
+            if len(labels) != value.ndim:
+                raise ValueError(
+                    f"structured contraction operand {index} labels differ from "
+                    "its declared rank"
+                )
+            for label, extent in zip(labels, value.shape, strict=True):
+                previous = label_extents.get(label)
+                if previous is not None and previous != extent:
+                    raise ValueError(
+                        f"structured contraction label {label!r} has "
+                        "inconsistent extents"
+                    )
+                label_extents[label] = extent
+        inferred_shape = tuple(label_extents[label] for label in output_labels)
+        if inferred_shape != expected_shape:
+            raise ValueError(
+                "structured contraction declared result shape differs from "
+                "its subscripts"
+            )
+
+        result_dtype = numpy_dtype(expected_dtype)
+        operand_kinds = {value.dtype.kind for value in operands}
+        if result_dtype.kind == "f":
+            if not operand_kinds.issubset({"b", "i", "u", "f"}):
+                raise StructuredReferenceUnsupportedError(
+                    "structured floating contraction requires numeric operands"
+                )
+        elif result_dtype.kind in {"i", "u"}:
+            if not operand_kinds.issubset({"b", "i", "u"}):
+                raise StructuredReferenceUnsupportedError(
+                    "structured integer contraction cannot consume floating operands"
+                )
+        else:
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction result dtype must be numeric"
+            )
+        cast_operands = [
+            value.astype(result_dtype, copy=False) for value in operands
+        ]
+        try:
+            value = np.einsum(
+                compact,
+                cast_operands[0],
+                cast_operands[1],
+                optimize=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction dtype is unsupported by the closed "
+                "NumPy denotation"
+            ) from exc
+        value = np.asarray(value)
+        if value.dtype != result_dtype:
+            raise StructuredReferenceUnsupportedError(
+                "structured contraction did not preserve its declared result dtype"
+            )
+        return value
+
     def _ordinary(
         self,
         op: IntentOp,
@@ -492,6 +723,8 @@ class _Evaluator:
             return self._concat(op, env)
         if op.op == "gather":
             return self._gather(op, env)
+        if op.op == "iota":
+            return self._iota(op)
         if op.op == "map_binary":
             if set(op.attrs) != {"fn"} or len(op.operands) != 2:
                 raise StructuredReferenceUnsupportedError(
@@ -523,18 +756,7 @@ class _Evaluator:
         if op.op == "scan":
             return self._scan(op, env)
         if op.op == "contraction":
-            if set(op.attrs) != {"subscripts"} or len(op.operands) != 2:
-                raise StructuredReferenceUnsupportedError(
-                    "structured contraction requires one subscripts relation"
-                )
-            return np.asarray(
-                np.einsum(
-                    str(op.attrs["subscripts"]),
-                    self._operand(op, env, 0),
-                    self._operand(op, env, 1),
-                    optimize=False,
-                )
-            )
+            return self._contraction(op, env)
         if op.op == "select":
             if op.attrs or len(op.operands) != 3:
                 raise StructuredReferenceUnsupportedError(
@@ -768,7 +990,17 @@ def execute_structured_reference(
     j = elaborate_j(j)
     if not requires_structured_reference(j):
         raise StructuredReferenceUnsupportedError(
-            "structured reference requires at least one loop, scan, or tile"
+            "structured reference requires a structured op or a contraction "
+            "outside the scalar CPU capability"
+        )
+    unsupported = sorted(
+        {op.op for op in _walk_ops(j.intent.body)} - (_ORDINARY_OPS | {"loop"})
+    )
+    if unsupported:
+        raise StructuredReferenceUnsupportedError(
+            "structured reference graph contains IntentOp(s) outside its "
+            "closed operation table: "
+            + ", ".join(unsupported)
         )
     if len(inputs) != len(j.intent.inputs):
         raise ValueError("structured reference input arity differs from J")
