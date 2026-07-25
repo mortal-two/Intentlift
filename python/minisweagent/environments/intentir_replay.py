@@ -700,7 +700,7 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     timeout: int = 60
     replay_check_limit: int = 7
     replay_submission_check_limit: int = 1
-    replay_compile_check_limit: int = 4
+    replay_compile_check_limit: int = 7
 
 
 class IntentIRReplayEnvironment:

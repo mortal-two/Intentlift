@@ -304,7 +304,8 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert len(digest) == 64
     assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
     assert default_config["agent"].get("output_path") is None
-    assert default_config["agent"]["step_limit"] == 24
+    assert default_config["agent"]["step_limit"] == 40
+    assert default_config["environment"]["replay_compile_check_limit"] == 7
     assert default_config["model"]["retry_attempts"] == 3
 
 

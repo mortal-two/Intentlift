@@ -26,19 +26,22 @@ agent:
     be transport-elided. Construct complete Triton source in
     /output/replay.source early. Run bounded ReplayCheck, then the advisory
     compile check, make focused corrections yourself, rerun both after edits,
-    and submit. Do not create another file under
+    and submit. Produce a complete first source by turn 10. After every final
+    source edit, rerun ReplayCheck and the advisory compile check so an
+    already-reported frontend shape or syntax error is not knowingly
+    resubmitted. Do not create another file under
     /output. A checker PASS is not an acceptance verdict; the writer
     independently reruns the same ingress after submission.
-  step_limit: 24
+  step_limit: 40
   cost_limit: 0
   wall_time_limit_seconds: 1800
   max_consecutive_format_errors: 2
 model:
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 5 %}, "directive": "Finish the complete source, run ReplayCheck, repair static diagnostics, and submit now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
@@ -57,4 +60,4 @@ environment:
   timeout: 60
   replay_check_limit: 7
   replay_submission_check_limit: 1
-  replay_compile_check_limit: 4
+  replay_compile_check_limit: 7
