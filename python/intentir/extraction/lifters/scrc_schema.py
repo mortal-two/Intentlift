@@ -72,6 +72,20 @@ _PORTABLE_PREDICATE_STRING = {
         "program/grid/tile/lane coordinate construction."
     ),
 }
+_DIMENSION_CONSTRAINT_STRING = {
+    "type": "string",
+    "minLength": 1,
+    "description": (
+        "One boolean affine ContractExpr over declared x* dimensions. The "
+        "v4 checker accepts integer literals, +/-, constant multiplication, "
+        "comparisons, and conjunction. It rejects unknown references, "
+        "non-affine arithmetic, disjunction, and negation. This J-owned "
+        "legal-domain relation is never filled from a Harness valuation. "
+        "When Source exposes logical and rounded extents separately, declare "
+        "both x* handles and their relation instead of substituting the "
+        "current rounded integer."
+    ),
+}
 _STRING_ARRAY = _array(_STRING)
 _INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
 
@@ -86,7 +100,13 @@ def render_semantic_archive_wire_grammar() -> str:
         "by operations in that scope; a declared logical output is not a "
         "definition unless an operation really produces that same handle. "
         "captures and effects are likewise exact, with no convenience extras. "
-        "Every semantic loop has exactly one corresponding loop_region scope. "
+        "dimension_constraints explicitly declares the closed affine legal "
+        "domain of symbolic x* dimensions. Shape-dependent operations such "
+        "as pad must state symbolic lo/hi expressions such as x1-x0 in Layer A; "
+        "both dimensions remain declared when Source exposes both. Fixed code "
+        "only parses and proves the authored relation and never reads a "
+        "Harness dimension to repair it. Every semantic loop has exactly one "
+        "corresponding loop_region scope. "
         "The storage array may be empty: ordinary SSA temporaries do not have "
         "semantic storage or lifetime objects. Add StorageObject only when J "
         "semantics requires storage identity, such as an alias/destination or "
@@ -807,6 +827,9 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
                 "items": _portable_scope_schema(),
             },
             "storage": _array(_storage_schema()),
+            "dimension_constraints": _array(
+                _DIMENSION_CONSTRAINT_STRING
+            ),
         },
         SEMANTIC_ARCHIVE_WIRE_FIELDS,
         description=render_semantic_archive_wire_grammar(),

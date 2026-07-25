@@ -14,6 +14,11 @@ import re
 from typing import Any, Iterable, Mapping
 
 from intentir.ir.canonical_j import canonicalize_semantic_archive, j_elaboration
+from intentir.ir.dim_expr import (
+    DimExprError,
+    DimensionConstraintSet,
+    parse_affine_dim_expr,
+)
 from intentir.ir.functional_boundary import (
     functional_boundary_closure_issues,
     functional_reduction_padding_issues,
@@ -29,7 +34,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v8"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v9"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -74,6 +79,9 @@ class TypeCheckErrorCode(str, Enum):
     ITERATION_WITNESS_MISSING = "iteration_witness_missing"
     CONSUMER_EXTENSION_INVALID = "consumer_extension_invalid"
     CONSUMER_EXTENSION_MISSING = "consumer_extension_missing"
+    DIMENSION_CONSTRAINT_INVALID = "dimension_constraint_invalid"
+    PAD_SHAPE_INVALID = "pad_shape_invalid"
+    PAD_SHAPE_CONSTRAINT_MISSING = "pad_shape_constraint_missing"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
@@ -167,6 +175,184 @@ def _explicit_type(operation: Mapping[str, Any]) -> _ValueType | None:
     if not isinstance(dtype, str) or not isinstance(shape, list):
         return None
     return _ValueType(dtype, len(shape))
+
+
+def _declared_dimensions(j: SemanticArchive) -> frozenset[str]:
+    return frozenset(
+        dimension
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in tensor.shape
+        if isinstance(dimension, str) and re.fullmatch(r"x[0-9]+", dimension)
+    )
+
+
+def _check_dimension_and_pad_contracts(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Prove model-authored affine pad shapes without Harness valuations."""
+
+    dimensions = _declared_dimensions(j)
+    try:
+        constraints = DimensionConstraintSet.parse(
+            j.dimension_constraints,
+            dimensions=dimensions,
+        )
+    except DimExprError as exc:
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.DIMENSION_CONSTRAINT_INVALID,
+                "j.dimension_constraints",
+                str(exc),
+            )
+        )
+        return
+
+    value_types = j_elaboration(j).value_type_by_name
+    intent = j.intent.to_json()["intent_function"]
+    for operation_path, operation in _walk_operations(intent.get("body", [])):
+        if operation.get("op") != "pad":
+            continue
+        base = f"j.intent.intent_function.{operation_path}"
+        ref_value = operation.get("id")
+        ref = ref_value if isinstance(ref_value, str) else operation_path
+        attrs_value = operation.get("attrs")
+        attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+        operands = operation.get("operands")
+        result = operation.get("result")
+        if set(attrs) != {"lo", "hi", "value"}:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                    f"{base}.attrs",
+                    "pad requires exactly the closed attrs lo, hi, and value",
+                    ref,
+                )
+            )
+            continue
+        if (
+            not isinstance(operands, list)
+            or len(operands) != 1
+            or not isinstance(operands[0], str)
+            or not isinstance(result, str)
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                    f"{base}.operands",
+                    "pad requires exactly one typed operand and one result",
+                    ref,
+                )
+            )
+            continue
+        operand_type = value_types.get(operands[0])
+        result_type = value_types.get(result)
+        if operand_type is None or result_type is None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                    f"{base}.type",
+                    "pad operand and result require closed J value types",
+                    ref,
+                )
+            )
+            continue
+        if operand_type.dtype != result_type.dtype:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                    f"{base}.type.dtype",
+                    "pad preserves the operand dtype",
+                    ref,
+                )
+            )
+        lo = attrs.get("lo")
+        hi = attrs.get("hi")
+        rank = len(operand_type.shape)
+        if (
+            not isinstance(lo, list)
+            or not isinstance(hi, list)
+            or len(result_type.shape) != rank
+            or len(lo) != rank
+            or len(hi) != rank
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                    f"{base}.attrs",
+                    "pad lo/hi lengths and result rank must equal the operand rank",
+                    ref,
+                )
+            )
+            continue
+
+        for axis, (input_dim, low, high, output_dim) in enumerate(
+            zip(operand_type.shape, lo, hi, result_type.shape, strict=True)
+        ):
+            axis_path = f"{base}.attrs"
+            try:
+                input_form = parse_affine_dim_expr(
+                    input_dim,
+                    dimensions=dimensions,
+                    context=f"{base}.operand_shape[{axis}]",
+                )
+                low_form = parse_affine_dim_expr(
+                    low,
+                    dimensions=dimensions,
+                    context=f"{base}.attrs.lo[{axis}]",
+                )
+                high_form = parse_affine_dim_expr(
+                    high,
+                    dimensions=dimensions,
+                    context=f"{base}.attrs.hi[{axis}]",
+                )
+                output_form = parse_affine_dim_expr(
+                    output_dim,
+                    dimensions=dimensions,
+                    context=f"{base}.result_shape[{axis}]",
+                )
+            except DimExprError as exc:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                        axis_path,
+                        str(exc),
+                        ref,
+                    )
+                )
+                continue
+
+            expected = input_form.plus(
+                low_form, context=f"{base}.shape[{axis}]"
+            ).plus(high_form, context=f"{base}.shape[{axis}]")
+            if expected != output_form:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.PAD_SHAPE_INVALID,
+                        axis_path,
+                        "pad shape equation is not an affine identity: "
+                        f"input + lo + hi normalizes to {expected.to_text()!r}, "
+                        f"but result is {output_form.to_text()!r}",
+                        ref,
+                    )
+                )
+            for field, form in (("lo", low_form), ("hi", high_form)):
+                if constraints.proves_nonnegative(form):
+                    continue
+                code = (
+                    TypeCheckErrorCode.PAD_SHAPE_INVALID
+                    if form.is_constant
+                    else TypeCheckErrorCode.PAD_SHAPE_CONSTRAINT_MISSING
+                )
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        code,
+                        f"{base}.attrs.{field}[{axis}]",
+                        "pad extent is not mechanically proven non-negative "
+                        "by J.dimension_constraints",
+                        ref,
+                    )
+                )
 
 
 def _check_known_operation_contracts(
@@ -1474,11 +1660,14 @@ def _validate_consumer_path(
             or len(lo) != result_type.rank
             or len(hi) != result_type.rank
             or any(
-                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                isinstance(item, bool) or not isinstance(item, (int, str))
                 for item in [*lo, *hi]
             )
         ):
-            return "pad provenance requires non-negative lo/hi for every axis"
+            return (
+                "pad provenance requires closed affine lo/hi for every axis; "
+                "their shape and non-negativity are checked by Layer-A TypeCheck"
+            )
         if result_type.dtype != outside_dtype:
             return "pad result dtype differs from consumer outside dtype"
         if not _same_closed_scalar(attrs.get("value"), outside_value):
@@ -2097,6 +2286,7 @@ def type_check(
         return TypeCheckReport(TypeCheckStatus.FAIL, known_op_diagnostics)
 
     diagnostics: list[TypeCheckDiagnostic] = []
+    _check_dimension_and_pad_contracts(j, diagnostics)
     _check_total_j_value_typing(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     diagnostics.extend(

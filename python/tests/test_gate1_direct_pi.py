@@ -64,6 +64,7 @@ def test_artifact_v4_preserves_v3_v2_and_v1_legacy_contracts() -> None:
 
     legacy_v3 = copy.deepcopy(current)
     legacy_v3["schema"] = "intentir.scrc.artifact.v3"
+    del legacy_v3["j"]["dimension_constraints"]
     del legacy_v3["j"]["boundary"]["consumer_extensions"]
     del legacy_v3["pi"]["loop_carriers"]
     parsed_v3 = Gate1Artifact.from_json(legacy_v3)
@@ -139,6 +140,7 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
     if wire_schema != Gate1Artifact.SCHEMA:
+        del payload["j"]["dimension_constraints"]
         del payload["j"]["boundary"]["consumer_extensions"]
         del payload["pi"]["loop_carriers"]
     if wire_schema in {

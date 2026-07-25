@@ -15,6 +15,7 @@ from typing import Any, Mapping
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.verify.gate1.model import (
     AliasSpec,
     Gate1Artifact,
@@ -28,7 +29,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v4"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v5"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1224,6 +1225,33 @@ def _validate_compiler_view(
         elif slot is None or slot.kind is not ScheduleSlotKind.CONSTEXPR:
             raise ValueError("Lift omitted a pure-C constexpr slot")
     signature = {item.name: item for item in artifact.j.signature.parameters}
+    j_tensors = {
+        item.name: item
+        for item in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
+    }
+    dimensions: dict[str, int] = {}
+
+    def bind_dimension(name: str, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("J symbolic dimension requires an integer valuation")
+        previous = dimensions.setdefault(name, value)
+        if previous != value:
+            raise ValueError(f"J symbolic extent {name!r} is inconsistent")
+
+    def bind_shape(declared: list[int | str], actual: list[Any]) -> None:
+        if len(declared) != len(actual):
+            raise ValueError("J tensor rank differs from trusted compiler view")
+        for expected, extent in zip(declared, actual, strict=True):
+            if isinstance(extent, bool) or not isinstance(extent, int):
+                raise ValueError("trusted tensor extent must be an integer")
+            if isinstance(expected, int):
+                if expected != extent:
+                    raise ValueError(
+                        "J static tensor extent differs from trusted compiler view"
+                    )
+            else:
+                bind_dimension(expected, extent)
+
     for argument in anonymous_view["arguments"]:
         if argument["name"].startswith("c"):
             if argument["name"] not in slots:
@@ -1247,9 +1275,33 @@ def _validate_compiler_view(
             raise ValueError("Lift changed a trusted compiler argument dtype")
         if argument["kind"] == "tensor" and parameter.rank != len(argument["shape"]):
             raise ValueError("Lift changed a trusted compiler argument rank")
+        if argument["kind"] == "tensor" and parameter.logical_ref in j_tensors:
+            bind_shape(
+                j_tensors[parameter.logical_ref].shape,
+                argument["shape"],
+            )
+        if (
+            argument["kind"] == "scalar"
+            and isinstance(parameter.logical_ref, str)
+            and re.fullmatch(r"x[0-9]+", parameter.logical_ref)
+        ):
+            bind_dimension(parameter.logical_ref, argument.get("value"))
         expected_mode = argument.get("mode")
         if expected_mode is not None and parameter.mode.value != expected_mode:
             raise ValueError("Lift changed a trusted compiler argument mode")
+    for name, value in anonymous_view["bound_constexpr_values"].items():
+        parameter = signature.get(name)
+        if (
+            parameter is not None
+            and isinstance(parameter.logical_ref, str)
+            and re.fullmatch(r"x[0-9]+", parameter.logical_ref)
+        ):
+            bind_dimension(parameter.logical_ref, value)
+
+    try:
+        validate_dimension_instantiation(artifact.j, dimensions)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
     # Grid/source positions are Harness coordinates.  They are retained in the
     # extraction sidecar and deliberately absent from the proof artifact.
 

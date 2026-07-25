@@ -183,6 +183,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
         {"output": "y", "kind": "tolerance"}
     ]
     archive["boundary"]["consumer_extensions"] = []
+    archive["dimension_constraints"] = []
     return Gate1Artifact.from_json(
         {
             "schema": Gate1Artifact.SCHEMA,

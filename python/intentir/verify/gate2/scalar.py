@@ -19,6 +19,7 @@ from intentir.ir.canonical_j import (
     parse_contract_expr,
     parse_index_expression,
 )
+from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.functional_boundary import (
     parse_direct_axes,
     project_functional_boundary,
@@ -886,6 +887,7 @@ class ScalarLoweringSpec:
         object.__setattr__(self, "dims", _canonical_int_mapping(dims))
         object.__setattr__(self, "input_bindings", _canonical_str_mapping(inputs))
         object.__setattr__(self, "output_bindings", _canonical_str_mapping(outputs))
+        validate_dimension_instantiation(self.j, dims)
         expected_inputs = {item.name for item in self.j.intent.inputs}
         expected_outputs = {item.name for item in self.j.intent.outputs}
         if set(inputs) != expected_inputs:

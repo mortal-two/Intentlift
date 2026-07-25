@@ -41,7 +41,7 @@ GATE1_ARTIFACT_MODEL_FIELDS = (
     "pi",
 )
 GATE1_ARTIFACT_PRIVATE_FIELDS: tuple[str, ...] = ()
-SEMANTIC_ARCHIVE_WIRE_FIELDS = (
+SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS = (
     "kernel_id",
     "intent",
     "node_ids",
@@ -49,6 +49,10 @@ SEMANTIC_ARCHIVE_WIRE_FIELDS = (
     "signature",
     "scopes",
     "storage",
+)
+SEMANTIC_ARCHIVE_WIRE_FIELDS = (
+    *SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS,
+    "dimension_constraints",
 )
 BOUNDARY_LEGACY_WIRE_FIELDS = (
     "domains",
@@ -2700,6 +2704,7 @@ class SemanticArchive(StrictJSONMixin):
     signature: "LogicalSignature"
     scopes: list[PortableScope] = field(default_factory=list)
     storage: list[StorageObject] = field(default_factory=list)
+    dimension_constraints: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.kernel_id = _string(self.kernel_id, "SemanticArchive.kernel_id")
@@ -2747,6 +2752,17 @@ class SemanticArchive(StrictJSONMixin):
             item if isinstance(item, StorageObject) else StorageObject.from_json(item)
             for item in self.storage
         ]
+        if not isinstance(self.dimension_constraints, list):
+            raise SchemaError(
+                "SemanticArchive.dimension_constraints must be an array"
+            )
+        self.dimension_constraints = [
+            _string(
+                expression,
+                f"SemanticArchive.dimension_constraints[{index}]",
+            )
+            for index, expression in enumerate(self.dimension_constraints)
+        ]
         _validate_logical_signature(self)
         _validate_typed_boundary_relations(self)
         _validate_semantic_scopes_and_storage(self)
@@ -2757,7 +2773,7 @@ class SemanticArchive(StrictJSONMixin):
             value,
             path="SemanticArchive",
             allowed=set(SEMANTIC_ARCHIVE_WIRE_FIELDS),
-            required=set(SEMANTIC_ARCHIVE_WIRE_FIELDS),
+            required=set(SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS),
         )
         node_ids = _object(data["node_ids"], "SemanticArchive.node_ids")
         scopes = data.get("scopes", [])
@@ -2774,6 +2790,7 @@ class SemanticArchive(StrictJSONMixin):
             signature=LogicalSignature.from_json(data["signature"]),
             scopes=[PortableScope.from_json(item) for item in scopes],
             storage=[StorageObject.from_json(item) for item in storage],
+            dimension_constraints=data.get("dimension_constraints", []),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -2785,6 +2802,7 @@ class SemanticArchive(StrictJSONMixin):
             "signature": self.signature.to_json(),
             "scopes": [item.to_json() for item in self.scopes],
             "storage": [item.to_json() for item in self.storage],
+            "dimension_constraints": list(self.dimension_constraints),
         }
 
 
@@ -3541,6 +3559,10 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J consumer_extensions"
             )
+        if self.wire_schema != self.SCHEMA and self.j.dimension_constraints:
+            raise SchemaError(
+                "Gate1 artifact v1-v3 do not contain J dimension_constraints"
+            )
         if self.wire_schema == self.SCHEMA and any(
             item.masked_contribution is not None
             for item in self.j.boundary.reductions
@@ -3605,6 +3627,7 @@ class Gate1Artifact(StrictJSONMixin):
             and isinstance(data["j"].get("boundary"), dict)
             else None
         )
+        j_value = data["j"] if isinstance(data["j"], dict) else None
         if schema in {"intentir.scrc.artifact.v3", cls.SCHEMA} and (
             pi_value is not None and "iterations" not in pi_value
         ):
@@ -3619,6 +3642,11 @@ class Gate1Artifact(StrictJSONMixin):
                 "Gate1 artifact v1/v2 do not contain pi iterations"
             )
         if schema == cls.SCHEMA:
+            if j_value is not None and "dimension_constraints" not in j_value:
+                raise SchemaError(
+                    "Gate1Artifact.j is missing required field: "
+                    "dimension_constraints"
+                )
             if pi_value is not None and "loop_carriers" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: loop_carriers"
@@ -3632,6 +3660,11 @@ class Gate1Artifact(StrictJSONMixin):
                     "consumer_extensions"
                 )
         else:
+            if j_value is not None and "dimension_constraints" in j_value:
+                raise SchemaError(
+                    "Gate1 artifact v1-v3 do not contain J "
+                    "dimension_constraints"
+                )
             if pi_value is not None and "loop_carriers" in pi_value:
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain pi loop_carriers"
@@ -3658,6 +3691,7 @@ class Gate1Artifact(StrictJSONMixin):
         j_value = self.j.to_json()
         if self.wire_schema != self.SCHEMA:
             j_value["boundary"].pop("consumer_extensions", None)
+            j_value.pop("dimension_constraints", None)
         return {
             "schema": self.wire_schema,
             "j": j_value,
@@ -3744,6 +3778,8 @@ def _boundary_expression_fields(
     artifact: Gate1Artifact,
 ) -> list[tuple[str, str]]:
     fields: list[tuple[str, str]] = []
+    for index, expression in enumerate(artifact.j.dimension_constraints):
+        fields.append((expression, f"j.dimension_constraints[{index}]"))
     for index, expression in enumerate(artifact.j.boundary.domains.values()):
         fields.append((expression, f"j.boundary.domains[{index}]"))
     for index, access in enumerate(artifact.j.boundary.accesses):
@@ -4048,6 +4084,16 @@ def _opaque_intent_op(
     for key in ("attrs", "type"):
         if key in result:
             result[key] = _opaque_json_exact(result[key], aliases)
+    if result.get("op") == "pad" and isinstance(result.get("attrs"), dict):
+        for field in ("lo", "hi"):
+            values = result["attrs"].get(field)
+            if isinstance(values, list):
+                result["attrs"][field] = [
+                    _opaque_expression(value, aliases)
+                    if isinstance(value, str)
+                    else value
+                    for value in values
+                ]
     if "body" in result:
         result["body"] = [
             _opaque_intent_op(item, aliases) for item in result["body"]
@@ -4378,6 +4424,10 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 _opaque_storage_json(storage, aliases)
                 for storage in artifact.j.storage
             ],
+            "dimension_constraints": [
+                _opaque_expression(expression, aliases)
+                for expression in artifact.j.dimension_constraints
+            ],
         },
         "c": c_view,
         "pi": _opaque_pi_json(artifact.pi, aliases),
@@ -4700,6 +4750,9 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for item in artifact.j.storage
             ],
+            "dimension_constraints": [
+                "<masked>" for _ in artifact.j.dimension_constraints
+            ],
         },
         "c": opaque_c,
         "pi": _opaque_pi_json(artifact.pi, normal_aliases),
@@ -4726,7 +4779,8 @@ __all__ = [
     "render_boundary_access_wire_grammar",
     "render_gate1_artifact_envelope_grammar", "RuntimeArgument",
     "ScheduleSlot", "ScheduleSlotKind", "SchemaError", "SignatureParameter",
-    "ScopeKind", "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive",
+    "ScopeKind", "SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS",
+    "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive",
     "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
     "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",

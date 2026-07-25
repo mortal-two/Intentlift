@@ -74,7 +74,8 @@
         "effects": []
       }
     ],
-    "storage": []
+    "storage": [],
+    "dimension_constraints": []
   },
   "c": {
     "slots": [

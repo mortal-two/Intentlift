@@ -21,10 +21,14 @@ from intentir.verify.gate1.model import (
     EffectKind,
     EffectSpec,
     Gate1Artifact,
+    ParameterKind,
+    ParameterMode,
     SchemaError,
+    SignatureParameter,
     TypedOutsideValue,
 )
 from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
+from intentir.verify.gate2.scalar import ScalarLoweringSpec
 from intentir.verify.typecheck import (
     TYPECHECK_PROTOCOL,
     TypeCheckErrorCode,
@@ -43,6 +47,7 @@ def _codes(artifact: Gate1Artifact) -> set[TypeCheckErrorCode]:
 def _legacy_payload(version: int) -> dict:
     payload = make_copy_artifact().to_json()
     payload["schema"] = f"intentir.scrc.artifact.v{version}"
+    payload["j"].pop("dimension_constraints")
     payload["j"]["boundary"].pop("consumer_extensions")
     payload["pi"].pop("loop_carriers")
     if version < 3:
@@ -50,10 +55,11 @@ def _legacy_payload(version: int) -> dict:
     return payload
 
 
-def test_artifact_v4_requires_both_new_arrays_and_round_trips_them() -> None:
+def test_artifact_v4_requires_all_new_arrays_and_round_trips_them() -> None:
     payload = make_copy_artifact().to_json()
     assert payload["schema"] == "intentir.scrc.artifact.v4"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
+    assert payload["j"]["dimension_constraints"] == []
     assert payload["pi"]["loop_carriers"] == []
     assert Gate1Artifact.from_json(payload).to_json() == payload
 
@@ -63,6 +69,13 @@ def test_artifact_v4_requires_both_new_arrays_and_round_trips_them() -> None:
         SchemaError, match="missing required field: consumer_extensions"
     ):
         Gate1Artifact.from_json(missing_consumer)
+
+    missing_dimensions = copy.deepcopy(payload)
+    missing_dimensions["j"].pop("dimension_constraints")
+    with pytest.raises(
+        SchemaError, match="missing required field: dimension_constraints"
+    ):
+        Gate1Artifact.from_json(missing_dimensions)
 
     missing_carriers = copy.deepcopy(payload)
     missing_carriers["pi"].pop("loop_carriers")
@@ -76,7 +89,15 @@ def test_artifact_v1_v3_round_trip_exactly_without_v4_fields(version: int) -> No
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
     assert parsed.j.boundary.consumer_extensions == []
+    assert parsed.j.dimension_constraints == []
     assert parsed.pi.loop_carriers == []
+
+    with_dimensions = copy.deepcopy(payload)
+    with_dimensions["j"]["dimension_constraints"] = []
+    with pytest.raises(
+        SchemaError, match="v1-v3 do not contain J dimension_constraints"
+    ):
+        Gate1Artifact.from_json(with_dimensions)
 
     with_consumer = copy.deepcopy(payload)
     with_consumer["j"]["boundary"]["consumer_extensions"] = []
@@ -110,6 +131,7 @@ def test_static_v4_schema_requires_new_arrays_and_forbids_old_reduction_field() 
         )
     )
     assert "consumer_extensions" in boundary_schema["required"]
+    assert "dimension_constraints" in schema["properties"]["j"]["required"]
     assert "loop_carriers" in schema["properties"]["pi"]["required"]
 
     old_reduction = copy.deepcopy(payload["j"]["boundary"]["reductions"][0])
@@ -177,7 +199,7 @@ def _insert_pad_before_reduce(artifact: Gate1Artifact, *, op_name: str = "pad") 
             "op": op_name,
             "result": "v1",
             "operands": ["v0"],
-            "attrs": {"lo": [0, 0], "hi": [0, 1], "value": 0}
+            "attrs": {"lo": [0, 0], "hi": [0, 0], "value": 0}
             if op_name == "pad"
             else {},
             "type": {"dtype": "f32", "shape": ["x0", "x1"]},
@@ -186,6 +208,207 @@ def _insert_pad_before_reduce(artifact: Gate1Artifact, *, op_name: str = "pad") 
     artifact.j.intent.body.insert(1, pad)
     artifact.j.intent.body[2].operands = ["v1"]
     artifact.j.node_ids = {"n0": "body[0]", "n2": "body[1]", "n1": "body[2]"}
+
+
+def _make_affine_pad_artifact(
+    *,
+    high: int | str = "x1 - x0",
+    constraints: list[str] | None = None,
+    output_dim: int | str = "x1",
+) -> Gate1Artifact:
+    artifact = make_copy_artifact()
+    artifact.j.intent.outputs[0].shape = [output_dim]
+    artifact.j.intent.body[0] = IntentOp.from_json(
+        {
+            "id": "n0",
+            "op": "pad",
+            "result": "t1",
+            "operands": ["t0"],
+            "attrs": {"lo": [0], "hi": [high], "value": 0},
+            "type": {"dtype": "f32", "shape": [output_dim]},
+        }
+    )
+    artifact.j.dimension_constraints = list(
+        ["x0 <= x1"] if constraints is None else constraints
+    )
+    if output_dim == "x1":
+        artifact.j.signature.parameters.append(
+            SignatureParameter(
+                "p3",
+                ParameterKind.SCALAR,
+                ParameterMode.VALUE,
+                "i32",
+                logical_ref="x1",
+            )
+        )
+    return artifact
+
+
+@pytest.mark.parametrize(
+    ("high", "constraint"),
+    [
+        ("x1 - x0", "x0 <= x1"),
+        ("x1 + -(x0)", "x1 - x0 >= 0"),
+        ("x1 - 1 * x0", "x0 <= x1"),
+    ],
+)
+def test_v4_affine_pad_shape_is_proved_symbolically(
+    high: str, constraint: str
+) -> None:
+    artifact = _make_affine_pad_artifact(
+        high=high,
+        constraints=[constraint],
+    )
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    encoded = artifact.to_json()
+    assert encoded["j"]["dimension_constraints"] == [constraint]
+    assert Gate1Artifact.from_json(encoded).to_json() == encoded
+
+
+def test_v4_affine_grammar_also_accepts_a_static_constant_bound() -> None:
+    artifact = _make_affine_pad_artifact(
+        high="64 - x0",
+        constraints=["x0 <= 64"],
+        output_dim=64,
+    )
+
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+
+def test_v4_pad_rejects_harness_specialized_literal_shape_equation() -> None:
+    artifact = _make_affine_pad_artifact(high=31)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.PAD_SHAPE_INVALID in _codes(artifact)
+    assert any(
+        "not an affine identity" in item.detail for item in report.diagnostics
+    )
+
+
+def test_v4_pad_requires_an_authored_nonnegative_dimension_constraint() -> None:
+    artifact = _make_affine_pad_artifact(constraints=[])
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.PAD_SHAPE_CONSTRAINT_MISSING in _codes(artifact)
+    assert any(
+        item.path.endswith("attrs.hi[0]") for item in report.diagnostics
+    )
+
+
+@pytest.mark.parametrize("high", ["x1 - x9", "x0 * x0", "ceil_div(x1, x0)"])
+def test_v4_pad_rejects_unknown_or_non_affine_dimension_expressions(
+    high: str,
+) -> None:
+    artifact = _make_affine_pad_artifact(high=high)
+
+    assert TypeCheckErrorCode.PAD_SHAPE_INVALID in _codes(artifact)
+
+
+@pytest.mark.parametrize(
+    "constraints",
+    [
+        ["x9 <= 64"],
+        ["x0 * x0 <= 64"],
+        ["x0 <= 64 or x0 == 128"],
+        ["x0 <= 64", "x0 >= 65"],
+    ],
+)
+def test_v4_rejects_unclosed_or_unsatisfiable_dimension_constraints(
+    constraints: list[str],
+) -> None:
+    artifact = _make_affine_pad_artifact(constraints=constraints)
+
+    assert TypeCheckErrorCode.DIMENSION_CONSTRAINT_INVALID in _codes(artifact)
+
+
+def _affine_pad_compiler_view(extent: int, rounded_extent: int = 64) -> dict:
+    return {
+        "schedule_values": {"c0": 1024},
+        "bound_constexpr_values": {},
+        "compiler_slots": [],
+        "compiler_roles": {},
+        "aliases": [],
+        "arguments": [
+            {
+                "name": "p0",
+                "kind": "tensor",
+                "dtype": "f32",
+                "shape": [extent],
+                "mode": "input",
+            },
+            {
+                "name": "p1",
+                "kind": "tensor",
+                "dtype": "f32",
+                "shape": [rounded_extent],
+                "mode": "output",
+            },
+            {
+                "name": "p2",
+                "kind": "scalar",
+                "dtype": "i32",
+                "value": extent,
+                "mode": "value",
+            },
+            {
+                "name": "p3",
+                "kind": "scalar",
+                "dtype": "i32",
+                "value": rounded_extent,
+                "mode": "value",
+            },
+        ],
+        "grid": [],
+        "grid_contract": [],
+        "parameter_order": ["p0", "p1", "p2", "p3", "c0"],
+        "constexpr_parameters": ["c0"],
+    }
+
+
+def test_candidate_check_rejects_public_dimension_outside_j_constraints() -> None:
+    artifact = _make_affine_pad_artifact()
+    accepted = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json(), sort_keys=True),
+        SCRCCandidateCheckContext(
+            ("p0", "p1", "p2", "p3"),
+            anonymous_compiler_view=_affine_pad_compiler_view(63),
+        ),
+    )
+    rejected = check_scrc_lift_candidate(
+        json.dumps(artifact.to_json(), sort_keys=True),
+        SCRCCandidateCheckContext(
+            ("p0", "p1", "p2", "p3"),
+            anonymous_compiler_view=_affine_pad_compiler_view(65),
+        ),
+    )
+
+    assert accepted["status"] == "pass", accepted
+    assert rejected["status"] == "fail"
+    assert rejected["diagnostics"][0]["rule_code"] == "decode_rejected"
+    assert "violates J.dimension_constraints" in rejected["diagnostics"][0][
+        "observed_refs_or_types"
+    ][0]
+
+    spec = ScalarLoweringSpec.create(
+        artifact.j,
+        dims={"x0": 63, "x1": 64},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    assert spec.dims_map == {"x0": 63, "x1": 64}
+
+    with pytest.raises(ValueError, match="violates J.dimension_constraints"):
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 65, "x1": 64},
+            input_bindings={"t0": "input"},
+            output_bindings={"t1": "output"},
+        )
 
 
 def test_consumer_extension_provenance_crosses_closed_pad() -> None:
@@ -606,7 +829,7 @@ def test_loop_carrier_wire_rejects_unknown_fields_and_reused_state_result_slots(
         RealizationWitness.from_json(payload)
 
 
-def test_candidate_check_uses_v4_v8_and_reports_missing_consumer_relation() -> None:
+def test_candidate_check_uses_v4_v9_and_reports_missing_consumer_relation() -> None:
     artifact = make_reduce_artifact()
     context = SCRCCandidateCheckContext(("p0", "p1", "p2"))
 
@@ -621,8 +844,8 @@ def test_candidate_check_uses_v4_v8_and_reports_missing_consumer_relation() -> N
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v4"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v8"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v5"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v9"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"
