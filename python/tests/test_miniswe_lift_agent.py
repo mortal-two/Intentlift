@@ -131,7 +131,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v29"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v30"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -186,6 +186,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "one Layer-A `effect_if`, not a value `select`" in preflight
     assert "positive and negative arms are both explicit" in preflight
     assert "matching `EffectSpec.access_ref` are the only membership" in preflight
+    assert "one-arm early return" in preflight
+    assert "entire lexical continuation" in preflight
     assert "one Layer-A `value_if`, not a `select` or `effect_if`" in preflight
     assert "`{scope_id,body,yield_value}` arms" in preflight
     assert "no access/effect, unknown op, or nested" in preflight

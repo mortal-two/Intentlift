@@ -161,6 +161,13 @@ the artifact schema or external TypeCheck.
    it never copies predicate or polarity. CandidateCheck only rejects missing or
    contradictory authorship and never inserts an arm, scope, predicate, polarity,
    or select.
+   For a Source one-arm early return, preserve control without inventing a return
+   op: the returning arm contains exactly its pre-return computations/effects,
+   the sibling arm contains the entire lexical continuation that Source executes
+   only when it does not return, and no copy of that continuation remains after
+   the `effect_if`. Multiple sequential early returns become nested typed
+   controls in the continuing arm. Never flatten this into unconditional
+   effects, a select, or a parent continuation shared by both outcomes.
 13. A Source `scf.if` that yields one value is one Layer-A `value_if`, not a
    `select` or `effect_if`. Author its visible scalar-`i1` predicate, one result
    with a closed type, and explicit positive/negative
