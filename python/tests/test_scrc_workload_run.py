@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -19,7 +20,7 @@ from intentir.verify.gate1.orchestrate import (
     Gate1ExecutionResult,
     canonical_artifact_digest,
 )
-from intentir.verify.gate1.replay import ReplayGeneration
+from intentir.verify.gate1.replay import ReplayAttempt, ReplayGeneration
 from intentir.verify.gate2.model import (
     ExecutionResult,
     Gate2Result,
@@ -37,14 +38,17 @@ from intentir.verify.scrc_runner import (
 )
 from intentir.verify.scrc_workload_run import (
     GATE1_DIAGNOSTIC_RECHECK_PROTOCOL,
+    WorkloadExecutionError,
     build_workload_gate2_suite,
     classify_scrc_report,
     initialize_workload_gate1_recheck_evidence,
+    initialize_workload_evidence,
     next_candidate_fanout_dir,
     next_gate1_recheck_dir,
     next_workload_run_dir,
     recheck_prepared_workload_gate1,
     save_workload_gate1_recheck,
+    save_workload_failure,
     scrc_attempt_stage_counts,
     scrc_report_diagnostic,
     validate_workload_gate1_recheck_parent,
@@ -98,6 +102,32 @@ def test_evidence_directory_allocation_is_atomic_for_one_case(tmp_path) -> None:
     assert len(set(run_dirs)) == len(run_dirs)
     assert len(set(fanout_dirs)) == len(fanout_dirs)
     assert len(set(recheck_dirs)) == len(recheck_dirs)
+
+
+def test_request_evidence_records_independent_lift_and_replay_backends(
+    tmp_path,
+) -> None:
+    prepared = prepare_triton_workload(
+        next(iter(TRITON_WORKLOAD_ADAPTERS.values()))
+    )
+    run_dir = next_workload_run_dir(tmp_path, prepared.entry.case_id)
+    provider = ProviderConfig(
+        "provider", "https://provider.invalid/v1", "key", "model"
+    )
+
+    initialize_workload_evidence(
+        run_dir,
+        prepared,
+        provider=provider,
+        effort="high",
+        run_masked_j=True,
+        lift_backend="responses",
+        replay_backend="miniswe",
+    )
+
+    request = json.loads((run_dir / "request.json").read_text())
+    assert request["lift_backend"] == "responses"
+    assert request["replay_backend"] == "miniswe"
 
 
 def _write_recheck_parent_lineage(
@@ -312,6 +342,55 @@ def test_fixed_artifact_recheck_stops_at_same_typecheck_before_provider(
     assert result.replay_writer is None
 
 
+def test_replay_backend_is_independent_and_new_per_formal_round(
+    monkeypatch,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "key", "model"
+    )
+    created: list[object] = []
+
+    class FakeMiniReplayWriter:
+        def __init__(self, *, provider, effort):
+            self.provider = provider
+            self.effort = effort
+            self.records = ()
+            created.append(self)
+
+    monkeypatch.setattr(
+        workload_run,
+        "MiniSWEReplayWriter",
+        FakeMiniReplayWriter,
+    )
+    prepared = SimpleNamespace(
+        compiler_view=None,
+        entry=SimpleNamespace(symbol="source_symbol"),
+    )
+    runner, _lift, writers = workload_run._build_workload_runtime(
+        prepared,
+        provider=provider,
+        effort="xhigh",
+        lift_backend="responses",
+        replay_backend="miniswe",
+    )
+
+    first = runner.dependencies.gate1_factory(1)
+    second = runner.dependencies.gate1_factory(2)
+
+    assert first is not second
+    assert writers == created
+    assert len({id(writer) for writer in writers}) == 2
+    assert all(writer.provider is provider for writer in writers)
+    with pytest.raises(ValueError, match="unknown Replay backend"):
+        workload_run._new_replay_writer(
+            "lift-backend-name-is-not-replay",
+            provider=provider,
+            effort=None,
+        )
+
+
 def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
     tmp_path,
 ) -> None:
@@ -325,8 +404,15 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
     typecheck = __import__(
         "intentir.verify.typecheck", fromlist=["type_check"]
     ).type_check(artifact.j, artifact.c, artifact.pi)
+    trajectory = {"info": {"api_key": "<redacted>", "fresh_session": True}}
+    trajectory_bytes = json.dumps(
+        trajectory,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
     generation = ReplayGeneration(
-        code="import triton\n",
+        code="normalized replay\n",
         function_name="scrc_k0",
         model="test-model",
         response_id="response-1",
@@ -334,6 +420,12 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
         prompt_digest="prompt",
         request_sha256="request",
         response_sha256="response",
+        raw_response_sha256=hashlib.sha256(trajectory_bytes).hexdigest(),
+        raw_response=trajectory_bytes,
+        response_text="exact submitted replay\n",
+        trajectory=trajectory,
+        backend_protocol="minisweagent.intentir-replay.v1",
+        episode_contract_sha256="e" * 64,
     )
     gate1 = SimpleNamespace(
         protocol="llm_direct_pi_gate1_level2_v1",
@@ -364,6 +456,7 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
         provider=provider,
         effort="xhigh",
         parent_evidence=parent,
+        replay_backend="miniswe",
     )
     save_workload_gate1_recheck(recheck_dir, prepared, result)
 
@@ -376,12 +469,180 @@ def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
     assert metadata["changes_prior_verdict"] is False
     assert metadata["parent_evidence"] == str(parent.resolve())
     assert metadata["artifact_digest"] == result.artifact_digest
+    request = json.loads((recheck_dir / "request.json").read_text())
+    assert request["replay_backend"] == "miniswe"
     assert (recheck_dir / "artifact.json").is_file()
     assert (recheck_dir / "typecheck.json").is_file()
     assert (recheck_dir / "gate1.json").is_file()
     assert (recheck_dir / "replay.py").is_file()
     assert (recheck_dir / "replay_receipt.json").is_file()
+    assert (recheck_dir / "replay.py").read_text() == (
+        "exact submitted replay\n"
+    )
+    assert (recheck_dir / "replay_normalized.py").read_text() == (
+        "normalized replay\n"
+    )
+    receipt = json.loads((recheck_dir / "replay_receipt.json").read_text())
+    assert receipt["backend_protocol"] == "minisweagent.intentir-replay.v1"
+    assert receipt["episode_contract_sha256"] == "e" * 64
+    assert json.loads((recheck_dir / "replay_trajectory.json").read_text()) == (
+        trajectory
+    )
     assert not (parent / "gate1.json").exists()
+
+
+def test_infrastructure_replay_evidence_saves_exact_sources_receipts_and_hashes(
+    tmp_path,
+) -> None:
+    def trajectory_record(label: str) -> tuple[dict, bytes, str]:
+        trajectory = {
+            "info": {
+                "api_key": "<redacted>",
+                "fresh_session": True,
+                "label": label,
+            }
+        }
+        encoded = json.dumps(
+            trajectory,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()
+        return trajectory, encoded, hashlib.sha256(encoded).hexdigest()
+
+    normal_trajectory, normal_raw, normal_digest = trajectory_record("normal")
+    masked_trajectory, masked_raw, masked_digest = trajectory_record("masked")
+    generation = ReplayGeneration(
+        code="normalized normal\n",
+        function_name="scrc_k0",
+        model="model",
+        response_id="normal-id",
+        packet_digest="packet",
+        prompt_digest="prompt",
+        response_text="exact normal submission\n",
+        raw_response_sha256=normal_digest,
+        raw_response=normal_raw,
+        trajectory=normal_trajectory,
+        backend_protocol="minisweagent.intentir-replay.v1",
+        episode_contract_sha256="a" * 64,
+    )
+    rejected = ReplayAttempt(
+        model="model",
+        diagnostic="closed rejection",
+        response_text="exact masked rejection\n",
+        response_id="masked-id",
+        raw_response_sha256=masked_digest,
+        raw_response=masked_raw,
+        trajectory=masked_trajectory,
+        backend_protocol="minisweagent.intentir-replay.v1",
+        episode_contract_sha256="b" * 64,
+    )
+    lift = SimpleNamespace(records=())
+    writer = SimpleNamespace(records=(generation, rejected))
+    lifecycle_dir = tmp_path / "lifecycle"
+    lifecycle_dir.mkdir()
+    attempt = SimpleNamespace(
+        formal_round=1,
+        artifact=None,
+        typecheck=None,
+        gate1=SimpleNamespace(
+            normal=SimpleNamespace(generation=generation),
+            masked_j=SimpleNamespace(generation=None),
+            to_json=lambda: {"status": "masked_rejected"},
+        ),
+    )
+    import intentir.verify.scrc_workload_run as workload_run
+
+    workload_run._save_attempt_evidence(
+        lifecycle_dir,
+        (attempt,),
+        lift,
+        (writer,),
+    )
+    attempt_dir = lifecycle_dir / "attempt-01"
+    assert (attempt_dir / "replay.py").read_text() == (
+        "exact normal submission\n"
+    )
+    assert (attempt_dir / "masked_j_replay_rejected.txt").read_text() == (
+        "exact masked rejection\n"
+    )
+    assert (attempt_dir / "replay_receipt.json").is_file()
+    assert (attempt_dir / "masked_j_replay_receipt.json").is_file()
+    assert (attempt_dir / "replay_trajectory.json").is_file()
+    assert (attempt_dir / "masked_j_replay_trajectory.json").is_file()
+
+    runtime = WorkloadExecutionError(
+        RuntimeError("infrastructure stopped"),
+        lift,
+        (writer,),
+    )
+    run_dir = tmp_path / "infrastructure"
+    run_dir.mkdir()
+
+    save_workload_failure(run_dir, runtime, runtime=runtime)
+
+    replay_dir = run_dir / "gate1-call-01"
+    assert (replay_dir / "replay.py").read_text() == (
+        "exact normal submission\n"
+    )
+    assert (replay_dir / "replay_normalized.py").read_text() == (
+        "normalized normal\n"
+    )
+    assert (replay_dir / "masked_j_replay_rejected.txt").read_text() == (
+        "exact masked rejection\n"
+    )
+    for prefix, digest in (("replay", "a" * 64), ("masked_j_replay", "b" * 64)):
+        receipt = json.loads(
+            (replay_dir / f"{prefix}_receipt.json").read_text()
+        )
+        assert receipt["backend_protocol"] == (
+            "minisweagent.intentir-replay.v1"
+        )
+        assert receipt["episode_contract_sha256"] == digest
+        assert (replay_dir / f"{prefix}_trajectory.json").is_file()
+
+
+def test_replay_evidence_rejects_trajectory_hash_or_secret_before_source_write(
+    tmp_path,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    trajectory = {"info": {"api_key": "<redacted>"}}
+    record = ReplayAttempt(
+        model="model",
+        diagnostic="rejected",
+        response_text="must not be written",
+        raw_response_sha256="0" * 64,
+        trajectory=trajectory,
+    )
+    with pytest.raises(ValueError, match="canonical hash"):
+        workload_run._save_replay_record_evidence(
+            tmp_path,
+            prefix="replay",
+            exact_source_name="replay_rejected.txt",
+            record=record,
+        )
+    assert not (tmp_path / "replay_rejected.txt").exists()
+
+    encoded = json.dumps(
+        {"info": {"api_key": "not-redacted"}},
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+    unredacted = replace(
+        record,
+        trajectory={"info": {"api_key": "not-redacted"}},
+        raw_response_sha256=hashlib.sha256(encoded).hexdigest(),
+        raw_response=encoded,
+    )
+    with pytest.raises(ValueError, match="unredacted secret"):
+        workload_run._save_replay_record_evidence(
+            tmp_path,
+            prefix="masked_j_replay",
+            exact_source_name="masked_j_replay_rejected.txt",
+            record=unredacted,
+        )
 
 
 def _budget() -> CallBudget:

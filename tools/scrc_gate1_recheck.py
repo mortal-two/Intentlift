@@ -49,6 +49,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument(
+        "--replay-backend",
+        choices=("responses", "miniswe"),
+        default="responses",
+    )
+    parser.add_argument(
         "--run-root",
         type=Path,
         default=Path("/tmp/intentir-scrc-task11/fixed-gate1-rechecks"),
@@ -129,12 +134,14 @@ def main(argv: list[str] | None = None) -> int:
             provider=provider,
             effort=args.effort,
             parent_evidence=parent,
+            replay_backend=args.replay_backend,
         )
         result = recheck_prepared_workload_gate1(
             prepared,
             artifact,
             provider=provider,
             effort=args.effort,
+            replay_backend=args.replay_backend,
         )
         save_workload_gate1_recheck(recheck_dir, prepared, result)
     except Exception as exc:
@@ -157,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_path": str(recheck_dir),
         "artifact_digest": result.artifact_digest,
         "typecheck_status": result.typecheck.status.value,
+        "replay_backend": args.replay_backend,
         "status": status,
     }
     _emit(payload, output=args.output, json_mode=args.json)

@@ -31,6 +31,8 @@ from .tilelang_codegen import extract_tilelang_module
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v1"
+RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
+STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v1"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
@@ -55,6 +57,8 @@ class ReplayGeneration:
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    backend_protocol: str = RESPONSES_REPLAY_BACKEND
+    episode_contract_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,8 @@ class ReplayAttempt:
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    backend_protocol: str = RESPONSES_REPLAY_BACKEND
+    episode_contract_sha256: str = ""
 
 
 class ReplayGenerationError(RuntimeError):
@@ -84,6 +90,11 @@ class ReplayWriter(Protocol):
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration: ...
+
+
+class RecordedReplayWriter(ReplayWriter, Protocol):
+    @property
+    def records(self) -> tuple[ReplayGeneration | ReplayAttempt, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -648,12 +659,22 @@ class MiniSWEReplayWriter:
             from minisweagent.run.intentir_replay import (
                 IntentIRReplayRunError,
                 create_intentir_replay_model,
+                intentir_replay_episode_contract_sha256,
                 run_intentir_replay,
+                validated_intentir_replay_config,
             )
         except ImportError as exc:
             raise RuntimeError(
                 "MiniSWE Replay backend requires the lift-agent dependencies"
             ) from exc
+
+        effective_worker_config = validated_intentir_replay_config(
+            self.worker_config
+        )
+        episode_contract_sha256 = intentir_replay_episode_contract_sha256(
+            files,
+            effective_worker_config,
+        )
 
         # This exact callable is used by every virtual check and once again by
         # the writer after submission. It has no compiler or Source dependency.
@@ -717,9 +738,47 @@ class MiniSWEReplayWriter:
                 attempts=result.model_calls,
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
+                backend_protocol=MINISWE_REPLAY_BACKEND,
+                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
+        except Exception as exc:
+            infrastructure_trajectory = {
+                "info": {
+                    "backend": MINISWE_REPLAY_BACKEND,
+                    "fresh_session": True,
+                    "exit_status": "InfrastructureError",
+                    "exception_type": type(exc).__name__,
+                }
+            }
+            raw_trajectory = _trajectory_bytes(infrastructure_trajectory)
+            attempt = ReplayAttempt(
+                model=provider.model,
+                diagnostic=(
+                    "Replay infrastructure failure: " + type(exc).__name__
+                ),
+                response_text=(
+                    result.source_text
+                    if result is not None and result.source_text is not None
+                    else ""
+                ),
+                request_sha256=prompt_digest,
+                response_sha256=(
+                    hashlib.sha256(result.source_text.encode()).hexdigest()
+                    if result is not None and result.source_text is not None
+                    else ""
+                ),
+                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
+                raw_response=raw_trajectory,
+                attempts=result.model_calls if result is not None else 0,
+                elapsed_ms=result.elapsed_ms if result is not None else 0.0,
+                trajectory=infrastructure_trajectory,
+                backend_protocol=MINISWE_REPLAY_BACKEND,
+                episode_contract_sha256=episode_contract_sha256,
+            )
+            self._records.append(attempt)
+            raise
         finally:
             workspace.cleanup()
 
@@ -751,6 +810,8 @@ class MiniSWEReplayWriter:
                 attempts=result.model_calls,
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
+                backend_protocol=MINISWE_REPLAY_BACKEND,
+                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt)
@@ -774,6 +835,7 @@ class MiniSWEReplayWriter:
                 ),
                 "formal_ingress_recheck": True,
                 "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
+                "episode_contract_sha256": episode_contract_sha256,
             }
         )
         generation = ReplayGeneration(
@@ -797,6 +859,8 @@ class MiniSWEReplayWriter:
             attempts=result.model_calls,
             elapsed_ms=result.elapsed_ms,
             trajectory=safe_trajectory,
+            backend_protocol=MINISWE_REPLAY_BACKEND,
+            episode_contract_sha256=episode_contract_sha256,
         )
         self._records.append(generation)
         return generation
@@ -836,12 +900,14 @@ class StaticReplayWriter:
                 (instructions + "\0" + user).encode()
             ).hexdigest(),
             context_receipt=_context_receipt({}, packet.get("u_f", {})),
+            backend_protocol=STATIC_REPLAY_BACKEND,
         )
 
 
 __all__ = [
-    "MINISWE_REPLAY_BACKEND", "MiniSWEReplayWriter", "ReplayAttempt",
-    "ReplayGeneration", "ReplayGenerationError", "ReplayIngressResult",
-    "ReplayWriter", "ResponsesReplayWriter", "StaticReplayWriter",
-    "replay_source_ingress",
+    "MINISWE_REPLAY_BACKEND", "RESPONSES_REPLAY_BACKEND",
+    "STATIC_REPLAY_BACKEND", "MiniSWEReplayWriter", "RecordedReplayWriter",
+    "ReplayAttempt", "ReplayGeneration", "ReplayGenerationError",
+    "ReplayIngressResult", "ReplayWriter", "ResponsesReplayWriter",
+    "StaticReplayWriter", "replay_source_ingress",
 ]

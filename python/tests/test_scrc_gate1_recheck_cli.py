@@ -119,6 +119,8 @@ def test_cli_rechecks_one_fixed_artifact_in_new_diagnostic_evidence(
             "test-provider",
             "--effort",
             "xhigh",
+            "--replay-backend",
+            "miniswe",
             "--json",
         ]
     )
@@ -131,10 +133,13 @@ def test_cli_rechecks_one_fixed_artifact_in_new_diagnostic_evidence(
     assert payload["changes_prior_verdict"] is False
     assert payload["status"] == "replay_closed"
     assert payload["artifact_digest"] == "artifact-digest"
+    assert payload["replay_backend"] == "miniswe"
     assert calls["case"] == case_id
     assert calls["validated"][0] == parent.resolve()
     assert calls["recheck"][2]["effort"] == "xhigh"
+    assert calls["recheck"][2]["replay_backend"] == "miniswe"
     assert calls["initialized"][2]["parent_evidence"] == parent.resolve()
+    assert calls["initialized"][2]["replay_backend"] == "miniswe"
     assert calls["saved"][2] is result
 
 

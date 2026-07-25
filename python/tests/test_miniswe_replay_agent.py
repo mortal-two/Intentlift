@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import base64
+import copy
+import hashlib
 import json
-import os
 
 import pytest
 
@@ -22,10 +22,16 @@ from minisweagent.environments.intentir_replay import (
     INTENTIR_REPLAY_SUBMIT,
     REPLAY_CHECK_PROTOCOL,
     REPLAY_INPUT_FILES,
+    REPLAY_SANDBOX_HOSTNAME,
+    REPLAY_TOOL_APPLETS,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
 )
-from minisweagent.run.intentir_replay import run_intentir_replay
+from minisweagent.run.intentir_replay import (
+    intentir_replay_episode_contract_sha256,
+    run_intentir_replay,
+    validated_intentir_replay_config,
+)
 
 
 VALID_REPLAY = """import triton
@@ -90,8 +96,8 @@ class _ScriptedModel:
 
 
 def _write_source(source: str) -> str:
-    encoded = base64.b64encode(source.encode()).decode()
-    return f"printf '%s' '{encoded}' | base64 -d > /output/replay.source"
+    escaped = source.replace("'", "'\\''")
+    return f"printf '%s' '{escaped}' > /output/replay.source"
 
 
 def _workspace() -> IntentIRReplayWorkspace:
@@ -129,6 +135,52 @@ def test_replay_input_is_exact_source_isolated_allowlist() -> None:
         IntentIRReplayWorkspace.create({**files, "source.py": "forbidden"})
 
 
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"agent": {"output_path": "/tmp/trajectory.json"}},
+        {"agent": {"system_template": "replace policy"}},
+        {"environment": {"executable": "/bin/bash"}},
+        {"environment": {"env": {"SECRET": "leak"}}},
+        {"environment": {"input_dir": "/host"}},
+        {"model": {"api_key": "leak"}},
+    ],
+)
+def test_worker_overrides_reject_templates_paths_tools_and_secrets(
+    override,
+) -> None:
+    with pytest.raises(ValueError, match="forbidden"):
+        validated_intentir_replay_config(override)
+
+
+def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None:
+    files, _, _ = _replay_input_files(
+        make_reduce_artifact(), frontend=Frontend.TRITON, masked=False
+    )
+    default_config = validated_intentir_replay_config()
+    bounded_config = validated_intentir_replay_config(
+        {"agent": {"step_limit": 15}}
+    )
+    digest = intentir_replay_episode_contract_sha256(files, default_config)
+    changed_budget = intentir_replay_episode_contract_sha256(
+        files, bounded_config
+    )
+    changed_files = dict(files)
+    changed_files["TOOL.md"] += "\n"
+    changed_tool = intentir_replay_episode_contract_sha256(
+        changed_files, default_config
+    )
+    changed_prompt_config = copy.deepcopy(default_config)
+    changed_prompt_config["agent"]["instance_template"] += "\nchanged"
+    changed_prompt = intentir_replay_episode_contract_sha256(
+        files, changed_prompt_config
+    )
+
+    assert len(digest) == 64
+    assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
+    assert default_config["agent"].get("output_path") is None
+
+
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
     artifact = make_reduce_artifact()
 
@@ -163,7 +215,7 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
     }
 
 
-def test_replay_sandbox_exposes_only_allowlisted_read_only_input_and_no_network(
+def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("INTENTIR_REPLAY_SECRET", "must-not-enter")
@@ -173,18 +225,22 @@ def test_replay_sandbox_exposes_only_allowlisted_read_only_input_and_no_network(
         output_dir=workspace.output_dir,
         scratch_dir=workspace.scratch_dir,
     )
-    host_net_namespace = os.readlink("/proc/self/ns/net")
     try:
         result = environment.execute(
             {
                 "command": (
-                    "find /input -type f -printf '%P\\n' | sort; "
+                    "set -e; "
+                    "test ! -e /proc; test ! -e /usr; test ! -e /etc; "
+                    "test ! -e /lib; "
+                    "test ! -e /lib64; test ! -e /usr/local; "
                     "test ! -w /input/packet.json; "
                     "test ! -e /home/kingdom; "
                     "test -z \"${INTENTIR_REPLAY_SECRET+x}\"; "
-                    "python -c 'import importlib.util; "
-                    "assert importlib.util.find_spec(\"intentir\") is None'; "
-                    "readlink /proc/self/ns/net"
+                    "for name in python python3 gcc g++ clang ld as nvcc "
+                    "ptxas triton torch intentir; do ! command -v \"$name\"; done; "
+                    "find /input -type f | sed 's#^/input/#I:#' | sort; "
+                    "find /bin -type f | sed 's#^/bin/#T:#' | sort; "
+                    "printf 'H:%s\\n' \"$(hostname)\""
                 )
             }
         )
@@ -193,13 +249,16 @@ def test_replay_sandbox_exposes_only_allowlisted_read_only_input_and_no_network(
 
     assert result["returncode"] == 0, result
     lines = result["output"].splitlines()
-    assert set(lines[:-1]) == {
-        "README.md",
-        "REPLAY_CONTRACT.md",
-        "TOOL.md",
-        "packet.json",
-    }
-    assert lines[-1] != host_net_namespace
+    assert {line.removeprefix("I:") for line in lines if line.startswith("I:")} == (
+        REPLAY_INPUT_FILES
+    )
+    assert {line.removeprefix("T:") for line in lines if line.startswith("T:")} == set(
+        REPLAY_TOOL_APPLETS
+    )
+    assert f"H:{REPLAY_SANDBOX_HOSTNAME}" in lines
+    serialized = environment.serialize()["info"]["config"]["environment"]
+    assert serialized["network"] == "new-unshared-namespace-host-probed"
+    assert serialized["proc"] == "not-mounted"
 
 
 def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
@@ -220,8 +279,9 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
             workspace=workspace,
             replay_checker=lambda source: replay_source_ingress(
                 source, artifact=artifact, frontend=Frontend.TRITON
-            ).to_check_response(),
-        )
+                ).to_check_response(),
+            )
+        assert not tuple(workspace.scratch_dir.rglob("*"))
     finally:
         workspace.cleanup()
 
@@ -373,8 +433,23 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
     assert normal.attempts == 3
     assert normal.context_receipt["replay_check"]["evaluations"] == 1
     assert normal.context_receipt["packet_digest"] == normal.packet_digest
+    assert normal.context_receipt["episode_contract_sha256"] == (
+        normal.episode_contract_sha256
+    )
+    assert len(normal.episode_contract_sha256) == 64
+    assert normal.backend_protocol == MINISWE_REPLAY_BACKEND
     assert secret not in json.dumps(normal.trajectory)
     assert normal.trajectory["info"]["config"]["api_key"] == "<redacted>"
+    canonical_trajectory = json.dumps(
+        normal.trajectory,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+    assert normal.raw_response == canonical_trajectory
+    assert normal.raw_response_sha256 == hashlib.sha256(
+        canonical_trajectory
+    ).hexdigest()
     assert set(captured_files[0]) == set(captured_files[1]) == set(
         captured_files[2]
     ) == {
@@ -394,6 +469,11 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
         assert secret not in json.dumps(files, default=str)
         assert "trajectory" not in files["packet.json"]
     assert next_formal_round.context_receipt["fresh_session"] is True
+    assert normal.episode_contract_sha256 != masked.episode_contract_sha256
+    assert (
+        next_formal_round.episode_contract_sha256
+        == normal.episode_contract_sha256
+    )
 
     def keys(value):
         if isinstance(value, dict):

@@ -86,6 +86,17 @@ def _certified_execution():
     return SimpleNamespace(report=report)
 
 
+def test_batch_cli_has_independent_replay_backend_switch() -> None:
+    selected = scrc_batch._parser().parse_args(
+        ["--list", "--lift-backend", "responses", "--replay-backend", "miniswe"]
+    )
+    defaults = scrc_batch._parser().parse_args(["--list"])
+
+    assert selected.lift_backend == "responses"
+    assert selected.replay_backend == "miniswe"
+    assert defaults.replay_backend == "responses"
+
+
 def _install_live_batch_fakes(monkeypatch, *, search, complete):
     import intentir.extraction.providers.provider as provider_module
     import intentir.verify.scrc_workload_run as workload_module
@@ -381,12 +392,14 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
+        replay_backend,
         stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
         assert effort == "xhigh"
         assert run_masked_j
         assert lift_backend == "responses"
+        assert replay_backend == "miniswe"
         assert stop_requested is None
         assert progress_callback is not None
         barrier.wait()
@@ -415,12 +428,14 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         effort,
         run_masked_j,
         lift_backend,
+        replay_backend,
         search_metadata,
     ):
         assert run_dir.is_dir()
         assert provider.name == "test-provider"
         assert run_masked_j
         assert lift_backend == "responses"
+        assert replay_backend == "miniswe"
         assert search_metadata["candidate_count"] == 5
         assert search_metadata["protocol"] == (
             "intentir.scrc.candidate-fanout.v3"
@@ -458,6 +473,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "5",
             "--effort",
             "xhigh",
+            "--replay-backend",
+            "miniswe",
             "--run-root",
             str(tmp_path / "runs"),
             "--json",
@@ -491,6 +508,40 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         "saved_search": 4,
         "initialized_efforts": ["xhigh"] * 5,
     }
+
+
+def test_batch_cli_single_branch_threads_replay_backend(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def search(_prepared, **kwargs):
+        seen.append((kwargs["lift_backend"], kwargs["replay_backend"]))
+        return _closed_search()
+
+    entries = _install_live_batch_fakes(
+        monkeypatch,
+        search=search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            entries[0].case_id,
+            "--lift-backend",
+            "responses",
+            "--replay-backend",
+            "miniswe",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    capsys.readouterr()
+    assert seen == [("responses", "miniswe")]
 
 
 def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(

@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
-import site
 import stat
+import struct
 import subprocess
 import tempfile
 import time
@@ -15,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from minisweagent.exceptions import Submitted
 
@@ -25,6 +24,60 @@ INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v1"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
+)
+REPLAY_SANDBOX_PROTOCOL = "intentir.replay-busybox-empty-root.v1"
+REPLAY_SANDBOX_HOSTNAME = "intentir-replay"
+REPLAY_BWRAP = Path("/usr/bin/bwrap")
+REPLAY_BUSYBOX = Path("/usr/bin/busybox")
+REPLAY_TOOL_APPLETS = (
+    "awk",
+    "basename",
+    "cat",
+    "cmp",
+    "cp",
+    "cut",
+    "dd",
+    "diff",
+    "dirname",
+    "echo",
+    "env",
+    "expr",
+    "false",
+    "find",
+    "grep",
+    "head",
+    "hexdump",
+    "hostname",
+    "ln",
+    "ls",
+    "mkdir",
+    "mktemp",
+    "mv",
+    "od",
+    "printf",
+    "pwd",
+    "readlink",
+    "realpath",
+    "rm",
+    "rmdir",
+    "sed",
+    "seq",
+    "sh",
+    "sha256sum",
+    "sleep",
+    "sort",
+    "stat",
+    "tail",
+    "tee",
+    "test",
+    "timeout",
+    "touch",
+    "tr",
+    "true",
+    "uniq",
+    "wc",
+    "which",
+    "xargs",
 )
 MAX_REPLAY_BYTES = 1024 * 1024
 MAX_ACTION_OUTPUT_BYTES = 1024 * 1024
@@ -84,6 +137,40 @@ def _closed_failure(rule_code: str, *, path: str = "<replay>") -> dict[str, Any]
             }
         ],
     }
+
+
+def _is_static_elf(path: Path) -> bool:
+    """Return true only for an ELF executable without a PT_INTERP header."""
+
+    with path.open("rb") as stream:
+        header = stream.read(64)
+        if len(header) < 52 or header[:4] != b"\x7fELF":
+            return False
+        elf_class = header[4]
+        byte_order = header[5]
+        endian = "<" if byte_order == 1 else ">" if byte_order == 2 else ""
+        if not endian:
+            return False
+        if elf_class == 2:
+            program_offset = struct.unpack_from(endian + "Q", header, 32)[0]
+            entry_size = struct.unpack_from(endian + "H", header, 54)[0]
+            entry_count = struct.unpack_from(endian + "H", header, 56)[0]
+        elif elf_class == 1:
+            program_offset = struct.unpack_from(endian + "I", header, 28)[0]
+            entry_size = struct.unpack_from(endian + "H", header, 42)[0]
+            entry_count = struct.unpack_from(endian + "H", header, 44)[0]
+        else:
+            return False
+        if entry_size < 4 or entry_count > 4096:
+            return False
+        for index in range(entry_count):
+            stream.seek(program_offset + index * entry_size)
+            entry = stream.read(entry_size)
+            if len(entry) != entry_size:
+                return False
+            if struct.unpack_from(endian + "I", entry)[0] == 3:
+                return False
+    return True
 
 
 @dataclass
@@ -163,6 +250,8 @@ class IntentIRReplayWorkspace:
 
 
 class IntentIRReplayEnvironmentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     input_dir: Path
     output_dir: Path
     scratch_dir: Path
@@ -170,13 +259,6 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     timeout: int = 60
     replay_check_limit: int = 7
     replay_submission_check_limit: int = 1
-    executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
-    env: dict[str, str] = {
-        "HOME": "/tmp",
-        "LANG": "C.UTF-8",
-        "LC_ALL": "C.UTF-8",
-        "PATH": "/usr/local/bin:/usr/sbin:/usr/bin:/bin",
-    }
 
 
 class IntentIRReplayEnvironment:
@@ -229,46 +311,108 @@ class IntentIRReplayEnvironment:
 
     def _base_command(self) -> list[str]:
         command = [
-            self.config.executable,
+            str(REPLAY_BWRAP),
             "--unshare-all",
             "--unshare-user-try",
             "--die-with-parent",
             "--new-session",
             "--clearenv",
+            "--hostname",
+            REPLAY_SANDBOX_HOSTNAME,
+            "--tmpfs",
+            "/",
+            "--dir",
+            "/bin",
         ]
-        for system_path in ("/usr", "/bin", "/lib", "/lib64", "/etc"):
-            command.extend(["--ro-bind-try", system_path, system_path])
-        # The model may use the system Python for local text editing, but it may
-        # not import host IntentIR validators or compiler wrappers.
-        for package_root in site.getsitepackages():
-            package = (Path(package_root) / "intentir").resolve()
-            if package.is_dir() and str(package).startswith(("/usr/", "/lib/", "/lib64/")):
-                command.extend(["--tmpfs", str(package), "--remount-ro", str(package)])
+        # Only these entrypoint names are mounted. BusyBox remains a multicall
+        # binary and could be copied/renamed inside a writable bind; the hard
+        # boundary is therefore the empty rootfs, absent host tools/data, clear
+        # environment, and new network/PID namespaces—not an applet claim.
+        for applet in REPLAY_TOOL_APPLETS:
+            command.extend(
+                ["--ro-bind", str(REPLAY_BUSYBOX), f"/bin/{applet}"]
+            )
         command.extend(
             [
-                "--proc", "/proc",
-                "--dev", "/dev",
-                "--ro-bind", str(self.config.input_dir), "/input",
-                "--bind", str(self.config.output_dir), "/output",
-                "--bind", str(self.config.scratch_dir), "/work",
-                "--bind", str(self.config.tmp_dir), "/tmp",
-                "--chdir", "/work",
-                "--remount-ro", "/dev",
-                "--remount-ro", "/",
+                "--dev",
+                "/dev",
+                "--ro-bind",
+                str(self.config.input_dir),
+                "/input",
+                "--bind",
+                str(self.config.output_dir),
+                "/output",
+                "--bind",
+                str(self.config.scratch_dir),
+                "/work",
+                "--bind",
+                str(self.config.tmp_dir),
+                "/tmp",
+                "--chdir",
+                "/work",
+                "--remount-ro",
+                "/dev",
+                "--remount-ro",
+                "/",
+                "--setenv",
+                "HOME",
+                "/tmp",
+                "--setenv",
+                "LANG",
+                "C",
+                "--setenv",
+                "LC_ALL",
+                "C",
+                "--setenv",
+                "PATH",
+                "/bin",
+                "--setenv",
+                "TMPDIR",
+                "/tmp",
             ]
         )
-        for key, value in self.config.env.items():
-            command.extend(["--setenv", key, value])
         return command
 
     def _probe(self) -> None:
-        if shutil.which(self.config.executable) is None:
-            raise RuntimeError("IntentIR Replay requires bubblewrap (bwrap)")
+        if (
+            REPLAY_BWRAP.is_symlink()
+            or not REPLAY_BWRAP.is_file()
+            or REPLAY_BUSYBOX.is_symlink()
+            or not REPLAY_BUSYBOX.is_file()
+            or not _is_static_elf(REPLAY_BUSYBOX)
+        ):
+            raise RuntimeError("IntentIR Replay requires static /usr/bin/busybox")
+        busybox_applets = set(
+            subprocess.run(
+                [str(REPLAY_BUSYBOX), "--list"],
+                check=True,
+                stdout=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            ).stdout.splitlines()
+        )
+        missing_applets = sorted(set(REPLAY_TOOL_APPLETS) - busybox_applets)
+        if missing_applets:
+            raise RuntimeError(
+                "IntentIR Replay BusyBox lacks required entrypoints: "
+                + ", ".join(missing_applets)
+            )
         command = self._base_command() + [
-            "/bin/bash", "--noprofile", "--norc", "-c",
+            "/bin/sh",
+            "-c",
             (
-                "python -c 'import importlib.util,sys; "
-                "sys.exit(importlib.util.find_spec(\"intentir\") is not None)'"
+                "test \"$(hostname)\" "
+                f"= {REPLAY_SANDBOX_HOSTNAME}; "
+                "test ! -e /proc; "
+                "test ! -e /usr; test ! -e /etc; test ! -e /lib; "
+                "test ! -e /lib64; test ! -e /usr/local; "
+                "for name in python python3 gcc g++ clang ld as nvcc ptxas "
+                "triton torch intentir; do ! command -v \"$name\"; done; "
+                "test \"$(find /input -type f | wc -l)\" -eq 4; "
+                "test \"$(find /input -type f | sed 's#^/input/##' | sort | "
+                "sha256sum | cut -d' ' -f1)\" = "
+                "$(printf '%s\\n' README.md REPLAY_CONTRACT.md TOOL.md "
+                "packet.json | sort | sha256sum | cut -d' ' -f1)"
             ),
         ]
         try:
@@ -288,6 +432,47 @@ class IntentIRReplayEnvironment:
                 "bubblewrap Replay isolation probe failed"
                 + (f": {diagnostic}" if diagnostic else "")
             )
+        namespace_probe = subprocess.Popen(
+            self._base_command()
+            + [
+                "/bin/sh",
+                "-c",
+                "printf 'ready\\n'; sleep 2",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            if namespace_probe.stdout is None:
+                raise RuntimeError("Replay network namespace probe has no output")
+            if namespace_probe.stdout.readline().strip() != "ready":
+                raise RuntimeError("Replay network namespace probe did not start")
+            host_namespace = os.readlink("/proc/self/ns/net")
+            pending = [namespace_probe.pid]
+            observed_namespaces: set[str] = set()
+            while pending:
+                pid = pending.pop()
+                try:
+                    observed_namespaces.add(
+                        os.readlink(f"/proc/{pid}/ns/net")
+                    )
+                    children = Path(
+                        f"/proc/{pid}/task/{pid}/children"
+                    ).read_text(encoding="utf-8")
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                pending.extend(int(item) for item in children.split())
+            if not (observed_namespaces - {host_namespace}):
+                raise RuntimeError("Replay sandbox did not unshare the network")
+            self._network_namespace_probed = True
+        finally:
+            namespace_probe.terminate()
+            try:
+                namespace_probe.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                namespace_probe.kill()
+                namespace_probe.wait(timeout=5)
 
     def _read_check_target(self, path: str) -> tuple[bytes, str]:
         target = (
@@ -476,14 +661,17 @@ class IntentIRReplayEnvironment:
             return self._execute_replay_check(check_arguments)
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
-            "ulimit -t 60 -f 8192 -n 64 -u 128 -v 524288; "
+            "ulimit -t 60 -f 8192 -n 64 -p 128 -v 524288; "
             "set -o pipefail; "
-            f"/bin/bash --noprofile --norc -c \"$1\" 2>&1 | "
-            f"/usr/bin/head -c {MAX_ACTION_OUTPUT_BYTES}"
+            f"/bin/sh -c \"$1\" 2>&1 | "
+            f"/bin/head -c {MAX_ACTION_OUTPUT_BYTES}"
         )
         invocation = self._base_command() + [
-            "/bin/bash", "--noprofile", "--norc", "-c", bounded_shell,
-            "intentir-replay-action", command,
+            "/bin/sh",
+            "-c",
+            bounded_shell,
+            "intentir-replay-action",
+            command,
         ]
         process: subprocess.Popen[bytes] | None = None
         limit_error = ""
@@ -615,10 +803,15 @@ class IntentIRReplayEnvironment:
             "info": {
                 "config": {
                     "environment": {
-                        "sandbox": "intentir-replay-bubblewrap-v1",
-                        "network": "unshared",
+                        "sandbox": REPLAY_SANDBOX_PROTOCOL,
+                        "hostname": REPLAY_SANDBOX_HOSTNAME,
+                        "network": "new-unshared-namespace-host-probed",
+                        "proc": "not-mounted",
                         "input": "read-only-allowlist",
                         "output": "replay-source-only",
+                        "mounted_busybox_entrypoints": list(
+                            REPLAY_TOOL_APPLETS
+                        ),
                         "replay_check_shared_limit": self.config.replay_check_limit,
                         "replay_check_submission_reserve": (
                             self.config.replay_submission_check_limit

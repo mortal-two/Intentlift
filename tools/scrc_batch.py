@@ -460,7 +460,13 @@ def _parser() -> argparse.ArgumentParser:
         "--lift-backend",
         choices=("responses", "miniswe"),
         default="responses",
-        help="candidate Lift implementation; Replay remains source-blind Responses",
+        help="candidate Lift implementation; independent from Replay backend",
+    )
+    parser.add_argument(
+        "--replay-backend",
+        choices=("responses", "miniswe"),
+        default="responses",
+        help="source-blind Replay implementation; independent from Lift backend",
     )
     parser.add_argument(
         "--candidates",
@@ -797,6 +803,7 @@ def main(argv: list[str] | None = None) -> int:
                 effort=args.effort,
                 run_masked_j=not args.skip_masked_j,
                 lift_backend=args.lift_backend,
+                replay_backend=args.replay_backend,
             )
             callback = progress.callback(entry.case_id, entry.ordinal, 1)
             try:
@@ -806,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
+                    replay_backend=args.replay_backend,
                     progress_callback=callback,
                 )
             except Exception as exc:
@@ -946,6 +954,7 @@ def main(argv: list[str] | None = None) -> int:
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
+                    replay_backend=args.replay_backend,
                     search_metadata={
                         "protocol": CANDIDATE_FANOUT_PROTOCOL,
                         "branch_id": branch_id,
@@ -971,6 +980,7 @@ def main(argv: list[str] | None = None) -> int:
                         effort=args.effort,
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
+                        replay_backend=args.replay_backend,
                         progress_callback=callback,
                     )
                 except Exception as exc:
@@ -1112,6 +1122,8 @@ def main(argv: list[str] | None = None) -> int:
                 winner_result=(
                     winner_result.to_json() if winner_result is not None else None
                 ),
+                lift_backend=args.lift_backend,
+                replay_backend=args.replay_backend,
             )
             return case_result
 

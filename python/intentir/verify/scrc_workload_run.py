@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -34,6 +35,8 @@ from intentir.verify.gate1.orchestrate import (
     canonical_artifact_digest,
 )
 from intentir.verify.gate1.replay import (
+    MiniSWEReplayWriter,
+    RecordedReplayWriter,
     ReplayAttempt,
     ReplayGeneration,
     ResponsesReplayWriter,
@@ -73,6 +76,21 @@ RecordedLiftAdapter = ResponsesSCRCLiftAdapter | MiniSWELiftAdapter
 GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
     "intentir.scrc.gate1-diagnostic-recheck.v1"
 )
+
+
+def _new_replay_writer(
+    replay_backend: str,
+    *,
+    provider: ProviderConfig,
+    effort: str | None,
+) -> RecordedReplayWriter:
+    """Create one writer for exactly one formal Gate1 round."""
+
+    if replay_backend == "responses":
+        return ResponsesReplayWriter(provider=provider, effort=effort)
+    if replay_backend == "miniswe":
+        return MiniSWEReplayWriter(provider=provider, effort=effort)
+    raise ValueError(f"unknown Replay backend: {replay_backend!r}")
 
 
 def _numpy_dtype(dtype: str) -> np.dtype[Any]:
@@ -493,7 +511,7 @@ def scrc_attempt_stage_counts(
 class WorkloadExecution:
     report: SCRCRunReport
     lift: RecordedLiftAdapter
-    replay_writers: tuple[ResponsesReplayWriter, ...]
+    replay_writers: tuple[RecordedReplayWriter, ...]
 
 
 @dataclass(frozen=True)
@@ -501,7 +519,7 @@ class WorkloadGate1Search:
     report: SCRCGate1SearchReport
     runner: SCRCGateRunner
     lift: RecordedLiftAdapter
-    replay_writers: tuple[ResponsesReplayWriter, ...]
+    replay_writers: tuple[RecordedReplayWriter, ...]
 
 
 @dataclass(frozen=True)
@@ -516,7 +534,7 @@ class WorkloadGate1Recheck:
     artifact_digest: str
     typecheck: TypeCheckReport
     gate1: Gate1ExecutionResult | None
-    replay_writer: ResponsesReplayWriter | None
+    replay_writer: RecordedReplayWriter | None
     protocol: str = GATE1_DIAGNOSTIC_RECHECK_PROTOCOL
     diagnostic_only: bool = True
 
@@ -530,7 +548,7 @@ class WorkloadExecutionError(RuntimeError):
         self,
         cause: BaseException,
         lift: RecordedLiftAdapter,
-        replay_writers: tuple[ResponsesReplayWriter, ...],
+        replay_writers: tuple[RecordedReplayWriter, ...],
     ) -> None:
         self.cause = cause
         self.lift = lift
@@ -546,6 +564,7 @@ def recheck_prepared_workload_gate1(
     *,
     provider: ProviderConfig,
     effort: str | None = None,
+    replay_backend: str = "responses",
 ) -> WorkloadGate1Recheck:
     """Re-run normal Gate1 for one fixed artifact without Lift or Gate2.
 
@@ -567,7 +586,11 @@ def recheck_prepared_workload_gate1(
             None,
         )
 
-    writer = ResponsesReplayWriter(provider=provider, effort=effort)
+    writer = _new_replay_writer(
+        replay_backend,
+        provider=provider,
+        effort=effort,
+    )
     gate1 = BoundGate1Adapter(
         Gate1Runner(
             compiler=TritonCompiler(timeout=240.0),
@@ -595,7 +618,8 @@ def _build_workload_runtime(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
-) -> tuple[SCRCGateRunner, RecordedLiftAdapter, list[ResponsesReplayWriter]]:
+    replay_backend: str = "responses",
+) -> tuple[SCRCGateRunner, RecordedLiftAdapter, list[RecordedReplayWriter]]:
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
         lift_class = ResponsesSCRCLiftAdapter
@@ -609,11 +633,15 @@ def _build_workload_runtime(
         effort=effort,
         source_symbol=prepared.entry.symbol,
     )
-    writers: list[ResponsesReplayWriter] = []
+    writers: list[RecordedReplayWriter] = []
     compiler = TritonCompiler(timeout=240.0)
 
     def gate1_factory(_formal_round: int) -> BoundGate1Adapter:
-        writer = ResponsesReplayWriter(provider=provider, effort=effort)
+        writer = _new_replay_writer(
+            replay_backend,
+            provider=provider,
+            effort=effort,
+        )
         writers.append(writer)
         return BoundGate1Adapter(
             Gate1Runner(
@@ -640,6 +668,7 @@ def search_prepared_workload_gate1(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    replay_backend: str = "responses",
     stop_requested: Callable[[], int | None] | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadGate1Search:
@@ -651,6 +680,7 @@ def search_prepared_workload_gate1(
         effort=effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
+        replay_backend=replay_backend,
     )
     try:
         report = runner.search_gate1(
@@ -689,6 +719,7 @@ def execute_prepared_workload(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    replay_backend: str = "responses",
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadExecution:
     """Run one independent real case through the canonical full lifecycle."""
@@ -699,6 +730,7 @@ def execute_prepared_workload(
         effort=effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
+        replay_backend=replay_backend,
         progress_callback=progress_callback,
     )
     if search.report.closed:
@@ -883,6 +915,7 @@ def initialize_workload_gate1_recheck_evidence(
     provider: ProviderConfig,
     effort: str | None,
     parent_evidence: str | Path,
+    replay_backend: str = "responses",
 ) -> None:
     """Initialize an immutable diagnostic recheck directory.
 
@@ -921,6 +954,7 @@ def initialize_workload_gate1_recheck_evidence(
             "provider": provider.name,
             "model": provider.model,
             "reasoning_effort": effort or provider.reasoning_effort,
+            "replay_backend": replay_backend,
             "frontend": prepared.entry.frontend,
             "observer_profile": prepared.entry.observer_profile,
             "c0": prepared.request.binding.values,
@@ -939,6 +973,7 @@ def initialize_workload_evidence(
     effort: str | None,
     run_masked_j: bool,
     lift_backend: str = "responses",
+    replay_backend: str = "responses",
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     (run_dir / "source.py").write_text(
@@ -958,6 +993,7 @@ def initialize_workload_evidence(
         "model": provider.model,
         "reasoning_effort": effort or provider.reasoning_effort,
         "lift_backend": lift_backend,
+        "replay_backend": replay_backend,
         "frontend": prepared.entry.frontend,
         "observer_profile": prepared.entry.observer_profile,
         "q_policy": prepared.entry.q_policy,
@@ -974,6 +1010,8 @@ def initialize_workload_evidence(
 def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
     result: dict[str, Any] = {
         "recorded": True,
+        "backend_protocol": record.backend_protocol,
+        "episode_contract_sha256": record.episode_contract_sha256,
         "model": record.model,
         "response_model": record.response_model,
         "response_id": record.response_id,
@@ -1002,6 +1040,92 @@ def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
             }
         )
     return result
+
+
+_TRAJECTORY_SECRET_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "access_token",
+        "refresh_token",
+        "password",
+        "secret",
+    }
+)
+
+
+def _canonical_replay_trajectory_bytes(
+    trajectory: Mapping[str, Any],
+) -> bytes:
+    return json.dumps(
+        trajectory,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _assert_sanitized_replay_trajectory(
+    value: Any,
+    *,
+    key: str = "",
+) -> None:
+    normalized = key.casefold().replace("-", "_")
+    if (
+        normalized in _TRAJECTORY_SECRET_KEYS
+        or normalized.endswith("_api_key")
+    ) and value != "<redacted>":
+        raise ValueError("Replay trajectory contains an unredacted secret field")
+    if isinstance(value, Mapping):
+        for item_key, item in value.items():
+            _assert_sanitized_replay_trajectory(item, key=str(item_key))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _assert_sanitized_replay_trajectory(item)
+
+
+def _verified_replay_trajectory_bytes(
+    record: ReplayGeneration | ReplayAttempt,
+) -> bytes | None:
+    if not record.trajectory:
+        return None
+    _assert_sanitized_replay_trajectory(record.trajectory)
+    encoded = _canonical_replay_trajectory_bytes(record.trajectory)
+    digest = hashlib.sha256(encoded).hexdigest()
+    if digest != record.raw_response_sha256:
+        raise ValueError(
+            "Replay trajectory canonical hash differs from raw_response_sha256"
+        )
+    if record.raw_response and record.raw_response != encoded:
+        raise ValueError("Replay raw_response differs from canonical trajectory bytes")
+    return encoded
+
+
+def _save_replay_record_evidence(
+    directory: Path,
+    *,
+    prefix: str,
+    exact_source_name: str,
+    record: ReplayGeneration | ReplayAttempt,
+) -> None:
+    """Persist exact source, one canonical receipt, and verified trajectory."""
+
+    trajectory_bytes = _verified_replay_trajectory_bytes(record)
+    (directory / exact_source_name).write_text(
+        record.response_text,
+        encoding="utf-8",
+    )
+    if isinstance(record, ReplayGeneration) and record.code != record.response_text:
+        (directory / f"{prefix}_normalized.py").write_text(
+            record.code,
+            encoding="utf-8",
+        )
+    _write_json(directory / f"{prefix}_receipt.json", _replay_receipt(record))
+    if trajectory_bytes is not None:
+        # Write the parsed sanitized value only after its canonical byte hash has
+        # been bound to the record receipt.
+        _write_json(directory / f"{prefix}_trajectory.json", record.trajectory)
 
 
 def save_workload_gate1_recheck(
@@ -1042,15 +1166,19 @@ def save_workload_gate1_recheck(
     if record is None and result.gate1 is not None:
         record = result.gate1.normal.generation
     if isinstance(record, ReplayGeneration):
-        (recheck_dir / "replay.py").write_text(
-            record.code, encoding="utf-8"
+        _save_replay_record_evidence(
+            recheck_dir,
+            prefix="replay",
+            exact_source_name="replay.py",
+            record=record,
         )
-        _write_json(recheck_dir / "replay_receipt.json", _replay_receipt(record))
     elif isinstance(record, ReplayAttempt):
-        (recheck_dir / "replay_rejected.txt").write_text(
-            record.response_text, encoding="utf-8"
+        _save_replay_record_evidence(
+            recheck_dir,
+            prefix="replay",
+            exact_source_name="replay_rejected.txt",
+            record=record,
         )
-        _write_json(recheck_dir / "replay_receipt.json", _replay_receipt(record))
     else:
         _write_json(
             recheck_dir / "replay_receipt.json",
@@ -1157,7 +1285,7 @@ def _save_attempt_evidence(
     run_dir: Path,
     attempts: tuple[Any, ...],
     lift: RecordedLiftAdapter,
-    replay_writers: tuple[ResponsesReplayWriter, ...],
+    replay_writers: tuple[RecordedReplayWriter, ...],
 ) -> None:
     for index, attempt in enumerate(attempts, start=1):
         attempt_dir = run_dir / f"attempt-{index:02d}"
@@ -1170,20 +1298,6 @@ def _save_attempt_evidence(
             )
         if attempt.gate1 is not None:
             _write_json(attempt_dir / "gate1.json", attempt.gate1.to_json())
-            normal = attempt.gate1.normal.generation
-            if normal is not None:
-                (attempt_dir / "replay.py").write_text(
-                    normal.code, encoding="utf-8"
-                )
-            masked = (
-                attempt.gate1.masked_j.generation
-                if attempt.gate1.masked_j is not None
-                else None
-            )
-            if masked is not None:
-                (attempt_dir / "masked_j_replay.py").write_text(
-                    masked.code, encoding="utf-8"
-                )
         if index <= len(lift.records):
             record = lift.records[index - 1]
             if record.extraction is not None:
@@ -1250,31 +1364,42 @@ def _save_attempt_evidence(
                     and record.extraction.provenance.trajectory is not None
                 ):
                     _write_json(attempt_dir / "lift_trajectory.json", trajectory)
-    formal_attempt_dirs = [
-        run_dir / f"attempt-{index:02d}"
+    formal_attempts = [
+        (run_dir / f"attempt-{index:02d}", attempt)
         for index, attempt in enumerate(attempts, start=1)
         if attempt.formal_round is not None
     ]
-    for attempt_dir, writer in zip(
-        formal_attempt_dirs, replay_writers, strict=True
+    for (attempt_dir, attempt), writer in zip(
+        formal_attempts, replay_writers, strict=True
     ):
-        for record_index, record in enumerate(writer.records, start=1):
-            if not isinstance(record, ReplayAttempt):
-                continue
-            (attempt_dir / f"replay_rejected_{record_index:02d}.txt").write_text(
-                record.response_text, encoding="utf-8"
+        records = list(writer.records)
+        if not records and attempt.gate1 is not None:
+            normal = attempt.gate1.normal.generation
+            masked = (
+                attempt.gate1.masked_j.generation
+                if attempt.gate1.masked_j is not None
+                else None
             )
-            _write_json(
-                attempt_dir / f"replay_rejected_{record_index:02d}_receipt.json",
-                {
-                    "model": record.model,
-                    "response_model": record.response_model,
-                    "response_id": record.response_id,
-                    "usage": dict(record.usage),
-                    "attempts": record.attempts,
-                    "elapsed_ms": record.elapsed_ms,
-                    "diagnostic": record.diagnostic,
-                },
+            records.extend(
+                record for record in (normal, masked) if record is not None
+            )
+        for record_index, record in enumerate(records, start=1):
+            if record_index == 1:
+                prefix = "replay"
+            elif record_index == 2:
+                prefix = "masked_j_replay"
+            else:
+                prefix = f"replay_extra_{record_index:02d}"
+            exact_name = (
+                f"{prefix}.py"
+                if isinstance(record, ReplayGeneration)
+                else f"{prefix}_rejected.txt"
+            )
+            _save_replay_record_evidence(
+                attempt_dir,
+                prefix=prefix,
+                exact_source_name=exact_name,
+                record=record,
             )
 
 
@@ -1318,8 +1443,12 @@ def save_candidate_fanout_report(
     report: CandidateFanoutSearchReport,
     *,
     winner_result: Mapping[str, Any] | None,
+    lift_backend: str = "responses",
+    replay_backend: str = "responses",
 ) -> None:
     payload = report.to_json()
+    payload["lift_backend"] = lift_backend
+    payload["replay_backend"] = replay_backend
     payload["winner_result"] = (
         dict(winner_result) if winner_result is not None else None
     )
@@ -1329,6 +1458,8 @@ def save_candidate_fanout_report(
         "",
         f"- candidate_count: `{len(report.branches)}`",
         f"- selection_rule: `{report.selection_rule}`",
+        f"- lift_backend: `{lift_backend}`",
+        f"- replay_backend: `{replay_backend}`",
         "- winner_branch_id: `"
         + (str(report.winner.branch_id) if report.winner is not None else "None")
         + "`",
@@ -1427,27 +1558,23 @@ def save_workload_failure(
             call_dir = run_dir / f"gate1-call-{writer_index:02d}"
             call_dir.mkdir()
             for record_index, record in enumerate(writer.records, start=1):
-                if isinstance(record, ReplayGeneration):
-                    (call_dir / f"replay-{record_index:02d}.py").write_text(
-                        record.code, encoding="utf-8"
-                    )
-                    diagnostic = ""
-                else:
-                    (call_dir / f"rejected-{record_index:02d}.txt").write_text(
-                        record.response_text, encoding="utf-8"
-                    )
-                    diagnostic = record.diagnostic
-                _write_json(
-                    call_dir / f"receipt-{record_index:02d}.json",
-                    {
-                        "model": record.model,
-                        "response_model": record.response_model,
-                        "response_id": record.response_id,
-                        "usage": dict(record.usage),
-                        "attempts": record.attempts,
-                        "elapsed_ms": record.elapsed_ms,
-                        "diagnostic": diagnostic,
-                    },
+                prefix = (
+                    "replay"
+                    if record_index == 1
+                    else "masked_j_replay"
+                    if record_index == 2
+                    else f"replay_extra_{record_index:02d}"
+                )
+                exact_name = (
+                    f"{prefix}.py"
+                    if isinstance(record, ReplayGeneration)
+                    else f"{prefix}_rejected.txt"
+                )
+                _save_replay_record_evidence(
+                    call_dir,
+                    prefix=prefix,
+                    exact_source_name=exact_name,
+                    record=record,
                 )
     (run_dir / "SUMMARY.md").write_text(
         f"# {run_dir.parent.name} {run_dir.name}\n\n"
