@@ -501,16 +501,52 @@ def test_gate1_search_resumes_from_exact_failed_artifact_without_old_budget() ->
 
 
 @pytest.mark.parametrize(
+    "kind, diagnostics",
+    [
+        (FeedbackKind.TYPECHECK, {"typecheck": {"status": "fail"}}),
+        (
+            FeedbackKind.GATE2,
+            {
+                "gate2": {
+                    "status": "reference_unsupported",
+                    "diagnostic": "J-side boundary projection failed",
+                }
+            },
+        ),
+    ],
+)
+def test_gate1_search_resumes_from_typed_or_gate2_j_failure(
+    kind: FeedbackKind,
+    diagnostics: dict[str, object],
+) -> None:
+    previous = make_reduce_artifact()
+    resumed = make_reduce_artifact()
+    seed = LiftFeedback(kind, diagnostics, None, previous)
+    lift = _Lift([resumed])
+    factory = _Gate1Factory([_gate1_result(closed=True)])
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        initial_feedback=seed,
+    )
+
+    assert search.closed
+    assert lift.feedbacks == [seed]
+    assert search.call_budget.lift_calls == 1
+    assert search.call_budget.formal_gate1_rounds == 1
+
+
+@pytest.mark.parametrize(
     "seed, message",
     [
         (
             LiftFeedback(
-                FeedbackKind.TYPECHECK,
-                {"typecheck": {"status": "fail"}},
+                FeedbackKind.LIFT,
+                {"diagnostic": "parser failure without a typed artifact"},
                 None,
                 make_reduce_artifact(),
             ),
-            "Gate1 failure",
+            "TypeCheck, Gate1, or J-side Gate2 failure",
         ),
         (
             LiftFeedback(

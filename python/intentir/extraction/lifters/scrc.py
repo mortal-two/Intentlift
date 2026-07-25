@@ -151,7 +151,7 @@ def scrc_candidate_check_context(
 
 @dataclass(frozen=True)
 class SCRCReliftContext:
-    """Structured TypeCheck/Gate1 evidence visible only to source-aware Lift."""
+    """Structured TypeCheck/Gate1/Gate2 evidence visible only to Lift."""
 
     relift_round: int
     failure_kind: str
@@ -165,6 +165,7 @@ class SCRCReliftContext:
             "lift",
             "typecheck",
             "gate1",
+            "gate2",
         }:
             raise ValueError("unsupported relift failure kind")
         if not isinstance(self.diagnostics, Mapping):

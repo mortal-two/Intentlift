@@ -185,6 +185,7 @@ class FeedbackKind(str, Enum):
     LIFT = "lift"
     TYPECHECK = "typecheck"
     GATE1 = "gate1"
+    GATE2 = "gate2"
 
 
 class SCRCInfrastructureError(RuntimeError):
@@ -555,23 +556,36 @@ class SCRCGateRunner:
     ) -> SCRCGate1SearchReport:
         """Search one isolated branch through TypeCheck and Gate1 only.
 
-        ``initial_feedback`` resumes from an externally preserved failed
-        Gate1 observation.  It is context for the first new Lift call only:
-        the runner never accepts, repairs, or otherwise promotes the previous
-        artifact, and all budgets count only work performed by this search.
+        ``initial_feedback`` resumes from an externally preserved TypeCheck,
+        Gate1, or J-side Gate2 failure.  It is context for the first new Lift
+        call only: the runner never accepts, repairs, or otherwise promotes the
+        previous artifact, and all budgets count only work performed by this
+        search.
         """
 
         if initial_feedback is not None:
             if not isinstance(initial_feedback, LiftFeedback):
                 raise TypeError("initial_feedback must be LiftFeedback")
-            if initial_feedback.kind is not FeedbackKind.GATE1:
-                raise ValueError("initial_feedback must describe a Gate1 failure")
-            if (
-                not isinstance(initial_feedback.formal_round, int)
-                or initial_feedback.formal_round < 1
-            ):
+            if initial_feedback.kind not in {
+                FeedbackKind.TYPECHECK,
+                FeedbackKind.GATE1,
+                FeedbackKind.GATE2,
+            }:
                 raise ValueError(
-                    "initial Gate1 feedback requires a positive formal_round"
+                    "initial_feedback must describe a TypeCheck, Gate1, or "
+                    "J-side Gate2 failure"
+                )
+            if initial_feedback.kind is FeedbackKind.GATE1:
+                if (
+                    not isinstance(initial_feedback.formal_round, int)
+                    or initial_feedback.formal_round < 1
+                ):
+                    raise ValueError(
+                        "initial Gate1 feedback requires a positive formal_round"
+                    )
+            elif initial_feedback.formal_round is not None:
+                raise ValueError(
+                    "initial TypeCheck/Gate2 feedback has no formal Gate1 round"
                 )
             if initial_feedback.previous_artifact is None:
                 raise ValueError(

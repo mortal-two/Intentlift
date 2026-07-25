@@ -211,7 +211,7 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
 - `feedback.json`: null on the first round, otherwise only the explicitly
-  allowed previous parser/TypeCheck/Gate1 feedback, previous candidate, or the
+  allowed previous parser/TypeCheck/Gate1/Gate2 feedback, previous candidate, or the
   last worker's bounded source-free CandidateCheck rule/path summary.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
