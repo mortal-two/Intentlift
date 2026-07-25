@@ -421,7 +421,8 @@ def test_wave2_inout_and_disabled_carriers_are_explicit() -> None:
 
     assert mrope["q_ptr"].role is mrope["k_ptr"].role is BufferRole.INOUT
     assert cross_entropy["Y_ptr"].initializer is BufferInitializer.ZEROS
-    assert cross_entropy["X_ptr"].role is BufferRole.INPUT
+    assert cross_entropy["X_ptr"].role is BufferRole.INOUT
+    assert cross_entropy["X_ptr"].output_key == "x"
     assert cross_entropy["z_loss_ptr"].role is BufferRole.INPUT
     assert cross_entropy["token_accuracy_ptr"].role is BufferRole.INPUT
     assert cross_entropy["predicted_tokens_ptr"].role is BufferRole.INPUT

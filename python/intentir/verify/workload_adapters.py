@@ -924,7 +924,9 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_cross_entropy": TritonWorkloadAdapter(
         "high_performance:liger_cross_entropy",
         buffers=(
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 64)),
+            # The runtime ignore-index early-return clears this buffer even
+            # when HAS_GRADIENTS=false, so its Source effect contract is inout.
+            _buffer("X_ptr", BufferRole.INOUT, "f32", (2, 64), "x"),
             _buffer(
                 "Y_ptr",
                 BufferRole.INPUT,
