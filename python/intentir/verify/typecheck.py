@@ -3041,6 +3041,16 @@ def _consumer_dependency_path(
     memo: dict[str, tuple[bool, tuple[Mapping[str, Any], ...]]] = {}
     active: set[str] = set()
 
+    def path_score(
+        path: tuple[Mapping[str, Any], ...],
+    ) -> tuple[int, int, tuple[str, ...]]:
+        names = tuple(str(operation.get("op")) for operation in path)
+        return (
+            sum(name not in _CONSUMER_EXTENSION_OPS for name in names),
+            len(path),
+            names,
+        )
+
     def visit(value: str) -> tuple[bool, tuple[Mapping[str, Any], ...]]:
         if access_node_ref is None and value == access_tensor:
             return True, ()
@@ -3057,16 +3067,16 @@ def _consumer_dependency_path(
             if access_node_ref is not None and node_ref == access_node_ref:
                 result = (True, (operation,))
             else:
-                selected: list[Mapping[str, Any]] = []
-                found = False
+                candidates: list[tuple[Mapping[str, Any], ...]] = []
                 for dependency in _operation_dependencies(operation):
                     child_found, child_path = visit(dependency)
                     if child_found:
-                        found = True
-                        selected.extend(child_path)
-                if found:
-                    selected.append(operation)
-                result = (found, tuple(selected))
+                        candidates.append((*child_path, operation))
+                result = (
+                    (True, min(candidates, key=path_score))
+                    if candidates
+                    else (False, ())
+                )
         active.remove(value)
         memo[value] = result
         return result

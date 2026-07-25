@@ -389,6 +389,26 @@ def test_structured_refeval_executes_scanless_write_only_loop() -> None:
     )
 
 
+def test_structured_refeval_accepts_explicit_read_only_loop_captures() -> None:
+    archive = _scanless_write_only_loop_archive()
+    archive.intent.body[0].operands = ["x"]
+    spec = ScalarLoweringSpec.create(
+        archive,
+        dims={"N": 5},
+        input_bindings={"x": "input"},
+        output_bindings={"y": "output"},
+    )
+
+    result = ScalarLoweringRunner().run(
+        spec, {"input": np.arange(5, dtype=np.float32)}
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(
+        result.outputs["output"], np.asarray(10, dtype=np.float32)
+    )
+
+
 def test_structured_refeval_rejects_zero_trip_null_initialized_carry() -> None:
     archive = _scanless_write_only_loop_archive()
     spec = ScalarLoweringSpec.create(

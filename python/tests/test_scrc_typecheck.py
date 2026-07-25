@@ -937,6 +937,83 @@ def test_consumer_extension_is_required_only_when_padding_reaches_consumer_axis(
     assert report.passed, report.to_json()
 
 
+def test_consumer_extension_path_stops_at_an_earlier_reduction_sibling() -> None:
+    artifact = _functional_padded_reduction_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["body"] = [
+        {
+            "id": "n0",
+            "op": "map_binary",
+            "result": "v0",
+            "operands": ["t0", "t0"],
+            "attrs": {"fn": "mul"},
+            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+        },
+        {
+            "id": "n1",
+            "op": "reduce",
+            "result": "v1",
+            "operands": ["v0"],
+            "attrs": {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        },
+        {
+            "id": "n2",
+            "op": "map_binary",
+            "result": "v2",
+            "operands": ["v0", "v1"],
+            "attrs": {"fn": "mul"},
+            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+        },
+        {
+            "id": "n3",
+            "op": "reduce",
+            "result": "t1",
+            "operands": ["v2"],
+            "attrs": {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        },
+    ]
+    payload["returns"] = [{"output": "t1", "value": "t1"}]
+    artifact.j.intent = artifact.j.intent.from_json(payload)
+    artifact.j.node_ids = {
+        "n0": "body[0]",
+        "n1": "body[1]",
+        "n2": "body[2]",
+        "n3": "body[3]",
+    }
+    artifact.j.boundary.accesses[1].node_ref = "n3"
+    artifact.j.boundary.effects[1].node_ref = "n3"
+    artifact.j.boundary.broadcasts = [BroadcastSpec("n2", "v1", [1])]
+    artifact.j.boundary.reductions = [
+        artifact.j.boundary.reductions[0],
+        type(artifact.j.boundary.reductions[0])("n3", 0, identity=0),
+    ]
+    artifact.j.boundary.consumer_extensions = [
+        artifact.j.boundary.consumer_extensions[0],
+        ConsumerExtension(
+            "n3",
+            0,
+            "a0",
+            0,
+            TypedOutsideValue("f32", 0),
+            "two_sided",
+        ),
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
 def test_logical_guard_does_not_become_physical_consumer_padding() -> None:
     artifact = _functional_padded_reduction_artifact()
     artifact.j.intent.inputs.append(Tensor("flag", "i1", []))

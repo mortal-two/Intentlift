@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v6"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v7"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
