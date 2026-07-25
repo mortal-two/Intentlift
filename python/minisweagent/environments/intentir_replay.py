@@ -177,6 +177,52 @@ def _packet_ops(body: Any, prefix: str) -> list[dict[str, Any]]:
     return result
 
 
+def _packet_graph_ops(body: Any, prefix: str) -> list[dict[str, Any]]:
+    """Flatten full authored op records without duplicating nested bodies."""
+
+    result: list[dict[str, Any]] = []
+    if not isinstance(body, list):
+        return result
+    for index, operation in enumerate(body):
+        if not isinstance(operation, Mapping):
+            continue
+        path = f"{prefix}.{index}"
+        record = {
+            "path": path,
+            **{
+                str(key): value
+                for key, value in operation.items()
+                if key not in {"body", "positive", "negative"}
+            },
+        }
+        for arm in ("positive", "negative"):
+            branch = operation.get(arm)
+            if isinstance(branch, Mapping):
+                record[arm] = {
+                    str(key): value
+                    for key, value in branch.items()
+                    if key != "body"
+                }
+                arm_body = branch.get("body")
+                record[arm]["body_operation_count"] = (
+                    len(arm_body) if isinstance(arm_body, list) else 0
+                )
+        nested = operation.get("body")
+        if isinstance(nested, list):
+            record["body_operation_count"] = len(nested)
+        result.append(record)
+        result.extend(_packet_graph_ops(nested, f"{path}.body"))
+        for arm in ("positive", "negative"):
+            branch = operation.get(arm)
+            if isinstance(branch, Mapping):
+                result.extend(
+                    _packet_graph_ops(
+                        branch.get("body"), f"{path}.{arm}.body"
+                    )
+                )
+    return result
+
+
 def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
     j = packet.get("j", {})
     intent = j.get("intent", {}) if isinstance(j, Mapping) else {}
@@ -204,17 +250,21 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
         },
         "entry": u_f.get("replay_function") if isinstance(u_f, Mapping) else None,
         "frontend": u_f.get("frontend") if isinstance(u_f, Mapping) else None,
+        "j_parameter_total": len(signature.get("parameters", [])),
         "j_parameters": [
             {
                 key: parameter.get(key)
                 for key in ("name", "kind", "mode", "dtype", "rank")
             }
-            for parameter in signature.get("parameters", [])
+            for parameter in signature.get("parameters", [])[:24]
             if isinstance(parameter, Mapping)
         ],
+        "j_parameters_omitted": max(
+            0, len(signature.get("parameters", [])) - 24
+        ),
         "operation_count": len(operations),
-        "operations": operations[:32],
-        "operations_omitted": max(0, len(operations) - 32),
+        "operations": operations[:16],
+        "operations_omitted": max(0, len(operations) - 16),
         "boundary_counts": {
             key: len(value)
             for key, value in boundary.items()
@@ -231,11 +281,178 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
         else {},
         "c_slots": c.get("slots", []) if isinstance(c, Mapping) else [],
         "next": [
-            f"Query `{INTENTIR_PACKET_QUERY} section j`, `section pi`, "
-            "`section c`, and `section u_f` separately.",
-            "A large section returns child paths; query one of those paths.",
+            "This overview contains the compact ABI/op inventory and exact "
+            "root section sizes; do not query whole j/pi/u_f sections.",
+            f"Query `{INTENTIR_PACKET_QUERY} abi 0 48` for full parameter "
+            "fields, Intent I/O, U_f entry metadata, and MaskC slots.",
+            f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
+            "page only if `next_start` is non-null.",
+            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then "
+            f"`{INTENTIR_PACKET_QUERY} edges 0 24` when routes/order are nonempty.",
+            "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
+    }
+
+
+def _bounded_page(
+    values: list[Any],
+    *,
+    start: int,
+    count: int,
+) -> tuple[list[Any], int | None]:
+    if start < 0 or count < 1 or count > 48:
+        raise ValueError("page start must be >= 0 and count must be in [1, 48]")
+    end = min(len(values), start + count)
+    return values[start:end], end if end < len(values) else None
+
+
+def _packet_abi(packet: Mapping[str, Any], start: int, count: int) -> Any:
+    j = packet.get("j", {})
+    if not isinstance(j, Mapping):
+        raise TypeError("packet j must be an object")
+    signature = j.get("signature", {})
+    intent = j.get("intent", {})
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    if not isinstance(parameters, list):
+        raise TypeError("packet J signature parameters must be an array")
+    items, next_start = _bounded_page(
+        parameters,
+        start=start,
+        count=count,
+    )
+    u_f = packet.get("u_f", {})
+    u_f_summary = (
+        {
+            key: value
+            for key, value in u_f.items()
+            if key != "compile_entry_contract"
+        }
+        if isinstance(u_f, Mapping)
+        else u_f
+    )
+    if isinstance(u_f, Mapping) and "compile_entry_contract" in u_f:
+        u_f_summary = {
+            **u_f_summary,
+            "compile_entry_contract": {
+                "json_chars": _packet_json_chars(
+                    u_f["compile_entry_contract"]
+                ),
+                "query": (
+                    f"{INTENTIR_PACKET_QUERY} section "
+                    "u_f.compile_entry_contract"
+                ),
+            },
+        }
+    return {
+        "u_f": u_f_summary,
+        "intent_io": {
+            key: function.get(key)
+            for key in ("name", "inputs", "outputs", "returns")
+            if isinstance(function, Mapping) and key in function
+        },
+        "mask_c": packet.get("c"),
+        "parameter_total": len(parameters),
+        "parameter_start": start,
+        "parameters": items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} abi {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
+def _packet_graph(packet: Mapping[str, Any], start: int, count: int) -> Any:
+    j = packet.get("j", {})
+    intent = j.get("intent", {}) if isinstance(j, Mapping) else {}
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    operations = _packet_graph_ops(
+        function.get("body", []) if isinstance(function, Mapping) else [],
+        "j.intent.intent_function.body",
+    )
+    items, next_start = _bounded_page(
+        operations,
+        start=start,
+        count=count,
+    )
+    return {
+        "total_operations": len(operations),
+        "start": start,
+        "items": items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} graph {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
+def _packet_realization(packet: Mapping[str, Any]) -> Any:
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    edge_keys = {"routes", "order"}
+    return {
+        "counts": {
+            key: len(value)
+            for key, value in pi.items()
+            if isinstance(value, list)
+        },
+        "topology": {
+            key: value
+            for key, value in pi.items()
+            if key not in edge_keys
+        },
+        "edge_query": (
+            f"{INTENTIR_PACKET_QUERY} edges 0 24"
+            if any(pi.get(key) for key in edge_keys)
+            else None
+        ),
+    }
+
+
+def _packet_edges(
+    packet: Mapping[str, Any], start: int, count: int
+) -> Any:
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    routes = pi.get("routes", [])
+    order = pi.get("order", [])
+    if not isinstance(routes, list) or not isinstance(order, list):
+        raise TypeError("packet pi routes/order must be arrays")
+    route_items, route_next = _bounded_page(routes, start=start, count=count)
+    order_items, order_next = _bounded_page(order, start=start, count=count)
+    next_values = [item for item in (route_next, order_next) if item is not None]
+    next_start = min(next_values) if next_values else None
+    return {
+        "start": start,
+        "routes_total": len(routes),
+        "routes": route_items,
+        "order_total": len(order),
+        "order": order_items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} edges {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
     }
 
 
@@ -268,6 +485,23 @@ def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
 def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
     if arguments == [INTENTIR_PACKET_QUERY, "overview"]:
         return _packet_overview(packet)
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "abi",
+    ]:
+        return _packet_abi(packet, int(arguments[2]), int(arguments[3]))
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "graph",
+    ]:
+        return _packet_graph(packet, int(arguments[2]), int(arguments[3]))
+    if arguments == [INTENTIR_PACKET_QUERY, "realization"]:
+        return _packet_realization(packet)
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "edges",
+    ]:
+        return _packet_edges(packet, int(arguments[2]), int(arguments[3]))
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "section",
@@ -291,7 +525,8 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
     ):
         return _packet_find(packet, arguments[2])
     raise ValueError(
-        "usage: intentir_packet_query overview | section PATH | find HANDLE"
+        "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
+        "realization | edges START COUNT | section PATH | find HANDLE"
     )
 
 

@@ -963,17 +963,19 @@ This is the complete immutable input allowlist for one fresh Replay episode.
 - `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
 - `TOOL.md`: fixed bounded check and submission interface.
 - `intentir_packet_query`: bounded read-only packet inventory, path lookup, and
-  anonymous-handle search virtual tool. It exposes only packet.json and never
-  writes Replay.
+  anonymous-handle search plus paged graph/realization views. It exposes only
+  packet.json and never writes Replay.
 
 No Source or source slice, Harness/compiler view, actual C values, CompileCase,
 grid, Gate diff/TTIR, previous Replay, sibling trajectory, or network is
 available. Generate the entire source yourself. Fixed code only checks and
 rejects; it never generates, patches, or certifies source.
 
-Start with `intentir_packet_query overview`. Query `j`, `pi`, `c`, and `u_f`
-separately with `intentir_packet_query section PATH`; never concatenate all input
-files into one shell output because the transport may elide its middle.
+Start with `intentir_packet_query overview`; then follow its exact `abi`,
+`graph`, `realization`, and paged `edges` commands. These views expose the
+complete packet facts in bounded pages. Use `section PATH`
+only for one named omitted field; never concatenate inputs because the transport
+may elide its middle.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including

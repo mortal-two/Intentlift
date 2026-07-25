@@ -151,6 +151,18 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         overview = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} overview"}
         )
+        abi = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} abi 0 48"}
+        )
+        graph = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} graph 0 12"}
+        )
+        realization = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} realization"}
+        )
+        edges = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} edges 0 24"}
+        )
         j_view = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} section j"}
         )
@@ -167,6 +179,15 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert overview["returncode"] == 0
     assert len(overview["output"].encode()) <= 10_000
     assert '"operations"' in overview["output"]
+    assert abi["returncode"] == 0
+    assert '"logical_ref"' in abi["output"]
+    assert '"intent_io"' in abi["output"]
+    assert graph["returncode"] == 0
+    assert '"attrs"' in graph["output"]
+    assert realization["returncode"] == 0
+    assert '"topology"' in realization["output"]
+    assert edges["returncode"] == 0
+    assert '"routes"' in edges["output"]
     assert j_view["returncode"] == 0
     assert '"intent_function"' in j_view["output"]
     assert references["returncode"] == 0
@@ -218,6 +239,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert len(digest) == 64
     assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
     assert default_config["agent"].get("output_path") is None
+    assert default_config["agent"]["step_limit"] == 24
     assert default_config["model"]["retry_attempts"] == 3
 
 
