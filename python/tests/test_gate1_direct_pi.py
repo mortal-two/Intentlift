@@ -26,6 +26,7 @@ from intentir.verify.gate1.model import (
     ScheduleSlot,
     SchemaError,
 )
+from intentir.verify.gate1.codegen import UnsafeReplayCodeError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.pi import (
     REALIZATION_MECHANISMS,
@@ -42,6 +43,7 @@ from intentir.verify.gate1.prompt import (
     build_normal_rewriter_view,
     build_rewriter_packet,
 )
+from intentir.verify.gate1.replay import StaticReplayWriter
 
 
 
@@ -673,17 +675,163 @@ def test_replay_packet_is_source_isolated() -> None:
     assert_source_isolated_payload(payload)
 
 
+def _artifact_with_typed_representation_widen(
+    *,
+    source_dtype: str | None,
+    target_dtype: str | None,
+) -> Gate1Artifact:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": source_dtype or "i32",
+            "rank": 0,
+            "logical_ref": None,
+        }
+    )
+    payload["pi"]["instances"].append(
+        {
+            "id": "i4",
+            "semantic_ref": "p3",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    payload["pi"]["routes"].append(
+        {"source": "i4", "target": "i0", "slots": [0]}
+    )
+    authorization = {
+        "auth_id": "u0",
+        "kind": "signed_widen",
+        "subject_ref": "p3",
+    }
+    if source_dtype is not None:
+        authorization.update(
+            source_dtype=source_dtype,
+            target_dtype=target_dtype,
+        )
+    payload["j"]["boundary"]["realization_authorizations"].append(
+        authorization
+    )
+    payload["pi"]["refinements"].append(
+        {"instance": "i4", "kind": "signed_widen", "auth_ref": "u0"}
+    )
+    return Gate1Artifact.from_json(payload)
+
+
+def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
+    artifact = _artifact_with_typed_representation_widen(
+        source_dtype="i32",
+        target_dtype="i64",
+    )
+
+    assert build_rewriter_packet(artifact).u_f["context_policy"] == (
+        "public_frontend_context_v7"
+    )
+
+
+def _replay_with_representation_scalar(expression: str | None) -> str:
+    use = f"    v1 = {expression}\n" if expression is not None else ""
+    return f"""import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, p3, c0: tl.constexpr):
+    v0 = tl.arange(0, c0)
+{use}    v2 = tl.load(p0 + v0, mask=v0 < p2, other=0.0)
+    tl.store(p1 + v0, v2, mask=v0 < p2)
+"""
+
+
+def test_static_replay_keeps_unrouted_null_carrier_as_unused_abi_only() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "scalar",
+            "mode": "value",
+            "dtype": "i32",
+            "rank": 0,
+            "logical_ref": None,
+        }
+    )
+    artifact = Gate1Artifact.from_json(payload)
+
+    StaticReplayWriter(_replay_with_representation_scalar(None)).generate(
+        artifact
+    )
+    with pytest.raises(UnsafeReplayCodeError, match="must remain unused"):
+        StaticReplayWriter(
+            _replay_with_representation_scalar("p3 + v0")
+        ).generate(artifact)
+
+
+def test_static_replay_allows_only_the_exact_routed_typed_widen() -> None:
+    artifact = _artifact_with_typed_representation_widen(
+        source_dtype="i32",
+        target_dtype="i64",
+    )
+
+    generation = StaticReplayWriter(
+        _replay_with_representation_scalar("p3.to(tl.int64)")
+    ).generate(artifact)
+
+    assert "p3.to(tl.int64)" in generation.code
+    receipt = generation.context_receipt
+    assert receipt["replay_input_protocol"] == "intentir.scrc.replay-input.v1"
+    assert receipt["context_policy"] == "public_frontend_context_v7"
+    assert receipt["frontend"] == "triton"
+    assert len(receipt["context_sha256"]) == 64
+    assert receipt["retrieval_trace"] == []
+
+    with pytest.raises(UnsafeReplayCodeError, match="exact artifact refinement"):
+        StaticReplayWriter(
+            _replay_with_representation_scalar("p3.to(tl.int32)")
+        ).generate(artifact)
+
+
+def test_historical_same_dtype_widen_canary_fails_before_replay() -> None:
+    artifact = _artifact_with_typed_representation_widen(
+        source_dtype="i32",
+        target_dtype="i32",
+    )
+
+    with pytest.raises(SchemaError, match="strictly increasing width"):
+        build_rewriter_packet(artifact)
+
+
+@pytest.mark.parametrize(
+    ("source_dtype", "target_dtype"),
+    [(None, None), ("u32", "u64")],
+)
+def test_replay_contract_rejects_non_widening_or_untyped_signed_widen(
+    source_dtype: str | None,
+    target_dtype: str | None,
+) -> None:
+    artifact = _artifact_with_typed_representation_widen(
+        source_dtype=source_dtype,
+        target_dtype=target_dtype,
+    )
+
+    with pytest.raises(SchemaError, match="strictly increasing width"):
+        build_rewriter_packet(artifact)
+
+
 def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     payload = build_normal_rewriter_view(make_reduce_artifact())
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v6"
+    assert context["context_policy"] == "public_frontend_context_v7"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
     assert "J.boundary.reductions.tile_axis" in contract
     assert "physical frontend reduction axis" in contract
+    assert "local tile axis after program/grid axes" in contract
+    assert "not the whole-tensor logical ordinal" in contract
     assert "when predicate is absent" in contract
     assert "never synthesize a defensive or redundant mask" in contract
     assert "placement='program' alone never authorizes tl.program_id" in contract
@@ -718,7 +866,11 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "elementwise power as the public `x ** y` operator" in contract
     assert "isnan as `x != x`" in contract
     assert "Every pi.refinements entry is mandatory" in contract
-    assert "authorized target_dtype" in contract
+    assert "explicitly authorized target_dtype" in contract
+    assert "Never propagate one refinement to a sibling" in contract
+    assert "do not guess a stride/index widening" in contract
+    assert "logical_ref=null has no logical denotation" in contract
+    assert "keep the ABI parameter but do not read it" in contract
     assert_source_isolated_payload(payload)
 
 
@@ -791,6 +943,15 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "node_ref (including null)" in normalized
     assert "compiler-visible sensitive representation event" in normalized
     assert "distinct instances/refinements for distinct source stages" in normalized
+    assert "reuse that same t* in the predicate and arithmetic dataflow" in normalized
+    assert "never split one Source value" in normalized
+    assert "whose every Source use is extent/index/domain-only" in normalized
+    assert "explicit Source `reduce(sum)` followed by division" in normalized
+    assert "generated `reduce(sum)` over ones" in normalized
+    assert "never propagate one conversion to sibling parameters" in normalized
+    assert "strictly wider target_dtype" in normalized
+    assert "local tile axis after program/grid axes" in normalized
+    assert "not the whole-tensor logical axis number" in normalized
 
 
 def test_lift_preserves_degenerate_program_coordinate_topology() -> None:

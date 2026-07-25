@@ -731,10 +731,14 @@ an ambiguity for Lift to repair.
 
 Every J.signature logical_ref names only a declared J input/output t* handle or
 a symbolic dimension x*; it never names a source/local or J-body v* SSA value.
-When a runtime scalar or bound semantic constexpr is logical data used in a
-predicate, operator, or result, declare a dtype-matching rank-0 J input tensor
-with shape [] and bind that p* parameter to its t* handle. This input participates
-in J dataflow. Only an integral extent-only parameter binds an x* dimension.
+When a runtime scalar or bound semantic constexpr is logical data used in an
+arithmetic/boolean operator or result, declare one dtype-matching rank-0 J input
+tensor with shape [] and bind that p* parameter to its t* handle. If the same
+Source scalar also bounds an index or padding predicate, reuse that same t* in
+the predicate and arithmetic dataflow; never split one Source value between x*,
+t*, null carriers, constants, or a synthesized count. Only a scalar whose every
+Source use is extent/index/domain-only and which never enters logical arithmetic
+or boolean dataflow may bind an x* dimension.
 Never bind a value parameter to an output tensor merely to satisfy handle
 existence; tensor dtype, rank, and input/output mode must agree exactly.
 Conversely, a runtime scalar used only for representation/address realization
@@ -750,11 +754,13 @@ carrier: declare that p* exactly once as kind `opaque`, mode `value`, dtype
 access, effect, or pi instance; never replace it with a pointer or scalar.
 
 A runtime scalar p* value in harness_compiler_view is only the current Harness
-binding, never permission to specialize J. If source uses that scalar in a
-logical extent, index, predicate, or result, create a symbolic x* dimension,
-use it in every affected J tensor shape, and set the scalar parameter's
-logical_ref to that x*. Symbolic dimensions are type/signature handles, not SSA
-values: never list x* in portable scope definitions/captures or storage.
+binding, never permission to specialize J. If all Source uses of that scalar are
+strictly logical extent/index/domain uses, create a symbolic x* dimension, use it
+in every affected J tensor shape, and set the scalar parameter's logical_ref to
+that x*. A scalar that also enters logical arithmetic or boolean dataflow instead
+uses the single rank-0 t* rule above. Symbolic dimensions are type/signature
+handles, not SSA values: never list x* in portable scope definitions/captures or
+storage.
 
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
@@ -794,6 +800,11 @@ explicit logical division when that is what Source computes. Dense/unpredicated
 mean, guard-bearing or cross-axis predicates, unrelated non-reduced masks, and
 unknown-op propagation are not this TypeCheck error; consumers still fail
 closed when they cannot project those boundaries.
+More generally, an explicit Source `reduce(sum)` followed by division remains
+those two ordered J nodes even when the divisor equals an extent. Never replace
+it with `reduce(mean)`, and never replace its divisor dependency with a generated
+`reduce(sum)` over ones. These algebraic rewrites erase compiler-visible stages
+and logical scalar dataflow that Gate1 is required to observe.
 For an unconditional access, omit both predicate and fill_value; never attach a
 redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,
@@ -825,6 +836,16 @@ corresponding refinement and auth_ref to the exact realization instance. Use
 distinct instances/refinements for distinct source stages. These events are
 not whole-tensor operators, but omitting them changes Gate1 realization
 closure; do not assume TypeCheck can infer an undeclared cast from source code.
+Conversely, never propagate one conversion to sibling parameters, strides, or
+instances merely because they share a dtype or appear in the same address
+expression. A signed/unsigned widen states explicit source_dtype and a strictly
+wider target_dtype of the same signedness; equal-width or missing dtype pairs do
+not denote a widening refinement.
+
+For each J reduction, boundary.reductions.tile_axis is the Source frontend's
+local tile axis after program/grid axes have selected the program instance. It
+is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
+observed local axis; do not copy a logical rank axis or add program axes to it.
 
 C contains scheduling slots/values only. It must not contain operators,
 predicates, source topology, APIs, policy, or a strategy field.

@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v15"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v16"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -214,8 +214,10 @@ This directory is the complete allowlisted input for one fresh Lift round.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
 - `knowledge/preflight.md`: short source-neutral handle/ownership checklist.
-- `knowledge/minimal_example.json`: source-neutral wire-shape example only;
-  replace all semantics, handles, shapes, values, topology, and multiplicity.
+- `knowledge/minimal_example.json`: source-neutral wire/ownership example for a
+  dual-use rank-0 scalar, explicit sum-then-div stages, one exact cast
+  refinement, and a local reduction axis; replace every case-specific semantic,
+  handle, shape, value, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: bounded, read-only
   Decode/TypeCheck diagnostics for the complete candidate (a seven-evaluation

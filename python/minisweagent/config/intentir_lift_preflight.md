@@ -23,6 +23,11 @@ the artifact schema or external TypeCheck.
    A runtime scalar used only for representation/address realization is a
    rank-0 `mode=value` scalar with public dtype but no `logical_ref` or J input;
    pi may reference its p* carrier. Decide from Source use, never name/position.
+   Classify across all uses of one scalar. If it both bounds a predicate/index
+   and enters arithmetic or boolean dataflow, bind one dtype-matching rank-0
+   J input `t*` and reuse that same `t*` in every such use. Do not split it into
+   `x*` plus `t*`/null, specialize it to a constant, or synthesize a count.
+   Bind `x*` only when every use is extent/index/domain-only.
    This null-carrier form is runtime-scalar-only. Every
    `bound_constexpr_values` entry is logical: bind logical data to a
    dtype-matching rank-0 J input or an integral extent-only value to `x*`.
@@ -56,6 +61,9 @@ the artifact schema or external TypeCheck.
    predicates, unrelated non-reduced masks, and unknown-op propagation are not
    this TypeCheck error; consumers still fail closed when they cannot project
    those boundaries.
+   This stage rule is general: explicit Source `sum` then division remains two
+   J nodes even when the divisor equals an extent. Never rewrite it to `mean`
+   or replace the divisor with a generated `sum(ones)` count.
 8. If a pure-functional boundary contains any predicate/fill, the observable
    store producer has an explicit `type` exactly matching the J output. When
    that op directly produces the output handle, keep `output_mappings` empty;
@@ -108,7 +116,11 @@ the artifact schema or external TypeCheck.
    explicit relation, but complete omission remains visible only to Gate1.
 13. Every sensitive pi refinement `auth_ref` names an actually declared J
    authorization handle `u*`. It never names a node `n*`, instance `i*`, or
-   prose authorization kind.
+   prose authorization kind. Attach it only to the instance where that exact
+   Source conversion occurs; never copy it to sibling parameters, strides, or
+   same-dtype instances. A signed/unsigned widen includes explicit source and
+   target integer dtypes of matching signedness with strictly increasing width;
+   missing or equal dtype pairs are not widenings.
 14. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
    `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
    and only when that subject declares the referenced non-negative logical axis
@@ -124,10 +136,14 @@ the artifact schema or external TypeCheck.
    reassociation declares `result_relation.kind=tolerance`, never default or
    explicit `exact`. J declares only the class; numeric thresholds remain in
    external Q.
-18. Pi contains anonymous realization relations only. It contains no dtype,
+18. For a J reduction, `boundary.reductions.tile_axis` is the Source frontend's
+   local tile axis after program/grid axes select the program instance. It is
+   not `reduce.attrs.axes`' whole-tensor logical axis ordinal; do not copy or
+   offset one to obtain the other.
+19. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-19. Run the supplied static schema validator and then
+20. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still
    repeats canonical Decode and dependent TypeCheck before Replay and Gates.

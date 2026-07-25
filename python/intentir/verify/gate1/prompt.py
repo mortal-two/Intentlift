@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -19,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v6",
+        "context_policy": "public_frontend_context_v7",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -33,7 +34,10 @@ PUBLIC_FRONTEND_CONTEXT = {
             "emit an identity assignment merely to materialize it. J reduce.axes "
             "are whole-tensor logical axes, while each matching "
             "J.boundary.reductions.tile_axis is the physical frontend reduction "
-            "axis and must be used at the public reduction call. "
+            "axis and must be used at the public reduction call. It is the local "
+            "tile axis after program/grid axes select a program instance, not the "
+            "whole-tensor logical ordinal in J reduce.attrs.axes; never copy or "
+            "offset that logical ordinal to guess it. "
             "Each J.boundary access is closed: when predicate is absent, emit an "
             "unconditional load or store; never synthesize a defensive or "
             "redundant mask from a domain, grid extent, C slot, or safety guess. "
@@ -86,8 +90,16 @@ PUBLIC_FRONTEND_CONTEXT = {
             "materialize the authorized kind at that exact instance before its "
             "routed consumers. For signed_widen, unsigned_widen, numeric_cast, "
             "and accumulation_dtype, use a public Triton cast/to operation with "
-            "the authorized target_dtype; preserve distinct refined stages and "
-            "do not algebraically remove or move the conversion."
+            "the explicitly authorized target_dtype; preserve distinct refined "
+            "stages and do not algebraically remove or move the conversion. Never "
+            "propagate one refinement to a sibling parameter/instance that merely "
+            "shares a dtype or address expression. Signature dtypes are otherwise "
+            "authoritative: do not guess a stride/index widening or emit `.to` for "
+            "a p* carrier without its own routed refinement or an explicit J cast."
+            " A J.signature p* with logical_ref=null has no logical denotation. It "
+            "may affect the body only through an instance anchored to that p* and "
+            "a declared route to its realization consumer; if no such route exists, "
+            "keep the ABI parameter but do not read it in the kernel body."
             " The generated module must obey the audited public import ABI: use "
             "`import triton`, `import triton.language as tl`, and, when a reviewed "
             "libdevice function is required, exactly "
@@ -193,6 +205,44 @@ _U_F_KEYS = frozenset(
         "compile_entry_contract",
     }
 )
+
+_INTEGER_DTYPE = re.compile(r"^(?P<signedness>[iu])(?P<bits>[1-9][0-9]*)$")
+
+
+def _assert_replay_refinement_contract(artifact: Gate1Artifact) -> None:
+    """Reject only refinement shapes whose closed tag cannot denote its name."""
+
+    authorizations = {
+        item.auth_id: item
+        for item in artifact.j.boundary.realization_authorizations
+    }
+    for index, refinement in enumerate(artifact.pi.refinements):
+        kind = str(refinement["kind"])
+        if kind not in {"signed_widen", "unsigned_widen"}:
+            continue
+        authorization = authorizations.get(str(refinement.get("auth_ref")))
+        if authorization is None:
+            # The authoritative TypeCheck reports unresolved auth_ref first.
+            continue
+        source = authorization.source_dtype
+        target = authorization.target_dtype
+        source_match = _INTEGER_DTYPE.fullmatch(source or "")
+        target_match = _INTEGER_DTYPE.fullmatch(target or "")
+        expected_signedness = "i" if kind == "signed_widen" else "u"
+        if (
+            source_match is None
+            or target_match is None
+            or source_match.group("signedness") != expected_signedness
+            or target_match.group("signedness") != expected_signedness
+            or int(target_match.group("bits"))
+            <= int(source_match.group("bits"))
+        ):
+            raise SchemaError(
+                "Replay refinement contract rejects "
+                f"pi.refinements[{index}]: {kind} requires explicit "
+                "same-signedness integer source/target dtypes with strictly "
+                "increasing width"
+            )
 
 
 def _walk(value: Any, path: str = "$" ):
@@ -325,6 +375,7 @@ def build_rewriter_packet(
             f"{item.code.value}@{item.path}" for item in report.diagnostics
         )
         raise SchemaError("Replay requires TypeCheck(J,C,pi)=PASS: " + summary)
+    _assert_replay_refinement_contract(artifact)
     view = artifact.rewriter_view(masked=masked)
     frontend = Frontend(frontend)
     context = copy.deepcopy(PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {}))
@@ -413,14 +464,19 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "relation, iteration relation, representation refinement and region placement as required "
         "realization topology. Resolve each refinement auth_ref only through the "
         "matching J realization_authorization, materialize it at the refined "
-        "instance before routed consumers, and never infer, omit, or move a "
-        "sensitive conversion. Multiple "
+        "instance before routed consumers, and never infer, omit, move, or copy a "
+        "sensitive conversion onto a sibling instance. A logical_ref=null p* may "
+        "be read only when pi contains its anchored instance and a route from that "
+        "instance to a realization consumer; otherwise it remains an unused ABI "
+        "parameter. Multiple "
         "instances anchored to one handle are distinct source stages: do not collapse "
         "their chain, discard J/C dependencies, duplicate a shared producer, "
         "or invent an undocumented stage. Obtain callable logical handles from "
         "J.signature and append the anonymous slots from MaskC(C). Obtain all "
         "logical operators, predicates, fills, constants, index relations and "
-        "effects only from J. A boundary access with no predicate is unconditional: "
+        "effects only from J. Preserve explicit J stages: reduce(sum) followed by "
+        "division remains sum then division, never mean or a generated sum-of-ones "
+        "count. A boundary access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "
         + frontend_realization_clause

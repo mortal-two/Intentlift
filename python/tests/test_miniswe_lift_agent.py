@@ -28,6 +28,7 @@ from intentir.extraction.lifters.scrc import (
 )
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.typecheck import type_check
 from intentir.verify.scrc_runner import (
     CandidateLiftError,
     FeedbackKind,
@@ -122,7 +123,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v15"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v16"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -132,6 +133,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
         files["knowledge/intent_ops.md"]
     )
     assert "Do not page through the raw schema" in files["README.md"]
+    assert "dual-use rank-0 scalar" in files["README.md"]
+    assert "explicit sum-then-div stages" in files["README.md"]
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
     )
@@ -165,6 +168,13 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "result-axis orientation" in preflight
     assert "expect pi or Replay to recover it" in preflight
     assert "cannot carry or infer an initialization" in preflight
+    assert "Classify across all uses of one scalar" in preflight
+    assert "reuse that same `t*`" in preflight
+    assert "Never rewrite it to `mean`" in preflight
+    assert "generated `sum(ones)` count" in preflight
+    assert "never copy it to sibling parameters" in preflight
+    assert "strictly increasing width" in preflight
+    assert "local tile axis after program/grid axes" in preflight
 
 
 def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
@@ -219,6 +229,16 @@ def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
     payload = json.loads(files["knowledge/minimal_example.json"])
     artifact = Gate1Artifact.from_json(payload)
     assert artifact.to_json()["j"]["scopes"][0]["scope_id"] == "q0"
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+    assert payload["j"]["signature"]["parameters"][2]["logical_ref"] == "t1"
+    assert "t1" in payload["j"]["boundary"]["accesses"][0]["predicate"]
+    assert payload["j"]["intent"]["intent_function"]["body"][0]["attrs"][
+        "fn"
+    ] == "sum"
+    assert payload["j"]["intent"]["intent_function"]["body"][2]["attrs"][
+        "fn"
+    ] == "div"
+    assert payload["j"]["boundary"]["reductions"][0]["tile_axis"] == 0
 
     workspace = IntentIRLiftWorkspace.create(files)
     environment = IntentIRLiftEnvironment(
