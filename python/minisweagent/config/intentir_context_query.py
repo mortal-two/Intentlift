@@ -153,8 +153,10 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Run `{QUERY_COMMAND} feedback` before repairing a prior candidate.",
             f"Use `{QUERY_COMMAND} feedback --path diagnostics.KEY` for one exact diagnostic section.",
             "Read Source and Harness separately so neither can be transport-elided.",
+            f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
+            f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
@@ -244,6 +246,60 @@ def _source(input_root: Path, start: int, line_count: int) -> None:
         )
 
 
+def _source_find(input_root: Path, query: str, context: int) -> None:
+    """Find literal Source text with bounded line-numbered context.
+
+    This is deliberately a text lookup rather than a parser or semantic
+    extractor.  Lift still decides what the matched Source means and authors
+    every J/C/pi field.
+    """
+
+    if not query:
+        raise ValueError("source-find query must be non-empty")
+    if context < 0 or context > 20:
+        raise ValueError("source-find context must be in [0, 20]")
+    lines = (input_root / "source.py").read_text(encoding="utf-8").splitlines()
+    needle = query.casefold()
+    matches = [
+        index for index, line in enumerate(lines) if needle in line.casefold()
+    ]
+    if not matches:
+        raise KeyError(f"no Source lines match {query!r}")
+
+    ranges: list[tuple[int, int]] = []
+    for index in matches:
+        begin = max(0, index - context)
+        end = min(len(lines), index + context + 1)
+        if ranges and begin <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+        else:
+            ranges.append((begin, end))
+
+    blocks: list[str] = []
+    used = 0
+    omitted = False
+    match_set = set(matches)
+    for begin, end in ranges:
+        rendered = [f"--- source.py:{begin + 1} ---"]
+        rendered.extend(
+            f"{'>' if ordinal in match_set else ' '} {ordinal + 1:5d} | "
+            f"{lines[ordinal]}"
+            for ordinal in range(begin, end)
+        )
+        block = "\n".join(rendered)
+        remaining = MAX_OUTPUT_CHARS - 300 - used
+        if len(block) + 1 > remaining:
+            if remaining > 80:
+                blocks.append(block[: remaining - 40] + "\n[context truncated]")
+            omitted = True
+            break
+        blocks.append(block)
+        used += len(block) + 1
+    print("\n".join(blocks))
+    if omitted:
+        print("\n[more matches omitted; use a narrower literal query]")
+
+
 def _resolve_json_path(value: Any, path: str | None) -> Any:
     if not path:
         return value
@@ -331,6 +387,170 @@ def _candidate_find(output_root: Path, needle: str) -> None:
             "authority": "read-only; candidate.json was not edited",
         }
     )
+
+
+def _iter_candidate_nodes(
+    value: Any, path: str = ""
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return authored node objects in their JSON traversal order."""
+
+    nodes: list[tuple[str, dict[str, Any]]] = []
+
+    def visit(item: Any, current_path: str) -> None:
+        if isinstance(item, dict):
+            if isinstance(item.get("id"), str) and isinstance(
+                item.get("op"), str
+            ):
+                nodes.append((current_path, item))
+            for key, child in item.items():
+                visit(
+                    child,
+                    f"{current_path}.{key}" if current_path else str(key),
+                )
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(
+                    child,
+                    f"{current_path}.{index}" if current_path else str(index),
+                )
+
+    visit(value, path)
+    return nodes
+
+
+def _node_summary(path: str, node: dict[str, Any]) -> dict[str, Any]:
+    """Project only fields already authored on a node into a compact view."""
+
+    summary: dict[str, Any] = {
+        "path": path,
+        "id": node.get("id"),
+        "op": node.get("op"),
+    }
+    for field in ("operands", "result", "results", "type", "attrs"):
+        if field in node:
+            summary[field] = node[field]
+    for field in (
+        "body",
+        "then_body",
+        "else_body",
+        "positive_body",
+        "negative_body",
+        "carry",
+        "results",
+    ):
+        value = node.get(field)
+        if isinstance(value, list):
+            summary[f"{field}_item_count"] = len(value)
+    summary["authored_keys"] = list(node)
+    return summary
+
+
+def _candidate_nodes(
+    output_root: Path,
+    start: int,
+    count: int,
+    op: str | None = None,
+) -> None:
+    """Page a compact read-only view of the current authored J nodes."""
+
+    if start < 1:
+        raise ValueError("candidate-nodes start must be positive")
+    if count < 1 or count > 100:
+        raise ValueError("candidate-nodes count must be in [1, 100]")
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        raise FileNotFoundError("/output/candidate.json does not exist")
+    candidate = _load_json(candidate_path)
+    nodes = _iter_candidate_nodes(candidate)
+    if op is not None:
+        nodes = [item for item in nodes if item[1].get("op") == op]
+    selected = nodes[start - 1 : start - 1 + count]
+    summaries: list[dict[str, Any]] = []
+    for path, node in selected:
+        summary = _node_summary(path, node)
+        trial = summaries + [summary]
+        if len(
+            json.dumps(trial, sort_keys=True, ensure_ascii=False)
+        ) > MAX_OUTPUT_CHARS - 1_500:
+            if not summaries:
+                summaries.append(
+                    {
+                        "path": path,
+                        "id": node.get("id"),
+                        "op": node.get("op"),
+                        "authored_keys": list(node),
+                        "inspect_command": (
+                            f"{QUERY_COMMAND} candidate-node {node.get('id')}"
+                        ),
+                        "detail_omitted": "single compact node exceeded page budget",
+                    }
+                )
+            break
+        summaries = trial
+    next_start = start + len(summaries)
+    _emit_json(
+        {
+            "protocol": "intentir.lift-candidate-node-query.v1",
+            "filter_op": op,
+            "start": start,
+            "returned": len(summaries),
+            "total": len(nodes),
+            "nodes": summaries,
+            "next_command": (
+                f"{QUERY_COMMAND} candidate-nodes --start {next_start} "
+                f"--count {count}" + (f" --op {op}" if op is not None else "")
+                if next_start <= len(nodes)
+                else None
+            ),
+            "authority": "read-only; candidate.json was not edited or repaired",
+        }
+    )
+
+
+def _candidate_node(output_root: Path, node_id: str) -> None:
+    """Inspect one exact authored node without inferring its meaning."""
+
+    if not node_id:
+        raise ValueError("candidate-node requires a non-empty node id")
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        raise FileNotFoundError("/output/candidate.json does not exist")
+    matches = [
+        item
+        for item in _iter_candidate_nodes(_load_json(candidate_path))
+        if item[1].get("id") == node_id
+    ]
+    if not matches:
+        raise KeyError(f"candidate contains no authored node {node_id!r}")
+    if len(matches) != 1:
+        raise ValueError(
+            f"candidate contains {len(matches)} authored nodes named {node_id!r}"
+        )
+    path, node = matches[0]
+    result = {
+        "protocol": "intentir.lift-candidate-node-query.v1",
+        "path": path,
+        "node": node,
+        "authority": "read-only; candidate.json was not edited or repaired",
+    }
+    try:
+        _emit_json(result)
+    except ValueError:
+        _emit_json(
+            {
+                "protocol": result["protocol"],
+                "summary": _node_summary(path, node),
+                "nested_nodes": [
+                    _node_summary(child_path, child)
+                    for child_path, child in _iter_candidate_nodes(node, path)
+                    if child is not node
+                ][:48],
+                "exact_path_command": (
+                    f"{QUERY_COMMAND} candidate --path {path}"
+                ),
+                "authority": result["authority"],
+            }
+        )
 
 
 def _candidate_abi(input_root: Path, output_root: Path) -> None:
@@ -676,12 +896,21 @@ def main() -> int:
     source = subparsers.add_parser("source")
     source.add_argument("--start", type=int, default=1)
     source.add_argument("--lines", type=int, default=160)
+    source_find = subparsers.add_parser("source-find")
+    source_find.add_argument("query")
+    source_find.add_argument("--context", type=int, default=3)
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     candidate = subparsers.add_parser("candidate")
     candidate.add_argument("--path")
     candidate_find = subparsers.add_parser("candidate-find")
     candidate_find.add_argument("value")
+    candidate_nodes = subparsers.add_parser("candidate-nodes")
+    candidate_nodes.add_argument("--start", type=int, default=1)
+    candidate_nodes.add_argument("--count", type=int, default=40)
+    candidate_nodes.add_argument("--op")
+    candidate_node = subparsers.add_parser("candidate-node")
+    candidate_node.add_argument("node_id")
     subparsers.add_parser("candidate-abi")
     knowledge = subparsers.add_parser("knowledge")
     knowledge.add_argument("query")
@@ -697,12 +926,18 @@ def main() -> int:
         _feedback_category(args.input_root, args.name)
     elif args.command == "source":
         _source(args.input_root, args.start, args.lines)
+    elif args.command == "source-find":
+        _source_find(args.input_root, args.query, args.context)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "candidate":
         _candidate(args.output_root, args.path)
     elif args.command == "candidate-find":
         _candidate_find(args.output_root, args.value)
+    elif args.command == "candidate-nodes":
+        _candidate_nodes(args.output_root, args.start, args.count, args.op)
+    elif args.command == "candidate-node":
+        _candidate_node(args.output_root, args.node_id)
     elif args.command == "candidate-abi":
         _candidate_abi(args.input_root, args.output_root)
     elif args.command == "knowledge":

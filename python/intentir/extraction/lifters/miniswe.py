@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v35"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v36"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -243,6 +243,9 @@ This directory is the complete allowlisted input for one fresh Lift round.
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
   matches. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
+  Its literal `source-find` search and paged `candidate-nodes`/single
+  `candidate-node` views expose only Source and J content already visible to
+  this worker; they never parse semantics, construct fields, or edit the draft.
   Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
   bounded read-only inspection over already-mounted data and the current draft.
   `bootstrap` copies an explicitly supplied previous artifact without editing
@@ -290,6 +293,11 @@ Lift submission and will be checked externally again.
 If current Lift/TypeCheck diagnostics contain `unresolved_gate1`, the enclosed
 Gate1 counterexample remains an open obligation across the intermediate
 construction failure; address both without inventing fields.
+Use `python /input/tools/context_query.py source-find TEXT --context 3` to
+locate literal Source occurrences without paging the whole file. For a large
+draft, use `candidate-nodes --start 1 --count 40` and `candidate-node n0` to
+inspect the graph that you authored. These commands are read-only discovery,
+not semantic extraction or repair.
 If bootstrap copied a `continuation_draft`, it is only the adjacent prior
 worker's complete LLM-written JSON draft, not a decoded or accepted artifact.
 Continue its focused repair and rerun validator/CandidateCheck yourself.

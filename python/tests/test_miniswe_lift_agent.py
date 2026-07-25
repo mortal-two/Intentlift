@@ -42,8 +42,11 @@ from minisweagent.config.intentir_context_query import (
     _candidate,
     _candidate_abi,
     _candidate_find,
+    _candidate_node,
+    _candidate_nodes,
     _feedback,
     _feedback_category,
+    _source_find,
 )
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
@@ -131,7 +134,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v35"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v36"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -143,6 +146,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     )
     assert "Do not page through the raw schema" in files["README.md"]
     assert "context_query.py bootstrap" in files["README.md"]
+    assert "source-find" in files["README.md"]
+    assert "candidate-nodes" in files["README.md"]
+    assert "read-only discovery" in files["README.md"]
     assert "integral rank-0 scalar explicitly equated" in files["README.md"]
     assert "J-owned" in files["README.md"]
     assert "value_dimension_relations" in files["README.md"]
@@ -477,6 +483,79 @@ def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
         "pi.instances.0.semantic_ref",
     ]
     assert report["authority"].startswith("read-only")
+    assert candidate_path.read_bytes() == before
+
+
+def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    output_root.mkdir()
+    (input_root / "source.py").write_text(
+        "def kernel(x):\n"
+        "    value = load(x)\n"
+        "    for offset in range(4):\n"
+        "        value = value + offset\n"
+        "    store(x, value)\n"
+    )
+    candidate = {
+        "j": {
+            "intent": {
+                "intent_function": {
+                    "body": [
+                        {
+                            "id": "n0",
+                            "op": "map_unary",
+                            "operands": ["t0"],
+                            "result": "v0",
+                            "attrs": {"fn": "neg"},
+                        },
+                        {
+                            "id": "n1",
+                            "op": "loop",
+                            "body": [
+                                {
+                                    "id": "n2",
+                                    "op": "map_binary",
+                                    "operands": ["v0", "t1"],
+                                    "result": "v1",
+                                    "attrs": {"fn": "add"},
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        },
+        "c": {"slots": [], "values": {}},
+        "pi": {},
+    }
+    candidate_path = output_root / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate))
+    before = candidate_path.read_bytes()
+
+    _source_find(input_root, "value", 1)
+    source_report = capsys.readouterr().out
+    assert "2 |     value = load(x)" in source_report
+    assert "4 |         value = value + offset" in source_report
+
+    _candidate_nodes(output_root, 1, 2)
+    page = json.loads(capsys.readouterr().out)
+    assert page["total"] == 3
+    assert [node["id"] for node in page["nodes"]] == ["n0", "n1"]
+    assert page["next_command"].endswith("--start 3 --count 2")
+
+    _candidate_nodes(output_root, 1, 10, "map_binary")
+    filtered = json.loads(capsys.readouterr().out)
+    assert filtered["total"] == 1
+    assert filtered["nodes"][0]["id"] == "n2"
+
+    _candidate_node(output_root, "n2")
+    node = json.loads(capsys.readouterr().out)
+    assert node["path"].endswith("body.1.body.0")
+    assert node["node"]["operands"] == ["v0", "t1"]
     assert candidate_path.read_bytes() == before
 
 
