@@ -43,6 +43,7 @@ from minisweagent.config.intentir_context_query import (
     _candidate_abi,
     _candidate_find,
     _feedback,
+    _feedback_category,
 )
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
@@ -130,7 +131,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v28"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v29"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -245,6 +246,58 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
     assert '"candidate_copied_to_output": true' in observation
     assert '"feedback_kind": "gate1"' in observation
     assert json.loads((output_root / "candidate.json").read_text()) == previous
+
+
+def test_dataflow_region_feedback_routes_agent_to_lifetime_knowledge(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    feedback = {
+        "failure_kind": "gate1",
+        "diagnostics": {
+            "observer_diff": {
+                "categories": [
+                    {
+                        "category": "dataflow",
+                        "difference_count": 2,
+                        "examples": [
+                            {
+                                "kind": "missing",
+                                "item": [
+                                    "edge",
+                                    "region[root]",
+                                    "tt.make_range[node]",
+                                    "region.member",
+                                ],
+                            },
+                            {
+                                "kind": "unexpected",
+                                "item": [
+                                    "edge",
+                                    "region[scf.for:node]",
+                                    "tt.make_range[node]",
+                                    "region.member",
+                                ],
+                            },
+                        ],
+                    }
+                ]
+            }
+        },
+        "previous_artifact": None,
+    }
+    (input_root / "feedback.json").write_text(json.dumps(feedback))
+
+    _feedback_category(input_root, "dataflow")
+
+    result = json.loads(capsys.readouterr().out)
+    assert "cross root/scf.for" in result["diagnostic_hint"]
+    assert "knowledge 'lexical lifetime'" in result["knowledge_query"]
+    assert result["examples"] == feedback["diagnostics"]["observer_diff"][
+        "categories"
+    ][0]["examples"]
 
 
 def test_candidate_abi_query_reports_only_public_mechanical_differences(

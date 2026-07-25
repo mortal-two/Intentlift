@@ -197,7 +197,23 @@ def _feedback_category(input_root: Path, name: str) -> None:
         raise KeyError("feedback contains no observer-diff categories")
     for category in categories:
         if isinstance(category, dict) and category.get("category") == name:
-            _emit_json(category)
+            result = dict(category)
+            rendered = json.dumps(category, sort_keys=True)
+            if (
+                name == "dataflow"
+                and "region[root]" in rendered
+                and "region[scf.for:" in rendered
+                and "region.member" in rendered
+            ):
+                result["diagnostic_hint"] = (
+                    "The observer examples cross root/scf.for region membership. "
+                    "Inspect exact Source definition scope and pi instance regions; "
+                    "fixed code has not inferred which producer, if any, must move."
+                )
+                result["knowledge_query"] = (
+                    f"{QUERY_COMMAND} knowledge 'lexical lifetime' --context 5"
+                )
+            _emit_json(result)
             return
     available = [
         item.get("category") for item in categories if isinstance(item, dict)
