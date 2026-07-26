@@ -744,7 +744,7 @@ def test_value_dimension_equality_is_explicitly_authored_not_inferred(
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     config = load_intentir_lift_config()
-    assert config["agent"]["step_limit"] == 48
+    assert config["agent"]["step_limit"] == 64
     assert config["environment"]["candidate_check_limit"] == 11
     model = create_intentir_lift_model(
         model_name="test",
@@ -763,14 +763,14 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 36, "step_limit": 48},
+        {"n_model_calls": 44, "step_limit": 64},
     )[0]
     rendered = json.loads(observation["output"])
 
     assert rendered["turn_budget"] == {
-        "used": 36,
-        "limit": 48,
-        "remaining": 12,
+        "used": 44,
+        "limit": 64,
+        "remaining": 20,
     }
     assert rendered["directive"].startswith("Stop browsing")
 

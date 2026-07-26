@@ -68,16 +68,16 @@ agent:
        PASS; one separately reserved submission evaluation remains available
        after the ordinary allowance is exhausted. A failure returns diagnostics
        and does not deliver the candidate.
-  step_limit: 48
+  step_limit: 64
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 2
 model:
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 12 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 12 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
