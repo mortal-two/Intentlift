@@ -13,18 +13,28 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
         "high_performance:flash_attn.flash_attn_triton."
         "_bwd_preprocess_do_o_dot"
     ),
+    "flash_layer_norm_1pass": (
+        "high_performance:flash_attn.ops.triton.layer_norm."
+        "_layer_norm_fwd_1pass_kernel"
+    ),
     "fused_add_rms_norm": "high_performance:liger_fused_add_rms_norm",
     "geglu": "high_performance:liger_geglu",
     "jsd": "high_performance:liger_jsd",
+    "kl_div": "high_performance:liger_kl_div",
     "layer_norm": "high_performance:liger_layer_norm",
     "liger_rms_norm": "high_performance:liger_rms_norm",
     "poly_norm": "high_performance:liger_poly_norm",
     "softmax": "high_performance:liger_softmax",
+    "sparsemax": "high_performance:liger_sparsemax",
     "swiglu": "high_performance:liger_swiglu",
     "tvd": "high_performance:liger_tvd",
     "xformers_rms_norm": (
         "high_performance:xformers.ops._triton.rmsnorm_kernels."
         "_rms_norm_kernel"
+    ),
+    "xformers_rms_norm_add": (
+        "high_performance:xformers.ops._triton.rmsnorm_kernels."
+        "_rms_norm_add_kernel"
     ),
 }
 

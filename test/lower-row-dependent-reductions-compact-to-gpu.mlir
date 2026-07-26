@@ -7,7 +7,10 @@
 // gpu.all_reduce buffers.  The graph and centered-variance arithmetic remain
 // unchanged; only Layer-C synchronization/storage is retuned.
 // CHECK-LABEL: func.func @dependent_centered_variance(
-// CHECK-SAME: attributes {intent.launch_plan = {{.*}}smem = 16 : i64
+// CHECK-SAME: intent.backend.fma_count = 0 : i64
+// CHECK-SAME: intent.backend.reduction_topology = "workgroup_hierarchical"
+// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1"]
+// CHECK-SAME: intent.launch_plan = {{.*}}smem = 16 : i64
 // CHECK: gpu.launch
 // CHECK-SAME: dynamic_shared_memory_size
 // CHECK: gpu.dynamic_shared_memory
@@ -42,5 +45,7 @@ func.func @dependent_centered_variance(
 }
 
 // FMA-LABEL: func.func @dependent_centered_variance(
+// FMA-SAME: intent.backend.fma_count = 4 : i64
+// FMA-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.numeric.fma.f32.v1"]
 // FMA: math.fma
 // FMA-NOT: intent.

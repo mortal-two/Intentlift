@@ -58,9 +58,10 @@ def ConvertIntentRowReductionToGPU
            "forced-vector graphs fail closed.">,
     Option<"fuseFma", "fuse-fma", "bool", "false",
            "Emit explicit f32 math.fma for single-use mul+add epilogues and "
-           "sum-of-products reduction accumulation. Disabled by default; an "
-           "offline Layer-C candidate may enable it and must pass P6 before "
-           "performance selection.">,
+           "sum-of-products reduction accumulation. Disabled by default. The "
+           "production search may enable it as an observation-changing concrete "
+           "MLIR state; that state must pass the frozen Q on D_search before "
+           "performance selection and the fixed winner must pass D_cert.">,
     Option<"deferEpilogueColLoads", "defer-epilogue-col-loads", "bool", "true",
            "Delay epilogue-only contiguous Col loads until after all row "
            "collectives, reducing cross-barrier register pressure. Set false "

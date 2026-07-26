@@ -235,6 +235,53 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
   }
 }
 
+/// Attach a machine-readable receipt to the concrete MLIR state produced by
+/// this C++ lowering.  The outer search controller reads only these facts and
+/// the resulting IR digest; it never infers a mechanism from a kernel name or
+/// from the requested pass option.  In particular, an FMA request that matched
+/// no concrete mul+add is recorded with fma_count=0.
+static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads) {
+  MLIRContext *ctx = lowered.getContext();
+  unsigned fmaCount = 0;
+  unsigned shuffleCount = 0;
+  unsigned barrierCount = 0;
+  unsigned allReduceCount = 0;
+  lowered.walk([&](math::FmaOp) { ++fmaCount; });
+  lowered.walk([&](gpu::ShuffleOp) { ++shuffleCount; });
+  lowered.walk([&](gpu::BarrierOp) { ++barrierCount; });
+  lowered.walk([&](gpu::AllReduceOp) { ++allReduceCount; });
+
+  StringRef topology = "none";
+  if (shuffleCount != 0)
+    topology = threads <= 32 ? "subgroup_shuffle"
+                             : "workgroup_hierarchical";
+  else if (allReduceCount != 0)
+    topology = "gpu_all_reduce";
+
+  SmallVector<Attribute> trace{
+      StringAttr::get(ctx, "cuda.row_reduction.read_once.v1"),
+      StringAttr::get(ctx, ("cuda.reduction." + topology + ".v1").str())};
+  if (fmaCount != 0)
+    trace.push_back(StringAttr::get(ctx, "cuda.numeric.fma.f32.v1"));
+
+  lowered->setAttr("intent.backend.lowering_path_kind",
+                   StringAttr::get(ctx, "row_reduction"));
+  lowered->setAttr("intent.backend.reduction_topology",
+                   StringAttr::get(ctx, topology));
+  lowered->setAttr("intent.backend.transformation_trace",
+                   ArrayAttr::get(ctx, trace));
+  lowered->setAttr("intent.backend.fma_count",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), fmaCount));
+  lowered->setAttr("intent.backend.shuffle_count",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), shuffleCount));
+  lowered->setAttr("intent.backend.barrier_count",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), barrierCount));
+  lowered->setAttr("intent.backend.all_reduce_count",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), allReduceCount));
+  lowered->setAttr("intent.backend.block_threads",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), threads));
+}
+
 /// Match the common normalization scalar fast path `recip(sqrt(x))`.  The
 /// single-use condition makes the replacement local: no other consumer loses
 /// the explicitly materialized sqrt value.
@@ -2567,6 +2614,7 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    attachConcreteStateReceipt(gpuFn, T);
     fn.erase();
     return success();
   }
@@ -2945,6 +2993,7 @@ struct RowReductionLowering {
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
+    attachConcreteStateReceipt(gpuFn, T);
     fn.erase();
     return success();
   }
@@ -3698,6 +3747,7 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    attachConcreteStateReceipt(gpuFn, T);
     fn.erase();
     return success();
   }
@@ -4552,6 +4602,7 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    attachConcreteStateReceipt(gpuFn, T);
     fn.erase();
     return success();
   }

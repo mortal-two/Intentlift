@@ -9,6 +9,7 @@ import intentir.backend.cuda.compile as backend_compile
 import intentir.backend.cuda.pipeline as backend_pipeline
 from intentir.backend.cuda.pipeline import (
     LoweredProgram,
+    _transformation_receipt,
     execute_cuda_artifact,
     lower_to_cuda,
 )
@@ -89,6 +90,33 @@ def test_specialized_pipeline_replays_the_exact_probe_before_codegen(
     assert observed == {"module": _SPECIALIZED, "scf_to_cf": True}
     assert result.specialized_mlir_sha256 == selection.probe_output_sha256
     assert result.to_record()["kernels"][0]["cubin_is_elf"] is True
+
+
+def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> None:
+    receipt = _transformation_receipt(
+        """
+        func.func @opaque() attributes {
+          intent.backend.all_reduce_count = 0 : i64,
+          intent.backend.barrier_count = 2 : i64,
+          intent.backend.block_threads = 64 : i64,
+          intent.backend.fma_count = 4 : i64,
+          intent.backend.lowering_path_kind = "row_reduction",
+          intent.backend.reduction_topology = "workgroup_hierarchical",
+          intent.backend.shuffle_count = 20 : i64,
+          intent.backend.transformation_trace = [
+            "cuda.row_reduction.read_once.v1",
+            "cuda.reduction.workgroup_hierarchical.v1",
+            "cuda.numeric.fma.f32.v1"
+          ]
+        } { return }
+        """
+    )
+
+    assert receipt is not None
+    assert receipt.fma_count == 4
+    assert receipt.observation_changing
+    assert receipt.reduction_topology == "workgroup_hierarchical"
+    assert len(receipt.topology_digest) == 64
 
 
 def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(

@@ -8,13 +8,16 @@ import pytest
 from direct_fixtures import make_reduce_artifact
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import (
+    PRODUCTION_CATALOG_SCHEMA,
     PRODUCTION_SNAPSHOT_SCHEMA,
     ProductionSnapshot,
     ProductionSnapshotError,
+    load_production_snapshot,
 )
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.production_export import (
     ProductionExportError,
+    append_production_export,
     export_production_snapshot,
 )
 
@@ -127,3 +130,73 @@ def test_exporter_fails_closed_on_incomplete_or_misaligned_evidence(
 
     with pytest.raises(ProductionExportError, match=message):
         export_production_snapshot(path)
+
+
+def test_certified_export_appends_content_addressed_catalog_idempotently(
+    tmp_path,
+) -> None:
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "catalog.json").write_text(
+        json.dumps(
+            {
+                "protocol": PRODUCTION_CATALOG_SCHEMA,
+                "entry_count": 0,
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(_certified_report()), encoding="utf-8")
+
+    first = append_production_export(
+        catalog_dir,
+        name="reduce",
+        case_id="high_performance:test_reduce",
+        evidence=report_path,
+    )
+    second = append_production_export(
+        catalog_dir,
+        name="reduce",
+        case_id="high_performance:test_reduce",
+        evidence=report_path,
+    )
+    loaded, path = load_production_snapshot(catalog_dir, "reduce")
+    catalog = json.loads((catalog_dir / "catalog.json").read_text())
+
+    assert first[0].snapshot_digest == second[0].snapshot_digest
+    assert loaded.snapshot_digest == first[0].snapshot_digest
+    assert path.name == f"{loaded.snapshot_digest}.json"
+    assert catalog["entry_count"] == 1
+
+
+def test_catalog_append_rejects_stable_name_rebinding(tmp_path) -> None:
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "catalog.json").write_text(
+        json.dumps(
+            {
+                "protocol": PRODUCTION_CATALOG_SCHEMA,
+                "entry_count": 0,
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(_certified_report()), encoding="utf-8")
+    append_production_export(
+        catalog_dir,
+        name="reduce",
+        case_id="high_performance:test_reduce",
+        evidence=report_path,
+    )
+
+    with pytest.raises(ProductionExportError, match="different content"):
+        append_production_export(
+            catalog_dir,
+            name="reduce",
+            case_id="high_performance:different_case",
+            evidence=report_path,
+        )

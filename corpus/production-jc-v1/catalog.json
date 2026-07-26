@@ -21,6 +21,16 @@
       "snapshot_file": "69e061e5aef6d8e4c10aefd7f8d6ee96fa166c06cf6f78054a267f5209afa590.json"
     },
     {
+      "c_digest": "a5ad45ad91462c68bbc084058d566fa1d12bf35cb8b5432de0335aed3cb2eef5",
+      "case_id": "high_performance:flash_attn.ops.triton.layer_norm._layer_norm_fwd_1pass_kernel",
+      "evidence_kind": "zero_model_gate2_recheck",
+      "j_digest": "487a74d65e5310306e5d76be73d483366382cdcb7baae8ac6440244acbbe5fcb",
+      "name": "flash_layer_norm_1pass",
+      "receipt_digest": "2119c8d3cc5c8c4fd8f75ca581991201725cbc1c1ca59728f0e280753dfbae6d",
+      "snapshot_digest": "76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480",
+      "snapshot_file": "76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480.json"
+    },
+    {
       "c_digest": "1837e4c5e61f3fe5f5f0fc40fd3c8a86066cf9c237ec2b42f150d7a229e8da5d",
       "case_id": "high_performance:liger_fused_add_rms_norm",
       "evidence_kind": "certified_run_report",
@@ -49,6 +59,16 @@
       "receipt_digest": "8943330b87343e6a86b5b834573b804ca6201f39ba00694d8550a4e5f3cd7548",
       "snapshot_digest": "abdc61bc3039de3d20ac2585497013227fbc337d760a32b8be06a1e75a39b507",
       "snapshot_file": "abdc61bc3039de3d20ac2585497013227fbc337d760a32b8be06a1e75a39b507.json"
+    },
+    {
+      "c_digest": "928a8c86c83d98e849c300fcaca790b2f1cff4634e601b3a7262963b38c84095",
+      "case_id": "high_performance:liger_kl_div",
+      "evidence_kind": "certified_run_report",
+      "j_digest": "c6a97697fe8cd731290282896915002f5616f1176213adf748c8c3f077159027",
+      "name": "kl_div",
+      "receipt_digest": "2f0aff9e5db03d44978c1113016ecbfd83a48738dbce0d99d354b1399975ee7d",
+      "snapshot_digest": "b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a",
+      "snapshot_file": "b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a.json"
     },
     {
       "c_digest": "b961285f7dbc9c145dfe2d9c12983ef649c070696bb9bf90d9f3861185ca4d7c",
@@ -91,6 +111,16 @@
       "snapshot_file": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06.json"
     },
     {
+      "c_digest": "7c1725bf6cd384c60c82bdbc8bde727a1c3d82a6278d6bcbd2fed47a8b958878",
+      "case_id": "high_performance:liger_sparsemax",
+      "evidence_kind": "zero_model_gate2_recheck",
+      "j_digest": "0c5138202bb3efdfee48e6a3fcc2a8417024707206fbf21baf90b32770d80483",
+      "name": "sparsemax",
+      "receipt_digest": "8ede60b802269584ab28021b48f51630dc28d46f2509c024f08f518a7a1cd5bd",
+      "snapshot_digest": "ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda",
+      "snapshot_file": "ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda.json"
+    },
+    {
       "c_digest": "40ea18d74315d7c8d208054804cdbaa7754f8792a70344a03c128f3695a66fc0",
       "case_id": "high_performance:liger_swiglu",
       "evidence_kind": "certified_run_report",
@@ -119,8 +149,18 @@
       "receipt_digest": "c2d2164930e77b72575e845516a171d6904ce8abeeb85c3bf2d0871393ca4faa",
       "snapshot_digest": "a4dd51db46b67b80b3389be5c03b6ebd8ad234e4ae8f2e1f6a69e17b0e9bd699",
       "snapshot_file": "a4dd51db46b67b80b3389be5c03b6ebd8ad234e4ae8f2e1f6a69e17b0e9bd699.json"
+    },
+    {
+      "c_digest": "1837e4c5e61f3fe5f5f0fc40fd3c8a86066cf9c237ec2b42f150d7a229e8da5d",
+      "case_id": "high_performance:xformers.ops._triton.rmsnorm_kernels._rms_norm_add_kernel",
+      "evidence_kind": "zero_model_gate2_recheck",
+      "j_digest": "e89066867f5918fbeb11126307d3b1b1fa53043ac0ced956f19e0c589abe340c",
+      "name": "xformers_rms_norm_add",
+      "receipt_digest": "a12943be2df956d0b89d7f4e34f2f90216e07ddbb7e3942bf70c6e6b147b34b0",
+      "snapshot_digest": "e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be",
+      "snapshot_file": "e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be.json"
     }
   ],
-  "entry_count": 12,
+  "entry_count": 16,
   "protocol": "intentir.production.jc-catalog.v1"
 }

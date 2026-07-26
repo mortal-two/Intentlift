@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,106 @@ from intentir.backend.cuda.selection import (
 from intentir.backend.cuda.schedules import ScheduleDecision
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentFunction
+from intentir.ir.production_snapshot import content_digest
+
+
+@dataclass(frozen=True)
+class MLIRTransformationReceipt:
+    """Facts attached by the C++ pass to the concrete post-pass MLIR state."""
+
+    lowering_path_kind: str
+    reduction_topology: str
+    transformation_trace: tuple[str, ...]
+    fma_count: int
+    shuffle_count: int
+    barrier_count: int
+    all_reduce_count: int
+    block_threads: int
+
+    @property
+    def observation_changing(self) -> bool:
+        return self.fma_count > 0 or self.reduction_topology in {
+            "subgroup_shuffle",
+            "workgroup_hierarchical",
+            "gpu_all_reduce",
+        }
+
+    @property
+    def topology_digest(self) -> str:
+        return content_digest(
+            {
+                "lowering_path_kind": self.lowering_path_kind,
+                "reduction_topology": self.reduction_topology,
+                "transformation_trace": list(self.transformation_trace),
+            }
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "lowering_path_kind": self.lowering_path_kind,
+            "reduction_topology": self.reduction_topology,
+            "transformation_trace": list(self.transformation_trace),
+            "fma_count": self.fma_count,
+            "shuffle_count": self.shuffle_count,
+            "barrier_count": self.barrier_count,
+            "all_reduce_count": self.all_reduce_count,
+            "block_threads": self.block_threads,
+            "observation_changing": self.observation_changing,
+            "topology_digest": self.topology_digest,
+        }
+
+
+def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
+    """Decode only C++-authored receipt attrs; never infer from function names."""
+
+    def string_attr(name: str) -> str | None:
+        match = re.search(
+            rf"{re.escape(name)}\s*=\s*\"([^\"]+)\"",
+            mlir,
+        )
+        return match.group(1) if match is not None else None
+
+    def integer_attr(name: str) -> int | None:
+        match = re.search(
+            rf"{re.escape(name)}\s*=\s*(-?[0-9]+)\s*:\s*i64",
+            mlir,
+        )
+        return int(match.group(1)) if match is not None else None
+
+    path = string_attr("intent.backend.lowering_path_kind")
+    topology = string_attr("intent.backend.reduction_topology")
+    trace_match = re.search(
+        r"intent\.backend\.transformation_trace\s*=\s*\[([^\]]*)\]",
+        mlir,
+    )
+    if path is None and topology is None and trace_match is None:
+        return None
+    if path is None or topology is None or trace_match is None:
+        raise ValueError("C++ concrete-state receipt is incomplete")
+    trace = tuple(re.findall(r'\"([^\"]+)\"', trace_match.group(1)))
+    counts = {
+        name: integer_attr(f"intent.backend.{name}")
+        for name in (
+            "fma_count",
+            "shuffle_count",
+            "barrier_count",
+            "all_reduce_count",
+            "block_threads",
+        )
+    }
+    if not trace or any(value is None or value < 0 for value in counts.values()):
+        raise ValueError("C++ concrete-state receipt has invalid trace/counts")
+    assert all(value is not None for value in counts.values())
+    return MLIRTransformationReceipt(
+        lowering_path_kind=path,
+        reduction_topology=topology,
+        transformation_trace=trace,
+        fma_count=int(counts["fma_count"]),
+        shuffle_count=int(counts["shuffle_count"]),
+        barrier_count=int(counts["barrier_count"]),
+        all_reduce_count=int(counts["all_reduce_count"]),
+        block_threads=int(counts["block_threads"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -38,6 +139,7 @@ class LoweredProgram:
     kernels: tuple[backend_compile.CompiledKernel, ...]
     source_mlir_sha256: str
     specialized_mlir_sha256: str | None = None
+    transformation_receipt: MLIRTransformationReceipt | None = None
 
     def __post_init__(self) -> None:
         if not self.kernels:
@@ -62,6 +164,17 @@ class LoweredProgram:
                 )
         elif self.specialized_mlir_sha256 is not None:
             raise ValueError("generic lowering cannot carry specialized MLIR")
+        if (
+            self.transformation_receipt is not None
+            and self.selection.pipeline_kind != "specialized"
+        ):
+            raise ValueError("generic lowering cannot carry a transformation receipt")
+
+    @property
+    def executable_digest(self) -> str:
+        return content_digest(
+            [hashlib.sha256(kernel.cubin).hexdigest() for kernel in self.kernels]
+        )
 
     def to_record(self) -> dict[str, object]:
         """Return JSON-safe compiler provenance without embedding binary bytes."""
@@ -70,6 +183,12 @@ class LoweredProgram:
             "selection": self.selection.to_dict(),
             "source_mlir_sha256": self.source_mlir_sha256,
             "specialized_mlir_sha256": self.specialized_mlir_sha256,
+            "transformation_receipt": (
+                self.transformation_receipt.to_dict()
+                if self.transformation_receipt is not None
+                else None
+            ),
+            "executable_digest": self.executable_digest,
             "kernel_count": len(self.kernels),
             "kernels": [
                 {
@@ -162,6 +281,7 @@ def lower_to_cuda(
         )
 
     specialized_digest: str | None = None
+    transformation_receipt: MLIRTransformationReceipt | None = None
     if selection.pipeline_kind == "specialized":
         assert selection.pass_argument is not None
         specialized = backend_compile._run(
@@ -170,6 +290,7 @@ def lower_to_cuda(
         specialized_digest = hashlib.sha256(
             specialized.encode("utf-8")
         ).hexdigest()
+        transformation_receipt = _transformation_receipt(specialized)
         if specialized_digest != selection.probe_output_sha256:
             raise RuntimeError(
                 "specialized pass output changed between selection and compilation"
@@ -187,6 +308,7 @@ def lower_to_cuda(
         kernels=kernels,
         source_mlir_sha256=source_digest,
         specialized_mlir_sha256=specialized_digest,
+        transformation_receipt=transformation_receipt,
     )
 
 
@@ -274,6 +396,7 @@ def execute_cuda_artifact(
 
 __all__ = [
     "LoweredProgram",
+    "MLIRTransformationReceipt",
     "execute_cuda_artifact",
     "lower_function_to_cuda",
     "lower_to_cuda",

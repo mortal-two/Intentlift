@@ -281,7 +281,13 @@ def _default_h100_speedups(report: Mapping[str, Any]) -> dict[str, float]:
             for candidate in item["candidates"]
             if candidate["status"] == "measured"
         ]
-        path_kinds = {candidate["candidate"]["family"] for candidate in measured}
+        path_kinds = {
+            candidate["candidate"].get(
+                "lowering_path_kind",
+                candidate["candidate"].get("family"),
+            )
+            for candidate in measured
+        }
         if len(path_kinds) != 1:
             continue
         path_kind = next(iter(path_kinds))

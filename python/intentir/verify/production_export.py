@@ -9,12 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
-from intentir.ir.production_snapshot import ProductionSnapshot, content_digest
+from intentir.ir.production_snapshot import (
+    PRODUCTION_CATALOG_SCHEMA,
+    ProductionCatalogEntry,
+    ProductionSnapshot,
+    content_digest,
+    load_production_snapshot,
+)
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 
@@ -45,6 +53,25 @@ def _sha256_file(path: Path) -> str:
     except OSError as exc:
         raise ProductionExportError(f"cannot hash evidence {path}: {exc}") from exc
     return digest.hexdigest()
+
+
+def _write_atomic(path: Path, payload: str) -> None:
+    """Durably replace one catalog object without exposing a partial JSON file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def _artifact(value: Mapping[str, Any]) -> Gate1Artifact:
@@ -179,9 +206,129 @@ def export_production_snapshot(
     return snapshot, receipt
 
 
+def append_production_export(
+    catalog_directory: str | Path,
+    *,
+    name: str,
+    case_id: str,
+    evidence: str | Path,
+) -> tuple[ProductionSnapshot, ProductionExportReceipt, ProductionCatalogEntry]:
+    """Append one certified export to an existing content-addressed catalog.
+
+    Existing entries are decoded and digest-checked before the append.  A
+    repeated identical append is idempotent; a stable-name or case-id conflict
+    fails without rewriting the catalog.  The evidence itself never enters the
+    backend snapshot, preserving the J+C-only production boundary.
+    """
+
+    directory = Path(catalog_directory)
+    catalog_path = directory / "catalog.json"
+    catalog = _read_object(catalog_path, context="production catalog")
+    if set(catalog) != {"protocol", "entry_count", "entries"}:
+        raise ProductionExportError(
+            "production catalog root must contain protocol, entry_count, entries"
+        )
+    if catalog.get("protocol") != PRODUCTION_CATALOG_SCHEMA:
+        raise ProductionExportError("unsupported production catalog protocol")
+    raw_entries = catalog.get("entries")
+    if (
+        not isinstance(raw_entries, list)
+        or isinstance(catalog.get("entry_count"), bool)
+        or not isinstance(catalog.get("entry_count"), int)
+        or catalog["entry_count"] != len(raw_entries)
+    ):
+        raise ProductionExportError("production catalog entry_count mismatch")
+    try:
+        entries = [ProductionCatalogEntry.from_dict(item) for item in raw_entries]
+        for existing in entries:
+            load_production_snapshot(directory, existing.name)
+    except (TypeError, ValueError) as exc:
+        raise ProductionExportError(
+            f"existing production catalog is invalid: {exc}"
+        ) from exc
+
+    snapshot, receipt = export_production_snapshot(evidence)
+    entry_dict = {
+        "name": name,
+        "case_id": case_id,
+        "snapshot_file": f"{snapshot.snapshot_digest}.json",
+        "snapshot_digest": snapshot.snapshot_digest,
+        "j_digest": snapshot.j_digest,
+        "c_digest": snapshot.c_digest,
+        "receipt_digest": receipt.receipt_digest,
+        "evidence_kind": receipt.evidence_kind,
+    }
+    try:
+        entry = ProductionCatalogEntry.from_dict(entry_dict)
+    except (TypeError, ValueError) as exc:
+        raise ProductionExportError(f"new production catalog entry is invalid: {exc}") from exc
+
+    same_name = next((item for item in entries if item.name == name), None)
+    if same_name is not None:
+        if same_name != entry:
+            raise ProductionExportError(
+                f"production catalog name {name!r} already identifies different content"
+            )
+        loaded, _path = load_production_snapshot(directory, name)
+        if loaded.snapshot_digest != snapshot.snapshot_digest:
+            raise ProductionExportError("idempotent append snapshot mismatch")
+        return snapshot, receipt, entry
+    if any(item.case_id == case_id for item in entries):
+        raise ProductionExportError(
+            f"production catalog case_id {case_id!r} already has a stable name"
+        )
+
+    snapshot_path = directory / entry.snapshot_file
+    if snapshot_path.exists():
+        try:
+            existing_snapshot = ProductionSnapshot.from_json(
+                snapshot_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ProductionExportError(
+                f"content-addressed snapshot collision is unreadable: {exc}"
+            ) from exc
+        if existing_snapshot.snapshot_digest != snapshot.snapshot_digest:
+            raise ProductionExportError("content-addressed snapshot collision")
+    else:
+        _write_atomic(snapshot_path, snapshot.to_json(indent=2))
+
+    updated = sorted([*entries, entry], key=lambda item: item.name)
+    payload = {
+        "protocol": PRODUCTION_CATALOG_SCHEMA,
+        "entry_count": len(updated),
+        "entries": [
+            {
+                "name": item.name,
+                "case_id": item.case_id,
+                "snapshot_file": item.snapshot_file,
+                "snapshot_digest": item.snapshot_digest,
+                "j_digest": item.j_digest,
+                "c_digest": item.c_digest,
+                "receipt_digest": item.receipt_digest,
+                "evidence_kind": item.evidence_kind,
+            }
+            for item in updated
+        ],
+    }
+    _write_atomic(
+        catalog_path,
+        json.dumps(
+            payload,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+    )
+    return snapshot, receipt, entry
+
+
 __all__ = [
     "EXPORT_RECEIPT_SCHEMA",
     "ProductionExportError",
     "ProductionExportReceipt",
+    "append_production_export",
     "export_production_snapshot",
 ]

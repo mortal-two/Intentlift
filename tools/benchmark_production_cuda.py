@@ -29,12 +29,18 @@ from intentir.backend.cuda.benchmark import (
     do_bench_us,
 )
 from intentir.backend.cuda.search import PerformanceCache, search_cuda
+from intentir.backend.cuda.qd import (
+    CudaOpaqueExecution,
+    build_seeded_execution_domain,
+)
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
+from intentir.backend.ablation import SearchAxes
+from intentir.backend.search_and_close import SearchAndCloseController
 from intentir.ir.production_snapshot import (
     ProductionSnapshot,
     load_production_snapshot,
@@ -43,6 +49,7 @@ from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.gate2.triton import PreparedTritonInvocation
+from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 from intentir.verify.workload_adapters import (
     TRITON_WORKLOAD_ADAPTERS,
@@ -141,6 +148,12 @@ def _one_kernel(
     search_prior: str,
     b_search_mode: str,
     cache: PerformanceCache,
+    axes: SearchAxes | None = None,
+    fixed_lowering_path_kind: str | None = None,
+    qd_search_seeds: tuple[int, ...] = (),
+    qd_cert_seeds: tuple[int, ...] = (),
+    replay_program: KernelSource | None = None,
+    require_backend_closure: bool = False,
 ) -> dict[str, Any]:
     import torch
 
@@ -164,9 +177,47 @@ def _one_kernel(
     )
     state = attach_c(
         materialized,
-        snapshot.c if search_prior == "with-c" else None,
+        snapshot.c
+        if (
+            axes.use_c_prior
+            if axes is not None
+            else search_prior == "with-c"
+        )
+        else None,
         BackendTarget("cuda", backend_compile.CHIP),
     )
+    qd_controller = None
+    if qd_search_seeds or qd_cert_seeds:
+        if not qd_search_seeds or not qd_cert_seeds:
+            raise ValueError("Q/D search and certification seeds are both required")
+        d_search = build_seeded_execution_domain(
+            prepared_workload,
+            snapshot.j,
+            snapshot.c,
+            domain_id=f"{name}.D_search",
+            seeds=qd_search_seeds,
+        )
+        d_cert = build_seeded_execution_domain(
+            prepared_workload,
+            snapshot.j,
+            snapshot.c,
+            domain_id=f"{name}.D_cert",
+            seeds=qd_cert_seeds,
+        )
+        opaque = CudaOpaqueExecution(
+            j=snapshot.j,
+            materialized=materialized,
+            source=prepared_workload.request.source.gate_source,
+            replay=replay_program,
+        )
+        qd_controller = SearchAndCloseController(
+            j=snapshot.j,
+            target=state.target.to_dict(),
+            policy=DEFAULT_GATE2_POLICY,
+            d_search=d_search,
+            d_cert=d_cert,
+            runners=opaque.runners(),
+        )
     inputs = _tensor_inputs(
         torch,
         snapshot,
@@ -213,7 +264,15 @@ def _one_kernel(
         budget=budget,
         include_generic=False,
         cache=cache,
-        enable_b_transformations=b_search_mode == "contract-guided",
+        enable_b_transformations=(
+            axes.enable_local_b_transformations
+            if axes is not None
+            else b_search_mode == "contract-guided"
+        ),
+        axes=axes,
+        fixed_lowering_path_kind=fixed_lowering_path_kind,
+        qd_controller=qd_controller,
+        require_backend_closure=require_backend_closure,
     )
     if search.winner is None or search.winner_program is None:
         raise RuntimeError("measured search produced no executable winner")
@@ -283,11 +342,21 @@ def _one_kernel(
         "extents": dims,
         "materialization": materialized.to_record(),
         "search_prior": {
-            "mode": search_prior,
-            "c_attached_to_backend_search": search_prior == "with-c",
+            "mode": (
+                "with-c" if axes is not None and axes.use_c_prior
+                else "without-c" if axes is not None
+                else search_prior
+            ),
+            "c_attached_to_backend_search": (
+                axes.use_c_prior
+                if axes is not None
+                else search_prior == "with-c"
+            ),
             "accepted_c_used_only_to_reconstruct_exact_workload": True,
         },
         "b_search_mode": b_search_mode,
+        "ablation_axes": axes.to_dict() if axes is not None else None,
+        "execution_domain_closure_required": require_backend_closure,
         "search": search.to_record(),
         "winner": {
             "candidate": search.winner.to_dict(),

@@ -12,12 +12,47 @@ from intentir.backend.materialize import (
     materialize_j,
 )
 from intentir.backend.protocol import BackendTarget
+from intentir.backend.cuda.production_cases import (
+    PRODUCTION_CASE_IDS,
+    constexpr_input_bindings,
+)
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
+from intentir.verify.scrc_workload_run import build_workload_jc_suite
+from intentir.verify.workload_adapters import (
+    TRITON_WORKLOAD_ADAPTERS,
+    prepare_triton_workload,
+)
 
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("name", sorted(PRODUCTION_CASE_IDS))
+def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v1", name
+    )
+    assert snapshot.c is not None
+    prepared = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS[PRODUCTION_CASE_IDS[name]]
+    )
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+
+    assert materialized.j_digest == snapshot.j_digest
+    assert "\nmodule {\n" in materialized.intent_mlir
 
 
 def test_materialization_is_deterministic_and_does_not_read_c() -> None:

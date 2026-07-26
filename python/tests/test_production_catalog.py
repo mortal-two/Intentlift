@@ -13,24 +13,28 @@ _ROOT = Path(__file__).resolve().parents[2]
 _CATALOG_DIR = _ROOT / "corpus" / "production-jc-v1"
 
 
-def test_frozen_production_catalog_contains_exactly_the_closed_twelve() -> None:
+def test_frozen_production_catalog_contains_exactly_the_closed_sixteen() -> None:
     catalog = json.loads((_CATALOG_DIR / "catalog.json").read_text())
 
     assert catalog["protocol"] == "intentir.production.jc-catalog.v1"
-    assert catalog["entry_count"] == 12
+    assert catalog["entry_count"] == 16
     assert {item["name"] for item in catalog["entries"]} == {
         "dyt",
         "flash_bwd_preprocess",
+        "flash_layer_norm_1pass",
         "fused_add_rms_norm",
         "geglu",
         "jsd",
+        "kl_div",
         "layer_norm",
         "liger_rms_norm",
         "poly_norm",
         "softmax",
+        "sparsemax",
         "swiglu",
         "tvd",
         "xformers_rms_norm",
+        "xformers_rms_norm_add",
     }
 
 

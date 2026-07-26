@@ -82,7 +82,13 @@ def _default_latency(item: Mapping[str, Any]) -> tuple[str, float]:
         for attempt in _attempts(item)
         if attempt.get("latency_us") is not None
     ]
-    path_kinds = {attempt["candidate"]["family"] for attempt in measured}
+    path_kinds = {
+        attempt["candidate"].get(
+            "lowering_path_kind",
+            attempt["candidate"].get("family"),
+        )
+        for attempt in measured
+    }
     if len(path_kinds) != 1:
         raise ValueError(
             f"{item['kernel']} has {len(path_kinds)} measured lowering path kinds"

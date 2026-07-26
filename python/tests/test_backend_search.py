@@ -14,6 +14,7 @@ from intentir.backend.cuda.search import (
     enumerate_cuda_candidates,
 )
 from intentir.backend.materialize import attach_c, materialize_j
+from intentir.backend.ablation import ExperimentArm, standard_ablation_plan
 from intentir.backend.protocol import BackendTarget
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import load_production_snapshot
@@ -137,3 +138,43 @@ def test_performance_cache_identity_does_not_depend_on_c(tmp_path: Path) -> None
     assert left == right
     cache.store(left, 3.25, candidate=candidate_c)
     assert PerformanceCache(tmp_path / "cache.json").lookup(right) == 3.25
+
+
+def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
+    state, _without_c = _states()
+    arms = {item.arm: item for item in standard_ablation_plan(96)}
+    e2 = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E2_SCHEDULE],
+        fixed_lowering_path_kind="row_reduction",
+    )
+    n1 = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.N1_REDUCTION_TREE],
+    )
+    n2 = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.N2_FMA],
+    )
+
+    assert all(
+        item.lowering_path_kind in {"generic", "row_reduction"}
+        for item in e2
+    )
+    assert all(
+        not item.schedule.get("fuse_fma", False) for item in e2
+    )
+    assert all(not item.b_transformations for item in e2)
+    assert any(
+        item.schedule.get("block_threads") == 32
+        for item in n1
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert any(
+        item.schedule.get("fuse_fma") is True
+        for item in n2
+        if item.lowering_path_kind == "row_reduction"
+    )
+    record = n2[1].to_dict()
+    assert "lowering_path_kind" in record
+    assert "family" not in record

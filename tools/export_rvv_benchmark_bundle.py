@@ -19,7 +19,9 @@ from intentir.backend.cuda.production_cases import (
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.riscv.compile import (
+    RiscvLoweringCandidate,
     RiscvSchedule,
+    RiscvTransformationState,
     compile_riscv_object,
 )
 from intentir.backend.riscv.contract import derive_riscv_contract_view
@@ -34,7 +36,7 @@ from intentir.verify.workload_adapters import (
 )
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v1"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
 TARGET = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
 
 
@@ -42,20 +44,25 @@ def _shape(shape: list[int | str], dims: dict[str, int]) -> list[int]:
     return [int(dims[item]) if isinstance(item, str) else int(item) for item in shape]
 
 
-def _schedules(enable_b_transformations: bool) -> list[RiscvSchedule]:
-    schedules = [
-        RiscvSchedule(fuse, opt, vectorize, 128)
+def _candidates(
+    enable_b_transformations: bool,
+) -> list[RiscvLoweringCandidate]:
+    candidates = [
+        RiscvLoweringCandidate(
+            RiscvTransformationState(fuse),
+            RiscvSchedule(opt, vectorize, 128),
+        )
         for fuse in (False, True)
         for opt in (2, 3)
         for vectorize in (False, True)
         if enable_b_transformations or not fuse
     ]
     return sorted(
-        schedules,
+        candidates,
         key=lambda item: (
-            not item.fuse_elementwise,
-            not item.vectorize,
-            -item.opt_level,
+            not item.transformation.fuse_elementwise,
+            not item.schedule.vectorize,
+            -item.schedule.opt_level,
         ),
     )
 
@@ -104,19 +111,19 @@ def _entry(name: str, snapshot_dir: Path) -> dict[str, Any]:
     contract = derive_riscv_contract_view(state)
     candidates = []
     rejected = []
-    for schedule in _schedules(enable_b_transformations=True):
+    for candidate in _candidates(enable_b_transformations=True):
         started = time.perf_counter_ns()
         try:
             compiled = compile_riscv_object(
                 state,
-                schedule,
+                candidate,
                 capabilities=contract.capabilities,
             )
         except Exception as error:
             rejected.append(
                 {
-                    "candidate_id": schedule.candidate_id,
-                    "schedule": schedule.to_dict(),
+                    "candidate_id": candidate.candidate_id,
+                    "candidate": candidate.to_dict(),
                     "reason": f"{type(error).__name__}: {error}",
                 }
             )
@@ -183,7 +190,7 @@ def _entry(name: str, snapshot_dir: Path) -> dict[str, Any]:
         "schedule_only_candidate_ids": [
             item["candidate"]["candidate_id"]
             for item in candidates
-            if not item["candidate"]["schedule"]["b_transformations"]
+            if not item["candidate"]["transformation"]["b_transformations"]
         ],
         "candidates": candidates,
         "rejected_candidates": rejected,

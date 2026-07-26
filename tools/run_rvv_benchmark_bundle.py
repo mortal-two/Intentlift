@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v1"
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v1"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v2"
 
 
 class KernelFailure(RuntimeError):
@@ -365,7 +365,7 @@ def _one_kernel(
             "e3_contract_guided_us": e3["latency_us"],
             "e3_over_e2_speedup": e2["latency_us"] / e3["latency_us"],
             "b_transformation_wins": bool(
-                e3["candidate"]["schedule"]["b_transformations"]
+                e3["candidate"]["transformation"]["b_transformations"]
             ),
             "timing": "pinned-process perf_counter_ns via ctypes C ABI",
             "warmup": warmup,
