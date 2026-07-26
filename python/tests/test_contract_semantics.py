@@ -20,6 +20,7 @@ from intentir.ir.contract_semantics import (
     TypedContractProgram,
     evaluate_contract_expr,
     evaluate_contract_index,
+    infer_reference_sorts,
 )
 
 
@@ -80,6 +81,27 @@ def test_boolean_contract_semantics_are_typed() -> None:
     assert program.evaluate(
         {"enabled": True, "disabled": False, "lane": 8, "extent": 8}
     ) is False
+
+
+def test_reference_sorts_are_uniquely_inferred_from_grammar_context() -> None:
+    expression = _boolean("enabled and 0 <= lane < extent")
+    assert infer_reference_sorts(
+        expression,
+        expected_sort=ContractSort.BOOLEAN,
+    ) == {
+        "enabled": ContractSort.BOOLEAN,
+        "extent": ContractSort.INTEGER,
+        "lane": ContractSort.INTEGER,
+    }
+
+
+def test_reference_sort_inference_rejects_conflicting_uses() -> None:
+    expression = _boolean("value and value < 4")
+    with pytest.raises(ContractSemanticsError, match="conflicting sorts"):
+        infer_reference_sorts(
+            expression,
+            expected_sort=ContractSort.BOOLEAN,
+        )
 
 
 @pytest.mark.parametrize("factors", [(2, 3, 4), (1, 4, 6), (2, 2, 2)])

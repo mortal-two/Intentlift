@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from intentir.ir.functional_boundary import static_index_bounds_status
+from intentir.ir.integer_range import proves_index_bounds
 
 from intentir.verify.gate1.model import (
     DuplicatePolicy,
@@ -108,11 +109,11 @@ def close_q(
     return bool(np.all(error <= bound))
 
 
-def _j_inputs(
+def _j_inputs_and_dimensions(
     j: SemanticArchive,
     input_bindings: Mapping[str, str],
     values: Mapping[str, Any],
-) -> dict[str, np.ndarray]:
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     expected = {item.name for item in j.intent.inputs}
     if set(input_bindings) != expected:
         raise ValueError("Gate2 input bindings differ from canonical J inputs")
@@ -151,7 +152,15 @@ def _j_inputs(
                     raise ValueError(
                         f"Gate2 symbolic extent {declared!r} is inconsistent"
                     )
-    return result
+    return result, dimension_extents
+
+
+def _j_inputs(
+    j: SemanticArchive,
+    input_bindings: Mapping[str, str],
+    values: Mapping[str, Any],
+) -> dict[str, np.ndarray]:
+    return _j_inputs_and_dimensions(j, input_bindings, values)[0]
 
 
 def _active_update_groups(
@@ -209,7 +218,9 @@ def validate_j_inputs(
 ) -> None:
     """Validate typed input-domain and uniqueness preconditions before running."""
 
-    j_inputs = _j_inputs(j, input_bindings, values)
+    j_inputs, dimension_extents = _j_inputs_and_dimensions(
+        j, input_bindings, values
+    )
     for item in j.boundary.index_bounds:
         static_status = static_index_bounds_status(j, item)
         if static_status is True:
@@ -218,6 +229,13 @@ def validate_j_inputs(
             raise ValueError(
                 f"Gate2 index-bounds precondition failed at {item.node_ref!r}"
             )
+        if proves_index_bounds(
+            j,
+            item,
+            logical_inputs=j_inputs,
+            dimension_extents=dimension_extents,
+        ):
+            continue
         if item.data not in j_inputs or item.indices not in j_inputs:
             raise NotImplementedError(
                 "Gate2 index bounds currently require external data/indices inputs"

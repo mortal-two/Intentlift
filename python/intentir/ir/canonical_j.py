@@ -1101,6 +1101,18 @@ def j_elaboration(j: "SemanticArchive") -> JElaboration:
     return record
 
 
+def canonical_broadcast_axes(
+    j: "SemanticArchive",
+) -> dict[str, dict[str, tuple[int, ...]]]:
+    """Return only J-authored broadcast projections in canonical value form."""
+
+    canonical = elaborate_j(j)
+    return {
+        result: dict(operands)
+        for result, operands in _declared_broadcast_axes(canonical).items()
+    }
+
+
 def canonicalize_semantic_archive(j: "SemanticArchive") -> "SemanticArchive":
     return elaborate_j(j)
 
@@ -1130,6 +1142,7 @@ __all__ = [
     "ContractExpr",
     "ContractSort",
     "JElaboration",
+    "canonical_broadcast_axes",
     "canonicalize_gate1_artifact",
     "canonicalize_semantic_archive",
     "elaborate_j",
