@@ -74,12 +74,16 @@ from intentir.verify.typecheck import TypeCheckStatus
 @dataclass(frozen=True)
 class _Comparison:
     hard_pass: bool
+    rank_tuple: tuple[int, int, float, int, int, int] | None = None
 
     def to_dict(self):
-        return {
+        result = {
             "hard_pass": self.hard_pass,
             "differences": [] if self.hard_pass else [{"kind": "test_diff"}],
         }
+        if self.rank_tuple is not None:
+            result["rank_tuple"] = list(self.rank_tuple)
+        return result
 
 
 def _gate1_result(
@@ -87,6 +91,7 @@ def _gate1_result(
     closed: bool,
     masked_closed: bool | None = None,
     compile_failed: bool = False,
+    failed_rank_score: float | None = None,
 ) -> Gate1ExecutionResult:
     compile_result = CompileResult(
         not compile_failed,
@@ -106,7 +111,14 @@ def _gate1_result(
         generation,
         compile_result,
         None,
-        _Comparison(closed),  # type: ignore[arg-type]
+        _Comparison(
+            closed,
+            (
+                (0, 3, failed_rank_score, -4, 1, 0)
+                if not closed and failed_rank_score is not None
+                else None
+            ),
+        ),  # type: ignore[arg-type]
         None if closed else "observer mismatch",
     )
     masked = None
@@ -584,6 +596,51 @@ def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None
     assert "observer_diff" in lift.feedbacks[1].diagnostics
     assert lift.feedbacks[1].previous_artifact is report.attempts[0].artifact
     assert gate2.calls == 1
+
+
+def test_gate1_search_retains_best_failed_parent_without_accepting_by_score() -> None:
+    artifacts = [make_reduce_artifact() for _ in range(3)]
+    lift = _Lift(artifacts)
+    factory = _Gate1Factory(
+        [
+            _gate1_result(closed=False, failed_rank_score=0.8),
+            _gate1_result(closed=False, failed_rank_score=0.4),
+            _gate1_result(closed=True),
+        ]
+    )
+
+    report = _runner(lift, factory, _Gate2()).run(_request())
+
+    assert report.main_status is MainStatus.SCRC_CERTIFIED
+    first = report.attempts[0]
+    second = report.attempts[1]
+    assert first.feedback is not None and first.feedback.formal_round == 1
+    assert second.feedback is not None and second.feedback.formal_round == 2
+    assert lift.feedbacks[1] is first.feedback
+    assert lift.feedbacks[2] is first.feedback
+    assert lift.feedbacks[2].previous_artifact is first.artifact
+    assert lift.feedbacks[2].previous_artifact is not second.artifact
+
+
+def test_gate1_search_advances_parent_only_when_failed_rank_improves() -> None:
+    artifacts = [make_reduce_artifact() for _ in range(3)]
+    lift = _Lift(artifacts)
+    factory = _Gate1Factory(
+        [
+            _gate1_result(closed=False, failed_rank_score=0.4),
+            _gate1_result(closed=False, failed_rank_score=0.8),
+            _gate1_result(closed=True),
+        ]
+    )
+
+    report = _runner(lift, factory, _Gate2()).run(_request())
+
+    assert report.main_status is MainStatus.SCRC_CERTIFIED
+    first = report.attempts[0]
+    second = report.attempts[1]
+    assert lift.feedbacks[1] is first.feedback
+    assert lift.feedbacks[2] is second.feedback
+    assert lift.feedbacks[2].previous_artifact is second.artifact
 
 
 def test_gate1_search_resumes_from_exact_failed_artifact_without_old_budget() -> None:

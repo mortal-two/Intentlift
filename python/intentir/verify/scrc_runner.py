@@ -759,6 +759,36 @@ class SCRCGateRunner:
         )
 
     @staticmethod
+    def _failed_gate1_rank(
+        result: Gate1ExecutionResult,
+    ) -> tuple[int | float, ...] | None:
+        """Return Gate1's diagnostic-only failed-candidate ordering.
+
+        The rank never accepts a candidate.  It only chooses which complete,
+        already TypeChecked LLM artifact and its exact counterexample become
+        the parent of the next Lift call.  A result without a comparable
+        observer verdict keeps the ordinary latest-candidate repair path.
+        """
+
+        comparison = result.normal.comparison
+        if comparison is None:
+            return None
+        rank = getattr(comparison, "rank_tuple", None)
+        if rank is None:
+            raw = comparison.to_dict()
+            rank = raw.get("rank_tuple") if isinstance(raw, Mapping) else None
+        if (
+            not isinstance(rank, (list, tuple))
+            or len(rank) != 6
+            or any(
+                isinstance(item, bool) or not isinstance(item, (int, float))
+                for item in rank
+            )
+        ):
+            return None
+        return tuple(rank)
+
+    @staticmethod
     def _unresolved_gate1(
         feedback: LiftFeedback | None,
     ) -> dict[str, Any] | None:
@@ -871,6 +901,8 @@ class SCRCGateRunner:
             initial_feedback.previous_artifact
             if initial_feedback is not None else None
         )
+        best_failed_feedback: LiftFeedback | None = None
+        best_failed_rank: tuple[int | float, ...] | None = None
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0
@@ -1118,7 +1150,7 @@ class SCRCGateRunner:
                         stop_observed_at="after_gate1",
                     )
 
-                feedback = self._gate1_feedback(
+                candidate_feedback = self._gate1_feedback(
                     gate1,
                     formal_rounds,
                     artifact,
@@ -1132,10 +1164,27 @@ class SCRCGateRunner:
                         artifact=artifact,
                         typecheck=report,
                         gate1=gate1,
-                        feedback=feedback,
+                        feedback=candidate_feedback,
                         lift_metadata=lift_result.metadata,
                     )
                 )
+                candidate_rank = self._failed_gate1_rank(gate1)
+                if candidate_rank is None:
+                    # Compile/generation failures have no comparable observer
+                    # rank.  Repair that exact latest artifact and diagnostic.
+                    feedback = candidate_feedback
+                    last_artifact = artifact
+                else:
+                    if (
+                        best_failed_rank is None
+                        or candidate_rank > best_failed_rank
+                    ):
+                        best_failed_rank = candidate_rank
+                        best_failed_feedback = candidate_feedback
+                    assert best_failed_feedback is not None
+                    feedback = best_failed_feedback
+                    assert feedback.previous_artifact is not None
+                    last_artifact = feedback.previous_artifact
                 stopped = superseded("after_gate1")
                 if stopped is not None:
                     return stopped
