@@ -40,6 +40,7 @@ _ALLOWED_OVERRIDE_KEYS = {
         "replay_check_limit",
         "replay_submission_check_limit",
         "replay_compile_check_limit",
+        "replay_source_inspect_limit",
     },
 }
 _OVERRIDE_BOUNDS = {
@@ -49,6 +50,7 @@ _OVERRIDE_BOUNDS = {
     ("environment", "replay_check_limit"): (0, 32),
     ("environment", "replay_submission_check_limit"): (0, 4),
     ("environment", "replay_compile_check_limit"): (0, 16),
+    ("environment", "replay_source_inspect_limit"): (0, 32),
 }
 
 
@@ -213,6 +215,9 @@ def intentir_replay_episode_contract_sha256(
             ),
             "replay_compile_check_limit": environment.get(
                 "replay_compile_check_limit"
+            ),
+            "replay_source_inspect_limit": environment.get(
+                "replay_source_inspect_limit"
             ),
             "transport_attempts_per_turn": model.get("retry_attempts"),
         },

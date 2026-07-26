@@ -1147,6 +1147,9 @@ This is the complete immutable input allowlist for one fresh Replay episode.
   anonymous-handle search plus paged graph/realization/resolved-edge and local
   instance-obligation views. It exposes only packet.json and never writes
   Replay or infers relations.
+- `intentir_replay_inspect`: bounded syntax-only inventory of the writer's own
+  current replay.source. It reads no packet or external evidence, performs no
+  comparison, and never edits or generates source.
 
 No Source or source slice, Harness/compiler view, actual C values, real
 CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
@@ -1159,6 +1162,12 @@ joins already-authored facts around each instance; use `obligation HANDLE` for
 one i* or semantic anchor. Resolved `routes`/`order` and raw paged `edges` are
 available to cross-check a named relation without redundantly paging all three.
 These views expose only complete packet facts in bounded pages and never add an edge.
+
+After writing a complete first source, run
+`intentir_replay_inspect /output/replay.source overview`, then page its
+`statements START COUNT` view or use `find NAME`. Compare its loop/if, call,
+and define-use inventory with the packet yourself. The tool reports only your
+own syntax and never declares a semantic mismatch or recommends a repair.
 Use `section PATH`
 only for one named omitted field; never concatenate inputs because the transport
 may elide its middle.
@@ -1190,7 +1199,10 @@ different and may be used only through its packet-declared pi realization.
 """
     tool = """# Replay tool contract
 
-Write exactly `/output/replay.source`. Run exactly
+Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
+`intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
+or `find NAME` views over your own current bytes; twelve calls are available and
+none enters submission or Gate authority. Run exactly
 `intentir_replay_check /output/replay.source` for the mandatory bounded ingress
 check, then exactly
 `intentir_replay_compile_check /output/replay.source` for advisory synthetic

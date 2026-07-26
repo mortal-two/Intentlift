@@ -7,8 +7,12 @@ agent:
 
     Write exactly one final file, /output/replay.source. Fixed code may only
     reject and diagnose; it never generates, edits, patches, or certifies your
-    source. You may run `intentir_replay_check /output/replay.source` as one
-    entire tool action, then run
+    source. You may inspect only your own current source with
+    `intentir_replay_inspect /output/replay.source overview` and its bounded
+    `statements START COUNT` or `find NAME` views. This syntax-only tool reads
+    no packet, Source, Gate, compiler result, history, or other candidate and
+    never compares, repairs, or generates code. You may then run
+    `intentir_replay_check /output/replay.source` as one entire tool action and
     `intentir_replay_compile_check /output/replay.source` as another complete
     action. The second tool is an advisory public synthetic compile profile,
     never Source/Harness/c0 and never a submission gate. Repair actionable
@@ -47,8 +51,11 @@ agent:
     reference. Read REPLAY_CONTRACT.md once in one bounded action; TOOL.md is
     already summarized here. Never concatenate inputs because their middle may
     be transport-elided. Construct complete Triton source in
-    /output/replay.source early. Run bounded ReplayCheck, then the advisory
-    compile check, make focused corrections yourself, rerun both after edits,
+    /output/replay.source early. Run the own-source inspect overview and page
+    its statements; compare the resulting loop/if, call, and define-use
+    inventory yourself against the current packet facts. The tool never reports
+    a semantic mismatch or recommends an edit. Then run bounded ReplayCheck and
+    the advisory compile check, make focused corrections yourself, rerun both after edits,
     and submit. Produce a complete first source by turn 10. After every final
     source edit, rerun ReplayCheck and the advisory compile check so an
     already-reported frontend shape or syntax error is not knowingly
@@ -84,3 +91,4 @@ environment:
   replay_check_limit: 7
   replay_submission_check_limit: 1
   replay_compile_check_limit: 7
+  replay_source_inspect_limit: 12

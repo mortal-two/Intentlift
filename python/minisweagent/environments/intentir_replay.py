@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shlex
@@ -10,6 +11,7 @@ import struct
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -23,6 +25,7 @@ INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
+INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
@@ -90,6 +93,7 @@ MAX_CHECK_FIELD_CHARS = 4096
 MAX_CHECK_HANDLES = 32
 MAX_CHECK_RESULT_BYTES = 128 * 1024
 MAX_PACKET_QUERY_OUTPUT_BYTES = 10_000
+MAX_REPLAY_INSPECT_OUTPUT_BYTES = 10_000
 _SANDBOX_START_MARKER = b"__INTENTIR_REPLAY_SANDBOX_STARTED__\n"
 
 
@@ -1201,6 +1205,309 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
     )
 
 
+def _ast_qualified_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _ast_qualified_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    try:
+        return ast.unparse(node)
+    except (TypeError, ValueError):
+        return type(node).__name__
+
+
+def _ast_text(nodes: list[ast.AST], *, limit: int = 320) -> str:
+    parts: list[str] = []
+    for node in nodes:
+        try:
+            parts.append(ast.unparse(node))
+        except (TypeError, ValueError):
+            parts.append(type(node).__name__)
+    value = " | ".join(parts)
+    return value if len(value) <= limit else value[:limit] + "...[truncated]"
+
+
+def _statement_header_nodes(statement: ast.stmt) -> list[ast.AST]:
+    if isinstance(statement, ast.Assign):
+        return [*statement.targets, statement.value]
+    if isinstance(statement, ast.AnnAssign):
+        return [
+            statement.target,
+            statement.annotation,
+            *([statement.value] if statement.value is not None else []),
+        ]
+    if isinstance(statement, ast.AugAssign):
+        return [statement.target, statement.value]
+    if isinstance(statement, ast.Expr):
+        return [statement.value]
+    if isinstance(statement, ast.Return):
+        return [statement.value] if statement.value is not None else []
+    if isinstance(statement, (ast.For, ast.AsyncFor)):
+        return [statement.target, statement.iter]
+    if isinstance(statement, (ast.If, ast.While)):
+        return [statement.test]
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        result: list[ast.AST] = []
+        for item in statement.items:
+            result.append(item.context_expr)
+            if item.optional_vars is not None:
+                result.append(item.optional_vars)
+        return result
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments: list[ast.AST] = [
+            *statement.decorator_list,
+            *statement.args.defaults,
+            *statement.args.kw_defaults,
+        ]
+        if statement.returns is not None:
+            arguments.append(statement.returns)
+        return [item for item in arguments if item is not None]
+    if isinstance(statement, ast.Raise):
+        return [
+            item
+            for item in (statement.exc, statement.cause)
+            if item is not None
+        ]
+    if isinstance(statement, ast.Assert):
+        return [
+            item for item in (statement.test, statement.msg) if item is not None
+        ]
+    return []
+
+
+def _statement_defined_names(statement: ast.stmt) -> list[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return [statement.name]
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return sorted(
+            alias.asname or alias.name.split(".")[0] for alias in statement.names
+        )
+    names = {
+        node.id
+        for header in _statement_header_nodes(statement)
+        for node in ast.walk(header)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return sorted(names)
+
+
+def _replay_source_statement_records(source: str) -> tuple[ast.Module, list[dict[str, Any]]]:
+    """Return syntax-only records over the Replay writer's own source bytes."""
+
+    tree = ast.parse(source, filename="replay.source")
+    records: list[dict[str, Any]] = []
+
+    def visit_block(
+        statements: list[ast.stmt],
+        *,
+        prefix: str,
+        depth: int,
+        region: str,
+    ) -> None:
+        for index, statement in enumerate(statements):
+            path = f"{prefix}.{index}"
+            header_nodes = _statement_header_nodes(statement)
+            used_names = sorted(
+                {
+                    node.id
+                    for header in header_nodes
+                    for node in ast.walk(header)
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                }
+            )
+            calls = sorted(
+                {
+                    _ast_qualified_name(node.func)
+                    for header in header_nodes
+                    for node in ast.walk(header)
+                    if isinstance(node, ast.Call)
+                }
+            )
+            records.append(
+                {
+                    "path": path,
+                    "kind": type(statement).__name__,
+                    "line": getattr(statement, "lineno", None),
+                    "end_line": getattr(statement, "end_lineno", None),
+                    "depth": depth,
+                    "region": region,
+                    "defines": _statement_defined_names(statement),
+                    "uses": used_names,
+                    "calls": calls,
+                    "header": _ast_text(header_nodes),
+                    "body_count": len(getattr(statement, "body", [])),
+                    "orelse_count": len(getattr(statement, "orelse", [])),
+                }
+            )
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"function:{statement.name}",
+                )
+            elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While, ast.If)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+                visit_block(
+                    statement.orelse,
+                    prefix=f"{path}.orelse",
+                    depth=depth + 1,
+                    region=f"{path}:orelse",
+                )
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+            elif isinstance(statement, ast.Try):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+                for handler_index, handler in enumerate(statement.handlers):
+                    visit_block(
+                        handler.body,
+                        prefix=f"{path}.handlers.{handler_index}.body",
+                        depth=depth + 1,
+                        region=f"{path}:handler:{handler_index}",
+                    )
+                visit_block(
+                    statement.orelse,
+                    prefix=f"{path}.orelse",
+                    depth=depth + 1,
+                    region=f"{path}:orelse",
+                )
+                visit_block(
+                    statement.finalbody,
+                    prefix=f"{path}.finalbody",
+                    depth=depth + 1,
+                    region=f"{path}:finalbody",
+                )
+            elif isinstance(statement, ast.Match):
+                for case_index, case in enumerate(statement.cases):
+                    visit_block(
+                        case.body,
+                        prefix=f"{path}.cases.{case_index}.body",
+                        depth=depth + 1,
+                        region=f"{path}:case:{case_index}",
+                    )
+
+    visit_block(tree.body, prefix="module", depth=0, region="module")
+    return tree, records
+
+
+def _inspect_replay_source(source: str, arguments: list[str]) -> dict[str, Any]:
+    tree, records = _replay_source_statement_records(source)
+    authority = (
+        "syntax-only inventory of the Replay writer's current replay.source; "
+        "reads no packet, Source, Harness, Gate, compiler result, prior Replay, "
+        "or other candidate and performs no comparison, repair, or generation"
+    )
+    if arguments == ["overview"]:
+        call_counts = Counter(
+            _ast_qualified_name(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        )
+        control_kinds = {
+            "For",
+            "AsyncFor",
+            "While",
+            "If",
+            "Return",
+            "Break",
+            "Continue",
+        }
+        controls = [item for item in records if item["kind"] in control_kinds]
+        functions = [
+            {
+                "name": node.name,
+                "line": node.lineno,
+                "parameters": [
+                    argument.arg
+                    for argument in (
+                        *node.args.posonlyargs,
+                        *node.args.args,
+                        *node.args.kwonlyargs,
+                    )
+                ],
+                "decorators": [
+                    _ast_qualified_name(decorator.func)
+                    if isinstance(decorator, ast.Call)
+                    else _ast_qualified_name(decorator)
+                    for decorator in node.decorator_list
+                ],
+            }
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        return {
+            "protocol": "intentir.replay-own-source-inventory.v1",
+            "authority": authority,
+            "functions": functions,
+            "statement_count": len(records),
+            "call_counts": dict(sorted(call_counts.items())),
+            "control_counts": dict(
+                sorted(Counter(item["kind"] for item in controls).items())
+            ),
+            "controls": controls[:32],
+            "controls_omitted": max(0, len(controls) - 32),
+            "next": (
+                f"{INTENTIR_REPLAY_INSPECT} /output/replay.source statements 0 16"
+            ),
+        }
+    if len(arguments) == 3 and arguments[0] == "statements":
+        start = int(arguments[1])
+        count = int(arguments[2])
+        items, next_start = _bounded_page(records, start=start, count=count)
+        return {
+            "protocol": "intentir.replay-own-source-statements.v1",
+            "authority": authority,
+            "total": len(records),
+            "start": start,
+            "items": items,
+            "next_start": next_start,
+            "next": (
+                f"{INTENTIR_REPLAY_INSPECT} /output/replay.source statements "
+                f"{next_start} {count}"
+                if next_start is not None
+                else None
+            ),
+        }
+    if len(arguments) == 2 and arguments[0] == "find" and arguments[1]:
+        needle = arguments[1]
+        matches = [
+            item
+            for item in records
+            if needle in item["defines"]
+            or needle in item["uses"]
+            or needle in item["calls"]
+            or needle in item["header"]
+        ]
+        return {
+            "protocol": "intentir.replay-own-source-find.v1",
+            "authority": authority,
+            "query": needle,
+            "match_total": len(matches),
+            "items": matches[:32],
+            "omitted": max(0, len(matches) - 32),
+        }
+    raise ValueError(
+        "usage: intentir_replay_inspect /output/replay.source overview | "
+        "statements START COUNT | find NAME"
+    )
+
+
 def _remove_path_iterative(path: Path) -> None:
     """Remove one exact private workspace tree without Python recursion."""
 
@@ -1371,6 +1678,7 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     replay_check_limit: int = 7
     replay_submission_check_limit: int = 1
     replay_compile_check_limit: int = 7
+    replay_source_inspect_limit: int = 12
 
 
 class IntentIRReplayEnvironment:
@@ -1391,6 +1699,8 @@ class IntentIRReplayEnvironment:
             raise ValueError("replay_submission_check_limit must be non-negative")
         if self.config.replay_compile_check_limit < 0:
             raise ValueError("replay_compile_check_limit must be non-negative")
+        if self.config.replay_source_inspect_limit < 0:
+            raise ValueError("replay_source_inspect_limit must be non-negative")
         self._replay_checker = replay_checker
         self._replay_compile_checker = replay_compile_checker
         self._check_calls = 0
@@ -1403,6 +1713,8 @@ class IntentIRReplayEnvironment:
         self._compile_check_calls = 0
         self._compile_check_evaluations = 0
         self._compile_check_audit: list[dict[str, Any]] = []
+        self._source_inspect_calls = 0
+        self._source_inspect_audit: list[str] = []
         self._passed_bytes: bytes | None = None
         self._validate_paths()
         self._probe()
@@ -1822,6 +2134,42 @@ class IntentIRReplayEnvironment:
             "exception_info": "",
         }
 
+    def _execute_replay_inspect(self, arguments: list[str]) -> dict[str, Any]:
+        self._source_inspect_calls += 1
+        mode = arguments[2] if len(arguments) > 2 else "invalid"
+        self._source_inspect_audit.append(mode)
+        try:
+            if self._source_inspect_calls > self.config.replay_source_inspect_limit:
+                raise ValueError("Replay source inspect budget exhausted")
+            if len(arguments) < 3 or arguments[1] not in {
+                "/work/replay.source",
+                "/output/replay.source",
+            }:
+                raise ValueError("Replay source inspect requires the private source path")
+            _source_bytes, source_text = self._read_check_target(arguments[1])
+            value = _inspect_replay_source(source_text, arguments[2:])
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_REPLAY_INSPECT_OUTPUT_BYTES:
+                raise ValueError(
+                    "Replay source inspect result is too large; use statements paging or find"
+                )
+        except Exception as exc:
+            return {
+                "output": (
+                    "Replay source inspect rejected: "
+                    f"{type(exc).__name__}: {exc}\n"
+                ),
+                "returncode": 1,
+                "exception_info": "",
+            }
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
     def _writable_usage(self) -> tuple[int, int, int]:
         entries = 0
         size = 0
@@ -1867,6 +2215,8 @@ class IntentIRReplayEnvironment:
             check_arguments = []
         if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
             return self._execute_packet_query(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
+            return self._execute_replay_inspect(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
         if (
@@ -2034,6 +2384,9 @@ class IntentIRReplayEnvironment:
                         "replay_compile_check_limit": (
                             self.config.replay_compile_check_limit
                         ),
+                        "replay_source_inspect_limit": (
+                            self.config.replay_source_inspect_limit
+                        ),
                     },
                     "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
                 },
@@ -2071,6 +2424,13 @@ class IntentIRReplayEnvironment:
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
                 },
+                "replay_source_inspect": {
+                    "protocol": "intentir.replay-own-source-inventory.v1",
+                    "authority": "diagnostic_syntax_only_own_replay_source",
+                    "calls": self._source_inspect_calls,
+                    "limit": self.config.replay_source_inspect_limit,
+                    "modes": list(self._source_inspect_audit),
+                },
             }
         }
 
@@ -2079,6 +2439,7 @@ __all__ = [
     "INTENTIR_PACKET_QUERY",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",
+    "INTENTIR_REPLAY_INSPECT",
     "INTENTIR_REPLAY_SUBMIT",
     "REPLAY_CHECK_PROTOCOL",
     "REPLAY_INPUT_FILES",
