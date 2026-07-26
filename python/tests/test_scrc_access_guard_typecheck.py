@@ -188,7 +188,7 @@ def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v17"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
 
 
 @pytest.mark.parametrize(

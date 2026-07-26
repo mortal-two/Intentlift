@@ -34,6 +34,8 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     return b.create<math::ExpOp>(loc, x);
   if (fn == "log")
     return b.create<math::LogOp>(loc, x);
+  if (fn == "log2")
+    return b.create<math::Log2Op>(loc, x);
   if (fn == "sqrt")
     return b.create<math::SqrtOp>(loc, x);
   if (fn == "rsqrt")

@@ -329,7 +329,7 @@ TypeCheck 还必须检查 closed result relation 与对应 output 的 dtype、A 
    再沿 op operands 递归得到 `Deps_A(output)`；无法唯一解析时 fail closed；
 2. output dtype 为 floating，且依赖闭包含以下任一项时返回 true：
    - floating `reduce`；
-   - `map_unary.fn` 属于 `{exp,log,sqrt,rsqrt,tanh,sigmoid,cos,sin,tan,exp2,atan,erf}`；
+   - `map_unary.fn` 属于 `{exp,log,log2,sqrt,rsqrt,tanh,sigmoid,cos,sin,tan,exp2,atan,erf}`；
    - J/B 中 `kind=reassociation` 的 **source-realization authorization**，其 `subject_ref` 位于该闭包；
 3. `RequiresTolerance_v1=true` 时，显式或默认的 `exact` 均 fail closed，Lift 必须显式重新声明
    `tolerance`。
@@ -337,6 +337,8 @@ TypeCheck 还必须检查 closed result relation 与对应 output 的 dtype、A 
 v1 没有“更强 exact contract”例外；未来若需要，必须新增版本化 closed vocabulary 与判定，而不能
 使用自由文本豁免。这里的 reassociation authorization 只触发 SCRC comparison-class 检查，不授权
 production backend 改变 reduction tree。具体 tolerance 阈值继续只由 Q 提供。
+`typecheck.v18` 相对 v17 只把已存在且可执行的 `log2` 纳入该 transcendental 集；因此 floating
+`log2` output 不能再以默认/显式 `exact` 漏过，仍由 Lift 作者化 `tolerance` relation。
 
 `artifact.v4` 引入、当前 v5 保留由 Lift 显式作者的 `J.value_dimension_relations` 与
 `J.boundary.consumer_extensions`：前者只表达 integral rank-0 J input 与 declared `x*` 的 closed
@@ -519,7 +521,8 @@ Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round �
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v14`。它完整继承下述 v7 及其前序合同，并增加当前 v4/v5 typed
+当前 fresh-run 版本为 `typecheck.v18`。它完整继承 v14、v15-v17 typed-control 合同及下述 v7
+前序合同，并增加当前 v4/v5 typed
 relations 的 source-free dependent checking：value/dimension 与 consumer provenance/identity 必须
 闭合；access guard 必须满足支配、i1、唯一 axes authority，以及 guarded-store 的显式 select、精确
 inout/pre-state 和 observable merge。checker 仍不构造任何 artifact fact。历史 v7 完整继承 v6；
@@ -564,10 +567,12 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-当前 Lift knowledge v40 另提供只读 `source-outline`，对长 Source 分页显示 function/loop/if/
-return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定哪个循环是
-Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。Lift LLM 仍必须
-阅读对应 Source 区间、做语义分类并完整作者化 `(J,C,π)`。
+当前 Lift knowledge v41 继承 v40 的只读 `source-outline`，对长 Source 分页显示
+function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
+哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
+v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
+vocabulary；没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source 区间、做语义分类并完整
+作者化 `(J,C,π)`。
 
 该 representation-only null-carrier 例外只适用于 runtime scalar。对 `bound_constexpr_values`，Lift 必须
 遍历它在 Source 中的全部 use：作为 logical value/predicate/result 时绑定 dtype-compatible
@@ -585,8 +590,8 @@ production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v14`，shared functional projection 为
-`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v16`，shared functional projection 为
+`intentir.j-functional-boundary.v15`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -637,6 +642,17 @@ v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output m
 路径都是 `map_unary/map_binary/select/cast`，且每个 observable store 使用完全相同 predicate 时才可
 擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
 未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
+
+当前 `j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 在上述 v14/v13 上增加两项共享、
+J-only 的确定性消费能力。第一，若 domain upper bound 是 J 显式写出的正整数/`x*` 乘积，access 的
+每个非 direct coordinate 必须恰好是该乘积的一位 mixed-radix digit，且所有 factor 各出现一次、
+stride 为精确 suffix，才形成 `complete_mixed_radix_bijection` receipt；不做交换律猜测、不补缺位、
+不接受含混重复 factor。第二，missing-fill pointwise provenance 可经过 shape-preserving 的精确
+`transpose`，但 observable store coordinates 必须逐项等于 load coordinates 的 authored `perm`，
+predicate 仍须完全相同；任一 shape change、坐标不一致或未知 op 都 fail closed。shared materializer
+同时支持 J 已作者化的 `map_unary(log2)`，并把 JSON-safe `inf/-inf/nan` sentinel 按声明 dtype 编成
+MLIR IEEE bit literal。这些都不新增 J/B 字段、不读取 Source/C/π/Harness、不改变 TypeCheck 接受集，
+也不是按 kernel 名称选择 recipe。
 
 函数 `returns` 与 boundary `output_mapping` 是同一 canonical output binding 的两种 authored 入口，
 不再要求 LLM 重复写两份；若同时存在必须一致。shared J→Intent MLIR materializer 从唯一
@@ -865,7 +881,7 @@ TypeCheck
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v14`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v18`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

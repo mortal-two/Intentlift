@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v14"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v15"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -237,6 +237,43 @@ class AccessGuardProjection:
 
 
 @dataclass(frozen=True)
+class MixedRadixDigitProjection:
+    """One tensor coordinate decoded from a complete flattened domain axis."""
+
+    tensor_axis: int
+    extent: int | str
+    stride_factors: tuple[int | str, ...]
+    expression: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "tensor_axis": self.tensor_axis,
+            "extent": self.extent,
+            "stride_factors": list(self.stride_factors),
+            "expression": self.expression,
+        }
+
+
+@dataclass(frozen=True)
+class MixedRadixAccessProjection:
+    """J-only proof that one flat physical axis bijects logical dimensions."""
+
+    access_id: str
+    flat_axis: str
+    domain_factors: tuple[int | str, ...]
+    digits: tuple[MixedRadixDigitProjection, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "complete_mixed_radix_bijection",
+            "access_id": self.access_id,
+            "flat_axis": self.flat_axis,
+            "domain_factors": list(self.domain_factors),
+            "digits": [item.to_json() for item in self.digits],
+        }
+
+
+@dataclass(frozen=True)
 class FunctionalBoundaryProjection:
     """One ephemeral proof that Layer B projects to logical tensor execution."""
 
@@ -262,6 +299,7 @@ class FunctionalBoundaryProjection:
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
     access_guard_relations: tuple[AccessGuardProjection, ...] = ()
+    mixed_radix_accesses: tuple[MixedRadixAccessProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -333,6 +371,9 @@ class FunctionalBoundaryProjection:
             ],
             "access_guard_relations": [
                 proof.to_json() for proof in self.access_guard_relations
+            ],
+            "mixed_radix_accesses": [
+                proof.to_json() for proof in self.mixed_radix_accesses
             ],
         }
 
@@ -628,6 +669,105 @@ _PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
 )
 
 
+def _masked_load_axis_provenance(
+    j: Any,
+    *,
+    access: Any,
+    nodes: Mapping[str, IntentOp],
+) -> tuple[set[str], dict[str, tuple[int, ...]]] | None:
+    """Track one masked value through pointwise ops and exact transposes."""
+
+    value_types = j_elaboration(j).value_type_by_name
+    tensor_type = value_types.get(access.tensor)
+    start = nodes.get(access.node_ref)
+    if tensor_type is None or start is None:
+        return None
+    start_results = _result_names(start)
+    if not start_results:
+        return None
+    identity = tuple(range(len(tensor_type.shape)))
+    provenance: dict[str, tuple[int, ...]] = {}
+    for result in start_results:
+        result_type = value_types.get(result)
+        if result_type is None or result_type.shape != tensor_type.shape:
+            return None
+        provenance[result] = identity
+
+    canonical_refs = tuple(j.node_ids)
+    if any(node_ref not in nodes for node_ref in canonical_refs):
+        return None
+    reachable_refs = {access.node_ref}
+    changed = True
+    while changed:
+        changed = False
+        for node_ref in canonical_refs:
+            if node_ref in reachable_refs:
+                continue
+            operation = nodes[node_ref]
+            reachable_operands = [
+                operand for operand in operation.operands if operand in provenance
+            ]
+            if not reachable_operands:
+                continue
+            results = _result_names(operation)
+            if not results:
+                return None
+
+            if operation.op in _PREDICATE_DOMINATED_POINTWISE_OPS:
+                permutations = {provenance[item] for item in reachable_operands}
+                if len(permutations) != 1:
+                    return None
+                output_permutation = next(iter(permutations))
+                first_operand_type = value_types.get(reachable_operands[0])
+                if first_operand_type is None:
+                    return None
+                pointwise_shape = first_operand_type.shape
+                for operand in reachable_operands:
+                    operand_type = value_types.get(operand)
+                    if (
+                        operand_type is None
+                        or operand_type.shape != pointwise_shape
+                    ):
+                        return None
+                for result in results:
+                    result_type = value_types.get(result)
+                    if (
+                        result_type is None
+                        or result_type.shape != pointwise_shape
+                    ):
+                        return None
+                    provenance[result] = output_permutation
+            elif operation.op == "transpose":
+                if len(operation.operands) != 1 or len(reachable_operands) != 1:
+                    return None
+                operand = reachable_operands[0]
+                operand_type = value_types.get(operand)
+                permutation = operation.attrs.get("perm")
+                if (
+                    operand_type is None
+                    or not isinstance(permutation, (list, tuple))
+                    or any(type(item) is not int for item in permutation)
+                    or sorted(permutation) != list(range(len(operand_type.shape)))
+                    or len(results) != 1
+                ):
+                    return None
+                result_type = value_types.get(results[0])
+                expected_shape = tuple(
+                    operand_type.shape[item] for item in permutation
+                )
+                if result_type is None or result_type.shape != expected_shape:
+                    return None
+                input_permutation = provenance[operand]
+                provenance[results[0]] = tuple(
+                    input_permutation[item] for item in permutation
+                )
+            else:
+                return None
+            reachable_refs.add(node_ref)
+            changed = True
+    return reachable_refs, provenance
+
+
 def predicate_dominated_pointwise_load(
     j: Any,
     access_id: str,
@@ -636,11 +776,12 @@ def predicate_dominated_pointwise_load(
 
     A physical load may omit ``other`` when every value depending on its
     masked lanes stays inside a pointwise chain and every observable output of
-    that chain is stored under the exact same predicate.  The logical J domain
-    contains only predicate-true elements, so the physical outside-domain
-    value cannot affect an observable result.  Reductions, scans, loops,
-    transposes, padding, unmatched effects, and differently predicated stores
-    remain unsupported.
+    that chain is stored under the exact same predicate.  An exact tensor-axis
+    transpose is also permitted when its store coordinates are the authored
+    permutation of the load coordinates.  The logical J domain contains only
+    predicate-true elements, so the physical outside-domain value cannot
+    affect an observable result.  Reductions, scans, loops, padding, unmatched
+    effects, and differently predicated stores remain unsupported.
 
     The proof is deliberately J-only.  It neither derives an artifact field
     nor consults Harness, C, pi, Replay, or Source.
@@ -668,34 +809,19 @@ def predicate_dominated_pointwise_load(
         or access.tensor not in _operation_dependencies(start)
     ):
         return False
-    start_results = set(_result_names(start))
-    if not start_results:
+    provenance_result = _masked_load_axis_provenance(
+        j,
+        access=access,
+        nodes=nodes,
+    )
+    if provenance_result is None:
         return False
-
-    canonical_refs = tuple(j.node_ids)
-    if any(node_ref not in nodes for node_ref in canonical_refs):
+    reachable_refs, provenance = provenance_result
+    reachable_values = set(provenance)
+    parsed_accesses = j_elaboration(j).access_by_id
+    parsed_load = parsed_accesses.get(access.access_id)
+    if parsed_load is None:
         return False
-    reachable_refs = {access.node_ref}
-    reachable_values = set(start_results)
-    changed = True
-    while changed:
-        changed = False
-        for node_ref in canonical_refs:
-            if node_ref in reachable_refs:
-                continue
-            operation = nodes[node_ref]
-            if not reachable_values.intersection(
-                _operation_dependencies(operation)
-            ):
-                continue
-            if operation.op not in _PREDICATE_DOMINATED_POINTWISE_OPS:
-                return False
-            results = set(_result_names(operation))
-            if not results:
-                return False
-            reachable_refs.add(node_ref)
-            reachable_values.update(results)
-            changed = True
 
     # Canonical elaboration owns output binding, including the identity form
     # where an operation directly produces an output-named value and the wire
@@ -732,7 +858,19 @@ def predicate_dominated_pointwise_load(
             or stores[0].predicate != access.predicate
         ):
             return False
-        matched_store_ids.add(stores[0].access_id)
+        store = stores[0]
+        parsed_store = parsed_accesses.get(store.access_id)
+        permutation = provenance.get(mapping.value)
+        if parsed_store is None or permutation is None:
+            return False
+        if len(parsed_load.index.components) != len(permutation):
+            return False
+        expected_store_coordinates = tuple(
+            parsed_load.index.components[item] for item in permutation
+        )
+        if parsed_store.index.components != expected_store_coordinates:
+            return False
+        matched_store_ids.add(store.access_id)
 
     for item in j.boundary.accesses:
         if item.node_ref not in reachable_refs or item.kind.value == "load":
@@ -1192,7 +1330,56 @@ def _reference(expression: ContractExpr) -> str | None:
 def _bound_value(expression: ContractExpr) -> int | str | None:
     if expression.op == "int" and isinstance(expression.value, int):
         return expression.value
-    return _reference(expression)
+    reference = _reference(expression)
+    if reference is not None:
+        return reference
+    factors = _positive_product_factors(expression)
+    if factors is not None and len(factors) > 1:
+        return expression.to_text()
+    return None
+
+
+def _positive_product_factors(
+    expression: ContractExpr,
+) -> tuple[int | str, ...] | None:
+    """Return authored positive integer/ref factors without algebraic guessing."""
+
+    if expression.op == "mul" and len(expression.args) == 2:
+        left = _positive_product_factors(expression.args[0])
+        right = _positive_product_factors(expression.args[1])
+        if left is None or right is None:
+            return None
+        return (*left, *right)
+    if (
+        expression.op == "int"
+        and isinstance(expression.value, int)
+        and not isinstance(expression.value, bool)
+        and expression.value > 0
+    ):
+        return (expression.value,)
+    reference = _reference(expression)
+    return (reference,) if reference is not None else None
+
+
+def _domain_product_factors(j: Any) -> dict[str, tuple[int | str, ...]]:
+    """Index only explicit product upper bounds already authored in J domains."""
+
+    result: dict[str, tuple[int | str, ...]] = {}
+    for _domain_id, expression in j_elaboration(j).domains:
+        for term in _flatten_conjunction(expression):
+            if term.op != "lt" or len(term.args) != 2:
+                continue
+            axis = _reference(term.args[0])
+            factors = _positive_product_factors(term.args[1])
+            if axis is None or factors is None or len(factors) < 2:
+                continue
+            previous = result.get(axis)
+            if previous is not None and previous != factors:
+                raise ValueError(
+                    f"functional domain axis {axis!r} has conflicting products"
+                )
+            result[axis] = factors
+    return result
 
 
 def _predicate_projection(
@@ -1323,6 +1510,136 @@ def _functional_access_coordinates(
     if len(candidates) != 1:
         return None
     return next(iter(candidates))
+
+
+def _flat_stride_factors(
+    expression: ContractExpr,
+    flat_axis: str,
+) -> tuple[int | str, ...] | None:
+    reference = _reference(expression)
+    if reference == flat_axis:
+        return ()
+    if expression.op != "floordiv" or len(expression.args) != 2:
+        return None
+    if _reference(expression.args[0]) != flat_axis:
+        return None
+    return _positive_product_factors(expression.args[1])
+
+
+def _mixed_radix_digit(
+    expression: ContractExpr,
+    *,
+    flat_axis: str,
+    declared_extent: int | str,
+    domain_factors: tuple[int | str, ...],
+) -> tuple[int, tuple[int | str, ...]] | None:
+    """Match one exact mixed-radix digit and its authored suffix stride."""
+
+    if expression.op == "mod" and len(expression.args) == 2:
+        modulus = _positive_product_factors(expression.args[1])
+        if modulus != (declared_extent,):
+            return None
+        stride = _flat_stride_factors(expression.args[0], flat_axis)
+        if stride is None:
+            return None
+    else:
+        stride = _flat_stride_factors(expression, flat_axis)
+        if stride is None or not stride:
+            return None
+
+    matches = [
+        index
+        for index, factor in enumerate(domain_factors)
+        if factor == declared_extent
+        and tuple(domain_factors[index + 1 :]) == stride
+    ]
+    if len(matches) != 1:
+        return None
+    position = matches[0]
+    if expression.op != "mod" and position != 0:
+        return None
+    return position, stride
+
+
+def _mixed_radix_access_projection(
+    access_id: str,
+    index: Any,
+    target_shape: Sequence[Any],
+    domain_products: Mapping[str, tuple[int | str, ...]],
+) -> tuple[
+    tuple[str | int, ...],
+    tuple[str, ...],
+    MixedRadixAccessProjection,
+] | None:
+    """Prove one complete product-domain unflatten from J expressions alone."""
+
+    components = index.components
+    if len(components) != len(target_shape):
+        return None
+    candidates: list[
+        tuple[
+            tuple[str | int, ...],
+            tuple[str, ...],
+            MixedRadixAccessProjection,
+        ]
+    ] = []
+    for flat_axis, factors in domain_products.items():
+        coordinates: list[str | int] = []
+        physical_axes: list[str] = []
+        digits: list[MixedRadixDigitProjection] = []
+        positions: set[int] = set()
+        valid = True
+        for tensor_axis, (component, extent) in enumerate(
+            zip(components, target_shape, strict=True)
+        ):
+            if component.op == "int" and isinstance(component.value, int):
+                coordinates.append(component.value)
+                continue
+            direct = _reference(component)
+            if direct is not None and direct != flat_axis:
+                coordinates.append(direct)
+                if direct not in physical_axes:
+                    physical_axes.append(direct)
+                continue
+            matched = _mixed_radix_digit(
+                component,
+                flat_axis=flat_axis,
+                declared_extent=extent,
+                domain_factors=factors,
+            )
+            if matched is None or matched[0] in positions:
+                valid = False
+                break
+            position, stride = matched
+            positions.add(position)
+            coordinates.append(component.to_text())
+            if flat_axis not in physical_axes:
+                physical_axes.append(flat_axis)
+            digits.append(
+                MixedRadixDigitProjection(
+                    tensor_axis,
+                    extent,
+                    stride,
+                    component.to_text(),
+                )
+            )
+        if not valid or positions != set(range(len(factors))):
+            continue
+        candidates.append(
+            (
+                tuple(coordinates),
+                tuple(physical_axes),
+                MixedRadixAccessProjection(
+                    access_id,
+                    flat_axis,
+                    factors,
+                    tuple(sorted(digits, key=lambda item: item.tensor_axis)),
+                ),
+            )
+        )
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
 
 
 def _substitute_value_dimension_bounds(
@@ -3470,6 +3787,7 @@ def _project_functional_boundary(
     structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
     domains = _full_domains(j) if boundary.accesses else {}
+    domain_products = _domain_product_factors(j) if boundary.accesses else {}
     if not boundary.accesses and (boundary.domains or boundary.effects):
         raise ValueError(
             "functional boundary domains/effects require explicit accesses"
@@ -3535,6 +3853,7 @@ def _project_functional_boundary(
     }
     whole_load_tensors: set[str] = set()
     constant_gathers: list[ConstantGatherProjection] = []
+    mixed_radix_accesses: list[MixedRadixAccessProjection] = []
     constant_gather_edges: dict[str, dict[tuple[str, int], str]] = {}
     logical_scalar_inputs = _logical_scalar_inputs(j)
     access_guard_input_refs = {
@@ -3578,15 +3897,26 @@ def _project_functional_boundary(
             parsed_accesses[access.access_id].index,
             tensor.shape,
         )
+        mixed_projection: MixedRadixAccessProjection | None = None
         if coordinates is None:
-            raise NotImplementedError(
-                "functional dense access requires a direct ordered axis vector "
-                "of references or integer constants"
+            mixed = _mixed_radix_access_projection(
+                access.access_id,
+                parsed_accesses[access.access_id].index,
+                tensor.shape,
+                domain_products,
             )
-        axes = tuple(
-            coordinate for coordinate in coordinates
-            if isinstance(coordinate, str)
-        )
+            if mixed is None:
+                raise NotImplementedError(
+                    "functional dense access requires a direct ordered axis "
+                    "vector or a complete product-domain mixed-radix bijection"
+                )
+            coordinates, axes, mixed_projection = mixed
+            mixed_radix_accesses.append(mixed_projection)
+        else:
+            axes = tuple(
+                coordinate for coordinate in coordinates
+                if isinstance(coordinate, str)
+            )
         if len(set(axes)) != len(axes):
             raise ValueError("functional dense access axes must be unique")
         if len(coordinates) != len(tensor.shape):
@@ -3599,9 +3929,19 @@ def _project_functional_boundary(
         )
         axis_refs_by_access[access.access_id] = axes
         coordinates_by_access[access.access_id] = coordinates
-        for coordinate, declared_extent in zip(
-            coordinates, tensor.shape, strict=True
+        mixed_tensor_axes = {
+            item.tensor_axis
+            for item in (
+                mixed_projection.digits if mixed_projection is not None else ()
+            )
+        }
+        if mixed_projection is not None:
+            consumed_domain_axes.add(mixed_projection.flat_axis)
+        for dimension, (coordinate, declared_extent) in enumerate(
+            zip(coordinates, tensor.shape, strict=True)
         ):
+            if dimension in mixed_tensor_axes:
+                continue
             if isinstance(coordinate, int):
                 if type(declared_extent) is not int:
                     raise NotImplementedError(
@@ -4104,6 +4444,7 @@ def _project_functional_boundary(
         concat_store_partitions=tuple(concat_store_partitions),
         direct_store_partitions=tuple(direct_store_partitions),
         access_guard_relations=access_guard_relations,
+        mixed_radix_accesses=tuple(mixed_radix_accesses),
     )
 
 

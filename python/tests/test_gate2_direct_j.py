@@ -79,6 +79,51 @@ def _attach_dense_copy_boundary(artifact, *, domains=None) -> None:
     ]
 
 
+def _mixed_radix_copy_j() -> SemanticArchive:
+    artifact = make_copy_artifact()
+    # ``identity`` is sufficient for Gate1 fixtures but is intentionally not a
+    # production Intent lowering recipe.  Use a supported unary while this test
+    # exercises the real scalar/MLIR consumer end to end.
+    artifact.j.intent.body[0].attrs["fn"] = "abs"
+    for tensor in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]:
+        tensor.shape = ["x0", "x1", "x2"]
+    artifact.j.signature.parameters[0].rank = 3
+    artifact.j.signature.parameters[1].rank = 3
+    artifact.j.signature.parameters.extend(
+        [
+            SignatureParameter(
+                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x1",
+            ),
+            SignatureParameter(
+                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x2",
+            ),
+        ]
+    )
+    coordinate = (
+        "[k0 // (x1 * x2), (k0 // x2) % x1, k0 % x2]"
+    )
+    artifact.j.boundary = Boundary(
+        domains={"d0": "0 <= k0 and k0 < ((x0 * x1) * x2)"},
+        accesses=[
+            BoundaryAccess(
+                "a0", AccessKind.LOAD, "t0", node_ref="n0",
+                index_expression=coordinate,
+            ),
+            BoundaryAccess(
+                "a1", AccessKind.STORE, "t1", node_ref="n0",
+                index_expression=coordinate,
+            ),
+        ],
+        effects=[
+            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+            EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+        ],
+    )
+    return artifact.j
+
+
 def test_functional_boundary_allows_semantically_unused_tensor_abi_input() -> None:
     artifact = make_copy_artifact()
     _attach_dense_copy_boundary(
@@ -105,6 +150,46 @@ def test_functional_boundary_allows_semantically_unused_tensor_abi_input() -> No
 
     assert "access:a0" in projection.consumed
     assert not any("unused" in item for item in projection.consumed)
+
+
+def test_functional_boundary_consumes_complete_mixed_radix_bijection() -> None:
+    j = _mixed_radix_copy_j()
+
+    projection = project_functional_boundary(j)
+    receipts = projection.to_json()["mixed_radix_accesses"]
+
+    assert projection.domains == (("k0", "((x0 * x1) * x2)"),)
+    assert len(receipts) == 2
+    assert receipts[0]["proof"] == "complete_mixed_radix_bijection"
+    assert receipts[0]["flat_axis"] == "k0"
+    assert receipts[0]["domain_factors"] == ["x0", "x1", "x2"]
+    assert [item["stride_factors"] for item in receipts[0]["digits"]] == [
+        ["x1", "x2"],
+        ["x2"],
+        [],
+    ]
+
+    spec = ScalarLoweringSpec.create(
+        j,
+        dims={"x0": 2, "x1": 3, "x2": 4},
+        input_bindings={"t0": "input"},
+        output_bindings={"t1": "output"},
+    )
+    value = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+    result = ScalarLoweringRunner().run(spec, {"input": value})
+
+    assert result.ok, result.error
+    np.testing.assert_array_equal(result.outputs["output"], value)
+
+
+def test_functional_boundary_rejects_incomplete_mixed_radix_digits() -> None:
+    j = _mixed_radix_copy_j()
+    j.boundary.accesses[0].index_expression = (
+        "[k0 // (x1 * x2), k0 % x1, k0 % x2]"
+    )
+
+    with pytest.raises(NotImplementedError, match="mixed-radix bijection"):
+        project_functional_boundary(j)
 
 
 def _constant_gather_boundary_j() -> SemanticArchive:
@@ -1113,7 +1198,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v15"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v16"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1333,7 +1418,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v14"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v15"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1702,7 +1787,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v15"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v16"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -1754,6 +1839,81 @@ def test_scalar_e_j_erases_unobservable_pointwise_masked_load_fill() -> None:
     assert "predicate differs from the full logical domain" in (
         rejected.error or ""
     )
+
+
+def test_scalar_e_j_erases_mask_through_exact_terminal_transpose() -> None:
+    artifact = make_copy_artifact()
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"][0]["shape"] = ["x0", "x1"]
+    payload["outputs"][0]["shape"] = ["x1", "x0"]
+    payload["body"] = [
+        {
+            "id": "n0",
+            "op": "map_unary",
+            "result": "v0",
+            "operands": ["t0"],
+            "attrs": {"fn": "tanh"},
+            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+        },
+        {
+            "id": "n1",
+            "op": "transpose",
+            "result": "t1",
+            "operands": ["v0"],
+            "attrs": {"perm": [1, 0]},
+            "type": {"dtype": "f32", "shape": ["x1", "x0"]},
+        },
+    ]
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
+            "i32", logical_ref="x1",
+        )
+    )
+    artifact.j.boundary = Boundary(
+        domains={
+            "d0": "0 <= i0 and i0 < x0",
+            "d1": "0 <= i1 and i1 < x1",
+        },
+        accesses=[
+            BoundaryAccess(
+                "a0", AccessKind.LOAD, "t0", node_ref="n0",
+                predicate="i1 < x1", index_expression="[i0, i1]",
+            ),
+            BoundaryAccess(
+                "a1", AccessKind.STORE, "t1", node_ref="n1",
+                predicate="i1 < x1", index_expression="[i1, i0]",
+            ),
+        ],
+        effects=[
+            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+            EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
+        ],
+    )
+
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    projection = project_functional_boundary(artifact.j)
+    assert "predicate_dominated_load:a0:i1 < x1" in projection.consumed
+
+    value = np.arange(6, dtype=np.float32).reshape(2, 3)
+    result = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 2, "x1": 3},
+            input_bindings={"t0": "input"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input": value},
+    )
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value).T)
+
+    artifact.j.boundary.accesses[1].index_expression = "[i0, i1]"
+    assert not predicate_dominated_pointwise_load(artifact.j, "a0")
 
 
 def _make_node_less_input_load_artifact():

@@ -1176,7 +1176,8 @@ evaluation 的 20 条 `rule_code/path`；observed value、候选 patch、Source/
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v14`。v14 完整继承下述 v7 及其前序合同，并检查 authored
+活动 fresh-run 使用 `typecheck.v18`。v18 完整继承 v14、v15-v17 typed-control 合同及下述 v7
+前序合同，并检查 authored
 value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造
 artifact。历史 v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A value typing total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
@@ -1217,8 +1218,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v14`，共享
-`intentir.j-functional-boundary.v13`：它们继承 v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v16`，共享
+`intentir.j-functional-boundary.v15`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1255,6 +1256,12 @@ v13/v12 的 post-state reload proof 还要求唯一 inout output mapping、同 i
 missing-fill proof 只接受全 downstream pointwise 且所有 observable store 被同 predicate 支配的情形；
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
+
+`j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 进一步只消费 J 已写出的完整 product-domain
+mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
+store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
+special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
+fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
 canonical output binding 可以由 `returns` 或 `output_mapping` 唯一给出，同时存在时必须一致；共享
 J→Intent MLIR 入口与 structured reference v5 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有

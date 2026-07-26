@@ -212,12 +212,13 @@ CandidateCheck 与新增 dependent rules 必须随下一 TypeCheck protocol vers
 在实现和版本同步前不视为现有 worker 能力，也不重判历史证书。
 
 当前已落地的 fresh-run 合同为
-`artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`。Lift LLM 仍完整生成全部
+`artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1 / replay-check.v3`。Lift LLM 仍完整生成全部
 `(J,C,π)`：artifact.v4 的 `J.value_dimension_relations` 与
 `J.boundary.consumer_extensions`、artifact.v5 的
-`J.boundary.access_guard_relations` 都是 J-owned authored facts；Decode、TypeCheck 与
+`J.boundary.access_guard_relations`、artifact.v6/v7 的 typed `effect_if/value_if` 都是 J-owned
+authored facts；Decode、TypeCheck 与
 CandidateCheck 只解析、验证、拒绝和诊断，不补造 relation、axes、polarity、pre-state、inout 或
-Layer-A op。v1-v4 仍按各自 wire/receipt 解释，不因当前 schema 增加空数组或被重标。
+Layer-A op。v1-v7 仍按各自 wire/receipt 解释，不因当前 schema 增加空数组或被重标。
 
 对 v5 guarded store，Layer A 必须显式包含 `select`；目标 tensor 必须精确同时作为 J input/output，
 并由唯一 `mode=inout` parameter 绑定。tensor handle 按 inputs 后 outputs 的首次声明连续编号；同一
@@ -228,7 +229,8 @@ loop 的 `carry.init_value` 必须是该 tensor，inactive branch
 的唯一 broadcast authority，不能在 `boundary.broadcasts` 重复。TypeCheck 不会因 dtype/shape 相同
 而接受另一个 input 代替 pre-state，也不会插入 merge。
 
-`typecheck.v14` 完整继承下面 v7 及其前序合同。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
+`typecheck.v18` 完整继承 v14、v15-v17 typed-control 合同以及下面 v7 及其前序合同，并把
+floating `log2` 纳入 closed tolerance requirement。v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A total typing 与显式 non-trailing broadcast 合同：canonical graph 的每个 Layer-A result 都必须
 具有 closed total type，`map_binary` 默认严格服从 NumPy broadcast，非 trailing 轴只能消费
 Lift 已在 `J.boundary.broadcasts` 中显式声明的 relation。v5 新增已知 `reduce` 与 binary
@@ -284,8 +286,8 @@ constexpr 只能在纯 selector 情形使用这一 Harness specialization 形式
 只影响 layout/tile/stage 等 implementation
 selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v14`，shared functional projection 使用
-`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v16`，shared functional projection 使用
+`intentir.j-functional-boundary.v15`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
@@ -335,6 +337,12 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 仍 fail closed。canonical output destination 可由 function `returns` 或 boundary `output_mapping` 任一
 唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v5 消费同一个 deterministic
 `JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
+
+`j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 的 product-domain mixed-radix bijection、
+精确 axis-permutation transpose mask provenance、`log2` 与 IEEE special literal 均是共享 J consumer 能力。
+它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
+或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的
+membership oracle。
 Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored
 binding；该版本只删除互相重复的双写要求，不允许 fixed code 从 store、Source 或地址关系猜 value。
 `intentir.lift-knowledge.v22` 再明确：每个 semantic reduce/inclusive-scan 都由 Lift 写自己的 local-axis

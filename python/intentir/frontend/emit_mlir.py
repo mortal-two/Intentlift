@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import ast
+import math
 import operator
 import re
 
@@ -1015,11 +1016,48 @@ def _loop_dtypes(fn: IntentFunction, loop: IntentOp) -> dict[str, str]:
     return dtypes
 
 
-def _mlir_f(v) -> str:
+_MLIR_SPECIAL_FLOAT_BITS = {
+    "f16": {
+        "pos_inf": "0x7C00",
+        "neg_inf": "0xFC00",
+        "nan": "0x7E00",
+    },
+    "bf16": {
+        "pos_inf": "0x7F80",
+        "neg_inf": "0xFF80",
+        "nan": "0x7FC0",
+    },
+    "f32": {
+        "pos_inf": "0x7F800000",
+        "neg_inf": "0xFF800000",
+        "nan": "0x7FC00000",
+    },
+    "f64": {
+        "pos_inf": "0x7FF0000000000000",
+        "neg_inf": "0xFFF0000000000000",
+        "nan": "0x7FF8000000000000",
+    },
+}
+
+
+def _mlir_f(v, dtype: str = "f64") -> str:
     """Format a Python float as an MLIR-parseable float literal. MLIR requires a
     decimal point before the optional exponent, so bare scientific literals like
-    ``1e-05`` (which ``repr`` emits) must become ``1.0e-05``."""
-    s = repr(float(v))
+    ``1e-05`` (which ``repr`` emits) must become ``1.0e-05``.  MLIR's textual
+    dense-element parser does not accept ``inf``/``nan`` spellings, so IEEE
+    specials use the exact bit-pattern form accepted by DenseElementsAttr.
+    """
+    value = float(v)
+    if math.isnan(value) or math.isinf(value):
+        bits = _MLIR_SPECIAL_FLOAT_BITS.get(dtype)
+        if bits is None:
+            raise ValueError(
+                f"unsupported floating dtype for special literal: {dtype}"
+            )
+        if math.isnan(value):
+            return bits["nan"]
+        return bits["neg_inf" if value < 0 else "pos_inf"]
+    s = repr(value)
     if "e" in s or "E" in s:
         e = "e" if "e" in s else "E"
         mant, _, exp = s.partition(e)
@@ -1632,9 +1670,11 @@ class _Printer:
                 else:
                     dense = f"dense<{int(val)}>"
             elif isinstance(val, (list, tuple)):
-                dense = "dense<[" + ", ".join(_mlir_f(v) for v in val) + "]>"
+                dense = "dense<[" + ", ".join(
+                    _mlir_f(v, dt) for v in val
+                ) + "]>"
             else:
-                dense = f"dense<{_mlir_f(val)}>"
+                dense = f"dense<{_mlir_f(val, dt)}>"
             self.lines.append(
                 f'{indent}{r} = arith.constant {dense} : {self._ttn(op.result, env)}')
         else:

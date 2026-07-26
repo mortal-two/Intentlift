@@ -385,6 +385,8 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
+当前 `typecheck.v18` 相对 v17 只把 `log2` 纳入同一 closed transcendental 集；floating `log2`
+output 仍须由 Lift 显式选择 `tolerance`，fixed checker 不代选 relation 或阈值。
 
 v14 还检查 v4/v5 authored relations。`value_dimension_relations` 只允许 integral rank-0 J input 与
 declared symbolic dimension 的 `eq`；`consumer_extensions` 必须闭合 predicate-bearing load 到
@@ -439,11 +441,12 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v17 / candidate-check.v1 / replay-check.v3`；
+当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1 / replay-check.v3`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v10`，
-Lift knowledge 为 v40。v40 只为 source-aware Lift worker 增加只读、分页的 Source
-control-flow outline（function/loop/if/return 的行号与嵌套深度）；它不分类语义、不产生
-IntentOp/carry/relation/π，仍由 Lift LLM 打开对应 Source 并完整作者化 artifact。
+Lift knowledge 为 v41。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
+outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
+`log2` 补入通用 `map_unary` vocabulary。两者都不分类语义、不产生 IntentOp/carry/relation/π，
+仍由 Lift LLM 打开对应 Source 并完整作者化 artifact。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`。每个当前字段都由
@@ -498,7 +501,8 @@ value、patch、Source/Gate/hidden/sibling 信息。该摘要与 submission `PAS
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v14`。v14 完整继承下述 v7 及其前序合同，并增加上述 v4/v5
+当前 fresh-run 取 `v_TC = typecheck.v18`。v18 完整继承 v14、v15-v17 typed-control 合同及下述 v7
+前序合同，并增加上述 v4/v5
 relation 的 source-free dependent checks；仍不赋予 fixed core artifact 构造权。历史 v7 完整继承 v6；
 v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
@@ -544,8 +548,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v14`，shared projection 为
-`intentir.j-functional-boundary.v13`。它们完整继承 v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v16`，shared projection 为
+`intentir.j-functional-boundary.v15`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -592,6 +596,14 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 `map_unary/map_binary/select/cast`，且每个 observable store 都由同一 predicate 支配时证明 physical
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
+
+当前 `j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 继续只扩展 deterministic
+consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
+bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
+链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
+完全一致时才允许穿过 transpose。它还消费 J 已写出的 `map_unary(log2)` 与 JSON-safe IEEE special
+constant。所有 proof 都只读 J、产生 receipt；不做一般代数化简、不新增字段、不改变 TypeCheck、
+不按 kernel 名称分支，失败仍显式 unsupported。
 
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
 一致。shared J→Intent MLIR 入口及 structured reference v5 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与

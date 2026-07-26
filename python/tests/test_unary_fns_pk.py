@@ -6,7 +6,7 @@ launched, and compared to torch at rel < 1e-3. This is what PROVES the
 libdevice-safe lowering is numerically correct end-to-end:
 
   cos/sin/tan  -> nvvm.{cos,sin}.approx.f  (tan = sin/cos)
-  exp2         -> ex2.approx.ftz.f (no log2e prescale)
+  exp2/log2    -> native ex2/lg2 approx instructions (no base conversion)
   erf          -> shared target A&S polynomial x native ex2
   isnan        -> arith.cmpf uno (feeds select)
 
@@ -85,6 +85,7 @@ func.func @{name}(%X: {R}) -> {R} {{
     ("sin", torch.sin, -3.0, 3.0),
     ("tan", torch.tan, -1.0, 1.0),      # avoid the pi/2 pole
     ("exp2", torch.exp2, -4.0, 4.0),
+    ("log2", torch.log2, 0.125, 8.0),
     ("erf", torch.erf, -3.0, 3.0),
 ])
 def test_unary_fn(fn, ref, lo, hi):

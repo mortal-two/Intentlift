@@ -287,6 +287,46 @@ def test_cpu_runner_accepts_and_preserves_ieee_special_input_bits() -> None:
     )
 
 
+def test_cpu_runner_lowers_negative_infinity_and_log2_constants() -> None:
+    from intentir.backend.cpu.pipeline import run_on_cpu
+    from intentir.ir.model import IntentFunction
+
+    fn = IntentFunction.from_json(
+        {
+            "name": "negative_infinity_log2",
+            "inputs": [{"name": "X", "dtype": "f32", "shape": ["N"]}],
+            "outputs": [{"name": "Y", "dtype": "f32", "shape": ["N"]}],
+            "body": [
+                {
+                    "op": "const",
+                    "result": "Lower",
+                    "attrs": {"dtype": "f32", "value": "-inf"},
+                    "type": {"dtype": "f32", "shape": []},
+                },
+                {
+                    "op": "map_binary",
+                    "result": "Clamped",
+                    "operands": ["Lower", "X"],
+                    "attrs": {"fn": "max"},
+                    "type": {"dtype": "f32", "shape": ["N"]},
+                },
+                {
+                    "op": "map_unary",
+                    "result": "Y",
+                    "operands": ["Clamped"],
+                    "attrs": {"fn": "log2"},
+                    "type": {"dtype": "f32", "shape": ["N"]},
+                },
+            ],
+        }
+    )
+    value = np.asarray([1.0, 2.0, 4.0], dtype=np.float32)
+
+    actual = run_on_cpu(fn, {"N": 3}, [value])
+
+    np.testing.assert_array_equal(actual, np.asarray([0.0, 1.0, 2.0]))
+
+
 def test_cpu_module_does_not_embed_runtime_input_values() -> None:
     from intentir.backend.cpu.pipeline import emit_cpu_module
     from intentir.ir.model import IntentFunction

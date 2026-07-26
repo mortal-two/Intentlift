@@ -251,7 +251,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v17"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -1767,7 +1767,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v17"
+    assert report.protocol == "intentir.scrc.typecheck.v18"
 
 
 @pytest.mark.parametrize(
@@ -1920,6 +1920,14 @@ def test_floating_transcendental_and_reduction_require_tolerance() -> None:
         ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
     ]
     assert type_check(nonlinear.j, nonlinear.c, nonlinear.pi).passed
+
+    base2_log = make_copy_artifact()
+    base2_log.j.intent.body[0].attrs["fn"] = "log2"
+    assert TypeCheckErrorCode.RESULT_RELATION_INCOMPATIBLE in _codes(base2_log)
+    base2_log.j.boundary.result_relations = [
+        ResultRelationSpec("t1", ResultRelationKind.TOLERANCE)
+    ]
+    assert type_check(base2_log.j, base2_log.c, base2_log.pi).passed
 
     reassociated = make_copy_artifact()
     reassociated.j.boundary.realization_authorizations = [

@@ -1029,6 +1029,7 @@ struct LowerGpuMathToNVVM
     RewritePatternSet patterns(&getContext());
     patterns.add<PromoteHalfUnaryMath<math::ExpOp>,
                  PromoteHalfUnaryMath<math::LogOp>,
+                 PromoteHalfUnaryMath<math::Log2Op>,
                  PromoteHalfUnaryMath<math::AbsFOp>,
                  PromoteHalfUnaryMath<math::SqrtOp>,
                  PromoteHalfUnaryMath<math::RsqrtOp>,
@@ -1045,6 +1046,8 @@ struct LowerGpuMathToNVVM
     patterns.add<ExpToEx2Approx>(&getContext());
     patterns.add<SigmoidReciprocalToNVVMApprox>(&getContext());
     patterns.add<LogToLg2Approx>(&getContext());
+    patterns.add<UnaryToNVVMApprox<math::Log2Op>>(
+        &getContext(), "llvm.nvvm.lg2.approx.f");
     patterns.add<LogF64Polynomial>(&getContext());
     patterns.add<Exp2ToEx2Approx>(&getContext());
     patterns.add<TanhToEx2Approx>(&getContext());

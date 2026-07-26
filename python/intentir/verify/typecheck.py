@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v17"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v18"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
@@ -1598,7 +1598,7 @@ def _axis_refs_v1(
 
 _TOLERANCE_UNARY_FNS = frozenset(
     {
-        "exp", "log", "sqrt", "rsqrt", "tanh", "sigmoid", "cos",
+        "exp", "log", "log2", "sqrt", "rsqrt", "tanh", "sigmoid", "cos",
         "sin", "tan", "exp2", "atan", "erf",
     }
 )

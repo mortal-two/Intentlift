@@ -245,7 +245,7 @@ def test_v6_effect_if_schema_decode_round_trip_and_digest() -> None:
     assert artifact.to_json() == payload
     assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v7"
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v11"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v17"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     decoded_json = decoded.to_json()
     assert Gate1Artifact.from_json(decoded_json).to_json() == decoded_json
