@@ -54,8 +54,9 @@ contract，不是形式完备性证明。同 case fan-out 协议是
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v10`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v3`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+当前实现中的 scalar RefEval 是 `j_scalar_cpu_mlir_v15`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v14`，closed structured reference 是
+`intentir.j-structured-cpu-reference.v7`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
 domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。v3 projection 内的 invocation-local
@@ -75,6 +76,7 @@ production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-onl
 - [Gate1](verification/gate1.md)
 - [Gate2](verification/gate2.md)
 - [RefEval 与 J-Grounded、Q/D-Certified Lowering-State Search](lowering/contract.md)
+- [Backend search ablation v1 machine spec](../../spec/lowering/backend-search-ablation-v1.json)
 - [旧实现退役与首步重构](migration/legacy-removal.md)
 
 历史 spec 已迁至 [`.trellis/archive/spec`](../archive/spec/2026-07-21-pre-llm-first/README.md)，

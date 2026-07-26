@@ -13,7 +13,8 @@
 
 对应的 production 实现与实测记录：
 
-- [Accepted J+C production backend](production-backend-jc-search.md)：已冻结 12-kernel 的真实 C++ MLIR lowering、历史 RTX 5090/H100/RVV 结果，以及最新 16-kernel intake 和 Q/D 搜索实施差距。
+- [Accepted J+C production backend](production-backend-jc-search.md)：已冻结 16-kernel catalog 的真实 C++ MLIR lowering、历史 closed-12 RTX 5090/H100/RVV 结果，以及最新 Q/D lowering-state search 实施边界。
+- [16 项 backend implementation smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)：16/16 J-only materialization 与 CUDA 编译覆盖、CUDA held-out Q/D controller、RVV E2/E3 state 对照和当前负结果。
 - [12 个闭合 Kernel 性能与消融报告](results/production-backend-closed-12/production-backend-report.md)：12/12 correctness、GPU 双 target 性能、RVV 真实 MLIR 执行、默认 lowering→搜索提升，以及 B/C 配对消融。
 
 前四份 SCRC 文档共同规定：

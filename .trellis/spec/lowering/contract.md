@@ -180,19 +180,19 @@ seed 上传播 padded provenance：predicated direct load 不含 logical guard�
 pointwise/broadcast 路径被 `mean` 消去时才映射为 `padded_mean_count_unproven`。该必要条件与
 consumer capability 仍分离：guard-bearing 与 cross-axis/general predicate 不成为 TypeCheck padding
 seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 guard/cross-axis 访问或 masked
-provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
+provenance 进入未知 op 均显式 consumer-unsupported。当前实现保留上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v9`，scalar RefEval 为
-`j_scalar_cpu_mlir_v11`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v3`。v11/v9 完整继承 v10/v3 的唯一 node-less logical-input load、
-通用 multi-reduction padding closure 与当前 Gate2 invocation 的 runtime predicate tautology proof，
-并增加上述 v4/v5 relations、direct-store partition 与 closed typed contraction consumer。runtime
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v14`，scalar RefEval 为
+`j_scalar_cpu_mlir_v15`，closed structured reference 为
+`intentir.j-structured-cpu-reference.v7`。这些 active receipt version 覆盖唯一 node-less logical-input
+load、通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
+上述 typed relations、direct-store partition 与 closed typed contraction consumer。runtime
 predicate 对应的 invocation-local proof subreceipt 仍只含
 protocol、access id、J predicate digest、logical input refs 与 domain axes，不含 raw runtime value 或
 value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2
 receipt、functional-boundary v1/v2 与
-`logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v11/v9 追认或重判。
+`logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由当前 consumer 追认或重判。
 
 修复上述 RefEval capability 后，可以对 parent 中 `replay_closed` 的精确 artifact/Replay 做零模型调用
 Gate2-only recheck；它写独立 evidence 且 `changes_parent_verdict=false`。这只证明当前 reference
@@ -215,9 +215,11 @@ sqrt/sqrtf ABI。这是 CPU-only compatibility pass；共享 Intent lowering 与
   依靠 role-first、π 或 Source 猜测作用点；
 - alias/effect、logical update 与当前 `exact/tolerance/one_of_updates` obligation 中所有影响 target
   denotation、safety 或 ABI 的 backend-relevant B facts 必须实际实现或拒绝；
-- 当前 production J+C 路径即使能取得 shared `access_guard_relations` receipt，也没有通用
-  access-local guard materializer，必须以 `access_guard_materialization_not_implemented` fail closed。
-  Layer A 已有 `select` 只足以让 RefEval 执行 value semantics，不授权 production 擦除该 B relation；
+- 当前 production J+C 路径复用 shared functional projection 的 `access_guard_relations` receipt：只有
+  relation 已由 J-authored explicit select/access-local projection 完整物化，且每一条 authored relation
+  都有精确 consumed ref 时才可继续。缺任一 receipt 或 guarded update 等未实现形式仍必须以
+  `access_guard_materialization_not_implemented`/projection error fail closed；不能仅从图中看见 select
+  就猜测 B 已消费；
 - `realization_authorizations` 的既有 consumer 是 SCRC TypeCheck/π；backend 只识别其 SCRC-only
   身份，不把它当 target permission，也不因其存在自动 unsupported；
 - core lowerer 与 transformations 不读取 π、Gate/Q、Source、kernel name 或 per-kernel RuleCard；
@@ -228,21 +230,21 @@ sqrt/sqrtf ABI。这是 CPU-only compatibility pass；共享 Intent lowering 与
 
 ## Certified corpus intake
 
-截至 2026-07-26，严格 SCRC closure 为 16/28；当前 `corpus/production-jc-v1` 已冻结 12，verified
-intake queue 为以下四项：
+截至 2026-07-26，严格 SCRC closure 为 16/28；当前 `corpus/production-jc-v1` 已 content-addressed
+冻结并实际消费全部 16 项，verified intake queue 为 0。新增四项的 snapshot digest 为：
 
 ```text
-high_performance:xformers.ops._triton.rmsnorm_kernels._rms_norm_add_kernel
-high_performance:liger_sparsemax
-high_performance:liger_kl_div
-high_performance:flash_attn.ops.triton.layer_norm._layer_norm_fwd_1pass_kernel
+xFormers RMSNorm-add:      e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be
+Liger Sparsemax:           ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda
+Liger KLDiv:               b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a
+Flash one-pass LayerNorm:  76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480
 ```
 
 入库必须复制 exact accepted J/C 与 closure receipt，核验 artifact/J/C/receipt digest，并产生新的
 content-addressed snapshot/catalog entry。不得重新 Lift、固定代码补 J、只按 case_id 构造 snapshot，
 或在 artifact 未冻结时把 `/tmp` 路径当 production truth。历史 12-kernel correctness/performance report
-保持历史口径；只有四项完成入库、编译、Q/D closure 与 target measurement 后才能报告 16-kernel
-backend aggregate。
+保持历史口径；新增四项的 materialization/codegen smoke 或单 case Q/D closure 不得重标成 16-kernel
+performance aggregate。
 
 ## Deterministic materialization
 
@@ -473,6 +475,13 @@ E2/E3 必须共享 J、target、compiler revision、terminal target pipeline、p
 D_cert。报告同时给出 equal-total-budget anytime/time-to-best 与小空间 exhaustive/oracle 结果；
 E3/E4 在共享 latency map 的 full budget 下必须收敛到相同最优候选。所有 Kernel 都进入汇总，
 不适用的 transformation 记录 `not_matched/rejected`，不能只报告 winner。
+
+上述 arm 由 repository-root 的 `spec/lowering/backend-search-ablation-v1.json` 唯一冻结并被 runner
+直接读取；当前 canonical digest 为
+`60ca646b34c29ce3542d3c4e6a9e08c39155bc9e2a27324844ab8fad80f050a7`。loader 必须同时校验 scope、
+Q/D direct-edge 规则、D_search/D_cert digest-disjoint 规则、C ordering-only 角色、equal-total-budget
+规则、arm 全集与字段类型。报告必须写入 digest；未知/重复 arm、额外字段或 correctness protocol
+漂移均 fail closed，禁止 runner 内另存一套同名实验定义。
 
 ## Q/D-constrained performance selection
 

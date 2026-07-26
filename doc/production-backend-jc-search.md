@@ -1,32 +1,22 @@
 # Accepted J+C production backend：真实 MLIR lowering、B 合同与 C 搜索
 
-> 状态：本文的实现与性能数字对应已经 content-addressed 冻结的 12-kernel catalog。2026-07-26
-> 最新严格 SCRC closure 已达到 16/28；新增四项尚待导入，不能把本文历史 12-kernel 数字重标为
-> 16-kernel 结果。
+> 状态：production catalog 已 append-only 扩展为 content-addressed 的 **16 个**闭合 J；2026-07-26。
+> 文中 RTX 5090/H100 的历史 aggregate 仍只对应原 closed-12，不得重标为 16-kernel 结果。
 
-本文记录已冻结 12 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。性能与消融数值见
+本文记录已冻结 16 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。原 12 项性能与消融数值见
 [production-backend-report.md](results/production-backend-closed-12/production-backend-report.md)。
+本轮 16 项编译覆盖、CUDA Q/D smoke 与新增 RVV state 对照见
+[backend-implementation-smoke-2026-07-26.md](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)。
 
-最新 16-kernel closure 中，待 append-only 导入 `corpus/production-jc-v1` 的四项为：xFormers
-RMSNorm-add、Liger Sparsemax、Liger KLDiv、FlashAttention `_layer_norm_fwd_1pass_kernel`。四项都已有
-独立完整 Gate1+Gate2 evidence；导入仍须复制 exact artifact/C/receipt、核验 digest 并经过同一个
-catalog loader，不从 `/tmp` 路径直接长期消费，也不重新 Lift 或修改 J。
+新增四项已经通过同一个 catalog loader 导入；snapshot 只复制已接受 artifact/C/evidence，未重新 Lift、
+未修改 J，也不把 `/tmp` 作为长期 truth：
 
-当前 intake handoff 的 raw-file SHA256 为：
-
-| case | artifact SHA256 | closure evidence SHA256 |
+| case | frozen snapshot digest | evidence kind |
 |---|---|---|
-| xFormers RMSNorm-add | `5e6375eb9c337fc8c30387ff97965a0bca89023432981786a6ba9f9024ba707e` | `1bc8b069c1d5ad5b6b139173144f75493dc8e59ab657793a3b118abaeb3e40f1` |
-| Liger Sparsemax | `923b496353836a2815ba02dd84c9f3c1d0dd9dca0500f5ed3c9391dc34ed2876` | `710368f0c3536e4f876011e6a86e34059e08b9f8aa8221df67567ff3ee94bef4` |
-| Liger KLDiv | `78ca4a70d137ce221bdca3ea304a9770ebf702da76c062211b7876f544cb1582` | `40425909c8c66ccafb489de19094b6e9ac86e010af024f9a5e487ee67bf33a8f` |
-| FlashAttention one-pass LayerNorm | `28c5a97bcd5c7784e189e3edc92d3000c080b9ce2cddb26db892739a27705e1c` | `caee663241d996bc1df1d67246d6cd4fae553d235985795bfbbf4478f7c402fc` |
-
-这些是 staging 文件 digest，不冒充 catalog 的 canonical J/C/snapshot digest；正式导入工具仍须重新
-计算并交叉核验各层 digest。staging roots 依次为
-`/tmp/scrc_task11_v9_rmsnorm_add_inoutfix_20260725_02`、
-`/tmp/scrc_task11_v25_continuation_sparse_b1_20260725_01`、
-`/tmp/scrc_task11_v60_kl_agent_discovery_20260725_01` 与
-`/tmp/scrc_task11_v69_layernorm_formal_replay_fanout_20260725_01`；它们只用于本次 intake handoff。
+| xFormers RMSNorm-add | `e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be` | zero-model Gate2 recheck |
+| Liger Sparsemax | `ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda` | zero-model Gate2 recheck |
+| Liger KLDiv | `b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a` | certified run report |
+| FlashAttention one-pass LayerNorm | `76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480` | zero-model Gate2 recheck |
 
 当前 16 项均无 typed contraction；Flash `do_o_dot` 是 FP32 multiply + row reduction。因此当前性能
 推进不把 TF32 误套到 row reduction；TF32/IEEE 精度状态留给后续 `tl.dot`/matmul/完整 Attention J。
@@ -40,7 +30,7 @@ core lowerer 的持久输入只有：
 - target capability。
 
 它不读取 Source、Replay、π、Gate verdict、Q、kernel 名或 provider 身份来决定
-lowering。`corpus/production-jc-v1/` 保存 12 个 content-addressed
+lowering。`corpus/production-jc-v1/` 保存 16 个 content-addressed
 `intentir.production.jc-snapshot.v1` 对象和一个 stable-name catalog。catalog loader
 会同时核验 snapshot、J、C digest；验收导出目录的 `<name>.json` 和冻结后的
 `<sha256>.json` 使用同一个消费入口。
@@ -62,11 +52,12 @@ Python 只负责 snapshot transport、候选编排、CUDA Driver ABI 绑定、�
 所有目标计算和 local/structural/schedule transformations 都由注册的 C++/upstream MLIR pass 生成；不存在
 Python/Triton 替代 kernel emission。
 
-这里的 Q/D filter 是一个待实现的通用 search controller，不是每个 Kernel 的 Python emitter 或
-validator。core MLIR compiler 不读取 Q；controller 只通过 signature-driven opaque harness 执行
-Source/Replay/RefEval/target，并使用冻结 comparator。当前已提交实现完成了真实 MLIR compilation、
-correctness checks 与性能搜索，但尚未把 reduction tree、FMA、内部精度候选统一接入该 Q/D
-feasibility protocol。
+这里的 Q/D filter 是已经实现的唯一通用 `SearchAndCloseController`，不是每个 Kernel 的 Python
+emitter 或 validator。core MLIR compiler 不读取 Q；controller 只通过 signature-driven opaque harness
+执行 Source/Replay/RefJ/target，并使用冻结 comparator。`D_search` 对每个具体 post-pass MLIR state 做
+direct target–RefJ；性能选择后的固定 winner 在输入 digest 不相交的 `D_cert` 上直接比较
+target–Source、target–Replay、target–RefJ，禁止 tolerance 传递。缺 Replay 时可以留下 search evidence，
+但不能产生 formal backend-closure receipt。
 
 ## 2. J、B 与 constexpr
 
@@ -75,8 +66,10 @@ feasibility protocol。
 - functional boundary projection；
 - dense predicate/fill materialization；
 - exact value-dimension relations；
-- no-scan full-axis logical step，以及 J-declared constexpr 对 typed
-  `effect_if` 的精确分支专化；
+- full-axis logical step：包括 no-scan/null-init carry，也包括 scan 输入与 typed literal/reference
+  carry init；该投影与 RefJ 的完整逻辑轴一步语义相同，不把 C tile 当语义；
+- J-declared constexpr 对 typed `effect_if` 的精确分支专化；普通 scalar `value_if` 不伪装成
+  constexpr，而在 M0 中保留为标准 `scf.if`；
 - J.signature 明确声明的 rank-0 `constexpr` specialization。
 
 constexpr specialization 不是从 Source 猜常量。只有 J.signature 的
@@ -94,8 +87,12 @@ constexpr specialization 不是从 Source 猜常量。只有 J.signature 的
 
 存在未消费的 alias/effect/access guard/storage/update/reduction/output relation 时，搜索在
 候选编译前 fail-closed。C 不能绕过该入口。编译审计会向每个已闭合 kernel 的同一 M0
-注入未支持 `may_alias` 作为负对照：12/12 的 with-C 与 Erase_C 两臂都在 codegen 前以
+注入未支持 `may_alias` 作为负对照：历史 closed-12 的 with-C 与 Erase_C 两臂都在 codegen 前以
 `alias_relation` 拒绝。
+
+Sparsemax 复用同一个 functional-boundary projection 消费 authored access-local guards；scan 上的
+reduction relation 与 reduce 使用同一闭合合同。若 projection receipt 未覆盖某个 guard，ContractView
+仍返回 `missing/unsupported`，不会仅因图中出现 select 而猜测它已被消费。
 
 该负对照只证明显式 `may_alias` 不会被 C 绕过，不能单独证明 v7 的空 alias list 等价于完整
 no-alias。当前 `b.readonly_nonalias_inputs.v1` 对空列表的解释属于待收紧的 B0/B1 contract gap；规范
@@ -147,8 +144,9 @@ Flash preprocess、JSD 分别为 1.261x、1.130x；H100 分别为 1.170x、1.071
 这与 C 消融是两件事：B 决定额外变换是否被授权，C 只决定有限预算候选顺序。
 
 RVV 的 whole-graph Linalg fusion 确实改变 materialization/loop topology，是当前首个结构性 lowering
-transition；但当前实现把 `fuse_elementwise` 混在 `RiscvSchedule` 中，正式结构路径实验前应将它拆成
-transformation trace，并让 fused/materialized 两条 path 分别搜索 schedule。
+transition。实现已把它从 `RiscvSchedule` 拆成独立 `RiscvTransformationState`；materialized 与 fused
+state 分别搜索 O2/O3、vectorize on/off，post-pass Linalg op count 与 topology digest 来自真实 MLIR
+receipt，不是 pass 开关自报。
 
 ## 5. 注册的真实 MLIR lowering paths
 
@@ -176,13 +174,17 @@ register tile、warp/shared reduction 和 typed epilogue。搜索轴包括：
 - deferred/preloaded epilogue Col；
 - rank-0 host-by-value / device-uniform-load ABI。
 
-FMA 选项目前仍是旧的专项离线工程开关，尚未接入统一 production search。按最新设计，它不再等待
-J 增加 mechanism permission；实现时应把 FMA concrete MLIR state 标记为 `observation-changing`，
-先通过 hard verifier，再进入通用 Q/D filter。现有 `reduce.assoc`、value-dimension equality、
-predicate/output/alias projection 继续参与 hard admission 或 codegen。
+reduction topology 与 FP32 FMA 已进入 production lowering-state search。C++ pass 在结果 MLIR 上记录
+实际 shuffle/barrier/all-reduce/FMA 数量与 transformation trace；请求 FMA 但实际未产生 FMA 的状态会
+按 post-pass MLIR digest 去重。它们标记为 `observation-changing`，在 `D_search` 通过 target–RefJ 后
+才可计时，固定 winner 再走 `D_cert` 三条 direct edges。现有 `reduce.assoc`、value-dimension equality、
+predicate/output/alias projection 继续参与 hard admission 或 codegen，而不是数值权限开关。
 
 已消费：Liger RMSNorm、fused-add RMSNorm、LayerNorm、Softmax、JSD、PolyNorm、
-xFormers RMSNorm。
+xFormers RMSNorm、xFormers RMSNorm-add、KLDiv、Sparsemax 与 Flash one-pass LayerNorm。KLDiv 的
+scan/carry 在 J-only full-axis materializer 展开；Sparsemax 的 scan 与 logical `and` 有 generic/target
+lowering；Flash 的普通 scalar `value_if` 保留为 `scf.if`，C++ row state 再对 pure arms 做 predication。
+该 state 的实际 receipt 为 2 次 value-if predication、10 次 constexpr select folding，而非 Python 分支。
 
 ### Masked short-dot + pad lowering path
 
@@ -208,13 +210,14 @@ Flash preprocess 在 RTX 5090 上从约 1.35× Triton 降至 1.07×，H100 为 1
 2. 指定唯一 registered fast path 和 pass options；
 3. C++ whole-graph admission；
 4. GPU/NVVM/cubin compilation；
-5. 已合法 candidate 的 device timing；
-6. top-finalist robust tournament；
-7. fastest candidate selection。
+5. 在 `D_search` 上 direct target–RefJ filter；
+6. 通过者的 device timing；
+7. top-finalist robust tournament 与 fastest candidate selection；
+8. 固定 winner 在独立 `D_cert` 上 direct target–Source/Replay/RefJ closure。
 
 运行结果不用于放宽 memory/effect/ABI hard boundary。正确性测试与 performance selection 分离；
-当前 frozen-12 winner 另外与 canonical J 比较，未来 observation-changing state 则先经过通用
-Q/D feasibility、最终再做 direct-edge closure。baseline 是 SCRC 已使用的 exact declarative Triton
+历史 frozen-12 winner 另外与 canonical J 比较；新 controller 已对 observation-changing state 执行通用
+Q/D feasibility 与 direct-edge closure。baseline 是 SCRC 已使用的 exact declarative Triton
 workload adapter/source slice，而不是新写的替代 kernel。
 
 performance cache key 包含 M0 digest、target、candidate、toolchain 和 benchmark workload，
@@ -252,10 +255,19 @@ correctness 和固定 CPU 计时。12/12 kernel、全部候选均通过正确性
 arm 的全体几何平均加速为 **1.157x**，11/12 winner 使用该变换。
 Flash preprocess 为 1.495x，PolyNorm 为 1.445x，Liger RMSNorm 为 1.218x，TVD 为 1.140x。
 
+新增 J 的 2026-07-26 原生 RVV smoke 进一步验证了同一机制：KLDiv 的 8 个对象全部由真实
+MLIR→LLVM→riscv64 链生成并通过 canonical-J correctness；fixed-state schedule-only best 为
+14.1428 μs，加入 whole-graph fused state 后 best 为 9.1056 μs，即 **1.553x E3/E2 增量**。
+最快 fused-vector state 含 120 条 RVV 指令、9.3754 μs；全局 winner 是更快的 fused-scalar O3，说明
+搜索会选择实测 state，而不把“出现向量指令”当目标。Flash one-pass LayerNorm 当前两臂均为
+36.9453 μs（1.000x），如实记录为该结构变换不适用/无增益。
+
 RVV winner 不强制“必须含向量指令”：例如包含 `tanhf` 的 DYT 在该小 shape 上标量候选更快，
 搜索会如实选择它；其他候选与 receipt 仍记录 RVV 指令数。当前没有与 RVV 上的 Source/Triton
 实现进行配对，因此 1.157x 只能解释为 whole-graph fusion path 的内部因果消融，不能解释为超越
-Source，也暂不冒充完整的 E3/E2 structural-path search。
+Source。KLDiv 的 1.553x 是同一目标、同一 J、相同 schedule domain 下 materialized 与 fused concrete
+MLIR state 的内部因果消融；RVV 侧尚未接入 Source/Replay 的独立 D_cert，因此不冒充正式端到端
+backend closure 或超越 Source 的证据。
 
 ## 9. 复现
 
@@ -284,6 +296,15 @@ python tools/audit_production_backend_search.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/b-c-audit.json --search-budget 3
 
+# 正式 CUDA E2/E3/N0-N3：arm 由 machine-consumed spec 冻结；Replay manifest
+# 必须给出 content hash，缺 Replay 时 --require-backend-closure 会 fail closed。
+# 报告会绑定 canonical experiment spec digest；当前 v1 为 60ca646b...050a7。
+python tools/run_production_backend_ablation.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/cuda-ablation.json --arms E2 E3 N0 N1 N2 N3 \
+  --candidate-budget 96 --replay-manifest /path/to/replay-manifest.json \
+  --require-backend-closure
+
 # sm90a bundle（远端只执行）
 INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
@@ -293,17 +314,27 @@ INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
 python tools/export_rvv_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/rvv-bundle.json
+scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv:/tmp/
+ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
+  --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json
 ```
 
 ## 10. 当前边界
 
-当前冻结实现已经达到 12/12 lowering/correctness；RTX 5090 与 H100 均有 6/12 达到或超过
-Triton，整体 MLIR/Triton 几何平均分别为 1.013x 与 1.019x，但不是 12/12 全部超越。
-剩余主要差距是小 shape LayerNorm/RMSNorm/fused-add
-reduction 的固定指令/collective 开销。下一阶段先导入新增四个 J，再增加 source-neutral 的
-producer/reduction/epilogue fusion、materialization/copy elimination，并把 RVV fusion 正式建模为
-structural transformation trace。subgroup/workgroup/hierarchical reduction、FP32 FMA 与 target-supported
-precision 作为 hard-safe concrete MLIR states 统一进入 Q/D filter，不新增 per-mechanism J 字段，也不按
-kernel 名、Source recipe 或 Gate receipt 增加隐藏路径。RVV 当前证明 12/12 可编译、可执行、可搜索，
-以及 fusion path 的内部机制收益；在
-建立同机 Source baseline 前不声称端到端优于原实现。
+当前冻结实现达到 **16/16 deterministic materialization、generic cubin compilation**，并且每项至少有
+一个 C++ whole-graph specialized path 生成单 cubin。新增四项的真实消费者包括：inout/post-state、
+access-local guard、scan/reduction relation、loop scan/carry、runtime value-if 与多输出 half-storage
+epilogue。CUDA 的正式 Q/D smoke 已在 KLDiv 与 Flash one-pass LayerNorm 上直接通过 held-out
+target–Source、target–Replay、target–RefJ；这证明 controller 与 opaque Replay 接口真实可用，但不是
+16-kernel 的论文 aggregate。
+
+RTX 5090/H100 的已发布 aggregate 仍是 closed-12：两机各有 6/12 达到或超过 Triton，整体
+MLIR/Triton 几何平均分别为 1.013x 与 1.019x。新增 Flash LayerNorm 的 equal-budget E2/E3 当前约与
+Triton 持平，E3 的 2 个实际 FMA 没有产生显著额外收益；不能为故事挑选性删除。下一步性能重点是
+CUDA 上 producer/reduction/epilogue fusion、materialization/copy elimination，以及在更多适用 J 上跑满
+machine spec 冻结的 E2/E3/E4、L0/L1、N0--N3。当前 16 项没有 typed contraction，因此 precision/TF32
+axis 会如实记录 `unavailable/not_matched`，不制造候选。
+
+RVV 已证明原 closed-12 全量可编译/执行/搜索，并在新增 KLDiv 上得到 1.553x 的真实 structural-state
+增量。其 target-side runner 当前是 target–RefJ correctness + timing；在加入预计算 Source/Replay 的
+独立 D_search/D_cert bundle 前，不声称 RVV 端到端 backend closure 或超越 Source。

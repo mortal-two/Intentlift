@@ -940,6 +940,13 @@ N3  N2 + target-supported precision/approximation states
 N0--N3 的 hard verifier、Q、D、target pipeline 与总搜索预算保持一致；某个 Kernel 不匹配某类
 transformation 时记录 `not_matched`，不得从 aggregate 中删除。
 
+这些实验臂不是文档中的自由文本约定。实现必须从
+`spec/lowering/backend-search-ablation-v1.json` 读取 E0--E4、L0/L1、N0--N3 的开关与预算类别，
+校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v1 spec digest 为
+`60ca646b34c29ce3542d3c4e6a9e08c39155bc9e2a27324844ab8fad80f050a7`。runner 不得在代码中重新定义
+同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
+C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
+
 报告指标至少包括：
 
 - absolute latency/throughput；
@@ -988,17 +995,17 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 
 ### 20.1 当前闭合与 production intake 基线（2026-07-26）
 
-当前严格 SCRC 独立覆盖是 **16/28**。J-search 分支已经 content-addressed 冻结并实际消费其中
-12 个：DYT、Flash backward preprocess、Liger fused-add RMSNorm、GeGLU、JSD、Liger LayerNorm、
-Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TVD、xFormers RMSNorm。下表四项已有完整 Gate1+Gate2
-证据，但尚未导入 `corpus/production-jc-v1`：
+当前严格 SCRC 独立覆盖是 **16/28**，J-search 分支已将 16 项全部 content-addressed 冻结到
+`corpus/production-jc-v1` 并实际消费：DYT、Flash backward preprocess、Liger fused-add RMSNorm、
+GeGLU、JSD、Liger LayerNorm、Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TVD、xFormers RMSNorm，
+以及下列新增四项：
 
-| 待导入 case | closure evidence kind | 首批后端覆盖重点 |
+| 已导入 case | frozen snapshot digest | 当前真实后端 consumer |
 |---|---|---|
-| xFormers `_rms_norm_add_kernel` | exact Gate1 artifact + zero-model Gate2 capability recheck | inout/post-state、reduction、epilogue、exact+tolerance 多输出 |
-| Liger Sparsemax | exact Gate1 artifact + zero-model Gate2 capability recheck | scan + 双 reduction + select，scan/reduction mapping 与 fusion |
-| Liger KLDiv | fresh `SCRC_CERTIFIED` run | loop-carried reduction、log、tile 与 materialization |
-| FlashAttention `_layer_norm_fwd_1pass_kernel` | exact Gate1 artifact + zero-model Gate2 capability recheck | 双 reduction、value-if、多输出 writeback 与 epilogue |
+| xFormers `_rms_norm_add_kernel` | `e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be` | inout/post-state、reduction、epilogue、多输出 |
+| Liger Sparsemax | `ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda` | access-local guard、scan + 双 reduction、logical select/and、generic scan baseline |
+| Liger KLDiv | `b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a` | loop scan/carry full-axis step、log/reduction、CUDA/RVV state search |
+| FlashAttention `_layer_norm_fwd_1pass_kernel` | `76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480` | runtime value-if、双 reduction、unused ABI preservation、多输出 half epilogue |
 
 当前 16 项都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
 elementwise multiply + row sum。因此这批的首要数值搜索轴是 reduction tree、FP32 FMA、fusion 与
@@ -1009,16 +1016,27 @@ target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
 
 ```text
 SCRC-closed corpus       = 16
-frozen production catalog = 12
-verified intake queue      = 4
+frozen production catalog = 16
+verified intake queue      = 0
 ```
 
-不得把历史 12-kernel 性能数字重标为 16-kernel 结果。真实推进的第一步是把上述四项的 exact artifact、
-C、closure receipt 与 digest 复制到 content-addressed snapshot，通过现有 catalog loader/TypeCheck 后再
-扩展 CUDA/RVV/search 测试；导入不得重新 Lift、修 J 或按 case name 选择 emitter。后续新 closure 采用
-同一 append-only intake 流程，不能等待 28/28 才开始，也不能让未冻结 `/tmp` 路径成为长期 truth。
+不得把历史 12-kernel 性能数字重标为 16-kernel 结果。导入过程只复制 exact accepted artifact、C、
+closure receipt 并交叉核验 digest，没有重新 Lift、修 J 或按 case name 选择 emitter。后续新 closure
+继续使用同一 append-only intake 工具；同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径不能成为
+长期 truth。
+
+当前实现基线为：16/16 可从冻结 J deterministic materialize；16/16 可经通用
+Intent→Linalg→CUDA cubin；16/16 至少有一个注册 C++ whole-graph path 生成单 cubin。CUDA 的 KLDiv 与
+Flash one-pass LayerNorm 已用真实 opaque Replay 跑通 `D_search` target–RefJ 以及 held-out `D_cert`
+target–Source/Replay/RefJ。RVV 在新增 KLDiv 上的 materialized schedule-only best 为 14.1428 μs，加入
+whole-graph fused concrete state 后为 9.1056 μs（1.553x）；这是同 J/target 的结构 state 增量，不是
+Source speedup。Flash one-pass LayerNorm 的 CUDA E2/E3 当前分别为 1.3782/1.3734 μs，约 1.004x
+E3/E2；该量级没有显著性证据，FMA state 不能宣称带来稳定增益，
+必须保留这个负结果。
 
 ### 阶段 B0：IntentOp/ABC ownership 对齐
+
+**当前状态：核心入口已落地，继续以增量方式补齐 consumer。**
 
 - 清理 Op.td target recipe；
 - 标记 A semantics、B-derived attrs 与 C-derived annotations；
@@ -1027,6 +1045,11 @@ C、closure receipt 与 digest 复制到 content-addressed snapshot，通过现�
 - 保证 structured ops 不在结构 transformation 完成前过早消失。
 
 ### 阶段 B1：后端合同入口
+
+**当前状态：已实现。** `materialize_j`、`ContractView`、`Attach_C/Erase_C`、统一
+`SearchAndCloseController`、content-addressed 16-kernel catalog 与 fail-closed rejection 已进入
+J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 generic/conservative path，不被静默
+升级。
 
 - 固化 `Emit_v(J)`；
 - 实现独立 `Attach_C(M0,C,t)` 与 `Erase_C` invariant；
@@ -1039,6 +1062,11 @@ C、closure receipt 与 digest 复制到 content-addressed snapshot，通过现�
   direct-edge comparator 与 backend closure receipt；不按 kernel 名注册数值机制。
 
 ### 阶段 B2：第一批 lowering-path expansion
+
+**当前状态：第一批已实现并开始做真实消融。** CUDA row/elementwise/padded lowering 与 RVV
+materialized/whole-graph transformation state 均由真实 MLIR receipt 驱动；KLDiv 的 RVV E3/E2 为
+1.553x 内部增量，Flash LayerNorm 的 E3/E2 约 1.0x，负结果照录。下一步是扩大适用 Kernel 和统一
+report，而不是新增 family 抽象。
 
 - elementwise producer/reduction fusion；
 - 在 hard boundary 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；

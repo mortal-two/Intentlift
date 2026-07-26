@@ -118,11 +118,11 @@ post-SCRC backend 可以复用记录的 Q protocol 与 D 定义，但不得读�
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v11`，shared functional projection receipt 为
-`intentir.j-functional-boundary.v9`，structured reference 为
-`intentir.j-structured-cpu-reference.v3`。这些版本在 v10/v3 的 source-neutral multi-reduction 与
-invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed relations、闭合 direct-store
-partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v15`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v14`，structured reference 为
+`intentir.j-structured-cpu-reference.v7`。这些 active consumer 继续支持 source-neutral
+multi-reduction、invocation-local predicate proof、当前 typed relations、direct-store partition，
+并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
 consumer 追认、覆盖或静默刷新。
 
@@ -143,11 +143,12 @@ consumer 追认、覆盖或静默刷新。
   guarded load/update 需要尚未实现的 access-local pre-execution materialization，当前显式
   unsupported；TypeCheck 另要求 guarded load 有 fill，并拒绝当前无 merge contract 的 guarded update。
 
-production J+C 当前即使能读取 shared access-guard receipt，也没有通用 target materializer，必须以
-`access_guard_materialization_not_implemented` fail closed；不能把 RefEval 对显式 select 的执行能力
-当成擦除 B relation 的许可。
+production J+C 只在 shared projection 已把每条 authored access guard 完整投影为 explicit
+select/access-local dataflow，并给出精确 consumed ref 时继续；缺 receipt、guarded update 或其他未实现
+形式仍以 `access_guard_materialization_not_implemented`/projection error fail closed。不能仅因图中
+出现 select 就把 RefEval 的执行能力当成擦除 B relation 的许可。
 
-`intentir.j-functional-boundary.v9` 还接受一个窄、通用的 direct-store partition：多个 store 必须都
+当前 functional-boundary consumer 还接受一个窄、通用的 direct-store partition：多个 store 必须都
 无 predicate、引用同一个 producer 与同一个完整 observable typed result，只沿一个静态 output axis
 使用常量、无重复且无缺口的 unit-width point slices 覆盖全部 extent；非 partition axes 必须完整
 覆盖且一致。成功时产生 `unit_width_direct_store_partition` receipt。多轴、symbolic extent、wide、
