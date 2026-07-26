@@ -8,8 +8,9 @@
 // unchanged; only Layer-C synchronization/storage is retuned.
 // CHECK-LABEL: func.func @dependent_centered_variance(
 // CHECK-SAME: intent.backend.fma_count = 0 : i64
+// CHECK-SAME: intent.backend.host_value_capture_count = 1 : i64
 // CHECK-SAME: intent.backend.reduction_topology = "workgroup_hierarchical"
-// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1"]
+// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.b.rank0_host_value_capture.v1"]
 // CHECK-SAME: intent.launch_plan = {{.*}}smem = 16 : i64
 // CHECK: gpu.launch
 // CHECK-SAME: dynamic_shared_memory_size
@@ -46,6 +47,6 @@ func.func @dependent_centered_variance(
 
 // FMA-LABEL: func.func @dependent_centered_variance(
 // FMA-SAME: intent.backend.fma_count = 4 : i64
-// FMA-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.numeric.fma.f32.v1"]
+// FMA-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.numeric.fma.f32.v1", "cuda.b.rank0_host_value_capture.v1"]
 // FMA: math.fma
 // FMA-NOT: intent.

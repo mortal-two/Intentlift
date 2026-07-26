@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import intentir.backend.riscv.compile as rvv
 from intentir.backend.contract_capabilities import B_CAP_READONLY_INPUTS
+from intentir.backend.cuda.production_cases import (
+    constexpr_input_bindings,
+    prepare_production_workload,
+)
+from intentir.backend.materialize import attach_c, materialize_j
+from intentir.backend.protocol import BackendTarget
+from intentir.backend.riscv.contract import (
+    RiscvContractError,
+    derive_riscv_contract_view,
+)
+from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.scrc_workload_run import build_workload_jc_suite
+
+
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _candidate(fused: bool) -> rvv.RiscvLoweringCandidate:
@@ -83,3 +100,73 @@ def test_rvv_record_exposes_real_mlir_topology_receipt(monkeypatch) -> None:
     assert record["transformation_receipt"]["linalg_ops_after"] == 3
     assert record["true_mlir_pipeline"] is True
     assert record["python_target_kernel_emission"] is False
+
+
+def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v1",
+        "sparsemax",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload("sparsemax")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    view = derive_riscv_contract_view(attach_c(materialized, snapshot.c, target))
+
+    assert view.supported
+    assert "access_guard:a0:v22:0:positive" in view.consumed
+    assert "access_guard:a1:v22:0:positive" in view.consumed
+
+    stripped_projection = replace(
+        materialized.boundary_projection,
+        consumed=tuple(
+            item
+            for item in materialized.boundary_projection.consumed
+            if not item.startswith("access_guard:")
+        ),
+    )
+    stripped = replace(materialized, boundary_projection=stripped_projection)
+    with pytest.raises(
+        RiscvContractError,
+        match="access_guard_materialization_not_implemented",
+    ):
+        derive_riscv_contract_view(attach_c(stripped, snapshot.c, target))
+
+
+def test_unused_abi_inputs_do_not_suppress_readonly_graph_fusion() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v1",
+        "flash_layer_norm_1pass",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload("flash_layer_norm_1pass")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    view = derive_riscv_contract_view(
+        attach_c(materialized, snapshot.c, target)
+    )
+
+    assert not snapshot.j.boundary.aliases
+    assert B_CAP_READONLY_INPUTS in view.capabilities

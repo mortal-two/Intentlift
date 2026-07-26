@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -113,8 +114,6 @@ def extract_single_launch(
 ) -> ExtractedSingleLaunch:
     """Extract a target-portable launch bundle without loading its cubin."""
 
-    if program.selection.pipeline_kind != "specialized":
-        raise ValueError("prepared benchmark requires a specialized candidate")
     if len(program.kernels) != 1:
         raise ValueError("prepared benchmark requires exactly one compiled kernel")
     source = read_intent_module(intent_module)
@@ -274,6 +273,48 @@ class PreparedSingleLaunch:
         return launch
 
 
+class PreparedGraphLaunch:
+    """Bind a generic/fused multi-launch MLIR program once for fair timing."""
+
+    def __init__(
+        self,
+        program: LoweredProgram,
+        intent_module: str,
+        input_tensors: Sequence[Any],
+    ):
+        source = read_intent_module(intent_module)
+        source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if source_digest != program.source_mlir_sha256:
+            raise ValueError("prepared graph source differs from compiled MLIR")
+        signature = orchestrate._parse_intent_signature(source)
+        bound = tuple(input_tensors)
+        if len(bound) != len(signature):
+            raise ValueError(
+                "prepared graph input count mismatch: "
+                f"expected {len(signature)}, got {len(bound)}"
+            )
+        values = {
+            item.name: tensor for item, tensor in zip(signature, bound, strict=True)
+        }
+        with tempfile.TemporaryDirectory(
+            prefix="intentir-prepared-graph-"
+        ) as directory:
+            path = f"{directory}/input.mlir"
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(source)
+            prepared = orchestrate.prepare_program(
+                path,
+                values,
+                compile_all=lambda _path: list(program.kernels),
+            )
+        self._prepared = prepared
+        self.record = prepared.record
+        self.outputs = prepared.outputs
+
+    def thunk(self):
+        return self._prepared.thunk()
+
+
 def do_bench_us(
     thunk,
     *,
@@ -313,6 +354,7 @@ __all__ = [
     "EXTRACTED_LAUNCH_PROTOCOL",
     "ExtractedSingleLaunch",
     "PreparedLaunchRecord",
+    "PreparedGraphLaunch",
     "PreparedSingleLaunch",
     "do_bench_cudagraph_us",
     "do_bench_us",

@@ -13,9 +13,9 @@
 
 对应的 production 实现与实测记录：
 
-- [Accepted J+C production backend](production-backend-jc-search.md)：已冻结 16-kernel catalog 的真实 C++ MLIR lowering、历史 closed-12 RTX 5090/H100/RVV 结果，以及最新 Q/D lowering-state search 实施边界。
-- [16 项 backend implementation smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)：16/16 J-only materialization 与 CUDA 编译覆盖、CUDA held-out Q/D controller、RVV E2/E3 state 对照和当前负结果。
-- [12 个闭合 Kernel 性能与消融报告](results/production-backend-closed-12/production-backend-report.md)：12/12 correctness、GPU 双 target 性能、RVV 真实 MLIR 执行、默认 lowering→搜索提升，以及 B/C 配对消融。
+- [Accepted J+C production backend](production-backend-jc-search.md)：已冻结 18-J catalog 的真实 C++ MLIR lowering、J/B 驱动的图级/规约/数值 state search、统一 Q/D controller 与证据边界。
+- [18 个闭合 J 的 production backend 结果](results/production-backend-closed-18/README.md)：RTX 5090D 正式 E2/E3 与 L0/L1 closure、numeric/C 消融、H100/RVV portable 结果、压缩原始报告和 SHA-256。
+- [16 项 backend implementation smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)与 [12 个闭合 Kernel 历史报告](results/production-backend-closed-12/production-backend-report.md)：只用于追溯，不参与当前 18-J aggregate。
 
 前四份 SCRC 文档共同规定：
 

@@ -49,6 +49,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <string>
+
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTELEMENTWISETOGPU
 #include "Intent/Conversion/CUDA/Passes.h.inc"
@@ -82,6 +84,50 @@ static Value emitSplatScalarConstant(OpBuilder &b, Location loc,
       loc, b.getIntegerAttr(intTy, dense.getSplatValue<APInt>()));
 }
 
+static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
+                                          StringRef approximationMode,
+                                          bool oneDimensionalResults,
+                                          unsigned hostValueCaptureCount) {
+  MLIRContext *context = lowered.getContext();
+  SmallVector<Attribute> trace{
+      StringAttr::get(context, "cuda.elementwise.row.vectorized.v1")};
+  if (oneDimensionalResults)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.rank1.output.v1"));
+  if (approximationMode == "native_tanh")
+    trace.push_back(
+        StringAttr::get(context, "cuda.numeric.tanh_native_ptx.f32.v1"));
+  else if (approximationMode == "stable_tanh")
+    trace.push_back(
+        StringAttr::get(context, "cuda.numeric.tanh_stable_ex2.f32.v1"));
+  if (hostValueCaptureCount != 0)
+    trace.push_back(
+        StringAttr::get(context, "cuda.b.uniform_host_value_capture.v1"));
+  auto i64 = IntegerType::get(context, 64);
+  lowered->setAttr("intent.backend.lowering_path_kind",
+                   StringAttr::get(context, "elementwise"));
+  lowered->setAttr("intent.backend.reduction_topology",
+                   StringAttr::get(context, "none"));
+  lowered->setAttr("intent.backend.approximation_mode",
+                   StringAttr::get(context, approximationMode));
+  lowered->setAttr("intent.backend.transformation_trace",
+                   ArrayAttr::get(context, trace));
+  lowered->setAttr("intent.backend.fma_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.shuffle_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.barrier_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.all_reduce_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.block_threads",
+                   IntegerAttr::get(i64, threads));
+  lowered->setAttr("intent.backend.predicated_value_if_count",
+                   IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.folded_constexpr_select_count",
+                   IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.host_value_capture_count",
+                   IntegerAttr::get(i64, hostValueCaptureCount));
+  lowered->setAttr("intent.backend.epilogue_load_motion_count",
+                   IntegerAttr::get(i64, 0));
+}
+
 /// One func's pure-elementwise lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
 struct ElementwiseLowering {
@@ -90,6 +136,7 @@ struct ElementwiseLowering {
   bool requestFlattenContiguous;
   unsigned requestFlatVectorWidth;
   bool requestPromoteUniformScalars;
+  std::string requestTanhApproximation;
 
   // The 2-D logical layout of one register-tile access. A Row/result arg is
   // accessed at element (row*rowStride + col*colStride) of its bare pointer; the
@@ -105,6 +152,7 @@ struct ElementwiseLowering {
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0, gridBlocks = 0;
+  bool oneDimensionalResults = false;
   bool flattenContiguous = false;
   bool tailMasked = false;
   // Contiguous vectorization (N3/N4): prefer float4 when K is divisible by 4,
@@ -116,6 +164,7 @@ struct ElementwiseLowering {
   int64_t numVectorTiles = 0;
   Type storageType;
   Type computeType;
+  bool containsTanh = false;
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<Type> argElementTypes; // per func arg storage/broadcast type
   SmallVector<int64_t> argRowDiv;    // per arg: 1, or M/d0 for a broadcast Row
@@ -125,10 +174,12 @@ struct ElementwiseLowering {
   SmallVector<Value> outputVals;     // the returned values (>=1, all [M,N])
 
   ElementwiseLowering(func::FuncOp fn, unsigned bt, bool flatten,
-                      unsigned flatWidth, bool promoteUniformScalars)
+                      unsigned flatWidth, bool promoteUniformScalars,
+                      StringRef tanhApproximation)
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
         requestFlatVectorWidth(flatWidth),
-        requestPromoteUniformScalars(promoteUniformScalars) {}
+        requestPromoteUniformScalars(promoteUniformScalars),
+        requestTanhApproximation(tanhApproximation.str()) {}
 
   /// Memref type for a Row/result view in the function's storage type.
   /// `memref<d0 x N x storage>` uses identity layout when contiguous, otherwise
@@ -155,34 +206,60 @@ struct ElementwiseLowering {
                            VectorType::get({vectorWidth}, storageType));
   }
 
+  /// Destination-passing ABI for a result.  Public rank-1 tensors remain
+  /// rank-1 memrefs; they are not silently reshaped to [1,N], because that
+  /// would make the compiler ABI disagree with the accepted J shape.
+  MemRefType resultMemref(MLIRContext *ctx, Strides s) {
+    if (oneDimensionalResults)
+      return MemRefType::get({N}, storageType);
+    return rowMemref(ctx, M, s);
+  }
+
+  MemRefType resultVecMemref(MLIRContext *ctx) {
+    if (oneDimensionalResults)
+      return MemRefType::get({N / vectorWidth},
+                             VectorType::get({vectorWidth}, storageType));
+    return rowVecMemref(ctx, M);
+  }
+
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
+    if (requestTanhApproximation != "stable-ex2" &&
+        requestTanhApproximation != "native-ptx")
+      return failure();
     auto fty = fn.getFunctionType();
     unsigned nRes = fty.getNumResults();
     if (nRes < 1)
       return failure();
-    // Every result is one full rank-2 static floating [M,N] row output.  f16
-    // and bf16 are storage types; scalar computation is promoted to f32.
-    // Anchor (M,N,storage) from the first; all results must agree.
-    int64_t anchorM = -1, anchorN = -1;
+    // Every result is either a static floating [N] vector or a full rank-2
+    // floating [M,N] row output.  Rank-1 is represented as one logical row for
+    // launch geometry only; its public destination-passing ABI remains [N].
+    // f16 and bf16 are storage types; scalar computation is promoted to f32.
+    // Anchor (rank,M,N,storage) from the first; all results must agree.
+    int64_t anchorRank = -1, anchorM = -1, anchorN = -1;
     for (Type rt : fty.getResults()) {
       auto t = dyn_cast<RankedTensorType>(rt);
-      if (!t || t.getRank() != 2 || !t.hasStaticShape())
+      if (!t || (t.getRank() != 1 && t.getRank() != 2) ||
+          !t.hasStaticShape())
         return failure();
       Type elementType = t.getElementType();
       if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
         return failure();
       if (anchorN < 0) {
-        anchorM = t.getDimSize(0);
-        anchorN = t.getDimSize(1);
+        anchorRank = t.getRank();
+        anchorM = anchorRank == 1 ? 1 : t.getDimSize(0);
+        anchorN = t.getDimSize(anchorRank - 1);
         storageType = elementType;
-      } else if (t.getDimSize(0) != anchorM || t.getDimSize(1) != anchorN)
+      } else if (t.getRank() != anchorRank ||
+                 (anchorRank == 2 && t.getDimSize(0) != anchorM) ||
+                 t.getDimSize(anchorRank - 1) != anchorN)
         return failure();
       else if (elementType != storageType)
         return failure();
     }
     M = anchorM;
     N = anchorN;
+    oneDimensionalResults = anchorRank == 1;
     computeType = Float32Type::get(fn.getContext());
 
     // Single basic block, terminated by a return of the output values.
@@ -199,6 +276,10 @@ struct ElementwiseLowering {
     // half-views of a fresh [M,hd] buffer (rowStride hd = 2N).
     resStrides.assign(nRes, Strides{N, 1});
     if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.result_strides")) {
+      // The registered relation currently defines row/column strides only for
+      // rank-2 views.  Fail closed instead of inventing rank-1 semantics.
+      if (oneDimensionalResults)
+        return failure();
       if ((unsigned)a.size() != 2 * nRes)
         return failure();
       for (unsigned j = 0; j < nRes; ++j)
@@ -212,6 +293,13 @@ struct ElementwiseLowering {
     // before any store, so writing back through an input view is safe.
     inplaceArg.assign(nRes, -1);
     if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.inplace")) {
+      // Rank-2 Row aliases are loaded into the complete register tile before
+      // any output store.  Rank-1 inputs are Col operands and are loaded on
+      // demand, so accepting an alias could make one result overwrite a value
+      // subsequently consumed by another result.  Keep this case conservative
+      // until a rank-1 read-once tile is represented explicitly.
+      if (oneDimensionalResults)
+        return failure();
       if ((unsigned)a.size() != nRes)
         return failure();
       for (unsigned j = 0; j < nRes; ++j)
@@ -287,9 +375,13 @@ struct ElementwiseLowering {
           return failure();
         continue;
       }
+      if (auto unary = dyn_cast<MapUnaryOp>(&op))
+        containsTanh |= unary.getFn() == "tanh";
       if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp, CastOp>(&op))
         return failure();
     }
+    if (requestTanhApproximation == "native-ptx" && !containsTanh)
+      return failure();
 
     // A flattened schedule is admitted only for a fully contiguous Row-only
     // graph. It deliberately rejects Col/scalar parameters, broadcast rows,
@@ -407,7 +499,21 @@ struct ElementwiseLowering {
     if (isa<Float16Type, BFloat16Type>(input.getType()) ||
         isa<Float16Type, BFloat16Type>(resultType))
       input = toCompute(b, loc, input);
-    Value result = emitScalarUnary(b, loc, op.getFn(), input);
+    Value result;
+    if (op.getFn() == "tanh" &&
+        requestTanhApproximation == "native-ptx") {
+      // Keep the semantic math op intact until the outlined NVIDIA device
+      // module.  emitScalarUnary's default tanh is already an ex2/reciprocal
+      // expansion, so tagging its final arith.subf cannot possibly recover a
+      // native tanh instruction later in the target pipeline.
+      auto tanh = b.create<math::TanhOp>(loc, input);
+      tanh->setAttr(
+          "intent.backend.tanh_approximation",
+          StringAttr::get(b.getContext(), "native-ptx"));
+      result = tanh;
+    } else {
+      result = emitScalarUnary(b, loc, op.getFn(), input);
+    }
     return result ? castFloatTo(b, loc, result, resultType) : Value();
   }
 
@@ -551,8 +657,8 @@ struct ElementwiseLowering {
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
 
-    // New signature: original args (as memrefs) ++ one [M,N] output memref per
-    // result (destination-passing).
+    // New signature: original args (as memrefs) ++ one shape-preserving output
+    // memref per result (destination-passing).
     SmallVector<Type> inTys;
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       if (flattenContiguous && argRoles[i] == Role::Row)
@@ -567,8 +673,8 @@ struct ElementwiseLowering {
         inTys.push_back(
             flattenContiguous
                 ? flatVecMemref(ctx)
-                : (vectorWidth > 1 ? rowVecMemref(ctx, M)
-                                   : rowMemref(ctx, M, resStrides[j])));
+                : (vectorWidth > 1 ? resultVecMemref(ctx)
+                                   : resultMemref(ctx, resStrides[j])));
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -596,6 +702,7 @@ struct ElementwiseLowering {
     // A read-only, non-alias B capability may admit host-by-value capture for
     // uniform invocation inputs.  This is a real search arm: the false arm
     // below retains the historical device-side load in every launched lane.
+    unsigned hostValueCaptureCount = 0;
     if (requestPromoteUniformScalars) {
       for (unsigned i = 0; i < argRoles.size(); ++i) {
         if (argRoles[i] != Role::Scalar)
@@ -611,6 +718,7 @@ struct ElementwiseLowering {
           uniform[arg] =
               b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
         }
+        ++hostValueCaptureCount;
       }
     }
 
@@ -743,6 +851,9 @@ struct ElementwiseLowering {
           if (flattenContiguous)
             b.create<memref::StoreOp>(loc, vec, outMems[j],
                                       ValueRange{vecIdx[vt]});
+          else if (oneDimensionalResults)
+            b.create<memref::StoreOp>(loc, vec, outMems[j],
+                                      ValueRange{vecIdx[vt]});
           else
             b.create<memref::StoreOp>(loc, vec, outMems[j],
                                       ValueRange{bx, vecIdx[vt]});
@@ -752,8 +863,12 @@ struct ElementwiseLowering {
           if (!tailMasked) {
             Value out =
                 toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
-            b.create<memref::StoreOp>(loc, out, outMems[j],
-                                      ValueRange{bx, cols[k]});
+            if (oneDimensionalResults)
+              b.create<memref::StoreOp>(loc, out, outMems[j],
+                                        ValueRange{cols[k]});
+            else
+              b.create<memref::StoreOp>(loc, out, outMems[j],
+                                        ValueRange{bx, cols[k]});
             continue;
           }
           auto guarded = b.create<scf::IfOp>(
@@ -762,8 +877,12 @@ struct ElementwiseLowering {
           Value out = toStorage(
               thenBuilder, loc,
               emitAt(thenBuilder, loc, outputVals[j], k));
-          thenBuilder.create<memref::StoreOp>(
-              loc, out, outMems[j], ValueRange{bx, cols[k]});
+          if (oneDimensionalResults)
+            thenBuilder.create<memref::StoreOp>(
+                loc, out, outMems[j], ValueRange{cols[k]});
+          else
+            thenBuilder.create<memref::StoreOp>(
+                loc, out, outMems[j], ValueRange{bx, cols[k]});
         }
       }
     }
@@ -772,6 +891,13 @@ struct ElementwiseLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    attachElementwiseStateReceipt(
+        gpuFn, T,
+        containsTanh
+            ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
+                                                         : "stable_tanh")
+            : "none",
+        oneDimensionalResults, hostValueCaptureCount);
     fn.erase();
     return success();
   }
@@ -787,13 +913,15 @@ struct ConvertIntentElementwiseToGPUPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
-                                flatVectorWidth, promoteUniformScalars);
+                                flatVectorWidth, promoteUniformScalars,
+                                tanhApproximation);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
-                              flatVectorWidth, promoteUniformScalars);
+                              flatVectorWidth, promoteUniformScalars,
+                              tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");
         return signalPassFailure();

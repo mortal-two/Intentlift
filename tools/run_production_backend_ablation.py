@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run fair-budget E2/E3/E4, L0/L1, and N0-N3 CUDA ablations."""
+"""Run E0/E1 baselines and fair-budget CUDA search ablations."""
 
 from __future__ import annotations
 
@@ -17,18 +17,15 @@ from intentir.backend.ablation import (
     ablation_spec_digest,
     standard_ablation_plan,
 )
+from intentir.backend.ablation_report import summarize_ablation_records
 from intentir.backend.cuda.production_cases import PRODUCTION_CASE_IDS
 from intentir.backend.cuda.search import PerformanceCache
 from intentir.verify.gate1.compiler import KernelSource
 from benchmark_production_cuda import _device_record, _one_kernel
 
 
-REPORT_PROTOCOL = "intentir.production.cuda-ablation.v1"
-_SEARCH_ARMS = tuple(
-    arm
-    for arm in ExperimentArm
-    if arm not in {ExperimentArm.E0_SOURCE, ExperimentArm.E1_CANONICAL}
-)
+REPORT_PROTOCOL = "intentir.production.cuda-ablation.v2"
+_ARMS = tuple(ExperimentArm)
 
 
 def _seeds(value: str) -> tuple[int, ...]:
@@ -85,8 +82,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--arms",
         nargs="+",
-        choices=[item.value for item in _SEARCH_ARMS],
-        default=[item.value for item in _SEARCH_ARMS],
+        choices=[item.value for item in _ARMS],
+        default=[item.value for item in _ARMS],
     )
     parser.add_argument("--candidate-budget", type=int, default=96)
     parser.add_argument("--fixed-path-map", type=Path)
@@ -115,7 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     selected_arms = tuple(ExperimentArm(item) for item in args.arms)
     fixed_paths = _json_object(args.fixed_path_map)
     replay_manifest = _json_object(args.replay_manifest)
-    if args.require_backend_closure:
+    closure_arms = {
+        arm for arm in selected_arms if arm is not ExperimentArm.E0_SOURCE
+    }
+    if args.require_backend_closure and closure_arms:
         missing = sorted(set(args.kernels) - set(replay_manifest))
         if missing:
             raise ValueError(
@@ -160,8 +160,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 records.append({"arm": arm.value, **record})
                 performance = record["performance"]
+                selected_us = performance["selected_us"]
                 print(
-                    f"{arm.value}/{name}: {performance['mlir_us']:.4f} us "
+                    f"{arm.value}/{name}: {selected_us:.4f} us "
                     f"({performance['speedup_over_triton']:.3f}x source)",
                     flush=True,
                 )
@@ -185,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             break
 
     successful = [item for item in records if "performance" in item]
+    selected_arm_names = [item.value for item in selected_arms]
     report = {
         "protocol": REPORT_PROTOCOL,
         "created_unix_ns": time.time_ns(),
@@ -193,6 +195,25 @@ def main(argv: list[str] | None = None) -> int:
         "target_chip": backend_compile.CHIP,
         "experiment_spec_digest": ablation_spec_digest(),
         "candidate_budget": args.candidate_budget,
+        "kernel_universe": sorted(PRODUCTION_CASE_IDS),
+        "selected_kernels": sorted(args.kernels),
+        "selection_scope": (
+            "all_corpus"
+            if set(args.kernels) == set(PRODUCTION_CASE_IDS)
+            else "explicit_subset"
+        ),
+        "replay_manifest": {
+            "path": str(args.replay_manifest) if args.replay_manifest else None,
+            "sha256": (
+                hashlib.sha256(args.replay_manifest.read_bytes()).hexdigest()
+                if args.replay_manifest is not None
+                else None
+            ),
+            "indexed_kernels": sorted(replay_manifest),
+            "missing_selected_kernels": sorted(
+                set(args.kernels) - set(replay_manifest)
+            ),
+        },
         "qd": {
             "search_seeds": list(args.qd_search_seeds),
             "certification_seeds": list(args.qd_cert_seeds),
@@ -209,6 +230,12 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(successful),
             "failed": len(records) - len(successful),
         },
+        "evidence_summary": summarize_ablation_records(
+            records,
+            selected_kernels=args.kernels,
+            kernel_universe=PRODUCTION_CASE_IDS,
+            selected_arms=selected_arm_names,
+        ),
         "records": records,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

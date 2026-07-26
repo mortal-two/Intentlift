@@ -1,14 +1,16 @@
 # Accepted J+C production backend：真实 MLIR lowering、B 合同与 C 搜索
 
-> 状态：production catalog 已 append-only 扩展为 content-addressed 的 **16 个**闭合 J；2026-07-26。
-> 文中 RTX 5090/H100 的历史 aggregate 仍只对应原 closed-12，不得重标为 16-kernel 结果。
+> 状态：production catalog 已 append-only 扩展为 content-addressed 的 **18 个**闭合 J；2026-07-26。
+> RTX 5090D、H100 与 RVV4 的 all-18 报告已经重新执行并冻结；历史 closed-12/16 数字只作追溯。
 
-本文记录已冻结 16 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。原 12 项性能与消融数值见
-[production-backend-report.md](results/production-backend-closed-12/production-backend-report.md)。
-本轮 16 项编译覆盖、CUDA Q/D smoke 与新增 RVV state 对照见
-[backend-implementation-smoke-2026-07-26.md](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)。
+本文记录已冻结 18 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。当前权威结果、
+证据边界、压缩原始报告与 SHA-256 见
+[18-J production backend 结果](results/production-backend-closed-18/README.md)。原
+[closed-12 报告](results/production-backend-closed-12/production-backend-report.md)和
+[closed-16 smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)
+只保留为历史，不参与当前 aggregate。
 
-新增四项已经通过同一个 catalog loader 导入；snapshot 只复制已接受 artifact/C/evidence，未重新 Lift、
+新增六项已经通过同一个 catalog loader 导入；snapshot 只复制已接受 artifact/C/evidence，未重新 Lift、
 未修改 J，也不把 `/tmp` 作为长期 truth：
 
 | case | frozen snapshot digest | evidence kind |
@@ -17,8 +19,10 @@
 | Liger Sparsemax | `ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda` | zero-model Gate2 recheck |
 | Liger KLDiv | `b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a` | certified run report |
 | FlashAttention one-pass LayerNorm | `76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480` | zero-model Gate2 recheck |
+| masked copy canary | `10d67ee0b4f061e1ce28b3e6b1ebfc371be2825692671c927e80b8e743e4ad49` | certified run report |
+| masked row square-sum canary | `31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892` | certified run report |
 
-当前 16 项均无 typed contraction；Flash `do_o_dot` 是 FP32 multiply + row reduction。因此当前性能
+当前 18 项均无 typed contraction；Flash `do_o_dot` 是 FP32 multiply + row reduction。因此当前性能
 推进不把 TF32 误套到 row reduction；TF32/IEEE 精度状态留给后续 `tl.dot`/matmul/完整 Attention J。
 
 ## 1. 输入边界
@@ -30,7 +34,7 @@ core lowerer 的持久输入只有：
 - target capability。
 
 它不读取 Source、Replay、π、Gate verdict、Q、kernel 名或 provider 身份来决定
-lowering。`corpus/production-jc-v1/` 保存 16 个 content-addressed
+lowering。`corpus/production-jc-v1/` 保存 18 个 content-addressed
 `intentir.production.jc-snapshot.v1` 对象和一个 stable-name catalog。catalog loader
 会同时核验 snapshot、J、C digest；验收导出目录的 `<name>.json` 和冻结后的
 `<sha256>.json` 使用同一个消费入口。
@@ -50,7 +54,8 @@ accepted J+C snapshot
 
 Python 只负责 snapshot transport、候选编排、CUDA Driver ABI 绑定、计时与报告。
 所有目标计算和 local/structural/schedule transformations 都由注册的 C++/upstream MLIR pass 生成；不存在
-Python/Triton 替代 kernel emission。
+Python/Triton 替代 kernel emission。仓库中历史 `cuda/flash.py` 只服务旧 benchmark tests，不在
+production catalog/search/bundle 的可达依赖图内；架构测试禁止 production 模块导入它。
 
 这里的 Q/D filter 是已经实现的唯一通用 `SearchAndCloseController`，不是每个 Kernel 的 Python
 emitter 或 validator。core MLIR compiler 不读取 Q；controller 只通过 signature-driven opaque harness
@@ -71,6 +76,8 @@ target–Source、target–Replay、target–RefJ，禁止 tolerance 传递。�
 - J-declared constexpr 对 typed `effect_if` 的精确分支专化；普通 scalar `value_if` 不伪装成
   constexpr，而在 M0 中保留为标准 `scf.if`；
 - J.signature 明确声明的 rank-0 `constexpr` specialization。
+- direct input/output binding 的确定性 identity materialization；它生成通用 `intent.map_unary identity`
+  而不是 Python copy kernel，并在 C++ generic/CUDA scalar lowerer 中闭合。
 
 constexpr specialization 不是从 Source 猜常量。只有 J.signature 的
 `ParameterKind.CONSTEXPR` 可以被绑定；普通 scalar/pointer 输入会被拒绝。若 constexpr
@@ -106,47 +113,69 @@ buffers、测试通过或空数组猜 no-alias。
 `BaseIR(S_C)` 始终是同一 M0，且 `Erase_C(S_C) == M0`。C 不进入 pass legality，也不
 改变 candidate ID、performance-cache identity 或 candidate universe。
 
-当前候选枚举在 `elementwise/row_reduction/padded_row_reduction` 三类 registered lowering matcher
-之间 round-robin，再用 C 的 tile/thread prior 排同一路径种类内的 schedule。这三个名字是现有
-receipt/API 的 legacy `family` 字段，本文只把它们解释为 `lowering_path_kind`，不把它们当作可发射的
-compiler family 或 semantic object。round-robin 只避免有限预算下某种 matcher 候选被饿死；C
+当前候选枚举在 `elementwise/row_reduction/padded_row_reduction` 等 registered lowering path
+之间 round-robin，再用 C 的 tile/thread prior 排同一路径种类内的 schedule。这些名字只作为
+`lowering_path_kind` 与 pass receipt，不是可发射的 compiler family 或 semantic object。round-robin
+只避免有限预算下某种 matcher 候选被饿死；C
 仍不决定哪条 path 合法。
 
 正式消融固定 J=A+B、ContractView、target、compiler、workload、candidate universe 和
-budget，只切换 `Attach_C/Erase_C`。RTX 5090 的 order-only 对照表明：
+budget，只切换 `Attach_C/Erase_C`。当前 role-aware scorer 完整消费 C 的
+`tile_extent/reduction_tile_extent/execution_warps/constexpr` roles；它只对已有 schedule dimension
+计算距离，不生成 candidate 或改变 admission。RTX 5090D all-18、budget=8 的配对报告中，with-C
+相对 Erase-C 的 best-latency 几何平均优势为 **1.0195x**；更大 budget 下两者趋于收敛。因此 C 的
+贡献是有限预算收敛速度，而不是 `ReachHard`、Q/D feasibility 或 correctness。
 
-- budget=3：with-C 和 without-C 都覆盖 12/12，但 with-C 的几何平均 best latency
-  低 6.9%；
-- full budget=83：使用相同 latency map 时两臂完全收敛；
-- 因而 C 提高有限预算搜索效率，但不改变 `ReachHard`、Q/D feasibility 或 correctness。
+## 4. J 驱动的大粒度机制与 local-B 次级消融
 
-## 4. B-conditioned local transformation 与结构路径证据
+### 4.1 首要机制：切断 materialization、dispatch 与规约瓶颈
 
-B 不能从 J 中关闭，因为持久语义对象就是 `J=A+B`。当前 GPU 配对固定 J、完整 ContractView、C、
-target、workload 和计时协议，只改变已注册的 B-conditioned local transformations 是否加入候选：
+第一性原理上的搜索对象是 concrete post-pass MLIR state，不是几个局部开关。materializer 从 A 的
+typed producer--consumer DAG、region、axis 与 observable state 出发；`ContractView` 再从 B 的
+domain/predicate/effect/update/output mapping 与 target/pass contract 判定 transition 是否 hard-safe。
+后端由此可以在同一个 immutable J 下同时形成：
 
-- L0（legacy CLI 名 `schedule-only`）：仍完整消费 B 并执行 fail-closed legality，但候选的
-  `b_transformations=[]`；
-- L1（legacy CLI 名 `contract-guided`）：候选集合严格包含 L0，并加入其
-  `required_b_capabilities` 被 ContractView 满足的变换；
-- 两臂分别从已通过当前 hard admission 与 canonical-J correctness 的候选中按性能选 winner；这是
-  frozen 12 的历史机制，未来 observation-changing states 改用统一 D_search/D_cert protocol。
+```text
+materialized producer -> temporary -> reduction -> temporary -> epilogue
+whole-graph producer/reduction/epilogue state
 
-当前公共 B capability 由 canonical J 的 effect、alias、update、storage 与 signature 派生，
-不是从 kernel 名或 Source recipe 猜测。CUDA 已注册 rank-0/singleton host-by-value capture、
-epilogue read-only load motion；RVV 已注册 read-only non-alias whole-graph Linalg fusion。缺少所需
-capability 的候选不会进入 codegen。
+sequential/subgroup/workgroup/hierarchical reduction states
 
-正式 GPU 配对结果为：RTX 5090 全 12 核 L1/L0 几何平均 **1.031x**，超过 1% 的
-2 个受影响核几何平均 **1.194x**；H100 分别为 **1.019x** 与 **1.120x**。RTX 上
-Flash preprocess、JSD 分别为 1.261x、1.130x；H100 分别为 1.170x、1.071x。
-这些数值证明 B-conditioned local optimization，不作为 E3/E2 structural lowering-path gain。
-这与 C 消融是两件事：B 决定额外变换是否被授权，C 只决定有限预算候选顺序。
+exact/FMA/precision-or-approximation states
+```
 
-RVV 的 whole-graph Linalg fusion 确实改变 materialization/loop topology，是当前首个结构性 lowering
-transition。实现已把它从 `RiscvSchedule` 拆成独立 `RiscvTransformationState`；materialized 与 fused
-state 分别搜索 O2/O3、vectorize on/off，post-pass Linalg op count 与 topology digest 来自真实 MLIR
-receipt，不是 pass 开关自报。
+这里的 readonly/noalias capability 只审计 A DAG 中实际流向 observable output 或 effectful state 的
+active inputs；闭合 artifact 为 ABI/Replay 保留的 dead legacy input 不再无理由阻塞 fusion。该
+active-input 集合由通用 DAG use 分析确定，不按 kernel 名维护 allowlist。
+
+RTX 5090D 的正式 all-18 E3 回执中，6 个 J 同时形成 materialized multi-kernel 与 whole-graph
+state。两侧各自调 schedule 后，消除中间物化与 dispatch 的几何平均收益为 **17.1258x**，最高
+PolyNorm **45.0139x**；其余为 GeGLU 10.7662x、LayerNorm 19.8063x、masked row square-sum
+39.7813x、Softmax 15.4004x、SwiGLU 4.2902x。这是 J 发挥作用的核心证据：收益来自编译图、全张量
+内存流量和 dispatch 数量改变，不来自 Python 发射或 per-kernel recipe。
+
+在相同 all-18 numeric ladder 中，加入 reduction topology 带来全体 **1.0409x**、12 个适用 J
+**1.0622x**；FMA 仅 **1.0003x**，如实作为负结果；precision/approximation 带来全体
+**1.0676x**、2 个适用 J **1.1271x**。它们属于 observation-changing states，统一通过冻结
+Q/D，而不是让后端从 tolerance 或 `float_nondeterministic` 推出静态数值许可。
+
+### 4.2 local-B 只作次级证据
+
+B 不能从 J 中关闭，因为持久语义对象就是 `J=A+B`。L0/L1 固定完整 J、ContractView、结构/数值
+state、C、target、workload、budget 与计时协议，只切换注册 local transformations 是否进入候选：
+
+- L0 仍完整消费 B 并执行 fail-closed legality，但关闭 rank-0 capture/load motion 等 local transition；
+- L1 加入 `required_b_capabilities` 被 ContractView 满足的 local transition；
+- 适用性只从 C++ pass 产出的 post-pass `cuda.b.*` trace 和 actual count 判断，不相信 requested toggle。
+
+当前正式 L0/L1 两臂各 18/18 完成 held-out backend closure；L1/L0 全体为 **1.0162x**，10 个真实
+观察到 local-B state 的 J 为 **1.0295x**，Flash preprocess 最大 **1.1827x**。这些数值只证明
+B-conditioned local optimization，不作为图级 lowering-state expansion 的创新主证据。C 消融则只
+回答有限预算顺序，二者不能混写。
+
+RVV whole-graph Linalg fusion同样改变 materialization/loop topology。实现把它从 schedule 拆成
+独立 `RiscvTransformationState`；materialized 与 fused state 分别搜索 O2/O3、vectorize on/off，
+post-pass Linalg op count 与 topology digest 来自真实 MLIR receipt，不是 pass 开关自报。
 
 ## 5. 注册的真实 MLIR lowering paths
 
@@ -160,8 +189,8 @@ B capability 授权的 singleton/rank-0 host-by-value ABI。非 2 次幂 tail
 
 已消费：DYT、GeGLU、SwiGLU、TVD。TVD 的 optional-label 输入在 constexpr
 `HAS_LABEL=false` 后成为 dead ABI input；MLIR host signature 仍保留该 memref，但 C++
-lowering 不生成虚假设备 load。RTX 5090 上 TVD 为 0.7280 μs，对 Triton 0.8103 μs
-（1.113x speedup）；H100 为 1.1339 μs，对 1.1912 μs（1.051x speedup）。
+lowering 不生成虚假设备 load。stable/native/approx math 都作为不同 actual MLIR state 留下
+math-op receipt；只有通过 Q/D 的状态才参与性能选择。
 
 ### Row reduction lowering path
 
@@ -181,7 +210,8 @@ reduction topology 与 FP32 FMA 已进入 production lowering-state search。C++
 predicate/output/alias projection 继续参与 hard admission 或 codegen，而不是数值权限开关。
 
 已消费：Liger RMSNorm、fused-add RMSNorm、LayerNorm、Softmax、JSD、PolyNorm、
-xFormers RMSNorm、xFormers RMSNorm-add、KLDiv、Sparsemax 与 Flash one-pass LayerNorm。KLDiv 的
+xFormers RMSNorm、xFormers RMSNorm-add、KLDiv、Sparsemax、Flash one-pass LayerNorm 与
+masked row square-sum。KLDiv 的
 scan/carry 在 J-only full-axis materializer 展开；Sparsemax 的 scan 与 logical `and` 有 generic/target
 lowering；Flash 的普通 scalar `value_if` 保留为 `scf.if`，C++ row state 再对 pure arms 做 predication。
 该 state 的实际 receipt 为 2 次 value-if predication、10 次 constexpr select folding，而非 Python 分支。
@@ -198,9 +228,12 @@ same B-derived (p < validP && n < validN) mask
   -> authored zero pad P -> Q
 ```
 
-matcher 不读函数名。搜索 block threads、full-feature vector load 和 rank-0 scalar ABI。
-将 valid-row/valid-feature 从每线程 device load 改为 host-by-value MLIR candidate 后，
-Flash preprocess 在 RTX 5090 上从约 1.35× Triton 降至 1.07×，H100 为 1.06×。
+matcher 不读函数名。搜索 block threads、full-feature vector load、`serial_row/subgroup_feature`
+reduction topology 和 rank-0 scalar ABI。
+正式 E2/E3 中 Flash preprocess 的 expanded-state winner 相对 fixed-path schedule-only 为
+**1.4047x**；正式 L0/L1 中 rank-0 host capture 的局部增量为 **1.1827x**。两者分别归因于
+state-space expansion 与 local-B，不能相互替代。shuffle/topology、host capture count 和
+`cuda.b.rank0_host_value_capture.v1` 都由 post-pass C++ receipt 记录，不由 Python toggle 自报。
 
 ## 6. 搜索与计时
 
@@ -215,6 +248,11 @@ Flash preprocess 在 RTX 5090 上从约 1.35× Triton 降至 1.07×，H100 为 1
 7. top-finalist robust tournament 与 fastest candidate selection；
 8. 固定 winner 在独立 `D_cert` 上 direct target–Source/Replay/RefJ closure。
 
+v2 实验合同把预算单位定义为不同的 canonical post-pass MLIR state；重复 state 保留在 audit log，
+不消耗候选预算。finalist 使用 fresh round-robin、正反交替 traversal 并排除初次排序样本。最终性能
+确认使用四组等数量 Source/target paired batches，交替执行顺序并丢弃一个 untimed warmup pair；只
+计 prepared launch/graph，不把 allocation 或 correctness synchronization 放进 timed closure。
+
 运行结果不用于放宽 memory/effect/ABI hard boundary。正确性测试与 performance selection 分离；
 历史 frozen-12 winner 另外与 canonical J 比较；新 controller 已对 observation-changing state 执行通用
 Q/D feasibility 与 direct-edge closure。baseline 是 SCRC 已使用的 exact declarative Triton
@@ -225,14 +263,16 @@ performance cache key 包含 M0 digest、target、candidate、toolchain 和 benc
 
 ## 7. H100 分支
 
-H100 机器不安装/调用 IntentIR compiler。`export_cuda_benchmark_bundle.py` 在本地用
-`INTENT_GPU_CHIP=sm_90a` 生成 cubin、launch plan、输入、canonical-J reference 和 exact
-Triton baseline；`run_cuda_benchmark_bundle.py` 在 `ssh h100` 只加载 cubin并做 CUDA Driver
-launch、correctness 和 timing。
+H100 机器不安装/调用 IntentIR compiler。`export_cuda_benchmark_bundle.py` 在本地分别用
+`INTENT_GPU_CHIP=sm_90a --arm E2|E3` 生成 cubin、launch plan、输入、canonical-J reference 和 exact
+Source baseline；`run_cuda_benchmark_bundle.py` 在 `ssh h100` 只加载 cubin并做 CUDA Driver
+launch、correctness 和 paired timing。
 
-bundle 同时保存 with-C/without-C candidate order、ContractView digest 和 candidate-universe
-invariant，因此 H100 的 bounded/full 搜索可以直接做预算消融。完整搜索相对 bounded 前缀
-在 PolyNorm 上提升 1.159×，在 JSD 上提升 1.069×。
+all-18、equal-budget=32 的 portable 结果为：E2/E3 都 18/18 执行成功，E3/E2 几何平均
+**1.1196x**，E3/Source **1.0539x**，15/18 E3 达到或超过 Source，15/18 的 E3/E2 超过 1%。
+runner 直接检查 Source–RefJ 与 Target–RefJ；由于 bundle 尚无 opaque Replay 和 held-out
+Target–Source/Replay/RefJ 三边，它是跨 target 性能与 correctness 证据，不冒充 formal backend
+closure。
 
 ## 8. RVV 分支
 
@@ -251,23 +291,14 @@ registered ConvertIntentToLinalg + ExpandRsqrtForLibm
 
 `ssh rvv` 实测机器为原生 riscv64、64 核、2.6 GHz、VLEN=128。portable bundle 在本地完成
 MLIR/LLVM 编译，远端只用系统 clang 链接 object，并通过 ctypes C ABI 做 canonical-J
-correctness 和固定 CPU 计时。12/12 kernel、全部候选均通过正确性；fused arm 相对 materialized
-arm 的全体几何平均加速为 **1.157x**，11/12 winner 使用该变换。
-Flash preprocess 为 1.495x，PolyNorm 为 1.445x，Liger RMSNorm 为 1.218x，TVD 为 1.140x。
+correctness 和固定 CPU 计时。all-18 结果为 18/18 Target–RefJ correct，E3/E2 几何平均
+**1.1817x**，15/18 winner 使用 B-admitted whole-graph transformation。代表性增量包括 KLDiv
+1.593x、Flash preprocess 1.458x、PolyNorm 1.430x、Flash one-pass LayerNorm 1.296x。
 
-新增 J 的 2026-07-26 原生 RVV smoke 进一步验证了同一机制：KLDiv 的 8 个对象全部由真实
-MLIR→LLVM→riscv64 链生成并通过 canonical-J correctness；fixed-state schedule-only best 为
-14.1428 μs，加入 whole-graph fused state 后 best 为 9.1056 μs，即 **1.553x E3/E2 增量**。
-最快 fused-vector state 含 120 条 RVV 指令、9.3754 μs；全局 winner 是更快的 fused-scalar O3，说明
-搜索会选择实测 state，而不把“出现向量指令”当目标。Flash one-pass LayerNorm 当前两臂均为
-36.9453 μs（1.000x），如实记录为该结构变换不适用/无增益。
-
-RVV winner 不强制“必须含向量指令”：例如包含 `tanhf` 的 DYT 在该小 shape 上标量候选更快，
-搜索会如实选择它；其他候选与 receipt 仍记录 RVV 指令数。当前没有与 RVV 上的 Source/Triton
-实现进行配对，因此 1.157x 只能解释为 whole-graph fusion path 的内部因果消融，不能解释为超越
-Source。KLDiv 的 1.553x 是同一目标、同一 J、相同 schedule domain 下 materialized 与 fused concrete
-MLIR state 的内部因果消融；RVV 侧尚未接入 Source/Replay 的独立 D_cert，因此不冒充正式端到端
-backend closure 或超越 Source 的证据。
+RVV winner 不强制“必须含向量指令”：标量、vectorized、O2/O3 states 都由同一真实 MLIR pipeline
+形成并按实测选择，receipt 同时保留 RVV 指令数与 topology digest。当前没有 RVV Source/Replay
+`D_cert`，因此 1.1817x 只解释为同一 J、同一 target 下从 materialized E2 到 expanded/fused E3 的
+内部因果增量，不能解释为超越 Source 或正式端到端 backend closure。
 
 ## 9. 复现
 
@@ -275,66 +306,60 @@ backend closure 或超越 Source 的证据。
 export PYTHONPATH=$PWD/python
 export INTENT_OPT=$PWD/build/tools/intent-opt/intent-opt
 
-# RTX 5090：C 顺序消融（两臂使用相同 L1 candidate universe）
-python tools/benchmark_production_cuda.py \
-  --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/rtx-with-c.json --search-prior with-c \
-  --b-search-mode contract-guided
-python tools/benchmark_production_cuda.py \
-  --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/rtx-without-c.json --search-prior without-c \
-  --b-search-mode contract-guided
-
-# B-conditioned local 变换消融：固定 J=A+B、ContractView 与 C，只切换 L1/L0
-python tools/benchmark_production_cuda.py \
-  --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/rtx-schedule-only.json --search-prior with-c \
-  --b-search-mode schedule-only
-
-# B/C 编译消融
-python tools/audit_production_backend_search.py \
-  --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/b-c-audit.json --search-budget 3
-
-# 正式 CUDA E2/E3/N0-N3：arm 由 machine-consumed spec 冻结；Replay manifest
-# 必须给出 content hash，缺 Replay 时 --require-backend-closure 会 fail closed。
-# 报告会绑定 canonical experiment spec digest；当前 v1 为 60ca646b...050a7。
+# RTX 5090D：正式 CUDA E2/E3。arm 由 machine-consumed v2 spec 冻结；
+# 缺 opaque Replay 或任一 held-out direct edge 时 fail closed。
 python tools/run_production_backend_ablation.py \
   --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/cuda-ablation.json --arms E2 E3 N0 N1 N2 N3 \
-  --candidate-budget 96 --replay-manifest /path/to/replay-manifest.json \
+  --out /tmp/cuda-e2-e3.json --arms E2 E3 \
+  --candidate-budget 32 \
+  --replay-manifest corpus/production-replay-v1/manifest.json \
   --require-backend-closure
 
-# sm90a bundle（远端只执行）
+# 数值阶梯、local-B 和低预算 C prior 分别运行，避免混淆因果轴。
+python tools/run_production_backend_ablation.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/cuda-numeric.json --arms N0 N1 N2 N3 --candidate-budget 32
+python tools/run_production_backend_ablation.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/cuda-local-b.json --arms L0 L1 --candidate-budget 32 \
+  --replay-manifest corpus/production-replay-v1/manifest.json \
+  --require-backend-closure
+python tools/run_production_backend_ablation.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/cuda-c-prior.json --arms E3 E4 --candidate-budget 8
+
+# sm90a：本地分别冻结 exact E2/E3 cubin bundle，远端只执行。
 INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/sm90a-bundle.json
+  --out /tmp/sm90a-e2.json --arm E2 --search-budget 32
+INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/sm90a-e3.json --arm E3 --search-budget 32
 
-# RVV：本地 true-MLIR 编译；bundle 再传到 ssh rvv 执行
+# RVV：本地 true-MLIR 编译；bundle 再传到 ssh rvv4 执行。
 python tools/export_rvv_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/rvv-bundle.json
-scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv:/tmp/
-ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
+scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv4:/tmp/
+ssh rvv4 python3 /tmp/run_rvv_benchmark_bundle.py \
   --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json
 ```
 
 ## 10. 当前边界
 
-当前冻结实现达到 **16/16 deterministic materialization、generic cubin compilation**，并且每项至少有
-一个 C++ whole-graph specialized path 生成单 cubin。新增四项的真实消费者包括：inout/post-state、
-access-local guard、scan/reduction relation、loop scan/carry、runtime value-if 与多输出 half-storage
-epilogue。CUDA 的正式 Q/D smoke 已在 KLDiv 与 Flash one-pass LayerNorm 上直接通过 held-out
-target–Source、target–Replay、target–RefJ；这证明 controller 与 opaque Replay 接口真实可用，但不是
-16-kernel 的论文 aggregate。
+当前冻结实现达到 **18/18 deterministic materialization、generic cubin compilation**；17/18 至少有
+一个 C++ whole-graph path，masked copy 由 generic C++ MLIR 生成单 cubin。真实 B/J consumers 覆盖
+inout/post-state、access-local guard、scan/reduction relation、loop scan/carry、runtime value-if、
+multi-output half epilogue、direct identity binding 与 masked square-sum reduction。
 
-RTX 5090/H100 的已发布 aggregate 仍是 closed-12：两机各有 6/12 达到或超过 Triton，整体
-MLIR/Triton 几何平均分别为 1.013x 与 1.019x。新增 Flash LayerNorm 的 equal-budget E2/E3 当前约与
-Triton 持平，E3 的 2 个实际 FMA 没有产生显著额外收益；不能为故事挑选性删除。下一步性能重点是
-CUDA 上 producer/reduction/epilogue fusion、materialization/copy elimination，以及在更多适用 J 上跑满
-machine spec 冻结的 E2/E3/E4、L0/L1、N0--N3。当前 16 项没有 typed contraction，因此 precision/TF32
-axis 会如实记录 `unavailable/not_matched`，不制造候选。
+当前主结果已经不是小修小补：RTX 5090D 正式 E3/E2 **1.1302x**，H100 portable E3/E2
+**1.1196x**，RVV4 E3/E2 **1.1817x**；6 个图的 whole-graph/materialized 内部对照为
+**17.1258x**。reduction topology 与 precision/approximation 分别提供 **1.0409x** 和
+**1.0676x** 的 all-corpus 增量，FMA 的 **1.0003x** 负结果保留。local-B 的 **1.0162x** 只作辅助，
+不冒充核心创新。
 
-RVV 已证明原 closed-12 全量可编译/执行/搜索，并在新增 KLDiv 上得到 1.553x 的真实 structural-state
-增量。其 target-side runner 当前是 target–RefJ correctness + timing；在加入预计算 Source/Replay 的
-独立 D_search/D_cert bundle 前，不声称 RVV 端到端 backend closure 或超越 Source。
+当前 18 项没有 typed contraction；Flash `do_o_dot` 仍是 FP32 multiply + reduction，所以不存在可诚实
+声称的 TF32 state。下一步真正有价值的扩展是：当新闭合 J 出现 `tl.dot`/matmul/完整 Attention A 图时，
+复用同一 transformation/QD framework 加入 MMA、IEEE/TF32 accumulator 和更大 stage decomposition；
+不是为现有 kernel 增加名字驱动 recipe。H100 缺 Replay，RVV 缺 Source/Replay，二者的 formal
+`D_cert` 仍是明确证据边界。

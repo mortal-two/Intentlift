@@ -24,11 +24,17 @@ import numpy as np
 
 import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.cuda.benchmark import (
+    PreparedGraphLaunch,
     PreparedSingleLaunch,
     do_bench_cudagraph_us,
     do_bench_us,
 )
-from intentir.backend.cuda.search import PerformanceCache, search_cuda
+from intentir.backend.cuda.pipeline import lower_to_cuda
+from intentir.backend.cuda.search import (
+    PerformanceCache,
+    canonical_cuda_candidate,
+    search_cuda,
+)
 from intentir.backend.cuda.qd import (
     CudaOpaqueExecution,
     build_seeded_execution_domain,
@@ -36,6 +42,7 @@ from intentir.backend.cuda.qd import (
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
+    prepare_production_workload,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
@@ -51,10 +58,6 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.gate2.triton import PreparedTritonInvocation
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
-from intentir.verify.workload_adapters import (
-    TRITON_WORKLOAD_ADAPTERS,
-    prepare_triton_workload,
-)
 
 
 REPORT_PROTOCOL = "intentir.production.cuda-performance.v1"
@@ -110,6 +113,8 @@ def _tensor_inputs(
     for name in runtime_input_names:
         tensor = tensors[name]
         raw = np.ascontiguousarray(np.asarray(case.values[bindings[tensor.name]]))
+        declared_shape = _shape(tensor.shape, case.refeval.dims_map)
+        raw = raw.reshape(declared_shape if declared_shape else ())
         result.append(
             torch.as_tensor(raw, dtype=_torch_dtype(torch, tensor.dtype), device="cuda")
         )
@@ -158,10 +163,9 @@ def _one_kernel(
     import torch
 
     snapshot, snapshot_path = load_production_snapshot(snapshot_dir, name)
-    if snapshot.c is None:
+    if snapshot.c is None and (axes is None or axes.baseline_kind is None):
         raise ValueError("performance search requires the optional frozen C prior")
-    adapter = TRITON_WORKLOAD_ADAPTERS[CASE_IDS[name]]
-    prepared_workload = prepare_triton_workload(adapter)
+    prepared_workload = prepare_production_workload(name)
     suite = build_workload_jc_suite(prepared_workload, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
@@ -228,10 +232,12 @@ def _one_kernel(
     tensors = [*inputs, *outputs]
 
     launch_records: dict[str, Any] = {}
+    prepared_graphs: dict[str, PreparedGraphLaunch] = {}
 
     def measure(thunk) -> float:
         samples = []
         for _ in range(measurement_rounds):
+            torch.cuda.synchronize()
             if timing == "graph":
                 samples.append(
                     do_bench_cudagraph_us(
@@ -246,12 +252,298 @@ def _one_kernel(
                         repeat_ms=repeat_ms,
                     )
                 )
+            torch.cuda.synchronize()
         return float(statistics.median(samples))
 
-    def benchmark(program, candidate) -> float:
+    reference = ScalarLoweringRunner().run(case.refeval, case.values)
+    if not reference.ok:
+        raise RuntimeError(f"canonical J reference failed: {reference.error}")
+
+    def measure_source() -> tuple[Any, float, list[float]]:
+        source_program = prepared_workload.request.source.gate_source
+        with PreparedTritonInvocation(
+            source_program, case.triton, case.values
+        ) as source:
+            source.launch()
+            torch.cuda.synchronize()
+            source_actual = source.copied_outputs()
+            source_j = compare_outputs(
+                "source-triton",
+                source_actual,
+                "canonical-J",
+                reference.outputs,
+                j=snapshot.j,
+                input_bindings=case.refeval.input_binding_map,
+                output_bindings=case.refeval.output_binding_map,
+                inputs=case.values,
+                policy=DEFAULT_GATE2_POLICY,
+            )
+            if not source_j.passed:
+                raise RuntimeError("source Triton result differs from canonical J")
+            samples = [measure(source.thunk()) for _ in range(3)]
+        return source_j, float(statistics.median(samples)), samples
+
+    def confirm_target_against_source(
+        target_thunk,
+    ) -> tuple[Any, float, float, list[float], list[float], list[dict[str, Any]]]:
+        """Confirm performance with fresh, equal-count, alternating pairs."""
+
+        source_program = prepared_workload.request.source.gate_source
+        with PreparedTritonInvocation(
+            source_program, case.triton, case.values
+        ) as source:
+            source.launch()
+            torch.cuda.synchronize()
+            source_actual = source.copied_outputs()
+            source_j = compare_outputs(
+                "source-triton",
+                source_actual,
+                "canonical-J",
+                reference.outputs,
+                j=snapshot.j,
+                input_bindings=case.refeval.input_binding_map,
+                output_bindings=case.refeval.output_binding_map,
+                inputs=case.values,
+                policy=DEFAULT_GATE2_POLICY,
+            )
+            if not source_j.passed:
+                raise RuntimeError("source Triton result differs from canonical J")
+
+            source_thunk = source.thunk()
+            # One untimed pair establishes both graphs and a common thermal state.
+            source_thunk()
+            target_thunk()
+            torch.cuda.synchronize()
+
+            target_samples: list[float] = []
+            source_samples: list[float] = []
+            paired_batches: list[dict[str, Any]] = []
+            for pair_index in range(4):
+                ordered = (
+                    (("source", source_thunk), ("target", target_thunk))
+                    if pair_index % 2 == 0
+                    else (("target", target_thunk), ("source", source_thunk))
+                )
+                pair: dict[str, float] = {}
+                for label, thunk in ordered:
+                    pair[label] = measure(thunk)
+                source_us = pair["source"]
+                target_us = pair["target"]
+                source_samples.append(source_us)
+                target_samples.append(target_us)
+                paired_batches.append(
+                    {
+                        "pair_index": pair_index,
+                        "order": [label for label, _thunk in ordered],
+                        "source_us": source_us,
+                        "target_us": target_us,
+                        "speedup_source_over_target": source_us / target_us,
+                    }
+                )
+
+        return (
+            source_j,
+            float(statistics.median(target_samples)),
+            float(statistics.median(source_samples)),
+            target_samples,
+            source_samples,
+            paired_batches,
+        )
+
+    def common_record() -> dict[str, Any]:
+        return {
+            "kernel": name,
+            "case_id": CASE_IDS[name],
+            "snapshot": {
+                "path": str(snapshot_path),
+                "snapshot_digest": snapshot.snapshot_digest,
+                "j_digest": snapshot.j_digest,
+                "c_digest": snapshot.c_digest,
+            },
+            "extents": dims,
+            "materialization": materialized.to_record(),
+            "search_prior": {
+                "mode": (
+                    "with-c" if axes is not None and axes.use_c_prior
+                    else "without-c" if axes is not None
+                    else search_prior
+                ),
+                "c_attached_to_backend_search": (
+                    axes.use_c_prior
+                    if axes is not None
+                    else search_prior == "with-c"
+                ),
+                "accepted_c_used_only_to_reconstruct_exact_workload": True,
+            },
+            "b_search_mode": b_search_mode,
+            "ablation_axes": axes.to_dict() if axes is not None else None,
+            "execution_domain_closure_required": require_backend_closure,
+        }
+
+    if axes is not None and axes.baseline_kind == "source":
+        source_j, source_latency, source_samples = measure_source()
+        return {
+            **common_record(),
+            "baseline": {
+                "kind": "source",
+                "candidate_budget": 0,
+                "compiler_search_performed": False,
+            },
+            "correctness": {
+                "source_j": source_j.to_json(),
+                "policy": DEFAULT_GATE2_POLICY.policy_id,
+            },
+            "performance": {
+                "selected_us": source_latency,
+                "mlir_us": None,
+                "source_triton_us": source_latency,
+                "mlir_over_triton": None,
+                "speedup_over_triton": 1.0,
+                "meets_or_beats_triton": True,
+                "warmup_ms": warmup_ms,
+                "repeat_ms": repeat_ms,
+                "timing": timing,
+                "graph_repetitions": graph_repetitions,
+                "measurement_rounds": measurement_rounds,
+                "selection_confirmation": {
+                    "source_batch_us": source_samples,
+                    "batch_aggregation": "median",
+                    "samples_per_batch": measurement_rounds,
+                },
+            },
+        }
+
+    if axes is not None and axes.baseline_kind == "canonical":
+        candidate = canonical_cuda_candidate(state)
+        program = lower_to_cuda(
+            state.base_ir,
+            allow_specialized=not candidate.generic,
+            only_fast_path=candidate.fast_path_id,
+            pass_overrides=(
+                {candidate.fast_path_id: candidate.pass_argument}
+                if candidate.fast_path_id is not None
+                and candidate.pass_argument is not None
+                else None
+            ),
+            require_specialized=not candidate.generic,
+        )
+        concrete_state = candidate.concrete_state(program)
+        qd_search = (
+            qd_controller.filter_candidate(program, concrete_state)
+            if qd_controller is not None
+            else None
+        )
+        if qd_search is not None and not qd_search.passed:
+            raise RuntimeError("canonical target failed target-to-RefJ on D_search")
         prepared = PreparedSingleLaunch(program, materialized.intent_mlir)
+        target_thunk = prepared.thunk(tensors)
+        target_thunk()
+        torch.cuda.synchronize()
+        actual = {
+            runtime_key: tensor.detach().cpu().numpy().copy()
+            for runtime_key, tensor in zip(case.output_keys, outputs, strict=True)
+        }
+        target_j = compare_outputs(
+            "canonical-mlir-cubin",
+            actual,
+            "canonical-J",
+            reference.outputs,
+            j=snapshot.j,
+            input_bindings=case.refeval.input_binding_map,
+            output_bindings=case.refeval.output_binding_map,
+            inputs=case.values,
+            policy=DEFAULT_GATE2_POLICY,
+        )
+        if not target_j.passed:
+            raise RuntimeError("canonical compiled MLIR differs from canonical J")
+        closure = None
+        closure_error = None
+        if qd_controller is not None:
+            try:
+                closure = qd_controller.close_winner(program, concrete_state)
+                if not closure.passed:
+                    closure_error = "canonical target failed a held-out direct edge"
+            except Exception as error:
+                closure_error = f"{type(error).__name__}: {error}"
+        if require_backend_closure and (closure is None or not closure.passed):
+            raise RuntimeError(
+                "canonical target lacks formal backend closure: "
+                + (closure_error or "no closure receipt")
+            )
+        (
+            source_j,
+            target_latency,
+            source_latency,
+            target_samples,
+            source_samples,
+            paired_batches,
+        ) = confirm_target_against_source(target_thunk)
+        kernel = program.kernels[0]
+        return {
+            **common_record(),
+            "baseline": {
+                "kind": "canonical",
+                "candidate_budget": 0,
+                "compiler_search_performed": False,
+                "candidate": candidate.to_dict(),
+                "concrete_state": concrete_state.to_dict(),
+                "qd_search": qd_search.to_dict() if qd_search is not None else None,
+                "backend_closure": closure.to_dict() if closure is not None else None,
+                "backend_closure_error": closure_error,
+            },
+            "winner": {
+                "candidate": candidate.to_dict(),
+                "lowering": program.to_record(),
+                "launch": prepared.record.to_dict(),
+                "cubin_sha256": _sha256(kernel.cubin),
+                "cubin_size_bytes": len(kernel.cubin),
+            },
+            "correctness": {
+                "mlir_j": target_j.to_json(),
+                "source_j": source_j.to_json(),
+                "policy": DEFAULT_GATE2_POLICY.policy_id,
+            },
+            "performance": {
+                "selected_us": target_latency,
+                "mlir_us": target_latency,
+                "source_triton_us": source_latency,
+                "mlir_over_triton": target_latency / source_latency,
+                "speedup_over_triton": source_latency / target_latency,
+                "meets_or_beats_triton": target_latency <= source_latency,
+                "warmup_ms": warmup_ms,
+                "repeat_ms": repeat_ms,
+                "timing": timing,
+                "graph_repetitions": graph_repetitions,
+                "measurement_rounds": measurement_rounds,
+                "selection_confirmation": {
+                    "mlir_batch_us": target_samples,
+                    "source_batch_us": source_samples,
+                    "batch_aggregation": "median",
+                    "samples_per_batch": measurement_rounds,
+                    "comparison_protocol": "paired-alternating.v1",
+                    "warmup_pair_discarded": True,
+                    "paired_batches": paired_batches,
+                },
+            },
+        }
+
+    def benchmark(program, candidate) -> float:
+        if program.selection.pipeline_kind == "specialized":
+            prepared = PreparedSingleLaunch(program, materialized.intent_mlir)
+        else:
+            prepared = PreparedGraphLaunch(
+                program,
+                materialized.intent_mlir,
+                inputs,
+            )
+            prepared_graphs[candidate.candidate_id] = prepared
         launch_records[candidate.candidate_id] = prepared.record.to_dict()
-        return measure(prepared.thunk(tensors))
+        thunk = (
+            prepared.thunk(tensors)
+            if isinstance(prepared, PreparedSingleLaunch)
+            else prepared.thunk()
+        )
+        return measure(thunk)
 
     search = search_cuda(
         state,
@@ -262,7 +554,9 @@ def _one_kernel(
             f":measurement-rounds={measurement_rounds}"
         ),
         budget=budget,
-        include_generic=False,
+        include_generic=(
+            axes.search_structural_states if axes is not None else True
+        ),
         cache=cache,
         enable_b_transformations=(
             axes.enable_local_b_transformations
@@ -293,18 +587,35 @@ def _one_kernel(
             + json.dumps(diagnostics, sort_keys=True)
         )
     winner = search.winner_program
-    mlir_prepared = PreparedSingleLaunch(winner, materialized.intent_mlir)
-    mlir_thunk = mlir_prepared.thunk(tensors)
+    if winner.selection.pipeline_kind == "specialized":
+        mlir_prepared = PreparedSingleLaunch(winner, materialized.intent_mlir)
+        mlir_thunk = mlir_prepared.thunk(tensors)
+    else:
+        mlir_prepared = prepared_graphs.get(search.winner.candidate_id)
+        if mlir_prepared is None:
+            mlir_prepared = PreparedGraphLaunch(
+                winner,
+                materialized.intent_mlir,
+                inputs,
+            )
+        mlir_thunk = mlir_prepared.thunk()
     mlir_thunk()
     torch.cuda.synchronize()
 
+    actual_tensors = (
+        outputs
+        if isinstance(mlir_prepared, PreparedSingleLaunch)
+        else [
+            mlir_prepared.outputs[f"out{index}"]
+            for index in range(len(case.output_keys))
+        ]
+    )
     actual = {
         runtime_key: tensor.detach().cpu().numpy().copy()
-        for runtime_key, tensor in zip(case.output_keys, outputs, strict=True)
+        for runtime_key, tensor in zip(
+            case.output_keys, actual_tensors, strict=True
+        )
     }
-    reference = ScalarLoweringRunner().run(case.refeval, case.values)
-    if not reference.ok:
-        raise RuntimeError(f"canonical J reference failed: {reference.error}")
     mlir_j = compare_outputs(
         "mlir-cubin",
         actual,
@@ -319,60 +630,27 @@ def _one_kernel(
     if not mlir_j.passed:
         raise RuntimeError("compiled MLIR result differs from canonical J")
 
-    source_program = prepared_workload.request.source.gate_source
-    with PreparedTritonInvocation(
-        source_program, case.triton, case.values
-    ) as source:
-        source.launch()
-        torch.cuda.synchronize()
-        source_actual = source.copied_outputs()
-        source_j = compare_outputs(
-            "source-triton",
-            source_actual,
-            "canonical-J",
-            reference.outputs,
-            j=snapshot.j,
-            input_bindings=case.refeval.input_binding_map,
-            output_bindings=case.refeval.output_binding_map,
-            inputs=case.values,
-            policy=DEFAULT_GATE2_POLICY,
-        )
-        if not source_j.passed:
-            raise RuntimeError("source Triton result differs from canonical J")
-        mlir_samples = [float(search.winner_latency_us)]
-        mlir_samples.extend(measure(mlir_thunk) for _ in range(2))
-        source_samples = [measure(source.thunk()) for _ in range(3)]
-        mlir_latency = float(statistics.median(mlir_samples))
-        source_latency = float(statistics.median(source_samples))
+    (
+        source_j,
+        mlir_latency,
+        source_latency,
+        mlir_samples,
+        source_samples,
+        paired_batches,
+    ) = confirm_target_against_source(mlir_thunk)
 
     kernel = winner.kernels[0]
+    cubin_records = [
+        {
+            "kernel_name": item.kernel_name,
+            "binary_name": item.binary_name,
+            "sha256": _sha256(item.cubin),
+            "size_bytes": len(item.cubin),
+        }
+        for item in winner.kernels
+    ]
     return {
-        "kernel": name,
-        "case_id": CASE_IDS[name],
-        "snapshot": {
-            "path": str(snapshot_path),
-            "snapshot_digest": snapshot.snapshot_digest,
-            "j_digest": snapshot.j_digest,
-            "c_digest": snapshot.c_digest,
-        },
-        "extents": dims,
-        "materialization": materialized.to_record(),
-        "search_prior": {
-            "mode": (
-                "with-c" if axes is not None and axes.use_c_prior
-                else "without-c" if axes is not None
-                else search_prior
-            ),
-            "c_attached_to_backend_search": (
-                axes.use_c_prior
-                if axes is not None
-                else search_prior == "with-c"
-            ),
-            "accepted_c_used_only_to_reconstruct_exact_workload": True,
-        },
-        "b_search_mode": b_search_mode,
-        "ablation_axes": axes.to_dict() if axes is not None else None,
-        "execution_domain_closure_required": require_backend_closure,
+        **common_record(),
         "search": search.to_record(),
         "winner": {
             "candidate": search.winner.to_dict(),
@@ -380,6 +658,7 @@ def _one_kernel(
             "launch": mlir_prepared.record.to_dict(),
             "cubin_sha256": _sha256(kernel.cubin),
             "cubin_size_bytes": len(kernel.cubin),
+            "cubins": cubin_records,
         },
         "correctness": {
             "mlir_j": mlir_j.to_json(),
@@ -387,6 +666,7 @@ def _one_kernel(
             "policy": DEFAULT_GATE2_POLICY.policy_id,
         },
         "performance": {
+            "selected_us": mlir_latency,
             "mlir_us": mlir_latency,
             "source_triton_us": source_latency,
             "mlir_over_triton": mlir_latency / source_latency,
@@ -402,6 +682,9 @@ def _one_kernel(
                 "source_batch_us": source_samples,
                 "batch_aggregation": "median",
                 "samples_per_batch": measurement_rounds,
+                "comparison_protocol": "paired-alternating.v1",
+                "warmup_pair_discarded": True,
+                "paired_batches": paired_batches,
             },
         },
     }

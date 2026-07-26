@@ -51,17 +51,71 @@ def _walk(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
-def _canonical_return_function(j: SemanticArchive) -> IntentFunction:
+def _canonical_return_function(
+    j: SemanticArchive,
+) -> tuple[IntentFunction, tuple[str, ...]]:
     """Project the one elaborated output binding into the MLIR printer view."""
 
     bindings = j_elaboration(j).output_bindings
+    inputs = {item.name: item for item in j.intent.inputs}
+    outputs = {item.name: item for item in j.intent.outputs}
+    body = list(j.intent.body)
+    returns: list[IntentReturn] = []
+    consumed: list[str] = []
+    used_names = {
+        *inputs,
+        *outputs,
+        *(
+            result
+            for operation in _walk(body)
+            for result in (
+                operation.result
+                if isinstance(operation.result, list)
+                else [operation.result]
+            )
+            if isinstance(result, str)
+        ),
+    }
+    for binding in bindings:
+        value = binding.value
+        if value in inputs:
+            output = outputs[binding.output]
+            if (
+                inputs[value].dtype != output.dtype
+                or inputs[value].shape != output.shape
+            ):
+                raise ValueError(
+                    "direct input/output binding requires identical logical types"
+                )
+            base = f"__intentir_identity_{binding.output}"
+            result = base
+            suffix = 0
+            while result in used_names:
+                suffix += 1
+                result = f"{base}_{suffix}"
+            used_names.add(result)
+            body.append(
+                IntentOp(
+                    op="map_unary",
+                    result=result,
+                    operands=[value],
+                    attrs={"fn": "identity"},
+                    type={"dtype": output.dtype, "shape": list(output.shape)},
+                )
+            )
+            returns.append(IntentReturn(binding.output, result))
+            consumed.append(
+                f"output_binding:{binding.output}:{value}:identity_materialized"
+            )
+        else:
+            returns.append(IntentReturn(binding.output, value))
     return IntentFunction(
         name=j.intent.name,
         inputs=list(j.intent.inputs),
         outputs=list(j.intent.outputs),
-        body=list(j.intent.body),
-        returns=[IntentReturn(item.output, item.value) for item in bindings],
-    )
+        body=body,
+        returns=returns,
+    ), tuple(consumed)
 
 
 def _logical_full_axis_step_function(
@@ -245,9 +299,8 @@ def materialize_j_function(
             if op.op == "loop"
         )
     else:
-        function = _canonical_return_function(j)
+        function, consumed = _canonical_return_function(j)
         form = FLAT_MATERIALIZATION
-        consumed = ()
     return JFunctionMaterialization(function, form, consumed)
 
 

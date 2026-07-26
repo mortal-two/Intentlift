@@ -1,0 +1,111 @@
+{
+  "protocol": "intentir.production.backend-closed18.mechanism-summary.v1",
+  "date": "2026-07-26",
+  "corpus": {
+    "accepted_j_count": 18,
+    "catalog": "corpus/production-jc-v1/catalog.json",
+    "kernels": [
+      "dyt",
+      "flash_bwd_preprocess",
+      "flash_layer_norm_1pass",
+      "fused_add_rms_norm",
+      "geglu",
+      "jsd",
+      "kl_div",
+      "layer_norm",
+      "liger_rms_norm",
+      "masked_copy",
+      "masked_row_square_sum",
+      "poly_norm",
+      "softmax",
+      "sparsemax",
+      "swiglu",
+      "tvd",
+      "xformers_rms_norm",
+      "xformers_rms_norm_add"
+    ]
+  },
+  "cuda_rtx5090d": {
+    "formal_e2_e3": {
+      "report": "cuda-e2-e3-budget32-formal-v4.json.gz",
+      "candidate_budget": 32,
+      "successful_records": 36,
+      "formal_backend_closed_e2": 18,
+      "formal_backend_closed_e3": 18,
+      "e3_over_e2_geomean": 1.1301917300452304,
+      "e3_over_source_geomean": 1.0927632713634994,
+      "e3_meets_or_beats_source_count": 17,
+      "e3_over_e2_above_1pct_count": 15,
+      "whole_graph_over_materialized_applicable_count": 6,
+      "whole_graph_over_materialized_geomean": 17.12576138630722,
+      "whole_graph_over_materialized_maximum": 45.01385800274948,
+      "whole_graph_over_materialized_per_kernel": {
+        "geglu": 10.766154118728192,
+        "layer_norm": 19.806335951434885,
+        "masked_row_square_sum": 39.78129553581819,
+        "poly_norm": 45.01385800274948,
+        "softmax": 15.400384213508483,
+        "swiglu": 4.290203407717198
+      }
+    },
+    "numeric_ladder": {
+      "report": "cuda-numeric-ladder-budget32-v3.json.gz",
+      "formal_backend_closure_in_this_report": false,
+      "n0_to_n1_reduction_tree_all_geomean": 1.0408859403757111,
+      "n0_to_n1_reduction_tree_applicable_geomean": 1.0622335027781082,
+      "n1_to_n2_fma_all_geomean": 1.000320026547675,
+      "n1_to_n2_fma_applicable_geomean": 1.0018563277511823,
+      "n2_to_n3_precision_approx_all_geomean": 1.0675591988454682,
+      "n2_to_n3_precision_approx_applicable_geomean": 1.1271334776221786
+    },
+    "local_b": {
+      "report": "cuda-local-b-budget32-formal-v5.json.gz",
+      "successful_records": 36,
+      "formal_backend_closed_l0": 18,
+      "formal_backend_closed_l1": 18,
+      "l1_over_l0_all_geomean": 1.0162331112367506,
+      "applicable_count": 10,
+      "l1_over_l0_applicable_geomean": 1.0294705405125175,
+      "maximum_gain": 1.182652845917998
+    },
+    "c_prior_budget8": {
+      "report": "cuda-c-prior-budget8-roleaware-v3.json.gz",
+      "formal_backend_closure_in_this_report": false,
+      "with_c_over_erase_c_best_latency_geomean": 1.0195491034569053
+    }
+  },
+  "cuda_h100": {
+    "e2_report": "h100-e2-budget32-v4.json.gz",
+    "e3_report": "h100-e3-budget32-v4.json.gz",
+    "successful_e2": 18,
+    "successful_e3": 18,
+    "e3_over_e2_geomean": 1.1196091215766553,
+    "e3_over_source_geomean": 1.053850125925519,
+    "e3_meets_or_beats_source_count": 15,
+    "e3_over_e2_above_1pct_count": 15,
+    "correctness_edges": [
+      "source_ref_j",
+      "target_ref_j"
+    ],
+    "formal_backend_closure": false
+  },
+  "rvv4": {
+    "report": "rvv-e2-e3-v3.json.gz",
+    "successful": 18,
+    "e3_over_e2_geomean": 1.1817053857735753,
+    "b_transformation_winner_count": 15,
+    "correctness_edges": [
+      "target_ref_j"
+    ],
+    "formal_backend_closure": false
+  },
+  "artifacts": {
+    "cuda-c-prior-budget8-roleaware-v3.json.gz": "0999f2b553505eca0aacaee34082b2337106e7f280ce29d9e2c4b4f8cb51fe96",
+    "cuda-e2-e3-budget32-formal-v4.json.gz": "7d38d2ada094b49ba47ed230d90bede4126d4f80e5e32cb6075f440b8d1dfd62",
+    "cuda-local-b-budget32-formal-v5.json.gz": "b70e60201a04ceba8b6517f0ac42542ad1459aab18eb741ab60299c555fdd009",
+    "cuda-numeric-ladder-budget32-v3.json.gz": "edc6ba2adf9b21071dcc3afc3a003ce2f1f1554fc68dc5ee6d410d026cb6fc14",
+    "h100-e2-budget32-v4.json.gz": "a14ba889b59be51eb88be3f89cdfa9cc82c504c59b01ee17a3f8953d80edb6f9",
+    "h100-e3-budget32-v4.json.gz": "3e9bd418456c9027fdbccc021eebef2e91e56b91be05c1f0d234e93033d32b96",
+    "rvv-e2-e3-v3.json.gz": "9b847f313210a6eb5b2e877007f8bb1c33ae711ba32ad006ec4ad5920eea9a23"
+  }
+}

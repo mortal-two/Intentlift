@@ -62,6 +62,12 @@ def ConvertIntentRowReductionToGPU
            "production search may enable it as an observation-changing concrete "
            "MLIR state; that state must pass the frozen Q on D_search before "
            "performance selection and the fixed winner must pass D_cert.">,
+    Option<"approximateDiv", "approximate-div", "bool", "false",
+           "Lower f32 division to multiplication by a native approximate "
+           "reciprocal (or a rounded constant reciprocal for a proven static "
+           "divisor). Disabled by default because its allowed observations differ "
+           "from divf. Production search treats it as an observation-changing "
+           "precision state and requires frozen Q/D_search and D_cert.">,
     Option<"deferEpilogueColLoads", "defer-epilogue-col-loads", "bool", "true",
            "Delay epilogue-only contiguous Col loads until after all row "
            "collectives, reducing cross-barrier register pressure. Set false "
@@ -83,6 +89,12 @@ def ConvertIntentRowReductionToGPU
            "transformation is restricted to typed side-effect-free MLIR arms, "
            "does not specialize the predicate, and records its actual count "
            "in the concrete-state receipt.">,
+    Option<"rowsPerBlock", "rows-per-block", "unsigned", "1",
+           "Independent logical rows assigned to one block. 1 preserves the "
+           "one-block-per-row lowering. Values 2, 4, or 8 enable the fail-closed "
+           "one-warp-per-row register path (32 logical lanes per row, no "
+           "block-wide collective or shared scratch). Unsupported graphs remain "
+           "unmatched rather than falling back under this candidate identity.">,
   ];
 }
 
@@ -123,6 +135,14 @@ def ConvertIntentPaddedRowReductionToGPU
     Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
            "Capture valid-row/feature scalars by value from the host stub; "
            "false loads their rank-0 buffers inside the GPU kernel.">,
+    Option<"reductionTopology", "reduction-topology", "std::string",
+           "\"serial-row\"",
+           "Concrete dot-reduction mapping. serial-row assigns one thread to "
+           "one padded output row and accumulates its feature strip serially. "
+           "subgroup-feature assigns one subgroup to a row and uses subgroup "
+           "shuffle reduction over contiguous feature lanes. The latter is an "
+           "observation-changing compiler state and must pass the backend Q/D "
+           "gate before performance selection.">,
   ];
 }
 
@@ -184,6 +204,12 @@ def ConvertIntentElementwiseToGPU
            "Capture rank-0 or singleton broadcast inputs by value from the "
            "host launch stub. False retains the historical per-thread device "
            "load as the schedule-only control.">,
+    Option<"tanhApproximation", "tanh-approximation", "std::string",
+           "\"stable-ex2\"",
+           "Concrete f32 tanh evaluation state. stable-ex2 uses the existing "
+           "overflow-safe ex2/reciprocal expansion. native-ptx marks tanh ops "
+           "for the single-instruction PTX tanh.approx.f32 lowering. native-ptx "
+           "is observation-changing and must pass Q/D before timing.">,
   ];
 }
 

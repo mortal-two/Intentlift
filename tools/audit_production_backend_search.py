@@ -19,6 +19,7 @@ import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
+    prepare_production_workload,
 )
 from intentir.backend.cuda.search import (
     CudaContractError,
@@ -31,10 +32,6 @@ from intentir.backend.protocol import BackendTarget
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate1.model import AliasKind, AliasSpec
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
-from intentir.verify.workload_adapters import (
-    TRITON_WORKLOAD_ADAPTERS,
-    prepare_triton_workload,
-)
 
 
 REPORT_PROTOCOL = "intentir.production.cuda-b-c-search-ablation.v1"
@@ -102,9 +99,7 @@ def _one(name: str, snapshot_dir: Path, budget: int) -> dict[str, Any]:
     snapshot, snapshot_path = load_production_snapshot(snapshot_dir, name)
     if snapshot.c is None:
         raise ValueError("C ablation requires the accepted optional C object")
-    prepared = prepare_triton_workload(
-        TRITON_WORKLOAD_ADAPTERS[PRODUCTION_CASE_IDS[name]]
-    )
+    prepared = prepare_production_workload(name)
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map

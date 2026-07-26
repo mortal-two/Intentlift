@@ -10,12 +10,13 @@
 
 // CHECK-LABEL: func.func @rms_norm_f16_tail(
 // CHECK-SAME:    {{.*}}memref<4x37xf16>{{.*}}memref<37xf16>{{.*}}memref<f32>{{.*}}memref<4x37xf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         %[[ACTIVE:.*]] = arith.cmpi ult
 // CHECK:         %[[SAFE:.*]] = arith.select %[[ACTIVE]]
 // CHECK:         memref.load {{.*}}[%{{.*}}, %[[SAFE]]] : memref<4x37xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
 // CHECK:         arith.select %[[ACTIVE]], {{.*}} : f32
-// CHECK:         gpu.all_reduce add
+// CHECK-COUNT-5: gpu.shuffle xor
 // CHECK:         memref.load {{.*}}[%[[SAFE]]] : memref<37xf16>
 // CHECK:         scf.if %[[ACTIVE]] {
 // CHECK:           memref.store {{.*}} : memref<4x37xf16>
@@ -48,10 +49,11 @@ func.func @rms_norm_f16_tail(%X: tensor<4x37xf16>, %W: tensor<37xf16>,
 // CHECK-LABEL: func.func @layer_norm_bf16_tail(
 // CHECK-SAME:    {{.*}}memref<4x37xbf16>{{.*}}memref<37xbf16>{{.*}}memref<37xbf16>{{.*}}memref<f32>
 // CHECK-SAME:    {{.*}}memref<4x37xbf16>{{.*}}memref<4xf32>{{.*}}memref<4xf32>)
+// CHECK-SAME:     intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         %[[ACTIVE:.*]] = arith.cmpi ult
 // CHECK:         %[[SAFE:.*]] = arith.select %[[ACTIVE]]
 // CHECK:         memref.load {{.*}}[%{{.*}}, %[[SAFE]]] : memref<4x37xbf16>
-// CHECK-COUNT-2: gpu.all_reduce add
+// CHECK-COUNT-10: gpu.shuffle xor
 // CHECK:         memref.load {{.*}}[%[[SAFE]]] : memref<37xbf16>
 // CHECK:         scf.if %[[ACTIVE]] {
 // CHECK:           memref.store {{.*}} : memref<4x37xbf16>

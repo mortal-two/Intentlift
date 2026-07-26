@@ -91,6 +91,26 @@
       "snapshot_file": "63514c55f14ab5e26e16285f3a6c19588584a079ac2217834df6dc8558426406.json"
     },
     {
+      "c_digest": "d154dee698722aaea05fe8a0e8ea507895182551614ee686415cd5b66e877e93",
+      "case_id": "scrc_canary:masked_copy",
+      "evidence_kind": "certified_run_report",
+      "j_digest": "920489f175f19549e16427e177dc5933620c40879c868f6f23b8b990ad592e42",
+      "name": "masked_copy",
+      "receipt_digest": "f0932055e7ce9ee20e247edba1ff2172f54c20d8cf9e614bbc917bc41bb3fe51",
+      "snapshot_digest": "10d67ee0b4f061e1ce28b3e6b1ebfc371be2825692671c927e80b8e743e4ad49",
+      "snapshot_file": "10d67ee0b4f061e1ce28b3e6b1ebfc371be2825692671c927e80b8e743e4ad49.json"
+    },
+    {
+      "c_digest": "d154dee698722aaea05fe8a0e8ea507895182551614ee686415cd5b66e877e93",
+      "case_id": "scrc_canary:masked_row_square_sum",
+      "evidence_kind": "certified_run_report",
+      "j_digest": "9e3e5a9d43a833a4ec52a385314f0faa60c982dfa9ece0f2e70396b5c3d8a464",
+      "name": "masked_row_square_sum",
+      "receipt_digest": "b81d603fa88d1a23333f1faa3d4166b1b2957d1b7a550d7b7fd20dcf6266bf21",
+      "snapshot_digest": "31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892",
+      "snapshot_file": "31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892.json"
+    },
+    {
       "c_digest": "e39c65f0fb194982c5e0a3b81c825a0ebc081bd6c3dc82feee31578ff92b8804",
       "case_id": "high_performance:liger_poly_norm",
       "evidence_kind": "zero_model_gate2_recheck",
@@ -161,6 +181,6 @@
       "snapshot_file": "e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be.json"
     }
   ],
-  "entry_count": 16,
+  "entry_count": 18,
   "protocol": "intentir.production.jc-catalog.v1"
 }

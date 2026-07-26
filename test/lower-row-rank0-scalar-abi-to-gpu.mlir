@@ -6,11 +6,14 @@
 // stub, the other retains the rank-0 load inside gpu.launch.
 
 // HOST-LABEL: func.func @rms(
+// HOST-SAME: intent.backend.host_value_capture_count = 1 : i64
+// HOST-SAME: "cuda.b.rank0_host_value_capture.v1"
 // HOST: memref.load
 // HOST: gpu.launch
 // HOST-NOT: intent.
 
 // DEVICE-LABEL: func.func @rms(
+// DEVICE-SAME: intent.backend.host_value_capture_count = 0 : i64
 // DEVICE: gpu.launch
 // DEVICE: memref.load
 // DEVICE-NOT: intent.

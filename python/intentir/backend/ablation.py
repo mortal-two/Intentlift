@@ -11,10 +11,11 @@ from typing import Any
 from intentir.ir.production_snapshot import content_digest
 
 
-ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v1"
+ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v2"
 ABLATION_SCOPE = "J-grounded Q/D-certified concrete lowering-state search"
 ABLATION_BUDGET_RULE = (
-    "all non-baseline arms receive the same caller-supplied total candidate budget"
+    "all non-baseline arms receive the same caller-supplied total budget over "
+    "distinct post-pass MLIR states and distinct failed exact candidates"
 )
 ABLATION_CORRECTNESS = {
     "immutable_semantic_input": "J=A+B",
@@ -29,11 +30,48 @@ ABLATION_CORRECTNESS = {
     "comparison_rule": "every edge is direct; tolerance transitivity is forbidden",
     "c_role": "candidate ordering only",
 }
+ABLATION_CANDIDATE_IDENTITY = {
+    "search_object": (
+        "concrete post-pass MLIR state plus schedule assignment and "
+        "transformation trace"
+    ),
+    "deduplication_key": "canonical post-pass MLIR digest",
+    "duplicate_rule": (
+        "duplicate MLIR attempts remain in the audit log and do not consume "
+        "candidate budget"
+    ),
+    "failed_attempt_rule": (
+        "one distinct exact candidate that fails before state formation consumes "
+        "one budget unit"
+    ),
+    "abstraction_rule": (
+        "no implementation-family object, family id, or named emitter participates "
+        "in generation, legality, or selection"
+    ),
+}
+ABLATION_MEASUREMENT = {
+    "performance_baseline": "exact Source frontend implementation",
+    "timed_scope": (
+        "prepared launch or prepared graph only; allocation and correctness "
+        "synchronization are outside the timed closure"
+    ),
+    "finalist_rule": (
+        "fresh round-robin remeasurement with alternating traversal; initial "
+        "ranking samples are excluded"
+    ),
+    "confirmation_rule": (
+        "equal-count fresh Source and target batches in alternating pair order"
+    ),
+    "warmup_rule": (
+        "one untimed Source-target pair is discarded before confirmation"
+    ),
+    "aggregation": "median per side with every paired batch retained",
+}
 DEFAULT_ABLATION_SPEC = (
     Path(__file__).resolve().parents[3]
     / "spec"
     / "lowering"
-    / "backend-search-ablation-v1.json"
+    / "backend-search-ablation-v2.json"
 )
 
 
@@ -127,7 +165,15 @@ def load_ablation_spec(path: Path | None = None) -> dict[str, Any]:
     value = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("protocol") != ABLATION_PROTOCOL:
         raise ValueError("unsupported backend ablation spec")
-    if set(value) != {"protocol", "scope", "correctness", "budget_rule", "arms"}:
+    if set(value) != {
+        "protocol",
+        "scope",
+        "correctness",
+        "candidate_identity",
+        "measurement",
+        "budget_rule",
+        "arms",
+    }:
         raise ValueError("backend ablation spec has missing or unknown root fields")
     if value["scope"] != ABLATION_SCOPE:
         raise ValueError("backend ablation spec has an unsupported scope")
@@ -135,6 +181,10 @@ def load_ablation_spec(path: Path | None = None) -> dict[str, Any]:
         raise ValueError("backend ablation spec changed the equal-budget rule")
     if value["correctness"] != ABLATION_CORRECTNESS:
         raise ValueError("backend ablation spec differs from the Q/D implementation")
+    if value["candidate_identity"] != ABLATION_CANDIDATE_IDENTITY:
+        raise ValueError("backend ablation spec differs from state deduplication")
+    if value["measurement"] != ABLATION_MEASUREMENT:
+        raise ValueError("backend ablation spec differs from measurement protocol")
     records = value.get("arms")
     if not isinstance(records, list) or not records:
         raise ValueError("backend ablation spec requires a non-empty arms array")
@@ -215,6 +265,8 @@ def assert_fair_pair(left: SearchAxes, right: SearchAxes, *, varying: str) -> No
 __all__ = [
     "ABLATION_BUDGET_RULE",
     "ABLATION_CORRECTNESS",
+    "ABLATION_CANDIDATE_IDENTITY",
+    "ABLATION_MEASUREMENT",
     "ABLATION_PROTOCOL",
     "ABLATION_SCOPE",
     "DEFAULT_ABLATION_SPEC",

@@ -76,7 +76,7 @@ def _write_atomic(path: Path, payload: str) -> None:
 
 def _artifact(value: Mapping[str, Any]) -> Gate1Artifact:
     try:
-        return canonicalize_gate1_artifact(Gate1Artifact.from_json(dict(value)))
+        return Gate1Artifact.from_json(dict(value))
     except (TypeError, ValueError) as exc:
         raise ProductionExportError(f"certified artifact is invalid: {exc}") from exc
 
@@ -113,10 +113,12 @@ def _accepted_report_artifact(report: Mapping[str, Any]) -> Gate1Artifact:
     artifact_payload = attempt.get("artifact")
     if not isinstance(artifact_payload, Mapping):
         raise ProductionExportError("accepted attempt has no embedded artifact")
-    artifact = _artifact(artifact_payload)
-    if gate1.get("artifact_digest") != canonical_artifact_digest(artifact):
+    certified_artifact = _artifact(artifact_payload)
+    if gate1.get("artifact_digest") != canonical_artifact_digest(
+        certified_artifact
+    ):
         raise ProductionExportError("accepted Gate1 artifact digest mismatch")
-    return artifact
+    return canonicalize_gate1_artifact(certified_artifact)
 
 
 def _recheck_artifact(
@@ -144,13 +146,15 @@ def _recheck_artifact(
     if not parent.is_absolute():
         parent = evidence_path.parent / parent
     artifact_payload = _read_object(artifact_path, context="Gate1 artifact")
-    artifact = _artifact(artifact_payload)
+    certified_artifact = _artifact(artifact_payload)
     gate1 = _read_object(parent / "gate1.json", context="parent Gate1 evidence")
     if gate1.get("status") != "replay_closed":
         raise ProductionExportError("Gate2 recheck parent is not replay_closed")
-    if gate1.get("artifact_digest") != canonical_artifact_digest(artifact):
+    if gate1.get("artifact_digest") != canonical_artifact_digest(
+        certified_artifact
+    ):
         raise ProductionExportError("Gate2 recheck parent artifact digest mismatch")
-    return artifact
+    return canonicalize_gate1_artifact(certified_artifact)
 
 
 @dataclass(frozen=True)

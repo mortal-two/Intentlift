@@ -5,6 +5,8 @@
 // emitted from the closed FlashAttention preprocess J.
 
 // HOST-LABEL: func.func @anonymous(
+// HOST-SAME: intent.backend.host_value_capture_count = 2 : i64
+// HOST-SAME: "cuda.b.rank0_host_value_capture.v1"
 // HOST: memref.load
 // HOST: memref.load
 // HOST: gpu.launch
@@ -12,6 +14,7 @@
 // HOST-NOT: intent.
 
 // DEVICE-LABEL: func.func @anonymous(
+// DEVICE-SAME: intent.backend.host_value_capture_count = 0 : i64
 // DEVICE: gpu.launch
 // DEVICE: memref.load
 // DEVICE: memref.store

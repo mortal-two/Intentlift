@@ -40,6 +40,12 @@ def test_machine_spec_is_the_consumed_qd_experiment_contract() -> None:
         "target_replay",
         "target_ref_j",
     ]
+    assert spec["candidate_identity"]["deduplication_key"] == (
+        "canonical post-pass MLIR digest"
+    )
+    assert spec["measurement"]["confirmation_rule"].startswith(
+        "equal-count fresh Source and target"
+    )
     assert {item["arm"] for item in spec["arms"]} == {
         item.value for item in ExperimentArm
     }

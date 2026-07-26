@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from intentir.backend.cuda.benchmark import (
     ExtractedSingleLaunch,
     PreparedLaunchRecord,
 )
 from intentir.backend.cuda.portable_bundle import (
+    cuda_compute_capability_for_chip,
     decode_array,
     decode_triton_spec,
     encode_array,
@@ -67,3 +69,10 @@ def test_triton_execution_spec_roundtrip_keeps_complete_abi() -> None:
     )
 
     assert decode_triton_spec(encode_triton_spec(spec)) == spec
+
+
+def test_cuda_cubin_target_decodes_exact_runtime_capability() -> None:
+    assert cuda_compute_capability_for_chip("sm_90a") == (9, 0)
+    assert cuda_compute_capability_for_chip("sm_120a") == (12, 0)
+    with pytest.raises(ValueError, match="unsupported CUDA chip"):
+        cuda_compute_capability_for_chip("compute_90")

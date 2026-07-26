@@ -29,8 +29,10 @@ class RowSchedule:
     tile_cols: int
     vector_width: int = 0
     fuse_fma: bool = False
+    approximate_div: bool = False
     defer_epilogue_col_loads: bool = True
     promote_rank0_scalars: bool = True
+    rows_per_block: int = 1
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -50,10 +52,23 @@ class RowSchedule:
             raise ValueError("row schedule vector_width must be 0, 1, or 4")
         if type(self.fuse_fma) is not bool:
             raise ValueError("row schedule fuse_fma must be a bool")
+        if type(self.approximate_div) is not bool:
+            raise ValueError("row schedule approximate_div must be a bool")
         if type(self.defer_epilogue_col_loads) is not bool:
             raise ValueError("row schedule defer_epilogue_col_loads must be a bool")
         if type(self.promote_rank0_scalars) is not bool:
             raise ValueError("row schedule promote_rank0_scalars must be a bool")
+        if type(self.rows_per_block) is not int or self.rows_per_block not in {
+            1,
+            2,
+            4,
+            8,
+        }:
+            raise ValueError("row schedule rows_per_block must be 1, 2, 4, or 8")
+        if self.rows_per_block > 1 and self.block_threads != 32:
+            raise ValueError(
+                "multi-row schedule requires 32 logical threads per row"
+            )
 
     @property
     def num_warps(self) -> int:
@@ -66,11 +81,13 @@ class RowSchedule:
             f"block-threads={self.block_threads} tile-cols={self.tile_cols} "
             f"vector-width={self.vector_width} "
             f"fuse-fma={'true' if self.fuse_fma else 'false'} "
+            f"approximate-div={'true' if self.approximate_div else 'false'} "
             "promote-rank0-scalars="
             f"{'true' if self.promote_rank0_scalars else 'false'} "
             "predicate-pure-value-if=true "
             "defer-epilogue-col-loads="
-            f"{'true' if self.defer_epilogue_col_loads else 'false'}"
+            f"{'true' if self.defer_epilogue_col_loads else 'false'} "
+            f"rows-per-block={self.rows_per_block}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -80,8 +97,10 @@ class RowSchedule:
             "num_warps": self.num_warps,
             "vector_width": self.vector_width,
             "fuse_fma": self.fuse_fma,
+            "approximate_div": self.approximate_div,
             "promote_rank0_scalars": self.promote_rank0_scalars,
             "defer_epilogue_col_loads": self.defer_epilogue_col_loads,
+            "rows_per_block": self.rows_per_block,
         }
 
 
@@ -91,6 +110,7 @@ class ElementwiseSchedule:
     flatten_contiguous: bool = True
     vector_width: int = 4
     promote_uniform_scalars: bool = False
+    tanh_approximation: str = "stable-ex2"
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -103,6 +123,10 @@ class ElementwiseSchedule:
             raise ValueError("elementwise vector_width must be 1, 2, or 4")
         if type(self.promote_uniform_scalars) is not bool:
             raise ValueError("promote_uniform_scalars must be boolean")
+        if self.tanh_approximation not in {"stable-ex2", "native-ptx"}:
+            raise ValueError(
+                "elementwise tanh_approximation must be stable-ex2 or native-ptx"
+            )
         if self.flatten_contiguous and self.vector_width not in {2, 4}:
             raise ValueError("flattened elementwise vector_width must be 2 or 4")
         if not self.flatten_contiguous and self.vector_width != 1:
@@ -121,6 +145,7 @@ class ElementwiseSchedule:
             )
         if self.promote_uniform_scalars:
             argument += " promote-uniform-scalars=true"
+        argument += f" tanh-approximation={self.tanh_approximation}"
         return argument
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -129,6 +154,7 @@ class ElementwiseSchedule:
             "flatten_contiguous": self.flatten_contiguous,
             "vector_width": self.vector_width,
             "promote_uniform_scalars": self.promote_uniform_scalars,
+            "tanh_approximation": self.tanh_approximation,
         }
 
 
@@ -139,6 +165,7 @@ class PaddedRowSchedule:
     block_threads: int
     vectorize_full_features: bool = True
     promote_rank0_scalars: bool = True
+    reduction_topology: str = "serial-row"
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -153,6 +180,11 @@ class PaddedRowSchedule:
             raise ValueError(
                 "padded-row promote_rank0_scalars must be boolean"
             )
+        if self.reduction_topology not in {"serial-row", "subgroup-feature"}:
+            raise ValueError(
+                "padded-row reduction_topology must be serial-row or "
+                "subgroup-feature"
+            )
 
     @property
     def pass_argument(self) -> str:
@@ -162,7 +194,9 @@ class PaddedRowSchedule:
             "vectorize-full-features="
             f"{'true' if self.vectorize_full_features else 'false'} "
             "promote-rank0-scalars="
-            f"{'true' if self.promote_rank0_scalars else 'false'}"
+            f"{'true' if self.promote_rank0_scalars else 'false'} "
+            "reduction-topology="
+            f"{self.reduction_topology}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -171,6 +205,7 @@ class PaddedRowSchedule:
             "num_warps": self.block_threads // 32,
             "vectorize_full_features": self.vectorize_full_features,
             "promote_rank0_scalars": self.promote_rank0_scalars,
+            "reduction_topology": self.reduction_topology,
         }
 
 

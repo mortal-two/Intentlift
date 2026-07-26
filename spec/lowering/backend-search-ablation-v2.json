@@ -1,0 +1,167 @@
+{
+  "protocol": "intentir.backend.ablation-plan.v2",
+  "scope": "J-grounded Q/D-certified concrete lowering-state search",
+  "correctness": {
+    "immutable_semantic_input": "J=A+B",
+    "compiler_inputs": ["J", "optional_C", "target_capabilities"],
+    "search_domain_edge": "target_ref_j",
+    "certification_domain_edges": [
+      "target_source",
+      "target_replay",
+      "target_ref_j"
+    ],
+    "domain_rule": "D_search and D_cert have disjoint exact input digests",
+    "comparison_rule": "every edge is direct; tolerance transitivity is forbidden",
+    "c_role": "candidate ordering only"
+  },
+  "candidate_identity": {
+    "search_object": "concrete post-pass MLIR state plus schedule assignment and transformation trace",
+    "deduplication_key": "canonical post-pass MLIR digest",
+    "duplicate_rule": "duplicate MLIR attempts remain in the audit log and do not consume candidate budget",
+    "failed_attempt_rule": "one distinct exact candidate that fails before state formation consumes one budget unit",
+    "abstraction_rule": "no implementation-family object, family id, or named emitter participates in generation, legality, or selection"
+  },
+  "measurement": {
+    "performance_baseline": "exact Source frontend implementation",
+    "timed_scope": "prepared launch or prepared graph only; allocation and correctness synchronization are outside the timed closure",
+    "finalist_rule": "fresh round-robin remeasurement with alternating traversal; initial ranking samples are excluded",
+    "confirmation_rule": "equal-count fresh Source and target batches in alternating pair order",
+    "warmup_rule": "one untimed Source-target pair is discarded before confirmation",
+    "aggregation": "median per side with every paired batch retained"
+  },
+  "budget_rule": "all non-baseline arms receive the same caller-supplied total budget over distinct post-pass MLIR states and distinct failed exact candidates",
+  "arms": [
+    {
+      "arm": "E0",
+      "budget_class": "baseline",
+      "baseline_kind": "source",
+      "use_c_prior": false,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E1",
+      "budget_class": "baseline",
+      "baseline_kind": "canonical",
+      "use_c_prior": false,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E2",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E3",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "E4",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": false,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "L0",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "L1",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "N0",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N1",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N2",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N3",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    }
+  ]
+}

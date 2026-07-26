@@ -1,6 +1,6 @@
 # IntentIR J-Grounded、Q/D-Certified Lowering-State Search：后端最终设计
 
-> 状态：第五份权威设计（2026-07-24；2026-07-26 execution-domain search 修订）
+> 状态：第五份权威设计（2026-07-24；2026-07-26 closed-18 intake、execution-domain search 与公平计时修订）
 >
 > 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
@@ -678,7 +678,7 @@ field、schema completeness rule 与推导版本；无法证明 completeness 时
 
 后四类都必须标记为 `observation-changing` 并经 Q/D，而不能借 `float_nondeterministic`、Source
 惯例或 target 默认值静态宣称全域等价。若未来项目目标改成脱离 D/Q 的静态 deployment theorem，
-可以另行设计版本化 numeric relations；这不是当前 backend 路线，也不阻塞当前 16 个 J 的消费。
+可以另行设计版本化 numeric relations；这不是当前 backend 路线，也不阻塞当前 18 个 J 的消费。
 
 现有 `exact|tolerance` 仍有约束力：`exact` 输出不能由 controller 私自改成 tolerance；`tolerance`
 只选择既定 Q class，具体阈值继续由外部 Q 独占。缺少有效 Q、空 D、非法 comparator 或未覆盖的
@@ -940,12 +940,34 @@ N3  N2 + target-supported precision/approximation states
 N0--N3 的 hard verifier、Q、D、target pipeline 与总搜索预算保持一致；某个 Kernel 不匹配某类
 transformation 时记录 `not_matched`，不得从 aggregate 中删除。
 
+结构机制还必须单独做“瓶颈切断”对照，避免 E3/E2 的平均数掩盖 J 打开的最大结构机会：
+
+```text
+G0  best admitted materialized state：保留 producer/reduction/epilogue 中间值与 dispatch 边界
+G1  best admitted whole-graph state：消除对应 materialization/dispatch，融合后再独立调 schedule
+```
+
+G0/G1 必须来自同一 J、同一 Q/D、同一 target pipeline 和同一份候选测量回执；两侧都独立搜索
+schedule，只在真实 post-pass MLIR 同时观察到 `kernel_count>1` 的 materialized state 与
+`kernel_count=1` 的 whole-graph state 时计入 applicable subset。该对照回答的不是“多开一个 pass
+是否更快”，而是 J 的 typed producer--consumer graph 与 B hard boundary 能否合法删除一次或多次
+全张量物化、内存往返和 dispatch。它应当作为结构创新的首要机制结果；L0/L1 的 scalar capture、
+load motion 等局部收益只作次级证据。G0/G1 是 E3 同一候选回执上的派生对照，不是新的搜索 arm，
+因此不修改 v2 machine spec 或其 digest，也不为它另造 candidate universe。
+
 这些实验臂不是文档中的自由文本约定。实现必须从
-`spec/lowering/backend-search-ablation-v1.json` 读取 E0--E4、L0/L1、N0--N3 的开关与预算类别，
-校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v1 spec digest 为
-`60ca646b34c29ce3542d3c4e6a9e08c39155bc9e2a27324844ab8fad80f050a7`。runner 不得在代码中重新定义
+`spec/lowering/backend-search-ablation-v2.json` 读取 E0--E4、L0/L1、N0--N3 的开关、预算类别、
+concrete-state identity 与计时合同，
+校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v2 spec digest 为
+`bc661eb71a81b1a97bb96a01643ae354dfb8fab03984eeb336b5de20775fd9c9`。runner 不得在代码中重新定义
 同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
 C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
+
+v2 中一个预算单位是一个不同的 canonical post-pass MLIR state；相同 MLIR digest 的重复编译仍留在
+audit log，但不消耗预算。无法形成 state 的不同 exact candidate compile failure 消耗一个预算单位。
+finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh round-robin remeasurement；最终 Source
+对比使用等数量、顺序交替的 Source/target paired batches，丢弃一个 untimed warmup pair。计时只覆盖
+prepared launch/graph，allocation 与 correctness synchronization 位于 timed closure 之外。
 
 报告指标至少包括：
 
@@ -995,10 +1017,10 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 
 ### 20.1 当前闭合与 production intake 基线（2026-07-26）
 
-当前严格 SCRC 独立覆盖是 **16/28**，J-search 分支已将 16 项全部 content-addressed 冻结到
+当前严格 SCRC 独立覆盖是 **18/28**，J-search 分支已将 18 项全部 content-addressed 冻结到
 `corpus/production-jc-v1` 并实际消费：DYT、Flash backward preprocess、Liger fused-add RMSNorm、
 GeGLU、JSD、Liger LayerNorm、Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TVD、xFormers RMSNorm，
-以及下列新增四项：
+以及下列新增六项：
 
 | 已导入 case | frozen snapshot digest | 当前真实后端 consumer |
 |---|---|---|
@@ -1006,8 +1028,10 @@ GeGLU、JSD、Liger LayerNorm、Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TV
 | Liger Sparsemax | `ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda` | access-local guard、scan + 双 reduction、logical select/and、generic scan baseline |
 | Liger KLDiv | `b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a` | loop scan/carry full-axis step、log/reduction、CUDA/RVV state search |
 | FlashAttention `_layer_norm_fwd_1pass_kernel` | `76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480` | runtime value-if、双 reduction、unused ABI preservation、多输出 half epilogue |
+| SCRC canary `masked_copy` | `10d67ee0b4f061e1ce28b3e6b1ebfc371be2825692671c927e80b8e743e4ad49` | direct input/output binding 确定性物化为 `intent.map_unary identity`；generic C++ MLIR 单 cubin；exact Q/D closure |
+| SCRC canary `masked_row_square_sum` | `31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892` | `map_binary mul -> reduce sum`；row-reduction topology search；tolerance Q/D closure |
 
-当前 16 项都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
+当前 18 项都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
 elementwise multiply + row sum。因此这批的首要数值搜索轴是 reduction tree、FP32 FMA、fusion 与
 materialization，不是 TF32。TF32 只在未来闭合的 `tl.dot`/matmul/完整 Attention contraction 上按
 target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
@@ -1015,24 +1039,43 @@ target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
 因此：
 
 ```text
-SCRC-closed corpus       = 16
-frozen production catalog = 16
+SCRC-closed corpus         = 18
+frozen production catalog = 18
 verified intake queue      = 0
 ```
 
-不得把历史 12-kernel 性能数字重标为 16-kernel 结果。导入过程只复制 exact accepted artifact、C、
-closure receipt 并交叉核验 digest，没有重新 Lift、修 J 或按 case name 选择 emitter。后续新 closure
+不得把历史 12/16-kernel 性能数字重标为 18-kernel 结果。导入过程只复制 exact accepted artifact、C、
+Source、Replay 与 closure receipt 并交叉核验 digest，没有重新 Lift、修 J 或按 case name 选择 emitter。后续新 closure
 继续使用同一 append-only intake 工具；同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径不能成为
 长期 truth。
 
-当前实现基线为：16/16 可从冻结 J deterministic materialize；16/16 可经通用
-Intent→Linalg→CUDA cubin；16/16 至少有一个注册 C++ whole-graph path 生成单 cubin。CUDA 的 KLDiv 与
-Flash one-pass LayerNorm 已用真实 opaque Replay 跑通 `D_search` target–RefJ 以及 held-out `D_cert`
-target–Source/Replay/RefJ。RVV 在新增 KLDiv 上的 materialized schedule-only best 为 14.1428 μs，加入
-whole-graph fused concrete state 后为 9.1056 μs（1.553x）；这是同 J/target 的结构 state 增量，不是
-Source speedup。Flash one-pass LayerNorm 的 CUDA E2/E3 当前分别为 1.3782/1.3734 μs，约 1.004x
-E3/E2；该量级没有显著性证据，FMA state 不能宣称带来稳定增益，
-必须保留这个负结果。
+当前实现基线为：18/18 可从冻结 J deterministic materialize；18/18 可经通用
+Intent→Linalg→CUDA cubin；17/18 至少有一个注册 C++ whole-graph path，`masked_copy` 由 generic
+C++ MLIR path 生成单 cubin。RTX 5090D 的 v2 equal-budget=32 正式 E2/E3 已覆盖全 18 项：两臂
+各 18/18 完成 opaque Replay、互斥 `D_search/D_cert` 与 held-out Target–Source/Replay/RefJ 三条直接
+闭合；E3/E2 几何平均为 **1.1302x**，E3/Source 为 **1.0928x**，17/18 达到或超过 Source，
+15/18 的 E3/E2 超过 1%。这组结果替代此前不得重标的 closed-12/16 aggregate。
+
+第一性原理的结构结果来自同一正式回执内的 G0/G1：6 个同时产生 materialized multi-kernel 与
+whole-graph MLIR state 的 J，消除中间物化与 dispatch 的几何平均增益为 **17.1258x**，其中
+GeGLU 10.7662x、LayerNorm 19.8063x、masked row square-sum 39.7813x、PolyNorm 45.0139x、
+Softmax 15.4004x、SwiGLU 4.2902x。它证明 J 的 typed graph 与 B hard boundary 能打开编译图级
+搜索空间；不能把该结果归因于 kernel 名、Python emitter 或局部 peephole。
+
+数值阶梯进一步给出因果分解：N0→N1 的 reduction-tree state 在全 18 项上为 **1.0409x**、12 个
+适用 J 上为 **1.0622x**；N1→N2 的 FMA 只有 **1.0003x**（适用子集 1.0019x），必须作为负结果；
+N2→N3 的 precision/approximation state 在全体为 **1.0676x**、2 个适用 J 上为 **1.1271x**。
+该 ladder 自身只有 `D_search`，正式 winner closure 由上述 E3 报告承担。budget=8 的 role-aware C
+ordering 相对 Erase-C 提高低预算 best latency **1.0195x**；C 不改变候选空间。正式 L0/L1 则在
+10 个真实 post-pass MLIR 观察到 local-B transformation 的 J 上为 **1.0295x**，全 18 项为
+**1.0162x**；这只是次级局部收益。
+
+跨 target 结果使用同一 18-J catalog：H100 E3/E2 为 **1.1196x**，E3/Source 为 **1.0539x**，
+18/18 通过 Source–RefJ 与 Target–RefJ，但缺 Replay 与 held-out 三边，因此不写成 formal backend
+closure；RVV4 的真实 MLIR materialized/fused 搜索 18/18 Target–RefJ correct，E3/E2 为
+**1.1817x**、15/18 winner 使用 B-admitted transformation，同样因缺 Source/Replay `D_cert` 只作为
+同 J/target 的内部因果证据。完整压缩报告与 SHA-256 固化在
+`doc/results/production-backend-closed-18/`。
 
 ### 阶段 B0：IntentOp/ABC ownership 对齐
 
@@ -1047,7 +1090,7 @@ E3/E2；该量级没有显著性证据，FMA state 不能宣称带来稳定增�
 ### 阶段 B1：后端合同入口
 
 **当前状态：已实现。** `materialize_j`、`ContractView`、`Attach_C/Erase_C`、统一
-`SearchAndCloseController`、content-addressed 16-kernel catalog 与 fail-closed rejection 已进入
+`SearchAndCloseController`、content-addressed 18-kernel catalog 与 fail-closed rejection 已进入
 J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 generic/conservative path，不被静默
 升级。
 
@@ -1063,10 +1106,17 @@ J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 ge
 
 ### 阶段 B2：第一批 lowering-path expansion
 
-**当前状态：第一批已实现并开始做真实消融。** CUDA row/elementwise/padded lowering 与 RVV
-materialized/whole-graph transformation state 均由真实 MLIR receipt 驱动；KLDiv 的 RVV E3/E2 为
-1.553x 内部增量，Flash LayerNorm 的 E3/E2 约 1.0x，负结果照录。下一步是扩大适用 Kernel 和统一
-report，而不是新增 family 抽象。
+**当前状态：第一批已实现并完成 18-J、三 target 的真实消融。** CUDA
+row/elementwise/padded/generic-Linalg lowering 与 RVV materialized/whole-graph states 均由真实
+post-pass MLIR receipt 驱动。主收益来自 materialization/dispatch elimination、reduction topology 和
+Q/D-admitted precision/approximation；FMA 的接近 1.0x 结果照录。下一步是把同一通用 transformation
+library 扩到 contraction/完整 Attention 等新 A 图，而不是新增 family 抽象或继续堆无关局部 pass。
+
+当前 CUDA 已登记并在 receipt 中区分：padded-row `serial_row/subgroup_feature`、row reduction
+`gpu_all_reduce/workgroup_hierarchical/subgroup_rows`（含 `rows_per_block`）、FP32 FMA count，以及 DYT
+`stable_tanh/native_tanh`。这些字段来自实际 C++ post-pass MLIR，不从 requested toggle 推断；2/4/8
+rows-per-block 进入 topology digest 和 actual-state evidence。candidate budget 按不同 MLIR digest 消耗，
+重复 state 只作为 search evidence 保留。
 
 - elementwise producer/reduction fusion；
 - 在 hard boundary 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；
@@ -1088,12 +1138,13 @@ report，而不是新增 family 抽象。
 
 ### 阶段 B4：实验与消融
 
-- E0--E4；
-- search cost/time-to-best；
-- transformation/path reuse；
-- C prior；
-- Q/D candidate feasibility、backend final closure 与性能结果分开报告；
-- 在 16-kernel all-corpus 和 transformation-applicable subset 上报告 N0--N3 数值机制消融。
+**当前状态：E2/E3、E3/E4、L0/L1、N0--N3 与 G0/G1 已按 v2 spec 在 18-J corpus 上执行并归档。**
+
+- E2/E3 正式 CUDA 主实验报告 search cost/time-to-best、all-corpus、applicable subset 与三边 closure；
+- G0/G1 从同一候选回执报告 materialization/dispatch elimination，不以 winner 名称反推适用性；
+- E3/E4 证明 C 的低预算 ordering 作用；L0/L1 隔离 local-B；N0--N3 隔离数值机制；
+- H100/RVV 严格标明缺失的 Replay/Source 边，不把 Target–RefJ correctness 冒充 formal closure；
+- 后续新 J 继续复用同一 machine spec、receipt schema 与 all-corpus/not-matched 口径。
 
 ## 21. 最终系统表述
 

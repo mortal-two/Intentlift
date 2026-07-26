@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import intentir.backend.cuda.compile as backend_compile
-from intentir.backend.cuda.pipeline import LoweredProgram, lower_to_cuda
+from intentir.backend.cuda.pipeline import (
+    LoweredProgram,
+    lower_to_cuda,
+    lower_to_cuda_fused,
+)
 from intentir.backend.cuda.schedules import (
     ELEMENTWISE_FAST_PATH_ID,
     PADDED_ROW_FAST_PATH_ID,
@@ -33,7 +37,7 @@ from intentir.backend.contract_capabilities import (
     B_CAP_READONLY_INPUTS,
     derive_search_capabilities,
 )
-from intentir.backend.materialize import BackendSearchState
+from intentir.backend.materialize import BackendSearchState, CPrior
 from intentir.backend.ablation import SearchAxes
 from intentir.backend.search_and_close import (
     BackendClosureError,
@@ -46,7 +50,7 @@ from intentir.backend.search_and_close import (
 from intentir.ir.production_snapshot import content_digest
 
 from .program import analyze_j_for_cuda
-from .selection import LoweringTarget, select_variant
+from .selection import DEFAULT_PASSES, LoweringTarget, select_variant
 
 
 SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v3"
@@ -58,6 +62,7 @@ B_TRANSFORM_EPILOGUE_LOAD_MOTION = (
 )
 B_TRANSFORM_RANK0_HOST_CAPTURE = "cuda.b.rank0_host_value_capture.v1"
 B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
+LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
 
 
 Benchmark = Callable[[LoweredProgram, "CudaSearchCandidate"], float]
@@ -67,8 +72,23 @@ class CudaContractError(ValueError):
     """Raised before candidate compilation when complete Layer B is unsupported."""
 
 
-def derive_default_lowering_path_kind(state: BackendSearchState) -> str:
-    """Resolve E1's first C++-admitted path without compiling a target binary."""
+def _lowering_path_kind_for_fast_path(fast_path_id: str) -> str:
+    """Map registered pass identities to stable, non-semantic path labels."""
+
+    mapping = {
+        ELEMENTWISE_FAST_PATH_ID: "elementwise",
+        PADDED_ROW_FAST_PATH_ID: "padded_row_reduction",
+        ROW_FAST_PATH_ID: "row_reduction",
+        "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_scan",
+    }
+    # Unknown registered paths keep their exact compiler identity.  This avoids
+    # inventing a semantic "family" or a kernel-name recipe merely to group
+    # structurally different C++ lowering paths.
+    return mapping.get(fast_path_id, fast_path_id)
+
+
+def derive_default_fast_path_id(state: BackendSearchState) -> str | None:
+    """Resolve E1's first C++-admitted pass identity from J and target only."""
 
     derive_cuda_contract_view(state)
     selection = select_variant(
@@ -79,21 +99,18 @@ def derive_default_lowering_path_kind(state: BackendSearchState) -> str:
             features=frozenset(state.target.features),
         ),
     )
-    mapping = {
-        ELEMENTWISE_FAST_PATH_ID: "elementwise",
-        PADDED_ROW_FAST_PATH_ID: "padded_row_reduction",
-        ROW_FAST_PATH_ID: "row_reduction",
-        "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_reduction",
-    }
-    if selection.fast_path_id is None:
-        return "generic"
-    path = mapping.get(selection.fast_path_id)
-    if path is None:
-        raise CudaContractError(
-            "default C++ path has no registered schedule search: "
-            + selection.fast_path_id
-        )
-    return path
+    return selection.fast_path_id
+
+
+def derive_default_lowering_path_kind(state: BackendSearchState) -> str:
+    """Resolve E1's admitted path label without compiling a target binary."""
+
+    fast_path_id = derive_default_fast_path_id(state)
+    return (
+        "generic"
+        if fast_path_id is None
+        else _lowering_path_kind_for_fast_path(fast_path_id)
+    )
 
 
 @dataclass(frozen=True)
@@ -224,10 +241,15 @@ class CudaSearchCandidate:
     requested_observation_class: ObservationClass = (
         ObservationClass.HARD_PRESERVING
     )
+    compiler_pipeline: str = "direct"
 
     @property
     def generic(self) -> bool:
-        return self.fast_path_id is None
+        return self.compiler_pipeline == "generic_materialized"
+
+    @property
+    def upstream_fused(self) -> bool:
+        return self.compiler_pipeline == "linalg_fused"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +267,7 @@ class CudaSearchCandidate:
             "requested_observation_class": (
                 self.requested_observation_class.value
             ),
+            "compiler_pipeline": self.compiler_pipeline,
         }
 
     def concrete_state(self, program: LoweredProgram) -> ConcreteLoweringState:
@@ -271,9 +294,7 @@ class CudaSearchCandidate:
             if receipt is not None and receipt.observation_changing
             else self.requested_observation_class
         )
-        mlir_digest = (
-            program.specialized_mlir_sha256 or program.source_mlir_sha256
-        )
+        mlir_digest = program.concrete_mlir_sha256
         state_id = "cuda.state." + content_digest(
             {
                 "mlir_digest": mlir_digest,
@@ -355,12 +376,20 @@ class CudaSearchResult:
     backend_closure_error: str | None = None
     ablation_axes: SearchAxes | None = None
     fixed_lowering_path_kind: str | None = None
+    fixed_fast_path_id: str | None = None
+    hard_admission: tuple[Mapping[str, Any], ...] = ()
+    candidate_universe_count: int = 0
+    candidate_budget: int = 0
+    budget_consumed: int = 0
 
     def to_record(self) -> dict[str, Any]:
         best_latency: float | None = None
         best_candidate: str | None = None
         curve: list[dict[str, Any]] = []
+        consumed_budget = 0
         for attempt_index, attempt in enumerate(self.attempts, start=1):
+            if attempt.status != "duplicate_state":
+                consumed_budget += 1
             improved = (
                 attempt.latency_us is not None
                 and (
@@ -373,7 +402,9 @@ class CudaSearchResult:
                 best_candidate = attempt.candidate.candidate_id
             curve.append(
                 {
-                    "attempt_budget": attempt_index,
+                    "candidate_attempt": attempt_index,
+                    "candidate_budget": consumed_budget,
+                    "attempt_budget": consumed_budget,
                     "candidate_id": attempt.candidate.candidate_id,
                     "status": attempt.status,
                     "latency_us": attempt.latency_us,
@@ -393,6 +424,89 @@ class CudaSearchResult:
                 None,
             )
 
+        admitted = tuple(
+            item
+            for item in self.attempts
+            if item.concrete_state is not None
+            and item.status in {"compiled", "measured", "benchmark_failed"}
+        )
+        actual_receipts = tuple(
+            receipt
+            for item in admitted
+            for receipt in (
+                (
+                    item.concrete_state.compiler_record.get(
+                        "transformation_receipt"
+                    )
+                    if item.concrete_state is not None
+                    else None
+                ),
+            )
+            if isinstance(receipt, Mapping)
+        )
+        reduction_topologies = sorted(
+            {
+                str(receipt["reduction_topology"])
+                for receipt in actual_receipts
+                if receipt.get("reduction_topology") not in {None, "none"}
+            }
+        )
+        rows_per_block_values = sorted(
+            {
+                int(receipt.get("rows_per_block", 1))
+                for receipt in actual_receipts
+            }
+        )
+        actual_fma_counts = [
+            int(receipt.get("fma_count", 0)) for receipt in actual_receipts
+        ]
+        approximation_modes = sorted(
+            {
+                str(receipt.get("approximation_mode"))
+                for receipt in actual_receipts
+                if receipt.get("approximation_mode") not in {None, "none"}
+            }
+        )
+        status_counts = {
+            status: sum(item.status == status for item in self.attempts)
+            for status in (
+                "compiled",
+                "measured",
+                "rejected",
+                "compile_failed",
+                "duplicate_state",
+                "qd_rejected",
+                "missing_qd",
+                "benchmark_failed",
+            )
+        }
+        admitted_pipeline_ids = sorted(
+            {
+                str(item.concrete_state.compiler_record.get("pipeline_id"))
+                for item in admitted
+                if item.concrete_state is not None
+                and item.concrete_state.compiler_record.get("pipeline_id")
+            }
+        )
+        materialized_kernel_counts = [
+            int(item.concrete_state.compiler_record.get("kernel_count", 0))
+            for item in admitted
+            if item.concrete_state is not None
+            and item.concrete_state.compiler_record.get("pipeline_id")
+            == "cuda.pipeline.linalg-materialized.v1"
+        ]
+        whole_graph_kernel_counts = [
+            int(item.concrete_state.compiler_record.get("kernel_count", 0))
+            for item in admitted
+            if item.concrete_state is not None
+            and item.concrete_state.compiler_record.get("pipeline_id")
+            != "cuda.pipeline.linalg-materialized.v1"
+        ]
+        fusion_pair_observed = (
+            any(count > 1 for count in materialized_kernel_counts)
+            and any(count == 1 for count in whole_graph_kernel_counts)
+        )
+
         return {
             "protocol": SEARCH_PROTOCOL,
             "materialization": self.state.base.to_record(),
@@ -401,6 +515,7 @@ class CudaSearchResult:
             "toolchain_digest": self.toolchain_digest,
             "benchmark_key": self.benchmark_key,
             "attempts": [item.to_dict() for item in self.attempts],
+            "hard_admission": [dict(item) for item in self.hard_admission],
             "winner": self.winner.to_dict() if self.winner is not None else None,
             "winner_latency_us": self.winner_latency_us,
             "winner_state": (
@@ -420,13 +535,14 @@ class CudaSearchResult:
                 else None
             ),
             "fixed_lowering_path_kind": self.fixed_lowering_path_kind,
+            "fixed_fast_path_id": self.fixed_fast_path_id,
             "registered_state_axes": {
                 "reduction_topology": True,
                 "fma_contraction": True,
                 "precision_mode": False,
-                "approximation_mode": False,
+                "approximation_mode": True,
                 "precision_reason": (
-                    "no typed contraction in the frozen 16-kernel catalog"
+                    "no typed contraction in the frozen 18-kernel catalog"
                 ),
             },
             "elapsed_ms": self.elapsed_ms,
@@ -434,7 +550,10 @@ class CudaSearchResult:
             "finalist_tournament": {
                 "count": self.finalist_count,
                 "remeasurements_per_candidate": self.finalist_remeasurements,
-                "aggregation": "median including initial measurement",
+                "aggregation": (
+                    "median of fresh round-robin measurements; initial ranking "
+                    "sample excluded"
+                ),
             },
             "b_search": {
                 "transformations_enabled": self.b_transformations_enabled,
@@ -446,8 +565,88 @@ class CudaSearchResult:
                     for item in self.attempts
                 ),
             },
+            "actual_state_evidence": {
+                "admitted_fast_path_ids": sorted(
+                    {
+                        item.candidate.fast_path_id
+                        for item in admitted
+                        if item.candidate.fast_path_id is not None
+                    }
+                ),
+                "admitted_lowering_path_kinds": sorted(
+                    {
+                        item.concrete_state.lowering_path_kind
+                        for item in admitted
+                        if item.concrete_state is not None
+                    }
+                ),
+                "admitted_pipeline_ids": admitted_pipeline_ids,
+                "materialized_kernel_counts": materialized_kernel_counts,
+                "whole_graph_kernel_counts": whole_graph_kernel_counts,
+                "concrete_post_pass_mlir_states": len(
+                    {
+                        item.concrete_state.mlir_digest
+                        for item in admitted
+                        if item.concrete_state is not None
+                        and item.concrete_state.mlir_digest is not None
+                    }
+                ),
+                "concrete_topology_states": len(
+                    {
+                        item.concrete_state.topology_digest
+                        for item in admitted
+                        if item.concrete_state is not None
+                        and item.concrete_state.topology_digest is not None
+                    }
+                ),
+                "reduction_topologies": reduction_topologies,
+                "rows_per_block_values": rows_per_block_values,
+                "actual_fma_counts": actual_fma_counts,
+                "approximation_modes": approximation_modes,
+                "structural_path_expansion_observed": (
+                    len(admitted_pipeline_ids) > 1
+                    or len(
+                        {
+                            item.candidate.fast_path_id
+                            for item in admitted
+                            if item.candidate.fast_path_id is not None
+                        }
+                    )
+                    > 1
+                ),
+                "reduction_topology_expansion_observed": (
+                    len(reduction_topologies) > 1
+                ),
+                "fma_contraction_observed": any(
+                    count > 0 for count in actual_fma_counts
+                ),
+                "fusion_materialization_pair_observed": (
+                    fusion_pair_observed
+                ),
+                "precision_or_approximation_observed": (
+                    len(approximation_modes) > 1
+                    or "native_tanh" in approximation_modes
+                ),
+                "evidence_rule": (
+                    "count only compiler-admitted, compiled post-pass MLIR; "
+                    "requested toggles and duplicate MLIR do not count"
+                ),
+            },
             "budget_curve": curve,
             "counts": {
+                "candidate_universe": self.candidate_universe_count,
+                "candidate_budget": self.candidate_budget,
+                "budget_consumed": self.budget_consumed,
+                "duplicate_compiles_outside_budget": status_counts[
+                    "duplicate_state"
+                ],
+                "hard_paths_probed": len(self.hard_admission),
+                "hard_paths_admitted": sum(
+                    item.get("admitted") is True for item in self.hard_admission
+                ),
+                "hard_paths_rejected": sum(
+                    item.get("admitted") is False for item in self.hard_admission
+                ),
                 "planned": len(self.attempts),
                 "admitted": sum(
                     item.status in {"compiled", "measured"}
@@ -462,6 +661,11 @@ class CudaSearchResult:
                 "compile_failed": sum(
                     item.status == "compile_failed" for item in self.attempts
                 ),
+                "duplicate_state": status_counts["duplicate_state"],
+                "qd_rejected": status_counts["qd_rejected"],
+                "missing_qd": status_counts["missing_qd"],
+                "benchmark_failed": status_counts["benchmark_failed"],
+                "status_counts": status_counts,
                 "first_admitted_attempt": first_attempt(
                     lambda item: item.status in {"compiled", "measured"}
                 ),
@@ -513,6 +717,7 @@ class PerformanceCache:
                     "fast_path_id": candidate.fast_path_id,
                     "pass_argument": candidate.pass_argument,
                     "schedule": dict(candidate.schedule),
+                    "compiler_pipeline": candidate.compiler_pipeline,
                 },
                 "toolchain_digest": toolchain_digest,
                 "benchmark_key": benchmark_key,
@@ -568,11 +773,74 @@ def _candidate_id(
     return f"{lowering_path_kind}.{suffix}"
 
 
-def _numeric_priors(state: BackendSearchState) -> tuple[float, ...]:
+def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
+    """Return E1's deterministic J/target-selected compiler state.
+
+    This performs the same registered C++ structural probes as production
+    lowering.  It does not enumerate schedules and does not read Source,
+    Replay, Q/D, benchmark identity, or measurements.
+    """
+
+    derive_cuda_contract_view(state)
+    selection = select_variant(
+        state.base_ir,
+        target=LoweringTarget(
+            backend="cuda",
+            chip=state.target.architecture,
+            features=frozenset(state.target.features),
+        ),
+    )
+    if selection.fast_path_id is None:
+        return CudaSearchCandidate(
+            _candidate_id("generic", None, None),
+            "generic",
+            None,
+            None,
+            {},
+            0.0,
+            requested_trace=("cuda.generic.intent_to_linalg.v1",),
+            compiler_pipeline="generic_materialized",
+        )
+    assert selection.pass_argument is not None
+    path_kind = _lowering_path_kind_for_fast_path(selection.fast_path_id)
+    return CudaSearchCandidate(
+        _candidate_id(
+            path_kind,
+            selection.fast_path_id,
+            selection.pass_argument,
+        ),
+        path_kind,
+        selection.fast_path_id,
+        selection.pass_argument,
+        {},
+        0.0,
+        requested_trace=(selection.fast_path_id,),
+        requested_observation_class=ObservationClass.OBSERVATION_CHANGING,
+    )
+
+
+_CUDA_ORDERING_PRIOR_ROLES = frozenset(
+    {
+        "tile_extent",
+        "reduction_tile_extent",
+        "execution_warps",
+        "constexpr",
+    }
+)
+
+
+def _numeric_priors(state: BackendSearchState) -> tuple[CPrior, ...]:
+    """Return only positive scalar C hints that can rank existing schedules.
+
+    The complete authored record is retained so scoring can respect the role of
+    each value.  C remains an ordering hint: this function neither constructs a
+    candidate nor participates in hard admission.
+    """
+
     return tuple(
-        float(item.value)
+        item
         for item in state.priors
-        if item.role in {"tile_extent", "reduction_tile_extent"}
+        if item.role in _CUDA_ORDERING_PRIOR_ROLES
         and isinstance(item.value, (int, float))
         and not isinstance(item.value, bool)
         and item.value > 0
@@ -581,24 +849,48 @@ def _numeric_priors(state: BackendSearchState) -> tuple[float, ...]:
 
 def _c_score(
     schedule: Mapping[str, int | bool | str],
-    priors: tuple[float, ...],
+    priors: tuple[CPrior, ...],
 ) -> float:
     if not priors:
         return 0.0
-    values = [
-        float(schedule[name])
-        for name in ("block_threads", "tile_cols", "tile_rows")
-        if isinstance(schedule.get(name), int)
-        and not isinstance(schedule.get(name), bool)
-        and int(schedule[name]) > 0
-    ]
-    if not values:
+
+    def positive_values(names: tuple[str, ...]) -> tuple[float, ...]:
+        return tuple(
+            float(schedule[name])
+            for name in names
+            if isinstance(schedule.get(name), (int, float))
+            and not isinstance(schedule.get(name), bool)
+            and float(schedule[name]) > 0
+        )
+
+    distances: list[float] = []
+    for prior in priors:
+        if prior.role == "execution_warps":
+            values = positive_values(("num_warps",))
+            if not values:
+                threads = positive_values(("block_threads",))
+                values = tuple(value / 32.0 for value in threads)
+        elif prior.role == "reduction_tile_extent":
+            values = positive_values(
+                ("tile_cols", "tile_rows", "tile_width", "block_threads")
+            )
+        else:
+            # tile_extent and constexpr are both concrete launch/tile hints in
+            # accepted C.  They rank only dimensions already present in the
+            # candidate; they never create a new dimension or exact state.
+            values = positive_values(
+                ("tile_cols", "tile_rows", "tile_width", "block_threads")
+            )
+        if not values:
+            continue
+        value = float(prior.value)
+        distances.append(min(abs(math.log2(candidate / value)) for candidate in values))
+    if not distances:
         return float("inf")
-    return min(
-        abs(math.log2(value / prior))
-        for value in values
-        for prior in priors
-    )
+    # Every authored C relation contributes.  The former Cartesian minimum
+    # discarded all but the easiest-to-match value and produced large zero-score
+    # ties, especially when tile and reduction hints coexisted.
+    return statistics.fmean(distances)
 
 
 def enumerate_cuda_candidates(
@@ -607,6 +899,7 @@ def enumerate_cuda_candidates(
     enable_b_transformations: bool = True,
     axes: SearchAxes | None = None,
     fixed_lowering_path_kind: str | None = None,
+    fixed_fast_path_id: str | None = None,
 ) -> tuple[CudaSearchCandidate, ...]:
     """Enumerate concrete pass states only after complete B admission."""
 
@@ -614,10 +907,18 @@ def enumerate_cuda_candidates(
         raise TypeError("CUDA candidate enumeration requires BackendSearchState")
     if axes is not None:
         enable_b_transformations = axes.enable_local_b_transformations
-        if not axes.search_structural_states and fixed_lowering_path_kind is None:
-            raise ValueError(
-                "fixed-structure schedule search requires lowering_path_kind"
-            )
+    if (
+        axes is not None
+        and not axes.search_structural_states
+        and fixed_lowering_path_kind is None
+        and fixed_fast_path_id is None
+    ):
+        raise ValueError(
+            "fixed-structure schedule search requires a concrete path identity"
+        )
+    # A fixed concrete path is the complete E2 search space.  The return logic
+    # below excludes the generic materialized pipeline, which would silently
+    # turn schedule-only search back into a multi-path experiment.
     contract_view = derive_cuda_contract_view(state)
     capabilities = set(contract_view.capabilities)
     runtime_names = set(state.base.runtime_input_names)
@@ -643,15 +944,25 @@ def enumerate_cuda_candidates(
 
     elementwise_schedule_bases = [
         *(ElementwiseSchedule(threads, False, 1)
-          for threads in (32, 64, 128, 256, 512)),
+          for threads in (32, 64, 128, 256, 512, 1024)),
         *(ElementwiseSchedule(threads, True, width)
           for threads in (64, 128, 256)
           for width in (2, 4)),
     ]
+    approximation_modes = (
+        ("stable-ex2", "native-ptx")
+        if axes is None or axes.search_approximation
+        else ("stable-ex2",)
+    )
     elementwise_schedules = [
-        replace(base, promote_uniform_scalars=promote)
+        replace(
+            base,
+            promote_uniform_scalars=promote,
+            tanh_approximation=approximation,
+        )
         for base in elementwise_schedule_bases
         for promote in ((False, True) if has_uniform_input else (False,))
+        for approximation in approximation_modes
     ]
     for schedule in elementwise_schedules:
         values = schedule.to_dict()
@@ -680,7 +991,17 @@ def enumerate_cuda_candidates(
                 tuple(requirements),
                 (
                     "cuda.elementwise.row.vectorized.v1",
+                    *(
+                        ("cuda.numeric.tanh_native_ptx.f32.request.v1",)
+                        if schedule.tanh_approximation == "native-ptx"
+                        else ()
+                    ),
                     *transformations,
+                ),
+                (
+                    ObservationClass.OBSERVATION_CHANGING
+                    if schedule.tanh_approximation == "native-ptx"
+                    else ObservationClass.HARD_PRESERVING
                 ),
             )
         )
@@ -695,6 +1016,11 @@ def enumerate_cuda_candidates(
         *(RowSchedule(threads, 32, vector_width=4, fuse_fma=False)
           for threads in (32, 64, 128)),
     ]
+    if axes is None or axes.search_reduction_topology:
+        row_schedule_bases.extend(
+            RowSchedule(32, 32, rows_per_block=rows)
+            for rows in (2, 4, 8)
+        )
     if axes is not None and not axes.search_reduction_topology:
         # E2/N0 freezes the concrete collective topology to the canonical
         # multi-warp hierarchy while still tuning its schedule parameters.
@@ -703,18 +1029,25 @@ def enumerate_cuda_candidates(
         ]
     fma_modes = (
         (False, True)
-        if axes is not None and axes.search_fma
+        if axes is None or axes.search_fma
+        else (False,)
+    )
+    approximate_div_modes = (
+        (False, True)
+        if axes is None or axes.search_precision
         else (False,)
     )
     row_schedules = [
         replace(
             schedule,
             fuse_fma=fuse_fma,
+            approximate_div=approximate_div,
             promote_rank0_scalars=promote,
             defer_epilogue_col_loads=defer,
         )
         for schedule in row_schedule_bases
         for fuse_fma in fma_modes
+        for approximate_div in approximate_div_modes
         for promote in (True, False)
         for defer in (True, False)
     ]
@@ -747,7 +1080,9 @@ def enumerate_cuda_candidates(
                 (
                     "cuda.row_reduction.read_once.v1",
                     (
-                        "cuda.reduction.subgroup_shuffle.v1"
+                        "cuda.reduction.subgroup_rows.v1"
+                        if schedule.rows_per_block > 1
+                        else "cuda.reduction.subgroup_shuffle.v1"
                         if schedule.block_threads == 32
                         else "cuda.reduction.workgroup_hierarchical.v1"
                     ),
@@ -756,20 +1091,38 @@ def enumerate_cuda_candidates(
                         if schedule.fuse_fma
                         else ()
                     ),
+                    *(
+                        ("cuda.numeric.div_reciprocal_approx.f32.request.v1",)
+                        if schedule.approximate_div
+                        else ()
+                    ),
                     *transformations,
                 ),
                 ObservationClass.OBSERVATION_CHANGING,
             )
         )
 
-    padded_schedule_bases = (
+    padded_schedule_bases = [
         PaddedRowSchedule(32, False),
         PaddedRowSchedule(64, False),
         PaddedRowSchedule(128, False),
         PaddedRowSchedule(32, True),
         PaddedRowSchedule(64, True),
         PaddedRowSchedule(128, True),
-    )
+    ]
+    # The subgroup-feature mapping is a real C++ lowering state: one subgroup
+    # owns a padded output row and lanes load contiguous feature elements.  It
+    # is only admitted in topology-search arms; E2/N0 remains the fixed
+    # serial-row state.  The C++ probe rejects non-power-of-two feature widths.
+    if axes is None or axes.search_reduction_topology:
+        padded_schedule_bases.extend(
+            PaddedRowSchedule(64, False, True, "subgroup-feature")
+            for _ in (0,)
+        )
+        padded_schedule_bases.extend(
+            PaddedRowSchedule(128, False, True, "subgroup-feature")
+            for _ in (0,)
+        )
     for schedule in (
         replace(base, promote_rank0_scalars=promote)
         for base in padded_schedule_bases
@@ -801,33 +1154,173 @@ def enumerate_cuda_candidates(
                 tuple(requirements),
                 (
                     "cuda.padded_row_reduction.masked_short_dot.v1",
+                    (
+                        "cuda.reduction.padded_subgroup_feature.v1"
+                        if schedule.reduction_topology == "subgroup-feature"
+                        else "cuda.reduction.padded_serial_row.v1"
+                    ),
                     *transformations,
                 ),
                 ObservationClass.OBSERVATION_CHANGING,
             )
         )
 
-    if fixed_lowering_path_kind is not None:
+    output_rank = max(
+        (len(item.shape) for item in state.base.j.intent.outputs),
+        default=1,
+    )
+    for width in (64, 128, 256):
+        tile = (width,) if output_rank <= 1 else (1, width)
+        tile_text = "x".join(str(item) for item in tile)
+        specialized.append(
+            CudaSearchCandidate(
+                _candidate_id(
+                    "linalg_fused",
+                    LINALG_FUSED_FAST_PATH_ID,
+                    f"linalg-fuse-elementwise-ops;tile={tile_text}",
+                ),
+                "linalg_fused",
+                LINALG_FUSED_FAST_PATH_ID,
+                f"linalg-fuse-elementwise-ops;tile={tile_text}",
+                {
+                    "tile_shape": tile_text,
+                    "tile_width": width,
+                },
+                _c_score({"tile_cols": width}, priors),
+                requested_trace=(
+                    "cuda.linalg.elementwise_fusion.v1",
+                    "cuda.linalg.parallel_loop_tiling.v1",
+                ),
+                compiler_pipeline="linalg_fused",
+            )
+        )
+
+    # Every target-compatible C++ whole-graph pass is a real structural search
+    # path.  The three high-volume paths above own schedule grids; all other
+    # registered passes enter with their compiler default exactly once.  The
+    # structural probe still decides admission for the current J, so this is
+    # neither a kernel allowlist nor a Python-emitted implementation.
+    scheduled_ids = {
+        ELEMENTWISE_FAST_PATH_ID,
+        PADDED_ROW_FAST_PATH_ID,
+        ROW_FAST_PATH_ID,
+    }
+    for descriptor in DEFAULT_PASSES:
+        if descriptor.fast_path_id in scheduled_ids:
+            continue
+        if state.target.architecture not in descriptor.supported_chips:
+            continue
+        path_kind = _lowering_path_kind_for_fast_path(
+            descriptor.fast_path_id
+        )
+        specialized.append(
+            CudaSearchCandidate(
+                _candidate_id(
+                    path_kind,
+                    descriptor.fast_path_id,
+                    descriptor.pass_argument,
+                ),
+                path_kind,
+                descriptor.fast_path_id,
+                descriptor.pass_argument,
+                {},
+                0.0,
+                requested_trace=(descriptor.fast_path_id,),
+                requested_observation_class=(
+                    ObservationClass.OBSERVATION_CHANGING
+                ),
+            )
+        )
+
+    if fixed_fast_path_id is not None:
+        specialized = [
+            item
+            for item in specialized
+            if item.fast_path_id == fixed_fast_path_id
+        ]
+    elif fixed_lowering_path_kind is not None:
         specialized = [
             item
             for item in specialized
             if item.lowering_path_kind == fixed_lowering_path_kind
         ]
+    if fixed_fast_path_id is not None and not specialized:
+        raise CudaContractError(
+            f"fixed CUDA path {fixed_fast_path_id!r} is not registered for the target"
+        )
+    if (
+        fixed_lowering_path_kind not in {None, "generic"}
+        and not specialized
+    ):
+        raise CudaContractError(
+            "fixed CUDA lowering path kind "
+            f"{fixed_lowering_path_kind!r} has no registered concrete state"
+        )
 
     # A C tile/thread prior has no authority to rank one lowering path above
     # another. Keep path discovery fair under finite budget and use C only to
     # order schedules inside each registered path kind.
+    def search_lane(item: CudaSearchCandidate) -> str:
+        local = "local" if item.b_transformations else "base"
+        if item.lowering_path_kind == "row_reduction":
+            topology = (
+                "subgroup_rows"
+                if int(item.schedule.get("rows_per_block", 1)) > 1
+                else "subgroup"
+                if int(item.schedule.get("block_threads", 64)) == 32
+                else "workgroup"
+            )
+            if item.schedule.get("approximate_div") is True:
+                numeric = "approximate_div"
+            elif item.schedule.get("fuse_fma") is True:
+                numeric = "fma"
+            else:
+                numeric = "plain"
+            return f"row_reduction.{topology}.{numeric}.{local}"
+        if item.lowering_path_kind == "elementwise":
+            approximation = str(
+                item.schedule.get("tanh_approximation", "stable-ex2")
+            )
+            return f"elementwise.{approximation}.{local}"
+        if item.lowering_path_kind == "padded_row_reduction":
+            topology = str(item.schedule.get("reduction_topology", "serial-row"))
+            return f"{item.lowering_path_kind}.{topology}.{local}"
+        return item.lowering_path_kind
+
+    known_lane_order = (
+        "elementwise.stable-ex2.base",
+        "row_reduction.workgroup.plain.base",
+        "padded_row_reduction.serial-row.base",
+        "padded_row_reduction.subgroup-feature.base",
+        "elementwise.native-ptx.base",
+        "row_reduction.subgroup_rows.plain.base",
+        "row_reduction.subgroup.plain.base",
+        "row_reduction.workgroup.fma.base",
+        "row_reduction.subgroup.fma.base",
+        "row_reduction.workgroup.approximate_div.base",
+        "row_reduction.subgroup_rows.approximate_div.base",
+        "row_reduction.subgroup.approximate_div.base",
+        "elementwise.stable-ex2.local",
+        "elementwise.native-ptx.local",
+        "row_reduction.workgroup.plain.local",
+        "row_reduction.subgroup_rows.plain.local",
+        "row_reduction.subgroup.plain.local",
+        "row_reduction.workgroup.fma.local",
+        "row_reduction.subgroup.fma.local",
+        "row_reduction.workgroup.approximate_div.local",
+        "row_reduction.subgroup_rows.approximate_div.local",
+        "row_reduction.subgroup.approximate_div.local",
+        "padded_row_reduction.serial-row.local",
+        "padded_row_reduction.subgroup-feature.local",
+    )
+    lanes = {search_lane(item) for item in specialized}
     path_order = (
-        "elementwise",
-        "row_reduction",
-        "padded_row_reduction",
+        *(lane for lane in known_lane_order if lane in lanes),
+        *sorted(lanes - set(known_lane_order)),
     )
     by_path = {
-        path: [
-            item for item in specialized
-            if item.lowering_path_kind == path
-        ]
-        for path in path_order
+        lane: [item for item in specialized if search_lane(item) == lane]
+        for lane in path_order
     }
     for candidates in by_path.values():
         candidates.sort(key=lambda item: item.c_order_score)
@@ -847,8 +1340,143 @@ def enumerate_cuda_candidates(
         {},
         0.0,
         requested_trace=("cuda.generic.intent_to_linalg.v1",),
+        compiler_pipeline="generic_materialized",
     )
+    if fixed_fast_path_id is not None:
+        return tuple(specialized)
+    if fixed_lowering_path_kind is not None:
+        if fixed_lowering_path_kind == "generic":
+            return (generic,)
+        return tuple(specialized)
     return (generic, *specialized)
+
+
+def admit_cuda_candidate_paths(
+    state: BackendSearchState,
+    candidates: tuple[CudaSearchCandidate, ...],
+) -> tuple[tuple[CudaSearchCandidate, ...], tuple[Mapping[str, Any], ...]]:
+    """Run source-blind structural probes before spending tuning budget."""
+
+    grouped: dict[str, list[CudaSearchCandidate]] = {}
+    generic_candidates: list[CudaSearchCandidate] = []
+    for candidate in candidates:
+        if candidate.generic:
+            generic_candidates.append(candidate)
+            continue
+        assert candidate.fast_path_id is not None
+        grouped.setdefault(candidate.fast_path_id, []).append(candidate)
+
+    target = LoweringTarget(
+        backend="cuda",
+        chip=state.target.architecture,
+        features=frozenset(state.target.features),
+    )
+    admitted_ids: set[str] = set()
+    records: list[Mapping[str, Any]] = []
+    if generic_candidates:
+        records.append(
+            {
+                "path_id": "cuda.pipeline.linalg-materialized.v1",
+                "candidate_count": len(generic_candidates),
+                "status": "admitted_by_registered_generic_pipeline",
+                "admitted": True,
+                "probe": None,
+            }
+        )
+    for fast_path_id, path_candidates in grouped.items():
+        if fast_path_id == LINALG_FUSED_FAST_PATH_ID:
+            admitted_ids.add(fast_path_id)
+            records.append(
+                {
+                    "path_id": fast_path_id,
+                    "candidate_count": len(path_candidates),
+                    "status": "deferred_to_exact_upstream_mlir_pipeline",
+                    "admitted": True,
+                    "probe": None,
+                }
+            )
+            continue
+        try:
+            selection = select_variant(
+                state.base_ir,
+                target=target,
+                only_fast_path=fast_path_id,
+            )
+        except Exception as error:
+            records.append(
+                {
+                    "path_id": fast_path_id,
+                    "candidate_count": len(path_candidates),
+                    "status": "probe_failed",
+                    "admitted": False,
+                    "reason": f"{type(error).__name__}: {error}",
+                    "probe": None,
+                }
+            )
+            continue
+        admitted = (
+            selection.pipeline_kind == "specialized"
+            and selection.fast_path_id == fast_path_id
+        )
+        if admitted:
+            admitted_ids.add(fast_path_id)
+        records.append(
+            {
+                "path_id": fast_path_id,
+                "candidate_count": len(path_candidates),
+                "status": "admitted" if admitted else "not_matched",
+                "admitted": admitted,
+                "probe": selection.to_dict(),
+            }
+        )
+
+    admitted_candidates = tuple(
+        candidate
+        for candidate in candidates
+        if candidate.generic or candidate.fast_path_id in admitted_ids
+    )
+    return admitted_candidates, tuple(records)
+
+
+def compile_cuda_candidate(
+    state: BackendSearchState,
+    candidate: CudaSearchCandidate,
+) -> LoweredProgram:
+    """Compile one path-admitted request through its registered MLIR pipeline.
+
+    Search, portable export, and any future offline compiler must share this
+    dispatcher.  Keeping the generic, upstream-fused, and direct C++ paths in
+    one place prevents a transport tool from silently treating a requested
+    path as an unknown direct pass or from counting a different compiler state.
+    """
+
+    if not isinstance(state, BackendSearchState):
+        raise TypeError("CUDA candidate compilation requires BackendSearchState")
+    if not isinstance(candidate, CudaSearchCandidate):
+        raise TypeError("CUDA candidate compilation requires CudaSearchCandidate")
+    if candidate.generic:
+        return lower_to_cuda(
+            state.base_ir,
+            allow_specialized=False,
+        )
+    if candidate.upstream_fused:
+        tile = tuple(
+            int(item)
+            for item in str(candidate.schedule["tile_shape"]).split("x")
+        )
+        return lower_to_cuda_fused(
+            state.base_ir,
+            tile=tile,
+            require_single_kernel=True,
+        )
+    assert candidate.fast_path_id is not None
+    assert candidate.pass_argument is not None
+    return lower_to_cuda(
+        state.base_ir,
+        only_fast_path=candidate.fast_path_id,
+        pass_overrides={candidate.fast_path_id: candidate.pass_argument},
+        require_specialized=True,
+    )
 
 
 def search_cuda(
@@ -864,6 +1492,7 @@ def search_cuda(
     enable_b_transformations: bool = True,
     axes: SearchAxes | None = None,
     fixed_lowering_path_kind: str | None = None,
+    fixed_fast_path_id: str | None = None,
     qd_controller: SearchAndCloseController | None = None,
     require_backend_closure: bool = False,
 ) -> CudaSearchResult:
@@ -891,16 +1520,56 @@ def search_cuda(
         axes is not None
         and not axes.search_structural_states
         and fixed_lowering_path_kind is None
+        and fixed_fast_path_id is None
     ):
-        fixed_lowering_path_kind = derive_default_lowering_path_kind(state)
+        default_fast_path_id = derive_default_fast_path_id(state)
+        default_lowering_path_kind = derive_default_lowering_path_kind(state)
+        default_probe = select_variant(
+            state.base_ir,
+            target=LoweringTarget(
+                backend="cuda",
+                chip=state.target.architecture,
+                features=frozenset(state.target.features),
+            ),
+            only_fast_path=default_fast_path_id,
+        )
+        if (
+            default_probe.pipeline_kind == "specialized"
+            and default_probe.fast_path_id == default_fast_path_id
+        ):
+            fixed_fast_path_id = default_fast_path_id
+            fixed_lowering_path_kind = default_lowering_path_kind
+            include_generic = False
+        else:
+            # A requested graph class is not a concrete path identity until its
+            # registered C++ matcher admits the current IR.  Keep E2 fixed on
+            # the canonical generic state instead of manufacturing a missing
+            # specialized trace or leaving the arm without an executable.
+            fixed_fast_path_id = None
+            fixed_lowering_path_kind = "generic"
+            include_generic = True
     planned = enumerate_cuda_candidates(
         state,
         enable_b_transformations=enable_b_transformations,
         axes=axes,
         fixed_lowering_path_kind=fixed_lowering_path_kind,
+        fixed_fast_path_id=fixed_fast_path_id,
     )
-    generic = planned[0]
-    candidates = [*(([generic] if include_generic else [])), *planned[1 : budget + 1]]
+    candidate_universe = tuple(
+        candidate
+        for candidate in planned
+        if include_generic or not candidate.generic
+    )
+    admitted_candidates, hard_admission = admit_cuda_candidate_paths(
+        state,
+        tuple(candidate_universe),
+    )
+    # Budget counts distinct executable compiler states (plus failed exact
+    # candidates), not repeated schedule spellings that C++ lowers to identical
+    # post-pass MLIR.  Duplicate detection necessarily happens after the cheap
+    # structural/compiler probe; such duplicates remain in the receipt but no
+    # longer starve later topology paths under a finite tuning budget.
+    candidates = list(admitted_candidates)
 
     attempts: list[SearchAttempt] = []
     winner: CudaSearchCandidate | None = None
@@ -911,27 +1580,16 @@ def search_cuda(
     cache_keys: dict[str, str] = {}
     concrete_states: dict[str, ConcreteLoweringState] = {}
     seen_mlir_states: dict[str, str] = {}
+    budget_consumed = 0
 
     for candidate in candidates:
+        if budget_consumed >= budget:
+            break
         compile_started = time.perf_counter_ns()
         try:
-            if candidate.generic:
-                program = lower_to_cuda(
-                    state.base_ir,
-                    allow_specialized=False,
-                )
-            else:
-                assert candidate.fast_path_id is not None
-                assert candidate.pass_argument is not None
-                program = lower_to_cuda(
-                    state.base_ir,
-                    only_fast_path=candidate.fast_path_id,
-                    pass_overrides={
-                        candidate.fast_path_id: candidate.pass_argument
-                    },
-                    require_specialized=True,
-                )
+            program = compile_cuda_candidate(state, candidate)
         except ValueError as error:
+            budget_consumed += 1
             attempts.append(
                 SearchAttempt(
                     candidate,
@@ -941,6 +1599,7 @@ def search_cuda(
             )
             continue
         except Exception as error:  # compiler diagnostics belong in the receipt
+            budget_consumed += 1
             attempts.append(
                 SearchAttempt(
                     candidate,
@@ -966,7 +1625,27 @@ def search_cuda(
             continue
         if concrete_state.mlir_digest is not None:
             seen_mlir_states[concrete_state.mlir_digest] = candidate.candidate_id
+        budget_consumed += 1
         concrete_states[candidate.candidate_id] = concrete_state
+
+        if (
+            benchmark is not None
+            and concrete_state.observation_class
+            is ObservationClass.OBSERVATION_CHANGING
+            and qd_controller is None
+        ):
+            attempts.append(
+                SearchAttempt(
+                    candidate,
+                    "missing_qd",
+                    "observation-changing state requires target-to-RefJ Q/D "
+                    "before performance measurement",
+                    compile_ms=compile_ms,
+                    lowering_record=program.to_record(),
+                    concrete_state=concrete_state,
+                )
+            )
+            continue
 
         qd_search: CandidateQDResult | None = None
         if qd_controller is not None:
@@ -992,7 +1671,7 @@ def search_cuda(
             "complete Layer-B audit, C++ whole-graph admission, and cubin "
             "compilation passed"
         )
-        if benchmark is not None and not candidate.generic:
+        if benchmark is not None:
             assert benchmark_key is not None
             key = performance_cache.key(
                 state=state,
@@ -1058,27 +1737,41 @@ def search_cuda(
             ),
             key=lambda item: item[1].latency_us,
         )[:finalist_count]
-        for index, attempt in ranked:
-            candidate = attempt.candidate
-            program = measured_programs[candidate.candidate_id]
-            samples = [float(attempt.latency_us)]
-            try:
-                for _ in range(finalist_remeasurements):
+        fresh_samples: dict[int, list[float]] = {
+            index: [] for index, _attempt in ranked
+        }
+        finalist_errors: dict[int, str] = {}
+        for round_index in range(finalist_remeasurements):
+            round_order = ranked if round_index % 2 == 0 else list(reversed(ranked))
+            for index, attempt in round_order:
+                if index in finalist_errors:
+                    continue
+                candidate = attempt.candidate
+                program = measured_programs[candidate.candidate_id]
+                try:
                     latency = float(benchmark(program, candidate))
                     if not math.isfinite(latency) or latency <= 0:
                         raise ValueError(
                             "finalist benchmark returned a non-positive latency"
                         )
-                    samples.append(latency)
-            except Exception as error:
+                    fresh_samples[index].append(latency)
+                except Exception as error:
+                    finalist_errors[index] = f"{type(error).__name__}: {error}"
+
+        for index, attempt in ranked:
+            candidate = attempt.candidate
+            if index in finalist_errors:
                 attempts[index] = replace(
                     attempt,
                     reason=(
                         attempt.reason
                         + "; finalist remeasurement failed: "
-                        + f"{type(error).__name__}: {error}"
+                        + finalist_errors[index]
                     ),
                 )
+                continue
+            samples = fresh_samples[index]
+            if not samples:
                 continue
             robust_latency = float(statistics.median(samples))
             attempts[index] = replace(
@@ -1086,7 +1779,8 @@ def search_cuda(
                 latency_us=robust_latency,
                 reason=(
                     "performance-only selection over admitted candidate; "
-                    f"finalist median of {len(samples)} measurements"
+                    f"finalist median of {len(samples)} fresh round-robin "
+                    "measurements"
                 ),
                 cache_hit=False,
             )
@@ -1129,6 +1823,11 @@ def search_cuda(
                 )
         except BackendClosureError as error:
             backend_closure_error = f"{type(error).__name__}: {error}"
+    if backend_closure is not None and not backend_closure.passed:
+        raise ValueError(
+            "fixed CUDA winner failed held-out D_cert; D_cert is not reused "
+            "to select a replacement candidate"
+        )
     if require_backend_closure and (
         backend_closure is None or not backend_closure.passed
     ):
@@ -1157,6 +1856,11 @@ def search_cuda(
         backend_closure_error=backend_closure_error,
         ablation_axes=axes,
         fixed_lowering_path_kind=fixed_lowering_path_kind,
+        fixed_fast_path_id=fixed_fast_path_id,
+        hard_admission=hard_admission,
+        candidate_universe_count=len(candidate_universe),
+        candidate_budget=budget,
+        budget_consumed=budget_consumed,
     )
 
 
@@ -1168,6 +1872,7 @@ __all__ = [
     "B_TRANSFORM_UNIFORM_HOST_CAPTURE",
     "CACHE_PROTOCOL",
     "CONTRACT_VIEW_VERSION",
+    "LINALG_FUSED_FAST_PATH_ID",
     "SEARCH_PROTOCOL",
     "CudaContractError",
     "CudaContractView",
@@ -1175,8 +1880,12 @@ __all__ = [
     "CudaSearchResult",
     "PerformanceCache",
     "SearchAttempt",
+    "admit_cuda_candidate_paths",
+    "canonical_cuda_candidate",
+    "compile_cuda_candidate",
     "enumerate_cuda_candidates",
     "derive_cuda_contract_view",
+    "derive_default_fast_path_id",
     "derive_default_lowering_path_kind",
     "search_cuda",
     "toolchain_fingerprint",

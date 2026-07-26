@@ -102,6 +102,24 @@ def test_backend_dependency_direction_is_target_explicit() -> None:
         assert "intentir.backend" not in source, module_path
 
 
+def test_production_backend_never_imports_legacy_python_kernel_emitter() -> None:
+    production_modules = (
+        _BACKEND_ROOT / "contract_capabilities.py",
+        *(_BACKEND_ROOT / "cuda").glob("*.py"),
+        *(_REPO_ROOT / "tools").glob("*production*backend*.py"),
+        _REPO_ROOT / "tools" / "benchmark_production_cuda.py",
+        _REPO_ROOT / "tools" / "export_cuda_benchmark_bundle.py",
+        _REPO_ROOT / "tools" / "run_cuda_benchmark_bundle.py",
+    )
+    legacy_emitter = (_BACKEND_ROOT / "cuda" / "flash.py").resolve()
+    for module_path in production_modules:
+        if module_path.resolve() == legacy_emitter:
+            continue
+        source = module_path.read_text(encoding="utf-8")
+        assert "intentir.backend.cuda.flash" not in source, module_path
+        assert "emit_fused_flash" not in source, module_path
+
+
 def test_cpp_pass_api_has_no_legacy_umbrella() -> None:
     legacy_headers = (
         "include/Intent/Conversion/Passes.h",

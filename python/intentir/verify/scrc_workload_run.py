@@ -124,6 +124,8 @@ def _input_value(
     dtype = _numpy_dtype(buffer.dtype)
     if buffer.initializer is BufferInitializer.ZEROS:
         return np.zeros(buffer.shape, dtype=dtype)
+    if buffer.initializer is BufferInitializer.STANDARD_NORMAL:
+        return rng.standard_normal(size=buffer.shape).astype(dtype)
     if buffer.initializer is not BufferInitializer.RANDOM:
         raise ValueError("input/inout buffer lacks a supported initializer")
     if dtype.kind == "b":

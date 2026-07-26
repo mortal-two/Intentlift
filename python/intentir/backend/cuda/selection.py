@@ -297,14 +297,17 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         pass_argument=(
             "-convert-intent-padded-row-reduction-to-gpu="
             "block-threads=64 vectorize-full-features=false "
-            "promote-rank0-scalars=true"
+            "promote-rank0-scalars=true reduction-topology=serial-row"
         ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="masked short row dot with authored zero padding",
     ),
     PassDescriptor(
         fast_path_id="cuda.elementwise.row.vectorized.v1",
-        pass_argument="-convert-intent-elementwise-to-gpu=block-threads=64",
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=64 "
+            "tanh-approximation=stable-ex2"
+        ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="complete static row-elementwise graph",
     ),
@@ -312,7 +315,7 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         fast_path_id="cuda.row_reduction.normalization_loss.read_once.v1",
         pass_argument=(
             "-convert-intent-row-reduction-to-gpu=block-threads=1024 "
-            "promote-rank0-scalars=true"
+            "promote-rank0-scalars=true rows-per-block=1"
         ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="row normalization/loss reduction graph",

@@ -6,8 +6,9 @@
 
 // CHECK-LABEL: func.func @runtime_value_if
 // CHECK-SAME: intent.backend.folded_constexpr_select_count = 1 : i64
+// CHECK-SAME: intent.backend.host_value_capture_count = 1 : i64
 // CHECK-SAME: intent.backend.predicated_value_if_count = 1 : i64
-// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.control.value_if_to_select.v1", "cuda.control.constexpr_select_fold.v1"]
+// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.control.value_if_to_select.v1", "cuda.control.constexpr_select_fold.v1", "cuda.b.rank0_host_value_capture.v1"]
 // CHECK: gpu.launch
 // CHECK-NOT: intent.
 // CHECK-NOT: tensor.extract

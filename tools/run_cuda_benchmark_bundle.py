@@ -20,6 +20,7 @@ from intentir.backend.cuda.benchmark import (
     do_bench_us,
 )
 from intentir.backend.cuda.portable_bundle import (
+    cuda_compute_capability_for_chip,
     decode_triton_spec,
     decode_values,
 )
@@ -30,8 +31,8 @@ from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.triton import PreparedTritonInvocation
 
 
-REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v1"
-BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v1"
+REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v2"
+BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v2"
 
 
 def _torch_dtype(torch: Any, dtype: str) -> Any:
@@ -202,15 +203,31 @@ def _one_kernel(
         for index, record in enumerate(candidate_records)
         if record["status"] == "measured"
     ]
-    for index in sorted(
+    ranked_indices = sorted(
         measured_indices,
         key=lambda item: candidate_records[item]["latency_us"],
-    )[:finalist_count]:
+    )[:finalist_count]
+    finalist_samples: dict[int, list[float]] = {
+        index: [] for index in ranked_indices
+    }
+    for round_index in range(finalist_remeasurements):
+        round_order = (
+            ranked_indices
+            if round_index % 2 == 0
+            else list(reversed(ranked_indices))
+        )
+        for index in round_order:
+            record = candidate_records[index]
+            candidate_id = record["candidate"]["candidate_id"]
+            thunk = candidate_artifacts[candidate_id][2]
+            finalist_samples[index].append(measure(thunk))
+    for index, samples in finalist_samples.items():
+        if not samples:
+            continue
         record = candidate_records[index]
-        candidate_id = record["candidate"]["candidate_id"]
-        thunk = candidate_artifacts[candidate_id][2]
-        samples = [float(record["latency_us"])]
-        samples.extend(measure(thunk) for _ in range(finalist_remeasurements))
+        # Initial ranking samples are deliberately excluded from final
+        # selection.  Fresh alternating round-robin batches remove incumbent
+        # and thermal-order bias from the target-side search.
         record["latency_us"] = float(statistics.median(samples))
         record["finalist_batch_us"] = samples
     if not measured_indices:
@@ -244,15 +261,36 @@ def _one_kernel(
         )
         if not source_agreement.passed:
             raise RuntimeError("source Triton baseline differs from canonical J")
-        source_samples = [
-            measure(source.thunk()) for _ in range(confirmation_batches)
-        ]
+        source_thunk = source.thunk()
+        # One untimed warmup pair before alternating, paired confirmation.
+        source_thunk()
+        winner_thunk()
+        torch.cuda.synchronize()
+        source_samples: list[float] = []
+        mlir_samples: list[float] = []
+        paired_batches: list[dict[str, Any]] = []
+        for pair_index in range(confirmation_batches):
+            if pair_index % 2 == 0:
+                order = ("source", "target")
+                source_us = measure(source_thunk)
+                target_us = measure(winner_thunk)
+            else:
+                order = ("target", "source")
+                target_us = measure(winner_thunk)
+                source_us = measure(source_thunk)
+            source_samples.append(source_us)
+            mlir_samples.append(target_us)
+            paired_batches.append(
+                {
+                    "pair_index": pair_index,
+                    "order": list(order),
+                    "source_us": source_us,
+                    "target_us": target_us,
+                    "speedup_source_over_target": source_us / target_us,
+                }
+            )
         source_latency = float(statistics.median(source_samples))
 
-    mlir_samples = [float(best_record["latency_us"])]
-    mlir_samples.extend(
-        measure(winner_thunk) for _ in range(confirmation_batches - 1)
-    )
     mlir_latency = float(statistics.median(mlir_samples))
     return {
         "kernel": entry["kernel"],
@@ -293,6 +331,9 @@ def _one_kernel(
                 "samples_per_batch": measurement_rounds,
                 "finalist_count": min(finalist_count, len(measured_indices)),
                 "finalist_remeasurements": finalist_remeasurements,
+                "comparison_protocol": "paired-alternating.v1",
+                "paired_batches": paired_batches,
+                "warmup_pair_discarded": True,
             },
         },
     }
@@ -311,8 +352,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repeat-ms", type=int, default=200)
     parser.add_argument("--measurement-rounds", type=int, default=3)
     parser.add_argument("--finalist-count", type=int, default=8)
-    parser.add_argument("--finalist-remeasurements", type=int, default=1)
-    parser.add_argument("--confirmation-batches", type=int, default=2)
+    parser.add_argument("--finalist-remeasurements", type=int, default=3)
+    parser.add_argument("--confirmation-batches", type=int, default=4)
     parser.add_argument("--fail-fast", action="store_true")
     return parser
 
@@ -336,9 +377,18 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("confirmation-batches must be positive")
     capability = torch.cuda.get_device_capability()
     target = bundle["target"]["chip"]
-    if target == "sm_90a" and capability != (9, 0):
+    expected_capability = cuda_compute_capability_for_chip(target)
+    declared_capability = tuple(bundle["target"].get("compute_capability", ()))
+    if declared_capability != expected_capability:
         raise RuntimeError(
-            f"sm_90a bundle requires compute capability 9.0, got {capability}"
+            "bundle CUDA target metadata is inconsistent: "
+            f"chip {target} names {expected_capability}, metadata names "
+            f"{declared_capability}"
+        )
+    if capability != expected_capability:
+        raise RuntimeError(
+            f"{target} bundle requires compute capability "
+            f"{expected_capability}, got {capability}"
         )
     selected = set(args.kernels or [])
     entries = [

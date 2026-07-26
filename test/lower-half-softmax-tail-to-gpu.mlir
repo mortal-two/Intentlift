@@ -6,13 +6,15 @@
 
 // CHECK-LABEL: func.func @softmax_f16_tail(
 // CHECK-SAME:    {{.*}}memref<4x37xf16>{{.*}}memref<4x37xf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         %[[ACTIVE:.*]] = arith.cmpi ult
 // CHECK:         %[[SAFE:.*]] = arith.select %[[ACTIVE]]
 // CHECK:         memref.load {{.*}}[%{{.*}}, %[[SAFE]]] : memref<4x37xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
 // CHECK:         arith.select %[[ACTIVE]], {{.*}} : f32
-// CHECK:         gpu.all_reduce maxnumf
-// CHECK:         gpu.all_reduce add
+// CHECK:         arith.maxnumf
+// CHECK-COUNT-10: gpu.shuffle xor
+// CHECK:         arith.addf
 // CHECK:         scf.if %[[ACTIVE]] {
 // CHECK:           memref.store {{.*}} : memref<4x37xf16>
 // CHECK:         }
@@ -34,13 +36,15 @@ func.func @softmax_f16_tail(%x: tensor<4x37xf16>) -> tensor<4x37xf16> {
 
 // CHECK-LABEL: func.func @softmax_bf16_tail(
 // CHECK-SAME:    {{.*}}memref<4x37xbf16>{{.*}}memref<4x37xbf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         %[[ACTIVE:.*]] = arith.cmpi ult
 // CHECK:         %[[SAFE:.*]] = arith.select %[[ACTIVE]]
 // CHECK:         memref.load {{.*}}[%{{.*}}, %[[SAFE]]] : memref<4x37xbf16>
 // CHECK:         arith.extf {{.*}} : bf16 to f32
 // CHECK:         arith.select %[[ACTIVE]], {{.*}} : f32
-// CHECK:         gpu.all_reduce maxnumf
-// CHECK:         gpu.all_reduce add
+// CHECK:         arith.maxnumf
+// CHECK-COUNT-10: gpu.shuffle xor
+// CHECK:         arith.addf
 // CHECK:         scf.if %[[ACTIVE]] {
 // CHECK:           memref.store {{.*}} : memref<4x37xbf16>
 // CHECK:         }

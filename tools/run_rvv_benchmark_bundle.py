@@ -267,6 +267,7 @@ def _one_kernel(
     arguments = [ctypes.byref(item) for item in descriptors]
 
     records = []
+    candidate_artifacts: dict[str, tuple[Any, Any]] = {}
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
         for candidate in entry["candidates"]:
@@ -318,14 +319,16 @@ def _one_kernel(
                     arguments,
                     warmup=warmup,
                     iterations=iterations,
-                    batches=batches,
+                    batches=1,
                 )
+                candidate_id = candidate["candidate"]["candidate_id"]
+                candidate_artifacts[candidate_id] = (library, function)
                 records.append(
                     {
                         "candidate": candidate["candidate"],
                         "status": "measured",
                         "latency_us": latency,
-                        "samples_us": samples,
+                        "initial_ranking_samples_us": samples,
                         "correctness": correctness,
                     }
                 )
@@ -340,6 +343,32 @@ def _one_kernel(
     measured = [item for item in records if item["status"] == "measured"]
     if not measured:
         raise KernelFailure("no correct RVV candidate", records)
+    # Exclude the sequential initial ranking sample.  Every correct state gets
+    # the same number of fresh batches in alternating round-robin order, so a
+    # fused state cannot win merely because it was measured earlier or later.
+    fresh_samples: dict[str, list[float]] = {
+        item["candidate"]["candidate_id"]: [] for item in measured
+    }
+    for round_index in range(batches):
+        round_order = measured if round_index % 2 == 0 else list(reversed(measured))
+        for item in round_order:
+            candidate_id = item["candidate"]["candidate_id"]
+            function = candidate_artifacts[candidate_id][1]
+            latency, samples = _measure(
+                function,
+                arguments,
+                warmup=0,
+                iterations=iterations,
+                batches=1,
+            )
+            assert len(samples) == 1
+            fresh_samples[candidate_id].append(latency)
+    for item in measured:
+        candidate_id = item["candidate"]["candidate_id"]
+        samples = fresh_samples[candidate_id]
+        item["latency_us"] = float(statistics.median(samples))
+        item["selection_samples_us"] = samples
+        item["selection_protocol"] = "fresh-alternating-round-robin.v1"
     schedule_only_ids = set(entry["schedule_only_candidate_ids"])
     e2 = min(
         (
@@ -368,6 +397,7 @@ def _one_kernel(
                 e3["candidate"]["transformation"]["b_transformations"]
             ),
             "timing": "pinned-process perf_counter_ns via ctypes C ABI",
+            "comparison_protocol": "fresh-alternating-round-robin.v1",
             "warmup": warmup,
             "iterations": iterations,
             "batches": batches,

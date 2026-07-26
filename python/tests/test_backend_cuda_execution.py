@@ -76,6 +76,16 @@ module {
 }
 """
 
+_RANK1_IDENTITY = """
+module {
+  func.func @rank1_identity(%x: tensor<1000xf32>) -> tensor<1000xf32> {
+    %y = intent.map_unary %x {fn = "identity"}
+      : (tensor<1000xf32>) -> tensor<1000xf32>
+    return %y : tensor<1000xf32>
+  }
+}
+"""
+
 
 def _half_softmax_source(rows: int, columns: int, mlir_type: str) -> str:
     row = f"tensor<{rows}x{columns}x{mlir_type}>"
@@ -224,6 +234,32 @@ def test_direct_elementwise_artifact_executes_the_persisted_cubin() -> None:
     assert program.selection.pipeline_kind == "specialized"
     assert program.selection.fast_path_id == fast_path_id
     torch.testing.assert_close(output, a + b, rtol=0.0, atol=0.0)
+
+
+def test_direct_elementwise_preserves_rank1_abi_and_tail_mask() -> None:
+    x = torch.linspace(-4.0, 4.0, 1000, device="cuda", dtype=torch.float32)
+    fast_path_id = "cuda.elementwise.row.vectorized.v1"
+    program = lower_to_cuda(
+        _RANK1_IDENTITY,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: "-convert-intent-elementwise-to-gpu=block-threads=128"
+        },
+    )
+
+    output = execute_cuda_artifact(
+        program,
+        _RANK1_IDENTITY,
+        {"x": x},
+    )["out0"]
+
+    assert program.selection.pipeline_kind == "specialized"
+    assert program.transformation_receipt is not None
+    assert "cuda.elementwise.rank1.output.v1" in (
+        program.transformation_receipt.transformation_trace
+    )
+    assert output.shape == x.shape
+    torch.testing.assert_close(output, x, rtol=0.0, atol=0.0)
 
 
 def test_generic_multikernel_artifact_preserves_launch_order_and_scratch() -> None:

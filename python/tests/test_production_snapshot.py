@@ -15,6 +15,7 @@ from intentir.ir.production_snapshot import (
     load_production_snapshot,
 )
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
+from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.production_export import (
     ProductionExportError,
     append_production_export,
@@ -101,6 +102,22 @@ def test_exporter_selects_exact_accepted_attempt_and_strips_evidence(tmp_path) -
     assert receipt.evidence_kind == "certified_run_report"
     assert receipt.snapshot_digest == snapshot.snapshot_digest
     assert "pi" not in snapshot.to_dict()
+
+
+def test_exporter_checks_certified_wire_digest_before_j_elaboration(tmp_path) -> None:
+    report = _certified_report()
+    accepted = report["attempts"][1]
+    accepted["artifact"]["j"]["boundary"]["domains"]["d0"] = (
+        "0 <= k0 and k0 < x0"
+    )
+    wire_artifact = Gate1Artifact.from_json(accepted["artifact"])
+    accepted["gate1"]["artifact_digest"] = canonical_artifact_digest(wire_artifact)
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    snapshot, _receipt = export_production_snapshot(path)
+
+    assert snapshot.j.boundary.domains["d0"] == "(0 <= k0) and (k0 < x0)"
 
 
 @pytest.mark.parametrize(

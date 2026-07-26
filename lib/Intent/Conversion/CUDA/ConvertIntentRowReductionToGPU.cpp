@@ -355,7 +355,11 @@ static unsigned foldRankZeroConstantSelects(func::FuncOp fn) {
 /// no concrete mul+add is recorded with fma_count=0.
 static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                                        unsigned predicatedValueIfCount,
-                                       unsigned foldedConstexprSelectCount) {
+                                       unsigned foldedConstexprSelectCount,
+                                       int64_t rowsPerBlock = 1,
+                                       unsigned approximateDivCount = 0,
+                                       unsigned hostValueCaptureCount = 0,
+                                       unsigned epilogueLoadMotionCount = 0) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -367,7 +371,9 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
   lowered.walk([&](gpu::AllReduceOp) { ++allReduceCount; });
 
   StringRef topology = "none";
-  if (shuffleCount != 0)
+  if (rowsPerBlock > 1 && shuffleCount != 0)
+    topology = "subgroup_rows";
+  else if (shuffleCount != 0)
     topology = threads <= 32 ? "subgroup_shuffle"
                              : "workgroup_hierarchical";
   else if (allReduceCount != 0)
@@ -384,6 +390,15 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
         StringAttr::get(ctx, "cuda.control.constexpr_select_fold.v1"));
   if (fmaCount != 0)
     trace.push_back(StringAttr::get(ctx, "cuda.numeric.fma.f32.v1"));
+  if (approximateDivCount != 0)
+    trace.push_back(
+        StringAttr::get(ctx, "cuda.numeric.div_reciprocal_approx.f32.v1"));
+  if (hostValueCaptureCount != 0)
+    trace.push_back(
+        StringAttr::get(ctx, "cuda.b.rank0_host_value_capture.v1"));
+  if (epilogueLoadMotionCount != 0)
+    trace.push_back(
+        StringAttr::get(ctx, "cuda.b.epilogue_readonly_load_motion.v1"));
 
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(ctx, "row_reduction"));
@@ -393,6 +408,9 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                    ArrayAttr::get(ctx, trace));
   lowered->setAttr("intent.backend.fma_count",
                    IntegerAttr::get(IntegerType::get(ctx, 64), fmaCount));
+  lowered->setAttr(
+      "intent.backend.approximate_div_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64), approximateDivCount));
   lowered->setAttr("intent.backend.shuffle_count",
                    IntegerAttr::get(IntegerType::get(ctx, 64), shuffleCount));
   lowered->setAttr("intent.backend.barrier_count",
@@ -400,13 +418,22 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
   lowered->setAttr("intent.backend.all_reduce_count",
                    IntegerAttr::get(IntegerType::get(ctx, 64), allReduceCount));
   lowered->setAttr("intent.backend.block_threads",
-                   IntegerAttr::get(IntegerType::get(ctx, 64), threads));
+                   IntegerAttr::get(IntegerType::get(ctx, 64),
+                                    threads * rowsPerBlock));
+  lowered->setAttr("intent.backend.rows_per_block",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), rowsPerBlock));
   lowered->setAttr(
       "intent.backend.predicated_value_if_count",
       IntegerAttr::get(IntegerType::get(ctx, 64), predicatedValueIfCount));
   lowered->setAttr(
       "intent.backend.folded_constexpr_select_count",
       IntegerAttr::get(IntegerType::get(ctx, 64), foldedConstexprSelectCount));
+  lowered->setAttr(
+      "intent.backend.host_value_capture_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64), hostValueCaptureCount));
+  lowered->setAttr(
+      "intent.backend.epilogue_load_motion_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64), epilogueLoadMotionCount));
 }
 
 /// Match the common normalization scalar fast path `recip(sqrt(x))`.  The
@@ -808,11 +835,14 @@ struct RowReductionLowering {
   unsigned tileColsMax;
   unsigned requestedVectorWidth;
   bool enableFmaFusion;
+  bool enableApproximateDiv;
   bool deferEpilogueColumnLoads;
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
+  unsigned requestedRowsPerBlock;
   unsigned predicatedValueIfCount;
   unsigned foldedConstexprSelectCount;
+  unsigned emittedApproximateDivCount = 0;
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
@@ -890,18 +920,83 @@ struct RowReductionLowering {
   Schedule sched;
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
-                       unsigned vw, bool fuseFma, bool deferColLoads,
+                       unsigned vw, bool fuseFma, bool approximateDiv,
+                       bool deferColLoads,
                        bool promoteScalars, bool enablePrefix,
                        unsigned predicatedValueIfs,
-                       unsigned foldedConstexprSelects)
+                       unsigned foldedConstexprSelects,
+                       unsigned rowsPerBlock)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
+        enableApproximateDiv(approximateDiv),
         deferEpilogueColumnLoads(deferColLoads),
         promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix),
+        requestedRowsPerBlock(rowsPerBlock),
         predicatedValueIfCount(predicatedValueIfs),
         foldedConstexprSelectCount(foldedConstexprSelects) {}
+
+  /// Finalize a static f32 mean.  The exact state retains divf.  The optional
+  /// precision-search state materializes the rounded f32 reciprocal as an
+  /// ordinary arith.constant and multiplies, removing NVPTX's precise division
+  /// correction/slowpath while leaving the candidate visible in post-pass MLIR.
+  Value finalizeMean(OpBuilder &b, Location loc, Value sum, Value divisor) {
+    if (!enableApproximateDiv)
+      return b.create<arith::DivFOp>(loc, sum, divisor);
+    ++emittedApproximateDivCount;
+    Value reciprocal = b.create<arith::ConstantOp>(
+        loc, b.getF32FloatAttr(1.0 / static_cast<double>(N)));
+    return b.create<arith::MulFOp>(loc, sum, reciprocal);
+  }
+
+  /// Prove that an authored scalar tensor is the static trailing extent N.
+  /// This consumes only the concrete tensor constant or the receipt-bound
+  /// scalar equality already admitted by match(); runtime sample values never
+  /// participate. Casts and a select whose two arms prove the same extent are
+  /// transparent.
+  bool isStaticFeatureExtent(Value value) const {
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto found = scalarEqualities.find(argument.getArgNumber());
+      return found != scalarEqualities.end() && found->second == N;
+    }
+    if (auto castOp = value.getDefiningOp<CastOp>())
+      return isStaticFeatureExtent(castOp.getInput());
+    if (auto select = value.getDefiningOp<SelectOp>())
+      return isStaticFeatureExtent(select.getX()) &&
+             isStaticFeatureExtent(select.getY());
+    if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
+      auto dense = dyn_cast<DenseElementsAttr>(constant.getValue());
+      if (!dense || !dense.isSplat())
+        return false;
+      if (isa<IntegerType>(dense.getElementType()))
+        return dense.getSplatValue<APInt>().getSExtValue() == N;
+      if (isa<FloatType>(dense.getElementType()))
+        return dense.getSplatValue<APFloat>().convertToDouble() ==
+               static_cast<double>(N);
+    }
+    return false;
+  }
+
+  Value emitMappedBinary(OpBuilder &b, Location loc, MapBinaryOp op, Value lhs,
+                         Value rhs, Type f32) {
+    if (enableApproximateDiv && op.getFn() == "div" && lhs && rhs &&
+        lhs.getType() == f32 && rhs.getType() == f32) {
+      ++emittedApproximateDivCount;
+      if (isStaticFeatureExtent(op.getRhs())) {
+        Value reciprocal = b.create<arith::ConstantOp>(
+            loc, b.getF32FloatAttr(1.0 / static_cast<double>(N)));
+        return b.create<arith::MulFOp>(loc, lhs, reciprocal);
+      }
+      // Preserve the concrete division in target-independent MLIR and mark
+      // only this explicitly searched state. The NVIDIA preparation pass turns
+      // the marked op into lhs * rcp.approx(rhs); unmarked divf remains exact.
+      auto division = b.create<arith::DivFOp>(loc, lhs, rhs);
+      division->setAttr("intent.cuda.approximate_div", b.getUnitAttr());
+      return division;
+    }
+    return emitRowScalarBinary(b, loc, op.getFn(), lhs, rhs, f32);
+  }
 
   /// A live LayerNorm extraction may express row reductions by transposing
   /// [M,N] to [N,M], reducing axis 0, and transposing the normalized value
@@ -1079,6 +1174,9 @@ struct RowReductionLowering {
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
+    if (requestedRowsPerBlock != 1 && requestedRowsPerBlock != 2 &&
+        requestedRowsPerBlock != 4 && requestedRowsPerBlock != 8)
+      return failure();
     if (requestedVectorWidth != 0 && requestedVectorWidth != 1 &&
         requestedVectorWidth != 4)
       return failure();
@@ -1773,6 +1871,22 @@ struct RowReductionLowering {
         std::any_of(inplaceArg.begin(), inplaceArg.end(),
                     [](int64_t arg) { return arg >= 0; }))
       return failure();
+    if (requestedRowsPerBlock > 1) {
+      bool hasUnsupportedOutput = llvm::any_of(
+          outRoles, [](ResultRole role) {
+            return role == ResultRole::AtomicOut ||
+                   role == ResultRole::PerRowVectorOut;
+          });
+      bool hasInplaceOutput = llvm::any_of(
+          inplaceArg, [](int64_t argument) { return argument >= 0; });
+      if (T != 32 || M % requestedRowsPerBlock != 0 ||
+          sched.kind != KRegister || !scans.empty() ||
+          !crossReduces.empty() || groupedBatch != 0 || numGroups != 0 ||
+          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput)
+        return failure();
+      sched.gridX = M / requestedRowsPerBlock;
+      sched.blockX = T * requestedRowsPerBlock;
+    }
 
     // Contiguous vector gate (register-tile path only): vector<4xf32> for
     // native f32 graphs, vector<4xf16/bf16> for mixed-precision storage.
@@ -1984,8 +2098,7 @@ struct RowReductionLowering {
         return remember(isa<IntegerType>(lhs.getType())
                             ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
                             : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs));
-      return remember(
-          emitRowScalarBinary(b, loc, mb.getFn(), lhs, rhs, f32));
+      return remember(emitMappedBinary(b, loc, mb, lhs, rhs, f32));
     }
     if (auto contraction = dyn_cast<ContractionOp>(def)) {
       if (!isCoordinatePreservingContraction(contraction))
@@ -2093,7 +2206,7 @@ struct RowReductionLowering {
         return isa<IntegerType>(lhs.getType())
                    ? emitScalarCmpI(b, loc, binary.getFn(), lhs, rhs)
                    : emitScalarCmp(b, loc, binary.getFn(), lhs, rhs);
-      return emitRowScalarBinary(b, loc, binary.getFn(), lhs, rhs, f32);
+      return emitMappedBinary(b, loc, binary, lhs, rhs, f32);
     }
     if (auto select = dyn_cast_or_null<SelectOp>(definition)) {
       Value condition = evaluateOperand(select.getCond());
@@ -2135,16 +2248,23 @@ struct RowReductionLowering {
                                     const ReduceInfo &info, Value acc,
                                     unsigned k, Value featureLaneActive,
                                     ArrayRef<Value> featureTileActive) {
-    if (enableFmaFusion && !hasInactiveFeatureThreads &&
-        !hasFeatureTail &&
-        info.op == gpu::AllReduceOperation::ADD &&
+    if (enableFmaFusion && info.op == gpu::AllReduceOperation::ADD &&
         red.getAssoc() == "float_nondeterministic") {
       auto mul = red.getInput().getDefiningOp<MapBinaryOp>();
       if (mul && mul.getFn() == "mul" && mul.getResult().hasOneUse()) {
         Value lhs = emitAt(b, loc, mul.getLhs(), k);
         Value rhs = emitAt(b, loc, mul.getRhs(), k);
-        if (lhs && rhs && lhs.getType() == f32 && rhs.getType() == f32)
-          return b.create<math::FmaOp>(loc, lhs, rhs, acc);
+        if (lhs && rhs && lhs.getType() == f32 && rhs.getType() == f32) {
+          Value fused = b.create<math::FmaOp>(loc, lhs, rhs, acc);
+          Value active =
+              hasFeatureTail ? featureTileActive[k] : featureLaneActive;
+          // A tail lane loaded a mechanically safe address, but its arithmetic
+          // is semantically inert. Preserve the incoming accumulator instead
+          // of evaluating `acc + identity` after the fused operation.
+          if (active)
+            fused = b.create<arith::SelectOp>(loc, active, fused, acc);
+          return fused;
+        }
       }
     }
     Value term = emitAt(b, loc, red.getInput(), k);
@@ -2388,8 +2508,7 @@ struct RowReductionLowering {
                            ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
                            : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
             else if (lhs && rhs)
-              scalar =
-                  emitRowScalarBinary(b, loc, mb.getFn(), lhs, rhs, f32);
+              scalar = emitMappedBinary(b, loc, mb, lhs, rhs, f32);
             if (scalar) {
               uniform[res] = scalar;
               changed = true;
@@ -2700,7 +2819,7 @@ struct RowReductionLowering {
     Value c0r = b.create<arith::ConstantIndexOp>(loc, 0);
     Value scalar = b.create<memref::LoadOp>(loc, scratch, ValueRange{c0r});
     if (info.isMean)
-      scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+      scalar = finalizeMean(b, loc, scalar, nF);
     uniform[red.getResult()] = scalar;
     hoistUniforms(b, loc); // rstd = rsqrt(mean+eps), etc. become available
 
@@ -2763,7 +2882,8 @@ struct RowReductionLowering {
     b.create<func::ReturnOp>(loc);
 
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount);
+                               foldedConstexprSelectCount, 1,
+                               emittedApproximateDivCount);
     fn.erase();
     return success();
   }
@@ -3143,7 +3263,8 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount);
+                               foldedConstexprSelectCount, 1,
+                               emittedApproximateDivCount);
     fn.erase();
     return success();
   }
@@ -3798,7 +3919,7 @@ struct RowReductionLowering {
           }
         }
         if (item.info.isMean)
-          scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+          scalar = finalizeMean(b, loc, scalar, nF);
         if (item.booleanCount)
           scalar = b.create<arith::FPToSIOp>(loc, item.elemTy, scalar);
         uniform[item.red.getResult()] = scalar;
@@ -3898,7 +4019,8 @@ struct RowReductionLowering {
     b.create<func::ReturnOp>(loc);
 
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount);
+                               foldedConstexprSelectCount, 1,
+                               emittedApproximateDivCount);
     fn.erase();
     return success();
   }
@@ -3967,6 +4089,9 @@ struct RowReductionLowering {
 
     b.setInsertionPoint(fn);
     auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
+    bool useMultiRowWarpReduction = requestedRowsPerBlock > 1;
+    bool useWarpLocalRegisterReduction =
+        sched.kind == KRegister && T == 32;
     // Register-tile reductions use one compact f32 slot per (reduction, warp).
     // Independent reductions publish all warp partials before a shared barrier,
     // avoiding one standalone gpu.all_reduce synchronization sequence per op.
@@ -3980,15 +4105,17 @@ struct RowReductionLowering {
     // shared allocation and redundant 32-lane second-level fold.
     int64_t reduceNumWarps = (T + 31) / 32;
     bool useCompactDependentRegisterReductions =
-        reduces.size() > 1 && T >= 64 && (T % 32) == 0 &&
+        !useMultiRowWarpReduction && reduces.size() > 1 && T >= 64 &&
+        (T % 32) == 0 &&
         reduceNumWarps <= 32 &&
         (reduceNumWarps & (reduceNumWarps - 1)) == 0;
     bool useGroupedRegisterReductions =
-        T > 0 && (T & (T - 1)) == 0 &&
+        !useMultiRowWarpReduction && T > 0 && (T & (T - 1)) == 0 &&
         (hasIndependentReductionGroup() ||
          useCompactDependentRegisterReductions);
     bool useCompactSingleRegisterReduction =
-        !useGroupedRegisterReductions && reduces.size() == 1 && T >= 64 &&
+        !useMultiRowWarpReduction && !useGroupedRegisterReductions &&
+        reduces.size() == 1 && T >= 64 &&
         (T % 32) == 0 && reduceNumWarps <= 32 &&
         (reduceNumWarps & (reduceNumWarps - 1)) == 0;
     bool useLeaderOnlySingleReduction =
@@ -4036,23 +4163,40 @@ struct RowReductionLowering {
           loc, argMemref[sourceArg], ValueRange{});
     }
 
-    Value cM = b.create<arith::ConstantIndexOp>(loc, M);
-    Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+    Value cGrid = b.create<arith::ConstantIndexOp>(loc, sched.gridX);
+    Value cBlock = b.create<arith::ConstantIndexOp>(loc, sched.blockX);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
 
     gpu::LaunchOp launch;
     if (reduceSharedBytes > 0) {
       Value sharedBytes = b.create<arith::ConstantOp>(
           loc, b.getI32IntegerAttr(reduceSharedBytes));
-      launch = b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1,
+      launch = b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlock, c1, c1,
                                       sharedBytes);
     } else {
-      launch = b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1);
+      launch = b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlock, c1, c1);
     }
     b.setInsertionPointToStart(&launch.getBody().front());
 
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
+    if (useMultiRowWarpReduction) {
+      // Keep the logical-warp width inside the device region.  A constant
+      // created before gpu.launch is an explicit launch capture after GPU
+      // outlining; NVPTX then sees an arbitrary kernel argument here and emits
+      // the full generic u64 div/rem sequence for `tx / 32` and `tx % 32`.
+      // This path has already proved T == 32 in match(), so an in-region
+      // constant folds to the intended shift/mask address calculation.
+      Value cLogicalRowThreads =
+          b.create<arith::ConstantIndexOp>(loc, T);
+      Value rowInBlock =
+          b.create<arith::DivUIOp>(loc, tx, cLogicalRowThreads);
+      tx = b.create<arith::RemUIOp>(loc, tx, cLogicalRowThreads);
+      Value cRows = b.create<arith::ConstantIndexOp>(
+          loc, requestedRowsPerBlock);
+      Value rowBase = b.create<arith::MulIOp>(loc, bx, cRows);
+      bx = b.create<arith::AddIOp>(loc, rowBase, rowInBlock);
+    }
     rowIndex = bx;
     Value featureLaneActive;
     SmallVector<Value> featureTileActive;
@@ -4302,7 +4446,32 @@ struct RowReductionLowering {
     // Non-power-of-two diagnostic schedules retain gpu.all_reduce, whose
     // verifier/runtime defines those widths. Production power-of-two schedules
     // use the grouped warp/shared hierarchy below.
-    if (!useGroupedRegisterReductions &&
+    if (useWarpLocalRegisterReduction) {
+      // With 32 logical lanes every hardware warp owns exactly one independent
+      // row, whether the launch contains one row or several rows per block.
+      // Reductions are therefore complete warp-local shuffle trees: no
+      // gpu.all_reduce, shared scratch, or block barrier is needed. Dependent
+      // reductions are emitted in program order and hoisted after each tree.
+      for (ReduceOp red : reduces) {
+        ReduceInfo info = *reduceInfoFor(red.getFn());
+        Value acc =
+            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
+        for (int64_t k = 0; k < K; ++k)
+          acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
+                                            featureLaneActive,
+                                            featureTileActive);
+        for (int32_t delta = 1; delta < 32; delta <<= 1) {
+          Value other = b.create<gpu::ShuffleOp>(
+                            loc, acc, delta, 32, gpu::ShuffleMode::XOR)
+                            .getShuffleResult();
+          acc = combineScalar(b, loc, info.op, acc, other);
+        }
+        if (info.isMean)
+          acc = finalizeMean(b, loc, acc, nF);
+        uniform[red.getResult()] = acc;
+        hoistUniforms(b, loc);
+      }
+    } else if (!useGroupedRegisterReductions &&
         !useCompactSingleRegisterReduction) {
       for (ReduceOp red : reduces) {
         ReduceInfo info = *reduceInfoFor(red.getFn());
@@ -4317,7 +4486,7 @@ struct RowReductionLowering {
             /*uniform=*/UnitAttr::get(ctx));
         Value scalar = allRed.getResult();
         if (info.isMean)
-          scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+          scalar = finalizeMean(b, loc, scalar, nF);
         uniform[red.getResult()] = scalar;
         hoistUniforms(b, loc);
       }
@@ -4409,7 +4578,7 @@ struct RowReductionLowering {
             ValueRange{b.create<arith::ConstantIndexOp>(loc, 0)});
       }
       if (info.isMean)
-        scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+        scalar = finalizeMean(b, loc, scalar, nF);
       uniform[red.getResult()] = scalar;
       hoistUniforms(b, loc);
     } else {
@@ -4521,7 +4690,7 @@ struct RowReductionLowering {
           }
         }
         if (item.info.isMean)
-          scalar = b.create<arith::DivFOp>(loc, scalar, nF);
+          scalar = finalizeMean(b, loc, scalar, nF);
         uniform[item.red.getResult()] = scalar;
         hoistUniforms(b, loc);
       }
@@ -4754,7 +4923,11 @@ struct RowReductionLowering {
     b.create<func::ReturnOp>(loc);
 
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount);
+                               foldedConstexprSelectCount,
+                               requestedRowsPerBlock,
+                               emittedApproximateDivCount,
+                               launchScalars.size(),
+                               deferredColArgs.size());
     fn.erase();
     return success();
   }
@@ -4779,21 +4952,23 @@ struct ConvertIntentRowReductionToGPUPass
           predicatePureValueIf ? predicatePureTensorValueIfs(fn) : 0;
       unsigned foldedConstexprSelects = foldRankZeroConstantSelects(fn);
       RowReductionLowering probe(fn, blockThreads, tileCols, vectorWidth,
-                                 fuseFma, deferEpilogueColLoads,
+                                 fuseFma, approximateDiv,
+                                 deferEpilogueColLoads,
                                  promoteRank0Scalars,
                                  enableSortedPrefix, predicatedValueIfs,
-                                 foldedConstexprSelects);
+                                 foldedConstexprSelects, rowsPerBlock);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
     }
     for (Target &target : targets) {
       RowReductionLowering low(target.fn, blockThreads, tileCols, vectorWidth,
-                               fuseFma, deferEpilogueColLoads,
+                               fuseFma, approximateDiv,
+                               deferEpilogueColLoads,
                                promoteRank0Scalars,
                                enableSortedPrefix,
                                target.predicatedValueIfs,
-                               target.foldedConstexprSelects);
+                               target.foldedConstexprSelects, rowsPerBlock);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

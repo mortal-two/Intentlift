@@ -15,15 +15,12 @@ from intentir.backend.protocol import BackendTarget
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
+    prepare_production_workload,
 )
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
-from intentir.verify.workload_adapters import (
-    TRITON_WORKLOAD_ADAPTERS,
-    prepare_triton_workload,
-)
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -34,9 +31,7 @@ def _materialize_closed_case(name: str):
         _ROOT / "corpus" / "production-jc-v1", name
     )
     assert snapshot.c is not None
-    prepared = prepare_triton_workload(
-        TRITON_WORKLOAD_ADAPTERS[PRODUCTION_CASE_IDS[name]]
-    )
+    prepared = prepare_production_workload(name)
     case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
     constexpr = constexpr_input_bindings(
         snapshot.j,
@@ -56,6 +51,25 @@ def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -
 
     assert materialized.j_digest == snapshot.j_digest
     assert "\nmodule {\n" in materialized.intent_mlir
+
+
+def test_masked_copy_materializes_direct_binding_as_real_identity_mlir() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case("masked_copy")
+
+    assert 'intent.map_unary %t0 {fn = "identity"}' in materialized.intent_mlir
+    assert materialized.consumed_structures == (
+        "output_binding:t1:t0:identity_materialized",
+    )
+
+
+def test_masked_row_square_sum_reuses_generic_row_reduction_graph() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "masked_row_square_sum"
+    )
+
+    assert 'intent.map_binary %t0, %t0 {fn = "mul"}' in materialized.intent_mlir
+    assert 'intent.reduce' in materialized.intent_mlir
+    assert 'fn = "sum"' in materialized.intent_mlir
 
 
 def test_kl_div_scan_and_explicit_carry_become_full_axis_intent_graph() -> None:

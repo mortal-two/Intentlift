@@ -53,3 +53,27 @@ func.func @sigmoid_reciprocal(%x: f32) -> f32 {
   %result = arith.divf %one, %denominator : f32
   return %result : f32
 }
+
+// -----
+
+// Precision search is explicit.  A marked f32 division becomes one native
+// reciprocal plus a multiply; an otherwise identical unmarked operation stays
+// exact and therefore remains available to the N0/N2 arms.
+// CHECK-LABEL: func.func @marked_approximate_div
+// CHECK: llvm.call_intrinsic "llvm.nvvm.rcp.approx.ftz.f"
+// CHECK: arith.mulf
+// CHECK-NOT: arith.divf
+func.func @marked_approximate_div(%x: f32, %y: f32) -> f32 {
+  %result = arith.divf %x, %y {intent.cuda.approximate_div} : f32
+  return %result : f32
+}
+
+// -----
+
+// CHECK-LABEL: func.func @unmarked_exact_div
+// CHECK: arith.divf
+// CHECK-NOT: llvm.call_intrinsic "llvm.nvvm.rcp.approx.ftz.f"
+func.func @unmarked_exact_div(%x: f32, %y: f32) -> f32 {
+  %result = arith.divf %x, %y : f32
+  return %result : f32
+}

@@ -350,6 +350,44 @@ class CachedLauncher:
             raise RuntimeError(f"cuLaunchKernel: CUDA driver error {int(err)}")
 
 
+@dataclass(frozen=True)
+class PreparedGraphRecord:
+    """Allocation-free timed-launch provenance for one compiled CUDA graph."""
+
+    launch_count: int
+    kernel_count: int
+    intermediate_buffer_count: int
+    output_count: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "launch_count": self.launch_count,
+            "kernel_count": self.kernel_count,
+            "intermediate_buffer_count": self.intermediate_buffer_count,
+            "output_count": self.output_count,
+        }
+
+
+class PreparedGraphProgram:
+    """Persistent tensors plus cached no-sync launchers for a whole MLIR graph."""
+
+    def __init__(self, sites, outputs, record: PreparedGraphRecord):
+        self._sites = tuple(sites)
+        self.outputs = dict(outputs)
+        self.record = record
+
+    def thunk(self):
+        """Return an allocation-free, synchronization-free whole-graph closure."""
+
+        sites = self._sites
+
+        def launch() -> None:
+            for launcher, tensors in sites:
+                launcher.launch(tensors)
+
+        return launch
+
+
 # --------------------------------------------------------------------------- #
 # MLIR type -> torch dtype.                                                    #
 # --------------------------------------------------------------------------- #
@@ -1265,6 +1303,7 @@ def run_program(
     inputs,
     compile_all=compile_all_kernels,
     output_aliases=None,
+    _prepare_only: bool = False,
 ):
     """Compile *intent_mlir_path* and execute its whole kernel graph on the GPU.
 
@@ -1548,6 +1587,7 @@ def run_program(
             )
         return int(tensor.reshape(()).view(torch.uint16).item())
 
+    prepared_sites = []
     for site in host.launches:
         ck = by_binary.get(site.binary_module)
         if ck is None:
@@ -1570,60 +1610,64 @@ def run_program(
             shared = int(host.constants[site.dynamic_shared_ssa][0])
             _set_dynamic_shared_memory(func, shared)
 
-        call_args = []
+        launch_tensors = []
+        plan = []
         for op in site.args:
             ty = op.ty
             if ty.startswith("!llvm.ptr"):
                 t = _resolve_ptr(op.ssa)
-                call_args.append(_PtrArg(t.data_ptr()))
+                plan.append(("ptr", len(launch_tensors)))
+                launch_tensors.append(t)
             elif ty in ("i64", "index"):
                 value = (
                     int(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else int(_loaded_input_scalar(op.ssa, torch.int64))
                 )
-                call_args.append(_I64Arg(value))
+                plan.append(("i64", value))
             elif ty == "i32":
                 value = (
                     int(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else int(_loaded_input_scalar(op.ssa, torch.int32))
                 )
-                call_args.append(_I32Arg(value))
+                plan.append(("i32", value))
             elif ty == "f16":
                 bits = (
                     _parse_f16_bits(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar_bits(op.ssa, torch.float16)
                 )
-                call_args.append(_F16Arg(bits))
+                plan.append(("f16", bits))
             elif ty == "bf16":
                 bits = (
                     _parse_bf16_bits(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar_bits(op.ssa, torch.bfloat16)
                 )
-                call_args.append(_BF16Arg(bits))
+                plan.append(("bf16", bits))
             elif ty == "f32":
                 value = (
                     _parse_f32(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar(op.ssa, torch.float32)
                 )
-                call_args.append(_F32Arg(value))
+                plan.append(("f32", value))
             elif ty == "f64":
                 value = (
                     _parse_f64(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar(op.ssa, torch.float64)
                 )
-                call_args.append(_F64Arg(value))
+                plan.append(("f64", value))
             else:
                 raise NotImplementedError(
                     f"orchestrate: unhandled launch-arg type {ty!r} (operand {op.ssa})"
                 )
 
-        _launch(func, grid, block, call_args, shared=shared)
+        launcher = CachedLauncher(func, grid, block, plan, shared=shared)
+        launcher.bind_input_scalars(launch_tensors)
+        prepared_sites.append((launcher, tuple(launch_tensors)))
 
     # --- collect outputs --------------------------------------------------- #
     # One ``out{i}`` per function result, in return order (multi-result programs,
@@ -1673,7 +1717,46 @@ def run_program(
                     f"declared shape {shape} requires {expected_numel}"
                 )
             outputs[key] = tensor.reshape(shape)
+    prepared = PreparedGraphProgram(
+        prepared_sites,
+        outputs,
+        PreparedGraphRecord(
+            launch_count=len(host.launches),
+            kernel_count=len(kernels),
+            intermediate_buffer_count=len(host.loose_buffers),
+            output_count=len(outputs),
+        ),
+    )
+    if _prepare_only:
+        return prepared
+    prepared.thunk()()
+    torch.cuda.synchronize()
     return outputs
 
 
-__all__ = ["run_program"]
+def prepare_program(
+    intent_mlir_path,
+    inputs,
+    compile_all=compile_all_kernels,
+    output_aliases=None,
+) -> PreparedGraphProgram:
+    """Compile/bind once and return a no-allocation whole-graph launcher."""
+
+    result = run_program(
+        intent_mlir_path,
+        inputs,
+        compile_all=compile_all,
+        output_aliases=output_aliases,
+        _prepare_only=True,
+    )
+    if not isinstance(result, PreparedGraphProgram):
+        raise RuntimeError("orchestrate did not return a prepared graph")
+    return result
+
+
+__all__ = [
+    "PreparedGraphProgram",
+    "PreparedGraphRecord",
+    "prepare_program",
+    "run_program",
+]

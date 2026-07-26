@@ -179,6 +179,30 @@ static bool isF32One(Value value) {
   return attr && attr.getType().isF32() && attr.getValueAsDouble() == 1.0;
 }
 
+/// Explicit precision-search state: `lhs / rhs` ->
+/// `lhs * rcp.approx.ftz(rhs)`.  Only the source-neutral row lowering can attach
+/// the marker after candidate enumeration; ordinary arith.divf operations and
+/// the exact ablation state remain untouched.
+struct MarkedDivToNVVMApprox : OpRewritePattern<arith::DivFOp> {
+  explicit MarkedDivToNVVMApprox(MLIRContext *ctx)
+      : OpRewritePattern<arith::DivFOp>(ctx, /*benefit=*/3) {}
+
+  LogicalResult matchAndRewrite(arith::DivFOp op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getType());
+    if (!f32 || !op->hasAttr("intent.cuda.approximate_div"))
+      return rewriter.notifyMatchFailure(
+          op, "requires a marked scalar f32 precision-search division");
+    auto reciprocal = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32,
+        rewriter.getStringAttr("llvm.nvvm.rcp.approx.ftz.f"),
+        ValueRange{op.getRhs()});
+    rewriter.replaceOpWithNewOp<arith::MulFOp>(
+        op, op.getLhs(), reciprocal.getResult(0));
+    return success();
+  }
+};
+
 /// `1 / (1 + ex2.approx(x))` -> `rcp.approx.ftz(1 + ex2.approx(x))`.
 ///
 /// This is the normalized scalar shape of sigmoid after ExpToEx2Approx. The
@@ -437,6 +461,22 @@ struct TanhToEx2Approx : OpRewritePattern<math::TanhOp> {
       return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
 
     Location loc = op.getLoc();
+    if (auto mode = op->getAttrOfType<StringAttr>(
+            "intent.backend.tanh_approximation");
+        mode && mode.getValue() == "native-ptx") {
+      // PTX ISA provides a single-instruction f32 approximation on current
+      // CUDA targets, but LLVM/NVVM does not expose a stable intrinsic for it.
+      // Keep it as target inline assembly rather than replacing the kernel in
+      // Python.  This state is explicitly marked by the upstream C++ lowering
+      // and is admitted only through Q/D-certified numeric search.
+      auto native = rewriter.create<LLVM::InlineAsmOp>(
+          loc, f32, ValueRange{op.getOperand()},
+          "tanh.approx.f32 $0, $1;", "=f,f",
+          /*has_side_effects=*/false, /*is_align_stack=*/false,
+          LLVM::AsmDialectAttr(), ArrayAttr());
+      rewriter.replaceOp(op, native.getResults());
+      return success();
+    }
     Value zero = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getF32FloatAttr(0.0));
     Value one = rewriter.create<arith::ConstantOp>(
@@ -1043,6 +1083,7 @@ struct LowerGpuMathToNVVM
         &getContext());
     patterns.add<LogSubToLg2Fma>(&getContext());
     patterns.add<ExpToEx2Approx>(&getContext());
+    patterns.add<MarkedDivToNVVMApprox>(&getContext());
     patterns.add<SigmoidReciprocalToNVVMApprox>(&getContext());
     patterns.add<LogToLg2Approx>(&getContext());
     patterns.add<LogF64Polynomial>(&getContext());

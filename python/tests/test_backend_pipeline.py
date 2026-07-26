@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -99,7 +100,9 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
           intent.backend.all_reduce_count = 0 : i64,
           intent.backend.barrier_count = 2 : i64,
           intent.backend.block_threads = 64 : i64,
+          intent.backend.rows_per_block = 2 : i64,
           intent.backend.fma_count = 4 : i64,
+          intent.backend.approximate_div_count = 1 : i64,
           intent.backend.folded_constexpr_select_count = 0 : i64,
           intent.backend.predicated_value_if_count = 0 : i64,
           intent.backend.lowering_path_kind = "row_reduction",
@@ -108,7 +111,8 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
           intent.backend.transformation_trace = [
             "cuda.row_reduction.read_once.v1",
             "cuda.reduction.workgroup_hierarchical.v1",
-            "cuda.numeric.fma.f32.v1"
+            "cuda.numeric.fma.f32.v1",
+            "cuda.numeric.div_reciprocal_approx.f32.v1"
           ]
         } { return }
         """
@@ -116,11 +120,15 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
 
     assert receipt is not None
     assert receipt.fma_count == 4
+    assert receipt.approximate_div_count == 1
     assert receipt.predicated_value_if_count == 0
     assert receipt.folded_constexpr_select_count == 0
+    assert receipt.rows_per_block == 2
+    assert receipt.to_dict()["rows_per_block"] == 2
     assert receipt.observation_changing
     assert receipt.reduction_topology == "workgroup_hierarchical"
     assert len(receipt.topology_digest) == 64
+    assert replace(receipt, rows_per_block=1).topology_digest != receipt.topology_digest
 
 
 def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(

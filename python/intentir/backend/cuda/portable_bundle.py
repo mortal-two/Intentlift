@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 from typing import Any, Mapping
 
 import numpy as np
@@ -16,6 +17,18 @@ from intentir.verify.gate2.triton import (
 
 
 ARRAY_PROTOCOL = "intentir.transport.ndarray.v1"
+
+
+def cuda_compute_capability_for_chip(chip: str) -> tuple[int, int]:
+    """Decode the exact compute capability named by an NVVM cubin target."""
+
+    match = re.fullmatch(r"sm_([0-9]+)a?", chip)
+    if match is None:
+        raise ValueError(f"unsupported CUDA chip spelling {chip!r}")
+    digits = match.group(1)
+    if len(digits) < 2:
+        raise ValueError(f"CUDA chip lacks major/minor digits: {chip!r}")
+    return int(digits[:-1]), int(digits[-1])
 
 
 def encode_array(value: Any) -> dict[str, Any]:
@@ -102,6 +115,7 @@ def decode_triton_spec(value: Mapping[str, Any]) -> TritonExecutionSpec:
 
 __all__ = [
     "ARRAY_PROTOCOL",
+    "cuda_compute_capability_for_chip",
     "decode_array",
     "decode_triton_spec",
     "decode_values",

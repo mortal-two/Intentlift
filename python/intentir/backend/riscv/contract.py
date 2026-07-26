@@ -70,13 +70,29 @@ def derive_riscv_contract_view(
     j = state.base.j
     projection = state.base.boundary_projection
     consumed = list(projection.consumed)
+    projected_consumed = set(projection.consumed)
     unsupported: list[str] = []
     if j.boundary.aliases:
         unsupported.append("alias_relation")
     if j.boundary.updates:
         unsupported.append("logical_update_relation")
     if j.boundary.access_guard_relations:
-        unsupported.append("access_guard_materialization_not_implemented")
+        guards_consumed = all(
+            any(
+                ref.startswith(
+                    f"access_guard:{item.access_ref}:{item.value_ref}:"
+                )
+                and ref.endswith(f":{item.polarity.value}")
+                for ref in projected_consumed
+            )
+            for item in j.boundary.access_guard_relations
+        )
+        if not guards_consumed:
+            # The shared typed boundary materializer is the only authority that
+            # may turn an authored access-local guard into an explicit select.
+            # Consume its receipt when complete; otherwise fail closed instead
+            # of reconstructing or guessing the guard in the RVV backend.
+            unsupported.append("access_guard_materialization_not_implemented")
     for storage in j.storage:
         reference = f"storage:{storage.storage_id}"
         if storage.mutability.value == "mutable" and not (

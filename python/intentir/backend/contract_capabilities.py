@@ -33,6 +33,34 @@ def derive_search_capabilities(base: MaterializedJ) -> tuple[str, ...]:
     }
     tensors = {item.name: item for item in j.intent.inputs}
 
+    # A closed signature may preserve unused frontend ABI parameters.  They are
+    # not compiler-visible state when they neither occur in the typed A DAG nor
+    # carry a B effect.  Requiring a read effect for such dead carriers made one
+    # unrelated unused tensor suppress whole-graph fusion for every live input.
+    # Walk every structured region so this projection is derived from J itself,
+    # never from a runtime sample or kernel-name allowlist.
+    dag_operands: set[str] = set()
+
+    def visit(operations) -> None:
+        for operation in operations:
+            dag_operands.update(operation.operands)
+            visit(operation.body)
+            for branch in (operation.positive, operation.negative):
+                if branch is not None:
+                    visit(branch.body)
+
+    visit(j.intent.body)
+    observable_inputs = {
+        output.name for output in j.intent.outputs if output.name in input_names
+    }
+    active_input_names = {
+        name
+        for name in input_names
+        if name in dag_operands
+        or name in observable_inputs
+        or bool(effects_by_target[name])
+    }
+
     def is_readonly_input(name: str) -> bool:
         kinds = effects_by_target[name]
         if kinds == {EffectKind.READ}:
@@ -46,8 +74,8 @@ def derive_search_capabilities(base: MaterializedJ) -> tuple[str, ...]:
             and parameter.alias_of is None
         )
 
-    all_inputs_readonly = bool(input_names) and all(
-        is_readonly_input(name) for name in input_names
+    all_inputs_readonly = bool(active_input_names) and all(
+        is_readonly_input(name) for name in active_input_names
     )
     capabilities: list[str] = []
     if all_inputs_readonly and not j.boundary.aliases and not j.boundary.updates:

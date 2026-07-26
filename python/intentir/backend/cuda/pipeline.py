@@ -40,19 +40,26 @@ class MLIRTransformationReceipt:
     reduction_topology: str
     transformation_trace: tuple[str, ...]
     fma_count: int
+    approximate_div_count: int
     shuffle_count: int
     barrier_count: int
     all_reduce_count: int
     block_threads: int
+    rows_per_block: int
     predicated_value_if_count: int
     folded_constexpr_select_count: int
+    host_value_capture_count: int
+    epilogue_load_motion_count: int
+    approximation_mode: str
 
     @property
     def observation_changing(self) -> bool:
-        return self.fma_count > 0 or self.reduction_topology in {
+        return self.fma_count > 0 or self.approximate_div_count > 0 or self.approximation_mode != "none" or self.reduction_topology in {
             "subgroup_shuffle",
             "workgroup_hierarchical",
             "gpu_all_reduce",
+            "subgroup_feature",
+            "subgroup_rows",
         }
 
     @property
@@ -61,7 +68,9 @@ class MLIRTransformationReceipt:
             {
                 "lowering_path_kind": self.lowering_path_kind,
                 "reduction_topology": self.reduction_topology,
+                "rows_per_block": self.rows_per_block,
                 "transformation_trace": list(self.transformation_trace),
+                "approximation_mode": self.approximation_mode,
             }
         )
 
@@ -71,12 +80,17 @@ class MLIRTransformationReceipt:
             "reduction_topology": self.reduction_topology,
             "transformation_trace": list(self.transformation_trace),
             "fma_count": self.fma_count,
+            "approximate_div_count": self.approximate_div_count,
             "shuffle_count": self.shuffle_count,
             "barrier_count": self.barrier_count,
             "all_reduce_count": self.all_reduce_count,
             "block_threads": self.block_threads,
+            "rows_per_block": self.rows_per_block,
             "predicated_value_if_count": self.predicated_value_if_count,
             "folded_constexpr_select_count": self.folded_constexpr_select_count,
+            "host_value_capture_count": self.host_value_capture_count,
+            "epilogue_load_motion_count": self.epilogue_load_motion_count,
+            "approximation_mode": self.approximation_mode,
             "observation_changing": self.observation_changing,
             "topology_digest": self.topology_digest,
         }
@@ -101,6 +115,9 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
 
     path = string_attr("intent.backend.lowering_path_kind")
     topology = string_attr("intent.backend.reduction_topology")
+    approximation_mode = (
+        string_attr("intent.backend.approximation_mode") or "none"
+    )
     trace_match = re.search(
         r"intent\.backend\.transformation_trace\s*=\s*\[([^\]]*)\]",
         mlir,
@@ -122,7 +139,29 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
             "folded_constexpr_select_count",
         )
     }
-    if not trace or any(value is None or value < 0 for value in counts.values()):
+    rows_per_block = integer_attr("intent.backend.rows_per_block")
+    if rows_per_block is None:
+        rows_per_block = 1
+    approximate_div_count = integer_attr(
+        "intent.backend.approximate_div_count"
+    )
+    if approximate_div_count is None:
+        approximate_div_count = 0
+    host_value_capture_count = integer_attr(
+        "intent.backend.host_value_capture_count"
+    )
+    if host_value_capture_count is None:
+        host_value_capture_count = 0
+    epilogue_load_motion_count = integer_attr(
+        "intent.backend.epilogue_load_motion_count"
+    )
+    if epilogue_load_motion_count is None:
+        epilogue_load_motion_count = 0
+    if (
+        not trace
+        or rows_per_block <= 0
+        or any(value is None or value < 0 for value in counts.values())
+    ):
         raise ValueError("C++ concrete-state receipt has invalid trace/counts")
     assert all(value is not None for value in counts.values())
     return MLIRTransformationReceipt(
@@ -130,14 +169,19 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         reduction_topology=topology,
         transformation_trace=trace,
         fma_count=int(counts["fma_count"]),
+        approximate_div_count=approximate_div_count,
         shuffle_count=int(counts["shuffle_count"]),
         barrier_count=int(counts["barrier_count"]),
         all_reduce_count=int(counts["all_reduce_count"]),
         block_threads=int(counts["block_threads"]),
+        rows_per_block=rows_per_block,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),
         folded_constexpr_select_count=int(
             counts["folded_constexpr_select_count"]
         ),
+        host_value_capture_count=host_value_capture_count,
+        epilogue_load_motion_count=epilogue_load_motion_count,
+        approximation_mode=approximation_mode,
     )
 
 
@@ -150,6 +194,8 @@ class LoweredProgram:
     source_mlir_sha256: str
     specialized_mlir_sha256: str | None = None
     transformation_receipt: MLIRTransformationReceipt | None = None
+    pipeline_id: str = "cuda.pipeline.direct.v1"
+    pipeline_mlir_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not self.kernels:
@@ -179,11 +225,28 @@ class LoweredProgram:
             and self.selection.pipeline_kind != "specialized"
         ):
             raise ValueError("generic lowering cannot carry a transformation receipt")
+        if not self.pipeline_id:
+            raise ValueError("lowering pipeline_id must be non-empty")
+        if (
+            self.pipeline_mlir_sha256 is not None
+            and re.fullmatch(r"[0-9a-f]{64}", self.pipeline_mlir_sha256) is None
+        ):
+            raise ValueError("pipeline MLIR digest must be SHA-256")
 
     @property
     def executable_digest(self) -> str:
         return content_digest(
             [hashlib.sha256(kernel.cubin).hexdigest() for kernel in self.kernels]
+        )
+
+    @property
+    def concrete_mlir_sha256(self) -> str:
+        """Digest the real compiler state used for duplicate-state rejection."""
+
+        return (
+            self.specialized_mlir_sha256
+            or self.pipeline_mlir_sha256
+            or self.source_mlir_sha256
         )
 
     def to_record(self) -> dict[str, object]:
@@ -193,6 +256,8 @@ class LoweredProgram:
             "selection": self.selection.to_dict(),
             "source_mlir_sha256": self.source_mlir_sha256,
             "specialized_mlir_sha256": self.specialized_mlir_sha256,
+            "pipeline_id": self.pipeline_id,
+            "pipeline_mlir_sha256": self.pipeline_mlir_sha256,
             "transformation_receipt": (
                 self.transformation_receipt.to_dict()
                 if self.transformation_receipt is not None
@@ -234,6 +299,17 @@ def _compile_generic(
         source_path = Path(directory) / "input.mlir"
         source_path.write_text(source, encoding="utf-8")
         return tuple(backend_compile.compile_all_kernels(source_path))
+
+
+def _pipeline_mlir_digest(
+    kernels: tuple[backend_compile.CompiledKernel, ...],
+) -> str:
+    return content_digest(
+        [
+            hashlib.sha256(kernel.binary_mlir.encode("utf-8")).hexdigest()
+            for kernel in kernels
+        ]
+    )
 
 
 def lower_to_cuda(
@@ -319,6 +395,65 @@ def lower_to_cuda(
         source_mlir_sha256=source_digest,
         specialized_mlir_sha256=specialized_digest,
         transformation_receipt=transformation_receipt,
+        pipeline_id=(
+            "cuda.pipeline.direct-specialized.v1"
+            if selection.pipeline_kind == "specialized"
+            else "cuda.pipeline.linalg-materialized.v1"
+        ),
+        pipeline_mlir_sha256=_pipeline_mlir_digest(kernels),
+    )
+
+
+def lower_to_cuda_fused(
+    intent_module: str | os.PathLike[str],
+    *,
+    tile: tuple[int, ...] = (1, 256),
+    target: LoweringTarget | None = None,
+    require_single_kernel: bool = True,
+) -> LoweredProgram:
+    """Compile a real upstream Linalg fusion+tiling state to CUDA.
+
+    This is the existing MLIR fusion pipeline from ``compile.py`` exposed as a
+    production search candidate.  It consumes the same immutable Intent module;
+    no Python implementation of the kernel is generated.
+    """
+
+    source = read_intent_module(intent_module)
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    selected_target = target or LoweringTarget()
+    if selected_target.chip != backend_compile.CHIP:
+        raise ValueError(
+            "lowering target must match the configured CUDA backend: "
+            f"requested {selected_target.chip!r}, configured {backend_compile.CHIP!r}"
+        )
+    selection = select_variant(
+        source,
+        target=selected_target,
+        allow_specialized=False,
+    )
+    path = _existing_path(intent_module)
+    if path is not None:
+        kernels = tuple(backend_compile.compile_all_kernels_fused(path, tile))
+    else:
+        with tempfile.TemporaryDirectory(
+            prefix="intentir-lowering-fused-"
+        ) as directory:
+            source_path = Path(directory) / "input.mlir"
+            source_path.write_text(source, encoding="utf-8")
+            kernels = tuple(
+                backend_compile.compile_all_kernels_fused(source_path, tile)
+            )
+    if require_single_kernel and len(kernels) != 1:
+        raise ValueError(
+            "Linalg fusion did not collapse the complete graph to one kernel: "
+            f"observed {len(kernels)} kernels"
+        )
+    return LoweredProgram(
+        selection=selection,
+        kernels=kernels,
+        source_mlir_sha256=source_digest,
+        pipeline_id="cuda.pipeline.linalg-elementwise-fused.v1",
+        pipeline_mlir_sha256=_pipeline_mlir_digest(kernels),
     )
 
 
@@ -410,4 +545,5 @@ __all__ = [
     "execute_cuda_artifact",
     "lower_function_to_cuda",
     "lower_to_cuda",
+    "lower_to_cuda_fused",
 ]

@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from intentir.verify.gate1.model import ParameterKind, SemanticArchive
+from intentir.verify.workload_adapters import (
+    BufferBinding,
+    BufferInitializer,
+    BufferRole,
+    PreparedTritonWorkload,
+    ScalarBinding,
+    TRITON_WORKLOAD_ADAPTERS,
+    TritonWorkloadAdapter,
+    prepare_triton_source_workload,
+    prepare_triton_workload,
+)
 
 
 PRODUCTION_CASE_IDS: dict[str, str] = {
@@ -23,6 +37,8 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
     "kl_div": "high_performance:liger_kl_div",
     "layer_norm": "high_performance:liger_layer_norm",
     "liger_rms_norm": "high_performance:liger_rms_norm",
+    "masked_copy": "scrc_canary:masked_copy",
+    "masked_row_square_sum": "scrc_canary:masked_row_square_sum",
     "poly_norm": "high_performance:liger_poly_norm",
     "softmax": "high_performance:liger_softmax",
     "sparsemax": "high_performance:liger_sparsemax",
@@ -37,6 +53,93 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
         "_rms_norm_add_kernel"
     ),
 }
+
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+_SOURCE_MANIFEST = (
+    _REPOSITORY_ROOT / "corpus" / "production-source-v1" / "manifest.json"
+)
+_CERTIFIED_CANARY_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
+    "scrc_canary:masked_copy": TritonWorkloadAdapter(
+        case_id="scrc_canary:masked_copy",
+        buffers=(
+            BufferBinding(
+                "X",
+                BufferRole.INPUT,
+                "f32",
+                (1000,),
+                initializer=BufferInitializer.STANDARD_NORMAL,
+            ),
+            BufferBinding("Y", BufferRole.OUTPUT, "f32", (1000,), "output0"),
+        ),
+        scalars=(ScalarBinding("N", "i32", 1000),),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 1024),),
+        grid=(1,),
+        grid_contract=("1",),
+        seed=11,
+    ),
+    "scrc_canary:masked_row_square_sum": TritonWorkloadAdapter(
+        case_id="scrc_canary:masked_row_square_sum",
+        buffers=(
+            BufferBinding(
+                "X",
+                BufferRole.INPUT,
+                "f32",
+                (2, 1000),
+                initializer=BufferInitializer.STANDARD_NORMAL,
+            ),
+            BufferBinding("Y", BufferRole.OUTPUT, "f32", (2,), "output0"),
+        ),
+        scalars=(ScalarBinding("N", "i32", 1000),),
+        semantic_constexprs=(),
+        c_values=(("BLOCK_SIZE", 1024),),
+        grid=(2,),
+        grid_contract=("2",),
+        seed=19,
+    ),
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def prepare_production_workload(name: str) -> PreparedTritonWorkload:
+    """Resolve an active Source or an exact content-checked certified canary."""
+
+    case_id = PRODUCTION_CASE_IDS[name]
+    if case_id in TRITON_WORKLOAD_ADAPTERS:
+        return prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[case_id])
+    adapter = _CERTIFIED_CANARY_ADAPTERS.get(case_id)
+    if adapter is None:
+        raise KeyError(f"production case {name!r} has no Source adapter")
+    payload = json.loads(_SOURCE_MANIFEST.read_text(encoding="utf-8"))
+    record = payload.get(name)
+    if not isinstance(record, dict) or set(record) != {
+        "case_id",
+        "path",
+        "sha256",
+        "symbol",
+    }:
+        raise ValueError(f"certified Source manifest entry {name!r} is invalid")
+    if record["case_id"] != case_id:
+        raise ValueError("certified Source manifest case_id mismatch")
+    source_path = (_REPOSITORY_ROOT / record["path"]).resolve()
+    if _REPOSITORY_ROOT not in source_path.parents:
+        raise ValueError("certified Source path escapes the repository")
+    if _sha256(source_path) != record["sha256"]:
+        raise ValueError("certified Source digest mismatch")
+    return prepare_triton_source_workload(
+        adapter,
+        source_path,
+        source_symbol=record["symbol"],
+        source_location=f"corpus://production-source-v1/{source_path.name}",
+    )
 
 
 def constexpr_input_bindings(
@@ -85,4 +188,8 @@ def constexpr_input_bindings(
     return result
 
 
-__all__ = ["PRODUCTION_CASE_IDS", "constexpr_input_bindings"]
+__all__ = [
+    "PRODUCTION_CASE_IDS",
+    "constexpr_input_bindings",
+    "prepare_production_workload",
+]

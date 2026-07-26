@@ -15,6 +15,7 @@ from intentir.backend.cuda.portable_bundle import encode_values
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
+    prepare_production_workload,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
@@ -30,10 +31,6 @@ from intentir.verify.gate1.model import ResultRelationKind
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
-from intentir.verify.workload_adapters import (
-    TRITON_WORKLOAD_ADAPTERS,
-    prepare_triton_workload,
-)
 
 
 BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
@@ -91,9 +88,7 @@ def _entry(name: str, snapshot_dir: Path) -> dict[str, Any]:
     snapshot, path = load_production_snapshot(snapshot_dir, name)
     if snapshot.c is None:
         raise ValueError("RVV bundle requires frozen accepted C")
-    prepared = prepare_triton_workload(
-        TRITON_WORKLOAD_ADAPTERS[PRODUCTION_CASE_IDS[name]]
-    )
+    prepared = prepare_production_workload(name)
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
