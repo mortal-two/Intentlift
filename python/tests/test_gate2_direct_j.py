@@ -79,6 +79,34 @@ def _attach_dense_copy_boundary(artifact, *, domains=None) -> None:
     ]
 
 
+def test_functional_boundary_allows_semantically_unused_tensor_abi_input() -> None:
+    artifact = make_copy_artifact()
+    _attach_dense_copy_boundary(
+        artifact,
+        domains={"d0": "0 <= i0 and i0 < x0"},
+    )
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["inputs"].append(
+        {"name": "unused", "dtype": "f32", "shape": ["x0"]}
+    )
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            f"p{len(artifact.j.signature.parameters)}",
+            ParameterKind.POINTER,
+            ParameterMode.INPUT,
+            "f32",
+            1,
+            logical_ref="unused",
+        )
+    )
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert "access:a0" in projection.consumed
+    assert not any("unused" in item for item in projection.consumed)
+
+
 def _constant_gather_boundary_j() -> SemanticArchive:
     function = IntentFunction.from_json(
         {
