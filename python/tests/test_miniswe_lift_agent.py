@@ -47,6 +47,7 @@ from minisweagent.config.intentir_context_query import (
     _feedback,
     _feedback_category,
     _source_find,
+    _source_outline,
 )
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
@@ -134,7 +135,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v39"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v40"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -147,6 +148,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "Do not page through the raw schema" in files["README.md"]
     assert "context_query.py bootstrap" in files["README.md"]
     assert "source-find" in files["README.md"]
+    assert "source-outline" in files["README.md"]
     assert "candidate-nodes" in files["README.md"]
     assert "read-only discovery" in files["README.md"]
     assert "integral rank-0 scalar explicitly equated" in files["README.md"]
@@ -599,6 +601,15 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
     assert "2 |     value = load(x)" in source_report
     assert "4 |         value = value + offset" in source_report
 
+    _source_outline(input_root, 1, 32)
+    outline = json.loads(capsys.readouterr().out)
+    assert outline["protocol"] == "intentir.lift-source-outline.v1"
+    assert "syntax-only Source navigation" in outline["authority"]
+    assert [
+        (item["kind"], item["line"], item["depth"])
+        for item in outline["items"]
+    ] == [("function", 1, 0), ("for", 3, 1)]
+
     _candidate_nodes(output_root, 1, 2)
     page = json.loads(capsys.readouterr().out)
     assert page["total"] == 3
@@ -640,6 +651,8 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
                 "command": (
                     "python /input/tools/context_query.py source-find mask "
                     "--context 1; "
+                    "python /input/tools/context_query.py source-outline "
+                    "--start 1 --count 32; "
                     "python /input/tools/context_query.py candidate-nodes "
                     "--start 1 --count 2; "
                     "python /input/tools/context_query.py candidate-node n0"
@@ -653,6 +666,7 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
     assert result["returncode"] == 0, result
     assert "--- source.py:" in result["output"]
     assert ">" in result["output"] and " < " in result["output"]
+    assert '"protocol": "intentir.lift-source-outline.v1"' in result["output"]
     assert result["output"].count(
         '"protocol": "intentir.lift-candidate-node-query.v1"'
     ) == 2

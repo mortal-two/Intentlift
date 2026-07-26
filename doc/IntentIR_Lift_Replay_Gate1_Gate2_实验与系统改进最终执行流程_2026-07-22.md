@@ -564,6 +564,11 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
+当前 Lift knowledge v40 另提供只读 `source-outline`，对长 Source 分页显示 function/loop/if/
+return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定哪个循环是
+Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。Lift LLM 仍必须
+阅读对应 Source 区间、做语义分类并完整作者化 `(J,C,π)`。
+
 该 representation-only null-carrier 例外只适用于 runtime scalar。对 `bound_constexpr_values`，Lift 必须
 遍历它在 Source 中的全部 use：作为 logical value/predicate/result 时绑定 dtype-compatible
 rank-0 J input，仅为 integral logical extent 时绑定 declared `x*`。只有全部语义 use 都是

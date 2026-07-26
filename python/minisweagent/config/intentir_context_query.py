@@ -9,6 +9,7 @@ shell output.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -154,6 +155,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Use `{QUERY_COMMAND} feedback --path diagnostics.KEY` for one exact diagnostic section.",
             "Read Source and Harness separately so neither can be transport-elided.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
+            f"Use `{QUERY_COMMAND} source-outline --start 1 --count 32` to locate syntax-level control before paging a long Source.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
@@ -329,6 +331,106 @@ def _source_find(input_root: Path, query: str, context: int) -> None:
     print("\n".join(blocks))
     if omitted:
         print("\n[more matches omitted; use a narrower literal query]")
+
+
+def _source_outline(input_root: Path, start: int, count: int) -> None:
+    """Page syntax-only Source control locations without semantic extraction."""
+
+    if start < 1 or count < 1 or count > 48:
+        raise ValueError("source-outline start must be positive and count in [1, 48]")
+    source = (input_root / "source.py").read_text(encoding="utf-8")
+    lines = source.splitlines()
+    tree = ast.parse(source, filename="source.py")
+    items: list[dict[str, Any]] = []
+
+    class OutlineVisitor(ast.NodeVisitor):
+        depth = 0
+
+        def record(self, node: ast.AST, kind: str) -> None:
+            line = getattr(node, "lineno", None)
+            if not isinstance(line, int):
+                return
+            header = lines[line - 1].strip() if line <= len(lines) else ""
+            items.append(
+                {
+                    "kind": kind,
+                    "line": line,
+                    "end_line": getattr(node, "end_lineno", line),
+                    "depth": self.depth,
+                    "header": header[:200],
+                }
+            )
+
+        def nested(self, node: ast.AST, kind: str) -> None:
+            self.record(node, kind)
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.nested(node, "function")
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.nested(node, "async_function")
+
+        def visit_For(self, node: ast.For) -> None:
+            self.nested(node, "for")
+
+        def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+            self.nested(node, "async_for")
+
+        def visit_While(self, node: ast.While) -> None:
+            self.nested(node, "while")
+
+        def visit_If(self, node: ast.If) -> None:
+            self.nested(node, "if")
+
+        def visit_Try(self, node: ast.Try) -> None:
+            self.nested(node, "try")
+
+        def visit_With(self, node: ast.With) -> None:
+            self.nested(node, "with")
+
+        def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+            self.nested(node, "async_with")
+
+        def visit_Match(self, node: ast.Match) -> None:
+            self.nested(node, "match")
+
+        def visit_Return(self, node: ast.Return) -> None:
+            self.record(node, "return")
+
+        def visit_Break(self, node: ast.Break) -> None:
+            self.record(node, "break")
+
+        def visit_Continue(self, node: ast.Continue) -> None:
+            self.record(node, "continue")
+
+    OutlineVisitor().visit(tree)
+    page = items[start - 1 : start - 1 + count]
+    next_start = start + len(page) if start - 1 + len(page) < len(items) else None
+    _emit_json(
+        {
+            "protocol": "intentir.lift-source-outline.v1",
+            "authority": (
+                "syntax-only Source navigation; Lift still interprets every "
+                "item and authors all J/C/pi fields"
+            ),
+            "total": len(items),
+            "start": start,
+            "items": [
+                {"ordinal": start + index, **item}
+                for index, item in enumerate(page)
+            ],
+            "next_start": next_start,
+            "next_command": (
+                f"{QUERY_COMMAND} source-outline --start {next_start} "
+                f"--count {count}"
+                if next_start is not None
+                else None
+            ),
+        }
+    )
 
 
 def _resolve_json_path(value: Any, path: str | None) -> Any:
@@ -930,6 +1032,9 @@ def main() -> int:
     source_find = subparsers.add_parser("source-find")
     source_find.add_argument("query")
     source_find.add_argument("--context", type=int, default=3)
+    source_outline = subparsers.add_parser("source-outline")
+    source_outline.add_argument("--start", type=int, default=1)
+    source_outline.add_argument("--count", type=int, default=32)
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     candidate = subparsers.add_parser("candidate")
@@ -959,6 +1064,8 @@ def main() -> int:
         _source(args.input_root, args.start, args.lines)
     elif args.command == "source-find":
         _source_find(args.input_root, args.query, args.context)
+    elif args.command == "source-outline":
+        _source_outline(args.input_root, args.start, args.count)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "candidate":

@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v39"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v40"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -243,7 +243,7 @@ This directory is the complete allowlisted input for one fresh Lift round.
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
   matches. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
-  Its literal `source-find` search and paged `candidate-nodes`/single
+  Its syntax-only `source-outline`, literal `source-find` search, and paged `candidate-nodes`/single
   `candidate-node` views expose only Source and J content already visible to
   this worker; they never parse semantics, construct fields, or edit the draft.
   Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
@@ -261,6 +261,10 @@ Then inspect Source and Harness in separate actions with
 `python /input/tools/context_query.py feedback` before editing the candidate
 copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.
+For a long Source, run
+`python /input/tools/context_query.py source-outline --start 1 --count 32`
+and page it before deciding that no loop, branch, or early return exists. The
+outline contains syntax locations only; it never classifies or constructs J.
 Use `feedback --path diagnostics.KEY` for an exact unresolved Gate1 or
 CandidateCheck section; do not probe category names or parse the full file with
 ad-hoc scripts. Use `candidate --path j.PATH` and `candidate-find HANDLE` to

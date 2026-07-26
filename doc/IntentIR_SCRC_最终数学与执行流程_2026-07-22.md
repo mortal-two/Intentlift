@@ -441,7 +441,9 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v17 / candidate-check.v1 / replay-check.v3`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v10`，
-Lift knowledge 为 v39。
+Lift knowledge 为 v40。v40 只为 source-aware Lift worker 增加只读、分页的 Source
+control-flow outline（function/loop/if/return 的行号与嵌套深度）；它不分类语义、不产生
+IntentOp/carry/relation/π，仍由 Lift LLM 打开对应 Source 并完整作者化 artifact。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`。每个当前字段都由
