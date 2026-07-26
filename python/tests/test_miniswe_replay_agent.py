@@ -337,6 +337,10 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["agent"]["step_limit"] == 40
     assert default_config["environment"]["replay_compile_check_limit"] == 7
     assert default_config["model"]["retry_attempts"] == 3
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v4"
+    instance = default_config["agent"]["instance_template"]
+    assert "typed rank and axis structure" in instance
+    assert "algebraically equivalent flattened reduction" in instance
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:

@@ -343,6 +343,9 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
 或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的
 membership oracle。
+当前 Lift knowledge v42 进一步明确 `fill_value` 是 Source 对应 load 的实际 `other`，不是由 C
+tile/role 或 downstream neutral value 重写的量；MiniSWE Replay v4 的 typed rank/reshape fidelity
+同样不读取 C value 来选择 shape。两项只约束 LLM authoring，不转移任何语义所有权给 C 或 fixed code。
 Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored
 binding；该版本只删除互相重复的双写要求，不允许 fixed code 从 store、Source 或地址关系猜 value。
 `intentir.lift-knowledge.v22` 再明确：每个 semantic reduce/inclusive-scan 都由 Lift 写自己的 local-axis

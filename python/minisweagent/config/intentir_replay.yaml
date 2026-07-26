@@ -23,6 +23,13 @@ agent:
     routes expose only already-authored instance endpoints and target-local
     slots. Resolved order states mandatory before -> after direction and
     prioritizes cross-region/effect obligations. Obey every item and later page.
+    Preserve the typed rank and axis structure of every J value and consumer.
+    When a physical lane tile needs an explicit public `tl.reshape` or
+    expand-dimension step to realize the authored operand shape and local
+    reduction axis, emit that compiler-visible step. Never replace a
+    reshape-plus-reduction, axis-specific reduction, or shaped carry by an
+    algebraically equivalent flattened reduction merely because final values
+    would match.
     A constexpr p* with no logical_ref is only a fixed-Harness-specialization
     ABI carrier. Retain it but never read it, invent a dummy use, or reconstruct
     inactive control; emit the authored active J graph.

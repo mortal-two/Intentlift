@@ -806,6 +806,12 @@ shape, Source fact, C value, pi route, or runtime value never fills a missing or
 different domain relation. General logical predicates remain legal J; do not
 delete them merely to satisfy this rectangular profile. A fill_value is legal
 only on a load with an authored predicate or access_guard_relation.
+For a predicate-bearing Source load, fill_value is that access's actual authored
+other value or Layer-A value reference. Never substitute a downstream neutral
+element, a value chosen to cancel a later operation, or another observationally
+equivalent fill. If Source omits other, omit fill_value. Consumer-specific
+outside identities and same-predicate masked stores are separate facts and do
+not rewrite the Source load fill.
 A computed Layer-A i1 access guard gets exactly one
 boundary.access_guard_relations item with increasing target-broadcast axes and
 closed polarity; do not copy it into the predicate or boundary.broadcasts. A

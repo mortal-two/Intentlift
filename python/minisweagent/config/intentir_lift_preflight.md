@@ -81,6 +81,12 @@ the artifact schema or external TypeCheck.
    `access_guard_relation`. An
    unconditional access omits both fields (or leaves both null); never attach a
    redundant fill to it. Consumers reject rather than normalize an orphan fill.
+   For a predicate-bearing Source load, `fill_value` records that access's
+   actual authored `other` value or Layer-A value reference. Do not replace it
+   with a downstream neutral element, a value that makes a later subtraction
+   vanish, or any observationally equivalent substitute. If Source omits
+   `other`, omit `fill_value`. Per-consumer outside semantics and a same-predicate
+   masked store are separate relations; neither rewrites the Source load fill.
    A computed Layer-A `i1` access guard belongs in exactly one
    `boundary.access_guard_relations` item, not copied into the access predicate.
    Its non-negative axes are strictly increasing access-target broadcast axes;

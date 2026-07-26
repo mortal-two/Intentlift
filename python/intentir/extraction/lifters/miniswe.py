@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v41"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v42"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 

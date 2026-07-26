@@ -1263,6 +1263,11 @@ store coordinates 与 load coordinates 的 permutation 完全一致并由同 pre
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
+当前 Lift knowledge v42 要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v4 要求
+writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
+flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
+各自 LLM 完整作者化，fixed checker 只拒绝和诊断。
+
 canonical output binding 可以由 `returns` 或 `output_mapping` 唯一给出，同时存在时必须一致；共享
 J→Intent MLIR 入口与 structured reference v5 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
 symbol-table view，不是另一个 artifact，也不使 π 获得 destination 语义。

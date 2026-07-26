@@ -443,10 +443,12 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1 / replay-check.v3`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v10`，
-Lift knowledge 为 v41。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
+Lift knowledge 为 v42，MiniSWE Replay backend 为 v4。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
-`log2` 补入通用 `map_unary` vocabulary。两者都不分类语义、不产生 IntentOp/carry/relation/π，
-仍由 Lift LLM 打开对应 Source 并完整作者化 artifact。
+`log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
+`other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
+rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
+都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`。每个当前字段都由

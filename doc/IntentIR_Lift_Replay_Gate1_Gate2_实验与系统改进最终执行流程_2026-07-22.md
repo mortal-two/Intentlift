@@ -567,12 +567,19 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-当前 Lift knowledge v41 继承 v40 的只读 `source-outline`，对长 Source 分页显示
+当前 Lift knowledge v42 继承 v41；v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
 哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
-vocabulary；没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source 区间、做语义分类并完整
-作者化 `(J,C,π)`。
+vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须是该 access 实际 authored
+`other`，不得换成 downstream neutral/canceling/observationally-equivalent value；consumer extension
+与 same-predicate store 不会改写它。没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source
+区间、做语义分类并完整作者化 `(J,C,π)`。
+
+MiniSWE Replay backend v4 相对 v3 只增加 source-blind typed rank/axis fidelity 合同：writer 必须按 J
+value type 与 local reduction axis 显式实现必要的 public reshape/expand-dimension stage，不得把
+reshape-plus-reduction、axis-specific reduction 或 shaped carry 改写为代数等价的 flattened reduction。
+固定代码仍不生成 Replay、不读取 Source/Gate，也不把这一提示变成 composer。
 
 该 representation-only null-carrier 例外只适用于 runtime scalar。对 `bound_constexpr_values`，Lift 必须
 遍历它在 Source 中的全部 use：作为 logical value/predicate/result 时绑定 dtype-compatible

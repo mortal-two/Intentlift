@@ -135,7 +135,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v41"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v42"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -176,6 +176,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "Every semantic `reduce` and inclusive `scan`" in preflight
     assert "one `consumer_extensions` relation for each affected" in preflight
     assert "A reduction identity or load fill is not a substitute" in preflight
+    assert "actual authored `other` value" in preflight
+    assert "observationally equivalent substitute" in preflight
     assert "Never replace the program path with constant zero" in preflight
     assert "route `p*` directly into `address_base`" in preflight
     assert "pointer `p*` bypasses it" in preflight
