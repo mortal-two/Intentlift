@@ -524,6 +524,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
         {"observer_diff": {"category": "dataflow"}},
         1,
         artifact,
+        (0, 2, 0.5, -3, 1, -1),
     )
     relifted = adapter.lift(request, feedback)
 
@@ -534,6 +535,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
+    assert "selection_rank" not in contexts[1].diagnostics
     assert contexts[1].previous_artifact == artifact.to_json()
 
 
@@ -641,6 +643,55 @@ def test_gate1_search_advances_parent_only_when_failed_rank_improves() -> None:
     assert lift.feedbacks[1] is first.feedback
     assert lift.feedbacks[2] is second.feedback
     assert lift.feedbacks[2].previous_artifact is second.artifact
+
+
+def test_gate1_search_retains_ranked_seed_when_first_new_candidate_regresses() -> None:
+    previous = make_reduce_artifact()
+    seed = LiftFeedback(
+        FeedbackKind.GATE1,
+        {
+            "status": "no_closure",
+            "diagnostic": "saved observer mismatch",
+            "observer_diff": {"primary_difference_category": "dataflow"},
+        },
+        6,
+        previous,
+        (0, 3, 0.8, -4, 1, 0),
+    )
+    lift = _Lift([make_reduce_artifact(), make_reduce_artifact()])
+    factory = _Gate1Factory(
+        [
+            _gate1_result(closed=False, failed_rank_score=0.4),
+            _gate1_result(closed=True),
+        ]
+    )
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        initial_feedback=seed,
+    )
+
+    assert search.closed
+    assert lift.feedbacks == [seed, seed]
+    assert lift.feedbacks[1].previous_artifact is previous
+    assert search.attempts[0].feedback is not seed
+    assert search.attempts[0].feedback.selection_rank == (
+        0,
+        3,
+        0.4,
+        -4,
+        1,
+        0,
+    )
+
+
+def test_lift_feedback_rejects_selection_rank_outside_gate1() -> None:
+    with pytest.raises(ValueError, match="private Gate1"):
+        LiftFeedback(
+            FeedbackKind.TYPECHECK,
+            {"typecheck": {"status": "fail"}},
+            selection_rank=(0, 1, 0.5, -1, 0, -1),
+        )
 
 
 def test_gate1_search_resumes_from_exact_failed_artifact_without_old_budget() -> None:

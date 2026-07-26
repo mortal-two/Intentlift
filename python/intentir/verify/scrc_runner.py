@@ -518,6 +518,21 @@ class LiftFeedback:
     diagnostics: Mapping[str, Any]
     formal_round: int | None = None
     previous_artifact: Gate1Artifact | None = None
+    selection_rank: tuple[int | float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.selection_rank is None:
+            return
+        if self.kind is not FeedbackKind.GATE1:
+            raise ValueError("selection_rank is private Gate1 search state")
+        if (
+            len(self.selection_rank) != 6
+            or any(
+                isinstance(item, bool) or not isinstance(item, (int, float))
+                for item in self.selection_rank
+            )
+        ):
+            raise ValueError("selection_rank must be one Gate1 rank tuple")
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -527,6 +542,10 @@ class LiftFeedback:
             "previous_artifact": (
                 self.previous_artifact.to_json()
                 if self.previous_artifact is not None else None
+            ),
+            "selection_rank": (
+                list(self.selection_rank)
+                if self.selection_rank is not None else None
             ),
         }
 
@@ -756,6 +775,7 @@ class SCRCGateRunner:
             diagnostics,
             formal_round,
             artifact,
+            cls._failed_gate1_rank(result),
         )
 
     @staticmethod
@@ -903,6 +923,13 @@ class SCRCGateRunner:
         )
         best_failed_feedback: LiftFeedback | None = None
         best_failed_rank: tuple[int | float, ...] | None = None
+        if (
+            initial_feedback is not None
+            and initial_feedback.kind is FeedbackKind.GATE1
+            and initial_feedback.selection_rank is not None
+        ):
+            best_failed_feedback = initial_feedback
+            best_failed_rank = initial_feedback.selection_rank
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0
