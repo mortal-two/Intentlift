@@ -68,6 +68,30 @@ def test_tilelang_replay_policy_accepts_public_primfunc_and_rejects_host_io() ->
         )
 
 
+@pytest.mark.parametrize(
+    "unsafe_module",
+    [
+        _REPLAY.replace(
+            "        for v1 in T.Parallel(N):",
+            "        import os\n        for v1 in T.Parallel(N):",
+        ),
+        _REPLAY.replace("N = 32", "N: __import__('os') = 32"),
+        _REPLAY.replace(
+            "def scrc_k0(",
+            "def scrc_k0(unsafe=open('private.txt'), ",
+        ),
+    ],
+)
+def test_tilelang_replay_policy_rejects_host_execution_surfaces(
+    unsafe_module: str,
+) -> None:
+    with pytest.raises(UnsafeTileLangReplayCodeError):
+        validate_tilelang_module(
+            unsafe_module,
+            required_function="scrc_k0",
+        )
+
+
 def test_tilelang_observer_combines_tir_topology_and_ptx_semantics() -> None:
     source = fingerprint_tilelang(_TIR, _PTX, interface={"arity": 2})
     replay = fingerprint_tilelang(

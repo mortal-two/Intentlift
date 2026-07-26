@@ -40,7 +40,10 @@ from .prompt import (
     build_rewriter_payload,
     replay_packet_digest,
 )
-from .tilelang_codegen import extract_tilelang_module
+from .tilelang_codegen import (
+    UnsafeTileLangReplayCodeError,
+    extract_tilelang_module,
+)
 from .tilelang_compiler import (
     TileLangCompileCase,
     TileLangCompiler,
@@ -761,6 +764,15 @@ def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
             "rule_code": exc.rule_code,
             "path": exc.path,
             "anonymous_handles": list(exc.handles),
+            "line": exc.line,
+        }
+    if isinstance(exc, UnsafeTileLangReplayCodeError):
+        return {
+            "rule_code": exc.rule_code,
+            "path": (
+                f"<line:{exc.line}>" if exc.line is not None else "<replay>"
+            ),
+            "anonymous_handles": [],
             "line": exc.line,
         }
     line_match = re.search(r"\bline\s+(\d+)\b", str(exc))

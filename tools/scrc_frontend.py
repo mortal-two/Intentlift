@@ -52,12 +52,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lift-backend",
         choices=("responses", "miniswe"),
-        default="responses",
+        default="miniswe",
     )
     parser.add_argument(
         "--replay-backend",
         choices=("responses", "miniswe"),
-        default="responses",
+        default="miniswe",
     )
     parser.add_argument(
         "--no-masked-j",

@@ -12,6 +12,17 @@ from .codegen import CodeExtractionError, extract_python_code
 class UnsafeTileLangReplayCodeError(ValueError):
     """The module is outside the reviewed public TileLang Python subset."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        rule_code: str = "tilelang_static_policy_rejected",
+        line: int | None = None,
+    ) -> None:
+        self.rule_code = rule_code
+        self.line = line
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class TileLangModuleValidation:
@@ -27,6 +38,8 @@ _FORBIDDEN_NODES = (
     ast.ClassDef,
     ast.Delete,
     ast.Global,
+    ast.Import,
+    ast.ImportFrom,
     ast.Lambda,
     ast.Match,
     ast.Nonlocal,
@@ -65,10 +78,20 @@ _FORBIDDEN_ATTRIBUTES = {
 }
 
 
-def _fail(node: ast.AST | None, message: str) -> NoReturn:
-    if node is not None and getattr(node, "lineno", None) is not None:
-        message = f"line {node.lineno}: {message}"
-    raise UnsafeTileLangReplayCodeError(message)
+def _fail(
+    node: ast.AST | None,
+    message: str,
+    *,
+    rule_code: str = "tilelang_static_policy_rejected",
+) -> NoReturn:
+    line = getattr(node, "lineno", None) if node is not None else None
+    if line is not None:
+        message = f"line {line}: {message}"
+    raise UnsafeTileLangReplayCodeError(
+        message,
+        rule_code=rule_code,
+        line=line,
+    )
 
 
 def _is_t_attribute(node: ast.AST, name: str | None = None) -> bool:
@@ -137,8 +160,16 @@ def validate_tilelang_module(
                 _fail(node, "unsupported TileLang Replay import")
             import_seen = True
             continue
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if isinstance(node, ast.AnnAssign):
+            _fail(
+                node,
+                "annotated top-level TileLang schedule bindings are forbidden",
+                rule_code=(
+                    "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+                ),
+            )
+        if isinstance(node, ast.Assign):
+            targets = node.targets
             value = node.value
             if (
                 len(targets) != 1
@@ -147,7 +178,14 @@ def validate_tilelang_module(
                 or value is None
                 or not _literal_or_schedule_expr(value)
             ):
-                _fail(node, "top-level TileLang values must be uppercase schedule literals")
+                _fail(
+                    node,
+                    "top-level TileLang values require an uppercase target and a "
+                    "literal or T.dynamic value; T.symbolic is forbidden",
+                    rule_code=(
+                        "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+                    ),
+                )
             continue
         if isinstance(node, ast.FunctionDef):
             functions.append(node)
@@ -167,8 +205,26 @@ def validate_tilelang_module(
         _fail(function, "TileLang Replay function must use only @T.prim_func")
     if function.args.vararg is not None or function.args.kwarg is not None:
         _fail(function, "variadic TileLang PrimFunc is forbidden")
+    if (
+        function.args.posonlyargs
+        or function.args.kwonlyargs
+        or function.args.defaults
+        or any(item is not None for item in function.args.kw_defaults)
+        or function.returns is not None
+    ):
+        _fail(
+            function,
+            "TileLang PrimFunc permits only ordinary annotated parameters without defaults",
+            rule_code="tilelang_primfunc_signature_without_defaults",
+        )
 
     for item in ast.walk(function):
+        if isinstance(item, (ast.Import, ast.ImportFrom)):
+            _fail(
+                item,
+                "imports inside the TileLang PrimFunc are forbidden",
+                rule_code="tilelang_inner_import_forbidden",
+            )
         if isinstance(item, _FORBIDDEN_NODES):
             _fail(item, f"{type(item).__name__} is forbidden in TileLang Replay")
         if isinstance(item, ast.Name) and "__" in item.id:

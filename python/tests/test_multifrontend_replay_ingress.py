@@ -42,6 +42,21 @@ def scrc_k0(
 '''
 
 
+UNSAFE_TILELANG_SCHEDULE_BINDING = r'''import tilelang.language as T
+
+x0 = T.symbolic("x0")
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((x0,), "float32"),
+    p1: T.Tensor((x0,), "float32"),
+    p2: T.int32,
+):
+    with T.Kernel(x0) as (v0,):
+        p1[v0] = p0[v0]
+'''
+
+
 @pytest.mark.parametrize(
     ("frontend", "source"),
     (
@@ -63,6 +78,23 @@ def test_native_replay_source_ingress_uses_audited_validator(
     assert result.code is not None
 
 
+def test_tilelang_ingress_returns_actionable_source_blind_schedule_rule() -> None:
+    result = replay_source_ingress(
+        UNSAFE_TILELANG_SCHEDULE_BINDING,
+        artifact=make_copy_artifact(),
+        frontend=Frontend.TILELANG,
+    )
+
+    assert result.to_check_response()["diagnostics"] == [
+        {
+            "rule_code": (
+                "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+            ),
+            "path": "<line:3>",
+            "anonymous_handles": [],
+            "line": 3,
+        }
+    ]
 @pytest.mark.parametrize(
     ("frontend", "source", "source_type", "case_type"),
     (
