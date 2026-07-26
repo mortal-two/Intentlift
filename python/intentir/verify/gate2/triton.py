@@ -206,70 +206,128 @@ class TritonRunner:
 
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA is unavailable")
-            with tempfile.TemporaryDirectory(prefix=f"intentir-gate2-{leg}-") as tmp:
-                module, module_name = _load_module(program, Path(tmp))
-                try:
-                    kernel = getattr(module, program.function)
-                    launch_args: dict[str, Any] = {}
-                    outputs: dict[str, Any] = {}
-                    for argument in spec.arguments:
-                        if argument.role is ArgumentRole.NONE:
-                            launch_args[argument.name] = None
-                            continue
-                        if argument.role is ArgumentRole.SCALAR:
-                            scalar = (
-                                values[argument.value_key]
-                                if argument.value_key is not None
-                                else argument.value
-                            )
-                            if isinstance(scalar, np.generic):
-                                scalar = scalar.item()
-                            launch_args[argument.name] = scalar
-                            continue
-                        dtype = _torch_dtype(torch, argument.dtype or "float32")
-                        if argument.role is ArgumentRole.OUTPUT:
-                            tensor = torch.empty(
-                                tuple(argument.shape or ()), dtype=dtype, device=spec.device
-                            )
-                            outputs[argument.output_key or argument.name] = tensor
-                        else:
-                            raw = np.asarray(values[argument.value_key])
-                            tensor = torch.as_tensor(raw, dtype=dtype, device=spec.device)
-                            if argument.role is ArgumentRole.INOUT:
-                                tensor = tensor.clone()
-                                outputs[argument.output_key or argument.name] = tensor
-                        launch_args[argument.name] = tensor
-                    _launch_by_name(
-                        kernel,
-                        tuple(int(dim) for dim in spec.grid),
-                        launch_args,
-                        spec.schedule,
-                    )
-                    torch.cuda.synchronize(spec.device)
-                    copied = {
-                        key: tensor.detach().cpu().numpy().copy()
-                        for key, tensor in outputs.items()
-                    }
-                    return ExecutionResult(
-                        leg,
-                        True,
-                        copied,
-                        metadata={
-                            "function": program.function,
-                            "grid": list(spec.grid),
-                            "binding_protocol": (
-                                "triton_name_keyed_complete_abi_v1"
-                            ),
-                        },
-                    )
-                finally:
-                    sys.modules.pop(module_name, None)
+            with PreparedTritonInvocation(program, spec, values) as invocation:
+                invocation.launch()
+                torch.cuda.synchronize(spec.device)
+                return ExecutionResult(
+                    leg,
+                    True,
+                    invocation.copied_outputs(),
+                    metadata={
+                        "function": program.function,
+                        "grid": list(spec.grid),
+                        "binding_protocol": (
+                            "triton_name_keyed_complete_abi_v1"
+                        ),
+                    },
+                )
         except Exception as exc:
             return ExecutionResult(leg, False, error=f"{type(exc).__name__}: {exc}")
 
 
+class PreparedTritonInvocation:
+    """Load once, bind once, then expose a no-sync Triton launch closure.
+
+    Gate2 uses one launch followed by an explicit synchronization. Performance
+    reporting reuses the identical source/spec/value binding but times only
+    repeated kernel launches. Compilation, imports, allocations and host-device
+    copies remain outside the timed closure.
+    """
+
+    def __init__(
+        self,
+        program: KernelSource,
+        spec: TritonExecutionSpec,
+        values: Mapping[str, Any],
+    ) -> None:
+        import torch
+
+        self._temporary = tempfile.TemporaryDirectory(
+            prefix="intentir-triton-prepared-"
+        )
+        module, self._module_name = _load_module(
+            program, Path(self._temporary.name)
+        )
+        self._kernel = getattr(module, program.function)
+        self._grid = tuple(int(dim) for dim in spec.grid)
+        self._schedule = dict(spec.schedule)
+        self._device = spec.device
+        self._launch_args: dict[str, Any] = {}
+        self.outputs: dict[str, Any] = {}
+        for argument in spec.arguments:
+            if argument.role is ArgumentRole.NONE:
+                self._launch_args[argument.name] = None
+                continue
+            if argument.role is ArgumentRole.SCALAR:
+                scalar = (
+                    values[argument.value_key]
+                    if argument.value_key is not None
+                    else argument.value
+                )
+                if isinstance(scalar, np.ndarray) and scalar.size == 1:
+                    scalar = scalar.item()
+                elif isinstance(scalar, np.generic):
+                    scalar = scalar.item()
+                self._launch_args[argument.name] = scalar
+                continue
+            dtype = _torch_dtype(torch, argument.dtype or "float32")
+            if argument.role is ArgumentRole.OUTPUT:
+                tensor = torch.empty(
+                    tuple(argument.shape or ()),
+                    dtype=dtype,
+                    device=spec.device,
+                )
+                self.outputs[argument.output_key or argument.name] = tensor
+            else:
+                raw = np.asarray(values[argument.value_key])
+                tensor = torch.as_tensor(
+                    raw, dtype=dtype, device=spec.device
+                )
+                if argument.role is ArgumentRole.INOUT:
+                    tensor = tensor.clone()
+                    self.outputs[argument.output_key or argument.name] = tensor
+            self._launch_args[argument.name] = tensor
+
+    def launch(self) -> None:
+        _launch_by_name(
+            self._kernel,
+            self._grid,
+            self._launch_args,
+            self._schedule,
+        )
+
+    def thunk(self):
+        return self.launch
+
+    def copied_outputs(self) -> dict[str, np.ndarray]:
+        return {
+            key: tensor.detach().cpu().numpy().copy()
+            for key, tensor in self.outputs.items()
+        }
+
+    def close(self) -> None:
+        module_name = getattr(self, "_module_name", None)
+        if module_name is not None:
+            sys.modules.pop(module_name, None)
+            self._module_name = None
+        temporary = getattr(self, "_temporary", None)
+        if temporary is not None:
+            temporary.cleanup()
+            self._temporary = None
+
+    def __enter__(self) -> "PreparedTritonInvocation":
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+
 __all__ = [
     "ArgumentRole",
+    "PreparedTritonInvocation",
     "TritonArgument",
     "TritonExecutionSpec",
     "TritonRunner",

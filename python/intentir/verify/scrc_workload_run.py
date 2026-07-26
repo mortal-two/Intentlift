@@ -16,8 +16,10 @@ from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.candidate_fanout import CandidateFanoutSearchReport
 from intentir.verify.gate1.model import (
     Gate1Artifact,
+    ImplementationConfig,
     ParameterKind,
     ParameterMode,
+    SemanticArchive,
 )
 from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
 from intentir.extraction.lifters.scrc import ResponsesSCRCLiftAdapter
@@ -186,11 +188,23 @@ def _bind_logical_scalar_input(
         raise ValueError("scalar dimension is inconsistent")
 
 
-def build_workload_gate2_suite(
+def build_workload_jc_suite(
     prepared: PreparedTritonWorkload,
-    artifact: Gate1Artifact,
+    j: SemanticArchive,
+    c: ImplementationConfig,
 ) -> Gate2Suite:
-    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+    """Build the shared finite source/J invocation from explicit canonical J+C.
+
+    Gate2 and post-acceptance performance reporting use the same declarative
+    workload adapter and seeded inputs.  The caller remains responsible for
+    deciding whether the supplied J+C is accepted; this helper performs no
+    proof or authorization check and never consumes pi.
+    """
+
+    if not isinstance(j, SemanticArchive):
+        raise TypeError("workload execution requires canonical J")
+    if not isinstance(c, ImplementationConfig):
+        raise TypeError("workload execution requires canonical C")
 
     adapter = prepared.adapter
     mapping = dict(prepared.source_to_opaque)
@@ -202,8 +216,8 @@ def build_workload_gate2_suite(
     semantics = {
         mapping[name]: value for name, value in adapter.semantic_constexprs
     }
-    j_inputs = {item.name: item for item in artifact.j.intent.inputs}
-    j_outputs = {item.name: item for item in artifact.j.intent.outputs}
+    j_inputs = {item.name: item for item in j.intent.inputs}
+    j_outputs = {item.name: item for item in j.intent.outputs}
     rng = np.random.default_rng(adapter.seed)
     values: dict[str, Any] = {}
     dimensions: dict[str, int] = {}
@@ -211,7 +225,7 @@ def build_workload_gate2_suite(
     output_bindings: dict[str, str] = {}
     arguments: list[TritonArgument] = []
 
-    for parameter in artifact.j.signature.parameters:
+    for parameter in j.signature.parameters:
         if parameter.kind is ParameterKind.CONSTEXPR:
             if parameter.name not in semantics:
                 raise ValueError(
@@ -354,7 +368,7 @@ def build_workload_gate2_suite(
     if set(output_bindings) != set(j_outputs):
         raise ValueError("Harness output bindings differ from accepted J outputs")
     refeval = ScalarLoweringSpec.create(
-        artifact.j,
+        j,
         dims=dimensions,
         input_bindings=input_bindings,
         output_bindings=output_bindings,
@@ -362,10 +376,10 @@ def build_workload_gate2_suite(
     execution = TritonExecutionSpec(
         tuple(arguments),
         adapter.grid,
-        artifact.c.values,
+        c.values,
     )
     output_keys = tuple(
-        output_bindings[item.name] for item in artifact.j.intent.outputs
+        output_bindings[item.name] for item in j.intent.outputs
     )
     case = Gate2Case(
         "finite-hidden-1",
@@ -380,6 +394,15 @@ def build_workload_gate2_suite(
         },
     )
     return Gate2Suite(adapter.case_id, (case,), prepared.request.binding.c_values)
+
+
+def build_workload_gate2_suite(
+    prepared: PreparedTritonWorkload,
+    artifact: Gate1Artifact,
+) -> Gate2Suite:
+    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+
+    return build_workload_jc_suite(prepared, artifact.j, artifact.c)
 
 
 def classify_scrc_report(report: SCRCRunReport) -> BatchClassification:
@@ -1593,6 +1616,7 @@ __all__ = [
     "WorkloadGate1Search",
     "WorkloadGate1Recheck",
     "build_workload_gate2_suite",
+    "build_workload_jc_suite",
     "classify_scrc_report",
     "complete_prepared_workload_gate2",
     "execute_prepared_workload",

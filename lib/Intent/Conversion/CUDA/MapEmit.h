@@ -205,7 +205,16 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
 ///               general over any affine-broadcast Col — NOT a per-kernel branch.
 ///   ParamVector[P] — a small parameter vector addressed only through a
 ///                    structurally validated scalar/per-column intent.gather.
-enum class Role { Row, Col, Scalar, RowInt, PerRow, ColSeg, ParamVector };
+enum class Role {
+  Row,
+  Col,
+  Scalar,
+  RowInt,
+  PerRow,
+  ColSeg,
+  ParamVector,
+  Unused,
+};
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

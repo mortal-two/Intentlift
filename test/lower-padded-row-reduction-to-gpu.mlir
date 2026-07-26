@@ -1,0 +1,61 @@
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=HOST
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=false' %s | FileCheck %s --check-prefix=DEVICE
+
+// The matcher is source/name neutral and consumes the exact structural form
+// emitted from the closed FlashAttention preprocess J.
+
+// HOST-LABEL: func.func @anonymous(
+// HOST: memref.load
+// HOST: memref.load
+// HOST: gpu.launch
+// HOST: memref.store
+// HOST-NOT: intent.
+
+// DEVICE-LABEL: func.func @anonymous(
+// DEVICE: gpu.launch
+// DEVICE: memref.load
+// DEVICE: memref.store
+// DEVICE-NOT: intent.
+func.func @anonymous(
+    %a: tensor<1x2x33x16xf16>,
+    %b: tensor<1x2x33x16xf16>,
+    %valid_rows: tensor<i32>,
+    %valid_features: tensor<i32>) -> tensor<1x2x64xf32> {
+  %row_iota = intent.iota : tensor<33xi32>
+  %row_valid = intent.map_binary %row_iota, %valid_rows {fn = "lt"}
+    : (tensor<33xi32>, tensor<i32>) -> tensor<33xi1>
+  %feature_iota = intent.iota : tensor<16xi32>
+  %feature_valid = intent.map_binary %feature_iota, %valid_features {fn = "lt"}
+    : (tensor<16xi32>, tensor<i32>) -> tensor<16xi1>
+  %row_expanded = tensor.expand_shape %row_valid [[0, 1]] output_shape [33, 1]
+    : tensor<33xi1> into tensor<33x1xi1>
+  %mask = intent.map_binary %row_expanded, %feature_valid {fn = "logical_and"}
+    : (tensor<33x1xi1>, tensor<16xi1>) -> tensor<33x16xi1>
+  %zero = arith.constant dense<0.0> : tensor<f16>
+  %mask_a = tensor.expand_shape %mask [[0, 1, 2], [3]]
+    output_shape [1, 1, 33, 16]
+    : tensor<33x16xi1> into tensor<1x1x33x16xi1>
+  %masked_a = intent.select %mask_a, %a, %zero
+    : (tensor<1x1x33x16xi1>, tensor<1x2x33x16xf16>, tensor<f16>)
+      -> tensor<1x2x33x16xf16>
+  %mask_b = tensor.expand_shape %mask [[0, 1, 2], [3]]
+    output_shape [1, 1, 33, 16]
+    : tensor<33x16xi1> into tensor<1x1x33x16xi1>
+  %masked_b = intent.select %mask_b, %b, %zero
+    : (tensor<1x1x33x16xi1>, tensor<1x2x33x16xf16>, tensor<f16>)
+      -> tensor<1x2x33x16xf16>
+  %af = intent.cast %masked_a {to_dtype = "f32"}
+    : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
+  %bf = intent.cast %masked_b {to_dtype = "f32"}
+    : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
+  %product = intent.map_binary %af, %bf {fn = "mul"}
+    : (tensor<1x2x33x16xf32>, tensor<1x2x33x16xf32>)
+      -> tensor<1x2x33x16xf32>
+  %sum = intent.reduce %product
+    {fn = "sum", axes = [3], assoc = "float_nondeterministic"}
+    : (tensor<1x2x33x16xf32>) -> tensor<1x2x33xf32>
+  %out = intent.pad %sum
+    {lo = [0, 0, 0], hi = [0, 0, 31], value = 0.0 : f64}
+    : (tensor<1x2x33xf32>) -> tensor<1x2x64xf32>
+  return %out : tensor<1x2x64xf32>
+}

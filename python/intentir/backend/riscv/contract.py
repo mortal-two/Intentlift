@@ -1,0 +1,128 @@
+"""Fail-closed Layer-B ContractView for the native RISC-V backend."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from intentir.backend.contract_capabilities import derive_search_capabilities
+from intentir.backend.materialize import BackendSearchState
+from intentir.frontend.canonical_j import LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+from intentir.ir.production_snapshot import content_digest
+
+
+CONTRACT_VIEW_VERSION = "intentir.backend.riscv.contract-view.v1"
+
+
+class RiscvContractError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class RiscvContractView:
+    j_digest: str
+    target: Mapping[str, Any]
+    consumed: tuple[str, ...]
+    unsupported: tuple[str, ...]
+    capabilities: tuple[str, ...]
+    boundary_sha256: str
+    version: str = CONTRACT_VIEW_VERSION
+
+    @property
+    def supported(self) -> bool:
+        return not self.unsupported
+
+    @property
+    def digest(self) -> str:
+        return content_digest(
+            {
+                "version": self.version,
+                "j_digest": self.j_digest,
+                "target": dict(self.target),
+                "consumed": list(self.consumed),
+                "unsupported": list(self.unsupported),
+                "capabilities": list(self.capabilities),
+                "boundary_sha256": self.boundary_sha256,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "digest": self.digest,
+            "j_digest": self.j_digest,
+            "target": dict(self.target),
+            "supported": self.supported,
+            "consumed": list(self.consumed),
+            "unsupported": list(self.unsupported),
+            "capabilities": list(self.capabilities),
+            "boundary_sha256": self.boundary_sha256,
+        }
+
+
+def derive_riscv_contract_view(
+    state: BackendSearchState,
+) -> RiscvContractView:
+    if not isinstance(state, BackendSearchState):
+        raise TypeError("RISC-V ContractView requires BackendSearchState")
+    if state.target.family != "riscv":
+        raise RiscvContractError("RISC-V ContractView requires riscv target")
+    j = state.base.j
+    projection = state.base.boundary_projection
+    consumed = list(projection.consumed)
+    unsupported: list[str] = []
+    if j.boundary.aliases:
+        unsupported.append("alias_relation")
+    if j.boundary.updates:
+        unsupported.append("logical_update_relation")
+    if j.boundary.access_guard_relations:
+        unsupported.append("access_guard_materialization_not_implemented")
+    for storage in j.storage:
+        reference = f"storage:{storage.storage_id}"
+        if storage.mutability.value == "mutable" and not (
+            state.base.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+            and reference in set(projection.consumed)
+        ):
+            unsupported.append(
+                f"general_mutable_storage:{storage.storage_id}"
+            )
+        else:
+            consumed.append(reference)
+    consumed.extend(
+        f"effect:{item.effect_id or index}:{item.kind.value}"
+        for index, item in enumerate(j.boundary.effects)
+    )
+    consumed.extend(
+        f"reduction:{item.node_ref}" for item in j.boundary.reductions
+    )
+    consumed.extend(
+        f"result_relation:{item.output}:{item.kind.value}"
+        for item in j.boundary.result_relations
+    )
+    consumed.extend(
+        f"output:{item.output}" for item in j.boundary.output_mappings
+    )
+    consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
+    consumed.extend(state.base.consumed_structures)
+    view = RiscvContractView(
+        j_digest=state.base.j_digest,
+        target=state.target.to_dict(),
+        consumed=tuple(sorted(set(consumed))),
+        unsupported=tuple(sorted(set(unsupported))),
+        capabilities=derive_search_capabilities(state.base),
+        boundary_sha256=projection.boundary_digest,
+    )
+    if not view.supported:
+        raise RiscvContractError(
+            "RISC-V backend cannot consume complete Layer B: "
+            + ", ".join(view.unsupported)
+        )
+    return view
+
+
+__all__ = [
+    "CONTRACT_VIEW_VERSION",
+    "RiscvContractError",
+    "RiscvContractView",
+    "derive_riscv_contract_view",
+]

@@ -30,6 +30,7 @@ def _pass_name(argument: str) -> str:
 def test_registry_covers_every_registered_direct_gpu_pass() -> None:
     expected = {
         "convert-intent-row-reduction-to-gpu",
+        "convert-intent-padded-row-reduction-to-gpu",
         "convert-intent-elementwise-to-gpu",
         "convert-intent-gather-to-gpu",
         "convert-intent-layout-to-gpu",

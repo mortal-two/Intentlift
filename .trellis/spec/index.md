@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-25 当前派生规范。
+> 状态：2026-07-26 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -12,7 +12,7 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   详细定义 SCRC 对象和运行协议；
 - [IntentIR / SCRC 最终数学、执行流程与论文表述](../../doc/IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)
   统一 SCRC 数学与 claim；
-- [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
+- [Contract-Guided Lowering-State Search 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
 - 本目录只做上述五份文档的派生投影。
 
@@ -74,7 +74,7 @@ production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-onl
 - [Frontend Harness](integration/frontend-harness.md)
 - [Gate1](verification/gate1.md)
 - [Gate2](verification/gate2.md)
-- [RefEval 与 Contract-Preserving Multi-Lowering](lowering/contract.md)
+- [RefEval 与 Contract-Guided Lowering-State Search](lowering/contract.md)
 - [旧实现退役与首步重构](migration/legacy-removal.md)
 
 历史 spec 已迁至 [`.trellis/archive/spec`](../archive/spec/2026-07-21-pre-llm-first/README.md)，

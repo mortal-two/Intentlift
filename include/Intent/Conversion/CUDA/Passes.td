@@ -67,11 +67,55 @@ def ConvertIntentRowReductionToGPU
            "to preload them before the reduction so small register-resident "
            "rows can overlap global-memory latency with the collective. This "
            "is a Layer-C candidate and must independently pass P6.">,
+    Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
+           "Load dynamic rank-0 inputs once in the host launch stub and pass "
+           "them to the outlined kernel by value. False retains device-side "
+           "uniform loads as an independently searchable ABI schedule.">,
     Option<"enableSortedPrefix", "enable-sorted-prefix", "bool", "true",
            "Enable the B-certified descending sparsemax early-stop fast path. "
            "Set false to force the general scan/reduction implementation for "
            "the same Intent graph, providing an independently executable "
            "generic correctness fallback.">,
+  ];
+}
+
+def ConvertIntentPaddedRowReductionToGPU
+    : Pass<"convert-intent-padded-row-reduction-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a masked last-axis row dot followed by zero padding to "
+                "one gpu.launch.";
+  let description = [{
+    Recognizes the source-neutral structural family
+
+      masked A/B [1,M,P,N] -> f32 multiply -> sum(axis=3)
+      -> zero pad the P axis to Q
+
+    where the two dense-load masks are the same conjunction of `p < validP`
+    and `n < validN`.  It emits one destination-passing GPU kernel with one
+    or more blocks per M row and one thread per padded output column.  Full
+    short rows use aligned vector loads; runtime-short rows use guarded scalar
+    loads. Q-P threads write the authored zero pad. The matcher uses only
+    typed Intent/tensor dataflow and static shapes, never a function/kernel
+    name.  Non-matching graphs remain untouched for other registered families
+    or the generic lowering.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block; 0 selects the smallest warp-multiple power of "
+           "two covering Q. Smaller values split Q across blocks; values must "
+           "be warp multiples not exceeding 1024.">,
+    Option<"vectorizeFullFeatures", "vectorize-full-features", "bool", "true",
+           "Use aligned vector loads on the full-feature scalar-thread path.">,
+    Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
+           "Capture valid-row/feature scalars by value from the host stub; "
+           "false loads their rank-0 buffers inside the GPU kernel.">,
   ];
 }
 
@@ -129,6 +173,10 @@ def ConvertIntentElementwiseToGPU
     Option<"flatVectorWidth", "flat-vector-width", "unsigned", "4",
            "Vector width for flatten-contiguous (2 or 4). Ignored by the "
            "default row schedule.">,
+    Option<"promoteUniformScalars", "promote-uniform-scalars", "bool", "false",
+           "Capture rank-0 or singleton broadcast inputs by value from the "
+           "host launch stub. False retains the historical per-thread device "
+           "load as the schedule-only control.">,
   ];
 }
 

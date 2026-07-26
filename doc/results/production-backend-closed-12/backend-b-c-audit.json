@@ -1,0 +1,816 @@
+{
+  "experiment": {
+    "fixed": "accepted J=A+B, target, compiler, candidate universe, budget",
+    "intervention": "Attach_C versus Erase_C",
+    "selection": "compile/admission only; no correctness-by-testing"
+  },
+  "kernels": [
+    {
+      "b_consumed_fact_count": 15,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "d2e581b867093ae84ac5bd0a272d99b6e85ba3f9767851605374be7037e2530e",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "dyt",
+      "snapshot_digest": "d4bb8faac7b953e8e540ab6f02350c198160dfba68645b3ed0822aa67307e8a3",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t1",
+          "rhs": "t2"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 19,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "1bb65e214028fac0598ace422baf008d1b86526f33bcd680fc56d47c05f362a1",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 3,
+        "with_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "flash_bwd_preprocess",
+      "snapshot_digest": "69e061e5aef6d8e4c10aefd7f8d6ee96fa166c06cf6f78054a267f5209afa590",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 3,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 3,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 30,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "ee0325b652540193c4ad9587dcaeb6719512860db40ced172363e017dbad3fa4",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "fused_add_rms_norm",
+      "snapshot_digest": "bcc2f3f275fd00b249a9623c6db80da1570310b20d46ff60fcd20d823728b5e7",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "15ff8aa89abfef11a95a13c62093eb612bbe4fb1ea95fec9977d68a3795e3a65",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "geglu",
+      "snapshot_digest": "42155b91a8e1a9e400d39be4d4928a1b10c92dd222353f11cf6db3be0da319c0",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 28,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "25b2e8d976542f2a6f715b6b666150bdb8df26e366a92f7365ede04cdbd9d32c",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.3fe638f5998b",
+          "row_reduction.ea648d837783",
+          "padded_row_reduction.f9d78ac3f1b4"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "jsd",
+      "snapshot_digest": "abdc61bc3039de3d20ac2585497013227fbc337d760a32b8be06a1e75a39b507",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 29,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "f392e9eb04f1ec39915f372c68deb1a56320d908137c5cd416dfe07d9312ce4e",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "layer_norm",
+      "snapshot_digest": "13e4345fc7beefd2ee03f4c85ca1f98ecb4a7a89e7bdfcc4aae1471b09344488",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t1",
+          "rhs": "t2"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 29,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "b97c1f83c425419f1e3e983f863cc963aea449a912d2091c069b0f81e1180260",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "liger_rms_norm",
+      "snapshot_digest": "63514c55f14ab5e26e16285f3a6c19588584a079ac2217834df6dc8558426406",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 52,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "e5df73233127e39db5d22700c1f534fec6d79bcc0a9b711c20e3193f464eee5d",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "poly_norm",
+      "snapshot_digest": "66bb9f32ed48985e91e2ae3493c610dea1f6b5078dc5dbc942ed4ff2d4551a3d",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "097b2a36f6bad3ca299673e8607feac93fee1d8ac816a938ee1c3c4dc6f5b19d",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "softmax",
+      "snapshot_digest": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "99d3f1530d83061e8e20c100344969ebbe7b4bcfd70b5ddbad01223aaaddc5c0",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "swiglu",
+      "snapshot_digest": "c3af3ede93aa2190e1cfac0f2cf55df2ab6d5ac3825db6ca506fd630cb5c8d69",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 25,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "bec3835d4f3d72e667e7a26751942e326d6ab7e34246376c6b3d42f54ac7b077",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.3fe638f5998b",
+          "row_reduction.ea648d837783",
+          "padded_row_reduction.f9d78ac3f1b4"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "tvd",
+      "snapshot_digest": "6c61bd8f543208305d585637beb3871a63c6ba8ccf314f9f0e7e7bc6fce7e016",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 1,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    },
+    {
+      "b_consumed_fact_count": 18,
+      "b_supported": true,
+      "b_unsupported_facts": [],
+      "contract_view_digest": "46c4ba11e0dd36363069f1cda1631e68dcf10d1f5bd41e6264d707eb2b129b6b",
+      "finite_budget": {
+        "budget": 3,
+        "order_changed": true,
+        "prefix_overlap": 0,
+        "with_c_prefix": [
+          "elementwise.ad127bf6f5a7",
+          "row_reduction.9510abc8ecc5",
+          "padded_row_reduction.f67e4e26828c"
+        ],
+        "without_c_prefix": [
+          "elementwise.3acbd4861988",
+          "row_reduction.f4920132b2a1",
+          "padded_row_reduction.47b41c277353"
+        ]
+      },
+      "invariants": {
+        "b_used_for_legality": true,
+        "c_used_for_legality": false,
+        "candidate_universe_equal_after_erase_c": true,
+        "contract_view_equal_after_erase_c": true,
+        "j_a_plus_b_unchanged": true
+      },
+      "kernel": "xformers_rms_norm",
+      "snapshot_digest": "a4dd51db46b67b80b3389be5c03b6ebd8ad234e4ae8f2e1f6a69e17b0e9bd699",
+      "unsupported_b_control": {
+        "both_rejected_before_codegen": true,
+        "intervention": {
+          "kind": "may_alias",
+          "lhs": "t0",
+          "rhs": "t1"
+        },
+        "with_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        },
+        "without_c": {
+          "reason": "CUDA search cannot consume complete Layer B: alias_relation",
+          "rejected_before_codegen": true
+        }
+      },
+      "with_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      },
+      "without_c_counts": {
+        "admitted": 1,
+        "compile_failed": 0,
+        "first_admitted_attempt": 2,
+        "first_measured_attempt": null,
+        "measured": 0,
+        "planned": 3,
+        "rejected": 2,
+        "winner_attempt": null
+      }
+    }
+  ],
+  "protocol": "intentir.production.cuda-b-c-search-ablation.compact.v1",
+  "source_protocol": "intentir.production.cuda-b-c-search-ablation.v1",
+  "source_report_count": 2,
+  "summary": {
+    "all_b_supported": true,
+    "all_candidate_universes_equal_after_erase_c": true,
+    "all_contract_views_equal_after_erase_c": true,
+    "all_unsupported_b_controls_rejected_before_codegen": true,
+    "c_reordered_kernel_count": 12,
+    "kernel_count": 12
+  },
+  "target": {
+    "backend": "cuda",
+    "chip": "sm_120a"
+  }
+}

@@ -889,10 +889,10 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
       return rewriter.notifyMatchFailure(
           op, "non-numeric contraction operands not implemented");
     bool isFloat = isa<FloatType>(elemTy);
-    if (isFloat != isa<FloatType>(aElemTy) ||
-        isFloat != isa<FloatType>(bElemTy))
+    if (!isFloat &&
+        (isa<FloatType>(aElemTy) || isa<FloatType>(bElemTy)))
       return rewriter.notifyMatchFailure(
-          op, "mixed integer/float contraction not implemented");
+          op, "floating operands into integer contraction not implemented");
     if (!isFloat && (aElemTy != elemTy || bElemTy != elemTy))
       return rewriter.notifyMatchFailure(
           op, "mixed-width integer contraction not implemented");
@@ -945,8 +945,17 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
           auto castToAccumulator = [&](Value value) -> Value {
             if (!isFloat)
               return value;
-            auto srcTy = cast<FloatType>(value.getType());
             auto dstTy = cast<FloatType>(elemTy);
+            if (auto integer = dyn_cast<IntegerType>(value.getType())) {
+              // Mixed numeric no-reduction contractions are the canonical
+              // outer-mask spelling emitted for one-hot coefficient grids.
+              // i1 is an unsigned boolean (0/1); wider canonical integers are
+              // signed.  The result type owns the explicit numeric promotion.
+              if (integer.getWidth() == 1)
+                return b.create<arith::UIToFPOp>(l, dstTy, value);
+              return b.create<arith::SIToFPOp>(l, dstTy, value);
+            }
+            auto srcTy = cast<FloatType>(value.getType());
             if (srcTy == dstTy)
               return value;
             if (srcTy.getWidth() < dstTy.getWidth())

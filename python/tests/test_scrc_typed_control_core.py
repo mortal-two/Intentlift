@@ -18,6 +18,7 @@ from intentir.extraction.lifters.scrc import (
     decode_scrc_lift_artifact,
 )
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
+from intentir.ir.functional_boundary import project_functional_boundary
 from intentir.verify.gate1.model import Frontend, Gate1Artifact, SchemaError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.prompt import (
@@ -298,6 +299,41 @@ def test_effect_if_typecheck_and_candidate_check_share_acceptance() -> None:
         SCRCCandidateCheckContext(expected_parameters=("p0", "p1", "p2")),
     )
     assert checked["status"] == "pass", checked
+
+
+def test_functional_boundary_resolves_effect_if_arm_node_paths() -> None:
+    payload = _effect_if_payload()
+    function = payload["j"]["intent"]["intent_function"]
+    function["body"].append(
+        {
+            "id": "n3",
+            "op": "reduce",
+            "result": "t2",
+            "operands": ["t0"],
+            "attrs": {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        }
+    )
+    j = payload["j"]
+    j["node_ids"]["n3"] = "body[1]"
+    j["boundary"]["accesses"][1]["node_ref"] = "n3"
+    j["boundary"]["effects"][1]["node_ref"] = "n3"
+    j["boundary"]["reductions"].append(
+        {"node_ref": "n3", "tile_axis": 0, "identity": 0}
+    )
+    j["scopes"][0]["definitions"].append("t2")
+    j["scopes"][0]["effects"] = ["e1"]
+    j["scopes"][1]["effects"] = ["e0"]
+    artifact = Gate1Artifact.from_json(payload)
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert "access:a0" in projection.consumed
+    assert "access:a1" in projection.consumed
 
 
 def test_effect_if_normal_and_masked_views_preserve_binary_structure() -> None:

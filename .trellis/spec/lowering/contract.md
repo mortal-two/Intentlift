@@ -1,4 +1,4 @@
-# RefEval 与 Contract-Preserving Multi-Lowering 合同
+# RefEval 与 Contract-Guided Lowering-State Search 合同
 
 > 状态：当前派生规范。上位设计见
 > [C 文档](../../../doc/IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md) 与
@@ -243,7 +243,8 @@ applicability 或 target ABI。只有 `Attach_C` 可以产生 C-derived attr；p
 或 kernel recognizer 不得冒充 C 来源。该步骤不修改 J，也不产生新顶层 artifact。
 
 Intent MLIR 是 J 的确定性 typed encoding 加 compiler internal state，不是第二份 J。structured ops
-必须保留到 implementation-family 选择完成；未接受 response、π、Source 或 Gate evidence 不得进入。
+必须保留到所有依赖其语义结构的 transformation 完成；未接受 response、π、Source 或 Gate evidence
+不得进入。
 
 ## Implementation judgement 与 pass contract
 
@@ -267,7 +268,7 @@ and Pre_rho(J,M,t)
 
 这是规范级、条件化 compiler contract，不是当前已经完成的机器检查形式证明。支持 claim 只覆盖
 当前 release 实际实现、登记并经过 admission 的 `Emit_v`、transformation 与 target lowerer；roadmap
-中的 family 不进入当前 `Reach_t(J)`。compiler TCB 至少包括 `Emit_v`/B projection、
+中的未实现 transformation 不进入当前 `Reach_t(J)`。compiler TCB 至少包括 `Emit_v`/B projection、
 `ContractView`/target capability query、实际 transformation 及其 Pre/preservation/admission 检查、
 transition admission 与 target lowerer。search/cost model 只有在不能绕过 admission 或直接构造
 candidate 时才不承担语义裁决。
@@ -275,18 +276,24 @@ candidate 时才不承担语义裁决。
 缺少 pass 所需 B fact 时，该 pass 不适用。系统不得从 Gate2 tolerance、运行结果、Source/π 或
 kernel identity 补足前提。`realization_authorizations` 服务 π，不自动成为 target permission。
 
-## Generic implementation families
+## Generic transformations 与 lowering derivation
 
-backend 可以按 A 的通用 op/region/graph pattern 识别：
+backend 登记通用 MLIR transformations，并按 A 的 op/region/graph pattern 匹配、按 B/current-state/
+target/pass contract 准入，例如：
 
-- sequential/vector/warp/block/hierarchical reduction；
-- producer-consumer fusion、fission 与 intermediate elimination；
-- scan、contraction、conv 与 structured recurrence family；
+- map reduction to vector/subgroup/workgroup、split partial/finalize；
+- producer-consumer fusion、fission 与 intermediate materialization/elimination；
+- scan、contraction、conv 与 structured recurrence transformations；
 - 有独立 preservation contract 的 algorithmic rewrite。
 
-family 是 source-neutral compiler library，不是 named-kernel rule。non-trivial identity，例如 online
-recurrence 到 ordinary two-pass，必须由单独 transformation 及 B preconditions 支撑，不能伪装成
-schedule tuning。
+compiler 不发射 implementation family。候选必须是由具体 transformation trace
+`p=(rho_1,...,rho_k)` 得到的具体 MLIR state `M_p`。registry key 只能来自 transformation identity、
+typed A match、B/current-state/target preconditions 与版本化 pass contract，不能来自 kernel/provider/
+Source 名称或手写 family ID。non-trivial identity，例如 online recurrence 到 ordinary two-pass，必须
+由单独 transformation 及 B preconditions 支撑，不能伪装成 schedule tuning。
+
+实现可以从 canonicalized candidate IR 派生擦除数值 schedule 参数后的 `topology_digest` 用于去重、
+receipt 和实验分组；该 digest 不得参与 semantic admission、替代 MLIR state 或选择 emitter。
 
 ## Search space 与 C ordering
 
@@ -308,7 +315,7 @@ Order_C(Reach_t(J))
 ```
 
 即 source-like 初值、第一批参数、优先邻域与搜索顺序。target-specific legal parameter domain 属于
-implementation family/target capability；`required` C slot 不表示 target schedule fixed。搜索产生的
+transformation/schedule/target contract；`required` C slot 不表示 target schedule fixed。搜索产生的
 assignment 与 lineage 是 backend internal state，不产生 `C_target` 或新 Agent/artifact。
 
 对有限预算 b：
@@ -321,6 +328,107 @@ C 可以改变 `Visited` 的顺序和有限预算覆盖，但不能改变 `Reach
 
 搜索器可使用 enumeration、beam、e-graph、bounded superoptimization、cost model、profiling 或
 autotuning。搜索顺序可以启发式，但 correctness 只取决于可达空间对 `Impl_t(J)` 闭合。
+
+## Transformation 分类与当前 B 边界
+
+所有 transformation 共用同一个 registry。下列分类只用于 contract 声明和实验归因，不建立 compiler
+object hierarchy：
+
+- `schedule-preserving`：固定 structural trace，只改变 tile、vector width、threads/warps、unroll、
+  pipeline 或 launch 参数；
+- `B-conditioned-local`：消费 B 事实，但不改变主 graph/materialization/reduction/synchronization
+  topology，例如 scalar capture、read-only load motion、dead ABI input elimination；
+- `structural`：改变 fusion partition、materialization points、reduction/synchronization topology、
+  data-movement decomposition 或 kernel-stage graph。
+
+memory placement 若只映射同一 logical buffer 的 address space，可以是 schedule；若插入/删除
+materialization、改变同步或跨 kernel 生命周期，必须标记为 structural。分类由 transformation contract
+与 before/after IR 共同审计，不由候选名称决定。
+
+当前 accepted J 与 production `ContractView` 允许直接开发和搜索：
+
+- 在 effect/alias completeness 可证明时的 producer-reduction-epilogue fusion；
+- intermediate materialization/copy elimination；
+- RVV whole-graph Linalg fusion 及其独立 schedule search；
+- scalar capture、load motion、predicate specialization 等 local transformations；
+- 不改变数值顺序，或已有明确 bit-exact associativity 支撑的 target mapping。
+
+当前 `reduce.assoc=associative|float_nondeterministic` 与 Gate2 `tolerance` 不得自动解释为任意 tree
+reduction、FMA/contraction、approximate transcendental、accumulator dtype change 或 atomic-order
+permission。缺少相应 closed B fact 时 transformation admission 必须 fail closed。当前后端工作不得等待、
+猜测或补写新 B；未来新增 permission 必须使用可选、版本化 relation 和新 J digest，旧 artifact
+保持原解释且字段缺失即拒绝。
+
+`ContractView` 不得仅凭 `boundary.aliases=[]` 或 `signature.alias_of=null` 推导全参数 no-alias，除非
+artifact/schema version 明确规定 alias relation set complete。每个 derived capability 必须记录 exact J
+carriers、使用的 completeness rule 与 derivation version；缺少 completeness 语义时返回
+`missing_contract`。具体 benchmark inputs 恰好 disjoint、负例测试通过或 downstream pass 未观察到
+alias 均不能补足该事实。
+
+未来 reduction numeric relation 若确有 backend consumer，最小 closed order vocabulary 至少区分：
+
+```text
+fixed_order       canonical leaf order + fixed parenthesization
+ordered_tree      leaf order fixed; tree shape/parenthesization may change
+commutative_tree  tree shape and leaf permutation may change
+```
+
+`ordered_tree` 与 `commutative_tree` 必须绑定必要的 rounding、NaN/Inf/signed-zero/overflow 与 result
+contract。A 中显式 cast/reduce/contraction 已唯一决定的 operand/result/accumulation dtype 不在 B 重复；
+改变 accumulator dtype、FMA/contraction、approximate transcendental 与 floating atomic linearization
+分别需要独立 numeric relation。
+
+当前 artifact.v7 闭合批次不因 backend roadmap 切换 schema。后端只实现现有事实的确定性 projection、
+conservative admission 与 `missing_contract` receipt；新增 B relation 推迟到存在真实 consumer 的后续
+artifact version。历史 J 不失效，只有需要新增 permission 的 kernel 才产生新 J digest 并完整重认证。
+
+## Candidate 与 transition receipt
+
+每个被枚举或拒绝的 structural/local transition 至少记录：
+
+```text
+j_digest
+target/toolchain digest
+input MLIR digest
+transformation id + normalized parameters
+matched A/IR carriers
+required and consumed B facts
+current-state/target preconditions
+admission or rejection reason
+output MLIR digest (if admitted)
+transform trace
+schedule assignment
+C order score/order position
+lowered IR/object digest (if compiled)
+correctness and performance record (if measured)
+```
+
+`topology_digest` 可以作为派生审计字段，但不是 admission truth。search/cost model 不得绕过 transition
+admission 直接构造 compiler state。
+
+## 实验投影
+
+规范实验使用：
+
+```text
+E0  Source frontend implementation
+E1  canonical deterministic target lowering + default schedule
+E2  fixed canonical structural trace + schedule-preserving search
+E3  B-admitted structural lowering paths + independent schedule search, with C
+E4  exactly the E3 Reach/budget with Erase_C
+
+L0  fixed structural Reach; B-conditioned local transforms disabled
+L1  same Reach/budget; B-conditioned local transforms enabled
+```
+
+E3 candidate set 必须包含 E2 全部候选。L0/L1 均完整消费 J=A+B，关闭的只是额外 local
+transformation。E2/E3 不得被 capture/load-motion 等 local-only 差异污染；E3/E4 只能改变 ordering，
+不能改变 candidate universe、legality 或 correctness policy。
+
+E2/E3 必须共享 J、target、compiler revision、terminal target pipeline、profiler 与 correctness policy。
+报告同时给出 equal-total-budget anytime/time-to-best 与小空间 exhaustive/oracle 结果；E3/E4 在共享
+latency map 的 full budget 下必须收敛到相同最优候选。所有 kernel 都进入汇总，不适用的 transformation
+记录 rejection，不能只报告 winner。
 
 ## Performance-only selection
 
@@ -340,7 +448,7 @@ backend conformance：
 Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 ```
 
-只用于 CI、release preflight/smoke、debug、new-family regression 与 evaluation audit，不是
+只用于 CI、release preflight/smoke、debug、new-transformation regression 与 evaluation audit，不是
 production legality oracle，也不是 SCRC 的第四条 Gate2 edge。
 
 ## J-facing executable CUDA boundary

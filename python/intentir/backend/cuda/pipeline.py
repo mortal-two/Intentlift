@@ -115,12 +115,14 @@ def lower_to_cuda(
     only_fast_path: str | None = None,
     schedule_decision: ScheduleDecision | None = None,
     allow_specialized: bool = True,
+    require_specialized: bool = False,
 ) -> LoweredProgram:
     """Compile accepted Intent dialect MLIR through generic or direct CUDA.
 
-    ``only_fast_path`` is useful for an explicit tuning/ablation candidate.  It
-    does not force acceptance: the named C++ pass must still consume the whole
-    graph, otherwise this function uses the generic fallback.
+    ``only_fast_path`` is useful for an explicit tuning/ablation candidate.
+    With ``require_specialized=True`` a structural probe miss is reported as a
+    rejected search candidate instead of silently compiling the generic
+    fallback under a specialized candidate id.
     """
 
     source = read_intent_module(intent_module)
@@ -154,6 +156,10 @@ def lower_to_cuda(
     )
     if selection.input_sha256 != source_digest:
         raise RuntimeError("selector did not probe the exact lowering input")
+    if require_specialized and selection.pipeline_kind != "specialized":
+        raise ValueError(
+            "required specialized candidate failed whole-graph admission"
+        )
 
     specialized_digest: str | None = None
     if selection.pipeline_kind == "specialized":
@@ -193,6 +199,7 @@ def lower_function_to_cuda(
     only_fast_path: str | None = None,
     schedule_decision: ScheduleDecision | None = None,
     allow_specialized: bool = True,
+    require_specialized: bool = False,
     fold: int = 0,
 ) -> LoweredProgram:
     """Emit an accepted flat ``IntentFunction`` and compile it to CUDA.
@@ -214,6 +221,7 @@ def lower_function_to_cuda(
         only_fast_path=only_fast_path,
         schedule_decision=schedule_decision,
         allow_specialized=allow_specialized,
+        require_specialized=require_specialized,
     )
 
 

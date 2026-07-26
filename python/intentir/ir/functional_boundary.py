@@ -400,12 +400,40 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
     return ()
 
 
-def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
-    result: list[IntentOp] = []
-    for op in body:
-        result.append(op)
-        result.extend(_walk_ops(op.body))
+def _nested_regions(
+    op: IntentOp,
+) -> tuple[tuple[str, Sequence[IntentOp]], ...]:
+    """Return every authored child region with its canonical path suffix."""
+
+    regions: list[tuple[str, Sequence[IntentOp]]] = [("body", op.body)]
+    if op.op in {"effect_if", "value_if"}:
+        if op.positive is not None:
+            regions.append(("positive.body", op.positive.body))
+        if op.negative is not None:
+            regions.append(("negative.body", op.negative.body))
+    return tuple(regions)
+
+
+def _walk_ops_with_paths(
+    body: Sequence[IntentOp],
+    prefix: str = "body",
+) -> tuple[tuple[str, IntentOp], ...]:
+    result: list[tuple[str, IntentOp]] = []
+    for index, op in enumerate(body):
+        path = f"{prefix}[{index}]"
+        result.append((path, op))
+        for suffix, nested_body in _nested_regions(op):
+            result.extend(
+                _walk_ops_with_paths(
+                    nested_body,
+                    f"{path}.{suffix}",
+                )
+            )
     return tuple(result)
+
+
+def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
+    return tuple(op for _path, op in _walk_ops_with_paths(body))
 
 
 def _store_result_reaches_output_through_enclosing_carry(
@@ -441,7 +469,8 @@ def _store_result_reaches_output_through_enclosing_carry(
                 if candidate.op == "loop"
                 else enclosing
             )
-            visit(candidate.body, nested)
+            for _suffix, nested_body in _nested_regions(candidate):
+                visit(nested_body, nested)
 
     visit(j.intent.body, ())
     if len(matches) != 1:
@@ -454,15 +483,7 @@ def _store_result_reaches_output_through_enclosing_carry(
 
 
 def _node_table(j: Any) -> dict[str, IntentOp]:
-    by_path: dict[str, IntentOp] = {}
-
-    def visit(body: Sequence[IntentOp], prefix: str = "body") -> None:
-        for index, op in enumerate(body):
-            path = f"{prefix}[{index}]"
-            by_path[path] = op
-            visit(op.body, f"{path}.body")
-
-    visit(j.intent.body)
+    by_path = dict(_walk_ops_with_paths(j.intent.body))
     result = dict(by_path)
     for node_id, path in j.node_ids.items():
         if path in by_path:
@@ -1985,15 +2006,9 @@ def _reduction_padding_analysis(
                 set(by_access.get(access.access_id, frozenset())) | masked
             )
 
-    path_by_marker: dict[int, str] = {}
-
-    def record_paths(body: Sequence[IntentOp], prefix: str = "body") -> None:
-        for index, op in enumerate(body):
-            path = f"{prefix}[{index}]"
-            path_by_marker[id(op)] = path
-            record_paths(op.body, f"{path}.body")
-
-    record_paths(j.intent.body)
+    path_by_marker = {
+        id(op): path for path, op in _walk_ops_with_paths(j.intent.body)
+    }
     ref_by_path = {path: node_ref for node_ref, path in j.node_ids.items()}
     mean_issues: list[FunctionalBoundaryClosureIssue] = []
     consumer_issues: list[FunctionalBoundaryClosureIssue] = []
@@ -2027,9 +2042,63 @@ def _reduction_padding_analysis(
             if axes
         }
 
-    for op in _walk_ops(j.intent.body):
+    def padding_events(
+        body: Sequence[IntentOp],
+    ) -> tuple[tuple[str, IntentOp], ...]:
+        events: list[tuple[str, IntentOp]] = []
+        for operation in body:
+            if operation.op == "loop":
+                events.append(("enter", operation))
+                events.extend(padding_events(operation.body))
+                events.append(("exit", operation))
+            elif operation.op in {"effect_if", "value_if"}:
+                assert operation.positive is not None
+                assert operation.negative is not None
+                events.append(("enter", operation))
+                events.extend(padding_events(operation.positive.body))
+                events.extend(padding_events(operation.negative.body))
+                events.append(("exit", operation))
+            else:
+                events.append(("ordinary", operation))
+        return tuple(events)
+
+    for phase, op in padding_events(j.intent.body):
         path = path_by_marker.get(id(op), "body")
         node_ref = ref_by_path.get(path)
+        if phase == "enter":
+            if op.op == "loop":
+                for scan in op.scan:
+                    padding_positions[scan.name] = padding_positions.get(
+                        scan.source, {}
+                    ).copy()
+                for state in op.carry:
+                    padding_positions[state.body_argument] = (
+                        padding_positions.get(state.init_value, {}).copy()
+                        if isinstance(state.init_value, str)
+                        else {}
+                    )
+            continue
+        if phase == "exit":
+            if op.op == "loop":
+                for state in op.carry:
+                    padding_positions[state.result_value] = (
+                        padding_positions.get(state.next_value, {}).copy()
+                    )
+            elif op.op == "value_if":
+                assert isinstance(op.result, str)
+                assert op.positive is not None and op.negative is not None
+                merged: dict[str, set[int]] = {}
+                for yielded in (
+                    op.positive.yield_value,
+                    op.negative.yield_value,
+                ):
+                    merge_projected(
+                        merged,
+                        padding_positions.get(yielded, {}),
+                    )
+                padding_positions[op.result] = freeze(merged)
+            # effect_if has no SSA result; branch-local padding cannot escape.
+            continue
         padded_operands = tuple(
             operand
             for operand in op.operands
@@ -2426,6 +2495,12 @@ def _operation_dependencies(op: IntentOp) -> tuple[str, ...]:
             add(carry.next_value)
         for value in op.yields:
             add(value)
+    if op.op in {"effect_if", "value_if"}:
+        add(op.predicate)
+    if op.op == "value_if":
+        assert op.positive is not None and op.negative is not None
+        add(op.positive.yield_value)
+        add(op.negative.yield_value)
     return tuple(dependencies)
 
 
@@ -2440,15 +2515,9 @@ def _consumer_dependency_path(
 
     operations = _walk_ops(j.intent.body)
     path_to_ref = {path: ref for ref, path in j.node_ids.items()}
-    path_by_marker: dict[int, str] = {}
-
-    def record_paths(body: Sequence[IntentOp], prefix: str = "body") -> None:
-        for index, op in enumerate(body):
-            path = f"{prefix}[{index}]"
-            path_by_marker[id(op)] = path
-            record_paths(op.body, f"{path}.body")
-
-    record_paths(j.intent.body)
+    path_by_marker = {
+        id(op): path for path, op in _walk_ops_with_paths(j.intent.body)
+    }
     producers: dict[str, tuple[str | None, IntentOp]] = {}
     for op in operations:
         node_ref = path_to_ref.get(path_by_marker[id(op)])

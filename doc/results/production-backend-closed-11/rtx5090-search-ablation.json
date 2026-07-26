@@ -1,0 +1,994 @@
+{
+  "created_unix_ns": 1785007150115518426,
+  "invariants": {
+    "c_changes_legality": false,
+    "candidate_universe_fixed": true,
+    "contract_view_fixed": true,
+    "j_a_plus_b_fixed": true,
+    "order_only_counterfactual_reuses_with_c_latency_map": true
+  },
+  "kernels": [
+    {
+      "actual_without_c_best_us": 0.9166221965975592,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 1,
+        "without_c_actual": 7,
+        "without_c_order_only": 7
+      },
+      "b_consumed_fact_count": 15,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 1.361668385669726,
+          "without_c_order_only_us": 1.3579594403118798
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 1.361668385669726,
+          "without_c_order_only_us": 1.3579594403118798
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 1.361668385669726,
+          "without_c_order_only_us": 1.3579594403118798
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 1.0793786450630092,
+          "without_c_order_only_us": 1.0757991026217997
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9153223016460825,
+          "without_c_actual_us": 0.9166221965975592,
+          "without_c_order_only_us": 0.9153223016460825
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "d2e581b867093ae84ac5bd0a272d99b6e85ba3f9767851605374be7037e2530e",
+      "family": "elementwise",
+      "full_budget_best_ratio_with_over_without_c": 0.9985818639824545,
+      "kernel": "dyt",
+      "measured_candidate_count": 5,
+      "registered_default_us": 1.0757991026217997,
+      "search_speedup_over_default": 1.1753227258716645,
+      "searched_best_us": 0.9153223016460825
+    },
+    {
+      "actual_without_c_best_us": 0.9551143940584158,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 3,
+        "without_c_actual": 3,
+        "without_c_order_only": 3
+      },
+      "b_consumed_fact_count": 19,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.9586721089255632,
+          "without_c_actual_us": 0.9628864372360629,
+          "without_c_order_only_us": 0.9586721089255632
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.9586721089255632,
+          "without_c_actual_us": 0.9628864372360629,
+          "without_c_order_only_us": 0.9586721089255632
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.9578209428699176,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.9512849008181968,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9512849008181968,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.9512849008181968,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.9512849008181968,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9512849008181968,
+          "without_c_actual_us": 0.9551143940584158,
+          "without_c_order_only_us": 0.9512849008181968
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "1bb65e214028fac0598ace422baf008d1b86526f33bcd680fc56d47c05f362a1",
+      "family": "padded_row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.9959905397049384,
+      "kernel": "flash_bwd_preprocess",
+      "measured_candidate_count": 12,
+      "registered_default_us": 0.9512849008181968,
+      "search_speedup_over_default": 1.0,
+      "searched_best_us": 0.9512849008181968
+    },
+    {
+      "actual_without_c_best_us": 1.010193744980255,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 8,
+        "without_c_actual": 14,
+        "without_c_order_only": 14
+      },
+      "b_consumed_fact_count": 30,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 1.0443471042061274,
+          "without_c_actual_us": 1.176735928032368,
+          "without_c_order_only_us": 1.1771552154441973
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 1.0443471042061274,
+          "without_c_actual_us": 1.176735928032368,
+          "without_c_order_only_us": 1.1771552154441973
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 1.0443471042061274,
+          "without_c_actual_us": 1.1766127168480975,
+          "without_c_order_only_us": 1.1771552154441973
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.1485730927231503,
+          "without_c_order_only_us": 1.1491509165000477
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.0132879857212076,
+          "without_c_order_only_us": 1.01347329590031
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.010193744980255,
+          "without_c_order_only_us": 1.007245912433306
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.010193744980255,
+          "without_c_order_only_us": 1.007245912433306
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.010193744980255,
+          "without_c_order_only_us": 1.007245912433306
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 1.007245912433306,
+          "without_c_actual_us": 1.010193744980255,
+          "without_c_order_only_us": 1.007245912433306
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "ee0325b652540193c4ad9587dcaeb6719512860db40ced172363e017dbad3fa4",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.9970819136808191,
+      "kernel": "fused_add_rms_norm",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.269114141946049,
+      "search_speedup_over_default": 1.2599844052780729,
+      "searched_best_us": 1.007245912433306
+    },
+    {
+      "actual_without_c_best_us": 0.7833235883270118,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 1,
+        "without_c_actual": 7,
+        "without_c_order_only": 7
+      },
+      "b_consumed_fact_count": 11,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": 0.7846819299475399,
+          "without_c_actual_us": 0.8770729900326486,
+          "without_c_order_only_us": 0.8770216146867311
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.7846819299475399,
+          "without_c_actual_us": 0.8770729900326486,
+          "without_c_order_only_us": 0.8770216146867311
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.7846819299475399,
+          "without_c_actual_us": 0.8770729900326486,
+          "without_c_order_only_us": 0.8770216146867311
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.7846819299475399,
+          "without_c_actual_us": 0.8029655513965579,
+          "without_c_order_only_us": 0.8028942210168565
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.7846819299475399,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.7836304127729907,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.7836304127729907,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.7836304127729907,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.7836304127729907,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.7836304127729907,
+          "without_c_actual_us": 0.7833235883270118,
+          "without_c_order_only_us": 0.7836304127729907
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "15ff8aa89abfef11a95a13c62093eb612bbe4fb1ea95fec9977d68a3795e3a65",
+      "family": "elementwise",
+      "full_budget_best_ratio_with_over_without_c": 1.0003916956549646,
+      "kernel": "geglu",
+      "measured_candidate_count": 5,
+      "registered_default_us": 0.8028942210168565,
+      "search_speedup_over_default": 1.0245827726053893,
+      "searched_best_us": 0.7836304127729907
+    },
+    {
+      "actual_without_c_best_us": 0.842360035458003,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 48,
+        "without_c_actual": 2,
+        "without_c_order_only": 2
+      },
+      "b_consumed_fact_count": 28,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.9948331214740171,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.9948331214740171,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.9947615326318514,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.975921282169872,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.975921282169872,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9238765149039532,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.8423490052694802,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.8423490052694802,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.8423490052694802,
+          "without_c_actual_us": 0.842360035458003,
+          "without_c_order_only_us": 0.8423490052694802
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "25b2e8d976542f2a6f715b6b666150bdb8df26e366a92f7365ede04cdbd9d32c",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.9999869056127327,
+      "kernel": "jsd",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.3149005222325678,
+      "search_speedup_over_default": 1.5609925506018865,
+      "searched_best_us": 0.8423490052694802
+    },
+    {
+      "actual_without_c_best_us": 1.1728696954494988,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 62,
+        "without_c_actual": 20,
+        "without_c_order_only": 70
+      },
+      "b_consumed_fact_count": 29,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 1.2084941533351135,
+          "without_c_actual_us": 1.3926811986622258,
+          "without_c_order_only_us": 1.3938439472784263
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 1.2084941533351135,
+          "without_c_actual_us": 1.3926811986622258,
+          "without_c_order_only_us": 1.3938439472784263
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 1.2084941533351135,
+          "without_c_actual_us": 1.3925826379851134,
+          "without_c_order_only_us": 1.3938439472784263
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 1.1727090236577975,
+          "without_c_actual_us": 1.3554868680511272,
+          "without_c_order_only_us": 1.3567634884310147
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 1.1710814487786942,
+          "without_c_actual_us": 1.1747809794521056,
+          "without_c_order_only_us": 1.1754063091194327
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 1.1696831981075069,
+          "without_c_actual_us": 1.1728696954494988,
+          "without_c_order_only_us": 1.1727090236577975
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 1.1696831981075069,
+          "without_c_actual_us": 1.1728696954494988,
+          "without_c_order_only_us": 1.1727090236577975
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 1.0723619931387725,
+          "without_c_actual_us": 1.1728696954494988,
+          "without_c_order_only_us": 1.1710814487786942
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 1.0723619931387725,
+          "without_c_actual_us": 1.1728696954494988,
+          "without_c_order_only_us": 1.0723619931387725
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "f392e9eb04f1ec39915f372c68deb1a56320d908137c5cd416dfe07d9312ce4e",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.9143061648700821,
+      "kernel": "layer_norm",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.5266747471682083,
+      "search_speedup_over_default": 1.423656150568779,
+      "searched_best_us": 1.0723619931387725
+    },
+    {
+      "actual_without_c_best_us": 0.9792202700810936,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 8,
+        "without_c_actual": 20,
+        "without_c_order_only": 20
+      },
+      "b_consumed_fact_count": 29,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 1.0118862747226358,
+          "without_c_actual_us": 1.144514335387466,
+          "without_c_order_only_us": 1.1444618762541003
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 1.0118862747226358,
+          "without_c_actual_us": 1.144514335387466,
+          "without_c_order_only_us": 1.1444618762541003
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 1.0118862747226358,
+          "without_c_actual_us": 1.144514335387466,
+          "without_c_order_only_us": 1.1444593808208583
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.9792851217077223,
+          "without_c_actual_us": 1.1109656590401613,
+          "without_c_order_only_us": 1.1109001494711443
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.9792564184026775,
+          "without_c_actual_us": 0.9870071704423926,
+          "without_c_order_only_us": 0.9870459123232783
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9792564184026775,
+          "without_c_actual_us": 0.9792202700810936,
+          "without_c_order_only_us": 0.9792851217077223
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.9792564184026775,
+          "without_c_actual_us": 0.9792202700810936,
+          "without_c_order_only_us": 0.9792851217077223
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.9792564184026775,
+          "without_c_actual_us": 0.9792202700810936,
+          "without_c_order_only_us": 0.9792564184026775
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9792564184026775,
+          "without_c_actual_us": 0.9792202700810936,
+          "without_c_order_only_us": 0.9792564184026775
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "b97c1f83c425419f1e3e983f863cc963aea449a912d2091c069b0f81e1180260",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 1.000036915413915,
+      "kernel": "liger_rms_norm",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.224549847155193,
+      "search_speedup_over_default": 1.2504894776718727,
+      "searched_best_us": 0.9792564184026775
+    },
+    {
+      "actual_without_c_best_us": 0.9165074484392175,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 70,
+        "without_c_actual": 8,
+        "without_c_order_only": 8
+      },
+      "b_consumed_fact_count": 52,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 1.1392688523217716,
+          "without_c_actual_us": 0.9354643263224437,
+          "without_c_order_only_us": 0.9364452246187773
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 1.1392688523217716,
+          "without_c_actual_us": 0.9354643263224437,
+          "without_c_order_only_us": 0.9364452246187773
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 1.1392688523217716,
+          "without_c_actual_us": 0.9354643263224437,
+          "without_c_order_only_us": 0.935600558091641
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 1.106625419145759,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 1.1066140933047663,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 1.1066133360812593,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 1.1066133360812593,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 1.1066133360812593,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9174452781198253,
+          "without_c_actual_us": 0.9165074484392175,
+          "without_c_order_only_us": 0.9174452781198253
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "e5df73233127e39db5d22700c1f534fec6d79bcc0a9b711c20e3193f464eee5d",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 1.0010232646578103,
+      "kernel": "poly_norm",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.70081963141222,
+      "search_speedup_over_default": 1.853864935571754,
+      "searched_best_us": 0.9174452781198253
+    },
+    {
+      "actual_without_c_best_us": 0.9993143116261488,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 2,
+        "without_c_actual": 26,
+        "without_c_order_only": 26
+      },
+      "b_consumed_fact_count": 11,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.9993353424522377,
+          "without_c_actual_us": 1.2371625238781625,
+          "without_c_order_only_us": 1.126414086846195
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.9993353424522377,
+          "without_c_actual_us": 1.2371625238781625,
+          "without_c_order_only_us": 1.126414086846195
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.9993353424522377,
+          "without_c_actual_us": 1.2371625238781625,
+          "without_c_order_only_us": 1.126414086846195
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.9993047998956108,
+          "without_c_actual_us": 1.2371364707610362,
+          "without_c_order_only_us": 1.126414086846195
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.9992543103385094,
+          "without_c_actual_us": 1.0330573631732105,
+          "without_c_order_only_us": 1.0330271467084136
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9992329184404627,
+          "without_c_actual_us": 0.9993450299984501,
+          "without_c_order_only_us": 0.9993047998956108
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.9992329184404627,
+          "without_c_actual_us": 0.9993450299984501,
+          "without_c_order_only_us": 0.9993047998956108
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.9992329184404627,
+          "without_c_actual_us": 0.9993381114621555,
+          "without_c_order_only_us": 0.9992543103385094
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9992329184404627,
+          "without_c_actual_us": 0.9993143116261488,
+          "without_c_order_only_us": 0.9992329184404627
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "097b2a36f6bad3ca299673e8607feac93fee1d8ac816a938ee1c3c4dc6f5b19d",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.999918550965658,
+      "kernel": "softmax",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.2753210801941495,
+      "search_speedup_over_default": 1.2763001064702584,
+      "searched_best_us": 0.9992329184404627
+    },
+    {
+      "actual_without_c_best_us": 0.7635015643217061,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 1,
+        "without_c_actual": 7,
+        "without_c_order_only": 7
+      },
+      "b_consumed_fact_count": 11,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": 0.7666286332698544,
+          "without_c_actual_us": 0.7888080392114639,
+          "without_c_order_only_us": 0.7888137433824403
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.7666286332698544,
+          "without_c_actual_us": 0.7888080392114639,
+          "without_c_order_only_us": 0.7888137433824403
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.7666286332698544,
+          "without_c_actual_us": 0.7888080392114639,
+          "without_c_order_only_us": 0.7888137433824403
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.7666286332698544,
+          "without_c_actual_us": 0.7734255375333188,
+          "without_c_order_only_us": 0.7739948280998756
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.7666286332698544,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.7657056889111059,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.7657056889111059,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.7657056889111059,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.7657056889111059,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.7657056889111059,
+          "without_c_actual_us": 0.7635015643217061,
+          "without_c_order_only_us": 0.7657056889111059
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "99d3f1530d83061e8e20c100344969ebbe7b4bcfd70b5ddbad01223aaaddc5c0",
+      "family": "elementwise",
+      "full_budget_best_ratio_with_over_without_c": 1.0028868632264794,
+      "kernel": "swiglu",
+      "measured_candidate_count": 5,
+      "registered_default_us": 0.7739948280998756,
+      "search_speedup_over_default": 1.0108254898831397,
+      "searched_best_us": 0.7657056889111059
+    },
+    {
+      "actual_without_c_best_us": 0.9642076822681735,
+      "attempt_budget_to_within_1pct": {
+        "with_c": 2,
+        "without_c_actual": 14,
+        "without_c_order_only": 14
+      },
+      "b_consumed_fact_count": 18,
+      "budget_curve": [
+        {
+          "attempt_budget": 1,
+          "with_c_actual_us": null,
+          "without_c_actual_us": null,
+          "without_c_order_only_us": null
+        },
+        {
+          "attempt_budget": 2,
+          "with_c_actual_us": 0.9680599668709582,
+          "without_c_actual_us": 1.0979701524514935,
+          "without_c_order_only_us": 1.0981272027441185
+        },
+        {
+          "attempt_budget": 3,
+          "with_c_actual_us": 0.9680599668709582,
+          "without_c_actual_us": 1.0979701524514935,
+          "without_c_order_only_us": 1.0981272027441185
+        },
+        {
+          "attempt_budget": 6,
+          "with_c_actual_us": 0.9680599668709582,
+          "without_c_actual_us": 1.0979701524514935,
+          "without_c_order_only_us": 1.098013551740668
+        },
+        {
+          "attempt_budget": 12,
+          "with_c_actual_us": 0.9680599668709582,
+          "without_c_actual_us": 1.0973220708276514,
+          "without_c_order_only_us": 1.097310361808858
+        },
+        {
+          "attempt_budget": 24,
+          "with_c_actual_us": 0.9680599668709582,
+          "without_c_actual_us": 0.9642179499976061,
+          "without_c_order_only_us": 0.9640939454870392
+        },
+        {
+          "attempt_budget": 36,
+          "with_c_actual_us": 0.9680512931011538,
+          "without_c_actual_us": 0.9642179499976061,
+          "without_c_order_only_us": 0.9640939454870392
+        },
+        {
+          "attempt_budget": 48,
+          "with_c_actual_us": 0.9640939454870392,
+          "without_c_actual_us": 0.9642179499976061,
+          "without_c_order_only_us": 0.9640939454870392
+        },
+        {
+          "attempt_budget": 64,
+          "with_c_actual_us": 0.9640253831098354,
+          "without_c_actual_us": 0.9642076822681735,
+          "without_c_order_only_us": 0.9640253831098354
+        },
+        {
+          "attempt_budget": 83,
+          "with_c_actual_us": 0.9640253831098354,
+          "without_c_actual_us": 0.9642076822681735,
+          "without_c_order_only_us": 0.9640253831098354
+        }
+      ],
+      "candidate_universe_size": 83,
+      "contract_view_digest": "46c4ba11e0dd36363069f1cda1631e68dcf10d1f5bd41e6264d707eb2b129b6b",
+      "family": "row_reduction",
+      "full_budget_best_ratio_with_over_without_c": 0.9998109337213439,
+      "kernel": "xformers_rms_norm",
+      "measured_candidate_count": 48,
+      "registered_default_us": 1.166395098320591,
+      "search_speedup_over_default": 1.209921563017287,
+      "searched_best_us": 0.9640253831098354
+    }
+  ],
+  "protocol": "intentir.production.cuda-search-ablation-summary.v1",
+  "summary": {
+    "budget_curves": [
+      {
+        "attempt_budget": 1,
+        "with_c_coverage": 3,
+        "with_c_geomean_best_us": 0.8196294926147354,
+        "without_c_actual_geomean_best_us": 0.9803010620048739,
+        "without_c_coverage": 3,
+        "without_c_order_only_geomean_best_us": 0.9793934338527277
+      },
+      {
+        "attempt_budget": 2,
+        "with_c_coverage": 10,
+        "with_c_geomean_best_us": 0.9743306901343084,
+        "without_c_actual_geomean_best_us": 1.065803803361678,
+        "without_c_coverage": 10,
+        "without_c_order_only_geomean_best_us": 1.0558071405924851
+      },
+      {
+        "attempt_budget": 3,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9728966763473297,
+        "without_c_actual_geomean_best_us": 1.0560098646184701,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 1.0465842278058823
+      },
+      {
+        "attempt_budget": 6,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9728903115681184,
+        "without_c_actual_geomean_best_us": 1.0238248516477435,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 1.014619285285005
+      },
+      {
+        "attempt_budget": 12,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.959880259321601,
+        "without_c_actual_geomean_best_us": 0.9952672732773139,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9868399265480325
+      },
+      {
+        "attempt_budget": 24,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9589320393677605,
+        "without_c_actual_geomean_best_us": 0.9342199296249097,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9341726856965707
+      },
+      {
+        "attempt_budget": 36,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9540600714221983,
+        "without_c_actual_geomean_best_us": 0.9303395171308276,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9299746680716917
+      },
+      {
+        "attempt_budget": 48,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9457286593988733,
+        "without_c_actual_geomean_best_us": 0.9303395171308276,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9299746680716917
+      },
+      {
+        "attempt_budget": 64,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9382833930549725,
+        "without_c_actual_geomean_best_us": 0.9303380309640792,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9298444980275099
+      },
+      {
+        "attempt_budget": 83,
+        "with_c_coverage": 11,
+        "with_c_geomean_best_us": 0.9224282598610783,
+        "without_c_actual_geomean_best_us": 0.9303360167097525,
+        "without_c_coverage": 11,
+        "without_c_order_only_geomean_best_us": 0.9224282598610783
+      }
+    ],
+    "kernel_count": 11,
+    "search_geomean_speedup_over_registered_default": 1.2553517172874535,
+    "search_improved_kernel_count": 10
+  },
+  "target": {
+    "compute_capability": [
+      12,
+      0
+    ],
+    "cuda_runtime": "13.0",
+    "device_index": 0,
+    "device_name": "NVIDIA GeForce RTX 5090 D",
+    "host": "aiiworks-MS73-HB1-000",
+    "python": "3.10.12",
+    "target_chip": "sm_120a",
+    "torch": "2.10.0+cu130",
+    "total_memory_bytes": 33668988928
+  }
+}

@@ -212,7 +212,7 @@ attachment 只定位 source-neutral prior，不授权 transformation。Lift 必�
 Decode/Elaborate、CandidateCheck 与 TypeCheck 不得推断或补造。TypeCheck 只检查
 `axis_ref in AxisRefs_v1(J,subject_ref)` 与 `axis_ref => subject_ref`。全局 prior 可以没有 attachment；
 局部 prior 缺失、含混或 consumer 不支持时必须安全忽略，不能读取 Source/π 猜测。具体 legal
-domain 属于 implementation family/target capability，不在 C 中增加
+domain 属于 transformation/schedule/target contract，不在 C 中增加
 `legal_domain/strength/retunable/fixed`。
 
 `tile_extent` 与 `reduction_tile_extent` 是触发 iteration missing-totality 的保留 role。它们只让
@@ -393,6 +393,11 @@ contract。`reduce` attrs 必须
 拒绝，fixed checker/emitter 不得翻译、补齐或修复 `fn/assoc/axes`。`contraction` 只接受 canonical
 `subscripts`，并按显式 operand/result rank 校验其输入项、reduction labels 与输出 orientation；
 `lhs_contract_axes`、`rhs_contract_axes` 等别名不能由 fixed code 翻译成 `subscripts`。
+
+当前二值 `assoc` vocabulary 不能被 production backend 静默重解释成完整的 reduction-order
+permission：`float_nondeterministic`/tolerance 不区分 fixed parenthesization、ordered tree 与 leaf
+permutation。需要这些区别的 transformation 必须在未来使用有真实 consumer 的版本化 closed B
+relation；artifact.v7 缺失该 relation 时只走保守 lowering，不影响既有 SCRC verdict。
 
 准确的 TypeCheck claim 是：
 

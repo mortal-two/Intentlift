@@ -18,6 +18,7 @@ from intentir.backend.cuda.selection import read_intent_module
 
 ROW_FAST_PATH_ID = "cuda.row_reduction.normalization_loss.read_once.v1"
 ELEMENTWISE_FAST_PATH_ID = "cuda.elementwise.row.vectorized.v1"
+PADDED_ROW_FAST_PATH_ID = "cuda.padded_row_reduction.masked_short_dot.v1"
 _BLOCK_THREADS = frozenset({32, 64, 128, 256, 512, 1024})
 _SIGNED_INTEGER_DTYPES = frozenset({"i8", "i16", "i32", "i64"})
 
@@ -29,6 +30,7 @@ class RowSchedule:
     vector_width: int = 0
     fuse_fma: bool = False
     defer_epilogue_col_loads: bool = True
+    promote_rank0_scalars: bool = True
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -50,6 +52,8 @@ class RowSchedule:
             raise ValueError("row schedule fuse_fma must be a bool")
         if type(self.defer_epilogue_col_loads) is not bool:
             raise ValueError("row schedule defer_epilogue_col_loads must be a bool")
+        if type(self.promote_rank0_scalars) is not bool:
+            raise ValueError("row schedule promote_rank0_scalars must be a bool")
 
     @property
     def num_warps(self) -> int:
@@ -62,6 +66,8 @@ class RowSchedule:
             f"block-threads={self.block_threads} tile-cols={self.tile_cols} "
             f"vector-width={self.vector_width} "
             f"fuse-fma={'true' if self.fuse_fma else 'false'} "
+            "promote-rank0-scalars="
+            f"{'true' if self.promote_rank0_scalars else 'false'} "
             "defer-epilogue-col-loads="
             f"{'true' if self.defer_epilogue_col_loads else 'false'}"
         )
@@ -73,6 +79,7 @@ class RowSchedule:
             "num_warps": self.num_warps,
             "vector_width": self.vector_width,
             "fuse_fma": self.fuse_fma,
+            "promote_rank0_scalars": self.promote_rank0_scalars,
             "defer_epilogue_col_loads": self.defer_epilogue_col_loads,
         }
 
@@ -82,6 +89,7 @@ class ElementwiseSchedule:
     block_threads: int
     flatten_contiguous: bool = True
     vector_width: int = 4
+    promote_uniform_scalars: bool = False
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -92,6 +100,8 @@ class ElementwiseSchedule:
             raise ValueError("elementwise flatten_contiguous must be boolean")
         if type(self.vector_width) is not int or self.vector_width not in {1, 2, 4}:
             raise ValueError("elementwise vector_width must be 1, 2, or 4")
+        if type(self.promote_uniform_scalars) is not bool:
+            raise ValueError("promote_uniform_scalars must be boolean")
         if self.flatten_contiguous and self.vector_width not in {2, 4}:
             raise ValueError("flattened elementwise vector_width must be 2 or 4")
         if not self.flatten_contiguous and self.vector_width != 1:
@@ -108,6 +118,8 @@ class ElementwiseSchedule:
                 " flatten-contiguous=true "
                 f"flat-vector-width={self.vector_width}"
             )
+        if self.promote_uniform_scalars:
+            argument += " promote-uniform-scalars=true"
         return argument
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -115,13 +127,63 @@ class ElementwiseSchedule:
             "block_threads": self.block_threads,
             "flatten_contiguous": self.flatten_contiguous,
             "vector_width": self.vector_width,
+            "promote_uniform_scalars": self.promote_uniform_scalars,
         }
+
+
+@dataclass(frozen=True)
+class PaddedRowSchedule:
+    """Launch geometry for the structural masked-short-dot/pad family."""
+
+    block_threads: int
+    vectorize_full_features: bool = True
+    promote_rank0_scalars: bool = True
+
+    def __post_init__(self) -> None:
+        if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
+            raise ValueError(
+                "padded-row schedule block_threads must be a supported warp multiple"
+            )
+        if type(self.vectorize_full_features) is not bool:
+            raise ValueError(
+                "padded-row vectorize_full_features must be boolean"
+            )
+        if type(self.promote_rank0_scalars) is not bool:
+            raise ValueError(
+                "padded-row promote_rank0_scalars must be boolean"
+            )
+
+    @property
+    def pass_argument(self) -> str:
+        return (
+            "-convert-intent-padded-row-reduction-to-gpu="
+            f"block-threads={self.block_threads} "
+            "vectorize-full-features="
+            f"{'true' if self.vectorize_full_features else 'false'} "
+            "promote-rank0-scalars="
+            f"{'true' if self.promote_rank0_scalars else 'false'}"
+        )
+
+    def to_dict(self) -> dict[str, int | bool]:
+        return {
+            "block_threads": self.block_threads,
+            "num_warps": self.block_threads // 32,
+            "vectorize_full_features": self.vectorize_full_features,
+            "promote_rank0_scalars": self.promote_rank0_scalars,
+        }
+
+
+REGISTERED_DEFAULT_SCHEDULES: dict[str, dict[str, int | bool]] = {
+    "elementwise": ElementwiseSchedule(64, False, 1).to_dict(),
+    "row_reduction": RowSchedule(1024, 32).to_dict(),
+    "padded_row_reduction": PaddedRowSchedule(64, False, True).to_dict(),
+}
 
 
 @dataclass(frozen=True)
 class ScheduleDecision:
     fast_path_id: str
-    schedule: RowSchedule | ElementwiseSchedule
+    schedule: RowSchedule | ElementwiseSchedule | PaddedRowSchedule
     observed_block_threads: int
     source: str
     optimization: Mapping[str, Any] | None = None
@@ -424,6 +486,9 @@ def pass_override(decision: ScheduleDecision) -> dict[str, str]:
 __all__ = [
     "ELEMENTWISE_FAST_PATH_ID",
     "ElementwiseSchedule",
+    "PADDED_ROW_FAST_PATH_ID",
+    "PaddedRowSchedule",
+    "REGISTERED_DEFAULT_SCHEDULES",
     "ROW_FAST_PATH_ID",
     "RowSchedule",
     "ScheduleDecision",

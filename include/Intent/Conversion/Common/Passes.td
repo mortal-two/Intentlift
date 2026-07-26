@@ -35,4 +35,35 @@ def ExpandRsqrtForLibm : Pass<"expand-rsqrt-for-libm", "::mlir::ModuleOp"> {
   ];
 }
 
+def ForwardBufferResultsToOutParams : Pass<
+    "forward-buffer-results-to-out-params", "::mlir::ModuleOp"> {
+  let summary = "Forward bufferized tensor results into explicit out params.";
+  let description = [{
+    After one-shot-bufferize and buffer-results-to-out-params, replace a
+    function-local result allocation followed by one final memref.copy with
+    direct writes to the equivalent out-parameter.  This removes allocator and
+    copy overhead before CPU/RVV LLVM lowering.  The pass is structural and
+    does not infer aliases: it only rewrites exact-type, single-copy result
+    buffers whose destination is an entry block argument.
+  }];
+  let dependentDialects = ["::mlir::memref::MemRefDialect"];
+}
+
+def LowerDisjointMemrefCopyToLoops : Pass<
+    "lower-disjoint-memref-copy-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Lower provably disjoint memref.copy operations to SCF loops.";
+  let description = [{
+    Expands memref.copy when its source is a fresh memref.alloc and source and
+    destination have equal ranked shapes and element types.  Fresh allocation
+    proves disjointness without an alias oracle, so the generated direct loop
+    preserves copy semantics and removes the external memrefCopy runtime from
+    standalone CPU/RVV objects.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+  ];
+}
+
 #endif // INTENT_CONVERSION_COMMON_PASSES

@@ -40,6 +40,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
@@ -146,6 +147,27 @@ static bool isCoordinatePreservingContraction(ContractionOp op) {
   appendLabels(lhs);
   appendLabels(rhs);
   return firstAppearance == out;
+}
+
+/// The canonical emitter makes a non-trailing broadcast explicit with
+/// tensor.expand_shape.  The row kernel already evaluates the source at its
+/// logical row/column coordinate, so a pure unit-axis insertion is an index
+/// view and needs no device instruction.  Reject dimension splitting/merging:
+/// only the ordered non-unit extents may survive unchanged.
+static bool isUnitAxisExpansion(tensor::ExpandShapeOp op) {
+  auto source = dyn_cast<RankedTensorType>(op.getSrc().getType());
+  auto result = dyn_cast<RankedTensorType>(op.getResult().getType());
+  if (!source || !result || !source.hasStaticShape() ||
+      !result.hasStaticShape() ||
+      source.getElementType() != result.getElementType())
+    return false;
+  SmallVector<int64_t> sourceNonUnit;
+  SmallVector<int64_t> resultNonUnit;
+  llvm::copy_if(source.getShape(), std::back_inserter(sourceNonUnit),
+                [](int64_t extent) { return extent != 1; });
+  llvm::copy_if(result.getShape(), std::back_inserter(resultNonUnit),
+                [](int64_t extent) { return extent != 1; });
+  return sourceNonUnit == resultNonUnit;
 }
 
 /// Prove that a rank-1 argument denotes the trailing feature axis from its
@@ -607,6 +629,7 @@ struct RowReductionLowering {
   unsigned requestedVectorWidth;
   bool enableFmaFusion;
   bool deferEpilogueColumnLoads;
+  bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
 
   // populated by match()
@@ -624,11 +647,10 @@ struct RowReductionLowering {
   // collective with the reduction identity while loading a safe in-bounds
   // address.  This mode is restricted to statistic-only outputs.
   bool hasInactiveFeatureThreads = false;
-  // Mixed-precision half-storage graphs additionally support a ragged final
-  // register tile. Every invalid per-thread column contributes the reduction
-  // identity and its output store is suppressed; all threads still execute
-  // every collective.
-  bool hasHalfFeatureTail = false;
+  // Ragged final register tile for any supported storage type. Every invalid
+  // per-thread column contributes the reduction identity and its output store
+  // is suppressed; all threads still execute every collective.
+  bool hasFeatureTail = false;
   // Tiling: the per-thread feature strip of K columns is split into `numTiles`
   // tiles of `Kpt` columns each (K == Kpt * numTiles). numTiles==1 (K <=
   // tileColsMax) is the M1 register-tile path, emitted byte-identically.
@@ -675,7 +697,7 @@ struct RowReductionLowering {
   DenseMap<unsigned, int64_t> scalarEqualities;
   Value groupVal;                    // bx % G (per-block uniform), set in rewrite
   Value rowIndex;                    // bx, used by per-row inputs/gathers
-  enum class IotaRole { Column, Group };
+  enum class IotaRole { Column, Group, OutputVector };
   DenseMap<Value, IotaRole> iotaRoles;
 
   // M6: the first-class Schedule this lowering emits. Populated by match();
@@ -687,11 +709,12 @@ struct RowReductionLowering {
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
                        unsigned vw, bool fuseFma, bool deferColLoads,
-                       bool enablePrefix)
+                       bool promoteScalars, bool enablePrefix)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
         deferEpilogueColumnLoads(deferColLoads),
+        promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix) {}
 
   /// A live LayerNorm extraction may express row reductions by transposing
@@ -1330,9 +1353,13 @@ struct RowReductionLowering {
             groupedBatch > 0 && resultTy.getRank() == 2 &&
             resultTy.getDimSize(0) == groupedGroups &&
             resultTy.getDimSize(1) == N;
+        bool perRowVectorShape =
+            resultTy.getRank() == 2 && resultTy.getDimSize(0) == M &&
+            resultTy.getDimSize(1) > 1 && resultTy.getDimSize(1) <= 16;
         if (!isCoordinatePreservingContraction(contraction) ||
             !resultTy.hasStaticShape() ||
-            (!standardShape && !groupedBroadcast && !groupedIndexGrid))
+            (!standardShape && !groupedBroadcast && !groupedIndexGrid &&
+             !perRowVectorShape))
           return failure();
       } else if (auto gather = dyn_cast<GatherOp>(&op)) {
         auto dataTy = cast<RankedTensorType>(gather.getData().getType());
@@ -1372,6 +1399,9 @@ struct RowReductionLowering {
         if (!isRowDomainTranspose(transpose) &&
             !isFlatSingletonOutputTranspose(transpose))
           return failure();
+      } else if (auto expand = dyn_cast<tensor::ExpandShapeOp>(&op)) {
+        if (!isUnitAxisExpansion(expand))
+          return failure();
       } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp, CastOp>(&op)) {
         // SelectOp + comparison map_binary (-> i1) + IotaOp are the M6 residual:
         // cross_entropy's target gather/one-hot (`select(iota == Y, X, 0)`). The
@@ -1396,6 +1426,7 @@ struct RowReductionLowering {
         bool columnExtent = extent == N;
         bool groupExtent = groupedGroups > 0 && extent == groupedGroups;
         bool batchExtent = groupedBatch > 0 && extent == groupedBatch;
+        bool outputVectorExtent = llvm::is_contained(outVectorWidths, extent);
         if (groupedBatch > 0) {
           int matches = static_cast<int>(columnExtent) +
                         static_cast<int>(groupExtent) +
@@ -1419,6 +1450,10 @@ struct RowReductionLowering {
             return failure();
           iotaRoles[iota.getResult()] =
               columnProof ? IotaRole::Column : IotaRole::Group;
+          continue;
+        }
+        if (!columnExtent && outputVectorExtent) {
+          iotaRoles[iota.getResult()] = IotaRole::OutputVector;
           continue;
         }
         if (!columnExtent ||
@@ -1457,21 +1492,9 @@ struct RowReductionLowering {
       return failure();
     if (N % T == 0) {
       K = N / T;
-    } else if (halfSoftmax || explicitHalfStorage) {
-      hasHalfFeatureTail = true;
-      K = (N + T - 1) / T;
-    } else if (T > N) {
-      // Preserve a source schedule such as Flash D=64 / 4 warps.  Only
-      // statistic outputs are legal: inactive lanes can contribute the exact
-      // reduction identity, but must never duplicate a row-output store.
-      hasInactiveFeatureThreads = true;
-      K = 1;
-      for (ResultRole role : outRoles)
-        if (role == ResultRole::RowOut ||
-            role == ResultRole::PerRowVectorOut)
-          return failure();
     } else {
-      return failure(); // general feature tails require a per-column mask
+      hasFeatureTail = true;
+      K = (N + T - 1) / T;
     }
     // Register budget: if the per-thread strip K exceeds tileColsMax, split it
     // into numTiles tiles of Kpt <= tileColsMax columns each (Kpt must divide K,
@@ -1565,7 +1588,7 @@ struct RowReductionLowering {
     // after vector loads.  Every Row/Col ABI value and RowOut must share the
     // selected storage type; arithmetic still proceeds through scalar emitAt.
     if (requestedVectorWidth != 1 && sched.kind == KRegister &&
-        !hasInactiveFeatureThreads && !hasHalfFeatureTail && numGroups == 0) {
+        !hasInactiveFeatureThreads && !hasFeatureTail && numGroups == 0) {
       bool hasColumnIndexedControl = false;
       bool allVectorABIValuesF32 = true;
       for (unsigned index = 0; index < argRoles.size(); ++index)
@@ -1729,6 +1752,11 @@ struct RowReductionLowering {
       return remember(emitRowScalarCast(
           b, loc, dst, emitAt(b, loc, castOp.getInput(), k)));
     }
+    if (auto expand = dyn_cast<tensor::ExpandShapeOp>(def)) {
+      if (!isUnitAxisExpansion(expand))
+        return nullptr;
+      return remember(emitAt(b, loc, expand.getSrc(), k));
+    }
     if (auto transpose = dyn_cast<TransposeOp>(def))
       return remember(emitAt(b, loc, transpose.getInput(), k));
     if (auto mu = dyn_cast<MapUnaryOp>(def)) {
@@ -1810,6 +1838,102 @@ struct RowReductionLowering {
     return nullptr; // a reduce result not yet hoisted: impossible in topo order
   }
 
+  /// Evaluate a compact per-row vector output at one logical vector column.
+  /// This is the output-side sibling of emitAt's feature-column evaluator.
+  /// Accepted DAGs are ordinary scalar maps/selects plus coordinate-preserving
+  /// no-reduction contractions over per-row uniforms and a width-P iota.  It
+  /// generalizes the historical singleton-column concat without inventing a
+  /// PolyNorm-specific recipe.
+  Value emitPerRowVectorAt(OpBuilder &b, Location loc, Value value,
+                           int64_t column, int64_t width) {
+    if (Value scalar = uniform.lookup(value))
+      return scalar;
+
+    auto evaluateOperand = [&](Value operand) -> Value {
+      auto type = dyn_cast<RankedTensorType>(operand.getType());
+      if (!type || !type.hasStaticShape())
+        return nullptr;
+      if (type.getRank() == 0)
+        return emitAt(b, loc, operand, 0);
+      if (type.getRank() == 1 && type.getDimSize(0) == width)
+        return emitPerRowVectorAt(b, loc, operand, column, width);
+      if (type.getRank() == 1 && type.getDimSize(0) == M)
+        return emitAt(b, loc, operand, 0);
+      if (type.getRank() == 2 && type.getDimSize(0) == M &&
+          type.getDimSize(1) == width)
+        return emitPerRowVectorAt(b, loc, operand, column, width);
+      if (type.getRank() == 2 && type.getDimSize(0) == M &&
+          type.getDimSize(1) == 1)
+        return emitAt(b, loc, operand, 0);
+      return nullptr;
+    };
+
+    Operation *definition = value.getDefiningOp();
+    if (auto constant = dyn_cast_or_null<arith::ConstantOp>(definition))
+      return emitSplatScalarConstant(b, loc, constant);
+    if (auto iota = dyn_cast_or_null<IotaOp>(definition)) {
+      auto type = cast<RankedTensorType>(iota.getResult().getType());
+      auto role = iotaRoles.find(iota.getResult());
+      if (type.getRank() != 1 || type.getDimSize(0) != width ||
+          role == iotaRoles.end() ||
+          role->second != IotaRole::OutputVector)
+        return nullptr;
+      Value index = b.create<arith::ConstantIndexOp>(loc, column);
+      return b.create<arith::IndexCastOp>(loc, type.getElementType(), index);
+    }
+    if (auto castOp = dyn_cast_or_null<CastOp>(definition)) {
+      Value input = evaluateOperand(castOp.getInput());
+      Type target = cast<RankedTensorType>(castOp.getResult().getType())
+                        .getElementType();
+      return input ? emitRowScalarCast(b, loc, target, input) : Value();
+    }
+    if (auto unary = dyn_cast_or_null<MapUnaryOp>(definition)) {
+      Value input = evaluateOperand(unary.getInput());
+      return input ? emitScalarUnary(b, loc, unary.getFn(), input) : Value();
+    }
+    if (auto binary = dyn_cast_or_null<MapBinaryOp>(definition)) {
+      Value lhs = evaluateOperand(binary.getLhs());
+      Value rhs = evaluateOperand(binary.getRhs());
+      if (!lhs || !rhs)
+        return nullptr;
+      if (isCmpFn(binary.getFn()))
+        return isa<IntegerType>(lhs.getType())
+                   ? emitScalarCmpI(b, loc, binary.getFn(), lhs, rhs)
+                   : emitScalarCmp(b, loc, binary.getFn(), lhs, rhs);
+      return emitRowScalarBinary(b, loc, binary.getFn(), lhs, rhs, f32);
+    }
+    if (auto select = dyn_cast_or_null<SelectOp>(definition)) {
+      Value condition = evaluateOperand(select.getCond());
+      Value positive = evaluateOperand(select.getX());
+      Value negative = evaluateOperand(select.getY());
+      if (!condition || !positive || !negative ||
+          !condition.getType().isInteger(1) ||
+          positive.getType() != negative.getType())
+        return nullptr;
+      return b.create<arith::SelectOp>(loc, condition, positive, negative);
+    }
+    if (auto contraction = dyn_cast_or_null<ContractionOp>(definition)) {
+      if (!isCoordinatePreservingContraction(contraction))
+        return nullptr;
+      Value lhs = evaluateOperand(contraction.getA());
+      Value rhs = evaluateOperand(contraction.getB());
+      if (!lhs || !rhs)
+        return nullptr;
+      Type target = cast<RankedTensorType>(contraction.getResult().getType())
+                        .getElementType();
+      if (lhs.getType() != target)
+        lhs = emitRowScalarCast(b, loc, target, lhs);
+      if (rhs.getType() != target)
+        rhs = emitRowScalarCast(b, loc, target, rhs);
+      if (!lhs || !rhs)
+        return nullptr;
+      return isa<FloatType>(target)
+                 ? Value(b.create<arith::MulFOp>(loc, lhs, rhs))
+                 : Value(b.create<arith::MulIOp>(loc, lhs, rhs));
+    }
+    return nullptr;
+  }
+
   /// Accumulate one register-tile term.  An explicit Layer-C FMA candidate may
   /// fuse a single-use elementwise product into an additive row reduction,
   /// matching the source compiler's f32 contraction while retaining the same
@@ -1819,7 +1943,7 @@ struct RowReductionLowering {
                                     unsigned k, Value featureLaneActive,
                                     ArrayRef<Value> featureTileActive) {
     if (enableFmaFusion && !hasInactiveFeatureThreads &&
-        !hasHalfFeatureTail &&
+        !hasFeatureTail &&
         info.op == gpu::AllReduceOperation::ADD &&
         red.getAssoc() == "float_nondeterministic") {
       auto mul = red.getInput().getDefiningOp<MapBinaryOp>();
@@ -1831,8 +1955,8 @@ struct RowReductionLowering {
       }
     }
     Value term = emitAt(b, loc, red.getInput(), k);
-    Value active = hasHalfFeatureTail ? featureTileActive[k]
-                                      : featureLaneActive;
+    Value active =
+        hasFeatureTail ? featureTileActive[k] : featureLaneActive;
     if (active) {
       Value identity = b.create<arith::ConstantOp>(
           loc, b.getF32FloatAttr(info.ident));
@@ -3696,6 +3820,21 @@ struct RowReductionLowering {
         outMems.push_back(entry->getArgument(freshOutput++));
     }
 
+    // Preserve the public rank-0 memref ABI while promoting invocation
+    // scalars to by-value gpu.launch captures.  The host stub performs one
+    // load; the outlined kernel receives an ordinary scalar argument instead
+    // of every lane redundantly loading the same device address.  Authored
+    // value/dimension equalities remain compile-time constants below.
+    DenseMap<Value, Value> launchScalars;
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      if (!promoteRank0ScalarInputs || argRoles[i] != Role::Scalar ||
+          scalarEqualities.contains(i))
+        continue;
+      Value sourceArg = srcBlock.getArgument(i);
+      launchScalars[sourceArg] = b.create<memref::LoadOp>(
+          loc, argMemref[sourceArg], ValueRange{});
+    }
+
     Value cM = b.create<arith::ConstantIndexOp>(loc, M);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
@@ -3765,7 +3904,7 @@ struct RowReductionLowering {
               b.create<arith::AddIOp>(loc, base, cj);
         }
       }
-    } else if (hasHalfFeatureTail) {
+    } else if (hasFeatureTail) {
       // Each register position has its own tail predicate.  Invalid positions
       // read a safe address so no speculative load can go out of bounds; their
       // reduction term is replaced by the monoid identity below and the final
@@ -3866,8 +4005,16 @@ struct RowReductionLowering {
           uniform[arg] = b.create<arith::ConstantOp>(
               loc, b.getIntegerAttr(integerTy, equality->second));
         } else {
-          uniform[arg] =
-              b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+          if (promoteRank0ScalarInputs) {
+            uniform[arg] = launchScalars.lookup(arg);
+            if (!uniform[arg]) {
+              fn.emitError("rank-0 scalar was not promoted to launch ABI");
+              return failure();
+            }
+          } else {
+            uniform[arg] = b.create<memref::LoadOp>(
+                loc, argMemref[arg], ValueRange{});
+          }
         }
       } else if (argRoles[i] == Role::RowInt) {
         // Y[bx] is uniform across the block's threads: load once per block.
@@ -4316,7 +4463,7 @@ struct RowReductionLowering {
             // reduction pass crash under -O2 even though debug builds passed.
             SmallVector<Value, 2> indices{
                 bx, useRegisterVector ? vecIdx[index] : cols[index]};
-            if (hasHalfFeatureTail) {
+            if (hasFeatureTail) {
               auto ifOp = b.create<scf::IfOp>(
                   loc, featureTileActive[index], /*withElseRegion=*/false);
               OpBuilder::InsertionGuard guard(b);
@@ -4353,26 +4500,41 @@ struct RowReductionLowering {
         b.create<memref::StoreOp>(loc, scalar, outMems[j], ValueRange{bx});
       } else if (outRoles[j] == ResultRole::PerRowVectorOut) {
         auto concat = outputVals[j].getDefiningOp<ConcatOp>();
-        if (!concat || concat.getInputs().size() !=
-                           static_cast<size_t>(outVectorWidths[j])) {
-          fn.emitError() << "per-row vector output " << j
-                         << " is not a singleton-column concat";
-          return failure();
-        }
         auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
         OpBuilder::InsertionGuard guard(b);
         b.setInsertionPointToStart(ifOp.thenBlock());
-        unsigned column = 0;
-        for (Value input : concat.getInputs()) {
-          Value scalar = emitAt(b, loc, input, 0);
-          if (!scalar) {
+        if (concat) {
+          if (concat.getInputs().size() !=
+              static_cast<size_t>(outVectorWidths[j])) {
             fn.emitError() << "per-row vector output " << j
-                           << " has an unsupported element";
+                           << " has a mismatched singleton-column concat";
             return failure();
           }
-          Value c = b.create<arith::ConstantIndexOp>(loc, column++);
-          b.create<memref::StoreOp>(loc, scalar, outMems[j],
-                                    ValueRange{bx, c});
+          unsigned column = 0;
+          for (Value input : concat.getInputs()) {
+            Value scalar = emitAt(b, loc, input, 0);
+            if (!scalar) {
+              fn.emitError() << "per-row vector output " << j
+                             << " has an unsupported concat element";
+              return failure();
+            }
+            Value c = b.create<arith::ConstantIndexOp>(loc, column++);
+            b.create<memref::StoreOp>(loc, scalar, outMems[j],
+                                      ValueRange{bx, c});
+          }
+        } else {
+          for (int64_t column = 0; column < outVectorWidths[j]; ++column) {
+            Value scalar = emitPerRowVectorAt(
+                b, loc, outputVals[j], column, outVectorWidths[j]);
+            if (!scalar) {
+              fn.emitError() << "per-row vector output " << j
+                             << " has an unsupported compact DAG";
+              return failure();
+            }
+            Value c = b.create<arith::ConstantIndexOp>(loc, column);
+            b.create<memref::StoreOp>(loc, scalar, outMems[j],
+                                      ValueRange{bx, c});
+          }
         }
       } else { // AtomicOut: thread 0 atomic-adds this block's scaled contribution
         Value contrib = uniform.lookup(outputVals[j]); // folded per-block scalar
@@ -4407,6 +4569,7 @@ struct ConvertIntentRowReductionToGPUPass
     for (auto fn : mod.getOps<func::FuncOp>()) {
       RowReductionLowering probe(fn, blockThreads, tileCols, vectorWidth,
                                  fuseFma, deferEpilogueColLoads,
+                                 promoteRank0Scalars,
                                  enableSortedPrefix);
       if (succeeded(probe.match()))
         targets.push_back(fn);
@@ -4414,6 +4577,7 @@ struct ConvertIntentRowReductionToGPUPass
     for (func::FuncOp fn : targets) {
       RowReductionLowering low(fn, blockThreads, tileCols, vectorWidth,
                                fuseFma, deferEpilogueColLoads,
+                               promoteRank0Scalars,
                                enableSortedPrefix);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("row-reduction lowering failed after match");

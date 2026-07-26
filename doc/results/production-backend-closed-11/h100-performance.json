@@ -1,0 +1,749 @@
+{
+  "device": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "cuda_runtime": "12.1",
+    "device_index": 0,
+    "device_name": "NVIDIA H100 80GB HBM3",
+    "host": "aiiworks-MS04-CE0-000",
+    "python": "3.10.12",
+    "torch": "2.5.1+cu121",
+    "total_memory_bytes": 85017493504
+  },
+  "kernels": [
+    {
+      "b_consumed_fact_count": 15,
+      "b_supported": true,
+      "c_digest": "39d9091b22221be04bdccdbc4faca30215af9d2c8074af867d52c4d01a02442d",
+      "case_id": "high_performance:liger_dyt",
+      "contract_view_digest": "bf5ac38b2fd6bd64c5fb469ceb4a4ef522b22814b278221454c27e39bf5b147a",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "8dbb6521afc6a196f525c9a22c2638bce97f0ad3aaea360d6f6ff174d6578980",
+      "kernel": "dyt",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.0871859943178988,
+        "mlir_us": 1.2780776826426252,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.2338009182662169,
+            1.3223544470190334
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.1758994633236903,
+            1.175267106743269
+          ]
+        },
+        "source_triton_us": 1.1755832850334795,
+        "speedup_over_triton": 0.9198058154045672,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 5,
+        "measured": 5
+      },
+      "snapshot_digest": "d4bb8faac7b953e8e540ab6f02350c198160dfba68645b3ed0822aa67307e8a3",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 0.0,
+        "candidate_id": "elementwise.ad127bf6f5a7",
+        "family": "elementwise",
+        "fast_path_id": "cuda.elementwise.row.vectorized.v1",
+        "pass_argument": "-convert-intent-elementwise-to-gpu=block-threads=128",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 128,
+          "flatten_contiguous": false,
+          "vector_width": 1
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 19,
+      "b_supported": true,
+      "c_digest": "15e6467f86008bb66fa2891b5819bfd567e5ffa7628e5dafcb5427e9fb97e313",
+      "case_id": "high_performance:flash_attn.flash_attn_triton._bwd_preprocess_do_o_dot",
+      "contract_view_digest": "7ab454ee5f4d8b4c9974f78639a9fed1984e7185749673c7839847aab37e317e",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 2
+      },
+      "j_digest": "86bec5aba8abe8a920f1ccea8689867efc89410a51d7ceb490c42c58b90c33bf",
+      "kernel": "flash_bwd_preprocess",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.0540482174996757,
+        "mlir_us": 1.3725150462594993,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.3725141277062538,
+            1.3725159648127447
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.3021829280447452,
+            1.302090810997789
+          ]
+        },
+        "source_triton_us": 1.302136869521267,
+        "speedup_over_triton": 0.9487232020297095,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 12,
+        "measured": 12
+      },
+      "snapshot_digest": "69e061e5aef6d8e4c10aefd7f8d6ee96fa166c06cf6f78054a267f5209afa590",
+      "winner": {
+        "b_transformations": [
+          "cuda.b.rank0_host_value_capture.v1"
+        ],
+        "c_order_score": 0.0,
+        "candidate_id": "padded_row_reduction.a0da2168d077",
+        "family": "padded_row_reduction",
+        "fast_path_id": "cuda.padded_row_reduction.masked_short_dot.v1",
+        "pass_argument": "-convert-intent-padded-row-reduction-to-gpu=block-threads=32 vectorize-full-features=true promote-rank0-scalars=true",
+        "required_b_capabilities": [
+          "b.rank0_readonly_host_capture.v1"
+        ],
+        "schedule": {
+          "block_threads": 32,
+          "num_warps": 1,
+          "promote_rank0_scalars": true,
+          "vectorize_full_features": true
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 30,
+      "b_supported": true,
+      "c_digest": "1837e4c5e61f3fe5f5f0fc40fd3c8a86066cf9c237ec2b42f150d7a229e8da5d",
+      "case_id": "high_performance:liger_fused_add_rms_norm",
+      "contract_view_digest": "e6d0067660736985ee25a9f581347592557cb9e79f6f8f440fcd4549814c79b0",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "1b04e15b1ad654aa5f53b887ad6fa2f72ab2f5203038ab9cad9b454424a046c6",
+      "kernel": "fused_add_rms_norm",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.0946741318754003,
+        "mlir_us": 1.4807054313959407,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.4805275134082105,
+            1.480883349383671
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.3527054955191917,
+            1.352584395380468
+          ]
+        },
+        "source_triton_us": 1.3526449454498297,
+        "speedup_over_triton": 0.9135138676263371,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "bcc2f3f275fd00b249a9623c6db80da1570310b20d46ff60fcd20d823728b5e7",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 0.0,
+        "candidate_id": "row_reduction.3c00cbae3170",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=128 tile-cols=32 vector-width=0 fuse-fma=false promote-rank0-scalars=false defer-epilogue-col-loads=false",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 128,
+          "defer_epilogue_col_loads": false,
+          "fuse_fma": false,
+          "num_warps": 4,
+          "promote_rank0_scalars": false,
+          "tile_cols": 32,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "c_digest": "40ea18d74315d7c8d208054804cdbaa7754f8792a70344a03c128f3695a66fc0",
+      "case_id": "high_performance:liger_geglu",
+      "contract_view_digest": "269fdfd88895cdf95e7fa72e70b83407c0b34557c4d5486523e256dcf394a4b3",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "2680448c50b7182cea98be8e02077919c3458baaa0cc8289f871bf14a222e113",
+      "kernel": "geglu",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": true,
+        "mlir_over_triton": 0.9934956501111049,
+        "mlir_us": 1.1799014749924495,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.179852986941801,
+            1.179949963043098
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.1878183163494702,
+            1.1874341064678786
+          ]
+        },
+        "source_triton_us": 1.1876262114086744,
+        "speedup_over_triton": 1.0065469334346535,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 5,
+        "measured": 5
+      },
+      "snapshot_digest": "42155b91a8e1a9e400d39be4d4928a1b10c92dd222353f11cf6db3be0da319c0",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 2.0,
+        "candidate_id": "elementwise.d87bc1dc92ef",
+        "family": "elementwise",
+        "fast_path_id": "cuda.elementwise.row.vectorized.v1",
+        "pass_argument": "-convert-intent-elementwise-to-gpu=block-threads=512",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 512,
+          "flatten_contiguous": false,
+          "vector_width": 1
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 28,
+      "b_supported": true,
+      "c_digest": "03bab20e6efd153c247b6b0226121470662005f92186c2dbcbab45c6b71c938a",
+      "case_id": "high_performance:liger_jsd",
+      "contract_view_digest": "da7f91973bfc308210695f140ffd6c253ee5305ad7458bab5306cc9725b0b84a",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 2,
+        "x1": 64
+      },
+      "j_digest": "a7994be9613f28c7881dbbd4a58ea59339808278fc4ff37a7737efd1057c52d9",
+      "kernel": "jsd",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": true,
+        "mlir_over_triton": 0.8708548041861792,
+        "mlir_us": 1.2927111819762223,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.2927003392575602,
+            1.2927220246948843
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.484424737426791,
+            1.4844081283096993
+          ]
+        },
+        "source_triton_us": 1.4844164328682452,
+        "speedup_over_triton": 1.148297046985356,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "abdc61bc3039de3d20ac2585497013227fbc337d760a32b8be06a1e75a39b507",
+      "winner": {
+        "b_transformations": [
+          "cuda.b.rank0_host_value_capture.v1",
+          "cuda.b.epilogue_readonly_load_motion.v1"
+        ],
+        "c_order_score": 1.0,
+        "candidate_id": "row_reduction.f4920132b2a1",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=32 tile-cols=32 vector-width=0 fuse-fma=false promote-rank0-scalars=true defer-epilogue-col-loads=true",
+        "required_b_capabilities": [
+          "b.rank0_readonly_host_capture.v1",
+          "b.readonly_nonalias_inputs.v1"
+        ],
+        "schedule": {
+          "block_threads": 32,
+          "defer_epilogue_col_loads": true,
+          "fuse_fma": false,
+          "num_warps": 1,
+          "promote_rank0_scalars": true,
+          "tile_cols": 32,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 29,
+      "b_supported": true,
+      "c_digest": "b961285f7dbc9c145dfe2d9c12983ef649c070696bb9bf90d9f3861185ca4d7c",
+      "case_id": "high_performance:liger_layer_norm",
+      "contract_view_digest": "a3e91677b832763bbd44d23c506991c1213c362321b3271c5cab332dbc776d3f",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 2,
+        "x1": 127
+      },
+      "j_digest": "ae12f222aada0330be5a0250e0cee363633bcae633c1786ef69f674c03b350cb",
+      "kernel": "layer_norm",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.1816558081101172,
+        "mlir_us": 1.7545967424487032,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.754347409309179,
+            1.7548460755882276
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.4855548960518765,
+            1.4841706880078676
+          ]
+        },
+        "source_triton_us": 1.484862792029872,
+        "speedup_over_triton": 0.8462701178605904,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "13e4345fc7beefd2ee03f4c85ca1f98ecb4a7a89e7bdfcc4aae1471b09344488",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 1.0,
+        "candidate_id": "row_reduction.5c92a3b2838b",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=64 vector-width=0 fuse-fma=false promote-rank0-scalars=false defer-epilogue-col-loads=false",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 64,
+          "defer_epilogue_col_loads": false,
+          "fuse_fma": false,
+          "num_warps": 2,
+          "promote_rank0_scalars": false,
+          "tile_cols": 64,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 29,
+      "b_supported": true,
+      "c_digest": "aaec1a0bec5847736fc26721a36d7d80a0aabf2e6eedf6de3f988c29f806d265",
+      "case_id": "high_performance:liger_rms_norm",
+      "contract_view_digest": "533d7b9be1dfc1ba3f4229695edeaf25165406798d8beae534b7374a019af87b",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "1ccd7281e8b311777f6735f3321b5999ffaca64cf281d0d8eabe8015a122867f",
+      "kernel": "liger_rms_norm",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.1296613419350316,
+        "mlir_us": 1.4809756238186962,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.480648665947343,
+            1.4813025816900494
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.3111568632579984,
+            1.3108247321852653
+          ]
+        },
+        "source_triton_us": 1.3109907977216317,
+        "speedup_over_triton": 0.8852210506620234,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "63514c55f14ab5e26e16285f3a6c19588584a079ac2217834df6dc8558426406",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 1.0,
+        "candidate_id": "row_reduction.5c92a3b2838b",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=64 vector-width=0 fuse-fma=false promote-rank0-scalars=false defer-epilogue-col-loads=false",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 64,
+          "defer_epilogue_col_loads": false,
+          "fuse_fma": false,
+          "num_warps": 2,
+          "promote_rank0_scalars": false,
+          "tile_cols": 64,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 52,
+      "b_supported": true,
+      "c_digest": "e39c65f0fb194982c5e0a3b81c825a0ebc081bd6c3dc82feee31578ff92b8804",
+      "case_id": "high_performance:liger_poly_norm",
+      "contract_view_digest": "a643355cb1c3cfb23b3cefd1458f6dd0ea78b7da422face65b6dd8cfc32e32d1",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "703f9ae471bda733cb0e3c6f39657904876e8d20f9fad51e3b53aba368c65514",
+      "kernel": "poly_norm",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": true,
+        "mlir_over_triton": 0.9302710097779224,
+        "mlir_us": 1.4126579760524813,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.4126600219115863,
+            1.4126559301933763
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.5185443729708914,
+            1.5185447359108655
+          ]
+        },
+        "source_triton_us": 1.5185445544408784,
+        "speedup_over_triton": 1.0749555661620838,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "66bb9f32ed48985e91e2ae3493c610dea1f6b5078dc5dbc942ed4ff2d4551a3d",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 2.0,
+        "candidate_id": "row_reduction.227f1cfbf014",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=32 tile-cols=32 vector-width=0 fuse-fma=false promote-rank0-scalars=false defer-epilogue-col-loads=false",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 32,
+          "defer_epilogue_col_loads": false,
+          "fuse_fma": false,
+          "num_warps": 1,
+          "promote_rank0_scalars": false,
+          "tile_cols": 32,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "c_digest": "39d9091b22221be04bdccdbc4faca30215af9d2c8074af867d52c4d01a02442d",
+      "case_id": "high_performance:liger_softmax",
+      "contract_view_digest": "6d978bf83cdec644dede4bf06c7148c4951846bfa0ce8d255ecbbd198b9aae03",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "610f239b6fb6135d2e71851cc02cd45a6e9da06f4ac12356cef2bbc13e55e2ab",
+      "kernel": "softmax",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": false,
+        "mlir_over_triton": 1.0237313065751088,
+        "mlir_us": 1.5077340232302765,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.5077072505464562,
+            1.5077607959140966
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.4728386617821494,
+            1.472727256826705
+          ]
+        },
+        "source_triton_us": 1.472782959304427,
+        "speedup_over_triton": 0.9768188132738639,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 0.0,
+        "candidate_id": "row_reduction.44e15ef80c8b",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=128 tile-cols=64 vector-width=0 fuse-fma=false promote-rank0-scalars=true defer-epilogue-col-loads=true",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 128,
+          "defer_epilogue_col_loads": true,
+          "fuse_fma": false,
+          "num_warps": 4,
+          "promote_rank0_scalars": true,
+          "tile_cols": 64,
+          "vector_width": 0
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 11,
+      "b_supported": true,
+      "c_digest": "40ea18d74315d7c8d208054804cdbaa7754f8792a70344a03c128f3695a66fc0",
+      "case_id": "high_performance:liger_swiglu",
+      "contract_view_digest": "22711784f03888054df643f682774295ffbf01bc789a44314a7c47035c69eca3",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "2b42aa01a36542d0c3145189f4618e773cb335f8abf0bb599415a3b6b14e66ca",
+      "kernel": "swiglu",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": true,
+        "mlir_over_triton": 0.9771717124254246,
+        "mlir_us": 1.1378701244933842,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.13784183832753,
+            1.1378984106592385
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.1645545951434946,
+            1.1643505707031347
+          ]
+        },
+        "source_triton_us": 1.1644525829233148,
+        "speedup_over_triton": 1.0233615927316537,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 5,
+        "measured": 5
+      },
+      "snapshot_digest": "c3af3ede93aa2190e1cfac0f2cf55df2ab6d5ac3825db6ca506fd630cb5c8d69",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 2.0,
+        "candidate_id": "elementwise.d87bc1dc92ef",
+        "family": "elementwise",
+        "fast_path_id": "cuda.elementwise.row.vectorized.v1",
+        "pass_argument": "-convert-intent-elementwise-to-gpu=block-threads=512",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 512,
+          "flatten_contiguous": false,
+          "vector_width": 1
+        }
+      }
+    },
+    {
+      "b_consumed_fact_count": 18,
+      "b_supported": true,
+      "c_digest": "cbb59f5b055d6656cea162aa6f456eeac548da31fc24ef028f3f6d50600b05e0",
+      "case_id": "high_performance:xformers.ops._triton.rmsnorm_kernels._rms_norm_kernel",
+      "contract_view_digest": "7466b36f36166e1acccc9327a974ace8d6a0324fc0d790a0aed275f85e5c1e64",
+      "correctness": {
+        "mlir_j": true,
+        "policy": "intentir.gate2.default.v1",
+        "source_j": true
+      },
+      "extents": {
+        "x0": 127
+      },
+      "j_digest": "bfdcfc65fec384b6e1489a123136da7bbef35830ee726abde0141833d6a6850f",
+      "kernel": "xformers_rms_norm",
+      "performance": {
+        "graph_repetitions": 100,
+        "measurement_rounds": 1,
+        "meets_or_beats_triton": true,
+        "mlir_over_triton": 0.9808875304673111,
+        "mlir_us": 1.4490991475672932,
+        "repeat_ms": 200,
+        "selection_confirmation": {
+          "batch_aggregation": "median",
+          "finalist_count": 4,
+          "finalist_remeasurements": 1,
+          "mlir_batch_us": [
+            1.4492351424285648,
+            1.4489631527060216
+          ],
+          "samples_per_batch": 1,
+          "source_batch_us": [
+            1.4773465145363198,
+            1.477322808004498
+          ]
+        },
+        "source_triton_us": 1.477334661270409,
+        "speedup_over_triton": 1.0194848735854387,
+        "timing": "graph",
+        "warmup_ms": 50
+      },
+      "search_counts": {
+        "candidate_count": 48,
+        "measured": 48
+      },
+      "snapshot_digest": "a4dd51db46b67b80b3389be5c03b6ebd8ad234e4ae8f2e1f6a69e17b0e9bd699",
+      "winner": {
+        "b_transformations": [],
+        "c_order_score": 1.0,
+        "candidate_id": "row_reduction.5b392eecdabc",
+        "family": "row_reduction",
+        "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1",
+        "pass_argument": "-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=32 vector-width=0 fuse-fma=false promote-rank0-scalars=false defer-epilogue-col-loads=false",
+        "required_b_capabilities": [],
+        "schedule": {
+          "block_threads": 64,
+          "defer_epilogue_col_loads": false,
+          "fuse_fma": false,
+          "num_warps": 2,
+          "promote_rank0_scalars": false,
+          "tile_cols": 32,
+          "vector_width": 0
+        }
+      }
+    }
+  ],
+  "protocol": "intentir.production.cuda-performance.compact.v1",
+  "source_protocol": "intentir.production.cuda-remote-performance.v1",
+  "summary": {
+    "correct_kernel_count": 11,
+    "geomean_mlir_over_triton": 1.0257347456563453,
+    "kernel_count": 11,
+    "meets_or_beats_triton": 5
+  },
+  "target_chip": "sm_90a"
+}

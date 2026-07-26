@@ -447,7 +447,7 @@ axis_ref in AxisRefs_v1(J, subject_ref)
 
 `subject_ref` 只回答“该 prior 作用于 J 的哪个稳定结构”；`axis_ref` 只回答该 subject 内的 logical
 axis。它们不允许引用 π/C/source handle、realization authorization 或物理 thread/lane/warp axis，
-也不授权某个 implementation family、参数值或 transformation。全局 compiler prior 可以省略
+也不授权某条 lowering path、参数值或 transformation。全局 compiler prior 可以省略
 subject；局部 prior 缺失或含混时 backend 必须安全忽略，不能从 Source/π 猜测。
 
 `tile_extent` 与 `reduction_tile_extent` 是当前 closed role vocabulary 中用于 physical-loop
@@ -513,7 +513,7 @@ Source basis。因而这次扩展没有污染 C，也没有把 SCRC fidelity con
 Lift LLM 随完整 C 显式产生 attachment；Harness、Decode/Elaborate、CandidateCheck 与 TypeCheck
 均不得推断或补造，只能检查 ref 存在、`axis_ref in AxisRefs_v1(J,subject_ref)`，以及
 `axis_ref => subject_ref`。不增加
-`legal_domain/strength/retunable/fixed`：target 参数合法域仍属于 implementation family/capability，
+`legal_domain/strength/retunable/fixed`：target 参数合法域仍属于 transformation/schedule/target contract，
 C 按定义仍可忽略或 retune。schema 变更必须随下一 schema/TypeCheck protocol version 生效，旧
 artifact 不重判。上述字段仍属于同一个 C，不能扩张成 portable-hint artifact、schedule ontology
 或 LoweringAgent 输入协议。
@@ -984,7 +984,7 @@ Gate2 增加第四条边，也不成为 production legality oracle。
 
 ### 11.4 Retune 与 cost model 的 production 扩展
 
-完整 multi-lowering、retune 与 cost-model 合同由
+完整 structural lowering-state search、retune 与 cost-model 合同由
 [第五份后端设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
 定义。其核心是在 backend 内部选择：
 
@@ -1008,7 +1008,7 @@ precision 配置分量，而不是脱离 MLIR 的完整实现候选，也不是�
 - correctness 架构不依赖 cost model；
 - backend 可以消费、忽略或以 C 排序候选；
 - target-specific cost model 是 production 性能层，不是 Lift/Replay/Gate 正确性的前置条件；
-- 28-kernel SCRC canary 与 backend multi-lowering/performance 实验继续分开验收。
+- 28-kernel SCRC canary 与 backend structural lowering-path/performance 实验继续分开验收。
 
 ## 12. C-purity 与多值实验
 
@@ -1226,4 +1226,4 @@ Production:
     K_t = Lower_t(J,C)
 ```
 
-> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + pi + MaskC(C)`。当前证明相关 artifact 始终只有 `(J,C,pi)`；production multi-lowering、retune 与 cost model 不属于 SCRC，并由第五份后端文档单独约束。**
+> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + pi + MaskC(C)`。当前证明相关 artifact 始终只有 `(J,C,pi)`；production structural lowering-state search、retune 与 cost model 不属于 SCRC，并由第五份后端文档单独约束。**

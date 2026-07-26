@@ -261,6 +261,7 @@ class CachedLauncher:
         self._cells: list = []
         self._ptr_slots: list[tuple[int, int]] = []  # (cell_index, input_index)
         self._scale_slots: list[int] = []
+        self._input_scalar_slots: list[tuple[int, int, str]] = []
         for entry in plan:
             kind = entry[0]
             if kind == "ptr":
@@ -281,6 +282,24 @@ class CachedLauncher:
                 self._cells.append(ctypes.c_int64(int(entry[1])))
             elif kind == "i32":
                 self._cells.append(ctypes.c_int32(int(entry[1])))
+            elif kind.startswith("input_"):
+                scalar_kind = kind.removeprefix("input_")
+                cells = {
+                    "i32": ctypes.c_int32,
+                    "i64": ctypes.c_int64,
+                    "f16": ctypes.c_uint16,
+                    "bf16": ctypes.c_uint16,
+                    "f32": ctypes.c_float,
+                    "f64": ctypes.c_double,
+                }
+                if scalar_kind not in cells:
+                    raise RuntimeError(
+                        f"CachedLauncher: unsupported input scalar {kind!r}"
+                    )
+                self._input_scalar_slots.append(
+                    (len(self._cells), int(entry[1]), scalar_kind)
+                )
+                self._cells.append(cells[scalar_kind](0))
             else:
                 raise RuntimeError(f"CachedLauncher: unhandled plan entry {entry!r}")
         # Build the pointer array ONCE; the cells' addresses are stable.
@@ -288,6 +307,28 @@ class CachedLauncher:
         for i, cv in enumerate(self._cells):
             self._arg_ptrs[i] = ctypes.cast(ctypes.byref(cv), ctypes.c_void_p)
         self._arg_addr = int(ctypes.addressof(self._arg_ptrs))
+
+    def bind_input_scalars(self, inputs) -> None:
+        """Snapshot dynamic scalar ABI values outside the timed launch closure."""
+
+        for cell_i, in_i, kind in self._input_scalar_slots:
+            value = inputs[in_i]
+            if not hasattr(value, "numel") or int(value.numel()) != 1:
+                raise ValueError(
+                    "CachedLauncher: dynamic scalar input must contain one value"
+                )
+            if kind in {"f16", "bf16"}:
+                import torch
+
+                expected = torch.float16 if kind == "f16" else torch.bfloat16
+                if value.dtype != expected:
+                    raise ValueError(
+                        f"CachedLauncher: input {in_i} must have dtype {expected}"
+                    )
+                scalar = int(value.reshape(()).view(torch.uint16).item())
+            else:
+                scalar = value.item()
+            self._cells[cell_i].value = scalar
 
     def launch(self, inputs, scale: float | None = None) -> None:
         import torch
@@ -1468,14 +1509,14 @@ def run_program(
     scalar_load_inputs: dict[str, int] = {}
     for match in re.finditer(
         r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*"
-        r"(f16|bf16|f32|f64)",
+        r"(i32|i64|f16|bf16|f32|f64)",
         host.body_text,
     ):
         result_ssa, pointer_ssa = match.group(1), match.group(2)
         if pointer_ssa in host.aligned_ptr_blockargs:
             scalar_load_inputs[result_ssa] = host.aligned_ptr_blockargs[pointer_ssa]
 
-    def _loaded_input_scalar(ssa: str, expected_dtype) -> float:
+    def _loaded_input_scalar(ssa: str, expected_dtype):
         if ssa not in scalar_load_inputs:
             raise NotImplementedError(
                 f"orchestrate: scalar launch arg {ssa} is neither a constant "
@@ -1489,7 +1530,7 @@ def run_program(
                 f"index={input_index}, shape={tuple(tensor.shape)}, "
                 f"dtype={tensor.dtype}, expected={expected_dtype}"
             )
-        return float(tensor.item())
+        return tensor.item()
 
     def _loaded_input_scalar_bits(ssa: str, expected_dtype) -> int:
         if ssa not in scalar_load_inputs:
@@ -1536,17 +1577,19 @@ def run_program(
                 t = _resolve_ptr(op.ssa)
                 call_args.append(_PtrArg(t.data_ptr()))
             elif ty in ("i64", "index"):
-                if op.ssa not in host.constants:
-                    raise NotImplementedError(
-                        f"orchestrate: integer scalar arg {op.ssa} is not a constant"
-                    )
-                call_args.append(_I64Arg(int(host.constants[op.ssa][0])))
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int64))
+                )
+                call_args.append(_I64Arg(value))
             elif ty == "i32":
-                if op.ssa not in host.constants:
-                    raise NotImplementedError(
-                        f"orchestrate: i32 scalar arg {op.ssa} is not a constant"
-                    )
-                call_args.append(_I32Arg(int(host.constants[op.ssa][0])))
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int32))
+                )
+                call_args.append(_I32Arg(value))
             elif ty == "f16":
                 bits = (
                     _parse_f16_bits(host.constants[op.ssa][0])

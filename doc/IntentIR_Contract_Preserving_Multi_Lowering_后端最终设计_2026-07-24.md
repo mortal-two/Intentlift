@@ -1,6 +1,10 @@
-# IntentIR Contract-Preserving Multi-Lowering：后端最终设计
+# IntentIR Contract-Guided Lowering-State Search：后端最终设计
 
-> 状态：第五份权威设计（2026-07-24）
+> 状态：第五份权威设计（2026-07-24；2026-07-26 lowering-state 修订）
+>
+> 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
+> registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
+> **contract-guided structural lowering-path expansion**。
 >
 > 上位前端与认证设计：
 > [C：所有权、绑定、消费与三方验证](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)、
@@ -34,7 +38,7 @@ S_C = Attach_C(M0,C,t)                 independent post-materialization step
 Intent MLIR + B-derived contract facts + C-derived search state
           |
           v
-generic implementation-family lowering / rewrite search
+registered MLIR transformations + lowering-state/path search
           |
           v
 target lowering + performance-only selection
@@ -231,7 +235,7 @@ C 的完整作用限定为：
 - 指定优先邻域；
 - 帮助 cost model 冷启动。
 
-C 不决定某个 implementation family 是否语义合法，不增加或删除 J 的 allowed behavior。
+C 不决定某条 transformation 或 lowering path 是否语义合法，不增加或删除 J 的 allowed behavior。
 
 ### 4.1 当前最小 C 足以启动后端
 
@@ -247,10 +251,10 @@ TypeCheck 激活规则仍只属于 C/SCRC 文档，不由本文重定义。
 特别地：
 
 - `required` 表示本次 Source/Replay invocation 需要实际 valuation，不表示 target 必须沿用；
-- target-specific parameter domain 由 implementation family 和 target capability 定义；
+- target-specific parameter domain 由 transformation/schedule contract 和 target capability 定义；
 - C 按定义可以被忽略或 retune，不需要重复声明 `retunable=true`；
 - 若某个值不可替换且会改变逻辑结果，它不属于纯 C；
-- 不增加 `legal_domain/strength/retunable/fixed`；候选合法域仍属于 pass/family/target contract；
+- 不增加 `legal_domain/strength/retunable/fixed`；候选合法域仍属于 pass/schedule/target contract；
 - `subject_ref/axis_ref` 只解决“这个 prior 作用于哪里”，不授权该作用点上的 transformation。
 
 ### 4.2 不增加 C_target
@@ -331,42 +335,60 @@ compiler internal implementation state；`BaseIR(S_C)` 仍是同一个 `M0`。
 - Replay 输入；
 - 携带 Source/π/Gate 语义副本的 wire format。
 
-structured Intent ops 必须至少保留到 implementation-family 选择完成，避免过早退化为 generic loops
-而丢失 map/reduce/scan/contraction/recurrence 等结构。
+structured Intent ops 必须至少保留到所有需要这些语义结构做 match/precondition 的结构性
+transformation 完成，避免过早退化为 generic loops 而丢失
+map/reduce/scan/contraction/recurrence 等结构。
 
-## 7. Generic implementation-family library
+## 7. Generic transformation library 与 lowering derivation
 
-backend 根据 A 的 op、region、axis 与 graph pattern 匹配通用实现族：
+backend 登记 source-neutral、kernel-name-independent 的 compiler transformations。每个
+transformation 根据 A 的 op、region、axis 与 graph pattern 做结构匹配，再由 B、当前 MLIR state、
+target capability 与 pass contract 决定是否可应用：
 
 ```text
-A structure + target capability
-    -> candidate implementation families
+A/IR structural match
+  + B semantic preconditions
+  + current-state/target legality
+    -> admitted transformation transition
 ```
 
-示例：
+示例 transformation 包括：
 
 ```text
 reduce
-  -> sequential / vector-tree / subgroup / warp / block / hierarchical
+  -> map-to-vector-tree / map-to-subgroup / map-to-workgroup
+  -> split-partial-and-finalize
 
 scan
-  -> scalar / SIMD prefix / subgroup scan / block scan
+  -> map-to-SIMD-prefix / map-to-subgroup-scan / map-to-workgroup-scan
 
 contraction
-  -> generic / tiled / vector / library / MMA
+  -> tile / vectorize / map-to-library / map-to-MMA
 
 conv
-  -> direct / implicit GEMM / im2col + GEMM
+  -> direct-to-loops / rewrite-to-implicit-GEMM / materialize-im2col
 
 softmax-shaped graph
-  -> generic multi-pass / SIMD row / GPU warp / GPU block / hierarchical
+  -> fuse-producer-reductions-epilogue
+  -> materialize-selected-intermediate
+  -> map-row-reduction-to-subgroup/workgroup
 
 structured recurrence
-  -> direct recurrence lowering / registered equivalent decomposition
+  -> direct recurrence lowering / registered equivalent decomposition rewrite
 ```
 
-实现族必须是 source-neutral、kernel-name-independent 的 compiler library。禁止按当前 kernel 名称、
-源码路径或历史 benchmark 选择隐藏 recipe。
+compiler 不“发射一个 family”。搜索候选始终是一个具体 MLIR state `M` 及产生它的
+transformation trace：
+
+```text
+p = (rho_1, ..., rho_k)
+M_p = rho_k(...rho_1(M0))
+```
+
+同一结构可以由不同 trace 到达；搜索器应通过 canonical IR digest 去重。实验和审计可以从结果 IR
+派生擦除数值 schedule 参数后的 `topology_digest`，但它只用于去重、分组和展示，不成为 semantic
+object、registry key、legality input 或 emitter selector。禁止按当前 kernel 名称、源码路径、
+provider、历史 benchmark 或手写 `family_id` 选择隐藏 recipe。
 
 ## 8. B-conditioned pass contracts
 
@@ -422,8 +444,8 @@ searchable parameters
 
 这是版本化 compiler contract 的规范级 judgement 与条件组合义务，不是已经完成的机器检查形式
 证明。某个实现或 release 只能对当时实际实现、登记并经过准入检查的 `Emit_v`、transformation
-`rho` 与 `Lower_t` 作支持 claim；第 7 节列出的尚未实现 family 以及第 20 节 roadmap 不能被计入
-当前 `Reach_t(J)`。
+`rho` 与 `Lower_t` 作支持 claim；第 7 节列出的尚未实现 transformation 以及第 20 节 roadmap
+不能被计入当前 `Reach_t(J)`。
 
 若当前 B 没有足够事实证明某个 precondition，该 pass 对该 J 不适用；系统选择保守实现或显式
 unsupported，不能从 tolerance、Source 惯例或运行结果补足前提。
@@ -473,23 +495,40 @@ C 可以改变 `Visited` 的顺序和有限预算下覆盖到的候选，但不�
 搜索器可以是确定性的，也可以是启发式的。正确性不依赖候选顺序，而依赖所有生成 transition 都
 保持 `Impl_t(J)`。
 
-## 10. Algorithmic multi-lowering 与 schedule tuning
+## 10. Structural lowering-path expansion 与 schedule tuning
 
-必须区分两类优化。
+production search 统一搜索合法 compiler states；下面的分类只服务 transformation contract、实验控制
+与性能归因，不建立另一套 compiler hierarchy。
 
-### 10.1 Same-family schedule tuning
+### 10.1 Schedule-preserving transformation
 
-保持 implementation family，仅改变：
+从固定的 canonical structural derivation 出发，只改变不会改变 compiler graph、fusion partition、
+materialization points、reduction/synchronization topology 或 kernel-stage decomposition 的参数，例如：
 
 - tile；
 - vector width；
 - threads/warps；
 - unroll；
 - pipeline；
-- memory placement；
 - launch configuration。
 
-### 10.2 Contract-guided multi-lowering
+memory placement 不能一概视作 schedule：若它只把同一个 logical buffer 映射到另一合法 address
+space，可以归入 schedule；若它插入/删除 materialization、改变同步图或跨 kernel 生命周期，则属于
+结构性 transformation。
+
+### 10.2 B-conditioned local transformation
+
+这类 transformation 使用 B 事实，但不改变主计算结构，例如：
+
+- rank-0/singleton host-by-value capture；
+- read-only load motion；
+- dead ABI input elimination；
+- 已有控制/谓词的局部 specialization。
+
+它们可以带来真实性能收益，但必须单独报告为 `B-conditioned local transformation gain`，不能作为
+结构 lowering-path 扩展的证据。
+
+### 10.3 Structural transformation
 
 允许改变实现结构：
 
@@ -501,12 +540,16 @@ C 可以改变 `Visited` 的顺序和有限预算下覆盖到的候选，但不�
 - layout/data-movement decomposition；
 - registered algorithmic equivalence transformation。
 
-“算法结构改变”不是任意重写。每种非平凡算法等价都必须作为通用 compiler transformation 存在，
-并具有明确的 B preconditions。
+“结构改变”不是任意重写。每种非平凡等价变化都必须作为通用 compiler transformation 存在，
+并具有明确的 A match、B preconditions、current-state/target legality 与 preservation contract。
 
 例如 online recurrence 与 ordinary two-pass reduction 不能因为输出在 tolerance 下接近，就被视为
-普通 schedule 变化。只有一条单独的、已定义保持合同的 transformation 才能把前者带入后者的
-implementation family。
+普通 schedule 变化。只有一条单独、已定义保持合同的 transformation 才能产生另一条合法
+lowering derivation。
+
+形式上可把已登记变换按实验目的记为 `R_sched`、`R_local` 与 `R_struct`。这三个集合都是同一个
+transformation registry 的标签；candidate identity 始终来自具体 MLIR state、trace 与 schedule，
+而不是来自预先声明的实现族。
 
 ## 11. Numeric correctness boundary
 
@@ -537,6 +580,44 @@ production backend 不读取 Q。Gate2 的 `tolerance` 不能授权：
 必要 numeric fact 时，才增加最小、closed、版本化的 B relation，并同时定义其 materializer、
 RefEval/Q、TypeCheck 与 backend consumer；不能先添加无人消费的字段。
 
+当前 accepted J corpus 与 production `ContractView` 的能力边界必须保守表述：现有
+`reduce.assoc=associative|float_nondeterministic`、boundary reduction、effect/alias 与 result relation
+足以支持结构匹配、mask/identity 物化，以及 exact preconditions 能从当前 schema 完整证明的
+effect-safe transformation；但 `float_nondeterministic` 或 Gate2 `tolerance` 本身不自动授权任意 tree
+reduction、FMA、近似数学、accumulator dtype 改变或 atomic update。缺少更强 closed fact 时这些路径
+不进入 `Reach_t(J)`。
+
+这里的“只读无别名”也必须有完整性依据。若当前 artifact version 只列出已知 alias relation，却没有
+规定“关系缺失即 no-alias”或显式声明 relation set complete，则 `boundary.aliases=[]`、
+`signature.alias_of=null` 不能单独推出全参数 no-alias。`ContractView` 的 capability 必须携带其 exact J
+field、schema completeness rule 与推导版本；无法证明 completeness 时返回 `missing_contract`，不能把
+具体 benchmark 恰好使用 disjoint buffers 当作语义证据。
+
+本阶段不等待 B schema 扩展，也不修改任何已闭合 J。优先实现并实验现有 B 已可证明的路径：
+
+- producer/reduction/epilogue 的 effect-safe fusion；
+- intermediate materialization/copy elimination；
+- RVV whole-graph Linalg fusion 与后续 vectorization；
+- local scalar capture/load motion/predicate specialization；
+- 对数值顺序不敏感或已具明确 bit-exact associativity 的 target mapping。
+
+若未来扩展 reduction numeric relation，不能使用含混的 `tree_permitted`。最小 closed vocabulary 至少
+区分：
+
+- `fixed_order`：保持 A 定义的 canonical leaf order 与固定 parenthesization；
+- `ordered_tree`：允许改变 parenthesization/tree shape，但保持 leaf order；
+- `commutative_tree`：允许改变 tree shape 与 leaf permutation。
+
+后两者都可能改变浮点结果，必须绑定 rounding/exception/result contract；accumulation dtype 若已由 A
+的显式 cast/typed reduce 唯一确定，不在 B 重复第二份真值。FMA/contraction、approximate
+transcendental、改变 accumulator dtype 或 atomic linearization 仍需要各自独立、最小的 closed numeric
+relation，不能由上述 reduction order 或 tolerance 顺带授权。
+
+任何新 permission 必须通过新的可选、版本化 B relation 与新 J digest 进入 SCRC；旧 artifact 缺失即
+fail closed，不被静默重解释。当前 artifact.v7 闭合批次不为后端搜索中途切换 schema。后端先记录
+真实 pass 的 `missing_contract` 和最小前提；只有需要这些 transformation 的旧 kernel 才在后续版本
+产生新 J 并完整重认证，其他已闭合 artifact 与证书保持原解释。
+
 ## 12. IntentOp 清理与归属规则
 
 ### 12.1 Op description 只写语义
@@ -559,7 +640,7 @@ IntentOps.td 中的 summary/description 应保留：
 - direct/no-im2col 等当前实现限制；
 - 性能 tolerance 数值。
 
-移走 recipe 不等于删除 backend 能力；它使同一 A/B 能匹配多个 target implementation family。
+移走 recipe 不等于删除 backend 能力；它使同一 A/B 能进入多条 target lowering derivation。
 当前 `include/Intent/IntentOps.td` 仍含上述多类 target recipe；因此这是 B0 的实际清理项，而不是
 已经完成的架构事实。extensional equation、tie/order/bounds、result type 与 region/yield contract
 仍属于 op semantics，不应因清理 recipe 一并删除。
@@ -616,7 +697,7 @@ A 已经暴露 cast、elementwise producer 与 reduction。可选 lowering 包�
 
 ### 13.2 完整 online Attention
 
-若 J/A 明确包含 online-softmax recurrence，默认 implementation family 可以直接 lower recurrence。
+若 J/A 明确包含 online-softmax recurrence，canonical lowering path 可以直接 lower recurrence。
 其他算法结构只有在 generic compiler library 中存在相应 contract-preserving transformation 时才进入
 搜索。
 
@@ -627,7 +708,7 @@ A 已经暴露 cast、elementwise producer 与 reduction。可选 lowering 包�
 
 TianchenForge/历史 backend 中的内容可以按以下类别迁入当前工程：
 
-1. 通用 implementation family；
+1. 通用 MLIR transformation 或 lowering pass；
 2. target lowering pass；
 3. schedule parameter domain；
 4. cost-model feature；
@@ -642,7 +723,7 @@ TianchenForge/历史 backend 中的内容可以按以下类别迁入当前工程
 - 由当前 `J -> Intent MLIR -> target` 路径生成候选；
 - 在当前系统中重新记录 compile、performance 与 conformance evidence。
 
-历史数值可以用于选择优先迁入的 family 和搜索范围，但不替代当前系统的运行记录。
+历史数值可以用于选择优先迁入的 transformation 和搜索范围，但不替代当前系统的运行记录。
 
 ## 15. Target lowering 与性能选择
 
@@ -730,7 +811,7 @@ Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 - release preflight / smoke test；
 - debug；
 - 实验审计；
-- 新 implementation family 的工程验证。
+- 新 structural transformation/lowering path 的工程验证。
 
 它不是：
 
@@ -740,27 +821,39 @@ Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 
 ## 18. 实验与消融设计
 
-实验使用四个主要层级：
+实验使用四个主要层级。这里的“固定结构”由 canonical structural transformation trace 决定，不由
+`family_id` 或 named emitter 决定：
 
 ```text
 E0  Source frontend implementation
-E1  canonical generic lowering M0
-E2  same-family schedule retuning
-E3  contract-guided multi-lowering + schedule search
+E1  canonical deterministic target lowering + default schedule
+E2  fixed-structure schedule search
+E3  contract-guided structural lowering-path + schedule search, with C
 ```
 
 额外消融：
 
 ```text
-E4  multi-lowering without C prior
+E4  same structural Reach and budget as E3, with Erase_C
 ```
 
 对应问题：
 
-- `E1 vs E0`：semantic interface 与 generic materialization 的基础质量；
+- `E1 vs E0`：semantic interface 与 canonical lowering 的基础质量；
 - `E2 vs E1`：只调 schedule 的收益；
-- `E3 vs E2`：实现结构/算法 lowering 多样性的额外收益；
+- `E3 vs E2`：结构性 lowering-path expansion 的额外收益；
 - `E3 vs E4`：C 作为搜索先验的作用，而不是 correctness 作用。
+
+另设与 E0--E4 正交的 local-B 配对实验：
+
+```text
+L0  fixed structural Reach, registered B-conditioned local transforms disabled
+L1  same Reach/budget, registered B-conditioned local transforms enabled
+```
+
+L1/L0 保留完整 J=A+B 和 fail-closed `ContractView`；关闭的只是额外 local transformation，不是 B
+语义。rank-0 capture、singleton capture、load motion 与 predicate specialization 的收益只写入该轴，
+不得混写成 E3/E2 的结构路径收益。
 
 报告指标至少包括：
 
@@ -768,19 +861,28 @@ E4  multi-lowering without C prior
 - 相对 Source 与 vendor baseline 的性能；
 - candidate 数、compile 数与测量数；
 - time-to-best；
-- implementation-family 命中与拒绝原因；
-- schedule-only 与 multi-lowering 的增量；
+- transformation match/admission/rejection reason 与 trace；
+- fixed-structure schedule 与 structural-path expansion 的增量；
 - C prior 对搜索效率的影响；
 - compile failure 与 backend conformance failure；
 - pass/library 的跨 Kernel、跨 frontend、跨 target 复用。
 
-“固定 implementation family”只作为实验控制变量，不建立系统冻结机制。
+E2/E3 必须共享同一 J、target、compiler revision、terminal code generator、correctness policy 与
+profiler。E3 的 candidate set 必须包含 E2 的全部候选。报告同时给出：
+
+- equal-total-budget 的 anytime/time-to-best 曲线；
+- 小候选空间 exhaustive/oracle best；
+- 固定 latency map 下 E3/E4 的 full-budget convergence；
+- all-kernel 与 transformation-applicable subset，禁止只挑 winner。
+
+不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
+revision 和 terminal target pipeline，不要求结构分支使用完全相同的高层 rewrite。
 
 ## 19. 版本与演进规则
 
 后端可以快速演进，但每次演进必须保持对象边界清楚：
 
-- 新 implementation family 只扩展 backend library，不改变 J；
+- 新 transformation/pass contract 只扩展 backend library，不改变 J；
 - 新 schedule parameter 只进入 compiler internal state或现有 C 的安全消费；
 - 新 B relation 必须有真实 consumer、closed schema 与完整版本升级；
 - 修改 A denotation、B relation 或 materializer interpretation 时，必须升级对应 schema/materializer/
@@ -800,7 +902,7 @@ E4  multi-lowering without C prior
 - 标记 A semantics、B-derived attrs 与 C-derived annotations；
 - 解除 `intent.loop.tile_hint` 对 canonical Emit、LoopOp denotation/verifier 与通用 loop lowering 的旧依赖；
 - 审计每个 B 字段的 consumer；
-- 保证 structured ops 不在 family selection 前过早消失。
+- 保证 structured ops 不在结构 transformation 完成前过早消失。
 
 ### 阶段 B1：后端合同入口
 
@@ -809,21 +911,24 @@ E4  multi-lowering without C prior
 - 建立 `ContractView(J,target)`；
 - 让 materializer 对所有影响 target denotation、safety 与 ABI 的 backend-relevant B facts 完整消费
   或 fail closed；
-- 定义 generic compiler pass/family registration API，只以 typed A pattern、B precondition 与
-  target capability 为 key。
+- 扩展现有 generic compiler transformation registration/admission API，只以 typed A pattern、
+  B precondition、current state 与 target capability 为 key；不另建 family registry。
 
-### 阶段 B2：第一批多 lowering
+### 阶段 B2：第一批 lowering-path expansion
 
 - elementwise producer/reduction fusion；
-- reduction sequential/warp/block/multi-stage family；
+- 在现有 B 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；
+- 把 RVV whole-graph fusion 从 schedule flag 分离为显式 structural transformation trace；
+- reduction mapping 只开放当前 B 能证明的路径；tree/multi-stage 路径缺少 numeric permission 时
+  fail closed，不等待或伪造新 B；
 - schedule candidate 与 C-prior ordering；
-- lowering trace、rejection reason 与 performance receipt。
+- lowering trace、B facts used、topology/IR digest、rejection reason 与 performance receipt。
 
 ### 阶段 B3：算法结构与跨 target
 
 - softmax-shaped graph；
 - structured recurrence；
-- contraction/conv 等通用 family；
+- contraction/conv 等通用 structural transformations；
 - CUDA/RVV 或其他 target 的同一 J reuse；
 - 迁入 Forge 通用 recipes。
 
@@ -831,14 +936,14 @@ E4  multi-lowering without C prior
 
 - E0--E4；
 - search cost/time-to-best；
-- family reuse；
+- transformation/path reuse；
 - C prior；
 - backend conformance 与性能结果分开报告。
 
 ## 21. 最终系统表述
 
-> **IntentIR production backend consumes only J and optional C from an SCRC-accepted artifact. It deterministically materializes the immutable semantic program and boundary into Intent MLIR, recognizes generic implementation families from A, admits transformations only under B- and target-conditioned compiler contracts, and uses C solely to prioritize schedule exploration. Search ranges over contract-preserving MLIR derivations rather than JSON J or arbitrary generated programs; performance measurement selects among already legal candidates and never serves as a semantic oracle.**
+> **IntentIR production backend consumes only J and optional C from an SCRC-accepted artifact. It deterministically materializes the immutable semantic program and boundary into Intent MLIR, expands concrete lowering derivations through registered source-neutral transformations, admits every transition only under A-matching, B- and target-conditioned compiler contracts, and uses C solely to prioritize finite-budget exploration. The compiler emits concrete lowered IR and target executables, never an abstract implementation family; performance measurement selects among already legal compiler states and never serves as a semantic oracle.**
 
 中文：
 
-> **IntentIR production backend 只消费 SCRC 已接受 artifact 中的 J 与可选 C。它将不变的语义程序和边界确定性编码为 Intent MLIR，根据 A 识别通用实现族，根据 B、当前编译状态与 target capability 判断 transformation 是否适用，并只用 C 提高调度搜索效率。搜索对象是保持合同的 MLIR 编译推导，不是 JSON J 或任意生成程序；性能测量只在已经合法的候选之间选择，不承担语义裁决。**
+> **IntentIR production backend 只消费 SCRC 已接受 artifact 中的 J 与可选 C。它将不变的语义程序和边界确定性编码为 Intent MLIR，通过已登记、source-neutral 的 transformations 扩展具体 lowering derivation，并根据 A match、B、当前编译状态与 target capability 判断每一步是否适用；C 只提高有限预算下的搜索效率。compiler 只发射具体 lowered IR 与 target executable，不发射抽象实现族；性能测量只在已经合法的 compiler states 之间选择，不承担语义裁决。**

@@ -61,6 +61,7 @@ _INTENT_OPERATION = re.compile(
 _GPU_LAUNCH = re.compile(
     r"(?<![A-Za-z0-9_.$])gpu\.launch(?![A-Za-z0-9_.$])"
 )
+_PORTABLE_BLOCK_CUDA_CHIPS = ("sm_90a", "sm_120a")
 
 
 def residual_intent_ops(mlir: str) -> tuple[str, ...]:
@@ -292,15 +293,28 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         ),
     ),
     PassDescriptor(
+        fast_path_id="cuda.padded_row_reduction.masked_short_dot.v1",
+        pass_argument=(
+            "-convert-intent-padded-row-reduction-to-gpu="
+            "block-threads=64 vectorize-full-features=false "
+            "promote-rank0-scalars=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description="masked short row dot with authored zero padding",
+    ),
+    PassDescriptor(
         fast_path_id="cuda.elementwise.row.vectorized.v1",
         pass_argument="-convert-intent-elementwise-to-gpu=block-threads=64",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="complete static row-elementwise graph",
     ),
     PassDescriptor(
         fast_path_id="cuda.row_reduction.normalization_loss.read_once.v1",
-        pass_argument="-convert-intent-row-reduction-to-gpu=block-threads=1024",
-        supported_chips=("sm_120a",),
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=1024 "
+            "promote-rank0-scalars=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="row normalization/loss reduction graph",
     ),
     PassDescriptor(

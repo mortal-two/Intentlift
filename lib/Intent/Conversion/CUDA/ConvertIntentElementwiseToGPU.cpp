@@ -89,6 +89,7 @@ struct ElementwiseLowering {
   unsigned blockThreads;
   bool requestFlattenContiguous;
   unsigned requestFlatVectorWidth;
+  bool requestPromoteUniformScalars;
 
   // The 2-D logical layout of one register-tile access. A Row/result arg is
   // accessed at element (row*rowStride + col*colStride) of its bare pointer; the
@@ -105,6 +106,7 @@ struct ElementwiseLowering {
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0, gridBlocks = 0;
   bool flattenContiguous = false;
+  bool tailMasked = false;
   // Contiguous vectorization (N3/N4): prefer float4 when K is divisible by 4,
   // otherwise use float2 when K is divisible by 2. Every Row arg/result must
   // be contiguous and the body must have no iota/select scalar gather. This
@@ -123,9 +125,10 @@ struct ElementwiseLowering {
   SmallVector<Value> outputVals;     // the returned values (>=1, all [M,N])
 
   ElementwiseLowering(func::FuncOp fn, unsigned bt, bool flatten,
-                      unsigned flatWidth)
+                      unsigned flatWidth, bool promoteUniformScalars)
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
-        requestFlatVectorWidth(flatWidth) {}
+        requestFlatVectorWidth(flatWidth),
+        requestPromoteUniformScalars(promoteUniformScalars) {}
 
   /// Memref type for a Row/result view in the function's storage type.
   /// `memref<d0 x N x storage>` uses identity layout when contiguous, otherwise
@@ -217,14 +220,16 @@ struct ElementwiseLowering {
 
     // Args: Row inputs use the result storage type. Col/Scalar broadcasts may
     // additionally be f32 (the common mixed-precision scale/bias contract).
+    // A singleton rank-1 tensor is also a scalar broadcast: the public ABI
+    // remains memref<1xT>, while the kernel reads element zero once.  Closed J
+    // artifacts use this spelling for scalar-like learned parameters.
     // A 2-D arg whose first dim d0 < M but DIVIDES M is a "broadcast Row": one
     // row is shared by M/d0 consecutive blocks (rope's cos/sin: one per token,
     // shared by the token's n_head blocks). An `intent.strides` arg-attr makes
     // the Row a strided view of a larger buffer (half / even-odd partner views).
     for (unsigned i = 0; i < fty.getNumInputs(); ++i) {
       auto t = dyn_cast<RankedTensorType>(fty.getInput(i));
-      if (!t || !t.hasStaticShape() ||
-          !isa<Float16Type, BFloat16Type, Float32Type>(t.getElementType()))
+      if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
       Strides st{N, 1};
@@ -235,7 +240,16 @@ struct ElementwiseLowering {
       }
       int64_t div = 1;
       Role role;
-      if (s.size() == 2 && s[1] == N) {
+      bool floating =
+          isa<Float16Type, BFloat16Type, Float32Type>(t.getElementType());
+      if (body.getArgument(i).use_empty() &&
+          isa<FloatType, IntegerType>(t.getElementType())) {
+        // Constexpr control specialization can make a branch-only ABI input
+        // dead (for example an optional label vector). Preserve the public
+        // memref ABI, but do not force an unused tensor into a Row/Col/Scalar
+        // execution role or synthesize a device load.
+        role = Role::Unused;
+      } else if (s.size() == 2 && s[1] == N && floating) {
         if (s[0] == M)
           div = 1;
         else if (s[0] > 0 && M % s[0] == 0)
@@ -243,9 +257,10 @@ struct ElementwiseLowering {
         else
           return failure();
         role = Role::Row;
-      } else if (s.size() == 1 && s[0] == N) {
+      } else if (s.size() == 1 && s[0] == N && floating) {
         role = Role::Col;
-      } else if (s.size() == 0) {
+      } else if ((s.empty() || (s.size() == 1 && s[0] == 1)) &&
+                 isa<FloatType, IntegerType>(t.getElementType())) {
         role = Role::Scalar;
       } else {
         return failure();
@@ -272,7 +287,7 @@ struct ElementwiseLowering {
           return failure();
         continue;
       }
-      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op))
+      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp, CastOp>(&op))
         return failure();
     }
 
@@ -306,9 +321,10 @@ struct ElementwiseLowering {
 
     // Default geometry: T threads over the feature dim, K columns per thread.
     T = blockThreads ? (int64_t)blockThreads : autoThreads(N);
-    if (T <= 0 || N % T != 0)
-      return failure(); // tail-mask (non-divisible) is a documented follow-up
-    K = N / T;
+    if (T <= 0 || T > 1024)
+      return failure();
+    tailMasked = N % T != 0;
+    K = (N + T - 1) / T;
     gridBlocks = M;
 
     // Vector gate: K a multiple of 4 (preferred) or 2, every Row arg + every
@@ -319,7 +335,9 @@ struct ElementwiseLowering {
     // vectorizable lane). Col/Scalar args stay scalar-loaded at col[k]/once —
     // the vector column layout keeps cols[k] pointing at the right scalar column.
     int64_t candidateVectorWidth =
-        T >= 32 ? (K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1)) : 1;
+        !tailMasked && T >= 32
+            ? (K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1))
+            : 1;
     if (candidateVectorWidth > 1) {
       bool ok = true;
       for (unsigned i = 0; i < argRoles.size(); ++i)
@@ -427,6 +445,8 @@ struct ElementwiseLowering {
       if (role == Role::Col)
         return b.create<memref::LoadOp>(loc, argMemref[v],
                                        ValueRange{cols[k]});
+      if (role == Role::Unused)
+        return nullptr;
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
     }
     Operation *def = v.getDefiningOp();
@@ -438,6 +458,11 @@ struct ElementwiseLowering {
       Type elt =
           cast<RankedTensorType>(io.getResult().getType()).getElementType();
       return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
+    }
+    if (auto castOp = dyn_cast<CastOp>(def)) {
+      Type target = tensorElementType(castOp.getResult());
+      return castFloatTo(
+          b, loc, emitAt(b, loc, castOp.getInput(), k), target);
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitMappedUnary(b, loc, mu, emitAt(b, loc, mu.getInput(), k));
@@ -476,6 +501,13 @@ struct ElementwiseLowering {
         if (auto cst = dyn_cast<arith::ConstantOp>(&op)) {
           uniform[res] = emitSplatScalarConstant(b, loc, cst);
           changed = true;
+        } else if (auto castOp = dyn_cast<CastOp>(&op)) {
+          if (isUniform(castOp.getInput())) {
+            uniform[res] = castFloatTo(
+                b, loc, emitAt(b, loc, castOp.getInput(), 0),
+                tensorElementType(castOp.getResult()));
+            changed = true;
+          }
         } else if (auto mu = dyn_cast<MapUnaryOp>(&op)) {
           if (isUniform(mu.getInput())) {
             uniform[res] = emitMappedUnary(
@@ -506,6 +538,11 @@ struct ElementwiseLowering {
       return rowMemref(ctx, M / argRowDiv[i], argStrides[i]);
     if (role == Role::Col)
       return MemRefType::get({N}, argElementTypes[i]);
+    auto original = cast<RankedTensorType>(fn.getFunctionType().getInput(i));
+    if (role == Role::Unused)
+      return MemRefType::get(original.getShape(), argElementTypes[i]);
+    if (original.getRank() == 1)
+      return MemRefType::get({1}, argElementTypes[i]);
     return MemRefType::get({}, argElementTypes[i]);
   }
 
@@ -556,6 +593,27 @@ struct ElementwiseLowering {
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
 
+    // A read-only, non-alias B capability may admit host-by-value capture for
+    // uniform invocation inputs.  This is a real search arm: the false arm
+    // below retains the historical device-side load in every launched lane.
+    if (requestPromoteUniformScalars) {
+      for (unsigned i = 0; i < argRoles.size(); ++i) {
+        if (argRoles[i] != Role::Scalar)
+          continue;
+        Value arg = srcBlock.getArgument(i);
+        auto original = cast<RankedTensorType>(
+            fn.getFunctionType().getInput(i));
+        if (original.getRank() == 1) {
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          uniform[arg] = b.create<memref::LoadOp>(
+              loc, argMemref[arg], ValueRange{zero});
+        } else {
+          uniform[arg] =
+              b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        }
+      }
+    }
+
     auto launch = b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cT, c1, c1);
     b.setInsertionPointToStart(&launch.getBody().front());
 
@@ -605,6 +663,20 @@ struct ElementwiseLowering {
         cols[k] = b.create<arith::AddIOp>(loc, tx, off);
       }
     }
+    SmallVector<Value> columnActive(K);
+    if (tailMasked) {
+      Value cN = b.create<arith::ConstantIndexOp>(loc, N);
+      Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+      for (int64_t k = 0; k < K; ++k) {
+        columnActive[k] = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, cols[k], cN);
+        // Use an in-bounds address for the inactive tail lane. Its value is
+        // observationally dead because the result store is guarded below.
+        // This lowers to one predicated select + ordinary coalesced load,
+        // avoiding a divergent scf.if around every input load.
+        cols[k] = b.create<arith::SelectOp>(loc, columnActive[k], cols[k], c0);
+      }
+    }
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Row) {
@@ -632,14 +704,25 @@ struct ElementwiseLowering {
                                               ArrayRef<int64_t>{j});
           }
         } else {
-          for (int64_t k = 0; k < K; ++k)
+          for (int64_t k = 0; k < K; ++k) {
             vals[k] = b.create<memref::LoadOp>(
                 loc, argMemref[arg], ValueRange{ridx, cols[k]});
+          }
         }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
-        uniform[arg] =
-            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        if (uniform.count(arg))
+          continue;
+        auto original = cast<RankedTensorType>(
+            fn.getFunctionType().getInput(i));
+        if (original.getRank() == 1) {
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          uniform[arg] = b.create<memref::LoadOp>(
+              loc, argMemref[arg], ValueRange{zero});
+        } else {
+          uniform[arg] =
+              b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        }
       }
     }
     hoistUniforms(b, loc);
@@ -666,9 +749,21 @@ struct ElementwiseLowering {
         }
       } else {
         for (int64_t k = 0; k < K; ++k) {
-          Value out = toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
-          b.create<memref::StoreOp>(loc, out, outMems[j],
-                                    ValueRange{bx, cols[k]});
+          if (!tailMasked) {
+            Value out =
+                toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
+            b.create<memref::StoreOp>(loc, out, outMems[j],
+                                      ValueRange{bx, cols[k]});
+            continue;
+          }
+          auto guarded = b.create<scf::IfOp>(
+              loc, columnActive[k], /*withElseRegion=*/false);
+          OpBuilder thenBuilder = guarded.getThenBodyBuilder();
+          Value out = toStorage(
+              thenBuilder, loc,
+              emitAt(thenBuilder, loc, outputVals[j], k));
+          thenBuilder.create<memref::StoreOp>(
+              loc, out, outMems[j], ValueRange{bx, cols[k]});
         }
       }
     }
@@ -692,13 +787,13 @@ struct ConvertIntentElementwiseToGPUPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
-                                flatVectorWidth);
+                                flatVectorWidth, promoteUniformScalars);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
-                              flatVectorWidth);
+                              flatVectorWidth, promoteUniformScalars);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");
         return signalPassFailure();

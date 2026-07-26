@@ -101,5 +101,5 @@ j_necessity_status   = PROVED | NOT_PROVED | INCONCLUSIVE
 typecheck/canonicalization version、Q、实际 c0 和测试域。搜索预算另行报告首轮 TypeCheck、
 `closure@1/2/3`、Lift/Replay/
 总 LLM 调用、CandidateCheck 次数、`NO_CLOSURE` 分类及 Gate2 条件通过率；这些记录不是新的 proof
-artifact。backend 另行报告 implementation family、pass trace、candidate/compile/measure 数、
-time-to-best 与 performance，不把这些字段写回 SCRC 证书。
+artifact。backend 另行报告 transformation/lowering trace、candidate/compile/measure 数、
+time-to-best、derived topology digest 与 performance，不把这些字段写回 SCRC 证书。

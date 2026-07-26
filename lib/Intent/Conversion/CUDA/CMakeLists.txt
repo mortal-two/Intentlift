@@ -1,5 +1,6 @@
 add_mlir_library(MLIRIntentConversionCUDA
   ConvertIntentRowReductionToGPU.cpp
+  ConvertIntentPaddedRowReductionToGPU.cpp
   ConvertIntentElementwiseToGPU.cpp
   ConvertIntentGatherToGPU.cpp
   ConvertIntentLayoutToGPU.cpp

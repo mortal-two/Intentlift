@@ -107,7 +107,7 @@ Intent MLIR 可以同时携带三类投影和 compiler internal state，但它�
   依赖它，并且仅由 `Attach_C` 生成、满足 erase invariance 后，才可作为 C-derived annotation；
 - 禁止恢复任意 per-op `layer_b` 或让 C annotation 反向改变 J denotation。
 
-structured ops 必须保留到 generic implementation-family 选择完成。Op.td description 只写
+structured ops 必须保留到所有依赖其语义结构的 transformation 完成。Op.td description 只写
 extensional semantics、typed operands/results、logical axes/order 与 closed contract，不写 NVVM、
 `arith.select`、Hillis--Steele、bitonic、shared-memory/barrier、one-block-per-row 或其他 target recipe。
 target recipe 属于 production pass library。
@@ -118,9 +118,9 @@ target recipe 属于 production pass library。
 清理时仍须保留真正改变 denotation 的 extensional equation、tie/order/bounds、result type 与
 region/yield contract。
 
-backend 根据 A 识别通用 implementation family，根据 B 和 target capability 检查 pass precondition，
-根据 C 排序候选。缺少某个 pass 所需的 B fact 时，该 pass 不适用；不能从 Source、π、kernel name、
-Gate2 tolerance 或运行结果补出前提。
+backend 根据 A/IR 匹配通用 transformation，根据 B、current state 和 target capability 检查 pass
+precondition，并根据 C 排序合法 compiler states。缺少某个 pass 所需的 B fact 时，该 pass 不适用；
+不能从 Source、π、kernel name、Gate2 tolerance 或运行结果补出前提。
 
 ## 禁止恢复的旧旁路
 
