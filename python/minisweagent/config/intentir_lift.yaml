@@ -31,10 +31,12 @@ agent:
     compaction: the persistent workspace is authoritative. Rerun a bounded read
     whenever exact old content is needed.
 
-    The normal fast path is to call
-    `intentir_lift_submit /output/candidate.json` as soon as your complete draft
-    is ready. Submission performs the same CandidateCheck preflight and exits
-    immediately on PASS. Use explicit CandidateCheck only when you intentionally
+    The normal first-candidate fast path is the `submit_candidate` tool: pass the
+    complete exact candidate JSON in that same response. It atomically writes the
+    bytes, performs the existing CandidateCheck preflight, and exits immediately
+    on PASS. For an existing file, use `apply_patch(..., submit=true)` when a
+    focused repair is ready, or `intentir_lift_submit /output/candidate.json`.
+    Use explicit CandidateCheck only when you intentionally
     want diagnostics before submission. If you deliberately continue auditing a
     PASS candidate, preserve it with
     `intentir_candidate_commit /output/candidate.json`. This records only your
@@ -62,7 +64,7 @@ agent:
     {{ startup_context }}
 
     Work incrementally if useful, but submit exactly one complete
-    /output/candidate.json. The submission command only delivers the candidate;
+    /output/candidate.json. The submission tools only deliver LLM-authored bytes;
     it does not certify it. Do not create any other file under /output.
 
     Time-governed workflow:
@@ -108,19 +110,20 @@ agent:
        `python /input/tools/context_query.py source-outline --start 1 --count 32`
        before concluding that no loop, branch, or early return exists. It only
        locates Source; you still interpret it and author every artifact field.
-    3. Write the complete first candidate early. On a Gate1 repair continuation,
+    3. Author and direct-submit the complete first candidate in one response. On a Gate1 repair continuation,
        start from the current persistent candidate but make every coordinated J/C/pi change
        justified by Source and the counterexample; a broad structural mismatch
        need not be treated as a one-field patch. Use `candidate-diff` only when
        you need to inspect whether your edit changed the file; it is not a
        mandatory pre-submit network turn. Do not resubmit an unchanged candidate.
-    4. Submit the complete candidate directly. Submission runs the read-only
+    4. Submission runs the read-only
        CandidateCheck preflight when the exact current bytes have no prior PASS;
        PASS ends this Lift invocation, while failure returns short diagnostics to
        this same session. Use the static validator or explicit CandidateCheck only
        when useful, not as mandatory extra network turns. Apply focused repairs
-       with `apply_patch`; fixed code replaces only the exact text you supply and
-       never parses or infers a J/C/pi field.
+       with `apply_patch`; set `submit=true` when the resulting full file is ready.
+       Fixed code replaces only the exact text you supply and never infers a
+       J/C/pi field.
   step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 3600
@@ -128,6 +131,7 @@ agent:
 model:
   max_tool_calls_per_response: 4
   enable_apply_patch_tool: true
+  enable_submit_candidate_tool: true
   compact_tool_history: true
   compact_tool_arguments_over_chars: 2048
   compact_tool_outputs_keep_recent: 4

@@ -12,6 +12,7 @@ from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
 from minisweagent.models.utils.actions_toolcall_response import (
     APPLY_PATCH_TOOL_RESPONSE_API,
     BASH_TOOL_RESPONSE_API,
+    SUBMIT_CANDIDATE_TOOL_RESPONSE_API,
     finish_reason_from_responses_api,
     format_toolcall_observation_messages,
     parse_toolcall_actions_response,
@@ -24,6 +25,7 @@ logger = logging.getLogger("litellm_response_model")
 class LitellmResponseModelConfig(LitellmModelConfig):
     max_tool_calls_per_response: int = 1
     enable_apply_patch_tool: bool = False
+    enable_submit_candidate_tool: bool = False
     compact_tool_history: bool = False
     compact_tool_arguments_over_chars: int = 4096
     compact_tool_outputs_keep_recent: int = 4
@@ -117,7 +119,10 @@ class LitellmResponseModel(LitellmModel):
                             ),
                             "old_text": receipt,
                             "new_text": "",
+                            "submit": False,
                         }
+                    elif message.get("name") == "submit_candidate":
+                        replacement = {"candidate_text": receipt}
                     else:
                         replacement = {"command": f"# {receipt}"}
                     message["arguments"] = json.dumps(replacement, sort_keys=True)
@@ -161,6 +166,11 @@ class LitellmResponseModel(LitellmModel):
                     *(
                         [APPLY_PATCH_TOOL_RESPONSE_API]
                         if self.config.enable_apply_patch_tool
+                        else []
+                    ),
+                    *(
+                        [SUBMIT_CANDIDATE_TOOL_RESPONSE_API]
+                        if self.config.enable_submit_candidate_tool
                         else []
                     ),
                 ],
@@ -240,6 +250,7 @@ class LitellmResponseModel(LitellmModel):
             template_kwargs={"finish_reason": finish_reason_from_responses_api(response)},
             max_tool_calls=self.config.max_tool_calls_per_response,
             enable_apply_patch_tool=self.config.enable_apply_patch_tool,
+            enable_submit_candidate_tool=self.config.enable_submit_candidate_tool,
         )
 
     def serialize(self) -> dict:

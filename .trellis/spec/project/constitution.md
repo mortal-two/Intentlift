@@ -44,6 +44,8 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - 将 Lift 本来获准读取、且在固定大小阈值内的 exact Source/Harness/closed feedback 与 source-neutral
   contract/preflight/example 原文直接搬入 user packet；超限只能给 receipt/path，不得由 fixed code
   生成语义摘要；
+- 将 LLM 在一个 action 中给出的完整 candidate text 原样落盘并调用既有 preflight，或在 LLM 明示
+  exact old/new text 后立即 preflight；不得由 runtime 生成、选择或修复字段；
 - 按外部比较政策 Q 从 B 的封闭类别构造确定性、对称的 Gate2 comparator；
 - 对不支持或不合法的输入 fail closed。
 

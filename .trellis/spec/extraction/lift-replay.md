@@ -147,6 +147,11 @@ telemetry；每个响应最多四个独立只读 query 只是原子工具 envelo
 fresh Replay/Gate1 后才消耗正式 `K=3`。submission `PASS` 仍非认证，外部 Runner 必须重跑
 TypeCheck。
 
+首稿可由标准 `submit_candidate(candidate_text)` function tool 在一个 action 中原样写入完整文本并
+调用同一 submission preflight；现有文件的 exact patch 可设置 `submit=true`，在唯一替换后调用
+同一 preflight。两者的输入内容均完全由 LLM author，runtime 不构造字段、不选版本、不返回修复；
+FAIL 仍是同一 closed diagnostics，PASS 后 Runner 仍独立重跑。
+
 单次 provider request 与 owner 总时间分离，active Lift 当前上限为 900 秒；timeout 不再次重烧，
 transient transport failure 仍按有界 retry 恢复。正常路径是完整 candidate 直接 submit，由同一
 action 自动 preflight，PASS 立即交付、FAIL 返回短 diagnostics。模型 API packet 可把旧的大型 tool
@@ -257,7 +262,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v10`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v47`，source-blind MiniSWE Replay backend 为
+`intentir.lift-knowledge.v48`，source-blind MiniSWE Replay backend 为
 `minisweagent.intentir-replay.v6`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 

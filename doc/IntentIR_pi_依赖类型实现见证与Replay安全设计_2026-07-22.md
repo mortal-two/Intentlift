@@ -1180,6 +1180,10 @@ receipt/path，不由 fixed code 摘要或生成 π。
 失败后同一 Lift owner 可继续修改完整 `(J,C,π)`；Replay 仍每个 formal round 全新且看不到该
 conversation 或 diff。
 
+完整 `candidate_text` 可以由 LLM 在单个 direct-submit action 中原样落盘并立即进入既有 preflight；
+exact-text patch 也可显式请求替换后立即 preflight。runtime 不理解 π/J/C 字段、不生成 route 或
+authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck 与证书谓词保持不变。
+
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
@@ -1200,7 +1204,7 @@ v7 又只对 rank-0 signature logical input 增加 source-free liveness：绑定
 和合法 boundary-only 路径保留，dead node 或 π route 不冒充 logical contribution。仅用于
 representation/address 的 runtime scalar 必须显式取 `logical_ref=null`，不创建 J input、不进入 J
 semantics，但其 p* carrier 可以由 π realization 引用。checker 不从名称/位置推断，不自动解绑或
-修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v47 继承 v17。上述拒绝不会给 π、CandidateCheck 或
+修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v48 继承 v17。上述拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。
 
 上述 representation-only null-carrier 只允许 runtime scalar。`bound_constexpr_values` 由 Lift 查看每个
@@ -1270,7 +1274,7 @@ store coordinates 与 load coordinates 的 permutation 完全一致并由同 pre
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
-当前 Lift knowledge v47 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
+当前 Lift knowledge v48 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
 flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。

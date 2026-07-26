@@ -508,6 +508,11 @@ active Lift 的单次 provider request 另有 900 秒上限，不能借 3600 秒
 立即暂停 owner 并交给外部 Runner，FAIL 才返回短 diagnostics。显式 validate/check/commit 仍可按需
 调用，但不再是每份候选都必须经历的四个 provider round-trip。
 
+首个完整候选还可由 `submit_candidate(candidate_text)` 在同一 function action 中完成 exact-byte
+落盘与上述 preflight；focused repair 可由 LLM-authored `apply_patch(old,new,submit=true)` 在唯一文本
+替换后立即 preflight。runtime 不解析 field meaning、不分配 handle、不合并 patch、不选历史版本。
+这只是把已经串行的 write/check/submit 合成一个事务，FAIL/PASS 的权威和外部重检均不变。
+
 若一次 pause 前没有提交候选，runner 只可把最后一次**实际执行**的 source-free checker 返回的
 最多 20 条 `rule_code/path` 摘要带入同一 branch owner 的下一次 continuation。没有实际 evaluation
 就没有摘要；不得携带 observed value、候选修复、hidden input 或 sibling 信息。owner 保留原有
@@ -595,11 +600,12 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-当前 Lift knowledge v47 继承 v46/v45/v44/v43/v42；v47 只把已授权且较小的 exact startup/closed
-feedback bytes 前置到 user packet，消除纯工具路由回合。v46 已增加 branch-local 持久 workspace、
+当前 Lift knowledge v48 继承 v47/v46/v45/v44/v43/v42；v48 只增加 exact-text direct-submit 与
+patch-and-submit transaction，消除完整 bytes 已作者化后的纯 submit 路由回合。v47 已把已授权且较小
+的 exact startup/closed feedback bytes 前置到 user packet。v46 已增加 branch-local 持久 workspace、
 deterministic transport compaction、LLM-authored exact-text patch、direct-submit fast path 与独立
 provider-turn time limit；v45 已引入持久 owner conversation、time-governed runtime 与 receipt 合同。
-三者都不改变 artifact wire 或 TypeCheck 接受集合。v40 的只读 `source-outline` 对长 Source 分页显示
+这些版本都不改变 artifact wire 或 TypeCheck 接受集合。v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
 哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
@@ -1211,7 +1217,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，当前 MiniSWE Lift knowledge 已由后续通用能力升级到
-`intentir.lift-knowledge.v47`。v47 继承 v46/v45/v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
+`intentir.lift-knowledge.v48`。v48 继承 v47/v46/v45/v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
 CandidateCheck diagnostics，以及 rank-0 logical-data/representation-only scalar
 分类合同；并加入 value/dimension equality、consumer extension 与 access guard 的完整 authored
 合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；

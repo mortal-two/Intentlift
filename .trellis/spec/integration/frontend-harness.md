@@ -62,6 +62,10 @@ Harness 可以把 Lift 已获准读取且总量不超过 64 KiB 的 exact Source
 text 直接放入初始或 continuation user packet；超限时只能给逐文件 receipt 与读取命令。该搬运不得
 生成 semantic outline、摘要、binding 或 artifact 字段，也不得把额外 hidden state 混入 packet。
 
+Harness runtime 可以接收 LLM 在一个 action 中给出的完整 exact candidate text，或 LLM 明示的唯一
+old/new text 与 `submit=true`，原样写入后调用既有 submission preflight。该事务不赋予 Harness
+field-level construction/repair 权限，且不替代正式 Runner 重检。
+
 ## Logical signature 与绑定
 
 input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical

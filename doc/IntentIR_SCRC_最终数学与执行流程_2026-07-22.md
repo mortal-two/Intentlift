@@ -499,6 +499,10 @@ value、fixed semantic patch 或 sibling 信息。单次 provider request 上限
 receipt/path，fixed code 不摘要或分类 Source。该摘要与
 submission `PASS` 都不进入证书，也不授权固定代码修补 `(J,C,π)`。
 
+LLM 还可以在单个 direct-submit action 中给出完整 candidate text，或对现有文件给出唯一 old/new
+text 并请求替换后提交；runtime 只原样落盘/替换并调用同一 submission preflight。这不压缩或重写
+artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Decode/TypeCheck。
+
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：
 
 \[

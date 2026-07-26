@@ -38,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v47"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v48"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 900.0
 MAX_CONTINUATION_FEEDBACK_BYTES = 64 * 1024
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -308,9 +308,13 @@ continuations for the same Source; Replay remains a separate fresh process.
   stdout marker. Direct submit is the normal fast path: it runs CandidateCheck
   on exact current bytes when needed and exits immediately on PASS; external
   Decode/TypeCheck still rerun independently.
+- `submit_candidate(candidate_text)`: preferred first-candidate tool. It writes
+  the complete exact LLM-authored text and invokes the same preflight in one
+  action; it does not construct, normalize, or select a field.
 - `apply_patch`: replace one exact, uniquely occurring text span in the existing
   `/output/candidate.json`. The model supplies both strings; fixed code performs
-  no JSON parsing, handle allocation, reordering, inference, or semantic edit.
+  no handle allocation, reordering, inference, or semantic edit. Set
+  `submit=true` to invoke the existing preflight after that exact replacement.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
@@ -395,7 +399,8 @@ not semantic extraction or repair.
 If bootstrap copied a `continuation_draft`, it is only the adjacent prior
 worker's complete LLM-written JSON draft, not a decoded or accepted artifact.
 Continue its focused repair and rerun validator/CandidateCheck yourself.
-Write it to `/output/candidate.json`. The normal next action is:
+For the first complete candidate, prefer the `submit_candidate` tool so writing
+and preflight occur in this same model response. For an existing ready file, use:
 
 `intentir_lift_submit /output/candidate.json`
 

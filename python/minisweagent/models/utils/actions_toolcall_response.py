@@ -48,8 +48,35 @@ APPLY_PATCH_TOOL_RESPONSE_API = {
                 "type": "string",
                 "description": "The exact replacement text authored by the model",
             },
+            "submit": {
+                "type": "boolean",
+                "description": (
+                    "If true, run the existing submission preflight immediately "
+                    "after applying the exact replacement"
+                ),
+            },
         },
         "required": ["path", "old_text", "new_text"],
+    },
+}
+
+SUBMIT_CANDIDATE_TOOL_RESPONSE_API = {
+    "type": "function",
+    "name": "submit_candidate",
+    "description": (
+        "Atomically write the complete candidate text authored in this call and "
+        "run the existing submission preflight. The tool never edits fields."
+    ),
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "candidate_text": {
+                "type": "string",
+                "description": "The complete exact candidate.json text",
+            },
+        },
+        "required": ["candidate_text"],
     },
 }
 
@@ -91,6 +118,7 @@ def parse_toolcall_actions_response(
     template_kwargs: dict | None = None,
     max_tool_calls: int = 1,
     enable_apply_patch_tool: bool = False,
+    enable_submit_candidate_tool: bool = False,
 ) -> list[dict]:
     """Parse tool calls from a Responses API response output.
 
@@ -154,15 +182,29 @@ def parse_toolcall_actions_response(
         elif tool_name == "apply_patch" and enable_apply_patch_tool:
             if (
                 not isinstance(args, dict)
-                or set(args) != {"path", "old_text", "new_text"}
+                or not {"path", "old_text", "new_text"}.issubset(args)
+                or not set(args).issubset(
+                    {"path", "old_text", "new_text", "submit"}
+                )
                 or not all(
                     isinstance(args.get(key), str)
                     for key in ("path", "old_text", "new_text")
                 )
+                or (
+                    "submit" in args and not isinstance(args.get("submit"), bool)
+                )
             ):
                 error_msg += (
-                    "apply_patch requires exactly string path, old_text, and new_text."
+                    "apply_patch requires string path, old_text, new_text, and "
+                    "an optional boolean submit."
                 )
+        elif tool_name == "submit_candidate" and enable_submit_candidate_tool:
+            if (
+                not isinstance(args, dict)
+                or set(args) != {"candidate_text"}
+                or not isinstance(args.get("candidate_text"), str)
+            ):
+                error_msg += "submit_candidate requires exactly candidate_text."
         else:
             error_msg += f"Unknown tool '{tool_name}'."
         if error_msg:
@@ -173,13 +215,22 @@ def parse_toolcall_actions_response(
         tool_call_id = tool_call.get("call_id") or tool_call.get("id")
         if tool_name == "bash":
             actions.append({"command": args["command"], "tool_call_id": tool_call_id})
-        else:
+        elif tool_name == "apply_patch":
             actions.append(
                 {
                     "tool_name": "apply_patch",
                     "path": args["path"],
                     "old_text": args["old_text"],
                     "new_text": args["new_text"],
+                    "submit": args.get("submit", False),
+                    "tool_call_id": tool_call_id,
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "tool_name": "submit_candidate",
+                    "candidate_text": args["candidate_text"],
                     "tool_call_id": tool_call_id,
                 }
             )

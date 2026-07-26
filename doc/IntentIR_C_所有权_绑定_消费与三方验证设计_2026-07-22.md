@@ -210,6 +210,12 @@ LLM 可以用通用 exact-text patch 修改自己明确给出的唯一字符串�
 拒绝，不给 Harness/runner 生成 J/C/π 的权限。Gate1 diff 也只回到
 该 branch 的同一 Lift owner；Replay 每个 formal round 仍全新且不可见该 conversation。
 
+为消除“写完整文件后再用一个高 effort 回合选择 submit”的纯编排延迟，LLM 可在一个 function
+action 中提供完整 `candidate_text`；runtime 原样原子落盘并立即调用上述既有 submission preflight。
+同理，LLM-authored exact-text patch 可显式请求替换后立即 preflight。两条路径都不选字段、不修改
+bytes、不改变 CandidateCheck/Runner 权威；FAIL 仍只返回 closed diagnostics，PASS 后外部 Runner 仍
+独立重跑。
+
 `ctx` 精确等于该 agent 原本已经获准读取的匿名机械 Harness compiler view 与公共协议版本；
 CandidateCheck 禁止读取未声明的 ambient host state 或 Source text，也不增加新的 source-conditioned
 信息通道。
@@ -349,7 +355,7 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
 或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的
 membership oracle。
-当前 Lift knowledge v47 继承 v42 对 `fill_value` 的要求：它是 Source 对应 load 的实际 `other`，
+当前 Lift knowledge v48 继承 v42 对 `fill_value` 的要求：它是 Source 对应 load 的实际 `other`，
 不是由 C tile/role 或 downstream neutral value 重写的量；MiniSWE Replay v6 继承 v4 的 typed rank/reshape fidelity
 同样不读取 C value 来选择 shape。两项只约束 LLM authoring，不转移任何语义所有权给 C 或 fixed code。
 Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored

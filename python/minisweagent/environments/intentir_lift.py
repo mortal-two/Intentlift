@@ -33,6 +33,7 @@ CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 LIFT_TRANSACTION_PROTOCOL = "intentir.lift-transaction.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
 APPLY_PATCH_PROTOCOL = "intentir.agent-apply-patch.v1"
+DIRECT_SUBMIT_PROTOCOL = "intentir.agent-direct-submit.v1"
 _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
     {
         "feedback",
@@ -328,6 +329,7 @@ class IntentIRLiftEnvironment:
         self._candidate_rollback_count = 0
         self._candidate_fallback_audit: list[dict[str, Any]] = []
         self._apply_patch_audit: list[dict[str, Any]] = []
+        self._direct_submit_audit: list[dict[str, Any]] = []
         self._multi_action_rejections = 0
         self._validate_paths()
         self._startup_context, self._startup_context_receipt = (
@@ -628,14 +630,93 @@ class IntentIRLiftEnvironment:
             "after_sha256": after_sha256,
             "before_bytes": len(before),
             "after_bytes": len(after),
+            "submit_requested": action.get("submit") is True,
             "authority": "exact LLM-authored text replacement; no semantic parsing",
         }
         self._apply_patch_audit.append(dict(receipt))
+        if action.get("submit") is True:
+            output = {
+                "output": (
+                    INTENTIR_LIFT_SUBMIT
+                    + "\n"
+                    + json.dumps(receipt, sort_keys=True)
+                    + "\n"
+                ),
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
         return {
             "output": json.dumps(receipt, sort_keys=True) + "\n",
             "returncode": 0,
             "exception_info": "",
         }
+
+    def _execute_submit_candidate(self, action: Mapping[str, Any]) -> dict[str, Any]:
+        """Write and submit exact candidate text supplied by the Lift LLM."""
+
+        candidate_text = action.get("candidate_text")
+        if not isinstance(candidate_text, str) or not candidate_text:
+            result = {
+                "protocol": DIRECT_SUBMIT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": "submit_candidate requires non-empty candidate_text",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        candidate_bytes = candidate_text.encode("utf-8")
+        if not 1 <= len(candidate_bytes) <= MAX_CANDIDATE_BYTES:
+            result = {
+                "protocol": DIRECT_SUBMIT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": "candidate_text size is outside the allowed range",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".candidate-direct-submit-",
+            dir=self.config.output_dir,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output_file:
+                output_file.write(candidate_bytes)
+                output_file.flush()
+                os.fsync(output_file.fileno())
+            os.replace(temporary, self.config.output_dir / "candidate.json")
+        finally:
+            temporary.unlink(missing_ok=True)
+        self._candidate_check_passed_bytes = None
+        receipt = {
+            "protocol": DIRECT_SUBMIT_PROTOCOL,
+            "status": "written",
+            "candidate_sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+            "candidate_bytes": len(candidate_bytes),
+            "authority": (
+                "exact LLM-authored bytes; write step performs no field parsing "
+                "or repair; existing submission preflight remains authoritative"
+            ),
+        }
+        self._direct_submit_audit.append(dict(receipt))
+        output = {
+            "output": (
+                INTENTIR_LIFT_SUBMIT
+                + "\n"
+                + json.dumps(receipt, sort_keys=True)
+                + "\n"
+            ),
+            "returncode": 0,
+            "exception_info": "",
+        }
+        self._check_submission(output)
+        return output
 
     def activate_committed_fallback(self, terminal_status: str) -> str | None:
         """Restore only bytes the LLM explicitly committed as its fallback choice."""
@@ -1018,6 +1099,8 @@ class IntentIRLiftEnvironment:
         command = action.get("command", "")
         if action.get("tool_name") == "apply_patch":
             return self._execute_apply_patch(action)
+        if action.get("tool_name") == "submit_candidate":
+            return self._execute_submit_candidate(action)
         if not isinstance(command, str):
             raise TypeError("Lift shell command must be a string")
         try:
@@ -1405,6 +1488,16 @@ class IntentIRLiftEnvironment:
                     "calls": len(self._apply_patch_audit),
                     "receipts": list(self._apply_patch_audit),
                 },
+                "direct_submit": {
+                    "protocol": DIRECT_SUBMIT_PROTOCOL,
+                    "authority": (
+                        "exact LLM-authored candidate text only; write step does "
+                        "not generate, select, or repair J/C/pi fields; existing "
+                        "syntax/CandidateCheck preflight is unchanged"
+                    ),
+                    "calls": len(self._direct_submit_audit),
+                    "receipts": list(self._direct_submit_audit),
+                },
                 "multi_action_policy": {
                     "protocol": MULTI_ACTION_PROTOCOL,
                     "max_actions": 4,
@@ -1422,6 +1515,7 @@ class IntentIRLiftEnvironment:
 __all__ = [
     "APPLY_PATCH_PROTOCOL",
     "CANDIDATE_CHECK_PROTOCOL",
+    "DIRECT_SUBMIT_PROTOCOL",
     "INTENTIR_CANDIDATE_COMMIT",
     "INTENTIR_LIFT_SUBMIT",
     "INTENTIR_LIFT_SUBMIT_COMMAND",

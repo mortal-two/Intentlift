@@ -55,6 +55,7 @@ from minisweagent.config.intentir_context_query import (
 from minisweagent.environments.intentir_lift import (
     APPLY_PATCH_PROTOCOL,
     CANDIDATE_CHECK_PROTOCOL,
+    DIRECT_SUBMIT_PROTOCOL,
     INTENTIR_CANDIDATE_COMMIT,
     INTENTIR_CANDIDATE_CHECK,
     INTENTIR_CANDIDATE_ROLLBACK,
@@ -73,7 +74,7 @@ from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.models.utils.actions_toolcall_response import (
     parse_toolcall_actions_response,
 )
-from minisweagent.exceptions import FormatError
+from minisweagent.exceptions import FormatError, Submitted
 from minisweagent.run.intentir_lift import (
     IntentIRLiftRunError,
     IntentIRLiftRunResult,
@@ -195,7 +196,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v47"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v48"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -1252,6 +1253,81 @@ def test_apply_patch_is_exact_atomic_and_invalidates_prior_check() -> None:
         workspace.cleanup()
 
 
+def test_direct_submit_writes_exact_llm_bytes_and_preflights_same_action() -> None:
+    workspace = _workspace()
+    candidate_text = '{"value":"direct"}\n'
+
+    def checker(observed: str) -> dict:
+        assert observed == candidate_text
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        with pytest.raises(Submitted):
+            environment.execute(
+                {
+                    "tool_name": "submit_candidate",
+                    "candidate_text": candidate_text,
+                }
+            )
+        assert workspace.candidate_path.read_text() == candidate_text
+        audit = environment.serialize()["info"]["direct_submit"]
+        assert audit["protocol"] == DIRECT_SUBMIT_PROTOCOL
+        assert audit["calls"] == 1
+        assert audit["receipts"][0]["candidate_sha256"] == hashlib.sha256(
+            candidate_text.encode()
+        ).hexdigest()
+    finally:
+        workspace.cleanup()
+
+
+def test_exact_patch_can_request_preflight_and_submit_in_same_action() -> None:
+    workspace = _workspace()
+    workspace.candidate_path.write_text('{"value":"before"}\n')
+
+    def checker(candidate_text: str) -> dict:
+        assert json.loads(candidate_text) == {"value": "after"}
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        with pytest.raises(Submitted):
+            environment.execute(
+                {
+                    "tool_name": "apply_patch",
+                    "path": "/output/candidate.json",
+                    "old_text": '"before"',
+                    "new_text": '"after"',
+                    "submit": True,
+                }
+            )
+        assert json.loads(workspace.candidate_path.read_text()) == {
+            "value": "after"
+        }
+        receipt = environment.serialize()["info"]["apply_patch"]["receipts"][0]
+        assert receipt["submit_requested"] is True
+    finally:
+        workspace.cleanup()
+
+
 def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
     workspace = _workspace()
     workspace.candidate_path.write_text('{"candidate": 1}\n', encoding="utf-8")
@@ -2032,7 +2108,35 @@ def test_parser_accepts_exact_text_apply_patch_only_when_enabled() -> None:
             "path": "/output/candidate.json",
             "old_text": '"n0"',
             "new_text": '"n1"',
+            "submit": False,
             "tool_call_id": "call-patch",
+        }
+    ]
+
+
+def test_parser_accepts_complete_direct_submission_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "submit_candidate",
+        "call_id": "call-submit",
+        "arguments": json.dumps({"candidate_text": '{"schema":"x"}'}),
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [call],
+            format_error_template="{{ error }}",
+        )
+
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_submit_candidate_tool=True,
+    ) == [
+        {
+            "tool_name": "submit_candidate",
+            "candidate_text": '{"schema":"x"}',
+            "tool_call_id": "call-submit",
         }
     ]
 
@@ -2099,6 +2203,7 @@ def test_model_serialization_redacts_provider_key() -> None:
     assert model.config.use_global_model_stats is False
     assert model.config.max_tool_calls_per_response == 4
     assert model.config.enable_apply_patch_tool is True
+    assert model.config.enable_submit_candidate_tool is True
     assert model.config.compact_tool_history is True
     assert model.config.model_kwargs["num_retries"] == 0
 
@@ -2188,6 +2293,7 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
     assert request["body"]["parallel_tool_calls"] is True
     assert request["body"]["tools"][0]["name"] == "bash"
     assert request["body"]["tools"][1]["name"] == "apply_patch"
+    assert request["body"]["tools"][2]["name"] == "submit_candidate"
     assert GLOBAL_MODEL_STATS.n_calls == global_calls_before
 
 
