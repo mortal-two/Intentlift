@@ -37,7 +37,7 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v2"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v3"
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
@@ -1144,8 +1144,8 @@ This is the complete immutable input allowlist for one fresh Replay episode.
 - `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
 - `TOOL.md`: fixed bounded check and submission interface.
 - `intentir_packet_query`: bounded read-only packet inventory, path lookup, and
-  anonymous-handle search plus paged graph/realization views. It exposes only
-  packet.json and never writes Replay.
+  anonymous-handle search plus paged graph/realization/resolved-edge views. It
+  exposes only packet.json and never writes Replay or infers relations.
 
 No Source or source slice, Harness/compiler view, actual C values, real
 CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
@@ -1153,8 +1153,9 @@ network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
 Start with `intentir_packet_query overview`; then follow its exact `abi`,
-`graph`, `realization`, and paged `edges` commands. These views expose the
-complete packet facts in bounded pages. Use `section PATH`
+`graph`, `realization`, resolved `routes`/`order`, and raw paged `edges`
+commands. These views expose the complete packet facts in bounded pages and
+never add an edge. Use `section PATH`
 only for one named omitted field; never concatenate inputs because the transport
 may elide its middle.
 

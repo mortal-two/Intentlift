@@ -289,8 +289,10 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
             f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
             "page only if `next_start` is non-null.",
             f"Query `{INTENTIR_PACKET_QUERY} realization` once, then "
-            f"`{INTENTIR_PACKET_QUERY} order 0 12` for resolved before->after "
-            "obligations and `intentir_packet_query edges 0 24` for raw routes.",
+            f"`{INTENTIR_PACKET_QUERY} routes 0 16` for resolved authored "
+            f"flows, `{INTENTIR_PACKET_QUERY} order 0 12` for resolved "
+            "before->after obligations, and `intentir_packet_query edges 0 24` "
+            "for the unchanged raw relations.",
             "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
@@ -538,6 +540,113 @@ def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any
     return result
 
 
+def _packet_instance_endpoint(
+    instance_id: Any,
+    *,
+    instance_index: Mapping[Any, Any],
+    region_index: Mapping[Any, Any],
+    semantic_index: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve one already-authored pi instance without inventing semantics."""
+
+    instance = instance_index.get(instance_id)
+    if not isinstance(instance, Mapping):
+        return {"id": instance_id, "unresolved": True}
+    semantic_ref = instance.get("semantic_ref")
+    region_id = instance.get("region")
+    region = region_index.get(region_id)
+    return {
+        "id": instance_id,
+        "semantic_ref": semantic_ref,
+        "semantic": semantic_index.get(
+            semantic_ref,
+            {"semantic_kind": "unclassified_handle"},
+        ),
+        "mechanism": instance.get("mechanism"),
+        "region": region_id,
+        "region_placement": (
+            region.get("placement") if isinstance(region, Mapping) else None
+        ),
+    }
+
+
+def _packet_route_obligations(
+    packet: Mapping[str, Any], start: int, count: int
+) -> Any:
+    """Resolve authored pi routes to source-blind endpoint descriptions."""
+
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    instances = pi.get("instances", [])
+    regions = pi.get("regions", [])
+    routes = pi.get("routes", [])
+    if (
+        not isinstance(instances, list)
+        or not isinstance(regions, list)
+        or not isinstance(routes, list)
+    ):
+        raise TypeError("packet pi instances/regions/routes must be arrays")
+    instance_index = {
+        item.get("id"): item
+        for item in instances
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    region_index = {
+        item.get("id"): item
+        for item in regions
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    semantic_index = _packet_semantic_index(packet)
+    resolved: list[dict[str, Any]] = []
+    for index, edge in enumerate(routes):
+        if not isinstance(edge, Mapping):
+            continue
+        source = _packet_instance_endpoint(
+            edge.get("source"),
+            instance_index=instance_index,
+            region_index=region_index,
+            semantic_index=semantic_index,
+        )
+        target = _packet_instance_endpoint(
+            edge.get("target"),
+            instance_index=instance_index,
+            region_index=region_index,
+            semantic_index=semantic_index,
+        )
+        slots = edge.get("slots", [])
+        resolved.append(
+            {
+                "original_index": index,
+                "source": source,
+                "target": target,
+                "target_local_slots": slots,
+                "required_flow": (
+                    f"{source.get('id')} MUST flow to {target.get('id')} "
+                    f"at target-local slots {slots}"
+                ),
+            }
+        )
+    items, next_start = _bounded_page(resolved, start=start, count=count)
+    return {
+        "protocol": "intentir.replay-resolved-routes.v1",
+        "meaning": (
+            "Every item expands one existing pi.routes entry. Slots remain "
+            "target-local exactly as authored; this view infers no edge, value, "
+            "or operation."
+        ),
+        "total": len(resolved),
+        "start": start,
+        "items": items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} routes {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
 def _packet_order_obligations(
     packet: Mapping[str, Any], start: int, count: int
 ) -> Any:
@@ -567,35 +676,22 @@ def _packet_order_obligations(
     }
     semantic_index = _packet_semantic_index(packet)
 
-    def endpoint(instance_id: Any) -> dict[str, Any]:
-        instance = instance_index.get(instance_id)
-        if not isinstance(instance, Mapping):
-            return {"id": instance_id, "unresolved": True}
-        semantic_ref = instance.get("semantic_ref")
-        region_id = instance.get("region")
-        region = region_index.get(region_id)
-        return {
-            "id": instance_id,
-            "semantic_ref": semantic_ref,
-            "semantic": semantic_index.get(
-                semantic_ref,
-                {"semantic_kind": "unclassified_handle"},
-            ),
-            "mechanism": instance.get("mechanism"),
-            "region": region_id,
-            "region_placement": (
-                region.get("placement")
-                if isinstance(region, Mapping)
-                else None
-            ),
-        }
-
     resolved: list[dict[str, Any]] = []
     for index, edge in enumerate(order):
         if not isinstance(edge, Mapping):
             continue
-        before = endpoint(edge.get("before"))
-        after = endpoint(edge.get("after"))
+        before = _packet_instance_endpoint(
+            edge.get("before"),
+            instance_index=instance_index,
+            region_index=region_index,
+            semantic_index=semantic_index,
+        )
+        after = _packet_instance_endpoint(
+            edge.get("after"),
+            instance_index=instance_index,
+            region_index=region_index,
+            semantic_index=semantic_index,
+        )
         reasons: list[str] = []
         if before.get("region") != after.get("region"):
             reasons.append("cross_region")
@@ -703,6 +799,13 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_edges(packet, int(arguments[2]), int(arguments[3]))
     if len(arguments) == 4 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
+        "routes",
+    ]:
+        return _packet_route_obligations(
+            packet, int(arguments[2]), int(arguments[3])
+        )
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
         "order",
     ]:
         return _packet_order_obligations(
@@ -732,7 +835,7 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "realization | order START COUNT | edges START COUNT | section PATH | "
+        "realization | routes START COUNT | order START COUNT | edges START COUNT | section PATH | "
         "find HANDLE"
     )
 

@@ -169,6 +169,9 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         edges = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} edges 0 24"}
         )
+        routes = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} routes 0 24"}
+        )
         order = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} order 0 24"}
         )
@@ -197,6 +200,19 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert '"topology"' in realization["output"]
     assert edges["returncode"] == 0
     assert '"routes"' in edges["output"]
+    assert routes["returncode"] == 0
+    resolved_routes = json.loads(routes["output"])
+    assert resolved_routes["protocol"] == "intentir.replay-resolved-routes.v1"
+    assert "infers no edge" in resolved_routes["meaning"]
+    assert resolved_routes["items"][0]["source"]["semantic_ref"] == "a0"
+    assert resolved_routes["items"][0]["source"]["semantic"][
+        "semantic_kind"
+    ] == "boundary_access"
+    assert resolved_routes["items"][0]["target"]["semantic_ref"] == "n0"
+    assert resolved_routes["items"][0]["target_local_slots"] == [0, 1]
+    assert resolved_routes["items"][0]["required_flow"] == (
+        "i0 MUST flow to i1 at target-local slots [0, 1]"
+    )
     assert order["returncode"] == 0
     resolved_order = json.loads(order["output"])
     assert resolved_order["protocol"] == "intentir.replay-resolved-order.v1"
