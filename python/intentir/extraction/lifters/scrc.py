@@ -725,16 +725,18 @@ must be identical to the supplied anonymous values. For each compiler slot,
 use exactly the public role in compiler_roles. Do not rename c* slots to p* and
 do not turn compiler roles into inferred strategy names.
 
-bound_constexpr_values are Harness-owned, non-C JIT specialization bindings.
-Their p* stays kind=constexpr. Author one Source-defined form: logical
-data/predicate/result -> compatible rank-0 t*; integral extent -> x*; a graph
-selector eliminated from this monomorphic kernel -> mode=value/rank=0,
-compatible public dtype, and no logical_ref. For the last form, preserve the ABI
-but author only the complete active Layer-A graph: no dummy dataflow, inactive
-operation, or runtime control. The concrete selector value stays only in Harness
-and never enters J/C/pi. Fixed code checks the classification but never selects
-or edits the graph. String constexprs require this form. An unlisted Source
-constexpr is pure implementation selection, remains c*, and has a pure-C slot.
+bound_constexpr_values are Harness-owned, non-C JIT bindings. constexprness
+alone never makes one a graph selector. Classify across all Source uses:
+logical data/predicate/result -> compatible rank-0 t*; integral extent-only ->
+x*. A no-logical_ref carrier is legal only when every semantic use is
+exclusively compile-time control and the selected active graph has no use of
+the value in shape, index, mask, arithmetic, boolean dataflow, or result. Any
+such use requires t*/x* even when constant-folded. A pure selector keeps
+kind=constexpr, mode=value, rank=0 and dtype; its value
+stays only in Harness. Author the complete active graph without dummy dataflow,
+inactive operations, or runtime control. Lift owns classification; fixed code
+checks only the authored wire/type contract and never selects or repairs the
+graph. String constexpr is pure-selector-only or unsupported.
 
 Every J.signature logical_ref names only a declared J input/output t* handle,
 a symbolic dimension x*; it never names a p* parameter, source/local, or J-body

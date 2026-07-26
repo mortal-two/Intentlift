@@ -1195,11 +1195,14 @@ semantics，但其 p* carrier 可以由 π realization 引用。checker 不从�
 修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v17 继承。上述拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。
 
-上述 null-carrier 只允许 runtime scalar。`bound_constexpr_values` 必须是逻辑语义 constexpr：logical
-data/predicate/result 绑定 dtype-compatible rank-0 J input，integral extent-only 绑定 declared `x*`；
-固定 compile-time 值若只选择当前 monomorphic active graph，则对应 constexpr p* 只保留 callable
-carrier/type，省略 `logical_ref`，其值留在 Harness；π 不复制值、不选择 branch、不增加 realization
-instance/route/refinement。Lift 自己作者化完整 active J，fixed checker 只检查分类与 type。
+上述 representation-only null-carrier 只允许 runtime scalar。`bound_constexpr_values` 由 Lift 查看每个
+Source use 后分类：logical data/predicate/result 绑定 dtype-compatible rank-0 J input，
+integral extent-only 绑定 declared `x*`。只有全部语义 use 都是 compile-time
+control/discrimination，且值不进入 active graph 的 shape/index/mask/arithmetic/boolean/result，
+对应 constexpr p* 才只保留 callable carrier/type 并省略 `logical_ref`。参与 active graph 的
+constexpr 即使 constant-fold 也必须显式走 t*/x*；data 与精确 dimension 重合时由 Lift 作者化
+`value_dimension_relations`。纯 selector 值留在 Harness；π 不复制值、不选择 branch、不增加 realization
+instance/route/refinement。Lift 自己作者化完整 active J，fixed checker 只检查 wire/type 形式，不代替 Lift 做该语义分类。
 只影响 layout/tile/stage 的 constexpr 归入 C。representation-only bound constexpr 不允许以
 `logical_ref=null` 伪装成 π-only carrier；static specialization carrier 是独立的 Harness-bound callable
 情形，但同样不由 π 补语义。

@@ -1168,6 +1168,9 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "reuse that same t* in the predicate and arithmetic dataflow" in normalized
     assert "never split one Source value" in normalized
     assert "an extent-only scalar binds x* directly" in normalized
+    assert "constexprness alone never makes one a graph selector" in normalized
+    assert "every semantic use is exclusively compile-time control" in normalized
+    assert "fixed code checks only the authored wire/type contract" in normalized
     assert "explicit Source `reduce(sum)` followed by division" in normalized
     assert "generated `reduce(sum)` over ones" in normalized
     assert "never propagate one conversion to sibling parameters" in normalized
@@ -1379,10 +1382,10 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
 def test_lift_prompt_and_schema_admit_harness_specialization_constexpr() -> None:
     instructions = " ".join(scrc.build_scrc_lift_instructions().split())
 
-    assert "Harness-owned, non-C JIT specialization bindings" in instructions
-    assert "concrete selector value stays only in Harness" in instructions
-    assert "never selects or edits the graph" in instructions
-    assert "unlisted Source constexpr is pure implementation selection" in instructions
+    assert "Harness-owned, non-C JIT bindings" in instructions
+    assert "its value stays only in Harness" in instructions
+    assert "never selects or repairs the graph" in instructions
+    assert "every semantic use is exclusively compile-time control" in instructions
 
     payload = make_reduce_artifact().to_json()
     parameter = payload["j"]["signature"]["parameters"][2]

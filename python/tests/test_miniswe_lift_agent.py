@@ -134,7 +134,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v38"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v39"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -164,8 +164,13 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "Do not prepend `set`" in readme
     lift_contract = " ".join(files["knowledge/lift_contract.md"].split())
     assert "never names a p* parameter, source/local, or J-body v*" in lift_contract
-    assert "Harness-owned, non-C JIT specialization bindings" in lift_contract
+    assert "Harness-owned, non-C JIT bindings" in lift_contract
+    assert "constexprness alone never makes one a graph selector" in lift_contract
+    assert "every semantic use is exclusively compile-time control" in lift_contract
+    assert "fixed code checks only the authored wire/type contract" in lift_contract
     preflight = " ".join(files["knowledge/preflight.md"].split())
+    assert "Inspect every Source use of that parameter" in preflight
+    assert "Any such active use requires t*/x* even when constant-folded" in preflight
     assert "Every semantic `reduce` and inclusive `scan`" in preflight
     assert "one `consumer_extensions` relation for each affected" in preflight
     assert "A reduction identity or load fill is not a substitute" in preflight

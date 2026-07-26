@@ -564,14 +564,17 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-该 null-carrier 例外只适用于 runtime scalar，不适用于 `bound_constexpr_values`。后者按 Harness
-合同必须已经是逻辑语义 constexpr：若作为 logical value/predicate/result，绑定 dtype-compatible
-rank-0 J input；若只表示 integral logical extent，绑定 declared `x*`；若固定 compile-time 值只选择
-本次 JIT specialization 的 active graph，Lift 保留 `kind=constexpr,mode=value,rank=0`、compatible
-dtype、无 `logical_ref` 的匿名 p* carrier，值只留在 Harness。Lift 自己作者化完整 active graph，不把
-inactive branch、dummy identity 或该 concrete value写入 J/C/π。string semantic constexpr 必须走
-这一形式。fixed Decode/CandidateCheck 只检查作者化分类与 Harness type，不生成 relation、不折叠
-Source、不替 Lift 选图。Replay 保留 exact constexpr ABI 并直接实现 active J；source-blind
+该 representation-only null-carrier 例外只适用于 runtime scalar。对 `bound_constexpr_values`，Lift 必须
+遍历它在 Source 中的全部 use：作为 logical value/predicate/result 时绑定 dtype-compatible
+rank-0 J input，仅为 integral logical extent 时绑定 declared `x*`。只有全部语义 use 都是
+compile-time control/discrimination，且值不进入 active graph 的
+shape/index/mask/arithmetic/boolean/result，才可保留
+`kind=constexpr,mode=value,rank=0`、compatible dtype、无 `logical_ref` 的匿名 p* carrier。
+参与 active graph 的 constexpr 即使 constant-fold 也不是纯 selector；若同时表示 data 与精确
+dimension，由 Lift 用 t* 及 `value_dimension_relations` 显式连接。纯 selector 值只留在 Harness，
+Lift 自己作者化完整 active graph，不把 inactive branch、dummy identity 或 concrete value写入 J/C/π。
+fixed Decode/CandidateCheck 只检查 wire/type 形式，不代替 Lift 做 Source-semantic 分类，不生成
+relation、不折叠 Source、不选图。Replay 保留 exact constexpr ABI 并直接实现 active J；source-blind
 ReplayCheck.v3 会拒绝 body 对该 carrier 的读取，不需要也看不到 selector value。Gate2 RefEval 与
 production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr

@@ -38,16 +38,24 @@ the artifact schema or external TypeCheck.
    active-length rank-0 `t*` without a relation. Emit the complete relation array,
    including `[]`; fixed code, Replay, C, and pi never add or repair its members.
    Bind `x*` only when every use is extent/index/domain-only.
-   This null-carrier form is runtime-scalar-only. Every
-   `bound_constexpr_values` entry is Harness-fixed and non-C. Bind runtime-like
+   The representation-only null-carrier form above is runtime-scalar-only.
+   Every `bound_constexpr_values` entry is Harness-fixed and non-C, but
+   constexprness alone is not evidence for a specialization carrier. Inspect
+   every Source use of that parameter before classifying it. Bind runtime-like
    logical data to a dtype-matching rank-0 J input and an integral logical extent
-   to `x*`. If the constexpr only selected the monomorphic active graph before J
-   runtime, keep its p* as `kind=constexpr,mode=value,rank=0` with compatible
-   public dtype and no `logical_ref`; its concrete value stays out of J/C/pi.
-   Author the complete active graph without identity selects, dummy dataflow,
-   inactive operations, or runtime `effect_if`/`value_if`. String semantic
-   constexprs necessarily use this specialization-carrier form. Fixed code
-   validates but never selects the graph or repairs the classification.
+   to `x*`. Use `kind=constexpr,mode=value,rank=0` with compatible public dtype
+   and no `logical_ref` only when all semantic uses are exclusively compile-time
+   control/discrimination and the selected active graph never uses the concrete
+   value in shape, index, mask, arithmetic, boolean dataflow, or a result. Any
+   such active use requires t*/x* even when constant-folded; a value that is both
+   data and its exact shape dimension uses t* plus an authored
+   `value_dimension_relations` equality. For a pure selector, author the complete
+   active graph without identity selects, dummy dataflow, inactive operations,
+   or runtime `effect_if`/`value_if`; its concrete value stays out of J/C/pi.
+   Lift owns the semantic classification. Fixed code checks only the authored
+   wire/type form and never selects the graph or repairs the classification.
+   A string constexpr is eligible only as a pure selector; reject unsupported
+   logical string data instead of disguising it as a carrier.
    A pure schedule constexpr belongs to C; never leave a bound constexpr as a
    representation-only pi carrier.
    Every rank-0 tensor bound by `logical_ref` must contribute to an observable

@@ -269,13 +269,18 @@ representation-only ABI carrier：它不创建 J input，不得参与 J output/b
 因此 v6/v14 及更早 receipt 仍保持原 verdict，必须以 v7/v15 fresh run 得到新结论。
 
 该 wire form 只允许 runtime scalar；`bound_constexpr_values` 不是另一种 representation-only carrier。
-bound constexpr 必须具有 J logical denotation：logical data/predicate/result 绑定 dtype-compatible
-rank-0 J input，integral extent-only 绑定 declared `x*`。固定 compile-time 值若只选择当前
-monomorphic active graph，则保留 `kind=constexpr,mode=value,rank=0`、compatible dtype、无
-`logical_ref` 的 p* callable carrier；值只属于 Harness `bound_constexpr_values`，不写入 J/C/π。
-Lift 作者化完整 active graph，fixed Decode/CandidateCheck 只检查分类与类型，不根据值剪枝、补图或
-修改 artifact。Replay 保留 constexpr ABI，RefEval 与 production 不消费该值；string semantic
-constexpr 必须使用这一 Harness specialization 形式。
+bound constexpr 必须由 Lift 根据它在 Source 中的全部 use 选择 J logical denotation：
+logical data/predicate/result 绑定 dtype-compatible rank-0 J input，integral extent-only 绑定
+declared `x*`。`constexpr` 身份本身不证明它是 graph selector；只有所有语义 use 都严格
+限于 compile-time control/discrimination，且 concrete value 不进入当前 active graph 的
+shape/index/mask/arithmetic/boolean/result，才可保留
+`kind=constexpr,mode=value,rank=0`、compatible dtype、无 `logical_ref` 的 p* callable carrier。
+参与 active graph 的 constexpr 即使被 constant-fold 也必须走 t*/x*；同时是 data 与精确 shape
+dimension 时使用 t* 及 Lift 作者化的 `value_dimension_relations`。纯 selector 的值只属于
+Harness `bound_constexpr_values`，不写入 J/C/π；Lift 作者化完整 active graph。fixed
+Decode/CandidateCheck 只检查已作者化的 wire/type 形式，不分类、不根据值选图、补图或修改
+artifact。Replay 保留 constexpr ABI，RefEval 与 production 不消费纯 selector 值；string
+constexpr 只能在纯 selector 情形使用这一 Harness specialization 形式，不支持的 logical string data 应拒绝。
 只影响 layout/tile/stage 等 implementation
 selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 

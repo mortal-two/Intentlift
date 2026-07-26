@@ -441,7 +441,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v17 / candidate-check.v1 / replay-check.v3`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v10`，
-Lift knowledge 为 v38。
+Lift knowledge 为 v39。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`。每个当前字段都由
@@ -516,14 +516,17 @@ boundary/shape semantics 使用；identity/direct-output 与 boundary-only 合�
 `kind=scalar,mode=value,rank=0,logical_ref=null`，不创建 J input、只可作为 π carrier；fixed checker
 不看 Source 名称/位置、不自动解绑，也不把规则推广成未证明的一般 tensor liveness。
 
-这个 null-carrier 例外仅限 runtime scalar。`bound_constexpr_values` 必须已有逻辑语义归属：logical
-data/predicate/result 使用 dtype-compatible rank-0 J input，integral extent-only 使用 declared `x*`；
-若固定 compile-time 值只在 JIT 前选择了当前 monomorphic active graph，则 Lift 保留对应
-`kind=constexpr,mode=value,rank=0` 的匿名 p* callable carrier 与 compatible public dtype，但省略
-`logical_ref`；concrete value 只留在 \(\rho_H^{\mathrm{static}}\)，不写入 J/C/π。Lift 必须自己作者化
-完整 active Layer-A graph，不生成 dummy/identity dataflow、inactive op 或 runtime `effect_if/value_if`。
-string semantic constexpr 必须走该路径。fixed code 只校验作者化分类与 Harness type，不根据值选图、
-补图、清空 `logical_ref` 或伪造 liveness；Replay 保留 exact constexpr ABI，source-blind
+这个 representation-only null-carrier 例外仅限 runtime scalar。对 `bound_constexpr_values`，Lift 必须按
+每个参数在 Source 中的全部 use 分类：logical data/predicate/result 使用 dtype-compatible
+rank-0 J input，integral extent-only 使用 declared `x*`。`constexpr` 本身不证明 graph-selector
+身份；只有所有语义 use 都严格限于 compile-time control/discrimination，且 concrete value 不进入
+active graph 的 shape/index/mask/arithmetic/boolean/result，才可保留
+`kind=constexpr,mode=value,rank=0` 的匿名 p* callable carrier、compatible public dtype 并省略
+`logical_ref`。参与 active graph 的 constexpr 即使 constant-fold 也必须走 t*/x*；同时是 data 与
+精确 dimension 时，使用 t* 与 Lift 作者化的 `value_dimension_relations`。纯 selector 的 concrete
+value 只留在 \(\rho_H^{\mathrm{static}}\)，不写入 J/C/π。Lift 必须自己作者化完整 active Layer-A graph，
+不生成 dummy/identity dataflow、inactive op 或 runtime `effect_if/value_if`。fixed code 只校验已作者化的
+wire/type 形式，不代替 Lift 分类，不根据值选图、补图、清空 `logical_ref` 或伪造 liveness；Replay 保留 exact constexpr ABI，source-blind
 ReplayCheck.v3 拒绝 kernel body 对这种 carrier 的任何读取。Gate1 由 Harness 绑定本次值，RefEval 与
 production backend 均不消费该值。
 只影响 implementation selection 的 constexpr 必须进入 C。representation-only bound constexpr
