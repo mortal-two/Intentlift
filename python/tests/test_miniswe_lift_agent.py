@@ -744,8 +744,8 @@ def test_value_dimension_equality_is_explicitly_authored_not_inferred(
 
 def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     config = load_intentir_lift_config()
-    assert config["agent"]["step_limit"] == 64
-    assert config["environment"]["candidate_check_limit"] == 11
+    assert config["agent"]["step_limit"] == 80
+    assert config["environment"]["candidate_check_limit"] == 15
     model = create_intentir_lift_model(
         model_name="test",
         api_base="http://provider.invalid/v1",
@@ -763,13 +763,13 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 44, "step_limit": 64},
+        {"n_model_calls": 60, "step_limit": 80},
     )[0]
     rendered = json.loads(observation["output"])
 
     assert rendered["turn_budget"] == {
-        "used": 44,
-        "limit": 64,
+        "used": 60,
+        "limit": 80,
         "remaining": 20,
     }
     assert rendered["directive"].startswith("Stop browsing")
@@ -890,8 +890,8 @@ def test_agent_can_use_candidate_check_before_independent_submission() -> None:
     assert check_evidence["calls"] == 1
     assert check_evidence["attempts"] == 1
     assert check_evidence["evaluations"] == 1
-    assert check_evidence["limit"] == 12
-    assert check_evidence["shared_budget"] == {"used": 1, "limit": 11}
+    assert check_evidence["limit"] == 16
+    assert check_evidence["shared_budget"] == {"used": 1, "limit": 15}
     assert check_evidence["submission_reserve"] == {
         "used": 0,
         "limit": 1,
