@@ -1144,8 +1144,9 @@ This is the complete immutable input allowlist for one fresh Replay episode.
 - `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
 - `TOOL.md`: fixed bounded check and submission interface.
 - `intentir_packet_query`: bounded read-only packet inventory, path lookup, and
-  anonymous-handle search plus paged graph/realization/resolved-edge views. It
-  exposes only packet.json and never writes Replay or infers relations.
+  anonymous-handle search plus paged graph/realization/resolved-edge and local
+  instance-obligation views. It exposes only packet.json and never writes
+  Replay or infers relations.
 
 No Source or source slice, Harness/compiler view, actual C values, real
 CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
@@ -1153,9 +1154,12 @@ network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
 Start with `intentir_packet_query overview`; then follow its exact `abi`,
-`graph`, `realization`, resolved `routes`/`order`, and raw paged `edges`
-commands. These views expose the complete packet facts in bounded pages and
-never add an edge. Use `section PATH`
+`graph`, `realization`, and paged `obligations` commands. The obligation ledger
+joins already-authored facts around each instance; use `obligation HANDLE` for
+one i* or semantic anchor. Resolved `routes`/`order` and raw paged `edges` are
+available to cross-check a named relation without redundantly paging all three.
+These views expose only complete packet facts in bounded pages and never add an edge.
+Use `section PATH`
 only for one named omitted field; never concatenate inputs because the transport
 may elide its middle.
 

@@ -288,11 +288,17 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
             "fields, Intent I/O, U_f entry metadata, and MaskC slots.",
             f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
             "page only if `next_start` is non-null.",
-            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then "
-            f"`{INTENTIR_PACKET_QUERY} routes 0 16` for resolved authored "
-            f"flows, `{INTENTIR_PACKET_QUERY} order 0 12` for resolved "
-            "before->after obligations, and `intentir_packet_query edges 0 24` "
-            "for the unchanged raw relations.",
+            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then page "
+            f"`{INTENTIR_PACKET_QUERY} obligations 0 12` across every instance. "
+            "It is the primary per-instance join of authored routes, order, "
+            "sharing, temporal roles, and refinements. Use "
+            f"`{INTENTIR_PACKET_QUERY} obligation HANDLE` to inspect one i* "
+            "instance or all instances anchored to one anonymous J/C handle.",
+            f"Use `{INTENTIR_PACKET_QUERY} routes 0 16`, "
+            f"`{INTENTIR_PACKET_QUERY} order 0 12`, or "
+            f"`{INTENTIR_PACKET_QUERY} edges 0 24` only to cross-check a named "
+            "relation; do not redundantly page all three after the obligation "
+            "ledger.",
             "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
@@ -751,6 +757,349 @@ def _packet_order_obligations(
     }
 
 
+def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join already-authored pi facts around each declared instance.
+
+    This is deliberately a projection, not a realization planner: it neither
+    invents an edge nor interprets Replay source.  The compact per-instance
+    ledger merely saves the source-blind writer from manually joining several
+    long, independently paged pi arrays.
+    """
+
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    list_names = (
+        "regions",
+        "instances",
+        "routes",
+        "order",
+        "sharing",
+        "refinements",
+        "iterations",
+        "loop_carriers",
+    )
+    values: dict[str, list[Any]] = {}
+    for name in list_names:
+        value = pi.get(name, [])
+        if not isinstance(value, list):
+            raise TypeError(f"packet pi {name} must be an array")
+        values[name] = value
+
+    instance_index = {
+        item.get("id"): item
+        for item in values["instances"]
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    region_index = {
+        item.get("id"): item
+        for item in values["regions"]
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    semantic_index = _packet_semantic_index(packet)
+
+    def endpoint(instance_id: Any) -> dict[str, Any]:
+        instance = instance_index.get(instance_id)
+        if not isinstance(instance, Mapping):
+            return {"id": instance_id, "unresolved": True}
+        return {
+            "id": instance_id,
+            "semantic_ref": instance.get("semantic_ref"),
+        }
+
+    incoming: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    outgoing: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for route in values["routes"]:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(target, str) and target in incoming:
+            incoming[target].append(
+                {
+                    "source": endpoint(source),
+                    "target_local_slots": route.get("slots"),
+                }
+            )
+        if isinstance(source, str) and source in outgoing:
+            outgoing[source].append(
+                {
+                    "target": endpoint(target),
+                    "target_local_slots": route.get("slots"),
+                }
+            )
+
+    must_run_after: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    must_run_before: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["order"]:
+        if not isinstance(relation, Mapping):
+            continue
+        before = relation.get("before")
+        after = relation.get("after")
+        if isinstance(after, str) and after in must_run_after:
+            must_run_after[after].append(
+                {"before": endpoint(before)}
+            )
+        if isinstance(before, str) and before in must_run_before:
+            must_run_before[before].append(
+                {"after": endpoint(after)}
+            )
+
+    sharing_roles: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["sharing"]:
+        if not isinstance(relation, Mapping):
+            continue
+        source = relation.get("source")
+        consumers = relation.get("consumers", [])
+        if isinstance(source, str) and source in sharing_roles:
+            sharing_roles[source].append(
+                {
+                    "role": "source",
+                    "consumers": [endpoint(item) for item in consumers]
+                    if isinstance(consumers, list)
+                    else consumers,
+                }
+            )
+        if isinstance(consumers, list):
+            for consumer in consumers:
+                if isinstance(consumer, str) and consumer in sharing_roles:
+                    sharing_roles[consumer].append(
+                        {
+                            "role": "consumer",
+                            "source": endpoint(source),
+                        }
+                    )
+
+    temporal_roles: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation_name, role_names in (
+        ("iterations", ("loop_instance", "tile_instance")),
+        (
+            "loop_carriers",
+            ("loop_instance", "init", "state", "next", "result"),
+        ),
+    ):
+        for index, relation in enumerate(values[relation_name]):
+            if not isinstance(relation, Mapping):
+                continue
+            for role in role_names:
+                instance_id = relation.get(role)
+                if isinstance(instance_id, str) and instance_id in temporal_roles:
+                    temporal_roles[instance_id].append(
+                        {
+                            "relation": relation_name,
+                            "original_index": index,
+                            "role": role,
+                            "authored_relation": dict(relation),
+                        }
+                    )
+
+    refinements: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["refinements"]:
+        if not isinstance(relation, Mapping):
+            continue
+        instance_id = relation.get("instance")
+        if isinstance(instance_id, str) and instance_id in refinements:
+            refinements[instance_id].append(dict(relation))
+
+    records: list[dict[str, Any]] = []
+    for instance in values["instances"]:
+        if not isinstance(instance, Mapping):
+            continue
+        instance_id = instance.get("id")
+        if not isinstance(instance_id, str):
+            continue
+        semantic_ref = instance.get("semantic_ref")
+        region_id = instance.get("region")
+        region = region_index.get(region_id)
+        records.append(
+            {
+                "id": instance_id,
+                "semantic_ref": semantic_ref,
+                "semantic": semantic_index.get(
+                    semantic_ref,
+                    {"semantic_kind": "unclassified_handle"},
+                ),
+                "mechanism": instance.get("mechanism"),
+                "region": (
+                    dict(region)
+                    if isinstance(region, Mapping)
+                    else {"id": region_id, "unresolved": True}
+                ),
+                "incoming_routes": incoming.get(instance_id, []),
+                "outgoing_routes": outgoing.get(instance_id, []),
+                "must_run_after": must_run_after.get(instance_id, []),
+                "must_run_before": must_run_before.get(instance_id, []),
+                "sharing_roles": sharing_roles.get(instance_id, []),
+                "temporal_roles": temporal_roles.get(instance_id, []),
+                "refinements": refinements.get(instance_id, []),
+            }
+        )
+    return records
+
+
+def _packet_obligations(
+    packet: Mapping[str, Any], start: int, count: int
+) -> dict[str, Any]:
+    records = _packet_obligation_records(packet)
+    items, next_start = _bounded_page(records, start=start, count=count)
+    compact_items: list[list[Any]] = []
+    for item in items:
+        semantic = item["semantic"]
+        semantic_kind = semantic.get("semantic_kind")
+        if semantic_kind == "intent_op":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("op"),
+                semantic.get("scope_id"),
+            ]
+        elif semantic_kind == "boundary_access":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("access_kind"),
+                semantic.get("tensor"),
+                semantic.get("node_ref"),
+            ]
+        elif semantic_kind == "boundary_effect":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("effect_kind"),
+                semantic.get("target"),
+                semantic.get("node_ref"),
+                semantic.get("access_ref"),
+            ]
+        elif semantic_kind == "signature_parameter":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("kind"),
+                semantic.get("mode"),
+                semantic.get("logical_ref"),
+            ]
+        else:
+            semantic_view = [semantic_kind]
+        region = item["region"]
+        compact_items.append(
+            [
+                item["id"],
+                item["semantic_ref"],
+                item["mechanism"],
+                [
+                    region.get("id"),
+                    region.get("parent"),
+                    region.get("placement"),
+                ],
+                semantic_view,
+                [
+                    [route["source"]["id"], route["target_local_slots"]]
+                    for route in item["incoming_routes"]
+                ],
+                [
+                    [route["target"]["id"], route["target_local_slots"]]
+                    for route in item["outgoing_routes"]
+                ],
+                [relation["before"]["id"] for relation in item["must_run_after"]],
+                [relation["after"]["id"] for relation in item["must_run_before"]],
+                [
+                    [
+                        relation["role"],
+                        (
+                            [peer["id"] for peer in relation["consumers"]]
+                            if relation["role"] == "source"
+                            else relation["source"]["id"]
+                        ),
+                    ]
+                    for relation in item["sharing_roles"]
+                ],
+                [
+                    [
+                        relation["relation"],
+                        relation["original_index"],
+                        relation["role"],
+                        relation["authored_relation"],
+                    ]
+                    for relation in item["temporal_roles"]
+                ],
+                [
+                    [relation.get("kind"), relation.get("auth_ref")]
+                    for relation in item["refinements"]
+                ],
+            ]
+        )
+    return {
+        "protocol": "intentir.replay-instance-obligations.v2",
+        "meaning": (
+            "Rows are a compact declaration-order index over this packet's own "
+            "already-authored J/pi facts. Columns name every row position. The "
+            "view infers no edge, value, operation, source construct, or "
+            "realization choice; use obligation HANDLE to expand one current "
+            "instance or semantic anchor."
+        ),
+        "total": len(records),
+        "start": start,
+        "columns": [
+            "id",
+            "semantic_ref",
+            "mechanism",
+            "region[id,parent,placement]",
+            "semantic",
+            "incoming_routes[source,slots]",
+            "outgoing_routes[target,slots]",
+            "order_predecessors",
+            "order_successors",
+            "sharing[role,peers]",
+            "temporal[relation,index,role,authored_relation]",
+            "refinements[kind,auth_ref]",
+        ],
+        "items": compact_items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} obligations {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
+def _packet_obligation(packet: Mapping[str, Any], handle: str) -> dict[str, Any]:
+    records = _packet_obligation_records(packet)
+    matches = [
+        item
+        for item in records
+        if item["id"] == handle or item["semantic_ref"] == handle
+    ]
+    if not matches:
+        raise KeyError(f"no pi instance or semantic anchor matches {handle!r}")
+    shown = matches[:4]
+    omitted = matches[4:]
+    return {
+        "protocol": "intentir.replay-instance-obligation.v1",
+        "meaning": (
+            "This is a bounded local join of authored facts only; it infers no "
+            "edge, value, operation, source construct, or realization choice."
+        ),
+        "query": handle,
+        "match_total": len(matches),
+        "items": shown,
+        "omitted_instance_ids": [item["id"] for item in omitted],
+        "omitted_queries": [
+            f"{INTENTIR_PACKET_QUERY} obligation {item['id']}" for item in omitted
+        ],
+    }
+
+
 def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
 
@@ -811,6 +1160,18 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_order_obligations(
             packet, int(arguments[2]), int(arguments[3])
         )
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "obligations",
+    ]:
+        return _packet_obligations(
+            packet, int(arguments[2]), int(arguments[3])
+        )
+    if len(arguments) == 3 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "obligation",
+    ]:
+        return _packet_obligation(packet, arguments[2])
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "section",
@@ -835,8 +1196,8 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "realization | routes START COUNT | order START COUNT | edges START COUNT | section PATH | "
-        "find HANDLE"
+        "realization | routes START COUNT | order START COUNT | obligations START COUNT | "
+        "obligation HANDLE | edges START COUNT | section PATH | find HANDLE"
     )
 
 

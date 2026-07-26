@@ -175,6 +175,15 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         order = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} order 0 24"}
         )
+        obligations = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligations 0 12"}
+        )
+        obligation = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligation i1"}
+        )
+        semantic_obligation = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligation n0"}
+        )
         j_view = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} section j"}
         )
@@ -224,6 +233,41 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert resolved_order["items"][0]["required_direction"] == (
         "i0 MUST execute before i1"
     )
+    assert obligations["returncode"] == 0
+    obligation_page = json.loads(obligations["output"])
+    assert obligation_page["protocol"] == (
+        "intentir.replay-instance-obligations.v2"
+    )
+    assert "infers no edge" in obligation_page["meaning"]
+    assert obligation_page["columns"][0:4] == [
+        "id",
+        "semantic_ref",
+        "mechanism",
+        "region[id,parent,placement]",
+    ]
+    i0 = obligation_page["items"][0]
+    assert i0[0:3] == ["i0", "a0", "realize"]
+    assert i0[6][0] == ["i1", [0, 1]]
+    assert {row[0] for row in obligation_page["items"]} <= {
+        item["id"] for item in packet["pi"]["instances"]
+    }
+    for forbidden in (
+        "source_code",
+        "harness",
+        "compiler_diff",
+        "gate1_diff",
+        "prior_replay",
+        "trajectory",
+    ):
+        assert forbidden not in obligations["output"]
+    assert obligation["returncode"] == 0
+    i1 = json.loads(obligation["output"])["items"][0]
+    assert i1["id"] == "i1"
+    assert i1["incoming_routes"][0]["source"]["id"] == "i0"
+    assert semantic_obligation["returncode"] == 0
+    assert json.loads(semantic_obligation["output"])["items"][0][
+        "semantic_ref"
+    ] == "n0"
     assert j_view["returncode"] == 0
     assert '"intent_function"' in j_view["output"]
     assert references["returncode"] == 0
@@ -341,6 +385,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     instance = default_config["agent"]["instance_template"]
     assert "typed rank and axis structure" in instance
     assert "algebraically equivalent flattened reduction" in instance
+    assert "obligation ledger" in instance
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
