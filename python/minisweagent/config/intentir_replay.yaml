@@ -18,8 +18,11 @@ agent:
   instance_template: |
     First run `intentir_packet_query overview`; it already contains the complete
     compact ABI/op inventory and exact root sizes. Then use
-    `intentir_packet_query abi 0 48`, `graph 0 12`, `realization`, and paged
-    `edges 0 24` only as directed by their `next` fields. Use `section PATH`
+    `intentir_packet_query abi 0 48`, `graph 0 12`, `realization`, and
+    `order 0 12` before paging raw `edges 0 24`. The resolved order view states
+    the mandatory before -> after direction and prioritizes cross-region and
+    observable-effect obligations; obey every item, including later pages.
+    Use `section PATH`
     only for a named omitted field and `find HANDLE` only when following one
     reference. Read REPLAY_CONTRACT.md once in one bounded action; TOOL.md is
     already summarized here. Never concatenate inputs because their middle may

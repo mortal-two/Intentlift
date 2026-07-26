@@ -169,6 +169,9 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         edges = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} edges 0 24"}
         )
+        order = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} order 0 24"}
+        )
         j_view = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} section j"}
         )
@@ -194,6 +197,17 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert '"topology"' in realization["output"]
     assert edges["returncode"] == 0
     assert '"routes"' in edges["output"]
+    assert order["returncode"] == 0
+    resolved_order = json.loads(order["output"])
+    assert resolved_order["protocol"] == "intentir.replay-resolved-order.v1"
+    assert "MUST execute before" in resolved_order["meaning"]
+    assert resolved_order["items"][0]["before"]["semantic_ref"] == "a0"
+    assert resolved_order["items"][0]["before"]["semantic"][
+        "semantic_kind"
+    ] == "boundary_access"
+    assert resolved_order["items"][0]["required_direction"] == (
+        "i0 MUST execute before i1"
+    )
     assert j_view["returncode"] == 0
     assert '"intent_function"' in j_view["output"]
     assert references["returncode"] == 0

@@ -289,7 +289,8 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
             f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
             "page only if `next_start` is non-null.",
             f"Query `{INTENTIR_PACKET_QUERY} realization` once, then "
-            f"`{INTENTIR_PACKET_QUERY} edges 0 24` when routes/order are nonempty.",
+            f"`{INTENTIR_PACKET_QUERY} order 0 12` for resolved before->after "
+            "obligations and `intentir_packet_query edges 0 24` for raw routes.",
             "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
@@ -457,6 +458,203 @@ def _packet_edges(
     }
 
 
+def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Resolve anonymous J handles to compact source-blind descriptions."""
+
+    result: dict[str, dict[str, Any]] = {}
+    j = packet.get("j", {})
+    if not isinstance(j, Mapping):
+        return result
+    intent = j.get("intent", {})
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    for operation in _packet_graph_ops(
+        function.get("body", []) if isinstance(function, Mapping) else [],
+        "j.intent.intent_function.body",
+    ):
+        node_id = operation.get("id")
+        if isinstance(node_id, str):
+            result[node_id] = {
+                "semantic_kind": "intent_op",
+                "op": operation.get("op"),
+                "scope_id": operation.get("scope_id"),
+                "path": operation.get("path"),
+            }
+    boundary = j.get("boundary", {})
+    if isinstance(boundary, Mapping):
+        accesses = boundary.get("accesses", [])
+        if isinstance(accesses, list):
+            for access in accesses:
+                if not isinstance(access, Mapping):
+                    continue
+                access_id = access.get("access_id")
+                if isinstance(access_id, str):
+                    result[access_id] = {
+                        "semantic_kind": "boundary_access",
+                        "access_kind": access.get("kind"),
+                        "tensor": access.get("tensor"),
+                        "node_ref": access.get("node_ref"),
+                    }
+        effects = boundary.get("effects", [])
+        if isinstance(effects, list):
+            for effect in effects:
+                if not isinstance(effect, Mapping):
+                    continue
+                effect_id = effect.get("effect_id")
+                if isinstance(effect_id, str):
+                    result[effect_id] = {
+                        "semantic_kind": "boundary_effect",
+                        "effect_kind": effect.get("kind"),
+                        "target": effect.get("target"),
+                        "node_ref": effect.get("node_ref"),
+                        "access_ref": effect.get("access_ref"),
+                    }
+        domains = boundary.get("domains", {})
+        if isinstance(domains, Mapping):
+            for domain_id in domains:
+                if isinstance(domain_id, str):
+                    result[domain_id] = {"semantic_kind": "domain"}
+    signature = j.get("signature", {})
+    parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    if isinstance(parameters, list):
+        for parameter in parameters:
+            if not isinstance(parameter, Mapping):
+                continue
+            name = parameter.get("name")
+            if isinstance(name, str):
+                result[name] = {
+                    "semantic_kind": "signature_parameter",
+                    "kind": parameter.get("kind"),
+                    "mode": parameter.get("mode"),
+                    "logical_ref": parameter.get("logical_ref"),
+                }
+    return result
+
+
+def _packet_order_obligations(
+    packet: Mapping[str, Any], start: int, count: int
+) -> Any:
+    """Resolve pi order handles and rank causal/effect edges first."""
+
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    instances = pi.get("instances", [])
+    regions = pi.get("regions", [])
+    order = pi.get("order", [])
+    if (
+        not isinstance(instances, list)
+        or not isinstance(regions, list)
+        or not isinstance(order, list)
+    ):
+        raise TypeError("packet pi instances/regions/order must be arrays")
+    instance_index = {
+        item.get("id"): item
+        for item in instances
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    region_index = {
+        item.get("id"): item
+        for item in regions
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    semantic_index = _packet_semantic_index(packet)
+
+    def endpoint(instance_id: Any) -> dict[str, Any]:
+        instance = instance_index.get(instance_id)
+        if not isinstance(instance, Mapping):
+            return {"id": instance_id, "unresolved": True}
+        semantic_ref = instance.get("semantic_ref")
+        region_id = instance.get("region")
+        region = region_index.get(region_id)
+        return {
+            "id": instance_id,
+            "semantic_ref": semantic_ref,
+            "semantic": semantic_index.get(
+                semantic_ref,
+                {"semantic_kind": "unclassified_handle"},
+            ),
+            "mechanism": instance.get("mechanism"),
+            "region": region_id,
+            "region_placement": (
+                region.get("placement")
+                if isinstance(region, Mapping)
+                else None
+            ),
+        }
+
+    resolved: list[dict[str, Any]] = []
+    for index, edge in enumerate(order):
+        if not isinstance(edge, Mapping):
+            continue
+        before = endpoint(edge.get("before"))
+        after = endpoint(edge.get("after"))
+        reasons: list[str] = []
+        if before.get("region") != after.get("region"):
+            reasons.append("cross_region")
+        for side, value in (("before", before), ("after", after)):
+            semantic = value.get("semantic")
+            kind = (
+                semantic.get("semantic_kind")
+                if isinstance(semantic, Mapping)
+                else None
+            )
+            if kind in {"boundary_access", "boundary_effect"}:
+                reasons.append(f"{side}_observable_boundary")
+            if kind == "intent_op" and semantic.get("op") in {
+                "loop",
+                "effect_if",
+                "value_if",
+            }:
+                reasons.append(f"{side}_control_region")
+        resolved.append(
+            {
+                "original_index": index,
+                "before": before,
+                "after": after,
+                "required_direction": (
+                    f"{before.get('id')} MUST execute before "
+                    f"{after.get('id')}"
+                ),
+                "priority_reasons": reasons,
+            }
+        )
+    ranked = sorted(
+        resolved,
+        key=lambda item: (
+            -len(item["priority_reasons"]),
+            item["original_index"],
+        ),
+    )
+    items, next_start = _bounded_page(ranked, start=start, count=count)
+    critical_total = sum(bool(item["priority_reasons"]) for item in ranked)
+    return {
+        "protocol": "intentir.replay-resolved-order.v1",
+        "meaning": (
+            "For every item, the resolved before endpoint MUST execute before "
+            "the resolved after endpoint. Priority only changes this diagnostic "
+            "view order; it never changes pi."
+        ),
+        "total": len(ranked),
+        "critical_total": critical_total,
+        "start": start,
+        "items": items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} order {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
 def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
 
@@ -503,6 +701,13 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         "edges",
     ]:
         return _packet_edges(packet, int(arguments[2]), int(arguments[3]))
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "order",
+    ]:
+        return _packet_order_obligations(
+            packet, int(arguments[2]), int(arguments[3])
+        )
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "section",
@@ -527,7 +732,8 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "realization | edges START COUNT | section PATH | find HANDLE"
+        "realization | order START COUNT | edges START COUNT | section PATH | "
+        "find HANDLE"
     )
 
 
