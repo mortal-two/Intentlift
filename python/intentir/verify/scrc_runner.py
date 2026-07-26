@@ -7,6 +7,7 @@ status rules live here exactly once.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
@@ -33,8 +34,10 @@ MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
 MAX_GATE1_FEEDBACK_NODE_WITNESSES = 10
 MAX_GATE1_FEEDBACK_EDGES_PER_NODE = 6
 MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS = 512
+MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES = 10
 MAX_GATE1_REPAIR_CHANGED_PATHS = 48
 GATE1_REPAIR_PROGRESS_PROTOCOL = "intentir.gate1-relift-progress.v1"
+GATE1_LOCAL_FRONTIER_PROTOCOL = "intentir.gate1-local-frontier.v1"
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -379,6 +382,147 @@ def _observer_diagnostic_signatures(
     return result
 
 
+def _observer_local_profile_counter(
+    fingerprint: Any | None,
+) -> tuple[Counter[str], dict[str, dict[str, Any]]]:
+    """Index non-recursive diagnostic node profiles without observer hashes."""
+
+    counts: Counter[str] = Counter()
+    payloads: dict[str, dict[str, Any]] = {}
+    entries = getattr(fingerprint, "diagnostic_node_profiles", ())
+    if not isinstance(entries, (list, tuple)):
+        return counts, payloads
+    for entry in entries:
+        if (
+            not isinstance(entry, (list, tuple))
+            or len(entry) != 4
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], str)
+            or not isinstance(entry[2], (list, tuple))
+            or not isinstance(entry[3], (list, tuple))
+            or not all(
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and isinstance(item[0], str)
+                and isinstance(item[1], str)
+                for item in entry[2]
+            )
+            or not all(isinstance(item, str) for item in entry[3])
+        ):
+            continue
+        profile: dict[str, Any] = {
+            "local_signature": entry[1][
+                :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+            ],
+            "inputs": [
+                {
+                    "role": role,
+                    "producer": producer[
+                        :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+                    ],
+                }
+                for role, producer in entry[2]
+            ],
+            "context": [
+                item[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+                for item in entry[3]
+            ],
+        }
+        # Be defensive if a future observer profile embeds an opaque digest.
+        # The diagnostic stays hash-free even though the hard observer does not.
+        profile = _feedback_item(profile)
+        key = json.dumps(
+            profile,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        counts[key] += 1
+        payloads.setdefault(key, profile)
+    return counts, payloads
+
+
+def _observer_local_dataflow_frontier(
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> dict[str, Any] | None:
+    """Return a bounded non-recursive frontier for a failed hard dataflow diff.
+
+    This sidecar never participates in comparison or candidate selection.  It
+    removes the recursive-hash cascade from the diagnostic view so Lift can see
+    which immediate producer/consumer profiles actually differ.
+    """
+
+    source, source_payloads = _observer_local_profile_counter(source_fingerprint)
+    replay, replay_payloads = _observer_local_profile_counter(replay_fingerprint)
+    if not source and not replay:
+        return None
+
+    source_signatures = Counter(
+        source_payloads[key]["local_signature"]
+        for key, count in source.items()
+        for _ in range(count)
+    )
+    replay_signatures = Counter(
+        replay_payloads[key]["local_signature"]
+        for key, count in replay.items()
+        for _ in range(count)
+    )
+    differences: list[dict[str, Any]] = []
+    for key in source.keys() | replay.keys():
+        expected = source[key]
+        actual = replay[key]
+        if expected == actual:
+            continue
+        profile = source_payloads.get(key) or replay_payloads[key]
+        assert profile is not None
+        differences.append(
+            {
+                "kind": "missing" if actual < expected else "unexpected",
+                "profile": profile,
+                "expected_count": expected,
+                "actual_count": actual,
+                "_paired_signature": bool(
+                    source_signatures[profile["local_signature"]]
+                    and replay_signatures[profile["local_signature"]]
+                ),
+            }
+        )
+
+    differences.sort(
+        key=lambda item: (
+            0 if item["_paired_signature"] else 1,
+            len(item["profile"].get("context", ())),
+            item["profile"]["local_signature"],
+            0 if item["kind"] == "missing" else 1,
+            json.dumps(item["profile"], sort_keys=True, ensure_ascii=False),
+        )
+    )
+    examples = []
+    for difference in differences[:MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES]:
+        example = dict(difference)
+        example.pop("_paired_signature", None)
+        examples.append(example)
+    return {
+        "protocol": GATE1_LOCAL_FRONTIER_PROTOCOL,
+        "authority": (
+            "diagnostic-only non-recursive profiles excluded from Gate1 "
+            "membership, artifact construction, and candidate selection"
+        ),
+        "source_profile_count": sum(source.values()),
+        "replay_profile_count": sum(replay.values()),
+        "difference_count": len(differences),
+        "examples": examples,
+        "truncated_count": max(0, len(differences) - len(examples)),
+        "diagnostic": (
+            "These are immediate local producer/consumer differences after "
+            "removing recursive node-hash fallout. Empty differences with a "
+            "hard dataflow failure indicate same-signature occurrence wiring "
+            "or higher-level region composition, not a Gate1 pass."
+        ),
+    }
+
+
 def _observer_edge_endpoint(value: Any) -> str:
     """Collapse an observer node label to a hash-free structural family."""
 
@@ -627,6 +771,12 @@ def _compact_gate1_observer_diff(
                 )[:MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY]
             ]
         if category == "dataflow":
+            local_frontier = _observer_local_dataflow_frontier(
+                source_fingerprint,
+                replay_fingerprint,
+            )
+            if local_frontier is not None:
+                group["local_frontier"] = local_frontier
             witnesses = _observer_node_witnesses(
                 mapped_differences,
                 node_aliases,

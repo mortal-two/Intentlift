@@ -161,6 +161,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
             "When Gate1 reports dataflow, run `python /input/tools/context_query.py feedback-category dataflow`; it preserves effect-order witnesses even when bulk node witnesses are paged out.",
+            "When that dataflow view contains local_frontier, inspect its non-recursive immediate profiles before bulk recursive-hash witnesses; it is diagnostic-only and never prescribes J/C/pi.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }

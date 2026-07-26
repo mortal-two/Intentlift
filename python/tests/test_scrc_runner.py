@@ -360,6 +360,93 @@ def test_gate1_relift_node_witness_preserves_incident_edge_context() -> None:
     assert replay_add not in str(compact)
 
 
+def test_gate1_relift_reports_non_recursive_local_dataflow_frontier() -> None:
+    source_add = "a" * 20
+    replay_add = "b" * 20
+
+    class RewiredComparison:
+        def to_dict(self):
+            return {
+                "hard_pass": False,
+                "hard_passes": {"dataflow": False},
+                "primary_difference_category": "dataflow",
+                "differences": [
+                    {
+                        "category": "dataflow",
+                        "kind": "missing",
+                        "item": [
+                            "edge",
+                            "arith.mulf[cccccccccccccccccccc]",
+                            f"arith.addf[{source_add}]",
+                            "operand[1]",
+                        ],
+                        "expected_count": 1,
+                        "actual_count": 0,
+                    },
+                    {
+                        "category": "dataflow",
+                        "kind": "unexpected",
+                        "item": [
+                            "edge",
+                            "arg[1]:f32",
+                            f"arith.addf[{replay_add}]",
+                            "operand[1]",
+                        ],
+                        "expected_count": 0,
+                        "actual_count": 1,
+                    },
+                ],
+            }
+
+    class SourceFingerprint:
+        diagnostic_node_signatures = ()
+        diagnostic_node_profiles = (
+            (
+                f"arith.addf[{source_add}]",
+                "arith.addf %,% : f32",
+                (
+                    ("operand[0]", "arg[0]:f32"),
+                    ("operand[1]", "arith.mulf %,% : f32"),
+                ),
+                (),
+            ),
+        )
+
+    class ReplayFingerprint:
+        diagnostic_node_signatures = ()
+        diagnostic_node_profiles = (
+            (
+                f"arith.addf[{replay_add}]",
+                "arith.addf %,% : f32",
+                (
+                    ("operand[0]", "arg[0]:f32"),
+                    ("operand[1]", "arg[1]:f32"),
+                ),
+                (),
+            ),
+        )
+
+    compact = _compact_gate1_observer_diff(
+        RewiredComparison(),
+        source_fingerprint=SourceFingerprint(),
+        replay_fingerprint=ReplayFingerprint(),
+    )
+    frontier = compact["categories"][0]["local_frontier"]
+
+    assert frontier["protocol"] == "intentir.gate1-local-frontier.v1"
+    assert frontier["source_profile_count"] == 1
+    assert frontier["replay_profile_count"] == 1
+    assert frontier["difference_count"] == 2
+    assert {item["kind"] for item in frontier["examples"]} == {
+        "missing",
+        "unexpected",
+    }
+    assert frontier["examples"][0]["profile"]["local_signature"] == (
+        "arith.addf %,% : f32"
+    )
+    assert re.search(r"[0-9a-f]{12,}", str(frontier)) is None
+
+
 def test_gate1_relift_surfaces_expanded_effect_order_before_operand_noise() -> None:
     source_trace = "1" * 20
     replay_trace = "2" * 20

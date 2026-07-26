@@ -605,6 +605,26 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only, non-recursive node profiles.  Recursive semantic node
+    # hashes are required by the hard dataflow observer, but one upstream
+    # mutation necessarily re-hashes every downstream consumer.  These local
+    # profiles retain only the immediate producer signatures, operand roles,
+    # lexical region roles.  SCRC can therefore
+    # report a bounded divergence frontier without weakening or changing the
+    # versioned membership relation above.
+    diagnostic_node_profiles: tuple[
+        tuple[
+            str,
+            str,
+            tuple[tuple[str, str], ...],
+            tuple[str, ...],
+        ],
+        ...,
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
     # Diagnostic-only expansion of each synthetic ``effect.trace`` node.
     # Keeping the ordered event spellings beside the opaque trace digest lets
     # SCRC explain *which* lexical effect sequence diverged.  Like node
@@ -4773,6 +4793,80 @@ class TTIRParser:
             for effect in memory_effects
             if effect.predicate is not None
         )
+
+        def diagnostic_operand_profile(value: str) -> str:
+            """Describe one immediate producer without recursive node hashes."""
+
+            leaf = leaf_labels.get(value)
+            if leaf is not None:
+                return leaf
+            producer_id = result_to_node[value]
+            producer = node_by_id[producer_id]
+            signature = producer.local_signature
+            if len(producer.result_names) <= 1:
+                return signature
+            try:
+                slot = producer.result_names.index(value)
+            except ValueError as error:  # pragma: no cover - maps share construction
+                raise TTIRParseError(
+                    f"SSA value {value!r} is absent from its multi-result producer"
+                ) from error
+            return f"{signature}#result[{slot}]"
+
+        def diagnostic_node_profile(
+            operation: _Operation,
+        ) -> tuple[
+            str,
+            str,
+            tuple[tuple[str, str], ...],
+            tuple[str, ...],
+        ]:
+            immediate = [
+                diagnostic_operand_profile(value)
+                for value in (*operation.operands, *operation.region_results)
+            ]
+            if operation.cmp_flipped and len(immediate) >= 2:
+                immediate[0], immediate[1] = immediate[1], immediate[0]
+            if (
+                operation.name in _COMMUTATIVE_OPS
+                or operation.cmp_predicate in _SYMMETRIC_CMP
+            ):
+                header = immediate[: operation.header_operand_count]
+                header.sort()
+                immediate = header + immediate[operation.header_operand_count :]
+
+            inputs: list[tuple[str, str]] = []
+            for index, producer in enumerate(immediate):
+                if operation.name == "scf.if":
+                    role = (
+                        "condition"
+                        if index == 0
+                        else "positive_yield"
+                        if index == 1
+                        else "negative_yield"
+                    )
+                elif index < operation.header_operand_count:
+                    role = f"operand[{index}]"
+                else:
+                    role = (
+                        f"region_result[{index - operation.header_operand_count}]"
+                    )
+                inputs.append((role, producer))
+
+            context = tuple(
+                node_by_id[owner].name for owner in operation.context
+            )
+            if operation.structured_if_arm is not None:
+                context += (f"structured_if_arm={operation.structured_if_arm}",)
+            if operation.fork_arm is not None:
+                context += (f"terminal_fork_arm={operation.fork_arm}",)
+            return (
+                node_ref(operation.node_id, semantic=True),
+                operation.local_signature,
+                tuple(inputs),
+                context,
+            )
+
         return TTIRFingerprint(
             interface=RuntimeInterface(
                 tuple(interface_arguments),
@@ -4796,6 +4890,13 @@ class TTIRParser:
                         node_ref(operation.node_id, semantic=True),
                         operation.local_signature,
                     )
+                    for operation in operations
+                    if operation.name not in _TERMINATORS
+                )
+            ),
+            diagnostic_node_profiles=tuple(
+                sorted(
+                    diagnostic_node_profile(operation)
                     for operation in operations
                     if operation.name not in _TERMINATORS
                 )

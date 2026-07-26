@@ -13,6 +13,7 @@ from intentir.verify.gate1.ttir import (
     fingerprint_ttir,
     runtime_argument_names,
 )
+from intentir.verify.scrc_runner import _observer_local_dataflow_frontier
 
 
 EQUIVALENT_SOURCE = r'''
@@ -63,16 +64,53 @@ module {
 
 def test_diagnostic_node_signatures_do_not_change_versioned_fingerprint() -> None:
     fingerprint = fingerprint_ttir(EQUIVALENT_SOURCE)
-    without_diagnostics = replace(fingerprint, diagnostic_node_signatures=())
+    without_diagnostics = replace(
+        fingerprint,
+        diagnostic_node_signatures=(),
+        diagnostic_node_profiles=(),
+    )
 
     assert fingerprint.diagnostic_node_signatures
+    assert fingerprint.diagnostic_node_profiles
     assert "diagnostic_node_signatures" not in fingerprint.to_dict()
+    assert "diagnostic_node_profiles" not in fingerprint.to_dict()
     assert fingerprint == without_diagnostics
     assert fingerprint.digest == without_diagnostics.digest
     assert all(
         "%zero" not in signature and "%sum" not in signature
         for _node, signature in fingerprint.diagnostic_node_signatures
     )
+    rendered_profiles = json.dumps(fingerprint.diagnostic_node_profiles)
+    assert "%zero" not in rendered_profiles
+    assert "%sum" not in rendered_profiles
+
+
+def test_local_dataflow_frontier_removes_recursive_hash_fallout() -> None:
+    source = fingerprint_ttir(EQUIVALENT_SOURCE)
+    equivalent = fingerprint_ttir(EQUIVALENT_REPLAY)
+    equivalent_frontier = _observer_local_dataflow_frontier(source, equivalent)
+
+    assert equivalent_frontier is not None
+    assert equivalent_frontier["difference_count"] == 0
+
+    rewired_ttir = EQUIVALENT_SOURCE.replace(
+        "%sum = arith.addf %value, %one :",
+        "%sum = arith.addf %zero, %one :",
+    )
+    rewired = fingerprint_ttir(rewired_ttir)
+    comparison = compare_fingerprints(source, rewired)
+    frontier = _observer_local_dataflow_frontier(source, rewired)
+
+    assert not comparison.passed
+    assert frontier is not None
+    assert frontier["difference_count"] == 3
+    assert frontier["difference_count"] < len(
+        comparison.component("dataflow").differences
+    )
+    assert {
+        item["profile"]["local_signature"].split(" ", 1)[0]
+        for item in frontier["examples"]
+    } == {"arith.addf", "tt.store"}
 
 
 def test_cache_policy_hints_are_global_presentation_noise() -> None:

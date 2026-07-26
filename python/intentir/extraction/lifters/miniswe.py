@@ -274,6 +274,10 @@ Gate1 `dataflow.node_witnesses` use `source_node_*`, `replay_node_*`, and
 one feedback. Compare their normalized local signatures and incident
 producer/consumer roles to localize the earliest wiring divergence; never copy
 an observer alias into J/C/pi.
+When present, inspect `dataflow.local_frontier` first. It removes recursive
+observer-hash fallout and lists bounded immediate producer/consumer profile
+differences; it is diagnostic-only, cannot accept a candidate, and does not
+prescribe any J/C/pi field.
 After writing or editing a complete draft, inspect the bounded public-ABI diff
 without paging the whole Harness again:
 
