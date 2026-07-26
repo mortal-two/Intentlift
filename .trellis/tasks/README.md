@@ -5,11 +5,14 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-2026-07-24 只有 Task 11 是活动任务。它继承已归档 Task 10 的 v4/v8 协议，以独立 fresh
+Task 11 继续作为 28-Kernel 闭合主线。2026-07-26 新增并行支撑任务 Task 12，专门修复已由 v124
+证明的 Agent execution/transaction 根因；Task 12 不替代或终止 Task 11。Task 11 继承已归档 Task 10
+的 v4/v8 协议，以独立 fresh
 lifecycle 对 28 个目标 Kernel 做有界 case-level 并行闭合，并按 registry ordinal 稳定汇总；不会
 恢复或改写已经结束的 Task 03。后端 B0/B1 仍在稳定 J corpus 形成后独立展开。
 
-- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；唯一当前主线）
+- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
+- [Task 12：Single-Owner Transactional Agent Runtime](07-26-single-owner-agent-runtime-12/task.md)（执行中；Task 11 的并行执行引擎支撑）
 
 ## 本轮已归档任务
 

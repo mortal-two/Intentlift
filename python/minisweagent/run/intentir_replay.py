@@ -220,6 +220,14 @@ def intentir_replay_episode_contract_sha256(
                 "replay_source_inspect_limit"
             ),
             "transport_attempts_per_turn": model.get("retry_attempts"),
+            "max_tool_calls_per_response": model.get(
+                "max_tool_calls_per_response"
+            ),
+            "parallel_tool_calls": (
+                model.get("model_kwargs", {}).get("parallel_tool_calls")
+                if isinstance(model.get("model_kwargs"), Mapping)
+                else None
+            ),
         },
     }
     hasher = hashlib.sha256()
@@ -281,8 +289,6 @@ def run_intentir_replay(
     except Exception as exc:
         caught = exc
         terminal = {"exit_status": type(exc).__name__, "submission": ""}
-    elapsed_ms = (time.monotonic() - started) * 1000.0
-    trajectory = agent.save(None)
     exit_status = str(terminal.get("exit_status", ""))
     source_text: str | None = None
     if exit_status == "Submitted":
@@ -291,6 +297,21 @@ def run_intentir_replay(
         except Exception as exc:
             caught = exc
             exit_status = "InvalidSubmission"
+    elif caught is None:
+        activate_fallback = getattr(
+            environment, "activate_committed_fallback", None
+        )
+        if callable(activate_fallback):
+            try:
+                source_text = activate_fallback(exit_status)
+            except Exception as exc:
+                caught = exc
+                exit_status = "InvalidSubmission"
+            else:
+                if source_text is not None:
+                    exit_status = "SubmittedCheckpoint"
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    trajectory = agent.save(None)
     result = IntentIRReplayRunResult(
         source_text=source_text,
         trajectory=trajectory,
@@ -308,7 +329,7 @@ def run_intentir_replay(
             result=result,
             cause=caught,
         ) from caught
-    if exit_status != "Submitted" or source_text is None:
+    if exit_status not in {"Submitted", "SubmittedCheckpoint"} or source_text is None:
         raise IntentIRReplayRunError(
             f"IntentIR Replay worker terminated without source: {exit_status}",
             result=result,

@@ -116,8 +116,6 @@ def _run_agent_stage(
     except Exception as exc:
         caught = exc
         terminal = {"exit_status": type(exc).__name__, "submission": ""}
-    elapsed_ms = (time.monotonic() - started) * 1000.0
-    trajectory = agent.save(None)
     exit_status = str(terminal.get("exit_status", ""))
     output_text: str | None = None
     if exit_status == "Submitted":
@@ -126,6 +124,21 @@ def _run_agent_stage(
         except Exception as exc:
             caught = exc
             exit_status = "InvalidSubmission"
+    elif caught is None:
+        activate_fallback = getattr(
+            environment, "activate_committed_fallback", None
+        )
+        if callable(activate_fallback):
+            try:
+                output_text = activate_fallback(exit_status)
+            except Exception as exc:
+                caught = exc
+                exit_status = "InvalidSubmission"
+            else:
+                if output_text is not None:
+                    exit_status = "SubmittedCheckpoint"
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    trajectory = agent.save(None)
     physical_after = getattr(model, "physical_provider_calls", None)
     retries_after = getattr(model, "transport_retries", None)
     physical_calls = (
@@ -282,7 +295,7 @@ def run_intentir_lift(
             result=result,
             cause=stage.caught,
         ) from stage.caught
-    if stage.exit_status != "Submitted" or stage.output_text is None:
+    if stage.exit_status not in {"Submitted", "SubmittedCheckpoint"} or stage.output_text is None:
         raise IntentIRLiftRunError(
             "IntentIR Lift worker terminated without a candidate: "
             f"{stage.exit_status}",
@@ -392,7 +405,10 @@ def run_intentir_staged_lift(
             result=result,
             cause=reviewer.caught,
         ) from reviewer.caught
-    if reviewer.exit_status != "Submitted" or reviewer.output_text is None:
+    if reviewer.exit_status not in {
+        "Submitted",
+        "SubmittedCheckpoint",
+    } or reviewer.output_text is None:
         raise IntentIRLiftRunError(
             "IntentIR staged Lift reviewer terminated without a candidate: "
             f"{reviewer.exit_status}",

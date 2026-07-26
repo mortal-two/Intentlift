@@ -16,13 +16,25 @@ agent:
     `intentir_replay_compile_check /output/replay.source` as another complete
     action. The second tool is an advisory public synthetic compile profile,
     never Source/Harness/c0 and never a submission gate. Repair actionable
-    diagnostics yourself. Finish
-    with a separate `printf 'INTENTIR_REPLAY_SUBMIT\n'` action. Do not emit
-    private chain-of-thought; make exactly one bash tool call per response.
+    diagnostics yourself. You are the sole Replay source owner for this whole
+    session. You may issue up to four independent `intentir_packet_query` calls
+    in one response. The runtime rejects the whole response before executing
+    anything if a multi-call batch contains another command. Every write,
+    inspect-after-write, check, commit, rollback, or submit must be the only bash
+    call in that response. Do not emit private chain-of-thought.
+
+    After exact current bytes receive ReplayCheck PASS, preserve them with
+    `intentir_replay_commit /output/replay.source`. This records only your exact
+    bytes and generates or patches no source. Restore them with
+    `intentir_replay_rollback /output/replay.source`. Submit current checked bytes
+    with `intentir_replay_submit /output/replay.source`, or explicitly submit the
+    committed version with `intentir_replay_submit --committed`. Do not use a
+    stdout marker.
   instance_template: |
-    First run `intentir_packet_query overview`; it already contains the complete
-    compact ABI/op inventory and exact root sizes. Then use
-    `intentir_packet_query abi 0 48`, `graph 0 12`, and `realization`, then page
+    In the first response issue these four independent read-only calls together:
+    `intentir_packet_query overview`, `intentir_packet_query abi 0 48`,
+    `intentir_packet_query graph 0 12`, and
+    `intentir_packet_query realization`. Then page
     `intentir_packet_query obligations 0 12` through every current instance.
     This compact relation index joins only this packet's already-authored
     instance, route, order, sharing, temporal, and refinement facts and never
@@ -59,7 +71,8 @@ agent:
     and submit. Produce a complete first source by turn 10. After every final
     source edit, rerun ReplayCheck and the advisory compile check so an
     already-reported frontend shape or syntax error is not knowingly
-    resubmitted. Do not create another file under
+    resubmitted. Commit the first ReplayCheck PASS immediately, update that commit
+    only after a better exact version also passes, and do not create another file under
     /output. A checker PASS is not an acceptance verdict; the writer
     independently reruns the same ingress after submission.
   step_limit: 40
@@ -67,6 +80,7 @@ agent:
   wall_time_limit_seconds: 1800
   max_consecutive_format_errors: 2
 model:
+  max_tool_calls_per_response: 4
   observation_template: |
     {%- if output.output | length < 12000 -%}
     {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
@@ -75,13 +89,14 @@ model:
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
-    Use the bash tool for the next bounded action. To submit, call bash with:
-    printf 'INTENTIR_REPLAY_SUBMIT\n'
+    Use one to four bash calls for the next bounded action. Multiple calls must
+    be independent and read-only; use exactly one call for every write, inspect
+    after write, check, commit, rollback, or direct submit.
   model_kwargs:
     drop_params: true
     num_retries: 0
     max_retries: 0
-    parallel_tool_calls: false
+    parallel_tool_calls: true
   # Same source-blind episode and exact message packet; no new semantic input.
   retry_attempts: 3
   use_global_model_stats: false

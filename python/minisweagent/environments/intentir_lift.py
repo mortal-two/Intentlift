@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import site
 import stat
@@ -22,9 +23,32 @@ from minisweagent.exceptions import Submitted
 
 INTENTIR_LIFT_SUBMIT = "INTENTIR_LIFT_SUBMIT"
 INTENTIR_LIFT_PLAN_SUBMIT = "INTENTIR_LIFT_PLAN_SUBMIT"
+INTENTIR_LIFT_SUBMIT_COMMAND = "intentir_lift_submit"
+INTENTIR_LIFT_PLAN_SUBMIT_COMMAND = "intentir_lift_plan_submit"
+INTENTIR_CANDIDATE_COMMIT = "intentir_candidate_commit"
+INTENTIR_CANDIDATE_ROLLBACK = "intentir_candidate_rollback"
 INTENTIR_LIFT_PLAN_PROTOCOL = "intentir.lift-plan.v1"
 INTENTIR_CANDIDATE_CHECK = "intentir_candidate_check"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
+LIFT_TRANSACTION_PROTOCOL = "intentir.lift-transaction.v1"
+MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
+_LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
+    {
+        "feedback",
+        "feedback-category",
+        "source",
+        "source-find",
+        "source-outline",
+        "harness",
+        "candidate",
+        "candidate-find",
+        "candidate-diff",
+        "candidate-nodes",
+        "candidate-node",
+        "candidate-abi",
+        "knowledge",
+    }
+)
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_LIFT_PLAN_BYTES = 256 * 1024
 MAX_ACTION_OUTPUT_BYTES = 1024 * 1024
@@ -243,8 +267,189 @@ class IntentIRLiftEnvironment:
         self._candidate_check_submission_reserved_evaluations = 0
         self._candidate_check_audit: list[dict[str, Any]] = []
         self._candidate_check_passed_bytes: bytes | None = None
+        self._candidate_committed_bytes: bytes | None = None
+        self._candidate_commit_audit: list[dict[str, Any]] = []
+        self._candidate_rollback_count = 0
+        self._candidate_fallback_audit: list[dict[str, Any]] = []
+        self._multi_action_rejections = 0
         self._validate_paths()
         self._probe()
+
+    @staticmethod
+    def _is_batched_read_only_command(command: Any) -> bool:
+        if not isinstance(command, str) or any(
+            token in command
+            for token in (";", "|", "&", ">", "<", "\n", "\r", "`", "$(")
+        ):
+            return False
+        try:
+            arguments = shlex.split(command)
+        except ValueError:
+            return False
+        if len(arguments) < 3 or arguments[0] != "python":
+            return False
+        if arguments[1] == "/input/tools/schema_query.py":
+            return True
+        return (
+            arguments[1] == "/input/tools/context_query.py"
+            and arguments[2] in _LIFT_READ_ONLY_CONTEXT_COMMANDS
+        )
+
+    def validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
+        """Fail the whole batch unless every action is an allowlisted read-only query."""
+
+        if len(actions) <= 1:
+            return None
+        if len(actions) > 4:
+            self._multi_action_rejections += 1
+            return (
+                f"{MULTI_ACTION_PROTOCOL}: at most four independent read-only "
+                "calls are allowed; no action in this response was executed"
+            )
+        if all(
+            isinstance(action, Mapping)
+            and self._is_batched_read_only_command(action.get("command"))
+            for action in actions
+        ):
+            return None
+        self._multi_action_rejections += 1
+        return (
+            f"{MULTI_ACTION_PROTOCOL}: multiple calls are allowed only for "
+            "independent read-only context_query.py or schema_query.py commands; "
+            "no action in this response was executed"
+        )
+
+    @staticmethod
+    def _transaction_output(
+        *,
+        action: str,
+        status: str,
+        candidate_bytes: bytes | None = None,
+        diagnostic: str | None = None,
+    ) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "protocol": LIFT_TRANSACTION_PROTOCOL,
+            "action": action,
+            "status": status,
+        }
+        if candidate_bytes is not None:
+            value["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
+            value["candidate_bytes"] = len(candidate_bytes)
+        if diagnostic is not None:
+            value["diagnostic"] = diagnostic
+        return {
+            "output": json.dumps(value, sort_keys=True) + "\n",
+            "returncode": 0 if status == "pass" else 1,
+            "exception_info": "",
+        }
+
+    def _current_candidate_bytes(self) -> bytes:
+        workspace = IntentIRLiftWorkspace(
+            root=self.config.input_dir.parent,
+            input_dir=self.config.input_dir,
+            output_dir=self.config.output_dir,
+            scratch_dir=self.config.scratch_dir,
+            tmp_dir=self.config.tmp_dir,
+        )
+        return workspace.read_candidate().encode("utf-8")
+
+    def _restore_committed_candidate(self) -> bytes:
+        committed = self._candidate_committed_bytes
+        if committed is None:
+            raise ValueError("no LLM-committed candidate is available")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".candidate-restore-",
+            dir=self.config.output_dir,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(committed)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, self.config.output_dir / "candidate.json")
+        finally:
+            temporary.unlink(missing_ok=True)
+        self._candidate_check_passed_bytes = committed
+        return committed
+
+    def _execute_candidate_commit(self, arguments: list[str]) -> dict[str, Any]:
+        if arguments != [INTENTIR_CANDIDATE_COMMIT, "/output/candidate.json"]:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                diagnostic=(
+                    "usage: intentir_candidate_commit /output/candidate.json"
+                ),
+            )
+        try:
+            candidate_bytes = self._current_candidate_bytes()
+        except Exception as exc:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                diagnostic=f"candidate read failed: {type(exc).__name__}: {exc}",
+            )
+        if candidate_bytes != self._candidate_check_passed_bytes:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                candidate_bytes=candidate_bytes,
+                diagnostic=(
+                    "the exact current bytes do not have CandidateCheck PASS; "
+                    "check this complete candidate first"
+                ),
+            )
+        self._candidate_committed_bytes = candidate_bytes
+        receipt = {
+            "sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+            "bytes": len(candidate_bytes),
+        }
+        self._candidate_commit_audit.append(receipt)
+        return self._transaction_output(
+            action="commit", status="pass", candidate_bytes=candidate_bytes
+        )
+
+    def _execute_candidate_rollback(self, arguments: list[str]) -> dict[str, Any]:
+        if arguments != [INTENTIR_CANDIDATE_ROLLBACK, "/output/candidate.json"]:
+            return self._transaction_output(
+                action="rollback",
+                status="fail",
+                diagnostic=(
+                    "usage: intentir_candidate_rollback /output/candidate.json"
+                ),
+            )
+        try:
+            candidate_bytes = self._restore_committed_candidate()
+        except Exception as exc:
+            return self._transaction_output(
+                action="rollback",
+                status="fail",
+                diagnostic=f"rollback unavailable: {type(exc).__name__}: {exc}",
+            )
+        self._candidate_rollback_count += 1
+        return self._transaction_output(
+            action="rollback", status="pass", candidate_bytes=candidate_bytes
+        )
+
+    def activate_committed_fallback(self, terminal_status: str) -> str | None:
+        """Restore only bytes the LLM explicitly committed as its fallback choice."""
+
+        if terminal_status not in {
+            "LimitsExceeded",
+            "TimeExceeded",
+            "RepeatedFormatError",
+        } or self._candidate_committed_bytes is None:
+            return None
+        candidate_bytes = self._restore_committed_candidate()
+        self._candidate_fallback_audit.append(
+            {
+                "terminal_status": terminal_status,
+                "sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+                "bytes": len(candidate_bytes),
+            }
+        )
+        return candidate_bytes.decode("utf-8")
 
     def _execute_candidate_check(
         self,
@@ -616,6 +821,77 @@ class IntentIRLiftEnvironment:
             and candidate_check_arguments[0] == INTENTIR_CANDIDATE_CHECK
         ):
             return self._execute_candidate_check(candidate_check_arguments)
+        if (
+            candidate_check_arguments
+            and candidate_check_arguments[0] == INTENTIR_CANDIDATE_COMMIT
+        ):
+            return self._execute_candidate_commit(candidate_check_arguments)
+        if (
+            candidate_check_arguments
+            and candidate_check_arguments[0] == INTENTIR_CANDIDATE_ROLLBACK
+        ):
+            return self._execute_candidate_rollback(candidate_check_arguments)
+        if (
+            candidate_check_arguments
+            and candidate_check_arguments[0] == INTENTIR_LIFT_PLAN_SUBMIT_COMMAND
+        ):
+            if candidate_check_arguments != [
+                INTENTIR_LIFT_PLAN_SUBMIT_COMMAND,
+                "/output/lift_plan.json",
+            ]:
+                return self._transaction_output(
+                    action="submit_plan",
+                    status="fail",
+                    diagnostic=(
+                        "usage: intentir_lift_plan_submit "
+                        "/output/lift_plan.json"
+                    ),
+                )
+            output = {
+                "output": INTENTIR_LIFT_PLAN_SUBMIT + "\n",
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
+        if (
+            candidate_check_arguments
+            and candidate_check_arguments[0] == INTENTIR_LIFT_SUBMIT_COMMAND
+        ):
+            if candidate_check_arguments == [
+                INTENTIR_LIFT_SUBMIT_COMMAND,
+                "--committed",
+            ]:
+                try:
+                    self._restore_committed_candidate()
+                except Exception as exc:
+                    return self._transaction_output(
+                        action="submit",
+                        status="fail",
+                        diagnostic=(
+                            "committed submission unavailable: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
+            elif candidate_check_arguments != [
+                INTENTIR_LIFT_SUBMIT_COMMAND,
+                "/output/candidate.json",
+            ]:
+                return self._transaction_output(
+                    action="submit",
+                    status="fail",
+                    diagnostic=(
+                        "usage: intentir_lift_submit /output/candidate.json | "
+                        "intentir_lift_submit --committed"
+                    ),
+                )
+            output = {
+                "output": INTENTIR_LIFT_SUBMIT + "\n",
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
             "ulimit -t 60 -f 8192 -n 64 -u 128 -v 524288; "
@@ -892,16 +1168,44 @@ class IntentIRLiftEnvironment:
                     },
                     "results": list(self._candidate_check_audit),
                 },
+                "candidate_transaction": {
+                    "protocol": LIFT_TRANSACTION_PROTOCOL,
+                    "authority": (
+                        "exact LLM-authored bytes only; no field is generated, "
+                        "renamed, reordered, inferred, or repaired"
+                    ),
+                    "commit_count": len(self._candidate_commit_audit),
+                    "commits": list(self._candidate_commit_audit),
+                    "rollback_count": self._candidate_rollback_count,
+                    "fallback_count": len(self._candidate_fallback_audit),
+                    "fallbacks": list(self._candidate_fallback_audit),
+                },
+                "multi_action_policy": {
+                    "protocol": MULTI_ACTION_PROTOCOL,
+                    "max_actions": 4,
+                    "authority": "whole-response fail-before-execute",
+                    "allowed": (
+                        "independent read-only context_query.py or "
+                        "schema_query.py commands"
+                    ),
+                    "rejections": self._multi_action_rejections,
+                },
             }
         }
 
 
 __all__ = [
     "CANDIDATE_CHECK_PROTOCOL",
+    "INTENTIR_CANDIDATE_COMMIT",
     "INTENTIR_LIFT_SUBMIT",
+    "INTENTIR_LIFT_SUBMIT_COMMAND",
     "INTENTIR_LIFT_PLAN_PROTOCOL",
     "INTENTIR_LIFT_PLAN_SUBMIT",
+    "INTENTIR_LIFT_PLAN_SUBMIT_COMMAND",
     "INTENTIR_CANDIDATE_CHECK",
+    "INTENTIR_CANDIDATE_ROLLBACK",
+    "LIFT_TRANSACTION_PROTOCOL",
+    "MULTI_ACTION_PROTOCOL",
     "IntentIRLiftEnvironment",
     "IntentIRLiftEnvironmentConfig",
     "IntentIRLiftWorkspace",

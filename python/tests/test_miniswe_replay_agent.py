@@ -24,13 +24,17 @@ from intentir.verify.gate1.replay import (
 from minisweagent.environments.intentir_replay import (
     INTENTIR_PACKET_QUERY,
     INTENTIR_REPLAY_CHECK,
+    INTENTIR_REPLAY_COMMIT,
     INTENTIR_REPLAY_COMPILE_CHECK,
     INTENTIR_REPLAY_INSPECT,
+    INTENTIR_REPLAY_ROLLBACK,
     INTENTIR_REPLAY_SUBMIT,
+    INTENTIR_REPLAY_SUBMIT_COMMAND,
     REPLAY_CHECK_PROTOCOL,
     REPLAY_INPUT_FILES,
     REPLAY_SANDBOX_HOSTNAME,
     REPLAY_TOOL_APPLETS,
+    REPLAY_TRANSACTION_PROTOCOL,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
 )
@@ -57,7 +61,9 @@ INVALID_CONSTEXPR_REPLAY = VALID_REPLAY.replace(
 
 
 class _ScriptedModel:
-    def __init__(self, commands: list[str], *, secret: str = "") -> None:
+    def __init__(
+        self, commands: list[str | list[str]], *, secret: str = ""
+    ) -> None:
         self.commands = list(commands)
         self.secret = secret
         self.query_inputs: list[list[dict]] = []
@@ -65,11 +71,13 @@ class _ScriptedModel:
     def query(self, messages, **kwargs):
         del kwargs
         self.query_inputs.append(list(messages))
+        command = self.commands.pop(0)
+        commands = [command] if isinstance(command, str) else command
         return {
             "role": "assistant",
             "content": "",
             "extra": {
-                "actions": [{"command": self.commands.pop(0)}],
+                "actions": [{"command": item} for item in commands],
                 "cost": 0.0,
             },
         }
@@ -455,7 +463,9 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["environment"]["replay_compile_check_limit"] == 7
     assert default_config["environment"]["replay_source_inspect_limit"] == 12
     assert default_config["model"]["retry_attempts"] == 3
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v4"
+    assert default_config["model"]["max_tool_calls_per_response"] == 4
+    assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v5"
     instance = default_config["agent"]["instance_template"]
     assert "typed rank and axis structure" in instance
     assert "algebraically equivalent flattened reduction" in instance
@@ -576,7 +586,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
             f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
             _write_source(VALID_REPLAY),
             f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
-            f"printf '{INTENTIR_REPLAY_SUBMIT}\\n'",
+            f"{INTENTIR_REPLAY_SUBMIT_COMMAND} /output/replay.source",
         ]
     )
     try:
@@ -598,6 +608,53 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
         "pass",
     ]
     assert evidence["evaluations"] == 2
+
+
+def test_replay_multi_action_write_batch_is_rejected_before_execution() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(
+        [
+            [
+                "printf forbidden > /output/extra",
+                "printf forbidden > /output/replay.source",
+            ],
+            _write_source(VALID_REPLAY),
+            f"{INTENTIR_REPLAY_SUBMIT_COMMAND} /output/replay.source",
+        ]
+    )
+    try:
+        result = run_intentir_replay(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    assert result.source_text == VALID_REPLAY
+    policy = result.trajectory["info"]["multi_action_policy"]
+    assert policy["rejections"] == 1
+    assert "no action in this response was executed" in json.dumps(
+        result.trajectory["messages"]
+    )
+
+
+def test_replay_multi_action_runtime_rejects_more_than_four_packet_queries() -> None:
+    workspace = _workspace()
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        diagnostic = environment.validate_actions(
+            [
+                {"command": f"{INTENTIR_PACKET_QUERY} overview"}
+                for _index in range(5)
+            ]
+        )
+        policy = environment.serialize()["info"]["multi_action_policy"]
+    finally:
+        workspace.cleanup()
+
+    assert diagnostic is not None and "at most four" in diagnostic
+    assert policy["rejections"] == 1
 
 
 def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> None:
@@ -694,6 +751,111 @@ def test_check_budget_submission_reserve_and_exact_bytes() -> None:
         "explicit",
         "submission",
     ]
+
+
+def test_replay_transaction_preserves_only_explicit_exact_bytes() -> None:
+    workspace = _workspace()
+    committed = VALID_REPLAY.encode("utf-8")
+    changed = (VALID_REPLAY + "\n").encode("utf-8")
+    workspace.replay_path.write_bytes(committed)
+
+    def checker(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=checker,
+    )
+    canary = workspace.scratch_dir / "rollback-canary"
+    canary.write_bytes(b"must-stay-unchanged")
+    (workspace.scratch_dir / ".replay-rollback.tmp").symlink_to(canary)
+    try:
+        checked = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_CHECK} /output/replay.source"}
+        )
+        committed_result = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_COMMIT} /output/replay.source"}
+        )
+        workspace.replay_path.write_bytes(changed)
+        mismatched_commit = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_COMMIT} /output/replay.source"}
+        )
+        rolled_back = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_ROLLBACK} /output/replay.source"}
+        )
+        evidence = environment.serialize()["info"]["replay_transaction"]
+        restored = workspace.replay_path.read_bytes()
+        canary_bytes = canary.read_bytes()
+    finally:
+        workspace.cleanup()
+
+    assert checked["returncode"] == committed_result["returncode"] == 0
+    assert mismatched_commit["returncode"] == 1
+    assert "exact current bytes" in json.loads(mismatched_commit["output"])[
+        "diagnostic"
+    ]
+    assert rolled_back["returncode"] == 0
+    assert restored == committed
+    assert canary_bytes == b"must-stay-unchanged"
+    assert evidence == {
+        "protocol": REPLAY_TRANSACTION_PROTOCOL,
+        "authority": (
+            "exact Replay-LLM-authored bytes only; no source is generated, "
+            "edited, patched, or inferred"
+        ),
+        "commit_count": 1,
+        "commits": [
+            {
+                "sha256": hashlib.sha256(committed).hexdigest(),
+                "bytes": len(committed),
+            }
+        ],
+        "rollback_count": 1,
+        "fallback_count": 0,
+        "fallbacks": [],
+    }
+
+
+def test_step_limit_returns_explicitly_committed_replay_checkpoint() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(
+        [
+            _write_source(VALID_REPLAY),
+            f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
+            f"{INTENTIR_REPLAY_COMMIT} /output/replay.source",
+        ]
+    )
+
+    def checker(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_replay(
+            model=model,
+            workspace=workspace,
+            replay_checker=checker,
+            config_overrides={"agent": {"step_limit": 3}},
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.source_text == VALID_REPLAY
+    assert result.exit_status == "SubmittedCheckpoint"
+    assert result.model_calls == 3
+    transaction = result.trajectory["info"]["replay_transaction"]
+    assert transaction["commit_count"] == 1
+    assert transaction["fallback_count"] == 1
+    assert transaction["fallbacks"][0]["terminal_status"] == "LimitsExceeded"
 
 
 def test_submission_rejects_any_additional_output_file() -> None:

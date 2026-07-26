@@ -37,7 +37,7 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v4"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v5"
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
@@ -1156,8 +1156,9 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-Start with `intentir_packet_query overview`; then follow its exact `abi`,
-`graph`, `realization`, and paged `obligations` commands. The obligation ledger
+Issue `intentir_packet_query overview`, `abi 0 48`, `graph 0 12`, and
+`realization` as four independent reads in the first model response; then follow
+the paged `obligations` commands. The obligation ledger
 joins already-authored facts around each instance; use `obligation HANDLE` for
 one i* or semantic anchor. Resolved `routes`/`order` and raw paged `edges` are
 available to cross-check a named relation without redundantly paging all three.
@@ -1213,8 +1214,13 @@ is never consulted by submission. Results contain only a closed
 protocol/status/rule/path plus anonymous handles or line number. No Source,
 Harness value, actual C value, Gate1 observer, or execution oracle is run. The
 compile profile is the public fixed synthetic profile in README.md. Neither
-check has acceptance authority. Submit with a separate
-`printf 'INTENTIR_REPLAY_SUBMIT\\n'`. The writer independently reruns the same
+check has acceptance authority. After exact bytes pass ReplayCheck, preserve the
+LLM owner's fallback choice with
+`intentir_replay_commit /output/replay.source`; restore only those bytes with
+`intentir_replay_rollback /output/replay.source`. Submit directly with
+`intentir_replay_submit /output/replay.source` or
+`intentir_replay_submit --committed`; no stdout marker is used. The writer
+independently reruns the same
 compiler-free ingress callable after submission, and formal Gate1 compiles c0.
 """
     return (
@@ -1347,7 +1353,7 @@ class ResponsesReplayWriter:
 
 @dataclass
 class MiniSWEReplayWriter:
-    """Fresh bounded multi-turn Replay agent; v2 is Triton-only."""
+    """Fresh bounded single-owner Replay agent; the current backend is Triton-only."""
 
     provider: ProviderConfig | None = None
     effort: str | None = None
@@ -1604,6 +1610,10 @@ class MiniSWEReplayWriter:
             info.get("replay_compile_check", {})
             if isinstance(info, Mapping) else {}
         )
+        replay_transaction = (
+            info.get("replay_transaction", {})
+            if isinstance(info, Mapping) else {}
+        )
         context_receipt = _context_receipt({}, packet["u_f"])
         context_receipt.update(
             {
@@ -1612,6 +1622,7 @@ class MiniSWEReplayWriter:
                 "model_calls": result.model_calls,
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
+                "termination_status": result.exit_status,
                 "packet_digest": packet_digest,
                 "replay_check": (
                     dict(replay_check)
@@ -1621,6 +1632,11 @@ class MiniSWEReplayWriter:
                 "replay_compile_check": (
                     dict(replay_compile_check)
                     if isinstance(replay_compile_check, Mapping)
+                    else {}
+                ),
+                "replay_transaction": (
+                    dict(replay_transaction)
+                    if isinstance(replay_transaction, Mapping)
                     else {}
                 ),
                 "formal_ingress_recheck": True,

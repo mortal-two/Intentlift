@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v43"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v44"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -241,6 +241,14 @@ This directory is the complete allowlisted input for one fresh Lift round.
   Decode/TypeCheck diagnostics for the complete candidate (an eleven-evaluation
   ordinary allowance plus one separately reserved submission preflight);
   it never repairs or certifies the artifact.
+- `intentir_candidate_commit /output/candidate.json`: record only exact bytes
+  already returned PASS by CandidateCheck as the LLM owner's conditional
+  fallback; fixed code does not parse or modify fields.
+- `intentir_candidate_rollback /output/candidate.json`: restore only those exact
+  LLM-committed bytes.
+- `intentir_lift_submit /output/candidate.json` or
+  `intentir_lift_submit --committed`: direct structured delivery without a
+  stdout marker; external Decode/TypeCheck still rerun independently.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
@@ -259,9 +267,12 @@ Start with this single bounded command so long inputs cannot hide feedback:
 
 `python /input/tools/context_query.py bootstrap`
 
-Then inspect Source and Harness in separate actions with
+Then inspect Source, Harness, and the syntax-only outline with independent calls
+that may share one model response:
 `python /input/tools/context_query.py source` and
-`python /input/tools/context_query.py harness`. On repair rounds, inspect
+`python /input/tools/context_query.py harness`, plus
+`python /input/tools/context_query.py source-outline --start 1 --count 32`.
+On repair rounds, inspect
 `python /input/tools/context_query.py feedback` before editing the candidate
 copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.

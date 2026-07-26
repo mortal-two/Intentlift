@@ -5,7 +5,8 @@
 > 类型：Task 10 完成后的 fresh SCRC corpus 构建；不是 backend 性能搜索、论文实验或旧 Task 03
 > 恢复执行。
 >
-> 活动性：Task 01–10 已完成并物理归档；当前只有 Task 11 活跃。
+> 活动性：Task 01–10 已完成并物理归档；Task 11 闭合主线保持活跃。Task 12 作为并行 Agent
+> runtime 支撑任务执行，不终止、不替代或归档本任务。
 
 ## 目标
 

@@ -14,6 +14,12 @@
 
 前四份定义 SCRC，第五份只定义 SCRC 之后的 production backend。
 
+## 2026-07-26：Agent execution 自省来源
+
+| 材料 | 性质 | 主要吸收位置 |
+|---|---|---|
+| [高级 AI 对 Agent 工作流的思考](高级ai_agent思考.md) | 对 staged Lift、事务式单一 owner、直接提交与 Codex-style agent loop 的外部建议；其中 typed builder 等越界建议未直接采纳 | Task 12 Single-Owner Transactional Agent Runtime |
+
 ## 2026-07-24：后端设计来源
 
 | 材料 | 性质 | 主要吸收位置 |

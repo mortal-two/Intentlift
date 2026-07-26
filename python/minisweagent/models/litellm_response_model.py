@@ -19,12 +19,14 @@ logger = logging.getLogger("litellm_response_model")
 
 
 class LitellmResponseModelConfig(LitellmModelConfig):
-    pass
+    max_tool_calls_per_response: int = 1
 
 
 class LitellmResponseModel(LitellmModel):
     def __init__(self, *, config_class: Callable = LitellmResponseModelConfig, **kwargs):
         super().__init__(config_class=config_class, **kwargs)
+        if not 1 <= self.config.max_tool_calls_per_response <= 4:
+            raise ValueError("max_tool_calls_per_response must be in [1, 4]")
         self._physical_provider_calls = 0
         self._transport_retries = 0
 
@@ -99,6 +101,7 @@ class LitellmResponseModel(LitellmModel):
             getattr(response, "output", []),
             format_error_template=self.config.format_error_template,
             template_kwargs={"finish_reason": finish_reason_from_responses_api(response)},
+            max_tool_calls=self.config.max_tool_calls_per_response,
         )
 
     def format_observation_messages(

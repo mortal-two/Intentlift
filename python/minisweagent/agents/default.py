@@ -151,8 +151,34 @@ class DefaultAgent:
 
     def execute_actions(self, message: dict) -> list[dict]:
         """Execute actions in message, add observation messages, return them."""
-        outputs = [self.env.execute(action) for action in message.get("extra", {}).get("actions", [])]
-        return self.add_messages(*self.model.format_observation_messages(message, outputs, self.get_template_vars()))
+        actions = message.get("extra", {}).get("actions", [])
+        validate_actions = getattr(self.env, "validate_actions", None)
+        diagnostic = (
+            validate_actions(actions)
+            if len(actions) > 1 and callable(validate_actions)
+            else None
+        )
+        if diagnostic is None:
+            outputs = [self.env.execute(action) for action in actions]
+        else:
+            outputs = [
+                {
+                    "output": diagnostic + "\n",
+                    "returncode": 2,
+                    "exception_info": (
+                        "the whole multi-action response was rejected before "
+                        "execution"
+                    ),
+                }
+                for _action in actions
+            ]
+        return self.add_messages(
+            *self.model.format_observation_messages(
+                message,
+                outputs,
+                self.get_template_vars(),
+            )
+        )
 
     def serialize(self, *extra_dicts) -> dict:
         """Serialize agent state to a json-compatible nested dictionary for saving."""

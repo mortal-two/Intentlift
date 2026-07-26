@@ -56,7 +56,11 @@ def finish_reason_from_responses_api(response) -> str | None:
 
 
 def parse_toolcall_actions_response(
-    output: list, *, format_error_template: str, template_kwargs: dict | None = None
+    output: list,
+    *,
+    format_error_template: str,
+    template_kwargs: dict | None = None,
+    max_tool_calls: int = 1,
 ) -> list[dict]:
     """Parse tool calls from a Responses API response output.
 
@@ -68,6 +72,12 @@ def parse_toolcall_actions_response(
     ``{"finish_reason": ...}``), matching ``parse_toolcall_actions``.
     """
     template_kwargs = template_kwargs or {}
+    if (
+        not isinstance(max_tool_calls, int)
+        or isinstance(max_tool_calls, bool)
+        or max_tool_calls < 1
+    ):
+        raise ValueError("max_tool_calls must be a positive integer")
     tool_calls = []
     for item in output:
         item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
@@ -83,10 +93,11 @@ def parse_toolcall_actions_response(
             **template_kwargs,
         )
         raise FormatError(_format_error_message(error_text))
-    if len(tool_calls) != 1:
+    if len(tool_calls) > max_tool_calls:
         error_text = Template(format_error_template, undefined=StrictUndefined).render(
             error=(
-                "IntentIR requires exactly one bash tool call per model turn; "
+                "IntentIR permits at most "
+                f"{max_tool_calls} bash tool call(s) per model turn; "
                 f"received {len(tool_calls)}."
             ),
             actions=[],

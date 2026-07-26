@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -52,10 +53,14 @@ from minisweagent.config.intentir_context_query import (
 )
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
+    INTENTIR_CANDIDATE_COMMIT,
     INTENTIR_CANDIDATE_CHECK,
+    INTENTIR_CANDIDATE_ROLLBACK,
     INTENTIR_LIFT_PLAN_PROTOCOL,
     INTENTIR_LIFT_PLAN_SUBMIT,
     INTENTIR_LIFT_SUBMIT,
+    INTENTIR_LIFT_SUBMIT_COMMAND,
+    LIFT_TRANSACTION_PROTOCOL,
     IntentIRLiftEnvironment,
     IntentIRLiftWorkspace,
     MAX_ACTION_OUTPUT_BYTES,
@@ -78,7 +83,7 @@ from minisweagent.run.intentir_lift import (
 
 
 class _ScriptedModel:
-    def __init__(self, commands: list[str]):
+    def __init__(self, commands: list[str | list[str]]):
         self.commands = list(commands)
         self.query_inputs: list[list[dict]] = []
 
@@ -86,10 +91,14 @@ class _ScriptedModel:
         del kwargs
         self.query_inputs.append(list(messages))
         command = self.commands.pop(0)
+        commands = [command] if isinstance(command, str) else command
         return {
             "role": "assistant",
             "content": "",
-            "extra": {"actions": [{"command": command}], "cost": 0.0},
+            "extra": {
+                "actions": [{"command": item} for item in commands],
+                "cost": 0.0,
+            },
         }
 
     def format_message(self, **kwargs):
@@ -139,7 +148,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v43"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v44"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -162,6 +171,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "intentir_candidate_check /output/candidate.json" in (
         files["README.md"]
     )
+    assert "intentir_candidate_commit /output/candidate.json" in files["README.md"]
+    assert "intentir_lift_submit /output/candidate.json" in files["README.md"]
     readme = " ".join(files["README.md"].split())
     assert "eleven-evaluation ordinary allowance" in readme
     assert "separately reserved submission preflight" in readme
@@ -898,7 +909,7 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     model = _ScriptedModel(
         [
             f"printf '%s\\n' '{candidate}' > /output/candidate.json",
-            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+            f"{INTENTIR_LIFT_SUBMIT_COMMAND} /output/candidate.json",
         ]
     )
     try:
@@ -911,6 +922,59 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     assert result.model_calls == 2
     assert len(model.query_inputs) == 2
     assert len(model.query_inputs[0]) == 2
+
+
+def test_lift_multi_action_write_batch_is_rejected_before_any_execution() -> None:
+    workspace = _workspace()
+    candidate = '{"j": {}, "c": {}, "pi": {}}'
+    model = _ScriptedModel(
+        [
+            [
+                "printf forbidden > /output/extra",
+                "printf forbidden > /output/candidate.json",
+            ],
+            f"printf '%s\\n' '{candidate}' > /output/candidate.json",
+            f"{INTENTIR_LIFT_SUBMIT_COMMAND} /output/candidate.json",
+        ]
+    )
+    try:
+        result = run_intentir_lift(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    assert json.loads(result.candidate_text or "") == json.loads(candidate)
+    policy = result.trajectory["info"]["multi_action_policy"]
+    assert policy["rejections"] == 1
+    assert "no action in this response was executed" in json.dumps(
+        result.trajectory["messages"]
+    )
+
+
+def test_lift_multi_action_runtime_rejects_more_than_four_read_queries() -> None:
+    workspace = _workspace()
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        diagnostic = environment.validate_actions(
+            [
+                {
+                    "command": (
+                        "python /input/tools/context_query.py source "
+                        f"--start {index + 1} --lines 1"
+                    )
+                }
+                for index in range(5)
+            ]
+        )
+        policy = environment.serialize()["info"]["multi_action_policy"]
+    finally:
+        workspace.cleanup()
+
+    assert diagnostic is not None and "at most four" in diagnostic
+    assert policy["rejections"] == 1
 
 
 def test_staged_lift_uses_three_fresh_llm_contexts_and_opaque_plan() -> None:
@@ -1243,6 +1307,112 @@ def test_submission_preflight_matches_exact_bytes_not_json_equivalence() -> None
     ]
 
 
+def test_candidate_transaction_preserves_only_explicit_exact_bytes() -> None:
+    workspace = _workspace()
+    committed = b'{"candidate":"llm-authored"}\n'
+    changed = b'{"candidate":"later-draft"}\n'
+    workspace.candidate_path.write_bytes(committed)
+
+    def checker(_candidate_text: str) -> dict:
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    canary = workspace.scratch_dir / "rollback-canary"
+    canary.write_bytes(b"must-stay-unchanged")
+    (workspace.scratch_dir / ".candidate-rollback.tmp").symlink_to(canary)
+    try:
+        checked = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json"}
+        )
+        committed_result = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_COMMIT} /output/candidate.json"}
+        )
+        workspace.candidate_path.write_bytes(changed)
+        mismatched_commit = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_COMMIT} /output/candidate.json"}
+        )
+        rolled_back = environment.execute(
+            {"command": f"{INTENTIR_CANDIDATE_ROLLBACK} /output/candidate.json"}
+        )
+        evidence = environment.serialize()["info"]["candidate_transaction"]
+        restored = workspace.candidate_path.read_bytes()
+        canary_bytes = canary.read_bytes()
+    finally:
+        workspace.cleanup()
+
+    assert checked["returncode"] == committed_result["returncode"] == 0
+    assert mismatched_commit["returncode"] == 1
+    assert "exact current bytes" in json.loads(mismatched_commit["output"])[
+        "diagnostic"
+    ]
+    assert rolled_back["returncode"] == 0
+    assert restored == committed
+    assert canary_bytes == b"must-stay-unchanged"
+    assert evidence == {
+        "protocol": LIFT_TRANSACTION_PROTOCOL,
+        "authority": (
+            "exact LLM-authored bytes only; no field is generated, renamed, "
+            "reordered, inferred, or repaired"
+        ),
+        "commit_count": 1,
+        "commits": [
+            {
+                "sha256": hashlib.sha256(committed).hexdigest(),
+                "bytes": len(committed),
+            }
+        ],
+        "rollback_count": 1,
+        "fallback_count": 0,
+        "fallbacks": [],
+    }
+
+
+def test_step_limit_returns_explicitly_committed_candidate_checkpoint() -> None:
+    workspace = _workspace()
+    candidate = '{"j": {}, "c": {}, "pi": {}}\n'
+    model = _ScriptedModel(
+        [
+            f"printf '%s' '{candidate}' > /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_CHECK} /output/candidate.json",
+            f"{INTENTIR_CANDIDATE_COMMIT} /output/candidate.json",
+        ]
+    )
+
+    def checker(_candidate_text: str) -> dict:
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+            config_overrides={"agent": {"step_limit": 3}},
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.candidate_text == candidate
+    assert result.exit_status == "SubmittedCheckpoint"
+    assert result.model_calls == 3
+    transaction = result.trajectory["info"]["candidate_transaction"]
+    assert transaction["commit_count"] == 1
+    assert transaction["fallback_count"] == 1
+    assert transaction["fallbacks"][0]["terminal_status"] == "LimitsExceeded"
+
+
 def test_submission_rejects_checker_side_effect_after_pass() -> None:
     workspace = _workspace()
     checked = '{"which": "checked"}\n'
@@ -1568,7 +1738,33 @@ def test_multiple_shell_actions_are_one_turn_format_error() -> None:
             calls,
             format_error_template="{{ error }}",
         )
-    assert "exactly one" in captured.value.messages[0]["content"][0]["text"]
+    assert "at most 1" in captured.value.messages[0]["content"][0]["text"]
+
+
+def test_parser_accepts_four_ordered_independent_tool_calls_when_enabled() -> None:
+    calls = [
+        {
+            "type": "function_call",
+            "name": "bash",
+            "call_id": f"call-{index}",
+            "arguments": json.dumps({"command": f"read-only-{index}"}),
+        }
+        for index in range(4)
+    ]
+
+    actions = parse_toolcall_actions_response(
+        calls,
+        format_error_template="{{ error }}",
+        max_tool_calls=4,
+    )
+
+    assert actions == [
+        {
+            "command": f"read-only-{index}",
+            "tool_call_id": f"call-{index}",
+        }
+        for index in range(4)
+    ]
 
 
 def test_model_serialization_redacts_provider_key() -> None:
@@ -1584,6 +1780,7 @@ def test_model_serialization_redacts_provider_key() -> None:
     assert "<redacted>" in serialized
     assert model.config.retry_attempts == 3
     assert model.config.use_global_model_stats is False
+    assert model.config.max_tool_calls_per_response == 4
     assert model.config.model_kwargs["num_retries"] == 0
 
 
@@ -1669,7 +1866,7 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
     assert request["authorization"] == "Bearer local-test-key"
     assert request["body"]["model"] == "test"
     assert request["body"]["reasoning"] == {"effort": "xhigh"}
-    assert request["body"]["parallel_tool_calls"] is False
+    assert request["body"]["parallel_tool_calls"] is True
     assert request["body"]["tools"][0]["name"] == "bash"
     assert GLOBAL_MODEL_STATS.n_calls == global_calls_before
 

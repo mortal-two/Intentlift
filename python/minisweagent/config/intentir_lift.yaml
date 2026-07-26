@@ -15,11 +15,25 @@ agent:
     network access or search outside /input, /work, and /output. A later
     external process alone decides whether the candidate is accepted.
 
-    Keep explanatory text concise and make exactly one bash tool call in each
-    response. Do not emit private chain-of-thought. When candidate.json is
-    complete, the static validator passes, and CandidateCheck diagnostics have
-    been addressed, finish with a separate command:
-    `printf 'INTENTIR_LIFT_SUBMIT\n'`.
+    You are the sole artifact owner for this whole session. Planning, building,
+    self-review, and repair are private phases in this one context, never handoffs
+    to another writer. Keep explanatory text concise and do not emit private
+    chain-of-thought. You may issue up to four independent read-only bash calls in
+    one response, but only when every call is a direct read-only invocation of
+    context_query.py or schema_query.py. The runtime rejects the whole response
+    before executing anything if such a batch contains another command. Any
+    write, CandidateCheck, commit, rollback, or submit must be the only bash call
+    in that response so observations remain ordered.
+
+    After exact current bytes receive CandidateCheck PASS, preserve them with
+    `intentir_candidate_commit /output/candidate.json`. This records only your
+    exact bytes as your conditional fallback; it creates, renames, reorders,
+    infers, or repairs no field. You may keep self-reviewing a working draft, then
+    check and commit a better exact version. Restore your latest committed choice
+    with `intentir_candidate_rollback /output/candidate.json`. Submit current
+    checked bytes with `intentir_lift_submit /output/candidate.json`, or explicitly
+    submit committed bytes with `intentir_lift_submit --committed`. Do not use a
+    stdout marker.
 
     This is a construction task, not a schema-reading task. Never page through
     the raw artifact schema or the full operation reference. Use the supplied
@@ -58,9 +72,13 @@ agent:
        If no previous artifact exists but `candidate_check_feedback` is present,
        use only its bounded rule/path list to focus the new construction; it is
        not a patch and you must still construct the complete candidate yourself.
-    2. Read Source and Harness in separate bounded actions using
+    2. Read Source, Harness, and the syntax-only Source outline with independent
+       bounded calls. They may be issued together in one model response using
        `python /input/tools/context_query.py source` and
-       `python /input/tools/context_query.py harness`. Use its paging/path,
+       `python /input/tools/context_query.py harness` plus
+       `python /input/tools/context_query.py source-outline --start 1 --count 32`.
+       On repair rounds the independent feedback query may join the same read-only
+       response. Use paging/path,
        feedback-category, and knowledge lookup subcommands to discover only
        the additional context needed. Read the minimal example and query only
        exact schema operations/leaf sections needed by Source.
@@ -81,7 +99,8 @@ agent:
        a mechanically unchanged candidate.
     4. Run the static validator, then CandidateCheck. Repair only the reported
        fields yourself, rerun within its fifteen-call ordinary allowance if
-       needed, and submit before the model-turn budget. Submission itself runs
+       needed, commit the first PASS immediately, and submit before the model-turn
+       budget. Submission itself runs
        the same read-only preflight when the exact current bytes have no prior
        PASS; one separately reserved submission evaluation remains available
        after the ordinary allowance is exhausted. A failure returns diagnostics
@@ -91,6 +110,7 @@ agent:
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 2
 model:
+  max_tool_calls_per_response: 4
   observation_template: |
     {%- if output.output | length < 12000 -%}
     {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish the current Lift stage and submit its required output now."{% endif %}}
@@ -99,13 +119,14 @@ model:
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
-    Use the bash tool for the next bounded action. Follow the current stage
-    prompt for its exact output path and submission marker.
+    Use one to four bash calls for the next bounded action. Multiple calls must
+    be independent and read-only; use exactly one call for every write, check,
+    commit, rollback, or direct submit command.
   model_kwargs:
     drop_params: true
     num_retries: 0
     max_retries: 0
-    parallel_tool_calls: false
+    parallel_tool_calls: true
   # Same agent turn and exact message packet; retries are transport recovery,
   # not new Lift turns or semantic relifts.
   retry_attempts: 3
@@ -139,8 +160,9 @@ staged:
         is `intentir.lift-plan.v1`. Useful sections are `signature`, `dataflow`,
         `consumer_context`, `time_and_control`, `effects`, `j_c_pi_obligations`,
         and `open_risks`; their contents remain entirely LLM-authored. Keep it
-        compact and source-grounded. Submit with a separate exact command:
-        `printf 'INTENTIR_LIFT_PLAN_SUBMIT\n'`.
+        compact and source-grounded. Submit with the direct exact command
+        `intentir_lift_plan_submit /output/lift_plan.json`; do not use a stdout
+        marker.
       instance_template: |
         Do not run bootstrap and do not write candidate.json. Read Source and
         Harness separately with the bounded context_query commands. If feedback
@@ -184,8 +206,8 @@ staged:
         Do not invoke Replay, Gate1, Gate2, RefEval, compiler observers, network,
         or external state. Do not produce a critique as the final output: leave
         exactly the reviewed full object at `/output/candidate.json`, validate
-        it, run CandidateCheck, and submit with:
-        `printf 'INTENTIR_LIFT_SUBMIT\n'`.
+        it, run CandidateCheck, commit the exact PASS bytes, and submit with
+        `intentir_lift_submit /output/candidate.json`.
       instance_template: |
         Do not run bootstrap and do not replace the current draft with an older
         artifact. Inspect the plan once, then inspect Source and the current
