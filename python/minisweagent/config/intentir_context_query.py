@@ -157,6 +157,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
+            "When Gate1 reports dataflow, run `python /input/tools/context_query.py feedback-category dataflow`; it preserves effect-order witnesses even when bulk node witnesses are paged out.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
@@ -197,10 +198,26 @@ def _feedback_category(input_root: Path, name: str) -> None:
     categories = observer.get("categories") if isinstance(observer, dict) else None
     if not isinstance(categories, list):
         raise KeyError("feedback contains no observer-diff categories")
-    for category in categories:
+    for category_index, category in enumerate(categories):
         if isinstance(category, dict) and category.get("category") == name:
             result = dict(category)
             rendered = json.dumps(category, sort_keys=True)
+            category_path = (
+                "diagnostics.observer_diff.categories."
+                f"{category_index}"
+            )
+            if name == "dataflow" and isinstance(
+                result.get("effect_order_witnesses"), list
+            ):
+                result["effect_order_hint"] = (
+                    "Compare the ordered Source and Replay event sequences, "
+                    "then inspect the LLM-authored J scopes and pi order. The "
+                    "witness is diagnostic only and does not prescribe a repair."
+                )
+                result["effect_order_query"] = (
+                    f"{QUERY_COMMAND} feedback --path {category_path}."
+                    "effect_order_witnesses"
+                )
             if (
                 name == "dataflow"
                 and "region[root]" in rendered
@@ -215,6 +232,20 @@ def _feedback_category(input_root: Path, name: str) -> None:
                 result["knowledge_query"] = (
                     f"{QUERY_COMMAND} knowledge 'lexical lifetime' --context 5"
                 )
+            if len(
+                json.dumps(result, sort_keys=True, ensure_ascii=False)
+            ) > MAX_OUTPUT_CHARS:
+                node_witnesses = result.pop("node_witnesses", None)
+                if isinstance(node_witnesses, list):
+                    result["node_witness_count"] = len(node_witnesses)
+                    result["node_witness_query"] = (
+                        f"{QUERY_COMMAND} feedback --path {category_path}."
+                        "node_witnesses"
+                    )
+                    result["bounded_view"] = (
+                        "bulk node witnesses omitted so causal role/effect "
+                        "witnesses remain visible"
+                    )
             _emit_json(result)
             return
     available = [

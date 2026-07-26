@@ -360,6 +360,109 @@ def test_gate1_relift_node_witness_preserves_incident_edge_context() -> None:
     assert replay_add not in str(compact)
 
 
+def test_gate1_relift_surfaces_expanded_effect_order_before_operand_noise() -> None:
+    source_trace = "1" * 20
+    replay_trace = "2" * 20
+    source_store = "3" * 20
+    replay_store = "4" * 20
+
+    class EffectComparison:
+        def to_dict(self):
+            return {
+                "hard_pass": False,
+                "hard_passes": {"dataflow": False},
+                "primary_difference_category": "dataflow",
+                "differences": [
+                    *[
+                        {
+                            "category": "dataflow",
+                            "kind": "missing",
+                            "item": [
+                                "edge",
+                                f"arith.addf[{index:020x}]",
+                                f"arith.mulf[{index + 20:020x}]",
+                                "operand[0]",
+                            ],
+                            "expected_count": 1,
+                            "actual_count": 0,
+                        }
+                        for index in range(12)
+                    ],
+                    {
+                        "category": "dataflow",
+                        "kind": "missing",
+                        "item": [
+                            "edge",
+                            "region[root]",
+                            f"effect.trace[{source_trace}]",
+                            "effect.order",
+                        ],
+                        "expected_count": 1,
+                        "actual_count": 0,
+                    },
+                    {
+                        "category": "dataflow",
+                        "kind": "unexpected",
+                        "item": [
+                            "edge",
+                            "region[root]",
+                            f"effect.trace[{replay_trace}]",
+                            "effect.order",
+                        ],
+                        "expected_count": 0,
+                        "actual_count": 1,
+                    },
+                ],
+            }
+
+    class SourceFingerprint:
+        diagnostic_node_signatures = ()
+        diagnostic_effect_traces = (
+            (
+                f"effect.trace[{source_trace}]",
+                "region[root]",
+                (
+                    "region:region[scf.for:aaaaaaaaaaaaaaaaaaaa]",
+                    f"tt.store:tt.store[{source_store}]@event[root/effect[1]:tt.store]",
+                ),
+            ),
+        )
+
+    class ReplayFingerprint:
+        diagnostic_node_signatures = ()
+        diagnostic_effect_traces = (
+            (
+                f"effect.trace[{replay_trace}]",
+                "region[root]",
+                (
+                    f"tt.store:tt.store[{replay_store}]@event[root/effect[0]:tt.store]",
+                    "region:region[scf.for:bbbbbbbbbbbbbbbbbbbb]",
+                ),
+            ),
+        )
+
+    compact = _compact_gate1_observer_diff(
+        EffectComparison(),
+        source_fingerprint=SourceFingerprint(),
+        replay_fingerprint=ReplayFingerprint(),
+    )
+    dataflow = compact["categories"][0]
+
+    assert dataflow["examples"][0]["item"][3] == "effect.order"
+    assert dataflow["examples"][1]["item"][3] == "effect.order"
+    assert [item["side"] for item in dataflow["effect_order_witnesses"]] == [
+        "source",
+        "replay",
+    ]
+    assert dataflow["effect_order_witnesses"][0]["ordered_events"][0].startswith(
+        "region:region[scf.for:"
+    )
+    assert dataflow["effect_order_witnesses"][1]["ordered_events"][0].startswith(
+        "tt.store:tt.store["
+    )
+    assert re.search(r"[0-9a-f]{12,}", str(compact)) is None
+
+
 class _Lift:
     def __init__(self, artifacts, events=None):
         self.artifacts = list(artifacts)

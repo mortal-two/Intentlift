@@ -605,6 +605,18 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only expansion of each synthetic ``effect.trace`` node.
+    # Keeping the ordered event spellings beside the opaque trace digest lets
+    # SCRC explain *which* lexical effect sequence diverged.  Like node
+    # signatures, this sidecar is excluded from membership, serialization and
+    # the digest; it can diagnose a rejection but can never accept a candidate.
+    diagnostic_effect_traces: tuple[
+        tuple[str, str, tuple[str, ...]], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
     @property
     def digest(self) -> str:
@@ -4387,6 +4399,9 @@ class TTIRParser:
             region_ref_cache[region_id] = cached
             return cached
 
+        diagnostic_effect_traces: list[
+            tuple[str, str, tuple[str, ...]]
+        ] = []
         for parent in [None, *sorted(region_ids)]:
             parent_ref = "region[root]" if parent is None else region_ref(parent)
             if parent in structured_if_ids:
@@ -4464,12 +4479,16 @@ class TTIRParser:
                 )
             effect_events = direct_effect_events(parent)
             if effect_events:
+                trace_ref = f"effect.trace[{_digest(effect_events)[:20]}]"
                 edges.append(
                     (
                         parent_ref,
-                        f"effect.trace[{_digest(effect_events)[:20]}]",
+                        trace_ref,
                         "effect.order",
                     )
+                )
+                diagnostic_effect_traces.append(
+                    (trace_ref, parent_ref, tuple(effect_events))
                 )
 
         reductions: list[ReductionFingerprint] = []
@@ -4780,6 +4799,9 @@ class TTIRParser:
                     for operation in operations
                     if operation.name not in _TERMINATORS
                 )
+            ),
+            diagnostic_effect_traces=tuple(
+                sorted(diagnostic_effect_traces)
             ),
         )
 

@@ -134,7 +134,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v36"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v37"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -306,6 +306,59 @@ def test_dataflow_region_feedback_routes_agent_to_lifetime_knowledge(
     assert result["examples"] == feedback["diagnostics"]["observer_diff"][
         "categories"
     ][0]["examples"]
+
+
+def test_dataflow_feedback_keeps_effect_order_when_node_witnesses_are_large(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    effect_witnesses = [
+        {
+            "side": "source",
+            "kind": "missing",
+            "region": "region[root]",
+            "trace": "effect.trace[source_node_0]",
+            "ordered_events": ["region:region[scf.for:source_node_1]", "tt.store"],
+        },
+        {
+            "side": "replay",
+            "kind": "unexpected",
+            "region": "region[root]",
+            "trace": "effect.trace[replay_node_0]",
+            "ordered_events": ["tt.store", "region:region[scf.for:replay_node_1]"],
+        },
+    ]
+    feedback = {
+        "failure_kind": "gate1",
+        "diagnostics": {
+            "observer_diff": {
+                "categories": [
+                    {
+                        "category": "dataflow",
+                        "difference_count": 200,
+                        "examples": [],
+                        "effect_order_witnesses": effect_witnesses,
+                        "node_witnesses": [
+                            {"node": f"node_{index}", "detail": "x" * 800}
+                            for index in range(20)
+                        ],
+                    }
+                ]
+            }
+        },
+        "previous_artifact": None,
+    }
+    (input_root / "feedback.json").write_text(json.dumps(feedback))
+
+    _feedback_category(input_root, "dataflow")
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["effect_order_witnesses"] == effect_witnesses
+    assert result["node_witness_count"] == 20
+    assert "effect_order_witnesses" in result["effect_order_query"]
+    assert "bulk node witnesses omitted" in result["bounded_view"]
 
 
 def test_candidate_abi_query_reports_only_public_mechanical_differences(
@@ -1973,6 +2026,101 @@ def test_candidate_check_decode_aggregation_is_bounded_and_non_speculative() -> 
         for item in blocked_result["diagnostics"]
         for observed in item["observed_refs_or_types"]
     )
+
+
+def test_candidate_check_reports_independent_surface_errors_after_decode_rejects() -> None:
+    candidate = make_copy_artifact().to_json()
+    parameters = candidate["j"]["signature"]["parameters"]
+    original_mode = parameters[0]["mode"]
+    context = SCRCCandidateCheckContext(
+        tuple(item["name"] for item in parameters),
+        anonymous_compiler_view={
+            "arguments": [
+                {
+                    "name": parameters[0]["name"],
+                    "kind": "tensor",
+                    "dtype": parameters[0]["dtype"],
+                    "shape": [4],
+                    "mode": original_mode,
+                }
+            ],
+            "schedule_values": candidate["c"]["values"],
+            "aliases": candidate["j"]["boundary"]["aliases"],
+        },
+    )
+    del candidate["j"]["signature"]["parameters"][0]["logical_ref"]
+    body = candidate["j"]["intent"]["intent_function"]["body"]
+    body[0]["id"] = "n7"
+    candidate["j"]["node_ids"] = {"n7": "body[0]"}
+    candidate["j"]["signature"]["parameters"][0]["mode"] = (
+        "output" if original_mode != "output" else "input"
+    )
+
+    rejected = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert rejected["status"] == "fail"
+    assert rejected["diagnostics"][0]["path"] == (
+        "j.signature.parameters[0].logical_ref"
+    )
+    diagnostics = {
+        (item["rule_code"], item["path"]): item
+        for item in rejected["diagnostics"]
+    }
+    assert (
+        "construction_handle_sequence",
+        "j.intent.intent_function.body recursive node ids",
+    ) in diagnostics
+    assert (
+        "construction_abi_mismatch",
+        "j.signature.parameters[p0].mode",
+    ) in diagnostics
+    assert body[0]["id"] == "n7"
+
+
+def test_decode_ignores_json_object_key_order_for_complete_node_map() -> None:
+    candidate = make_copy_artifact().to_json()
+    body = candidate["j"]["intent"]["intent_function"]["body"]
+    for index in range(1, 11):
+        body.append(
+            {
+                "id": f"n{index}",
+                "op": "map_unary",
+                "result": f"v{index}",
+                "operands": ["t0"],
+                "attrs": {"fn": "identity"},
+                "type": {"dtype": "f32", "shape": ["x0"]},
+            }
+        )
+    node_map = {
+        f"n{index}": f"body[{index}]" for index in range(len(body))
+    }
+    candidate["j"]["node_ids"] = dict(sorted(node_map.items()))
+
+    decoded = Gate1Artifact.from_json(candidate)
+
+    assert list(candidate["j"]["node_ids"])[:4] == ["n0", "n1", "n10", "n2"]
+    assert list(decoded.j.node_ids) == [f"n{index}" for index in range(11)]
+    assert decoded.j.node_ids["n10"] == "body[10]"
+
+
+def test_decode_ignores_json_object_key_order_for_domain_map() -> None:
+    candidate = make_copy_artifact().to_json()
+    domains = {
+        f"d{index}": f"0 <= k{index}" for index in range(11)
+    }
+    candidate["j"]["boundary"]["domains"] = dict(sorted(domains.items()))
+
+    decoded = Gate1Artifact.from_json(candidate)
+
+    assert list(candidate["j"]["boundary"]["domains"])[:4] == [
+        "d0",
+        "d1",
+        "d10",
+        "d2",
+    ]
+    assert list(decoded.j.boundary.domains) == [
+        f"d{index}" for index in range(11)
+    ]
 
 
 def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> None:

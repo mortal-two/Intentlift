@@ -1635,12 +1635,26 @@ class Boundary(StrictJSONMixin):
     def __post_init__(self) -> None:
         if not isinstance(self.domains, dict):
             raise SchemaError("Boundary.domains must be an object")
-        self.domains = {
+        normalized_domains = {
             _string(key, "Boundary.domains key"): _string(
                 value, f"Boundary.domains.{key}"
             )
             for key, value in self.domains.items()
         }
+        # As with node_ids, JSON object order cannot encode declaration
+        # semantics.  Domain handles are already explicit, so retain every
+        # authored key/expression pair and canonicalize only their map order.
+        self.domains = dict(
+            sorted(
+                normalized_domains.items(),
+                key=lambda item: (
+                    int(match.group(1))
+                    if (match := re.fullmatch(r"d([0-9]+)", item[0]))
+                    else math.inf,
+                    item[0],
+                ),
+            )
+        )
         self.accesses = [
             item if isinstance(item, BoundaryAccess) else BoundaryAccess.from_json(item)
             for item in self.accesses
@@ -3183,6 +3197,18 @@ class SemanticArchive(StrictJSONMixin):
                 raise SchemaError(
                     f"SemanticArchive.node_ids.{node_id} path is out of range"
                 )
+        # JSON object member order is not semantic.  Canonicalize the node map
+        # by the authored body-path traversal before any declaration-order
+        # checks or opaque projections consume it.  This preserves every LLM-
+        # authored id/path pair and merely removes serializer-dependent key
+        # ordering (for example n0,n1,n10,...,n2 from sort_keys=True).
+        path_order = {path: index for index, path in enumerate(by_path)}
+        self.node_ids = dict(
+            sorted(
+                self.node_ids.items(),
+                key=lambda item: path_order[item[1]],
+            )
+        )
         if not isinstance(self.boundary, Boundary):
             self.boundary = Boundary.from_json(self.boundary)
         if not isinstance(self.signature, LogicalSignature):

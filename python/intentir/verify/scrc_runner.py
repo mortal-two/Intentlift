@@ -323,6 +323,162 @@ def _observer_edge_pattern(difference: Mapping[str, Any]) -> tuple[str, ...] | N
     )
 
 
+def _observer_difference_role(difference: Mapping[str, Any]) -> str:
+    """Classify one difference by its structural observer role."""
+
+    item = difference.get("item")
+    if isinstance(item, (list, tuple)) and item:
+        if len(item) == 4 and item[0] == "edge":
+            return str(_feedback_item(item[3]))
+        return str(_feedback_item(item[0]))
+    return "item"
+
+
+def _observer_role_priority(role: str) -> tuple[int, str]:
+    """Put causal control/effect witnesses ahead of bulk operand fallout."""
+
+    if role == "effect.order":
+        return (0, role)
+    if role in {
+        "condition",
+        "positive",
+        "negative",
+        "true",
+        "false",
+        "positive_yield",
+        "negative_yield",
+    }:
+        return (1, role)
+    if role in {"region.child", "region.member"}:
+        return (2, role)
+    if role.startswith("region_result") or role.startswith("function.return"):
+        return (3, role)
+    if role.startswith("operand"):
+        return (8, role)
+    return (5, role)
+
+
+def _bounded_observer_examples(
+    differences: list[Mapping[str, Any]],
+    aliases: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    """Choose bounded examples by causal-role coverage, not input accident."""
+
+    ordered = sorted(
+        enumerate(differences),
+        key=lambda pair: (
+            _observer_role_priority(_observer_difference_role(pair[1])),
+            0 if pair[1].get("kind") == "missing" else 1,
+            pair[0],
+        ),
+    )
+    selected: list[Mapping[str, Any]] = []
+    represented: set[tuple[str, str]] = set()
+    for _index, difference in ordered:
+        key = (
+            str(difference.get("kind", "unknown")),
+            _observer_difference_role(difference),
+        )
+        if key in represented:
+            continue
+        represented.add(key)
+        selected.append(difference)
+        if len(selected) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
+            break
+    if len(selected) < MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
+        selected_ids = {id(item) for item in selected}
+        for difference in differences:
+            if id(difference) in selected_ids:
+                continue
+            selected.append(difference)
+            if len(selected) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
+                break
+    return [
+        {
+            key: _pseudonymize_observer_nodes(difference[key], aliases)
+            for key in ("kind", "item", "expected_count", "actual_count")
+            if key in difference
+        }
+        for difference in selected
+    ]
+
+
+def _observer_effect_trace_index(
+    fingerprint: Any | None,
+) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Index the diagnostic-only expansion of synthetic effect traces."""
+
+    result: dict[str, tuple[str, tuple[str, ...]]] = {}
+    entries = getattr(fingerprint, "diagnostic_effect_traces", ())
+    if not isinstance(entries, (list, tuple)):
+        return result
+    for entry in entries:
+        if (
+            not isinstance(entry, (list, tuple))
+            or len(entry) != 3
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], str)
+            or not isinstance(entry[2], (list, tuple))
+            or not all(isinstance(item, str) for item in entry[2])
+        ):
+            continue
+        result[entry[0]] = (entry[1], tuple(entry[2]))
+    return result
+
+
+def _observer_effect_order_witnesses(
+    differences: list[Mapping[str, Any]],
+    aliases: Mapping[str, str],
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> list[dict[str, Any]]:
+    """Explain divergent effect traces without changing Gate1 membership."""
+
+    indexes = {
+        "source": _observer_effect_trace_index(source_fingerprint),
+        "replay": _observer_effect_trace_index(replay_fingerprint),
+    }
+    witnesses: list[dict[str, Any]] = []
+    for difference in differences:
+        item = difference.get("item")
+        kind = str(difference.get("kind", "unknown"))
+        side = (
+            "source"
+            if kind == "missing"
+            else "replay"
+            if kind == "unexpected"
+            else None
+        )
+        if (
+            side is None
+            or difference.get("category") != "dataflow"
+            or not isinstance(item, (list, tuple))
+            or len(item) != 4
+            or item[0] != "edge"
+            or item[3] != "effect.order"
+            or not isinstance(item[2], str)
+        ):
+            continue
+        expansion = indexes[side].get(item[2])
+        if expansion is None:
+            continue
+        region, events = expansion
+        witnesses.append(
+            {
+                "side": side,
+                "kind": kind,
+                "region": _pseudonymize_observer_nodes(region, aliases),
+                "trace": _pseudonymize_observer_nodes(item[2], aliases),
+                "ordered_events": _pseudonymize_observer_nodes(
+                    list(events), aliases
+                ),
+            }
+        )
+        if len(witnesses) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
+            break
+    return witnesses
+
+
 def _compact_gate1_observer_diff(
     comparison: Any,
     *,
@@ -352,31 +508,25 @@ def _compact_gate1_observer_diff(
             {
                 "category": category,
                 "difference_count": 0,
-                "examples": [],
+                "_differences": [],
                 "_edge_patterns": {},
             },
         )
         group["difference_count"] += 1
+        group["_differences"].append(difference)
         pattern = _observer_edge_pattern(difference)
         if pattern is not None:
             patterns = group["_edge_patterns"]
             patterns[pattern] = patterns.get(pattern, 0) + 1
-        examples = group["examples"]
-        if len(examples) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
-            continue
-        examples.append(
-            {
-                key: _pseudonymize_observer_nodes(
-                    difference[key], node_aliases
-                )
-                for key in ("kind", "item", "expected_count", "actual_count")
-                if key in difference
-            }
-        )
 
     categories = []
     for category in sorted(grouped):
         group = grouped[category]
+        category_differences = group.pop("_differences")
+        group["examples"] = _bounded_observer_examples(
+            category_differences,
+            node_aliases,
+        )
         raw_patterns = group.pop("_edge_patterns")
         if raw_patterns:
             group["edge_patterns"] = [
@@ -401,6 +551,14 @@ def _compact_gate1_observer_diff(
             if witnesses:
                 group["node_witnesses"] = witnesses
                 group["node_alias_scope"] = "this_feedback_only"
+            effect_order_witnesses = _observer_effect_order_witnesses(
+                mapped_differences,
+                node_aliases,
+                source_fingerprint,
+                replay_fingerprint,
+            )
+            if effect_order_witnesses:
+                group["effect_order_witnesses"] = effect_order_witnesses
         group["truncated_count"] = max(
             0, group["difference_count"] - len(group["examples"])
         )

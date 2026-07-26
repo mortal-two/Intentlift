@@ -1142,10 +1142,19 @@ def check_scrc_lift_candidate(
             required_schema=context.schema_version,
         )
     except Exception as exc:
+        diagnostics = _candidate_decode_diagnostics(exc)
+        occupied_paths = {item["path"] for item in diagnostics}
+        for item in _candidate_surface_diagnostics(response_text, context):
+            if len(diagnostics) >= _CANDIDATE_DIAGNOSTIC_LIMIT:
+                break
+            if item["path"] in occupied_paths:
+                continue
+            diagnostics.append(item)
+            occupied_paths.add(item["path"])
         return {
             "protocol": CANDIDATE_CHECK_PROTOCOL,
             "status": "fail",
-            "diagnostics": _candidate_decode_diagnostics(exc),
+            "diagnostics": diagnostics,
         }
 
     # This is the same callable used by the formal Runner.  CandidateCheck does
@@ -1167,6 +1176,314 @@ def check_scrc_lift_candidate(
             for item in report.diagnostics[:_CANDIDATE_DIAGNOSTIC_LIMIT]
         ],
     }
+
+
+def _candidate_surface_diagnostics(
+    response_text: str,
+    context: SCRCCandidateCheckContext,
+) -> list[dict[str, Any]]:
+    """Report independent authored-surface mistakes beside a Decode failure.
+
+    The strict decoder remains the only acceptance boundary.  This pass reads
+    raw JSON only after that decoder has already rejected the candidate and
+    checks closed naming/ABI facts that do not depend on repairing or
+    interpreting an invalid graph.  It never mutates, canonicalizes, or fills
+    a field, and its diagnostics cannot turn rejection into acceptance.
+    """
+
+    try:
+        payload = _json_object(response_text)
+    except Exception:
+        return []
+
+    diagnostics: list[dict[str, Any]] = []
+
+    def mismatch(
+        rule_code: str,
+        path: str,
+        expected: Any,
+        actual: Any,
+    ) -> None:
+        if len(diagnostics) >= _CANDIDATE_DIAGNOSTIC_LIMIT:
+            return
+        diagnostics.append(
+            {
+                "rule_code": rule_code,
+                "path": path,
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(
+                        "expected=" + json.dumps(
+                            expected,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                    ),
+                    _bounded_candidate_diagnostic_text(
+                        "actual=" + json.dumps(
+                            actual,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                    ),
+                ],
+            }
+        )
+
+    j = payload.get("j")
+    if not isinstance(j, Mapping):
+        return diagnostics
+    intent = j.get("intent")
+    fn = intent.get("intent_function") if isinstance(intent, Mapping) else None
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters") if isinstance(signature, Mapping) else None
+    )
+    if isinstance(parameters, list) and all(
+        isinstance(item, Mapping) and isinstance(item.get("name"), str)
+        for item in parameters
+    ):
+        actual_parameters = [str(item["name"]) for item in parameters]
+        if actual_parameters != list(context.expected_parameters):
+            mismatch(
+                "construction_handle_sequence",
+                "j.signature.parameters[*].name",
+                list(context.expected_parameters),
+                actual_parameters,
+            )
+
+    tensors: list[Mapping[str, Any]] = []
+    if isinstance(fn, Mapping):
+        for collection in ("inputs", "outputs"):
+            values = fn.get(collection)
+            if isinstance(values, list):
+                tensors.extend(
+                    item for item in values if isinstance(item, Mapping)
+                )
+    tensor_names = [item.get("name") for item in tensors]
+    if tensor_names and all(isinstance(item, str) for item in tensor_names):
+        actual_tensors = list(dict.fromkeys(tensor_names))
+        expected_tensors = [f"t{index}" for index in range(len(actual_tensors))]
+        if actual_tensors != expected_tensors:
+            mismatch(
+                "construction_handle_sequence",
+                "j.intent.intent_function.inputs+outputs[*].name",
+                expected_tensors,
+                actual_tensors,
+            )
+
+    dimensions: list[str] = []
+    for tensor in tensors:
+        shape = tensor.get("shape")
+        if not isinstance(shape, list):
+            continue
+        for extent in shape:
+            if isinstance(extent, str) and extent not in dimensions:
+                dimensions.append(extent)
+    expected_dimensions = [f"x{index}" for index in range(len(dimensions))]
+    if dimensions != expected_dimensions:
+        mismatch(
+            "construction_handle_sequence",
+            "j.intent.intent_function tensor shape dimensions",
+            expected_dimensions,
+            dimensions,
+        )
+
+    def authored_ops(values: Any) -> list[Mapping[str, Any]]:
+        result: list[Mapping[str, Any]] = []
+        if not isinstance(values, list):
+            return result
+        for item in values:
+            if not isinstance(item, Mapping):
+                continue
+            result.append(item)
+            for arm_name in ("positive", "negative"):
+                arm = item.get(arm_name)
+                if isinstance(arm, Mapping):
+                    result.extend(authored_ops(arm.get("body")))
+            result.extend(authored_ops(item.get("body")))
+        return result
+
+    body = fn.get("body") if isinstance(fn, Mapping) else None
+    operations = authored_ops(body)
+    node_ids = [item.get("id") for item in operations]
+    if node_ids and all(isinstance(item, str) for item in node_ids):
+        expected_nodes = [f"n{index}" for index in range(len(node_ids))]
+        if node_ids != expected_nodes:
+            mismatch(
+                "construction_handle_sequence",
+                "j.intent.intent_function.body recursive node ids",
+                expected_nodes,
+                node_ids,
+            )
+    authored_node_map = j.get("node_ids")
+    if isinstance(authored_node_map, Mapping) and all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in authored_node_map.items()
+    ):
+        path_order = {
+            path: index
+            for index, operation in enumerate(operations)
+            if isinstance((path := authored_node_map.get(operation.get("id"))), str)
+        }
+        ordered_keys = [
+            key
+            for key, _value in sorted(
+                authored_node_map.items(),
+                key=lambda item: path_order.get(item[1], len(path_order)),
+            )
+        ]
+        expected_map_keys = [f"n{index}" for index in range(len(ordered_keys))]
+        if ordered_keys != expected_map_keys:
+            mismatch(
+                "construction_handle_sequence",
+                "j.node_ids keys in authored body-path order",
+                expected_map_keys,
+                ordered_keys,
+            )
+
+    boundary = j.get("boundary")
+    handle_specs = (
+        ("d", "domains", None),
+        ("a", "accesses", "access_id"),
+        ("e", "effects", "effect_id"),
+        ("q", "scopes", "scope_id"),
+        ("b", "storage", "storage_id"),
+    )
+    for prefix, field_name, id_field in handle_specs:
+        owner: Any = boundary if field_name in {"domains", "accesses", "effects"} else j
+        values = owner.get(field_name) if isinstance(owner, Mapping) else None
+        if id_field is None:
+            actual = (
+                sorted(
+                    values,
+                    key=lambda item: (
+                        int(match.group(1))
+                        if isinstance(item, str)
+                        and (match := re.fullmatch(r"d([0-9]+)", item))
+                        else math.inf,
+                        str(item),
+                    ),
+                )
+                if isinstance(values, Mapping)
+                else None
+            )
+        elif isinstance(values, list) and all(
+            isinstance(item, Mapping) and isinstance(item.get(id_field), str)
+            for item in values
+        ):
+            actual = [str(item[id_field]) for item in values]
+        else:
+            actual = None
+        if actual is None:
+            continue
+        expected = [f"{prefix}{index}" for index in range(len(actual))]
+        if actual != expected:
+            mismatch(
+                "construction_handle_sequence",
+                f"j.{field_name}" + (f"[*].{id_field}" if id_field else " keys"),
+                expected,
+                actual,
+            )
+
+    pi = payload.get("pi")
+    if isinstance(pi, Mapping):
+        for field_name, prefix in (("regions", "r"), ("instances", "i")):
+            values = pi.get(field_name)
+            if not isinstance(values, list) or not all(
+                isinstance(item, Mapping) and isinstance(item.get("id"), str)
+                for item in values
+            ):
+                continue
+            actual = [str(item["id"]) for item in values]
+            expected = [f"{prefix}{index}" for index in range(len(actual))]
+            if actual != expected:
+                mismatch(
+                    "construction_handle_sequence",
+                    f"pi.{field_name}[*].id",
+                    expected,
+                    actual,
+                )
+        order = pi.get("order")
+        if isinstance(order, list):
+            encoded = [
+                json.dumps(item, sort_keys=True, separators=(",", ":"))
+                for item in order
+            ]
+            duplicates = sorted(
+                item for item in set(encoded) if encoded.count(item) > 1
+            )
+            if duplicates:
+                mismatch(
+                    "construction_duplicate_relation",
+                    "pi.order",
+                    "unique order edges",
+                    [json.loads(item) for item in duplicates],
+                )
+
+    view = context.anonymous_compiler_view
+    if isinstance(view, Mapping) and isinstance(parameters, list):
+        by_name = {
+            item.get("name"): item
+            for item in parameters
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+        }
+        arguments = view.get("arguments")
+        if isinstance(arguments, list):
+            for argument in arguments:
+                if not isinstance(argument, Mapping):
+                    continue
+                name = argument.get("name")
+                parameter = by_name.get(name)
+                if not isinstance(name, str) or not isinstance(parameter, Mapping):
+                    continue
+                source_kind = argument.get("kind")
+                allowed_kinds = {
+                    "tensor": ["pointer", "tensor"],
+                    "scalar": ["scalar"],
+                    "opaque": ["opaque"],
+                    "none": ["opaque"],
+                }.get(source_kind)
+                expected_fields: dict[str, Any] = {}
+                if allowed_kinds is not None:
+                    expected_fields["kind"] = allowed_kinds
+                if "dtype" in argument:
+                    expected_fields["dtype"] = _canonical_dtype(argument.get("dtype"))
+                if source_kind == "tensor" and isinstance(argument.get("shape"), list):
+                    expected_fields["rank"] = len(argument["shape"])
+                if "mode" in argument:
+                    expected_fields["mode"] = argument.get("mode")
+                for field_name, expected in expected_fields.items():
+                    actual = parameter.get(field_name)
+                    if field_name == "dtype" and isinstance(actual, str):
+                        actual = _canonical_dtype(actual)
+                    matched = actual in expected if isinstance(expected, list) else actual == expected
+                    if not matched:
+                        mismatch(
+                            "construction_abi_mismatch",
+                            f"j.signature.parameters[{name}].{field_name}",
+                            expected,
+                            actual,
+                        )
+        c = payload.get("c")
+        if isinstance(c, Mapping) and c.get("values") != view.get("schedule_values"):
+            mismatch(
+                "construction_abi_mismatch",
+                "c.values",
+                view.get("schedule_values"),
+                c.get("values"),
+            )
+        actual_aliases = boundary.get("aliases") if isinstance(boundary, Mapping) else None
+        if actual_aliases != view.get("aliases"):
+            mismatch(
+                "construction_abi_mismatch",
+                "j.boundary.aliases",
+                view.get("aliases"),
+                actual_aliases,
+            )
+
+    return diagnostics
 
 
 def _candidate_typecheck_observations(

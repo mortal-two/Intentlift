@@ -3363,9 +3363,16 @@ module {
     reordered = template.replace("%FIRST", "%second").replace("%SECOND", "%first")
 
     verdict = compare_ttir(source, reordered)
+    fingerprint = fingerprint_ttir(source)
 
     assert not verdict.hard_pass
     assert not verdict.hard_passes["dataflow"]
+    assert any(
+        [event.split(":", 1)[0] for event in events]
+        == ["tt.store", "tt.store"]
+        for _trace, _region, events in fingerprint.diagnostic_effect_traces
+    )
+    assert "diagnostic_effect_traces" not in fingerprint.to_dict()
 
 
 def test_ttir_gather_is_closed_pure_dataflow_not_an_observer_gap() -> None:
