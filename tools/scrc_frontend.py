@@ -42,6 +42,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--provider", default=None)
+    parser.add_argument(
+        "--provider-config",
+        type=Path,
+        default=None,
+        help="provider JSON path; API keys are never copied into evidence",
+    )
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--lift-backend",
@@ -108,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             args.case,
             dataset_root=args.dataset_root,
         )
-        provider = get_provider(args.provider)
+        provider = get_provider(args.provider, args.provider_config)
         run_dir = next_workload_run_dir(args.run_root, args.case)
         initialize_workload_evidence(
             run_dir,
