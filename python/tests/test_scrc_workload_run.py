@@ -391,6 +391,65 @@ def test_replay_backend_is_independent_and_new_per_formal_round(
         )
 
 
+def test_replay_fanout_builds_fresh_writer_group_per_formal_round(
+    monkeypatch,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    provider = ProviderConfig(
+        "test-provider", "https://provider.invalid/v1", "key", "model"
+    )
+    created: list[object] = []
+
+    class FakeMiniReplayWriter:
+        def __init__(self, *, provider, effort):
+            self.provider = provider
+            self.effort = effort
+            self.records = ()
+            created.append(self)
+
+    monkeypatch.setattr(
+        workload_run,
+        "MiniSWEReplayWriter",
+        FakeMiniReplayWriter,
+    )
+    prepared = SimpleNamespace(
+        compiler_view=None,
+        entry=SimpleNamespace(symbol="source_symbol"),
+    )
+    runner, _lift, writers = workload_run._build_workload_runtime(
+        prepared,
+        provider=provider,
+        effort="xhigh",
+        lift_backend="responses",
+        replay_backend="miniswe",
+        replay_width=3,
+    )
+
+    first = runner.dependencies.gate1_factory(1)
+    second = runner.dependencies.gate1_factory(2)
+
+    assert first is not second
+    assert len(created) == 6
+    assert len(writers) == 2
+    assert all(
+        isinstance(writer, workload_run.RecordedReplayWriterGroup)
+        for writer in writers
+    )
+    assert [len(writer.writers) for writer in writers] == [3, 3]
+    assert len({id(item) for item in created}) == 6
+    assert first.runner.writers == writers[0].writers
+    assert second.runner.writers == writers[1].writers
+
+    with pytest.raises(ValueError, match="replay_width"):
+        workload_run._build_workload_runtime(
+            prepared,
+            provider=provider,
+            replay_backend="miniswe",
+            replay_width=5,
+        )
+
+
 def test_fixed_artifact_recheck_evidence_is_isolated_and_non_certifying(
     tmp_path,
 ) -> None:
@@ -634,6 +693,70 @@ def test_unaccepted_lift_continuation_is_persisted_as_draft_only(
     path = lifecycle_dir / "attempt-01/unaccepted_lift_continuation.json"
     assert json.loads(path.read_text()) == draft
     assert not (lifecycle_dir / "attempt-01/artifact.json").exists()
+
+
+def test_replay_fanout_evidence_saves_selected_replay_as_canonical(
+    tmp_path,
+) -> None:
+    import intentir.verify.scrc_workload_run as workload_run
+
+    unselected = ReplayGeneration(
+        code="unselected normalized\n",
+        function_name="scrc_k0",
+        model="model",
+        response_id=None,
+        packet_digest="packet-unselected",
+        prompt_digest="prompt-unselected",
+        response_text="unselected exact\n",
+    )
+    selected = ReplayGeneration(
+        code="selected normalized\n",
+        function_name="scrc_k0",
+        model="model",
+        response_id=None,
+        packet_digest="packet-selected",
+        prompt_digest="prompt-selected",
+        response_text="selected exact\n",
+    )
+    group = workload_run.RecordedReplayWriterGroup(
+        (
+            SimpleNamespace(records=(unselected,)),
+            SimpleNamespace(records=(selected,)),
+        )
+    )
+    attempt = SimpleNamespace(
+        lift_call=0,
+        formal_round=1,
+        artifact=None,
+        typecheck=None,
+        gate1=SimpleNamespace(
+            selected_normal_index=1,
+            normal=SimpleNamespace(generation=selected),
+            masked_j=None,
+            to_json=lambda: {"status": "replay_closed"},
+        ),
+    )
+    lifecycle_dir = tmp_path / "fanout-lifecycle"
+    lifecycle_dir.mkdir()
+
+    workload_run._save_attempt_evidence(
+        lifecycle_dir,
+        (attempt,),
+        SimpleNamespace(records=()),
+        (group,),
+    )
+
+    attempt_dir = lifecycle_dir / "attempt-01"
+    assert (attempt_dir / "replay.py").read_text() == "selected exact\n"
+    assert (attempt_dir / "replay_normalized.py").read_text() == (
+        "selected normalized\n"
+    )
+    assert (attempt_dir / "replay_candidate_01.py").read_text() == (
+        "unselected exact\n"
+    )
+    assert (attempt_dir / "replay_candidate_01_normalized.py").read_text() == (
+        "unselected normalized\n"
+    )
 
 
 def test_replay_evidence_rejects_trajectory_hash_or_secret_before_source_write(

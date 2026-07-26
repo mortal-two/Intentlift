@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from dataclasses import dataclass
@@ -65,6 +66,8 @@ class Gate1ExecutionResult:
     masked_j_calls: int
     protocol: str = GATE1_PROTOCOL
     observer_profile: ObserverProfile = TRITON_OBSERVER_PROFILE
+    normal_candidates: tuple[Gate1ArmEvidence, ...] = ()
+    selected_normal_index: int = 0
 
     @property
     def passed(self) -> bool:
@@ -125,6 +128,15 @@ class Gate1ExecutionResult:
                 "physical_calls": value.physical_calls,
             }
 
+        normal_fanout = None
+        if len(self.normal_candidates) > 1:
+            normal_fanout = {
+                "width": len(self.normal_candidates),
+                "selected_index": self.selected_normal_index,
+                "selection_rule": "exact-pass-then-gate1-rank-v1",
+                "source_blind_independent_replays": True,
+                "candidates": [arm(item) for item in self.normal_candidates],
+            }
         return {
             "protocol": self.protocol,
             "observer_profile": self.observer_profile.to_json(),
@@ -142,6 +154,7 @@ class Gate1ExecutionResult:
                 "normal": self.normal_calls,
                 "masked_j": self.masked_j_calls,
             },
+            "normal_fanout": normal_fanout,
         }
 
 
@@ -396,17 +409,24 @@ class Gate1Runner:
         self,
         *,
         compiler: TritonCompiler,
-        writer: ReplayWriter,
+        writer: ReplayWriter | tuple[ReplayWriter, ...],
         comparator: TTIRComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writer = writer
+        writers = writer if isinstance(writer, tuple) else (writer,)
+        if not writers:
+            raise ValueError("Gate1 requires at least one Replay writer")
+        if len({id(item) for item in writers}) != len(writers):
+            raise ValueError("Gate1 Replay fan-out requires fresh independent writers")
+        self.writers = writers
+        self.writer = writers[0]
         self.comparator = comparator or TTIRComparator()
         self.config = config or Gate1Config()
 
     def _arm(
         self,
+        writer: ReplayWriter,
         artifact: Gate1Artifact,
         source_fingerprint: TTIRFingerprint,
         replay_case: CompileCase,
@@ -415,7 +435,7 @@ class Gate1Runner:
     ) -> Gate1ArmEvidence:
         mode = "masked_j" if masked else "normal"
         try:
-            generation = self.writer.generate(artifact, masked=masked)
+            generation = writer.generate(artifact, masked=masked)
         except Exception as exc:
             attempt = getattr(exc, "attempt", None)
             physical_calls = getattr(attempt, "physical_provider_calls", 0)
@@ -464,6 +484,45 @@ class Gate1Runner:
             comparison,
             physical_calls=physical_calls,
         )
+
+    def _normal_arms(
+        self,
+        artifact: Gate1Artifact,
+        source_fingerprint: TTIRFingerprint,
+        replay_case: CompileCase,
+    ) -> tuple[Gate1ArmEvidence, ...]:
+        if len(self.writers) == 1:
+            return (
+                self._arm(
+                    self.writers[0],
+                    artifact,
+                    source_fingerprint,
+                    replay_case,
+                    masked=False,
+                ),
+            )
+        # Replay workers receive identical J/C/pi packets and no Source or
+        # Gate1 feedback.  Running them concurrently changes only completeness
+        # and latency; the ordered result list remains deterministic.
+        with ThreadPoolExecutor(max_workers=len(self.writers)) as executor:
+            futures = [
+                executor.submit(
+                    self._arm,
+                    writer,
+                    artifact,
+                    source_fingerprint,
+                    replay_case,
+                    masked=False,
+                )
+                for writer in self.writers
+            ]
+            return tuple(future.result() for future in futures)
+
+    @staticmethod
+    def _normal_rank(arm: Gate1ArmEvidence) -> tuple[int | float, ...]:
+        if arm.comparison is None:
+            return (-1, -1, -1.0, -10**18, -1, -10**18)
+        return tuple(arm.comparison.rank_tuple)
 
     def run(
         self,
@@ -545,9 +604,17 @@ class Gate1Runner:
                 0,
             )
 
-        normal = self._arm(
-            artifact, source_fingerprint, replay_case, masked=False
+        normal_candidates = self._normal_arms(
+            artifact, source_fingerprint, replay_case
         )
+        selected_normal_index = max(
+            range(len(normal_candidates)),
+            key=lambda index: (
+                self._normal_rank(normal_candidates[index]),
+                -index,
+            ),
+        )
+        normal = normal_candidates[selected_normal_index]
         if not normal.hard_closed:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
@@ -556,8 +623,10 @@ class Gate1Runner:
                 source_fingerprint,
                 normal,
                 None,
-                1,
+                len(normal_candidates),
                 0,
+                normal_candidates=normal_candidates,
+                selected_normal_index=selected_normal_index,
             )
 
         masked_evidence: Gate1ArmEvidence | None = None
@@ -566,7 +635,11 @@ class Gate1Runner:
         if self.config.run_masked_j:
             masked_calls = 1
             masked_evidence = self._arm(
-                artifact, source_fingerprint, replay_case, masked=True
+                self.writers[selected_normal_index],
+                artifact,
+                source_fingerprint,
+                replay_case,
+                masked=True,
             )
         return Gate1ExecutionResult(
             status,
@@ -575,8 +648,10 @@ class Gate1Runner:
             source_fingerprint,
             normal,
             masked_evidence,
-            1,
+            len(normal_candidates),
             masked_calls,
+            normal_candidates=normal_candidates,
+            selected_normal_index=selected_normal_index,
         )
 
 

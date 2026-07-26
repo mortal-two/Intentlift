@@ -724,6 +724,61 @@ def test_gate1_search_resumes_from_exact_failed_artifact_without_old_budget() ->
     assert factory.rounds == [1]
 
 
+def test_gate1_search_can_retry_exact_ranked_parent_before_any_lift() -> None:
+    previous = make_reduce_artifact()
+    seed = LiftFeedback(
+        FeedbackKind.GATE1,
+        {
+            "status": "no_closure",
+            "diagnostic": "saved observer mismatch",
+            "observer_diff": {"primary_difference_category": "dataflow"},
+        },
+        4,
+        previous,
+        (0, 3, 0.8, -4, 1, 0),
+    )
+    lift = _Lift([])
+    factory = _Gate1Factory([_gate1_result(closed=True)])
+
+    search = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(),
+        initial_feedback=seed,
+        retry_initial_artifact=True,
+    )
+
+    assert search.closed
+    assert lift.feedbacks == []
+    assert search.call_budget.lift_calls == 0
+    assert search.call_budget.lift_physical_calls == 0
+    assert search.call_budget.typecheck_calls == 1
+    assert search.call_budget.formal_gate1_rounds == 1
+    assert search.call_budget.replay_normal_calls == 1
+    assert search.attempts[0].lift_call == 0
+    assert search.attempts[0].formal_round == 1
+    assert search.attempts[0].artifact is not None
+    assert search.attempts[0].lift_metadata == {
+        "initial_artifact_gate1_retry": True,
+        "model_calls": 0,
+    }
+    assert factory.rounds == [1]
+
+
+def test_gate1_search_rejects_initial_retry_without_gate1_parent() -> None:
+    seed = LiftFeedback(
+        FeedbackKind.TYPECHECK,
+        {"typecheck": {"status": "fail"}},
+        None,
+        make_reduce_artifact(),
+    )
+
+    with pytest.raises(ValueError, match="retry_initial_artifact"):
+        _runner(_Lift([]), _Gate1Factory([]), _Gate2()).search_gate1(
+            _request(),
+            initial_feedback=seed,
+            retry_initial_artifact=True,
+        )
+
+
 @pytest.mark.parametrize(
     "kind, diagnostics",
     [

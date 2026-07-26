@@ -72,7 +72,20 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-gate1-rounds", type=int, default=6)
     parser.add_argument("--max-pre-replay-rejections", type=int, default=8)
+    parser.add_argument(
+        "--replay-width",
+        type=int,
+        choices=range(1, 5),
+        default=1,
+        metavar="{1,2,3,4}",
+        help="independent source-blind Replay workers per formal Gate1 round",
+    )
     parser.add_argument("--run-masked-j", action="store_true")
+    parser.add_argument(
+        "--retry-parent-gate1",
+        action="store_true",
+        help="run fresh formal Replay fan-out on the exact parent before Lift",
+    )
     parser.add_argument(
         "--run-root",
         type=Path,
@@ -230,6 +243,9 @@ def main(argv: list[str] | None = None) -> int:
                 "preserves_previous_artifact": True,
                 "initial_selection_rank": rank,
                 "failed_parent_policy": "gate1-rank-best-so-far-v1",
+                "replay_width": args.replay_width,
+                "replay_selection": "exact-pass-then-gate1-rank-v1",
+                "retry_parent_gate1": args.retry_parent_gate1,
             },
         )
 
@@ -261,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
             run_masked_j=args.run_masked_j,
             lift_backend=args.lift_backend,
             replay_backend=args.replay_backend,
+            replay_width=args.replay_width,
+            retry_initial_artifact=args.retry_parent_gate1,
             max_gate1_rounds=args.max_gate1_rounds,
             max_pre_replay_rejections=args.max_pre_replay_rejections,
             progress_callback=progress,

@@ -79,6 +79,30 @@ GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
 )
 
 
+@dataclass(frozen=True)
+class RecordedReplayWriterGroup:
+    """One formal Gate1 round's independent source-blind Replay writers."""
+
+    writers: tuple[RecordedReplayWriter, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.writers) < 2:
+            raise ValueError("Replay writer group requires fan-out width >= 2")
+        if len({id(writer) for writer in self.writers}) != len(self.writers):
+            raise ValueError("Replay writer group members must be independent")
+
+    @property
+    def records(self) -> tuple[ReplayGeneration | ReplayAttempt, ...]:
+        return tuple(
+            record
+            for writer in self.writers
+            for record in writer.records
+        )
+
+
+RecordedReplayEvidenceWriter = RecordedReplayWriter | RecordedReplayWriterGroup
+
+
 def _new_replay_writer(
     replay_backend: str,
     *,
@@ -512,7 +536,7 @@ def scrc_attempt_stage_counts(
 class WorkloadExecution:
     report: SCRCRunReport
     lift: RecordedLiftAdapter
-    replay_writers: tuple[RecordedReplayWriter, ...]
+    replay_writers: tuple[RecordedReplayEvidenceWriter, ...]
 
 
 @dataclass(frozen=True)
@@ -520,7 +544,7 @@ class WorkloadGate1Search:
     report: SCRCGate1SearchReport
     runner: SCRCGateRunner
     lift: RecordedLiftAdapter
-    replay_writers: tuple[RecordedReplayWriter, ...]
+    replay_writers: tuple[RecordedReplayEvidenceWriter, ...]
 
 
 @dataclass(frozen=True)
@@ -549,7 +573,7 @@ class WorkloadExecutionError(RuntimeError):
         self,
         cause: BaseException,
         lift: RecordedLiftAdapter,
-        replay_writers: tuple[RecordedReplayWriter, ...],
+        replay_writers: tuple[RecordedReplayEvidenceWriter, ...],
     ) -> None:
         self.cause = cause
         self.lift = lift
@@ -620,7 +644,16 @@ def _build_workload_runtime(
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     replay_backend: str = "responses",
-) -> tuple[SCRCGateRunner, RecordedLiftAdapter, list[RecordedReplayWriter]]:
+    replay_width: int = 1,
+) -> tuple[
+    SCRCGateRunner,
+    RecordedLiftAdapter,
+    list[RecordedReplayEvidenceWriter],
+]:
+    if not isinstance(replay_width, int) or isinstance(replay_width, bool):
+        raise TypeError("replay_width must be an integer")
+    if not 1 <= replay_width <= 4:
+        raise ValueError("replay_width must be in [1, 4]")
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
         lift_class = ResponsesSCRCLiftAdapter
@@ -634,20 +667,32 @@ def _build_workload_runtime(
         effort=effort,
         source_symbol=prepared.entry.symbol,
     )
-    writers: list[RecordedReplayWriter] = []
+    writers: list[RecordedReplayEvidenceWriter] = []
     compiler = TritonCompiler(timeout=240.0)
 
     def gate1_factory(_formal_round: int) -> BoundGate1Adapter:
-        writer = _new_replay_writer(
-            replay_backend,
-            provider=provider,
-            effort=effort,
+        round_writers = tuple(
+            _new_replay_writer(
+                replay_backend,
+                provider=provider,
+                effort=effort,
+            )
+            for _ in range(replay_width)
         )
-        writers.append(writer)
+        writer_evidence: RecordedReplayEvidenceWriter
+        if replay_width == 1:
+            writer_evidence = round_writers[0]
+        else:
+            writer_evidence = RecordedReplayWriterGroup(round_writers)
+        writers.append(writer_evidence)
         return BoundGate1Adapter(
             Gate1Runner(
                 compiler=compiler,
-                writer=writer,
+                writer=(
+                    round_writers[0]
+                    if replay_width == 1
+                    else round_writers
+                ),
                 config=Gate1Config(run_masked_j=run_masked_j),
             )
         )
@@ -671,6 +716,8 @@ def search_prepared_workload_gate1(
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     replay_backend: str = "responses",
+    replay_width: int = 1,
+    retry_initial_artifact: bool = False,
     max_gate1_rounds: int | None = None,
     max_pre_replay_rejections: int | None = None,
     stop_requested: Callable[[], int | None] | None = None,
@@ -685,6 +732,7 @@ def search_prepared_workload_gate1(
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
         replay_backend=replay_backend,
+        replay_width=replay_width,
     )
     request = prepared.request
     if max_gate1_rounds is not None:
@@ -698,6 +746,7 @@ def search_prepared_workload_gate1(
         report = runner.search_gate1(
             request,
             initial_feedback=initial_feedback,
+            retry_initial_artifact=retry_initial_artifact,
             stop_requested=stop_requested,
             progress_callback=progress_callback,
         )
@@ -1300,7 +1349,7 @@ def _save_attempt_evidence(
     run_dir: Path,
     attempts: tuple[Any, ...],
     lift: RecordedLiftAdapter,
-    replay_writers: tuple[RecordedReplayWriter, ...],
+    replay_writers: tuple[RecordedReplayEvidenceWriter, ...],
 ) -> None:
     for index, attempt in enumerate(attempts, start=1):
         attempt_dir = run_dir / f"attempt-{index:02d}"
@@ -1313,8 +1362,9 @@ def _save_attempt_evidence(
             )
         if attempt.gate1 is not None:
             _write_json(attempt_dir / "gate1.json", attempt.gate1.to_json())
-        if index <= len(lift.records):
-            record = lift.records[index - 1]
+        lift_call = getattr(attempt, "lift_call", index)
+        if 1 <= lift_call <= len(lift.records):
+            record = lift.records[lift_call - 1]
             if record.extraction is not None:
                 provenance = record.extraction.provenance
                 _write_json(
@@ -1392,24 +1442,60 @@ def _save_attempt_evidence(
     for (attempt_dir, attempt), writer in zip(
         formal_attempts, replay_writers, strict=True
     ):
-        records = list(writer.records)
-        if not records and attempt.gate1 is not None:
-            normal = attempt.gate1.normal.generation
-            masked = (
-                attempt.gate1.masked_j.generation
-                if attempt.gate1.masked_j is not None
-                else None
-            )
-            records.extend(
-                record for record in (normal, masked) if record is not None
-            )
-        for record_index, record in enumerate(records, start=1):
-            if record_index == 1:
-                prefix = "replay"
-            elif record_index == 2:
-                prefix = "masked_j_replay"
-            else:
-                prefix = f"replay_extra_{record_index:02d}"
+        record_entries: list[tuple[str, ReplayGeneration | ReplayAttempt]] = []
+        if isinstance(writer, RecordedReplayWriterGroup):
+            if attempt.gate1 is None:
+                raise ValueError("Replay writer fan-out lacks Gate1 evidence")
+            selected = attempt.gate1.selected_normal_index
+            if not 0 <= selected < len(writer.writers):
+                raise ValueError("Gate1 selected Replay index is out of range")
+            selected_records = list(writer.writers[selected].records)
+            for record_index, record in enumerate(selected_records):
+                prefix = (
+                    "replay"
+                    if record_index == 0
+                    else "masked_j_replay"
+                    if record_index == 1
+                    else f"replay_selected_extra_{record_index + 1:02d}"
+                )
+                record_entries.append((prefix, record))
+            for writer_index, candidate_writer in enumerate(writer.writers):
+                if writer_index == selected:
+                    continue
+                for record_index, record in enumerate(candidate_writer.records):
+                    suffix = "" if record_index == 0 else f"_{record_index + 1:02d}"
+                    record_entries.append(
+                        (
+                            f"replay_candidate_{writer_index + 1:02d}{suffix}",
+                            record,
+                        )
+                    )
+            if not record_entries and attempt.gate1.normal.generation is not None:
+                record_entries.append(
+                    ("replay", attempt.gate1.normal.generation)
+                )
+        else:
+            records = list(writer.records)
+            if not records and attempt.gate1 is not None:
+                normal = attempt.gate1.normal.generation
+                masked = (
+                    attempt.gate1.masked_j.generation
+                    if attempt.gate1.masked_j is not None
+                    else None
+                )
+                records.extend(
+                    record for record in (normal, masked) if record is not None
+                )
+            for record_index, record in enumerate(records, start=1):
+                prefix = (
+                    "replay"
+                    if record_index == 1
+                    else "masked_j_replay"
+                    if record_index == 2
+                    else f"replay_extra_{record_index:02d}"
+                )
+                record_entries.append((prefix, record))
+        for prefix, record in record_entries:
             exact_name = (
                 f"{prefix}.py"
                 if isinstance(record, ReplayGeneration)

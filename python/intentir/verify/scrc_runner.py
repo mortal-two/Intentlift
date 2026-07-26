@@ -871,16 +871,18 @@ class SCRCGateRunner:
         request: SCRCRunRequest,
         *,
         initial_feedback: LiftFeedback | None = None,
+        retry_initial_artifact: bool = False,
         stop_requested: Callable[[], int | None] | None = None,
         progress_callback: SCRCProgressCallback | None = None,
     ) -> SCRCGate1SearchReport:
         """Search one isolated branch through TypeCheck and Gate1 only.
 
         ``initial_feedback`` resumes from an externally preserved TypeCheck,
-        Gate1, or J-side Gate2 failure.  It is context for the first new Lift
-        call only: the runner never accepts, repairs, or otherwise promotes the
-        previous artifact, and all budgets count only work performed by this
-        search.
+        Gate1, or J-side Gate2 failure.  By default it is context for the first
+        new Lift call only.  ``retry_initial_artifact`` may first run current
+        TypeCheck and one fresh formal Gate1 round over an exact Gate1-failed
+        parent; it never edits the artifact, and all new Replay/Gate work is
+        counted in this search.
         """
 
         if initial_feedback is not None:
@@ -914,6 +916,13 @@ class SCRCGateRunner:
             request.binding.validate_artifact(
                 initial_feedback.previous_artifact
             )
+        if retry_initial_artifact and (
+            initial_feedback is None
+            or initial_feedback.kind is not FeedbackKind.GATE1
+        ):
+            raise ValueError(
+                "retry_initial_artifact requires exact Gate1 initial feedback"
+            )
 
         attempts: list[CandidateAttemptReport] = []
         feedback = initial_feedback
@@ -939,6 +948,11 @@ class SCRCGateRunner:
         replay_masked_calls = 0
         replay_physical_calls = 0
         gate1_adapters: list[Gate1AttemptAdapter] = []
+        pending_initial_artifact = (
+            initial_feedback.previous_artifact
+            if retry_initial_artifact and initial_feedback is not None
+            else None
+        )
 
         def budget() -> CallBudget:
             return CallBudget(
@@ -974,69 +988,83 @@ class SCRCGateRunner:
             stopped = superseded("before_lift")
             if stopped is not None:
                 return stopped
-            lift_calls += 1
-            _notify_progress(
-                progress_callback,
-                "lift",
-                lift_calls,
-                None,
-                "started",
-            )
-            try:
-                lift_result = self.dependencies.lift.lift(request, feedback)
-            except CandidateLiftError as exc:
-                lift_physical_calls += exc.physical_calls
-                pre_replay_rejections += 1
+            if pending_initial_artifact is not None:
+                artifact = canonicalize_gate1_artifact(
+                    pending_initial_artifact
+                )
+                pending_initial_artifact = None
+                attempt_lift_call = 0
+                lift_metadata: Mapping[str, Any] = {
+                    "initial_artifact_gate1_retry": True,
+                    "model_calls": 0,
+                }
+                last_artifact = artifact
+            else:
+                lift_calls += 1
                 _notify_progress(
                     progress_callback,
                     "lift",
                     lift_calls,
                     None,
-                    "rejected",
+                    "started",
                 )
-                feedback = LiftFeedback(
-                    FeedbackKind.LIFT,
-                    self._retain_gate1_diagnostic(exc.diagnostics, feedback),
-                    None,
-                    last_artifact,
-                )
-                attempts.append(
-                    CandidateAttemptReport(
-                        lift_call=lift_calls,
-                        formal_round=None,
-                        typecheck_status=TypeCheckStatus.NOT_RUN,
-                        feedback=feedback,
+                try:
+                    lift_result = self.dependencies.lift.lift(request, feedback)
+                except CandidateLiftError as exc:
+                    lift_physical_calls += exc.physical_calls
+                    pre_replay_rejections += 1
+                    _notify_progress(
+                        progress_callback,
+                        "lift",
+                        lift_calls,
+                        None,
+                        "rejected",
                     )
+                    feedback = LiftFeedback(
+                        FeedbackKind.LIFT,
+                        self._retain_gate1_diagnostic(exc.diagnostics, feedback),
+                        None,
+                        last_artifact,
+                    )
+                    attempts.append(
+                        CandidateAttemptReport(
+                            lift_call=lift_calls,
+                            formal_round=None,
+                            typecheck_status=TypeCheckStatus.NOT_RUN,
+                            feedback=feedback,
+                        )
+                    )
+                    stopped = superseded("after_lift")
+                    if stopped is not None:
+                        return stopped
+                    if pre_replay_rejections >= request.max_pre_replay_rejections:
+                        break
+                    continue
+                if not isinstance(lift_result, LiftCallResult):
+                    raise SCRCInfrastructureError(
+                        "Lift adapter must return LiftCallResult"
+                    )
+                lift_physical_calls += lift_result.physical_calls
+                _notify_progress(
+                    progress_callback,
+                    "lift",
+                    lift_calls,
+                    None,
+                    "finished",
                 )
-                stopped = superseded("after_lift")
-                if stopped is not None:
-                    return stopped
-                if pre_replay_rejections >= request.max_pre_replay_rejections:
-                    break
-                continue
-            if not isinstance(lift_result, LiftCallResult):
-                raise SCRCInfrastructureError(
-                    "Lift adapter must return LiftCallResult"
-                )
-            lift_physical_calls += lift_result.physical_calls
-            _notify_progress(
-                progress_callback,
-                "lift",
-                lift_calls,
-                None,
-                "finished",
-            )
-            artifact = canonicalize_gate1_artifact(lift_result.artifact)
-            last_artifact = artifact
+                artifact = canonicalize_gate1_artifact(lift_result.artifact)
+                attempt_lift_call = lift_calls
+                lift_metadata = lift_result.metadata
+                last_artifact = artifact
             stopped = superseded("after_lift")
             if stopped is not None:
                 attempts.append(
                     CandidateAttemptReport(
-                        lift_call=lift_calls,
+                        lift_call=attempt_lift_call,
                         formal_round=None,
                         typecheck_status=TypeCheckStatus.NOT_RUN,
                         artifact=artifact,
-                        lift_metadata=lift_result.metadata,
+                        lift_metadata=lift_metadata,
                     )
                 )
                 return superseded("after_lift") or stopped
@@ -1045,7 +1073,7 @@ class SCRCGateRunner:
             _notify_progress(
                 progress_callback,
                 "typecheck",
-                lift_calls,
+                attempt_lift_call,
                 None,
                 "started",
             )
@@ -1055,7 +1083,7 @@ class SCRCGateRunner:
             _notify_progress(
                 progress_callback,
                 "typecheck",
-                lift_calls,
+                attempt_lift_call,
                 None,
                 report.status.value,
             )
@@ -1071,13 +1099,13 @@ class SCRCGateRunner:
                 )
                 attempts.append(
                     CandidateAttemptReport(
-                        lift_call=lift_calls,
+                        lift_call=attempt_lift_call,
                         formal_round=None,
                         typecheck_status=TypeCheckStatus.FAIL,
                         artifact=artifact,
                         typecheck=report,
                         feedback=feedback,
-                        lift_metadata=lift_result.metadata,
+                        lift_metadata=lift_metadata,
                     )
                 )
                 stopped = superseded("after_typecheck")
@@ -1091,12 +1119,12 @@ class SCRCGateRunner:
             if stopped is not None:
                 attempts.append(
                     CandidateAttemptReport(
-                        lift_call=lift_calls,
+                        lift_call=attempt_lift_call,
                         formal_round=None,
                         typecheck_status=TypeCheckStatus.PASS,
                         artifact=artifact,
                         typecheck=report,
-                        lift_metadata=lift_result.metadata,
+                        lift_metadata=lift_metadata,
                     )
                 )
                 return superseded("before_replay") or stopped
@@ -1125,7 +1153,12 @@ class SCRCGateRunner:
             )
             replay_normal_calls += gate1.normal_calls
             replay_masked_calls += gate1.masked_j_calls
-            for arm in (gate1.normal, gate1.masked_j):
+            normal_arms = (
+                gate1.normal_candidates
+                if gate1.normal_candidates
+                else (gate1.normal,)
+            )
+            for arm in (*normal_arms, gate1.masked_j):
                 if arm is None:
                     continue
                 replay_physical_calls += (
@@ -1154,14 +1187,14 @@ class SCRCGateRunner:
                 if source_observer_unsupported:
                     attempts.append(
                         CandidateAttemptReport(
-                            lift_call=lift_calls,
+                            lift_call=attempt_lift_call,
                             formal_round=formal_rounds,
                             typecheck_status=TypeCheckStatus.PASS,
                             artifact=artifact,
                             typecheck=report,
                             gate1=gate1,
                             feedback=None,
-                            lift_metadata=lift_result.metadata,
+                            lift_metadata=lift_metadata,
                         )
                     )
                     stopped = superseded("after_gate1")
@@ -1185,14 +1218,14 @@ class SCRCGateRunner:
                 )
                 attempts.append(
                     CandidateAttemptReport(
-                        lift_call=lift_calls,
+                        lift_call=attempt_lift_call,
                         formal_round=formal_rounds,
                         typecheck_status=TypeCheckStatus.PASS,
                         artifact=artifact,
                         typecheck=report,
                         gate1=gate1,
                         feedback=candidate_feedback,
-                        lift_metadata=lift_result.metadata,
+                        lift_metadata=lift_metadata,
                     )
                 )
                 candidate_rank = self._failed_gate1_rank(gate1)
@@ -1230,13 +1263,13 @@ class SCRCGateRunner:
 
             attempts.append(
                 CandidateAttemptReport(
-                    lift_call=lift_calls,
+                    lift_call=attempt_lift_call,
                     formal_round=formal_rounds,
                     typecheck_status=TypeCheckStatus.PASS,
                     artifact=artifact,
                     typecheck=report,
                     gate1=gate1,
-                    lift_metadata=lift_result.metadata,
+                    lift_metadata=lift_metadata,
                 )
             )
             return SCRCGate1SearchReport(

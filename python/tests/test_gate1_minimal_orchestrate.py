@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import intentir.verify.gate1.orchestrate as gate1_orchestrate
+import pytest
 from direct_fixtures import make_reduce_artifact
 from intentir.verify.gate1.compiler import (
     CompileCase,
@@ -11,7 +12,11 @@ from intentir.verify.gate1.compiler import (
     RuntimeArgument,
 )
 from intentir.verify.gate1.model import Gate1Artifact, Gate1Status
-from intentir.verify.gate1.orchestrate import Gate1Runner, _replay_case
+from intentir.verify.gate1.orchestrate import (
+    Gate1Config,
+    Gate1Runner,
+    _replay_case,
+)
 from intentir.verify.gate1.replay import (
     ReplayAttempt,
     ReplayGenerationError,
@@ -120,6 +125,62 @@ def test_masked_j_hard_closure_does_not_reject_main_gate1() -> None:
     assert result.j_necessity_status.value == "not_proved"
     assert result.passed
     assert result.masked_j is not None and result.masked_j.hard_closed
+
+
+def test_source_blind_replay_fanout_selects_exact_closure_and_records_all() -> None:
+    class MarkerCompiler:
+        def compile(
+            self, source: KernelSource, case: CompileCase
+        ) -> CompileResult:
+            del case
+            if source.trusted:
+                text = GOOD_TTIR
+                names = ["X", "Y", "N", "BLOCK"]
+            else:
+                text = GOOD_TTIR if "GOOD_REPLAY" in (source.code or "") else BAD_TTIR
+                names = ["p0", "p1", "p2", "c0"]
+            return CompileResult(
+                True,
+                ttir=text,
+                python_interface={
+                    "arg_names": names,
+                    "constexprs": [names[-1]],
+                    "constexpr_indices": [3],
+                },
+            )
+
+    bad = StaticReplayWriter(REPLAY + "\n# BAD_REPLAY\n")
+    good = StaticReplayWriter(REPLAY + "\n# GOOD_REPLAY\n")
+    result = Gate1Runner(
+        compiler=MarkerCompiler(),
+        writer=(bad, good),
+        config=Gate1Config(run_masked_j=False),
+    ).run(
+        make_reduce_artifact(),
+        source=KernelSource.from_code("source", "kernel", trusted=True),
+        source_case=_case(),
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.normal_calls == 2
+    assert result.selected_normal_index == 1
+    assert len(result.normal_candidates) == 2
+    assert not result.normal_candidates[0].hard_closed
+    assert result.normal_candidates[1].hard_closed
+    assert result.normal is result.normal_candidates[1]
+    assert bad.calls == [False]
+    assert good.calls == [False]
+    fanout = result.to_json()["normal_fanout"]
+    assert fanout["width"] == 2
+    assert fanout["selected_index"] == 1
+    assert fanout["source_blind_independent_replays"] is True
+    assert len(fanout["candidates"]) == 2
+
+
+def test_replay_fanout_rejects_reused_writer_identity() -> None:
+    writer = StaticReplayWriter(REPLAY)
+    with pytest.raises(ValueError, match="fresh independent"):
+        Gate1Runner(compiler=FakeCompiler(), writer=(writer, writer))
 
 
 def test_source_parameter_spelling_is_not_a_gate1_semantic() -> None:

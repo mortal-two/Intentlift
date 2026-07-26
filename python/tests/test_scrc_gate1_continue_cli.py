@@ -135,6 +135,9 @@ def test_ranked_continuation_cli_loads_exact_seed_and_saves_no_closure(
             "test-provider",
             "--effort",
             "xhigh",
+            "--replay-width",
+            "3",
+            "--retry-parent-gate1",
             "--run-root",
             str(tmp_path / "runs"),
             "--json",
@@ -157,6 +160,10 @@ def test_ranked_continuation_cli_loads_exact_seed_and_saves_no_closure(
     metadata = calls["initialized"][2]["search_metadata"]
     assert metadata["initial_selection_rank"] == [0, 3, 0.75, -4, 1, 0]
     assert metadata["failed_parent_policy"] == "gate1-rank-best-so-far-v1"
+    assert metadata["replay_width"] == 3
+    assert calls["search"][1]["replay_width"] == 3
+    assert metadata["retry_parent_gate1"] is True
+    assert calls["search"][1]["retry_initial_artifact"] is True
     assert calls["saved"][3]["selected_for_gate2"] is False
 
 
