@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -160,6 +161,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
             "When Gate1 reports dataflow, run `python /input/tools/context_query.py feedback-category dataflow`; it preserves effect-order witnesses even when bulk node witnesses are paged out.",
+            "When that dataflow view contains local_frontier, inspect its non-recursive immediate profiles before bulk recursive-hash witnesses; it is diagnostic-only and never prescribes J/C/pi.",
             f"Use `{QUERY_COMMAND} knowledge QUERY` and schema_query for focused lookup.",
         ],
     }
@@ -518,6 +520,114 @@ def _candidate_find(output_root: Path, needle: str) -> None:
             "match_count": len(paths),
             "truncated": len(paths) >= 256,
             "authority": "read-only; candidate.json was not edited",
+        }
+    )
+
+
+def _bounded_diff_value(value: Any) -> Any:
+    if value is _MISSING:
+        return {"missing": True}
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str) and len(value) <= 240:
+        return value
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "type": type(value).__name__,
+        "json_bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+_MISSING = object()
+
+
+def _candidate_diff(input_root: Path, output_root: Path) -> None:
+    """Show a bounded mechanical diff from the supplied parent to the draft."""
+
+    previous = _previous_candidate(input_root)
+    candidate_path = output_root / "candidate.json"
+    if previous is None or not candidate_path.is_file():
+        _emit_json(
+            {
+                "protocol": "intentir.lift-candidate-diff.v1",
+                "previous_candidate_found": previous is not None,
+                "candidate_found": candidate_path.is_file(),
+                "authority": "read-only; no artifact field was inferred or edited",
+            }
+        )
+        return
+    current = _load_json(candidate_path)
+    differences: list[dict[str, Any]] = []
+    total = 0
+    limit = 48
+
+    def record(path: str, before: Any, after: Any) -> None:
+        nonlocal total
+        total += 1
+        if len(differences) < limit:
+            differences.append(
+                {
+                    "path": path or "<root>",
+                    "before": _bounded_diff_value(before),
+                    "after": _bounded_diff_value(after),
+                }
+            )
+
+    def visit(before: Any, after: Any, path: str) -> None:
+        if type(before) is not type(after):
+            record(path, before, after)
+            return
+        if isinstance(before, dict):
+            for key in sorted(set(before) | set(after)):
+                child = f"{path}.{key}" if path else str(key)
+                if key not in before:
+                    record(child, _MISSING, after[key])
+                elif key not in after:
+                    record(child, before[key], _MISSING)
+                else:
+                    visit(before[key], after[key], child)
+            return
+        if isinstance(before, list):
+            common = min(len(before), len(after))
+            for index in range(common):
+                visit(before[index], after[index], f"{path}.{index}")
+            for index in range(common, max(len(before), len(after))):
+                record(
+                    f"{path}.{index}",
+                    before[index] if index < len(before) else _MISSING,
+                    after[index] if index < len(after) else _MISSING,
+                )
+            return
+        if before != after:
+            record(path, before, after)
+
+    visit(previous, current, "")
+    component_changed = {
+        component: previous.get(component) != current.get(component)
+        for component in ("j", "c", "pi")
+        if isinstance(previous, dict) and isinstance(current, dict)
+    }
+    _emit_json(
+        {
+            "protocol": "intentir.lift-candidate-diff.v1",
+            "previous_candidate_found": True,
+            "candidate_found": True,
+            "artifact_changed": total > 0,
+            "component_changed": component_changed,
+            "difference_count": total,
+            "differences": differences,
+            "differences_omitted": max(0, total - len(differences)),
+            "authority": (
+                "read-only mechanical diff of two LLM-authored candidates; "
+                "no semantic repair or acceptance decision was made"
+            ),
         }
     )
 
@@ -1041,6 +1151,7 @@ def main() -> int:
     candidate.add_argument("--path")
     candidate_find = subparsers.add_parser("candidate-find")
     candidate_find.add_argument("value")
+    subparsers.add_parser("candidate-diff")
     candidate_nodes = subparsers.add_parser("candidate-nodes")
     candidate_nodes.add_argument("--start", type=int, default=1)
     candidate_nodes.add_argument("--count", type=int, default=40)
@@ -1072,6 +1183,8 @@ def main() -> int:
         _candidate(args.output_root, args.path)
     elif args.command == "candidate-find":
         _candidate_find(args.output_root, args.value)
+    elif args.command == "candidate-diff":
+        _candidate_diff(args.input_root, args.output_root)
     elif args.command == "candidate-nodes":
         _candidate_nodes(args.output_root, args.start, args.count, args.op)
     elif args.command == "candidate-node":

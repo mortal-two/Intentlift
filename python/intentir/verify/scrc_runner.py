@@ -7,8 +7,11 @@ status rules live here exactly once.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
+import json
 import re
 from typing import Any, Callable, Mapping, Protocol
 
@@ -31,6 +34,10 @@ MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
 MAX_GATE1_FEEDBACK_NODE_WITNESSES = 10
 MAX_GATE1_FEEDBACK_EDGES_PER_NODE = 6
 MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS = 512
+MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES = 10
+MAX_GATE1_REPAIR_CHANGED_PATHS = 48
+GATE1_REPAIR_PROGRESS_PROTOCOL = "intentir.gate1-relift-progress.v1"
+GATE1_LOCAL_FRONTIER_PROTOCOL = "intentir.gate1-local-frontier.v1"
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -75,6 +82,86 @@ def _feedback_item(value: Any) -> Any:
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     return value
+
+
+def _canonical_json_digest(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _artifact_component_digests(artifact: Gate1Artifact) -> dict[str, str]:
+    payload = artifact.to_json()
+    return {
+        component: _canonical_json_digest(payload[component])
+        for component in ("j", "c", "pi")
+    }
+
+
+def _changed_json_paths(
+    before: Any,
+    after: Any,
+) -> tuple[list[str], int]:
+    """Return a bounded mechanical diff between two LLM-authored artifacts."""
+
+    paths: list[str] = []
+    total = 0
+
+    def record(path: str) -> None:
+        nonlocal total
+        total += 1
+        if len(paths) < MAX_GATE1_REPAIR_CHANGED_PATHS:
+            paths.append(path or "<root>")
+
+    def visit(left: Any, right: Any, path: str) -> None:
+        if type(left) is not type(right):
+            record(path)
+            return
+        if isinstance(left, Mapping):
+            left_keys = {str(key) for key in left}
+            right_keys = {str(key) for key in right}
+            for key in sorted(left_keys | right_keys):
+                child = f"{path}.{key}" if path else key
+                if key not in left_keys or key not in right_keys:
+                    record(child)
+                else:
+                    visit(left[key], right[key], child)
+            return
+        if isinstance(left, list):
+            common = min(len(left), len(right))
+            for index in range(common):
+                visit(left[index], right[index], f"{path}.{index}")
+            for index in range(common, max(len(left), len(right))):
+                record(f"{path}.{index}")
+            return
+        if left != right:
+            record(path)
+
+    visit(before, after, "")
+    return paths, total
+
+
+def _observer_category_counts(
+    diagnostics: Mapping[str, Any],
+) -> dict[str, int]:
+    observer = diagnostics.get("observer_diff")
+    categories = observer.get("categories") if isinstance(observer, Mapping) else None
+    if not isinstance(categories, list):
+        return {}
+    result: dict[str, int] = {}
+    for category in categories:
+        if not isinstance(category, Mapping):
+            continue
+        name = category.get("category")
+        count = category.get("difference_count")
+        if isinstance(name, str) and isinstance(count, int) and not isinstance(count, bool):
+            result[name] = count
+    return dict(sorted(result.items()))
 
 
 def _observer_fingerprints(value: Any) -> tuple[str, ...]:
@@ -293,6 +380,147 @@ def _observer_diagnostic_signatures(
             for token in _observer_fingerprints(entry[0]):
                 result.setdefault(token, {}).setdefault(side, signature)
     return result
+
+
+def _observer_local_profile_counter(
+    fingerprint: Any | None,
+) -> tuple[Counter[str], dict[str, dict[str, Any]]]:
+    """Index non-recursive diagnostic node profiles without observer hashes."""
+
+    counts: Counter[str] = Counter()
+    payloads: dict[str, dict[str, Any]] = {}
+    entries = getattr(fingerprint, "diagnostic_node_profiles", ())
+    if not isinstance(entries, (list, tuple)):
+        return counts, payloads
+    for entry in entries:
+        if (
+            not isinstance(entry, (list, tuple))
+            or len(entry) != 4
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], str)
+            or not isinstance(entry[2], (list, tuple))
+            or not isinstance(entry[3], (list, tuple))
+            or not all(
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and isinstance(item[0], str)
+                and isinstance(item[1], str)
+                for item in entry[2]
+            )
+            or not all(isinstance(item, str) for item in entry[3])
+        ):
+            continue
+        profile: dict[str, Any] = {
+            "local_signature": entry[1][
+                :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+            ],
+            "inputs": [
+                {
+                    "role": role,
+                    "producer": producer[
+                        :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+                    ],
+                }
+                for role, producer in entry[2]
+            ],
+            "context": [
+                item[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+                for item in entry[3]
+            ],
+        }
+        # Be defensive if a future observer profile embeds an opaque digest.
+        # The diagnostic stays hash-free even though the hard observer does not.
+        profile = _feedback_item(profile)
+        key = json.dumps(
+            profile,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        counts[key] += 1
+        payloads.setdefault(key, profile)
+    return counts, payloads
+
+
+def _observer_local_dataflow_frontier(
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> dict[str, Any] | None:
+    """Return a bounded non-recursive frontier for a failed hard dataflow diff.
+
+    This sidecar never participates in comparison or candidate selection.  It
+    removes the recursive-hash cascade from the diagnostic view so Lift can see
+    which immediate producer/consumer profiles actually differ.
+    """
+
+    source, source_payloads = _observer_local_profile_counter(source_fingerprint)
+    replay, replay_payloads = _observer_local_profile_counter(replay_fingerprint)
+    if not source and not replay:
+        return None
+
+    source_signatures = Counter(
+        source_payloads[key]["local_signature"]
+        for key, count in source.items()
+        for _ in range(count)
+    )
+    replay_signatures = Counter(
+        replay_payloads[key]["local_signature"]
+        for key, count in replay.items()
+        for _ in range(count)
+    )
+    differences: list[dict[str, Any]] = []
+    for key in source.keys() | replay.keys():
+        expected = source[key]
+        actual = replay[key]
+        if expected == actual:
+            continue
+        profile = source_payloads.get(key) or replay_payloads[key]
+        assert profile is not None
+        differences.append(
+            {
+                "kind": "missing" if actual < expected else "unexpected",
+                "profile": profile,
+                "expected_count": expected,
+                "actual_count": actual,
+                "_paired_signature": bool(
+                    source_signatures[profile["local_signature"]]
+                    and replay_signatures[profile["local_signature"]]
+                ),
+            }
+        )
+
+    differences.sort(
+        key=lambda item: (
+            0 if item["_paired_signature"] else 1,
+            len(item["profile"].get("context", ())),
+            item["profile"]["local_signature"],
+            0 if item["kind"] == "missing" else 1,
+            json.dumps(item["profile"], sort_keys=True, ensure_ascii=False),
+        )
+    )
+    examples = []
+    for difference in differences[:MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES]:
+        example = dict(difference)
+        example.pop("_paired_signature", None)
+        examples.append(example)
+    return {
+        "protocol": GATE1_LOCAL_FRONTIER_PROTOCOL,
+        "authority": (
+            "diagnostic-only non-recursive profiles excluded from Gate1 "
+            "membership, artifact construction, and candidate selection"
+        ),
+        "source_profile_count": sum(source.values()),
+        "replay_profile_count": sum(replay.values()),
+        "difference_count": len(differences),
+        "examples": examples,
+        "truncated_count": max(0, len(differences) - len(examples)),
+        "diagnostic": (
+            "These are immediate local producer/consumer differences after "
+            "removing recursive node-hash fallout. Empty differences with a "
+            "hard dataflow failure indicate same-signature occurrence wiring "
+            "or higher-level region composition, not a Gate1 pass."
+        ),
+    }
 
 
 def _observer_edge_endpoint(value: Any) -> str:
@@ -543,6 +771,12 @@ def _compact_gate1_observer_diff(
                 )[:MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY]
             ]
         if category == "dataflow":
+            local_frontier = _observer_local_dataflow_frontier(
+                source_fingerprint,
+                replay_fingerprint,
+            )
+            if local_frontier is not None:
+                group["local_frontier"] = local_frontier
             witnesses = _observer_node_witnesses(
                 mapped_differences,
                 node_aliases,
@@ -925,6 +1159,14 @@ class SCRCGateRunner:
                 source_fingerprint=result.source_fingerprint,
                 replay_fingerprint=normal.fingerprint,
             )
+        progress = cls._gate1_repair_progress(
+            artifact,
+            diagnostics,
+            cls._failed_gate1_rank(result),
+            prior_feedback,
+        )
+        if progress is not None:
+            diagnostics["repair_progress"] = progress
         unresolved_gate2 = cls._unresolved_gate2(prior_feedback)
         if unresolved_gate2 is not None:
             diagnostics[UNRESOLVED_GATE2_DIAGNOSTIC] = unresolved_gate2
@@ -934,6 +1176,132 @@ class SCRCGateRunner:
             formal_round,
             artifact,
             cls._failed_gate1_rank(result),
+        )
+
+    @classmethod
+    def _gate1_repair_progress(
+        cls,
+        artifact: Gate1Artifact,
+        diagnostics: Mapping[str, Any],
+        current_rank: tuple[int | float, ...] | None,
+        prior_feedback: LiftFeedback | None,
+    ) -> dict[str, Any] | None:
+        """Describe repair progress without constructing or editing semantics."""
+
+        if prior_feedback is None or prior_feedback.previous_artifact is None:
+            return None
+        parent = prior_feedback.previous_artifact
+        parent_payload = parent.to_json()
+        current_payload = artifact.to_json()
+        changed_paths, changed_path_count = _changed_json_paths(
+            parent_payload,
+            current_payload,
+        )
+        parent_digests = _artifact_component_digests(parent)
+        current_digests = _artifact_component_digests(artifact)
+        component_changed = {
+            component: parent_digests[component] != current_digests[component]
+            for component in ("j", "c", "pi")
+        }
+        parent_counts = _observer_category_counts(prior_feedback.diagnostics)
+        current_counts = _observer_category_counts(diagnostics)
+        category_delta = {
+            category: current_counts.get(category, 0) - parent_counts.get(category, 0)
+            for category in sorted(set(parent_counts) | set(current_counts))
+        }
+        parent_rank = prior_feedback.selection_rank
+        rank_relation = "not_comparable"
+        if current_rank is not None and parent_rank is not None:
+            rank_relation = (
+                "improved"
+                if current_rank > parent_rank
+                else "unchanged"
+                if current_rank == parent_rank
+                else "regressed"
+            )
+        if not any(component_changed.values()):
+            diagnostic = (
+                "The canonical J/C/pi artifact is unchanged, so the prior "
+                "Gate1 counterexample remains unresolved. Re-read the bounded "
+                "observer evidence and author a Source-justified semantic or "
+                "realization change before resubmitting."
+            )
+        elif rank_relation in {"regressed", "unchanged"}:
+            diagnostic = (
+                "The authored artifact changed, but the Gate1 diagnostic rank "
+                "did not improve. Use the component/path and category deltas to "
+                "choose a different Source-justified repair hypothesis."
+            )
+        else:
+            diagnostic = (
+                "The authored artifact changed. Continue from the selected "
+                "parent and use the remaining Gate1 categories as open "
+                "obligations; fixed code has not prescribed a repair."
+            )
+        return {
+            "protocol": GATE1_REPAIR_PROGRESS_PROTOCOL,
+            "parent_formal_round": prior_feedback.formal_round,
+            "parent_component_sha256": parent_digests,
+            "current_component_sha256": current_digests,
+            "component_changed": component_changed,
+            "artifact_changed": bool(changed_path_count),
+            "changed_path_count": changed_path_count,
+            "changed_paths": changed_paths,
+            "changed_paths_omitted": max(0, changed_path_count - len(changed_paths)),
+            "parent_category_counts": parent_counts,
+            "current_category_counts": current_counts,
+            "category_count_delta": category_delta,
+            "rank_relation": rank_relation,
+            "diagnostic": diagnostic,
+            "authority": (
+                "diagnostic-only comparison of LLM-authored artifacts and Gate1 "
+                "evidence; it never edits J/C/pi or certifies a candidate"
+            ),
+        }
+
+    @staticmethod
+    def _best_parent_with_last_trial(
+        best: LiftFeedback,
+        trial: LiftFeedback,
+    ) -> LiftFeedback:
+        """Keep the best parent while retaining why the latest trial was rejected."""
+
+        best_rank = best.selection_rank
+        trial_rank = trial.selection_rank
+        outcome = (
+            "not_comparable"
+            if best_rank is None or trial_rank is None
+            else "tied"
+            if trial_rank == best_rank
+            else "regressed"
+        )
+        diagnostics = dict(best.diagnostics)
+        trial_observer = trial.diagnostics.get("observer_diff")
+        diagnostics["last_search_trial"] = {
+            "protocol": GATE1_REPAIR_PROGRESS_PROTOCOL,
+            "selected_parent_formal_round": best.formal_round,
+            "trial_formal_round": trial.formal_round,
+            "outcome": outcome,
+            "trial_category_counts": _observer_category_counts(trial.diagnostics),
+            "trial_primary_difference_category": (
+                trial_observer.get("primary_difference_category")
+                if isinstance(trial_observer, Mapping)
+                else None
+            ),
+            "trial_repair_progress": trial.diagnostics.get("repair_progress"),
+            "diagnostic": (
+                "The latest trial was not selected as the next parent. The "
+                "copied previous_artifact remains the best failed candidate; "
+                "do not repeat the rejected trial's unchanged or regressing "
+                "path pattern."
+            ),
+        }
+        return LiftFeedback(
+            FeedbackKind.GATE1,
+            diagnostics,
+            best.formal_round,
+            best.previous_artifact,
+            best.selection_rank,
         )
 
     @staticmethod
@@ -1400,7 +1768,14 @@ class SCRCGateRunner:
                         best_failed_rank = candidate_rank
                         best_failed_feedback = candidate_feedback
                     assert best_failed_feedback is not None
-                    feedback = best_failed_feedback
+                    feedback = (
+                        best_failed_feedback
+                        if best_failed_feedback is candidate_feedback
+                        else self._best_parent_with_last_trial(
+                            best_failed_feedback,
+                            candidate_feedback,
+                        )
+                    )
                     assert feedback.previous_artifact is not None
                     last_artifact = feedback.previous_artifact
                 stopped = superseded("after_gate1")

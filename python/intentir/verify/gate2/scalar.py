@@ -18,11 +18,13 @@ from intentir.backend.cpu.structured_reference import (
 from intentir.ir.canonical_j import (
     ContractExpr,
     ContractSort,
+    canonical_broadcast_axes,
     elaborate_j,
     j_elaboration,
     parse_contract_expr,
     parse_index_expression,
 )
+from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.functional_boundary import (
     direct_logical_operand_sources,
@@ -34,6 +36,7 @@ from intentir.ir.functional_boundary import (
     project_predicate_text,
     static_index_bounds_status,
 )
+from intentir.ir.integer_range import proves_index_bounds
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import (
@@ -854,6 +857,7 @@ def scalar_index_bounds(j: SemanticArchive) -> frozenset[str]:
 def validate_index_bounds_inputs(
     j: SemanticArchive,
     values: Mapping[str, np.ndarray],
+    dimensions: Mapping[str, int] | None = None,
 ) -> None:
     """Check J's indexed-domain preconditions before native scalar execution."""
 
@@ -865,6 +869,13 @@ def validate_index_bounds_inputs(
             raise ValueError(
                 f"J index-bounds precondition failed at node {item.node_ref!r}"
             )
+        if proves_index_bounds(
+            j,
+            item,
+            logical_inputs=values,
+            dimension_extents=dimensions,
+        ):
+            continue
         if item.data not in values or item.indices not in values:
             raise NotImplementedError(
                 "E_J runtime bounds checking currently requires data and indices "
@@ -886,6 +897,104 @@ def scalar_broadcast_axes(
     j: SemanticArchive,
 ) -> dict[str, dict[str, tuple[int, ...]]]:
     return project_functional_boundary(j).emitter_broadcast_axes()
+
+
+def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
+    """Recognize one relation capability class, never an index formula shape.
+
+    This migration slice covers flat, pure indexed A graphs whose physical
+    predicates are completely authored and whose non-direct internal loads are
+    guarded by already-validated J index-bounds relations.  Stateful, padded
+    reduction, runtime-guard, alias, and update semantics retain their dedicated
+    consumers until they move to ContractIR as typed relations.
+    """
+
+    boundary = j.boundary
+    if (
+        not boundary.index_bounds
+        or boundary.aliases
+        or boundary.reductions
+        or boundary.updates
+        or boundary.consumer_extensions
+        or boundary.access_guard_relations
+        or any(item.alias_of is not None for item in j.signature.parameters)
+    ):
+        return False
+
+    def walk(body: Sequence[IntentOp]):
+        for operation in body:
+            yield operation
+            yield from walk(operation.body)
+            for arm in (operation.positive, operation.negative):
+                if arm is not None:
+                    yield from walk(arm.body)
+
+    if any(
+        operation.op in {
+            "arg_reduce", "effect_if", "loop", "reduce", "scan", "value_if",
+        }
+        for operation in walk(j.intent.body)
+    ):
+        return False
+    if not boundary.accesses or any(
+        access.predicate is None for access in boundary.accesses
+    ):
+        return False
+    if any(
+        access.kind is AccessKind.LOAD and access.fill_value is None
+        for access in boundary.accesses
+    ):
+        return False
+
+    scalar_inputs = {
+        item.name for item in j.intent.inputs if not item.shape
+    }
+    elaboration = j_elaboration(j)
+    authored_expressions = [
+        *elaboration.domain_by_id.values(),
+        *(
+            access.predicate
+            for access in elaboration.accesses
+            if access.predicate is not None
+        ),
+    ]
+    if any(
+        expression.references.intersection(scalar_inputs)
+        for expression in authored_expressions
+    ):
+        return False
+
+    effects_by_access: dict[str, list[Any]] = {}
+    for effect in boundary.effects:
+        if effect.access_ref is None:
+            return False
+        effects_by_access.setdefault(effect.access_ref, []).append(effect)
+    expected_effect = {
+        AccessKind.LOAD: EffectKind.READ,
+        AccessKind.STORE: EffectKind.WRITE,
+    }
+    accesses = {item.access_id: item for item in boundary.accesses}
+    if set(effects_by_access) != set(accesses):
+        return False
+    for access in boundary.accesses:
+        matches = effects_by_access[access.access_id]
+        if (
+            access.kind not in expected_effect
+            or len(matches) != 1
+            or matches[0].kind is not expected_effect[access.kind]
+            or matches[0].target != access.tensor
+            or matches[0].node_ref != access.node_ref
+        ):
+            return False
+
+    bounded_nodes = {item.node_ref for item in boundary.index_bounds}
+    parsed = elaboration.access_by_id
+    return all(
+        access.kind is not AccessKind.LOAD
+        or parsed[access.access_id].index.direct_coordinates is not None
+        or access.node_ref in bounded_nodes
+        for access in boundary.accesses
+    )
 
 
 @dataclass(frozen=True)
@@ -1039,19 +1148,61 @@ class ScalarLoweringRunner:
                 tensor.name: value
                 for tensor, value in zip(spec.j.intent.inputs, inputs, strict=True)
             }
-            projection = project_functional_boundary_for_refeval(
+            validate_index_bounds_inputs(
                 spec.j,
                 inputs_by_ref,
                 spec.dims_map,
             )
-            boundary_digest = projection.boundary_digest
-            validate_index_bounds_inputs(spec.j, inputs_by_ref)
-            broadcast_axes = projection.emitter_broadcast_axes()
-            guarded_loads = tuple(
-                item
-                for item in projection.access_guard_relations
-                if item.access_kind == "load"
-            )
+            try:
+                projection = project_functional_boundary_for_refeval(
+                    spec.j,
+                    inputs_by_ref,
+                    spec.dims_map,
+                )
+            except NotImplementedError as capability_error:
+                # A capability-shaped formula must not become a second J
+                # membership test.  Preserve the complete typed contract and
+                # execute the canonical Layer-A graph.  Relations whose current
+                # RefEval semantics require extra runtime materialization retain
+                # the established specialized consumer until that lowering is
+                # migrated to ContractIR.
+                if not _contract_ir_indexed_graph_fallback(spec.j):
+                    raise capability_error
+                contract_ir = project_contract_ir(spec.j)
+                boundary_digest = contract_ir.digest
+                broadcast_axes = canonical_broadcast_axes(spec.j)
+                guarded_loads = ()
+                proven_index_bounds = frozenset(
+                    spec.j.node_ids.get(item.node_ref, item.node_ref)
+                    for item in spec.j.boundary.index_bounds
+                )
+                boundary_profile = "canonical_contract_ir_a_graph_v1"
+                boundary_projection_record = {
+                    **contract_ir.to_json(),
+                    "fallback_from": str(capability_error),
+                }
+                predicated_access_count = sum(
+                    item.predicate is not None
+                    for item in spec.j.boundary.accesses
+                )
+                erased_fill_count = 0
+                runtime_predicate_proof_count = 0
+            else:
+                boundary_digest = projection.boundary_digest
+                broadcast_axes = projection.emitter_broadcast_axes()
+                guarded_loads = tuple(
+                    item
+                    for item in projection.access_guard_relations
+                    if item.access_kind == "load"
+                )
+                proven_index_bounds = projection.proven_index_bounds
+                boundary_profile = projection.profile
+                boundary_projection_record = projection.to_json()
+                predicated_access_count = projection.predicated_access_count
+                erased_fill_count = projection.erased_fill_count
+                runtime_predicate_proof_count = len(
+                    projection.runtime_predicate_proofs
+                )
             structured = requires_structured_reference(spec.j) or bool(
                 guarded_loads
             )
@@ -1069,7 +1220,7 @@ class ScalarLoweringRunner:
                     spec.dims_map,
                     inputs,
                     broadcast_axes=broadcast_axes,
-                    proven_index_bounds=projection.proven_index_bounds,
+                    proven_index_bounds=proven_index_bounds,
                 )
             )
             output_bindings = spec.output_binding_map
@@ -1094,16 +1245,14 @@ class ScalarLoweringRunner:
                     "j_digest": spec.j_digest,
                     "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
-                    "boundary_profile": projection.profile,
-                    "boundary_projection": projection.to_json(),
+                    "boundary_profile": boundary_profile,
+                    "boundary_projection": boundary_projection_record,
                     "domain_relation_count": len(spec.j.boundary.domains),
                     "access_relation_count": len(spec.j.boundary.accesses),
                     "effect_relation_count": len(spec.j.boundary.effects),
-                    "predicated_access_count": projection.predicated_access_count,
-                    "erased_fill_count": projection.erased_fill_count,
-                    "runtime_predicate_proof_count": len(
-                        projection.runtime_predicate_proofs
-                    ),
+                    "predicated_access_count": predicated_access_count,
+                    "erased_fill_count": erased_fill_count,
+                    "runtime_predicate_proof_count": runtime_predicate_proof_count,
                     "broadcast_consumer_count": len(broadcast_axes),
                     "index_bounds_count": len(spec.j.boundary.index_bounds),
                     "result_relation_count": len(

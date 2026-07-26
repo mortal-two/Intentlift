@@ -274,6 +274,10 @@ Gate1 `dataflow.node_witnesses` use `source_node_*`, `replay_node_*`, and
 one feedback. Compare their normalized local signatures and incident
 producer/consumer roles to localize the earliest wiring divergence; never copy
 an observer alias into J/C/pi.
+When present, inspect `dataflow.local_frontier` first. It removes recursive
+observer-hash fallout and lists bounded immediate producer/consumer profile
+differences; it is diagnostic-only, cannot accept a candidate, and does not
+prescribe any J/C/pi field.
 After writing or editing a complete draft, inspect the bounded public-ABI diff
 without paging the whole Harness again:
 
@@ -291,9 +295,13 @@ sections include `access`, `effect`, `result_relation`, `authorization`,
 `pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
 On a fresh retry where `feedback.json.previous_artifact` is an object, copy
-that complete candidate first and make only the focused external-diagnostic
-repair; do not rebuild it from Source. The repaired full object is still a new
-Lift submission and will be checked externally again.
+that complete candidate first. Use `repair_progress`/`last_search_trial` when
+present and make the Source-justified coordinated J/C/pi changes needed by the
+external counterexample; do not blindly rebuild or mechanically resubmit the
+same artifact. Run `python /input/tools/context_query.py candidate-diff` before
+submission. This is only a read-only diff of two LLM-authored candidates, never
+a repair. The repaired full object is still a new Lift submission and will be
+checked externally again.
 If current Lift/TypeCheck diagnostics contain `unresolved_gate1`, the enclosed
 Gate1 counterexample remains an open obligation across the intermediate
 construction failure; address both without inventing fields.

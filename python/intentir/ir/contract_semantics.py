@@ -26,6 +26,123 @@ class ContractSemanticsError(ValueError):
     """A canonical ContractExpr has no value in the supplied typed environment."""
 
 
+def infer_reference_sorts(
+    expression: ContractExpr,
+    *,
+    expected_sort: ContractSort | None = None,
+    known_sorts: Mapping[str, ContractSort] | None = None,
+    context: str = "ContractExpr",
+) -> dict[str, ContractSort]:
+    """Infer the unique leaf sorts forced by the closed expression grammar.
+
+    This is ordinary type unification, not artifact repair: a reference used by
+    arithmetic/comparison is integer, while a reference used as a predicate is
+    boolean.  Conflicting uses or a direct reference with no expected sort fail
+    closed.
+    """
+
+    if not isinstance(expression, ContractExpr):
+        raise TypeError("reference-sort inference requires ContractExpr")
+    assignments = {
+        name: sort
+        for name, sort in dict(known_sorts or {}).items()
+        if name in expression.references
+    }
+    if any(
+        sort not in {ContractSort.INTEGER, ContractSort.BOOLEAN}
+        for sort in assignments.values()
+    ):
+        raise ContractSemanticsError(f"{context} contains a non-closed known sort")
+
+    def assign(name: str, sort: ContractSort, path: str) -> None:
+        previous = assignments.get(name)
+        if previous is not None and previous is not sort:
+            raise ContractSemanticsError(
+                f"{path} gives reference {name!r} conflicting sorts "
+                f"{previous.value!r} and {sort.value!r}"
+            )
+        assignments[name] = sort
+
+    def constrain(expression: ContractExpr, required: ContractSort | None, path: str) -> ContractSort:
+        if expression.op == "ref":
+            assert isinstance(expression.value, str)
+            resolved = required or assignments.get(expression.value)
+            if resolved not in {ContractSort.INTEGER, ContractSort.BOOLEAN}:
+                raise ContractSemanticsError(
+                    f"{path} does not uniquely determine the sort of "
+                    f"reference {expression.value!r}"
+                )
+            assign(expression.value, resolved, path)
+            return resolved
+        if expression.op == "int":
+            result = ContractSort.INTEGER
+            operand_requirements: tuple[ContractSort, ...] = ()
+        elif expression.op == "bool":
+            result = ContractSort.BOOLEAN
+            operand_requirements = ()
+        elif expression.op in {"pos", "neg"}:
+            result = ContractSort.INTEGER
+            operand_requirements = (ContractSort.INTEGER,)
+        elif expression.op == "not":
+            result = ContractSort.BOOLEAN
+            operand_requirements = (ContractSort.BOOLEAN,)
+        elif expression.op in {"add", "sub", "mul", "floordiv", "mod"}:
+            result = ContractSort.INTEGER
+            operand_requirements = (ContractSort.INTEGER, ContractSort.INTEGER)
+        elif expression.op in {"lt", "le", "gt", "ge", "eq", "ne"}:
+            result = ContractSort.BOOLEAN
+            operand_requirements = (ContractSort.INTEGER, ContractSort.INTEGER)
+        elif expression.op in {"and", "or"}:
+            if len(expression.args) < 2:
+                raise ContractSemanticsError(
+                    f"{path} boolean {expression.op} requires at least two operands"
+                )
+            result = ContractSort.BOOLEAN
+            operand_requirements = (ContractSort.BOOLEAN,) * len(expression.args)
+        elif expression.op == "call":
+            if expression.value not in {"ceil_div", "min", "max"}:
+                raise ContractSemanticsError(
+                    f"{path} has unsupported ContractExpr call {expression.value!r}"
+                )
+            result = ContractSort.INTEGER
+            operand_requirements = (ContractSort.INTEGER, ContractSort.INTEGER)
+        else:
+            raise ContractSemanticsError(
+                f"{path} has unknown ContractExpr opcode {expression.op!r}"
+            )
+        if required is not None and result is not required:
+            raise ContractSemanticsError(
+                f"{path} must produce {required.value}, got {result.value}"
+            )
+        if expression.sort not in {ContractSort.UNKNOWN_REF, result}:
+            raise ContractSemanticsError(
+                f"{path} declared sort {expression.sort.value!r} disagrees with "
+                f"{result.value!r}"
+            )
+        if len(expression.args) != len(operand_requirements):
+            raise ContractSemanticsError(
+                f"{path} has the wrong arity for {expression.op!r}"
+            )
+        for index, (argument, argument_sort) in enumerate(
+            zip(expression.args, operand_requirements, strict=True)
+        ):
+            constrain(
+                argument,
+                argument_sort,
+                f"{path}.{expression.op}[{index}]",
+            )
+        return result
+
+    root_required = expected_sort
+    if root_required is None and expression.sort is not ContractSort.UNKNOWN_REF:
+        root_required = expression.sort
+    constrain(expression, root_required, context)
+    missing = sorted(set(expression.references) - set(assignments))
+    if missing:  # pragma: no cover - recursive constraints above are total
+        raise ContractSemanticsError(f"{context} lacks inferred sorts for {missing}")
+    return dict(sorted(assignments.items()))
+
+
 def _require_integer(value: Any, *, context: str) -> int:
     if not isinstance(value, Integral) or isinstance(value, bool):
         raise ContractSemanticsError(f"{context} requires an integer value")
@@ -154,6 +271,29 @@ class TypedContractProgram:
             expression,
             tuple(sorted(closed_sorts.items())),
             result_sort,
+        )
+
+    @classmethod
+    def infer(
+        cls,
+        expression: ContractExpr,
+        *,
+        expected_sort: ContractSort | None = None,
+        known_sorts: Mapping[str, ContractSort] | None = None,
+        context: str = "ContractExpr",
+    ) -> "TypedContractProgram":
+        """Compile using only uniquely forced reference sorts."""
+
+        return cls.compile(
+            expression,
+            infer_reference_sorts(
+                expression,
+                expected_sort=expected_sort,
+                known_sorts=known_sorts,
+                context=context,
+            ),
+            expected_sort=expected_sort,
+            context=context,
         )
 
     @property
@@ -307,4 +447,5 @@ __all__ = [
     "TypedContractProgram",
     "evaluate_contract_expr",
     "evaluate_contract_index",
+    "infer_reference_sorts",
 ]
