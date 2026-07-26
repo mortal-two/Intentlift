@@ -316,6 +316,20 @@ def test_batch_cli_candidate_width_fails_closed(capsys) -> None:
         assert "must be in [1, 5]" in capsys.readouterr().err
 
 
+def test_batch_cli_replay_width_fails_closed(capsys) -> None:
+    for width in ("0", "5"):
+        assert scrc_batch.main(
+            [
+                "--run",
+                "--case",
+                "high_performance:liger_dyt",
+                "--replay-width",
+                width,
+            ]
+        ) == 2
+        assert "must be in [1, 4]" in capsys.readouterr().err
+
+
 def test_batch_cli_gate1_round_budget_is_positive_and_bounded(capsys) -> None:
     for rounds in ("0", "13"):
         assert scrc_batch.main(
@@ -368,7 +382,7 @@ def test_batch_cli_parallel_controls_are_live_only_and_globally_bounded(
         ]
     ) == 2
     assert (
-        "case_workers * candidates <= max_branch_workers"
+        "case_workers * candidates * replay_width <= max_branch_workers"
         in capsys.readouterr().err
     )
 
@@ -420,7 +434,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        replay_backend, max_gate1_rounds, max_pre_replay_rejections,
+        replay_backend, replay_width, max_gate1_rounds,
+        max_pre_replay_rejections,
         stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
@@ -428,6 +443,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert run_masked_j
         assert lift_backend == "responses"
         assert replay_backend == "miniswe"
+        assert replay_width == 2
         assert max_gate1_rounds == 6
         assert max_pre_replay_rejections == 8
         assert stop_requested is None
@@ -505,6 +521,10 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "xhigh",
             "--replay-backend",
             "miniswe",
+            "--replay-width",
+            "2",
+            "--max-branch-workers",
+            "10",
             "--gate1-rounds",
             "6",
             "--pre-replay-rejections",
@@ -521,7 +541,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
     assert payload["scheduling"] == {
         "case_workers": 1,
         "candidates": 5,
-        "max_branch_workers": 8,
+        "max_branch_workers": 10,
         "gate2_workers": 1,
         "gate1_rounds": 6,
         "pre_replay_rejections": 8,

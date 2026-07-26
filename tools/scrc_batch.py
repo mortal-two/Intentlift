@@ -469,6 +469,15 @@ def _parser() -> argparse.ArgumentParser:
         help="source-blind Replay implementation; independent from Lift backend",
     )
     parser.add_argument(
+        "--replay-width",
+        type=int,
+        default=1,
+        help=(
+            "independent source-blind Replay workers for the same typed J in "
+            "each formal Gate1 round"
+        ),
+    )
+    parser.add_argument(
         "--candidates",
         type=int,
         default=1,
@@ -484,7 +493,9 @@ def _parser() -> argparse.ArgumentParser:
         "--max-branch-workers",
         type=int,
         default=8,
-        help="global bound G for case_workers * candidates",
+        help=(
+            "global bound G for case_workers * candidates * replay_width"
+        ),
     )
     parser.add_argument(
         "--gate2-workers",
@@ -536,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         "--case-workers",
         "--max-branch-workers",
         "--gate2-workers",
+        "--replay-width",
         "--gate1-rounds",
         "--pre-replay-rejections",
     )
@@ -552,6 +564,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not 1 <= args.candidates <= 5:
         print("--candidates must be in [1, 5]", file=sys.stderr)
+        return 2
+    if not 1 <= args.replay_width <= 4:
+        print("--replay-width must be in [1, 4]", file=sys.stderr)
         return 2
     bounded_options = (
         ("--case-workers", args.case_workers),
@@ -574,9 +589,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.candidates != 1 and not args.run:
         print("--candidates > 1 is only valid with --run", file=sys.stderr)
         return 2
-    if args.run and args.case_workers * args.candidates > args.max_branch_workers:
+    if (
+        args.run
+        and args.case_workers * args.candidates * args.replay_width
+        > args.max_branch_workers
+    ):
         print(
-            "--run requires case_workers * candidates <= max_branch_workers",
+            "--run requires case_workers * candidates * replay_width "
+            "<= max_branch_workers",
             file=sys.stderr,
         )
         return 2
@@ -839,6 +859,7 @@ def main(argv: list[str] | None = None) -> int:
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
                     replay_backend=args.replay_backend,
+                    replay_width=args.replay_width,
                     max_gate1_rounds=args.gate1_rounds,
                     max_pre_replay_rejections=args.pre_replay_rejections,
                     progress_callback=callback,
@@ -986,6 +1007,7 @@ def main(argv: list[str] | None = None) -> int:
                         "protocol": CANDIDATE_FANOUT_PROTOCOL,
                         "branch_id": branch_id,
                         "candidate_count": args.candidates,
+                        "replay_width": args.replay_width,
                         "selection_rule": CANDIDATE_SELECTION_RULE,
                     },
                 )
@@ -1008,6 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
                         replay_backend=args.replay_backend,
+                        replay_width=args.replay_width,
                         max_gate1_rounds=args.gate1_rounds,
                         max_pre_replay_rejections=(
                             args.pre_replay_rejections
