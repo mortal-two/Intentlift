@@ -25,6 +25,12 @@ from .compiler import (
     TritonCompiler,
 )
 from .cuda_codegen import extract_cuda_module
+from .cuda_compiler import (
+    CudaCompileCase,
+    CudaCompiler,
+    CudaKernelSource,
+    FrontendParameter,
+)
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
 from .prompt import (
@@ -35,6 +41,11 @@ from .prompt import (
     replay_packet_digest,
 )
 from .tilelang_codegen import extract_tilelang_module
+from .tilelang_compiler import (
+    TileLangCompileCase,
+    TileLangCompiler,
+    TileLangKernelSource,
+)
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v4"
@@ -835,7 +846,12 @@ def replay_source_ingress(
                 },
             ),
         )
-    if selected_frontend is not Frontend.TRITON:
+    if selected_frontend not in {
+        Frontend.TRITON,
+        Frontend.CUTE,
+        Frontend.TILELANG,
+        Frontend.CUDA,
+    }:
         return ReplayIngressResult(
             "fail",
             diagnostics=(
@@ -860,17 +876,18 @@ def replay_source_ingress(
             frontend=selected_frontend,
             function_name=function_name,
         )
-        abi_violations = _check_triton_exact_abi(code, packet, function_name)
-        if abi_violations:
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=tuple(
-                    _closed_ingress_diagnostic(item)
-                    for item in abi_violations
-                ),
-            )
-        _check_triton_typed_control_contract(code, packet, function_name)
-        _check_triton_rounded_iteration_contract(code, packet, function_name)
+        if selected_frontend is Frontend.TRITON:
+            abi_violations = _check_triton_exact_abi(code, packet, function_name)
+            if abi_violations:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=tuple(
+                        _closed_ingress_diagnostic(item)
+                        for item in abi_violations
+                    ),
+                )
+            _check_triton_typed_control_contract(code, packet, function_name)
+            _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
         return ReplayIngressResult(
             "fail", diagnostics=(_closed_ingress_diagnostic(exc),)
@@ -957,8 +974,8 @@ def build_source_blind_replay_compile_case(
     return CompileCase(arguments, (1, 1, 1), schedule)
 
 
-def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
-    diagnostic = result.diagnostic or "Triton frontend rejected Replay"
+def _source_blind_compile_failure(result: Any) -> ReplayIngressResult:
+    diagnostic = result.diagnostic or "frontend rejected Replay"
     lines = [line.strip() for line in diagnostic.splitlines() if line.strip()]
     summary = re.sub(r"\s+", " ", lines[-1] if lines else diagnostic)[:2048]
     line_matches = _COMPILE_LINE.findall(diagnostic)
@@ -981,7 +998,8 @@ def source_blind_replay_compile_check(
     artifact: Gate1Artifact,
     function_name: str,
     *,
-    compiler: TritonCompiler | None = None,
+    frontend: Frontend | str = Frontend.TRITON,
+    compiler: Any | None = None,
 ) -> ReplayIngressResult:
     """Compile Replay against the public synthetic profile, without an oracle.
 
@@ -989,13 +1007,47 @@ def source_blind_replay_compile_check(
     submitted bytes against the real c0 after the agent episode ends.
     """
 
-    selected_compiler = compiler or TritonCompiler(timeout=120.0)
+    selected_frontend = Frontend(frontend)
     try:
-        source = KernelSource.from_replay(code, function_name)
-        result = selected_compiler.compile(
-            source,
-            build_source_blind_replay_compile_case(artifact),
-        )
+        if selected_frontend is Frontend.TRITON:
+            selected_compiler = compiler or TritonCompiler(timeout=120.0)
+            source = KernelSource.from_replay(code, function_name)
+            case: Any = build_source_blind_replay_compile_case(artifact)
+        elif selected_frontend in {Frontend.CUDA, Frontend.TILELANG}:
+            parameters: list[FrontendParameter] = []
+            for parameter in artifact.j.signature.parameters:
+                if parameter.kind.value == "constexpr":
+                    raise ValueError(
+                        "CUDA/TileLang synthetic compile ABI forbids J constexpr"
+                    )
+                kind = (
+                    "pointer"
+                    if parameter.kind.value in {"pointer", "tensor"}
+                    else "scalar"
+                    if parameter.kind.value == "scalar"
+                    else "opaque"
+                )
+                parameters.append(
+                    FrontendParameter(
+                        kind,
+                        parameter.dtype or "i64",
+                        parameter.rank or 0,
+                        parameter.mode.value,
+                    )
+                )
+            if selected_frontend is Frontend.CUDA:
+                selected_compiler = compiler or CudaCompiler(timeout=120.0)
+                source = CudaKernelSource.from_replay(code, function_name)
+                case = CudaCompileCase(tuple(parameters))
+            else:
+                selected_compiler = compiler or TileLangCompiler(timeout=120.0)
+                source = TileLangKernelSource.from_replay(code, function_name)
+                case = TileLangCompileCase(tuple(parameters))
+        else:
+            raise ValueError(
+                f"synthetic compile probe is unavailable for {selected_frontend.value}"
+            )
+        result = selected_compiler.compile(source, case)
     except Exception as exc:
         result = CompileResult(
             False,
@@ -1331,7 +1383,7 @@ class ResponsesReplayWriter:
 
 @dataclass
 class MiniSWEReplayWriter:
-    """Fresh bounded multi-turn Replay agent; v2 is Triton-only."""
+    """Fresh bounded multi-turn Replay agent for audited active frontends."""
 
     provider: ProviderConfig | None = None
     effort: str | None = None
@@ -1350,9 +1402,13 @@ class MiniSWEReplayWriter:
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration:
-        if self.frontend is not Frontend.TRITON:
+        if self.frontend not in {
+            Frontend.TRITON,
+            Frontend.CUDA,
+            Frontend.TILELANG,
+        }:
             raise ValueError(
-                "MiniSWE Replay v2 fails closed for non-Triton frontends"
+                f"MiniSWE Replay has no audited ingress for {self.frontend.value}"
             )
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
@@ -1418,7 +1474,6 @@ class MiniSWEReplayWriter:
                 packet=packet,
             )
 
-        probe_compiler = TritonCompiler(timeout=120.0)
         compile_checker = self.compile_checker
 
         def compile_check(source_text: str) -> dict[str, Any]:
@@ -1436,7 +1491,7 @@ class MiniSWEReplayWriter:
                     ingress_result.code,
                     artifact,
                     function_name,
-                    compiler=probe_compiler,
+                    frontend=self.frontend,
                 )
             )
             return compile_result.to_check_response()

@@ -354,7 +354,7 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
         artifact=artifact,
         frontend=Frontend.TRITON,
     )
-    unsupported = replay_source_ingress(
+    wrong_language = replay_source_ingress(
         VALID_REPLAY, artifact=artifact, frontend=Frontend.CUDA
     )
 
@@ -367,9 +367,9 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
         "anonymous_handles": ["c0"],
         "line": 5,
     }
-    assert unsupported.to_check_response()["diagnostics"][0][
+    assert wrong_language.to_check_response()["diagnostics"][0][
         "rule_code"
-    ] == "frontend_not_supported"
+    ] == "replay_static_policy_rejected"
     assert set(rejected.to_check_response()) == {
         "protocol",
         "status",

@@ -95,6 +95,37 @@ _CUDA_REPLAY = """extern "C" __global__ void scrc_k0(const float* p0, float* p1,
 def test_cuda_replay_policy_accepts_kernel_and_rejects_host_surface() -> None:
     result = validate_cuda_module(_CUDA_REPLAY, required_kernel="scrc_k0")
     assert result.global_functions == ("scrc_k0",)
+    launch_bounded = _CUDA_REPLAY.replace(
+        "void scrc_k0(", "void __launch_bounds__(16, 1) scrc_k0("
+    )
+    assert validate_cuda_module(
+        launch_bounded, required_kernel="scrc_k0"
+    ).global_functions == ("scrc_k0",)
+    prefix_bounded = _CUDA_REPLAY.replace(
+        "__global__ void", "__global__ __launch_bounds__(16, 1) void"
+    )
+    assert validate_cuda_module(
+        prefix_bounded, required_kernel="scrc_k0"
+    ).global_functions == ("scrc_k0",)
+    with_helper_call = '''
+__device__ int helper(int x) { return x + 1; }
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+  int index = helper(p2);
+  p1[index] = p0[index];
+}
+'''
+    validated = validate_cuda_module(
+        with_helper_call, required_kernel="scrc_k0"
+    )
+    assert validated.device_helpers == ("helper",)
+    with pytest.raises(UnsafeCudaReplayCodeError, match="positive integer"):
+        validate_cuda_module(
+            _CUDA_REPLAY.replace(
+                "void scrc_k0(",
+                "void __launch_bounds__(threads, 1) scrc_k0(",
+            ),
+            required_kernel="scrc_k0",
+        )
     with pytest.raises(UnsafeCudaReplayCodeError, match="host-side"):
         validate_cuda_module(
             _CUDA_REPLAY + "\nint helper() { return 0; }\n",

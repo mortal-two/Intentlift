@@ -415,11 +415,340 @@ def _annotation_is_constexpr(annotation: ast.expr | None) -> bool:
     return ast.unparse(annotation).endswith("constexpr")
 
 
+def _cuda_matching_parenthesis(source: str, opening: int) -> int:
+    """Find one CUDA/C++ closing parenthesis without reading comments/literals."""
+
+    depth = 0
+    index = opening
+    state = "code"
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "line_comment":
+            if character == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if character == "*" and following == "/":
+                state = "code"
+                index += 1
+        elif state in {"string", "character"}:
+            delimiter = '"' if state == "string" else "'"
+            if character == "\\":
+                index += 1
+            elif character == delimiter:
+                state = "code"
+        elif character == "/" and following == "/":
+            state = "line_comment"
+            index += 1
+        elif character == "/" and following == "*":
+            state = "block_comment"
+            index += 1
+        elif character == '"':
+            state = "string"
+        elif character == "'":
+            state = "character"
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ValueError("CUDA Lift source has an unterminated kernel parameter list")
+
+
+def _cuda_parameter_declarations(source: str, opening: int, closing: int) -> list[str]:
+    """Split the selected CUDA entry ABI at top-level commas only."""
+
+    declarations: list[str] = []
+    start = opening + 1
+    depths = {"(": 0, "[": 0, "<": 0, "{": 0}
+    pairs = {")": "(", "]": "[", ">": "<", "}": "{"}
+    index = start
+    state = "code"
+    while index < closing:
+        character = source[index]
+        following = source[index + 1] if index + 1 < closing else ""
+        if state == "line_comment":
+            if character == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if character == "*" and following == "/":
+                state = "code"
+                index += 1
+        elif state in {"string", "character"}:
+            delimiter = '"' if state == "string" else "'"
+            if character == "\\":
+                index += 1
+            elif character == delimiter:
+                state = "code"
+        elif character == "/" and following == "/":
+            state = "line_comment"
+            index += 1
+        elif character == "/" and following == "*":
+            state = "block_comment"
+            index += 1
+        elif character == '"':
+            state = "string"
+        elif character == "'":
+            state = "character"
+        elif character in depths:
+            depths[character] += 1
+        elif character in pairs and depths[pairs[character]]:
+            depths[pairs[character]] -= 1
+        elif character == "," and not any(depths.values()):
+            declarations.append(source[start:index].strip())
+            start = index + 1
+        index += 1
+    tail = source[start:closing].strip()
+    if tail and tail != "void":
+        declarations.append(tail)
+    return declarations
+
+
+def _cuda_parameter_name(declaration: str) -> str:
+    """Extract one C/C++ parameter declarator name without guessing from types."""
+
+    cleaned = re.sub(
+        r"\b(?:__attribute__|alignas)\s*\(\s*\([^)]*\)\s*\)",
+        " ",
+        declaration,
+    )
+    cleaned = cleaned.split("=", 1)[0].strip()
+    indirect = re.search(
+        r"\(\s*[*&]+\s*(?:const\s+|volatile\s+)*"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)",
+        cleaned,
+    )
+    if indirect is not None:
+        return indirect.group("name")
+    array = re.search(
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^]]*\]\s*)+$",
+        cleaned,
+    )
+    if array is not None:
+        return array.group("name")
+    identifiers = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", cleaned)
+    if len(identifiers) < 2:
+        raise ValueError(
+            f"CUDA Lift cannot identify parameter name in {declaration!r}"
+        )
+    return identifiers[-1]
+
+
+def _cuda_matching_brace(source: str, opening: int) -> int:
+    """Find a CUDA/C++ closing brace while ignoring comments and literals."""
+
+    depth = 0
+    index = opening
+    state = "code"
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "line_comment":
+            if character == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if character == "*" and following == "/":
+                state = "code"
+                index += 1
+        elif state in {"string", "character"}:
+            delimiter = '"' if state == "string" else "'"
+            if character == "\\":
+                index += 1
+            elif character == delimiter:
+                state = "code"
+        elif character == "/" and following == "/":
+            state = "line_comment"
+            index += 1
+        elif character == "/" and following == "*":
+            state = "block_comment"
+            index += 1
+        elif character == '"':
+            state = "string"
+        elif character == "'":
+            state = "character"
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ValueError("CUDA Lift source has an unterminated kernel body")
+
+
+def _replace_cuda_identifiers(source: str, mapping: Mapping[str, str]) -> str:
+    """Rename C/C++ identifier tokens while preserving comments and literals."""
+
+    pieces: list[str] = []
+    index = 0
+    state = "code"
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "code" and character == "/" and following == "/":
+            pieces.append("//")
+            index += 2
+            state = "line_comment"
+            continue
+        if state == "code" and character == "/" and following == "*":
+            pieces.append("/*")
+            index += 2
+            state = "block_comment"
+            continue
+        if state == "line_comment":
+            pieces.append(character)
+            index += 1
+            if character == "\n":
+                state = "code"
+            continue
+        if state == "block_comment":
+            pieces.append(character)
+            index += 1
+            if character == "*" and following == "/":
+                pieces.append("/")
+                index += 1
+                state = "code"
+            continue
+        if state in {"string", "character"}:
+            delimiter = '"' if state == "string" else "'"
+            pieces.append(character)
+            index += 1
+            if character == "\\" and index < len(source):
+                pieces.append(source[index])
+                index += 1
+            elif character == delimiter:
+                state = "code"
+            continue
+        if character in {'"', "'"}:
+            pieces.append(character)
+            index += 1
+            state = "string" if character == '"' else "character"
+            continue
+        if character == "_" or character.isalpha():
+            end = index + 1
+            while end < len(source) and (
+                source[end] == "_" or source[end].isalnum()
+            ):
+                end += 1
+            token = source[index:end]
+            pieces.append(mapping.get(token, token))
+            index = end
+            continue
+        pieces.append(character)
+        index += 1
+    return "".join(pieces)
+
+
+def anonymize_cuda_source(
+    source: str,
+    *,
+    source_symbol: str | None,
+    bound_constexpr_parameters: tuple[str, ...] = (),
+) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
+    """Alpha-rename the selected CUDA entry and its positional runtime ABI."""
+
+    if bound_constexpr_parameters:
+        raise ValueError("CUDA Lift source cannot expose Python constexpr parameters")
+    if not isinstance(source_symbol, str) or not source_symbol.isidentifier():
+        raise ValueError("CUDA Lift requires one identifier source_symbol")
+    entry = re.compile(
+        rf"\b__global__\b[^;{{}}]*?\b{re.escape(source_symbol)}\s*\(",
+        re.MULTILINE,
+    )
+    candidates: list[tuple[re.Match[str], int, int, int | None, int | None]] = []
+    for match in entry.finditer(source):
+        # The regex terminates on the selected entry's ``(``.  Searching from
+        # the start would accidentally pick an earlier ``__launch_bounds__(``.
+        candidate_opening = match.end() - 1
+        if source[candidate_opening : candidate_opening + 1] != "(":  # pragma: no cover
+            continue
+        candidate_closing = _cuda_matching_parenthesis(source, candidate_opening)
+        body_opening: int | None = None
+        body_closing: int | None = None
+        tail = candidate_closing + 1
+        while tail < len(source) and source[tail].isspace():
+            tail += 1
+        if tail < len(source) and source[tail] == "{":
+            body_opening = tail
+            body_closing = _cuda_matching_brace(source, tail)
+        candidates.append(
+            (
+                match,
+                candidate_opening,
+                candidate_closing,
+                body_opening,
+                body_closing,
+            )
+        )
+    definitions = [item for item in candidates if item[3] is not None]
+    if len(definitions) != 1:
+        raise ValueError(
+            f"CUDA Lift source_symbol {source_symbol!r} must resolve exactly once; "
+            f"found {len(definitions)} definitions"
+        )
+    _match, opening, closing, body_opening, body_closing = definitions[0]
+    declarations = _cuda_parameter_declarations(source, opening, closing)
+    parameter_names = [_cuda_parameter_name(item) for item in declarations]
+    if len(parameter_names) != len(set(parameter_names)):
+        raise ValueError("CUDA Lift entry parameters must have unique names")
+    mapping: dict[str, str] = {source_symbol: "scrc_k0"}
+    mapping.update(
+        {name: f"p{index}" for index, name in enumerate(parameter_names)}
+    )
+    edits: list[tuple[int, int, Mapping[str, str]]] = []
+    for match, candidate_opening, candidate_closing, candidate_body, candidate_end in candidates:
+        candidate_mapping: dict[str, str] = {source_symbol: "scrc_k0"}
+        candidate_declarations = _cuda_parameter_declarations(
+            source, candidate_opening, candidate_closing
+        )
+        try:
+            candidate_names = [
+                _cuda_parameter_name(item) for item in candidate_declarations
+            ]
+        except ValueError:
+            if candidate_body is not None:
+                raise
+            candidate_names = []
+        if candidate_names:
+            if len(candidate_names) != len(parameter_names):
+                raise ValueError("CUDA Lift entry declarations have inconsistent arity")
+            candidate_mapping.update(
+                {
+                    name: f"p{index}"
+                    for index, name in enumerate(candidate_names)
+                }
+            )
+        edits.append((match.start(), candidate_closing + 1, candidate_mapping))
+        if candidate_body is not None:
+            assert candidate_end is not None
+            edits.append((candidate_body, candidate_end + 1, mapping))
+    pieces: list[str] = []
+    position = 0
+    for start, end, scoped_mapping in sorted(edits):
+        if start < position:
+            raise ValueError("CUDA Lift entry spans overlap")
+        pieces.append(source[position:start])
+        pieces.append(
+            _replace_cuda_identifiers(source[start:end], scoped_mapping)
+        )
+        position = end
+    pieces.append(source[position:])
+    anonymous = "".join(pieces)
+    binding = SCRCHarnessBinding(
+        source_to_opaque=tuple(mapping.items()),
+        source_function=source_symbol,
+    )
+    return anonymous, binding, mapping
+
+
 def anonymize_source(
     source: str,
     *,
     source_symbol: str | None = None,
     bound_constexpr_parameters: tuple[str, ...] = (),
+    frontend: str = "triton",
 ) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
     """Alpha-rename source identifiers before the Lift provider sees them.
 
@@ -429,6 +758,16 @@ def anonymize_source(
     library modules that contain helpers and several kernels; declaration order
     in a Python file is not a semantic kernel identity.
     """
+
+    selected_frontend = str(frontend).casefold()
+    if selected_frontend == "cuda":
+        return anonymize_cuda_source(
+            source,
+            source_symbol=source_symbol,
+            bound_constexpr_parameters=bound_constexpr_parameters,
+        )
+    if selected_frontend not in {"triton", "tilelang", "cute", "python"}:
+        raise ValueError(f"unsupported Lift source frontend {frontend!r}")
 
     tree = ast.parse(source)
     functions = sorted(
@@ -699,31 +1038,22 @@ The supplied Responses schema is authoritative for the closed envelope, field
 names, enums, optional fields, operation grammar, and structural descriptions.
 Do not duplicate, rename, or extend it with convenience fields.
 
-Naming is mandatory: kernel scrc_k0; tensors t0,t1,...; J nodes n0,n1,...;
-values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
-effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
-c0,...; pi regions r0,... and instances i0,..., all by declaration order.
+Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
+values v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;
+storage b*; parameters p*; C slots c*; pi regions r* and instances i*.
+J t* numbering follows first declaration across inputs then outputs; inout
+reuses its input handle. Never derive t* from p* position: p0 input, p1 output,
+p2 extent bind t0, t1, x0 respectively.
 
-J tensor handles form their own gap-free sequence by first declaration over
-intent.inputs followed by intent.outputs. An inout tensor repeats its input
-handle verbatim in outputs and does not consume a new t* id. Never derive a t*
-suffix from a p* parameter position. For example, if p0 is an input pointer,
-p1 is an output pointer, and p2 is a runtime extent scalar, the J tensors are
-input t0 and output t1; p0.logical_ref is t0, p1.logical_ref is t1, and
-p2.logical_ref is the symbolic dimension x0.
+The semantic IntentFunction is scrc_j0. node_ids maps n* to body paths, never
+v* results. boundary.domains maps d* directly to portable boolean strings,
+never axes/members objects.
 
-The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
-node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
-body[i].body[j], never to v* results. boundary.domains maps each d* key directly
-to one portable boolean expression string; it is never an axes/members object.
-
-The trusted harness_compiler_view is byte-authoritative plumbing. Move every
-logical p* handle into J.signature and every implementation-selection c*
-handle into the single C object. Their relative source positions stay private
-to Harness and are not serialized in the artifact. C values and compiler_slots
-must be identical to the supplied anonymous values. For each compiler slot,
-use exactly the public role in compiler_roles. Do not rename c* slots to p* and
-do not turn compiler roles into inferred strategy names.
+The trusted harness_compiler_view is byte-authoritative plumbing. Put logical
+p* in J.signature and implementation-selection c* in the single C; source
+positions stay private. C values/compiler_slots equal the anonymous inputs and
+each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
+strategy names from roles.
 
 bound_constexpr_values are Harness-owned, non-C JIT bindings. constexprness
 alone never makes one a graph selector. Classify across all Source uses:
@@ -965,7 +1295,9 @@ one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,
 and effects remain exclusively in J.
 
-The source is already alpha-renamed. Do not invent or recover original names.
+The selected entry/ABI and Python locals are alpha-renamed. Public CUDA
+helper/type/API tokens may remain; treat them as opaque syntax and never copy
+them into J, C, or pi. Do not recover original names.
 Output JSON only.
 """
 
@@ -988,6 +1320,7 @@ def _prompt_material(
     compiler_view: SCRCCompilerView | None,
     relift_context: SCRCReliftContext | None,
     source_symbol: str | None = None,
+    frontend: str = "triton",
 ) -> tuple[str, str, SCRCHarnessBinding, dict[str, Any] | None]:
     anonymous_source, binding, mapping = anonymize_source(
         source,
@@ -997,6 +1330,7 @@ def _prompt_material(
             if compiler_view is not None
             else ()
         ),
+        frontend=frontend,
     )
     anonymous_view = _anonymous_compiler_view(compiler_view, mapping)
     instructions = build_scrc_lift_instructions()
@@ -1010,9 +1344,10 @@ def prepare_scrc_lift(
     compiler_view: SCRCCompilerView | None = None,
     relift_context: SCRCReliftContext | None = None,
     source_symbol: str | None = None,
+    frontend: str = "triton",
 ) -> SCRCLiftRequest:
     instructions, user, binding, anonymous_view = _prompt_material(
-        source, compiler_view, relift_context, source_symbol
+        source, compiler_view, relift_context, source_symbol, frontend
     )
     return SCRCLiftRequest(
         instructions,
@@ -1029,10 +1364,11 @@ def scrc_lift_prompt_sha256(
     *,
     compiler_view: SCRCCompilerView | None = None,
     source_symbol: str | None = None,
+    frontend: str = "triton",
 ) -> str:
     del name_hint
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, None, source_symbol
+        source, compiler_view, None, source_symbol, frontend
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -1043,9 +1379,10 @@ def scrc_relift_prompt_sha256(
     *,
     compiler_view: SCRCCompilerView | None = None,
     source_symbol: str | None = None,
+    frontend: str = "triton",
 ) -> str:
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, context, source_symbol
+        source, compiler_view, context, source_symbol, frontend
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -1860,6 +2197,7 @@ def extract_scrc_artifact(
     effort: str | None = None,
     relift_context: SCRCReliftContext | None = None,
     source_symbol: str | None = None,
+    frontend: str = "triton",
 ) -> SCRCExtraction:
     """Perform exactly one source-aware provider call for one Lift attempt."""
 
@@ -1869,6 +2207,7 @@ def extract_scrc_artifact(
         compiler_view=compiler_view,
         relift_context=relift_context,
         source_symbol=source_symbol,
+        frontend=frontend,
     )
     instructions = request.instructions
     user = request.user_input
@@ -1939,6 +2278,7 @@ class ResponsesSCRCRelifter:
     compiler_view: SCRCCompilerView | None = None
     effort: str | None = None
     source_symbol: str | None = None
+    frontend: str = "triton"
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -1967,6 +2307,7 @@ class ResponsesSCRCRelifter:
                 effort=self.effort,
                 relift_context=context,
                 source_symbol=self.source_symbol,
+                frontend=self.frontend,
             )
         except SCRCLiftError as exc:
             self._records.append(
@@ -1997,6 +2338,7 @@ class ResponsesSCRCLiftAdapter:
     compiler_view: SCRCCompilerView | None = None
     effort: str | None = None
     source_symbol: str | None = None
+    frontend: str = "triton"
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -2032,6 +2374,7 @@ class ResponsesSCRCLiftAdapter:
                 effort=self.effort,
                 relift_context=context,
                 source_symbol=self.source_symbol,
+                frontend=self.frontend,
             )
         except SCRCLiftError as exc:
             diagnostic = "; ".join(
@@ -2079,7 +2422,7 @@ __all__ = [
     "SCRCCandidateCheckContext", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
-    "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
+    "SCRCReliftRecord", "anonymize_cuda_source", "anonymize_source", "build_scrc_lift_instructions",
     "check_scrc_lift_candidate", "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_candidate_check_context", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
 ]

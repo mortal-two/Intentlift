@@ -363,6 +363,7 @@ class MiniSWELiftAdapter:
     source_symbol: str | None = None
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
+    frontend: str = "triton"
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -510,6 +511,7 @@ class MiniSWELiftAdapter:
             compiler_view=self.compiler_view,
             relift_context=self._relift_context(feedback),
             source_symbol=self.source_symbol,
+            frontend=self.frontend,
         )
         round_index = len(self._records) + 1
         candidate_check_context = scrc_candidate_check_context(prepared)

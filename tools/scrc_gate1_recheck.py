@@ -24,6 +24,7 @@ from intentir.verify.scrc_workload_run import (
     save_workload_gate1_recheck,
     validate_workload_gate1_recheck_parent,
 )
+from intentir.verify.workload_registry import prepare_registered_scrc_workload
 from intentir.verify.workload_adapters import (
     TRITON_WORKLOAD_ADAPTERS,
     prepare_triton_workload,
@@ -116,14 +117,19 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    adapter = TRITON_WORKLOAD_ADAPTERS.get(args.case)
-    if adapter is None:
-        print("case has no active Triton workload adapter", file=sys.stderr)
-        return 2
+    recheck_dir: Path | None = None
     try:
-        prepared = prepare_triton_workload(
-            adapter,
-            dataset_root=args.dataset_root,
+        triton_adapter = TRITON_WORKLOAD_ADAPTERS.get(args.case)
+        prepared = (
+            prepare_triton_workload(
+                triton_adapter,
+                dataset_root=args.dataset_root,
+            )
+            if triton_adapter is not None
+            else prepare_registered_scrc_workload(
+                args.case,
+                dataset_root=args.dataset_root,
+            )
         )
         validate_workload_gate1_recheck_parent(parent, prepared, artifact)
         provider = get_provider(args.provider)
@@ -145,6 +151,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         save_workload_gate1_recheck(recheck_dir, prepared, result)
     except Exception as exc:
+        if recheck_dir is not None:
+            (recheck_dir / "failure.json").write_text(
+                json.dumps(
+                    {
+                        "failure_class": type(exc).__name__,
+                        "diagnostic": str(exc),
+                        "diagnostic_only": True,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         print(f"fixed-artifact Gate1 recheck failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 

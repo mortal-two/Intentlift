@@ -15,6 +15,7 @@ import numpy as np
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.candidate_fanout import CandidateFanoutSearchReport
 from intentir.verify.gate1.model import (
+    Frontend,
     Gate1Artifact,
     ParameterKind,
     ParameterMode,
@@ -24,9 +25,12 @@ from intentir.extraction.lifters.scrc import ResponsesSCRCLiftAdapter
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.adapters import (
     BoundGate1Adapter,
+    NativeGate2ExecutionAdapter,
     TritonGate2ExecutionAdapter,
 )
 from intentir.verify.gate1.compiler import TritonCompiler
+from intentir.verify.gate1.cuda_compiler import CudaCompiler
+from intentir.verify.gate1.frontend import frontend_gate1_capability
 from intentir.verify.gate1.orchestrate import (
     Gate1Config,
     Gate1ExecutionResult,
@@ -34,6 +38,7 @@ from intentir.verify.gate1.orchestrate import (
     SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX,
     canonical_artifact_digest,
 )
+from intentir.verify.gate1.tilelang_compiler import TileLangCompiler
 from intentir.verify.gate1.replay import (
     MiniSWEReplayWriter,
     RecordedReplayWriter,
@@ -48,6 +53,7 @@ from intentir.verify.gate2.orchestrate import (
     Gate2Suite,
 )
 from intentir.verify.gate2.scalar import ScalarLoweringSpec
+from intentir.verify.gate2.native import CudaRunner, TileLangRunner
 from intentir.verify.gate2.triton import (
     ArgumentRole,
     TritonArgument,
@@ -71,9 +77,14 @@ from intentir.verify.workload_adapters import (
     NoneBinding,
     PreparedTritonWorkload,
 )
+from intentir.verify.frontend_workloads import (
+    PreparedFrontendDatasetWorkload,
+    build_frontend_dataset_gate2_suite,
+)
 
 
 RecordedLiftAdapter = ResponsesSCRCLiftAdapter | MiniSWELiftAdapter
+PreparedWorkload = PreparedTritonWorkload | PreparedFrontendDatasetWorkload
 GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
     "intentir.scrc.gate1-diagnostic-recheck.v1"
 )
@@ -108,14 +119,62 @@ def _new_replay_writer(
     *,
     provider: ProviderConfig,
     effort: str | None,
+    frontend: Frontend = Frontend.TRITON,
 ) -> RecordedReplayWriter:
     """Create one writer for exactly one formal Gate1 round."""
 
+    common = {"provider": provider, "effort": effort}
+    if frontend is not Frontend.TRITON:
+        common["frontend"] = frontend
     if replay_backend == "responses":
-        return ResponsesReplayWriter(provider=provider, effort=effort)
+        return ResponsesReplayWriter(**common)
     if replay_backend == "miniswe":
-        return MiniSWEReplayWriter(provider=provider, effort=effort)
+        return MiniSWEReplayWriter(**common)
     raise ValueError(f"unknown Replay backend: {replay_backend!r}")
+
+
+def _new_frontend_compiler(frontend: Frontend) -> Any:
+    if frontend is Frontend.TRITON:
+        return TritonCompiler(timeout=240.0)
+    if frontend is Frontend.CUDA:
+        return CudaCompiler(timeout=240.0)
+    if frontend is Frontend.TILELANG:
+        return TileLangCompiler(timeout=300.0)
+    raise ValueError(
+        f"prepared workload runtime does not support frontend {frontend.value!r}"
+    )
+
+
+def _prepared_frontend(prepared: Any) -> Frontend:
+    request = getattr(prepared, "request", None)
+    return Frontend(getattr(request, "frontend", Frontend.TRITON.value))
+
+
+def _prepared_source_symbol(prepared: Any) -> str:
+    source_slice = getattr(prepared, "source_slice", None)
+    function = getattr(source_slice, "function", None)
+    if isinstance(function, str) and function:
+        return function
+    symbol = getattr(getattr(prepared, "entry", None), "symbol", None)
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError("prepared workload lacks a selected Source symbol")
+    return symbol
+
+
+def _build_frontend_gate1_runner(
+    frontend: Frontend,
+    *,
+    compiler: Any,
+    writer: Any,
+    config: Gate1Config,
+) -> Any:
+    # Keep the long-standing Triton construction seam available to callers and
+    # tests; native frontends use the public capability registry.
+    if frontend is Frontend.TRITON:
+        return Gate1Runner(compiler=compiler, writer=writer, config=config)
+    return frontend_gate1_capability(frontend).build_runner(
+        compiler=compiler, writer=writer, config=config
+    )
 
 
 def _numpy_dtype(dtype: str) -> np.dtype[Any]:
@@ -584,7 +643,7 @@ class WorkloadExecutionError(RuntimeError):
 
 
 def recheck_prepared_workload_gate1(
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     artifact: Gate1Artifact,
     *,
     provider: ProviderConfig,
@@ -611,14 +670,17 @@ def recheck_prepared_workload_gate1(
             None,
         )
 
+    frontend = _prepared_frontend(prepared)
     writer = _new_replay_writer(
         replay_backend,
         provider=provider,
         effort=effort,
+        frontend=frontend,
     )
     gate1 = BoundGate1Adapter(
-        Gate1Runner(
-            compiler=TritonCompiler(timeout=240.0),
+        _build_frontend_gate1_runner(
+            frontend,
+            compiler=_new_frontend_compiler(frontend),
             writer=writer,
             config=Gate1Config(run_masked_j=False),
         )
@@ -637,7 +699,7 @@ def recheck_prepared_workload_gate1(
 
 
 def _build_workload_runtime(
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     *,
     provider: ProviderConfig,
     effort: str | None = None,
@@ -654,6 +716,9 @@ def _build_workload_runtime(
         raise TypeError("replay_width must be an integer")
     if not 1 <= replay_width <= 4:
         raise ValueError("replay_width must be in [1, 4]")
+    frontend = _prepared_frontend(prepared)
+    if frontend in {Frontend.CUDA, Frontend.TILELANG} and replay_width != 1:
+        raise ValueError("native Dataset frontends currently require replay_width=1")
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
         lift_class = ResponsesSCRCLiftAdapter
@@ -661,14 +726,17 @@ def _build_workload_runtime(
         lift_class = MiniSWELiftAdapter
     else:
         raise ValueError(f"unknown Lift backend: {lift_backend!r}")
-    lift = lift_class(
-        provider=provider,
-        compiler_view=prepared.compiler_view,
-        effort=effort,
-        source_symbol=prepared.entry.symbol,
-    )
+    lift_kwargs: dict[str, Any] = {
+        "provider": provider,
+        "compiler_view": prepared.compiler_view,
+        "effort": effort,
+        "source_symbol": _prepared_source_symbol(prepared),
+    }
+    if frontend is not Frontend.TRITON:
+        lift_kwargs["frontend"] = frontend.value
+    lift = lift_class(**lift_kwargs)
     writers: list[RecordedReplayEvidenceWriter] = []
-    compiler = TritonCompiler(timeout=240.0)
+    compiler = _new_frontend_compiler(frontend)
 
     def gate1_factory(_formal_round: int) -> BoundGate1Adapter:
         round_writers = tuple(
@@ -676,6 +744,7 @@ def _build_workload_runtime(
                 replay_backend,
                 provider=provider,
                 effort=effort,
+                frontend=frontend,
             )
             for _ in range(replay_width)
         )
@@ -686,7 +755,8 @@ def _build_workload_runtime(
             writer_evidence = RecordedReplayWriterGroup(round_writers)
         writers.append(writer_evidence)
         return BoundGate1Adapter(
-            Gate1Runner(
+            _build_frontend_gate1_runner(
+                frontend,
                 compiler=compiler,
                 writer=(
                     round_writers[0]
@@ -697,18 +767,40 @@ def _build_workload_runtime(
             )
         )
 
-    gate2 = TritonGate2ExecutionAdapter(
-        Gate2Runner(),
-        lambda artifact, _gate1, _binding: build_workload_gate2_suite(
-            prepared, artifact
-        ),
-    )
+    if frontend is Frontend.TRITON:
+        gate2: Any = TritonGate2ExecutionAdapter(
+            Gate2Runner(),
+            lambda artifact, _gate1, _binding: build_workload_gate2_suite(
+                prepared, artifact
+            ),
+        )
+    else:
+        if not isinstance(prepared, PreparedFrontendDatasetWorkload):
+            raise TypeError("native request requires PreparedFrontendDatasetWorkload")
+        if frontend is Frontend.CUDA:
+            source_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
+            replay_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
+        elif frontend is Frontend.TILELANG:
+            source_runner = TileLangRunner()
+            replay_runner = TileLangRunner()
+        else:  # pragma: no cover - rejected by _new_frontend_compiler
+            raise ValueError(f"unsupported native frontend {frontend.value!r}")
+        gate2 = NativeGate2ExecutionAdapter(
+            frontend.value,
+            Gate2Runner(
+                source_runner=source_runner,
+                replay_runner=replay_runner,
+            ),
+            lambda artifact, _gate1, _binding: (
+                build_frontend_dataset_gate2_suite(prepared, artifact)
+            ),
+        )
     runner = SCRCGateRunner(SCRCRunDependencies(lift, gate1_factory, gate2))
     return runner, lift, writers
 
 
 def search_prepared_workload_gate1(
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     *,
     provider: ProviderConfig,
     initial_feedback: LiftFeedback | None = None,
@@ -756,7 +848,7 @@ def search_prepared_workload_gate1(
 
 
 def complete_prepared_workload_gate2(
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     search: WorkloadGate1Search,
 ) -> WorkloadExecution:
     """Execute hidden Gate2 once for the preselected Gate1-closed branch."""
@@ -775,7 +867,7 @@ def complete_prepared_workload_gate2(
 
 
 def execute_prepared_workload(
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     *,
     provider: ProviderConfig,
     effort: str | None = None,
@@ -891,7 +983,7 @@ def _read_recheck_lineage_object(path: Path, label: str) -> dict[str, Any]:
 
 def validate_workload_gate1_recheck_parent(
     parent_evidence: str | Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     artifact: Gate1Artifact,
 ) -> Path:
     """Bind a diagnostic recheck to one exact parent case/source/artifact.
@@ -972,7 +1064,7 @@ def validate_workload_gate1_recheck_parent(
 
 def initialize_workload_gate1_recheck_evidence(
     recheck_dir: Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     *,
     provider: ProviderConfig,
     effort: str | None,
@@ -1029,7 +1121,7 @@ def initialize_workload_gate1_recheck_evidence(
 
 def initialize_workload_evidence(
     run_dir: Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     *,
     provider: ProviderConfig,
     effort: str | None,
@@ -1194,7 +1286,7 @@ def _save_replay_record_evidence(
 
 def save_workload_gate1_recheck(
     recheck_dir: Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     result: WorkloadGate1Recheck,
 ) -> None:
     """Persist fixed-artifact diagnostic evidence without a new verdict."""
@@ -1296,7 +1388,7 @@ def save_workload_gate1_recheck(
 
 def save_workload_execution(
     run_dir: Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     execution: WorkloadExecution,
 ) -> None:
     report = execution.report
@@ -1511,7 +1603,7 @@ def _save_attempt_evidence(
 
 def save_workload_gate1_search(
     run_dir: Path,
-    prepared: PreparedTritonWorkload,
+    prepared: PreparedWorkload,
     search: WorkloadGate1Search,
     *,
     selected_for_gate2: bool,
