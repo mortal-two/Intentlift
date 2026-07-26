@@ -64,6 +64,11 @@ agent:
        feedback-category, and knowledge lookup subcommands to discover only
        the additional context needed. Read the minimal example and query only
        exact schema operations/leaf sections needed by Source.
+       When `/input/knowledge/lift_plan.json` exists, it is an untrusted,
+       non-certified plan written by an earlier source-aware Lift LLM in this
+       same invocation. Read it once as a checklist, independently confirm it
+       against Source, and author every J/C/pi field yourself. Fixed code has
+       neither interpreted nor elaborated the plan.
        For a long Source, page the syntax-only control inventory with
        `python /input/tools/context_query.py source-outline --start 1 --count 32`
        before concluding that no loop, branch, or early return exists. It only
@@ -88,15 +93,14 @@ agent:
 model:
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish the current Lift stage and submit its required output now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish, validate, repair CandidateCheck diagnostics, and submit the complete candidate now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish the current Lift stage and submit its required output now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
-    Use the bash tool for the next bounded action. To submit a completed and
-    statically validated candidate, call bash with exactly:
-    printf 'INTENTIR_LIFT_SUBMIT\n'
+    Use the bash tool for the next bounded action. Follow the current stage
+    prompt for its exact output path and submission marker.
   model_kwargs:
     drop_params: true
     num_retries: 0
@@ -111,3 +115,87 @@ environment:
   timeout: 60
   candidate_check_limit: 15
   candidate_submission_check_limit: 1
+
+staged:
+  protocol: intentir.lift-workflow.v1
+  planner:
+    agent:
+      system_template: |
+        You are the source-aware semantic planner inside one IntentIR Lift
+        invocation. You are still part of Lift and may read only the mounted
+        anonymous Source, Harness view, source-neutral contract, and explicitly
+        allowed feedback. Your job is to author an untrusted planning object;
+        do not construct candidate.json and do not claim certification.
+
+        Recover the whole program before serialization: logical inputs/results,
+        tensor dataflow and dtypes, reductions, consumer-dependent behavior,
+        loops and loop-carried state, branches/early returns, predicates,
+        accesses/effects, and the corresponding J/C/pi obligations. Distinguish
+        semantic structure from implementation-only tiling. Fixed code will
+        copy your bytes without parsing their semantic content; a fresh Lift LLM
+        will independently author the complete artifact.
+
+        Write exactly `/output/lift_plan.json`, as one JSON object whose protocol
+        is `intentir.lift-plan.v1`. Useful sections are `signature`, `dataflow`,
+        `consumer_context`, `time_and_control`, `effects`, `j_c_pi_obligations`,
+        and `open_risks`; their contents remain entirely LLM-authored. Keep it
+        compact and source-grounded. Submit with a separate exact command:
+        `printf 'INTENTIR_LIFT_PLAN_SUBMIT\n'`.
+      instance_template: |
+        Do not run bootstrap and do not write candidate.json. Read Source and
+        Harness separately with the bounded context_query commands. If feedback
+        is non-null, inspect it as another allowed Lift input. For a long Source,
+        page source-outline before deciding that no loop, branch, or terminal
+        control exists. Write the complete plan by turn 7 and submit it by turn
+        10. The plan is scratch reasoning, not J, C, pi, a certificate, or an
+        input to any deterministic elaborator.
+      step_limit: 10
+      wall_time_limit_seconds: 900
+    environment:
+      candidate_check_limit: 0
+      candidate_submission_check_limit: 0
+      submission_kind: plan
+  builder:
+    agent:
+      step_limit: 32
+      wall_time_limit_seconds: 1800
+    environment:
+      candidate_check_limit: 6
+      candidate_submission_check_limit: 1
+      submission_kind: candidate
+  reviewer:
+    agent:
+      system_template: |
+        You are the final source-aware reviewer inside the same IntentIR Lift
+        invocation. A fresh Lift LLM has already authored a complete candidate
+        at `/output/candidate.json`; an earlier Lift LLM authored the untrusted
+        `/input/knowledge/lift_plan.json`. Neither is accepted or certified.
+
+        Audit the complete candidate directly against anonymous Source, Harness,
+        the Lift contract, and allowed feedback. Prioritize missing or invented
+        semantic structure over formatting: logical dataflow; consumer context;
+        reductions; loop induction, recurrence and carriers; branches and early
+        returns; predicates; access/effect order; and coordinated J/C/pi topology.
+        Independently fix the complete candidate when needed. You, not fixed
+        code, author every changed field. CandidateCheck is read-only and only
+        reports Decode/dependent-TypeCheck diagnostics; it is not an oracle for
+        Source equivalence.
+
+        Do not invoke Replay, Gate1, Gate2, RefEval, compiler observers, network,
+        or external state. Do not produce a critique as the final output: leave
+        exactly the reviewed full object at `/output/candidate.json`, validate
+        it, run CandidateCheck, and submit with:
+        `printf 'INTENTIR_LIFT_SUBMIT\n'`.
+      instance_template: |
+        Do not run bootstrap and do not replace the current draft with an older
+        artifact. Inspect the plan once, then inspect Source and the current
+        candidate in bounded views. For a long Source, use source-outline. Make
+        coordinated semantic and dependent-typing corrections yourself, run the
+        static validator and CandidateCheck, and submit by turn 16. Approval may
+        leave the exact LLM-authored bytes unchanged, but only after this audit.
+      step_limit: 16
+      wall_time_limit_seconds: 900
+    environment:
+      candidate_check_limit: 4
+      candidate_submission_check_limit: 1
+      submission_kind: candidate

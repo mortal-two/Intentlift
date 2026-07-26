@@ -21,9 +21,12 @@ from minisweagent.exceptions import Submitted
 
 
 INTENTIR_LIFT_SUBMIT = "INTENTIR_LIFT_SUBMIT"
+INTENTIR_LIFT_PLAN_SUBMIT = "INTENTIR_LIFT_PLAN_SUBMIT"
+INTENTIR_LIFT_PLAN_PROTOCOL = "intentir.lift-plan.v1"
 INTENTIR_CANDIDATE_CHECK = "intentir_candidate_check"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
+MAX_LIFT_PLAN_BYTES = 256 * 1024
 MAX_ACTION_OUTPUT_BYTES = 1024 * 1024
 MAX_WORKSPACE_BYTES = 64 * 1024 * 1024
 MAX_WORKSPACE_ENTRIES = 2048
@@ -109,6 +112,10 @@ class IntentIRLiftWorkspace:
     def candidate_path(self) -> Path:
         return self.output_dir / "candidate.json"
 
+    @property
+    def lift_plan_path(self) -> Path:
+        return self.output_dir / "lift_plan.json"
+
     def read_candidate(self) -> str:
         entries = tuple(self.output_dir.iterdir())
         if entries != (self.candidate_path,):
@@ -134,6 +141,50 @@ class IntentIRLiftWorkspace:
             raise TypeError("candidate.json must contain one JSON object")
         return text
 
+    def read_lift_plan(self) -> str:
+        """Read one opaque LLM-authored planning object without interpreting it."""
+
+        entries = tuple(self.output_dir.iterdir())
+        if entries != (self.lift_plan_path,):
+            names = sorted(path.name for path in entries)
+            raise ValueError(
+                "Lift planning output must contain exactly lift_plan.json; "
+                f"found {names}"
+            )
+        path = self.lift_plan_path
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("lift_plan.json must be a regular file")
+        size = path.stat().st_size
+        if not 1 <= size <= MAX_LIFT_PLAN_BYTES:
+            raise ValueError(
+                f"lift_plan.json size must be in [1, {MAX_LIFT_PLAN_BYTES}]"
+            )
+        raw = path.read_bytes()
+        if len(raw) != size:
+            raise ValueError("lift_plan.json changed while being read")
+        text = raw.decode("utf-8")
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise TypeError("lift_plan.json must contain one JSON object")
+        if value.get("protocol") != INTENTIR_LIFT_PLAN_PROTOCOL:
+            raise ValueError(
+                "lift_plan.json must declare protocol "
+                f"{INTENTIR_LIFT_PLAN_PROTOCOL!r}"
+            )
+        return text
+
+    def reset_writable(self, *, preserve_candidate: bool = False) -> None:
+        """Clear stage-local files while optionally retaining exact candidate bytes."""
+
+        if preserve_candidate:
+            self.read_candidate()
+        for directory in (self.output_dir, self.scratch_dir, self.tmp_dir):
+            os.chmod(directory, stat.S_IRWXU)
+            for child in directory.iterdir():
+                if preserve_candidate and child == self.candidate_path:
+                    continue
+                _remove_path_iterative(child)
+
     def cleanup(self) -> None:
         _remove_path_iterative(self.root)
 
@@ -146,6 +197,7 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     timeout: int = 60
     candidate_check_limit: int = 7
     candidate_submission_check_limit: int = 1
+    submission_kind: str = "candidate"
     executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
     env: dict[str, str] = {
         "HOME": "/tmp",
@@ -172,6 +224,10 @@ class IntentIRLiftEnvironment:
             raise ValueError(
                 "candidate_submission_check_limit must be non-negative"
             )
+        if self.config.submission_kind not in {"candidate", "plan"}:
+            raise ValueError("submission_kind must be 'candidate' or 'plan'")
+        if self.config.submission_kind == "plan" and candidate_checker is not None:
+            raise ValueError("Lift planning stage cannot install CandidateCheck")
         self._candidate_checker = candidate_checker
         self._candidate_check_calls = 0
         self._candidate_check_evaluations = 0
@@ -678,9 +734,14 @@ class IntentIRLiftEnvironment:
 
     def _check_submission(self, output: dict[str, Any]) -> None:
         lines = str(output.get("output", "")).lstrip().splitlines()
+        marker = (
+            INTENTIR_LIFT_PLAN_SUBMIT
+            if self.config.submission_kind == "plan"
+            else INTENTIR_LIFT_SUBMIT
+        )
         if (
             not lines
-            or lines[0].strip() != INTENTIR_LIFT_SUBMIT
+            or lines[0].strip() != marker
             or output.get("returncode") != 0
         ):
             return
@@ -691,6 +752,26 @@ class IntentIRLiftEnvironment:
             scratch_dir=self.config.scratch_dir,
             tmp_dir=self.config.tmp_dir,
         )
+        if self.config.submission_kind == "plan":
+            try:
+                workspace.read_lift_plan()
+            except Exception as exc:
+                output["returncode"] = 2
+                output["output"] += (
+                    "\nPlanning submission rejected by the local envelope check: "
+                    f"{type(exc).__name__}: {exc}\n"
+                )
+                return
+            raise Submitted(
+                {
+                    "role": "exit",
+                    "content": "lift_plan.json submitted",
+                    "extra": {
+                        "exit_status": "Submitted",
+                        "submission": "lift_plan.json",
+                    },
+                }
+            )
         try:
             candidate_text = workspace.read_candidate()
         except Exception as exc:
@@ -753,7 +834,12 @@ class IntentIRLiftEnvironment:
                         "sandbox": "intentir-bubblewrap-v1",
                         "network": "unshared",
                         "input": "read-only",
-                        "output": "candidate-only",
+                        "output": (
+                            "plan-only"
+                            if self.config.submission_kind == "plan"
+                            else "candidate-only"
+                        ),
+                        "submission_kind": self.config.submission_kind,
                         "command_timeout_seconds": self.config.timeout,
                         "candidate_check_shared_limit": (
                             self.config.candidate_check_limit
@@ -813,12 +899,15 @@ class IntentIRLiftEnvironment:
 __all__ = [
     "CANDIDATE_CHECK_PROTOCOL",
     "INTENTIR_LIFT_SUBMIT",
+    "INTENTIR_LIFT_PLAN_PROTOCOL",
+    "INTENTIR_LIFT_PLAN_SUBMIT",
     "INTENTIR_CANDIDATE_CHECK",
     "IntentIRLiftEnvironment",
     "IntentIRLiftEnvironmentConfig",
     "IntentIRLiftWorkspace",
     "MAX_ACTION_OUTPUT_BYTES",
     "MAX_CANDIDATE_BYTES",
+    "MAX_LIFT_PLAN_BYTES",
     "MAX_WORKSPACE_BYTES",
     "MAX_WORKSPACE_DEPTH",
     "MAX_WORKSPACE_ENTRIES",

@@ -705,6 +705,7 @@ def _build_workload_runtime(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
 ) -> tuple[
@@ -717,8 +718,12 @@ def _build_workload_runtime(
     if not 1 <= replay_width <= 4:
         raise ValueError("replay_width must be in [1, 4]")
     frontend = _prepared_frontend(prepared)
+    if lift_workflow not in {"single", "staged"}:
+        raise ValueError("lift_workflow must be 'single' or 'staged'")
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
+        if lift_workflow != "single":
+            raise ValueError("staged Lift workflow requires the miniswe backend")
         lift_class = ResponsesSCRCLiftAdapter
     elif lift_backend == "miniswe":
         lift_class = MiniSWELiftAdapter
@@ -732,6 +737,8 @@ def _build_workload_runtime(
     }
     if frontend is not Frontend.TRITON:
         lift_kwargs["frontend"] = frontend.value
+    if lift_backend == "miniswe":
+        lift_kwargs["workflow"] = lift_workflow
     lift = lift_class(**lift_kwargs)
     writers: list[RecordedReplayEvidenceWriter] = []
     compiler = _new_frontend_compiler(frontend)
@@ -805,6 +812,7 @@ def search_prepared_workload_gate1(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
     retry_initial_artifact: bool = False,
@@ -821,6 +829,7 @@ def search_prepared_workload_gate1(
         effort=effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
+        lift_workflow=lift_workflow,
         replay_backend=replay_backend,
         replay_width=replay_width,
     )
@@ -871,6 +880,7 @@ def execute_prepared_workload(
     effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
+    lift_workflow: str = "single",
     replay_backend: str = "responses",
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadExecution:
@@ -882,6 +892,7 @@ def execute_prepared_workload(
         effort=effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
+        lift_workflow=lift_workflow,
         replay_backend=replay_backend,
         progress_callback=progress_callback,
     )
@@ -1125,6 +1136,7 @@ def initialize_workload_evidence(
     effort: str | None,
     run_masked_j: bool,
     lift_backend: str = "responses",
+    lift_workflow: str = "single",
     replay_backend: str = "responses",
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
@@ -1145,6 +1157,7 @@ def initialize_workload_evidence(
         "model": provider.model,
         "reasoning_effort": effort or provider.reasoning_effort,
         "lift_backend": lift_backend,
+        "lift_workflow": lift_workflow,
         "replay_backend": replay_backend,
         "frontend": prepared.entry.frontend,
         "observer_profile": prepared.entry.observer_profile,

@@ -88,12 +88,22 @@ def _certified_execution():
 
 def test_batch_cli_has_independent_replay_backend_switch() -> None:
     selected = scrc_batch._parser().parse_args(
-        ["--list", "--lift-backend", "responses", "--replay-backend", "miniswe"]
+        [
+            "--list",
+            "--lift-backend",
+            "miniswe",
+            "--lift-workflow",
+            "staged",
+            "--replay-backend",
+            "miniswe",
+        ]
     )
     defaults = scrc_batch._parser().parse_args(["--list"])
 
-    assert selected.lift_backend == "responses"
+    assert selected.lift_backend == "miniswe"
+    assert selected.lift_workflow == "staged"
     assert selected.replay_backend == "miniswe"
+    assert defaults.lift_workflow == "single"
     assert defaults.replay_backend == "responses"
 
 
@@ -481,7 +491,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        replay_backend, replay_width, max_gate1_rounds,
+        lift_workflow, replay_backend, replay_width, max_gate1_rounds,
         max_pre_replay_rejections,
         stop_requested=None, progress_callback=None,
     ):
@@ -489,6 +499,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert effort == "xhigh"
         assert run_masked_j
         assert lift_backend == "responses"
+        assert lift_workflow == "single"
         assert replay_backend == "miniswe"
         assert replay_width == 2
         assert max_gate1_rounds == 6
@@ -521,6 +532,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         effort,
         run_masked_j,
         lift_backend,
+        lift_workflow,
         replay_backend,
         search_metadata,
     ):
@@ -528,6 +540,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert provider.name == "test-provider"
         assert run_masked_j
         assert lift_backend == "responses"
+        assert lift_workflow == "single"
         assert replay_backend == "miniswe"
         assert search_metadata["candidate_count"] == 5
         assert search_metadata["protocol"] == (

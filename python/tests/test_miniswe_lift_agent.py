@@ -53,6 +53,8 @@ from minisweagent.config.intentir_context_query import (
 from minisweagent.environments.intentir_lift import (
     CANDIDATE_CHECK_PROTOCOL,
     INTENTIR_CANDIDATE_CHECK,
+    INTENTIR_LIFT_PLAN_PROTOCOL,
+    INTENTIR_LIFT_PLAN_SUBMIT,
     INTENTIR_LIFT_SUBMIT,
     IntentIRLiftEnvironment,
     IntentIRLiftWorkspace,
@@ -71,6 +73,7 @@ from minisweagent.run.intentir_lift import (
     create_intentir_lift_model,
     load_intentir_lift_config,
     run_intentir_lift,
+    run_intentir_staged_lift,
 )
 
 
@@ -136,7 +139,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v42"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v43"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -908,6 +911,74 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     assert result.model_calls == 2
     assert len(model.query_inputs) == 2
     assert len(model.query_inputs[0]) == 2
+
+
+def test_staged_lift_uses_three_fresh_llm_contexts_and_opaque_plan() -> None:
+    workspace = _workspace()
+    plan = json.dumps(
+        {
+            "protocol": INTENTIR_LIFT_PLAN_PROTOCOL,
+            "time_and_control": ["LLM-authored loop obligation"],
+        }
+    )
+    candidate = '{"j": {}, "c": {}, "pi": {}}'
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{plan}' > /output/lift_plan.json",
+            f"printf '{INTENTIR_LIFT_PLAN_SUBMIT}\\n'",
+            (
+                "test -f /input/knowledge/lift_plan.json && "
+                f"printf '%s\\n' '{candidate}' > /output/candidate.json"
+            ),
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+            (
+                "python -c 'import json; "
+                "p=json.load(open(\"/input/knowledge/lift_plan.json\")); "
+                "assert p[\"protocol\"]==\"intentir.lift-plan.v1\"; "
+                "json.load(open(\"/output/candidate.json\"))'"
+            ),
+            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
+        ]
+    )
+    checked: list[str] = []
+
+    def checker(candidate_text: str) -> dict:
+        checked.append(candidate_text)
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_staged_lift(
+            model=model,
+            workspace=workspace,
+            candidate_checker=checker,
+        )
+        transported = (
+            workspace.input_dir / "knowledge" / "lift_plan.json"
+        ).read_text()
+    finally:
+        workspace.cleanup()
+
+    assert transported == plan + "\n"
+    assert json.loads(result.candidate_text or "") == json.loads(candidate)
+    assert result.exit_status == "Submitted"
+    assert result.model_calls == 6
+    assert checked == [candidate + "\n", candidate + "\n"]
+    assert set(result.stage_metrics) == {"planner", "builder", "reviewer"}
+    assert [result.stage_metrics[name]["model_calls"] for name in (
+        "planner", "builder", "reviewer"
+    )] == [2, 2, 2]
+    assert [len(model.query_inputs[index]) for index in (0, 2, 4)] == [2, 2, 2]
+    workflow = result.trajectory["info"]["lift_workflow"]
+    assert workflow["protocol"] == "intentir.lift-workflow.v1"
+    assert len(workflow["plan_sha256"]) == 64
+    assert {
+        message.get("extra", {}).get("intentir_lift_stage")
+        for message in result.trajectory["messages"]
+    } == {"planner", "builder", "reviewer"}
 
 
 def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
