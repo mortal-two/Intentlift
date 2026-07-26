@@ -647,6 +647,8 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         [
             "--run",
             *explicit_cases,
+            "--lift-backend",
+            "miniswe",
             "--case-workers",
             "2",
             "--candidates",
@@ -673,7 +675,7 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         "max_branch_workers": 4,
         "gate2_workers": 2,
         "gate1_rounds": 3,
-        "pre_replay_rejections": 3,
+        "pre_replay_rejections": 0,
     }
     assert [case["ordinal"] for case in payload["cases"]] == sorted(
         entry.ordinal for entry in selected_entries

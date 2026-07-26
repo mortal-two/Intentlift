@@ -1,6 +1,6 @@
 agent:
   system_template: |
-    You are the bounded source-aware Lift worker for IntentIR/SCRC.
+    You are the time-governed source-aware Lift owner for IntentIR/SCRC.
     Your only job in this session is to construct one complete anonymous
     candidate.json containing exactly J, C, and pi from the files mounted in
     /input. Use the bash tool to inspect those files and to write drafts in
@@ -38,18 +38,19 @@ agent:
     This is a construction task, not a schema-reading task. Never page through
     the raw artifact schema or the full operation reference. Use the supplied
     compact schema_query tool and minimal wire example. Produce a first complete
-    candidate by model turn 5, then reserve the remaining turns for static
-    validation, focused fixes, and submission.
+    candidate early, then spend the remaining session wall time on static
+    validation, focused fixes, formal-feedback repair, and submission. Model/tool
+    call counts are telemetry, not a capability cutoff.
   instance_template: |
     Read /input/README.md first. It indexes the anonymous Source, trusted
     Harness compiler view, current artifact schema, Lift contract, and any
-    feedback explicitly allowed for this fresh Lift round.
+    feedback explicitly allowed for this branch-owner invocation.
 
     Work incrementally if useful, but submit exactly one complete
     /output/candidate.json. The submission command only delivers the candidate;
     it does not certify it. Do not create any other file under /output.
 
-    Bounded workflow:
+    Time-governed workflow:
     1. Run exactly this bounded bootstrap first:
        `python /input/tools/context_query.py bootstrap`
        It inventories the mounted inputs and, on a repair round, copies the
@@ -60,10 +61,10 @@ agent:
        `diagnostics.unresolved_gate1` item: preserve the copied candidate and
        repair both the current mechanical diagnostic and that retained Gate1
        counterexample before submission.
-       Gate1 feedback may also contain `repair_progress` and
-       `last_search_trial`. They compare only earlier LLM-authored candidates
-       and external diagnostics. Use them to avoid repeating an unchanged or
-       regressing repair; they do not prescribe any semantic field.
+       Gate1 feedback may also contain `repair_progress`. It compares only
+       adjacent LLM-authored candidates and external diagnostics. Use it to
+       avoid repeating an unchanged repair; it does not prescribe any semantic
+       field.
        A copied `continuation_draft` is merely the adjacent prior worker's
        complete LLM-written JSON, never an accepted artifact; continue its
        repair and rerun validator/CandidateCheck yourself.
@@ -91,31 +92,29 @@ agent:
        `python /input/tools/context_query.py source-outline --start 1 --count 32`
        before concluding that no loop, branch, or early return exists. It only
        locates Source; you still interpret it and author every artifact field.
-    3. Write the complete first candidate by turn 8. On a Gate1 repair round,
+    3. Write the complete first candidate early. On a Gate1 repair continuation,
        start from the copied parent but make every coordinated J/C/pi change
        justified by Source and the counterexample; a broad structural mismatch
        need not be treated as a one-field patch. Before submission run
        `python /input/tools/context_query.py candidate-diff` and do not resubmit
        a mechanically unchanged candidate.
     4. Run the static validator, then CandidateCheck. Repair only the reported
-       fields yourself, rerun within its fifteen-call ordinary allowance if
-       needed, commit the first PASS immediately, and submit before the model-turn
-       budget. Submission itself runs
+       fields yourself and rerun as needed within the branch-owner wall-time
+       budget. Commit the first PASS immediately, and submit a complete candidate
+       when it is ready for external TypeCheck/Replay/Gate1. Submission itself runs
        the same read-only preflight when the exact current bytes have no prior
-       PASS; one separately reserved submission evaluation remains available
-       after the ordinary allowance is exhausted. A failure returns diagnostics
-       and does not deliver the candidate.
-  step_limit: 80
+       PASS. A failure returns diagnostics and does not deliver the candidate.
+  step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 3600
-  max_consecutive_format_errors: 2
+  max_consecutive_format_errors: 0
 model:
   max_tool_calls_per_response: 4
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish the current Lift stage and submit its required output now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "directive": "The branch-owner wall-time budget is nearly exhausted. Preserve a checked complete candidate and submit now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 20 %}, "directive": "Stop browsing. Finish the current Lift stage and submit its required output now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "directive": "The branch-owner wall-time budget is nearly exhausted. Preserve a checked complete candidate and submit now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
@@ -134,8 +133,9 @@ model:
   cost_tracking: ignore_errors
 environment:
   timeout: 60
-  candidate_check_limit: 15
-  candidate_submission_check_limit: 1
+  # Zero means time-governed/unbounded-by-count for the active single-owner path.
+  candidate_check_limit: 0
+  candidate_submission_check_limit: 0
 
 staged:
   protocol: intentir.lift-workflow.v1

@@ -30,6 +30,7 @@ class IntentIRLiftRunResult:
     physical_provider_calls: int | None = None
     transport_retries: int = 0
     stage_metrics: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    continued_from_messages: int = 0
 
     def __post_init__(self) -> None:
         if self.physical_provider_calls is None:
@@ -103,8 +104,9 @@ def _run_agent_stage(
     environment: Environment,
     agent_config: Mapping[str, Any],
     output_reader: Callable[[], str],
+    initial_messages: list[dict[str, Any]] | None = None,
 ) -> _IntentIRLiftStageResult:
-    """Run one fresh LLM context and read only its declared opaque output."""
+    """Run one fresh or branch-continuation context and read its opaque output."""
 
     physical_before = getattr(model, "physical_provider_calls", None)
     retries_before = getattr(model, "transport_retries", None)
@@ -112,7 +114,11 @@ def _run_agent_stage(
     started = time.monotonic()
     caught: Exception | None = None
     try:
-        terminal = agent.run()
+        terminal = (
+            agent.run()
+            if initial_messages is None
+            else agent.run_from_messages(initial_messages)
+        )
     except Exception as exc:
         caught = exc
         terminal = {"exit_status": type(exc).__name__, "submission": ""}
@@ -169,6 +175,8 @@ def _run_agent_stage(
 
 def _public_result(
     stage: _IntentIRLiftStageResult,
+    *,
+    continued_from_messages: int = 0,
 ) -> IntentIRLiftRunResult:
     return IntentIRLiftRunResult(
         candidate_text=stage.output_text,
@@ -178,6 +186,7 @@ def _public_result(
         elapsed_ms=stage.elapsed_ms,
         physical_provider_calls=stage.physical_provider_calls,
         transport_retries=stage.transport_retries,
+        continued_from_messages=continued_from_messages,
     )
 
 
@@ -264,8 +273,10 @@ def run_intentir_lift(
     config_overrides: Mapping[str, Any] | None = None,
     environment: Environment | None = None,
     candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
+    continuation_history: list[dict[str, Any]] | None = None,
+    continuation_message: str | None = None,
 ) -> IntentIRLiftRunResult:
-    """Run a fresh DefaultAgent and return its sole candidate plus trajectory."""
+    """Run a fresh or branch-continuation agent and return one full candidate."""
 
     config = recursive_merge(
         load_intentir_lift_config(), dict(config_overrides or {})
@@ -281,13 +292,31 @@ def run_intentir_lift(
         candidate_checker=candidate_checker,
         **config.get("environment", {}),
     )
+    if (continuation_history is None) != (continuation_message is None):
+        raise ValueError(
+            "continuation_history and continuation_message must be supplied together"
+        )
+    initial_messages = None
+    if continuation_history is not None and continuation_message is not None:
+        initial_messages = [
+            *continuation_history,
+            model.format_message(role="user", content=continuation_message),
+        ]
     stage = _run_agent_stage(
         model=model,
         environment=environment,
         agent_config=config["agent"],
         output_reader=workspace.read_candidate,
+        initial_messages=initial_messages,
     )
-    result = _public_result(stage)
+    result = _public_result(
+        stage,
+        continued_from_messages=(
+            len(continuation_history)
+            if continuation_history is not None
+            else 0
+        ),
+    )
     if stage.caught is not None:
         raise IntentIRLiftRunError(
             "IntentIR Lift worker failed: "

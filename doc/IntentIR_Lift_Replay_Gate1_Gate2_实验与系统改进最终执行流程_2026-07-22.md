@@ -284,6 +284,12 @@ Source
 
 但它仍然必须重新输出完整的 `(J,C,π)`，而不是输出对旧 artifact 的 patch。
 
+同一 branch 默认由一个 branch-local source-aware Lift owner 持续承担这些轮次。实现可以在每次
+candidate submission 后暂停该 owner，待外部 TypeCheck、全新 Replay 与 Gate1 完成后，把允许的
+closed feedback 作为真实 user continuation event 追加到原 conversation，再由同一 owner 继续修改
+完整 candidate。该 conversation 是 proof-irrelevant 的搜索状态，不是第四个 artifact；不得跨 branch
+共享。Replay conversation 不随 Lift 持久化，仍须每个正式轮次全新建立。
+
 Lift 不能把 compiler-visible semantic recurrence 压成一个只在最终数学结果上等价的 global formula。
 若 Source 的 value dataflow 依赖 loop-carried state，J 必须使用已有 structured `loop` 完整声明
 trip/scan、每个 carry/init、body update 与一一对应的 next/yield/result；body contraction 的 canonical
@@ -443,7 +449,7 @@ operand/result types 与全局固定 promotion lattice 唯一决定，属于该 
 authorization 或把 Source/π 信息带入 promotion。若 Source 中 cast 本身是独立 compiler-visible stage，
 Lift 仍必须显式生成 `cast` node 和 authorization，不能借 op-internal promotion 吞掉该 stage。
 
-### 6.4 Lift 内的有界 CandidateCheck
+### 6.4 持久 Lift owner 内、由活动时间治理的 CandidateCheck
 
 同一个 source-aware Lift agent 可以在一次生成动作内，对自己已经写出的完整 candidate 调用只读、
 非认证的 `CandidateCheck`。定义显式上下文：
@@ -479,28 +485,32 @@ protocol, status, rule_code, path, observed_refs_or_types
 
 它不返回 recommended value、canonical artifact 或 patch，也不读取 Replay、Gate1、Gate2、RefEval
 或 compiler observation，不运行行为测试，不生成 J/C 分类、authorization、result relation 或 π
-topology。agent 必须根据诊断自行修改并最终提交完整 `(J,C,pi)`。调用次数必须有界并作为普通 Lift
-audit 记录；tool `PASS` 不构成正式 TypeCheck，提交后 Runner 必须用相同 `typecheck_version` 重新
-执行权威检查。
+topology。agent 必须根据诊断自行修改并最终提交完整 `(J,C,pi)`。所有调用次数必须作为普通 Lift
+audit 记录，但当前 active runtime 不以低的 model-turn、tool-call 或 CandidateCheck 次数作为能力
+停止条件；同一 branch-local owner 由累计 active wall time、sandbox 资源、provider transport/cost
+safety 与外部 formal-round 预算约束。tool `PASS` 不构成正式 TypeCheck，提交后 Runner 必须用相同
+`typecheck_version` 重新执行权威检查。
 
 提交动作对尚无本 session `PASS` 的精确 candidate bytes 自动执行同一 CandidateCheck；
 FAIL 只返回上述 closed diagnostics 而不提交或修补；只有与某次 `PASS` 对应的精确 bytes 完全
 相同时才可复用，任何不同 bytes 都必须重新检查。该前置
-调用与 worker 显式调用共享同一有界预算，PASS 仍只是当前 episode 的诊断结果。当前 fresh
-worker 使用最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：普通共享 allowance
-为 7，agent 的显式调用与提前 submission preflight 都从中消费；另有 1 次仅 submission 可消费的
-reserve，因此典型 7 次显式 evaluation 后仍可检查最终提交，但任何顺序都不能超过 8 次。receipt
-分别记录 `shared_budget`、`submission_reserve`，并按 `explicit`/`submission` trigger 记录 calls 与
-实际 evaluations。这些是可报告的工程预算，不进入 certificate predicate。
+调用与 worker 显式调用共享同一 diagnostics path，PASS 仍只是当前 owner session 的诊断结果。
+当前 single-owner runtime 的 `step_limit=0`、CandidateCheck count limit 为 0，含义均是
+**time-governed，而不是不受约束**：默认每 branch 累计 active Lift wall time为 3600 秒；每个 shell
+action 仍有独立 CPU/output/workspace limit，provider transport retry 仍有固定安全上限。每个 response
+最多四个独立只读 query 只是原子工具 envelope，不是 session 总调用预算。receipt 持续记录 model
+turns、physical calls、CandidateCheck calls/evaluations、active elapsed 与 terminal reason；这些都是
+可报告的工程成本，不进入 certificate predicate。
 
-若 worker 在预算内没有提交候选，runner 只可把该 worker 最后一次**实际执行**的 source-free
-checker 返回的最多 20 条 `rule_code/path` 摘要带入同一 branch 的下一次 fresh Lift。没有实际
-evaluation 就没有摘要；不得携带 observed value、候选修复、Source/Gate/hidden input、conversation
-或 sibling 信息。下一 worker 仍完整生成 `(J,C,π)`，固定代码不应用 patch。submission preflight
-`PASS` 也不认证 candidate，外部 Runner 必须照常重跑权威 TypeCheck。
+若一次 pause 前没有提交候选，runner 只可把最后一次**实际执行**的 source-free checker 返回的
+最多 20 条 `rule_code/path` 摘要带入同一 branch owner 的下一次 continuation。没有实际 evaluation
+就没有摘要；不得携带 observed value、候选修复、hidden input 或 sibling 信息。owner 可保留自己
+原有的 Source conversation 与完整 working draft，但仍必须提交完整 `(J,C,π)`；固定代码不应用
+patch。submission preflight `PASS` 也不认证 candidate，外部 Runner 必须照常重跑权威 TypeCheck。
 
-该能力只把原本发生在相邻 fresh Lift invocation 之间的机械反馈移入一次有界 Lift episode，不增加
-Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round 的定义。
+该能力把原本发生在相邻 fresh Lift invocation 之间的机械反馈和 Gate1 relift 工作保留在一个
+branch-local owner conversation 内，不增加 Agent、proof artifact 或 Replay 信息通道，也不改变正式
+Gate round 的定义。
 
 ### 6.5 格式修正和正式实验轮次
 
@@ -513,7 +523,8 @@ Agent、proof artifact 或 Replay 信息通道，也不改变正式 Gate round �
 - schema 层级错误；
 - TypeCheck 能直接指出的引用和类型错误。
 
-这些错误在 Replay 之前处理，不算一次 Gate1 正式轮次。但每次实际 LLM 调用仍应计入普通调用记录，并设置修正次数上限，不能无限重试。
+这些错误在 Replay 之前处理，不算一次 Gate1 正式轮次。每次实际 LLM/tool/check 调用仍应计入普通
+调用记录；当前以累计 active wall time与资源合同停止，不用一个低的修正调用次数截断复杂 J 的完成。
 
 只有 TypeCheck 通过、能够进入全新 Replay 的候选，才算一次正式实验轮次。
 
@@ -567,7 +578,8 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-当前 Lift knowledge v42 继承 v41；v40 的只读 `source-outline` 对长 Source 分页显示
+当前 Lift knowledge v45 继承 v44/v43/v42；v45 只改变 branch-local 持久 owner、time-governed
+runtime 与 receipt 合同，不改变 artifact wire 或 TypeCheck 接受集合。v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
 哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
@@ -576,7 +588,8 @@ vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须
 与 same-predicate store 不会改写它。没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source
 区间、做语义分类并完整作者化 `(J,C,π)`。
 
-MiniSWE Replay backend v4 相对 v3 只增加 source-blind typed rank/axis fidelity 合同：writer 必须按 J
+MiniSWE Replay backend v5 继承 v4 的 source-blind typed rank/axis fidelity 合同，并采用同样的
+time-governed single-writer transaction runtime：writer 必须按 J
 value type 与 local reduction axis 显式实现必要的 public reshape/expand-dimension stage，不得把
 reshape-plus-reduction、axis-specific reduction 或 shaped carry 改写为代数等价的 flattened reduction。
 固定代码仍不生成 Replay、不读取 Source/Gate，也不把这一提示变成 composer。
@@ -885,6 +898,11 @@ TypeCheck
 
 旧 Replay 只作实验记录，不进入下一轮 Replay 输入。
 
+这里的“第 r+1 轮 Lift”默认是同一 branch-local Lift owner 的 continuation，不是另起一个不了解
+Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加真实 user continuation；owner
+继续编辑上一完整 candidate。该实现选择不改变数学上的
+`Relift(Source,Artifact_r,D_r) -> Artifact_(r+1)`，也不允许 conversation 跨 branch 或进入 Replay。
+
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
@@ -911,7 +929,8 @@ verdict；新的结果只属于记录的当前 RefEval/Q/test/environment capabi
 
 当前搜索把 branch 数参数化为 `1 <= B <= 5`。每个 branch 最多进行 `K=3` 次能够进入 Replay 的
 TypeCheck-valid 正式 Gate1 round，`K` 包含首次候选；schema/TypeCheck 的 pre-Replay rejection
-另按既定上限计数，并必须报告 logical 与 physical provider calls。`B=1` 主要用于横向诊断 canary；
+在同一 owner 的 active-wall-time 内修正，并必须报告 logical 与 physical provider calls、checks 和
+elapsed。`B=1` 主要用于横向诊断 canary；
 若唯一 branch 通过全部门禁，其 `SCRC_CERTIFIED` 与搜索宽度无关，仍然有效。只有失败结论至多是
 本次 `NO_CLOSURE_(1,K)`，不能声称标准五分支 `NO_CLOSURE_(5,K)`。最终未闭合项的搜索可在全局
 `G` 允许时升到 `B=5`。
@@ -1151,6 +1170,7 @@ relation/op 的通用消费缺口，修复 consumer 后执行 10.1.2 的 Gate2-o
 - 每轮结构化 diff；
 - Gate2 结果及失败关系；
 - LLM 调用次数和失败原因；
+- branch-local Lift owner session id、active wall time、continuation 次数与每轮 context-prefix 摘要；
 - 最终状态。
 
 这些是实验记录，不是新的证明对象，也不是 Replay 输入。
@@ -1170,9 +1190,9 @@ default 则保持不变。它不调用外部 `unroll_varargs`、`exec` 或 monke
 carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展开后 ABI 分别为 38/51
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
-direct/decomposed stage multiplicity 合同后，fresh MiniSWE Lift knowledge 当前升为
-`intentir.lift-knowledge.v17`。v17 继承 v15 的 generic functional logical-domain 闭合提示、有界
-CandidateCheck 预算、跨 fresh Lift 机械摘要，以及 rank-0 logical-data/representation-only scalar
+direct/decomposed stage multiplicity 合同后，当前 MiniSWE Lift knowledge 已由后续通用能力升级到
+`intentir.lift-knowledge.v45`。v45 继承 v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
+CandidateCheck diagnostics，以及 rank-0 logical-data/representation-only scalar
 分类合同；并加入 value/dimension equality、consumer extension 与 access guard 的完整 authored
 合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
 `declared` 只表示 Harness/source ABI 有闭合配置，不构成 TypeCheck、Gate 或 SCRC 终态。
@@ -1180,15 +1200,15 @@ CandidateCheck 预算、跨 fresh Lift 机械摘要，以及 rank-0 logical-data
 对上述 absent carrier，TypeCheck 分别拒绝其成为 π instance 的 `semantic_ref`、J/B realization
 authorization 的 `subject_ref` 或 refinement carrier；本地 CandidateCheck 只复用同一 source-free
 checker 提前返回这些机械诊断。两处都不能删除错误字段、生成 dummy carrier、补造 π/authorization
-或据此改写候选 verdict；修正仍由下一次 fresh Lift 完整重交 `(J,C,π)`。
+或据此改写候选 verdict；修正仍由同一 branch owner 完整重交 `(J,C,π)`。
 
 建议分别报告：
 
 ```text
 first-attempt TypeCheck pass rate
-Lift 格式修正次数
+Lift 格式修正次数 / CandidateCheck 次数 / active wall time
 closure@1 / closure@2 / closure@3
-Lift call count / Replay call count / total LLM call count
+Lift call count / Replay call count / total LLM call count（成本 telemetry，不是能力 cutoff）
 NO_CLOSURE failure categories
 Gate2 pairwise Source/Replay/J pass rate among Gate1-closed candidates
 SCRC_CERTIFIED rate
@@ -1210,10 +1230,10 @@ SCRC_CERTIFIED rate
 
 ```text
 1 <= B <= 5 个独立 branch 并行：
-  Lift response → Decode/Elaborate → (J,C,π) → TypeCheck(J,C,π)
+  一个持久 source-aware Lift owner：response → Decode/Elaborate → (J,C,π) → TypeCheck(J,C,π)
        → source-blind Replay(J,π,MaskC(C);U_f)
        → Harness 绑定同一 c0 → Gate1
-       → Gate1 diff 只返回本 branch 的 Lift 并 relift
+       → Gate1 diff 只返回本 branch 的同一 Lift owner 并继续修改完整 candidate
 → pre-Gate2 wave barrier
 → sigma 仅根据 pre-Gate2 evidence 按 (branch_id, formal_round) lexicographic 顺序选择 winner
 → 只为 winner 生成隐藏输入并在 G2 semaphore 下执行唯一 Gate2；失败不 fallback

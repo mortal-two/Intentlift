@@ -1152,7 +1152,7 @@ TypeCheck(J,C,pi)
 已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
 consumer 私有字符串解析，也不增加第二个 J 对象。
 
-有界、只读、非认证的 `CandidateCheck` 共享正式 Runner 的同一 source-free
+只读、非认证的 `CandidateCheck` 共享正式 Runner 的同一 source-free
 parser/Decode/anonymous-view/TypeCheck callable core；正式 Runner 另执行 source-identifier privacy、
 receipt/provenance，并在提交后重新运行该 core。禁止维护第二套近似 checker；它向 source-aware Lift
 agent 暴露当前完整 candidate 的 dependent diagnostics。该工具不得修改 candidate、
@@ -1166,12 +1166,14 @@ TypeCheck。其显式输入、ephemeral validation view 与 closed diagnostic sc
 任何不同 bytes 都必须重检；提交后的外部 TypeCheck 仍
 必须重跑。这个提交前诊断边界没有获得任何 π 构造权。
 
-当前 fresh worker 最多 24 个 model turns。CandidateCheck 采用总上限 8 的有界池：7 次普通共享
-allowance 由显式调用与提前 submission preflight 共同消费，另有 1 次只允许 submission 使用的
-reserve；receipt 分别记录 `shared_budget`/`submission_reserve` 以及每种 trigger 的 calls/evaluations。
-若 worker 未提交候选，跨到同一 branch 下一 fresh Lift 的内容最多是最后一次实际 source-free
-evaluation 的 20 条 `rule_code/path`；observed value、候选 patch、Source/Gate/hidden/sibling 信息均
-不得携带。该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。
+当前 branch-local Lift owner 不以低的 model-turn/CandidateCheck 次数截断构造；`step_limit=0` 与 check
+limit 0 表示由累计 active wall time治理，默认每 branch 3600 秒。receipt 仍记录每种 trigger 的
+calls/evaluations、model/physical calls、elapsed 与 terminal reason。若一次 pause 前未提交候选，同一
+owner continuation 最多新增最后一次实际 source-free evaluation 的 20 条 `rule_code/path`；它保留
+自己的 Source conversation，上一完整 draft 由 fresh workspace 原样 bootstrap，但 observed hidden value、fixed patch 与 sibling
+信息均不得进入。该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。Gate1
+失败后同一 Lift owner 可继续修改完整 `(J,C,π)`；Replay 仍每个 formal round 全新且看不到该
+conversation 或 diff。
 
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
@@ -1193,7 +1195,7 @@ v7 又只对 rank-0 signature logical input 增加 source-free liveness：绑定
 和合法 boundary-only 路径保留，dead node 或 π route 不冒充 logical contribution。仅用于
 representation/address 的 runtime scalar 必须显式取 `logical_ref=null`，不创建 J input、不进入 J
 semantics，但其 p* carrier 可以由 π realization 引用。checker 不从名称/位置推断，不自动解绑或
-修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v17 继承。上述拒绝不会给 π、CandidateCheck 或
+修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v45 继承 v17。上述拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。
 
 上述 representation-only null-carrier 只允许 runtime scalar。`bound_constexpr_values` 由 Lift 查看每个
@@ -1263,7 +1265,7 @@ store coordinates 与 load coordinates 的 permutation 完全一致并由同 pre
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
-当前 Lift knowledge v42 要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v4 要求
+当前 Lift knowledge v45 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
 flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。

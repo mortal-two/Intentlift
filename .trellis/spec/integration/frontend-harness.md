@@ -44,13 +44,13 @@ Harness-private 近似规则。
 填默认值、改别名、删除冲突项或构造 repaired artifact。若 JSON、父对象或某个参数本身尚不能
 合法解析，依赖该前提的后续检查必须留到修正后的下一次 evaluation，不能猜测修复结果后提前报错。
 
-当前 fresh worker 最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：7 次普通
-`shared_budget` 同时供显式调用与提前 submission preflight 消费，另有 1 次
-`submission_reserve` 只允许 submission 使用；任何顺序均不得超过 8。Harness/receipt 分别记录两类
-budget，并按 `explicit`/`submission` trigger 记录 calls/evaluations。若 worker 没有提交 candidate，
-同一 branch 下一 fresh Lift 最多只接收最后一次实际 source-free evaluation 的 20 条
-`rule_code/path`；不得包含 observed value、patch、Source/Gate/hidden/sibling 信息。Harness 不应用
-摘要修补 artifact，submission `PASS` 也不能替代正式 Runner 的 `typecheck.v7`。
+当前 single-owner Lift 默认按每 branch 3600 秒累计 active wall time 治理；model turns、tool calls 与
+CandidateCheck evaluations 不设低次数型 capability cutoff，全部按 `explicit`/`submission` trigger
+记录为 telemetry。若一次 workspace invocation 没有提交 candidate，同一 branch 的持久 owner 可以在
+下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
+`rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
+source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
+替代正式 Runner 的 `typecheck.v18`。
 
 ## Logical signature 与绑定
 

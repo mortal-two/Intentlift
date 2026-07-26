@@ -37,7 +37,7 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v5"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v6"
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"

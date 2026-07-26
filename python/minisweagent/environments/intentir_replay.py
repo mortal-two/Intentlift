@@ -1681,10 +1681,10 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
-    replay_check_limit: int = 7
-    replay_submission_check_limit: int = 1
-    replay_compile_check_limit: int = 7
-    replay_source_inspect_limit: int = 12
+    replay_check_limit: int = 0
+    replay_submission_check_limit: int = 0
+    replay_compile_check_limit: int = 0
+    replay_source_inspect_limit: int = 0
 
 
 class IntentIRReplayEnvironment:
@@ -2169,7 +2169,10 @@ class IntentIRReplayEnvironment:
             except Exception:
                 result = _closed_failure("replay_check_read_failed")
             else:
-                if self._shared_evaluations < self.config.replay_check_limit:
+                if (
+                    self.config.replay_check_limit == 0
+                    or self._shared_evaluations < self.config.replay_check_limit
+                ):
                     self._shared_evaluations += 1
                     budget_pool = "shared"
                 elif (
@@ -2234,7 +2237,8 @@ class IntentIRReplayEnvironment:
         elif self._replay_compile_checker is None:
             result = _closed_failure("replay_compile_check_unavailable")
         elif (
-            self._compile_check_evaluations
+            self.config.replay_compile_check_limit != 0
+            and self._compile_check_evaluations
             >= self.config.replay_compile_check_limit
         ):
             result = _closed_failure("compile_check_budget_exhausted")
@@ -2308,7 +2312,11 @@ class IntentIRReplayEnvironment:
         mode = arguments[2] if len(arguments) > 2 else "invalid"
         self._source_inspect_audit.append(mode)
         try:
-            if self._source_inspect_calls > self.config.replay_source_inspect_limit:
+            if (
+                self.config.replay_source_inspect_limit != 0
+                and self._source_inspect_calls
+                > self.config.replay_source_inspect_limit
+            ):
                 raise ValueError("Replay source inspect budget exhausted")
             if len(arguments) < 3 or arguments[1] not in {
                 "/work/replay.source",
@@ -2600,9 +2608,12 @@ class IntentIRReplayEnvironment:
                     "calls": self._check_calls,
                     "evaluations": self._check_evaluations,
                     "limit": (
-                        self.config.replay_check_limit
+                        0
+                        if self.config.replay_check_limit == 0
+                        else self.config.replay_check_limit
                         + self.config.replay_submission_check_limit
                     ),
+                    "time_governed": self.config.replay_check_limit == 0,
                     "explicit": {
                         "calls": self._calls_by_trigger["explicit"],
                         "evaluations": self._evaluations_by_trigger["explicit"],

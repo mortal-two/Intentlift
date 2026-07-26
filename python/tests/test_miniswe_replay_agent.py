@@ -353,7 +353,7 @@ def test_own_replay_source_inspect_is_syntax_only_and_diagnostic() -> None:
         "diagnostic_syntax_only_own_replay_source"
     )
     assert inspect_audit["calls"] == 4
-    assert inspect_audit["limit"] == 12
+    assert inspect_audit["limit"] == 0
 
 
 def test_synthetic_compile_profile_never_reads_c0_or_harness_values() -> None:
@@ -459,13 +459,13 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert len(digest) == 64
     assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
     assert default_config["agent"].get("output_path") is None
-    assert default_config["agent"]["step_limit"] == 40
-    assert default_config["environment"]["replay_compile_check_limit"] == 7
-    assert default_config["environment"]["replay_source_inspect_limit"] == 12
+    assert default_config["agent"]["step_limit"] == 0
+    assert default_config["environment"]["replay_compile_check_limit"] == 0
+    assert default_config["environment"]["replay_source_inspect_limit"] == 0
     assert default_config["model"]["retry_attempts"] == 3
     assert default_config["model"]["max_tool_calls_per_response"] == 4
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v5"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v6"
     instance = default_config["agent"]["instance_template"]
     assert "typed rank and axis structure" in instance
     assert "algebraically equivalent flattened reduction" in instance

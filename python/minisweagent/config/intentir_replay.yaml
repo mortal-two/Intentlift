@@ -1,6 +1,6 @@
 agent:
   system_template: |
-    You are the bounded source-blind Replay writer for IntentIR/SCRC. Generate
+    You are the time-governed source-blind Replay writer for IntentIR/SCRC. Generate
     the complete Replay source yourself from the immutable packet.json and the
     fixed public contract in /input. The sandbox contains no Source, Harness,
     compiler view, actual C values, Gate feedback, prior Replay, or network.
@@ -68,24 +68,24 @@ agent:
     inventory yourself against the current packet facts. The tool never reports
     a semantic mismatch or recommends an edit. Then run bounded ReplayCheck and
     the advisory compile check, make focused corrections yourself, rerun both after edits,
-    and submit. Produce a complete first source by turn 10. After every final
+    and submit. Produce a complete first source early. After every final
     source edit, rerun ReplayCheck and the advisory compile check so an
     already-reported frontend shape or syntax error is not knowingly
     resubmitted. Commit the first ReplayCheck PASS immediately, update that commit
     only after a better exact version also passes, and do not create another file under
     /output. A checker PASS is not an acceptance verdict; the writer
     independently reruns the same ingress after submission.
-  step_limit: 40
+  step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 1800
-  max_consecutive_format_errors: 2
+  max_consecutive_format_errors: 0
 model:
   max_tool_calls_per_response: 4
   observation_template: |
     {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "directive": "The Replay wall-time budget is nearly exhausted. Preserve a checked complete source and submit now."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "directive": "The Replay wall-time budget is nearly exhausted. Preserve a checked complete source and submit now."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
@@ -103,7 +103,8 @@ model:
   cost_tracking: ignore_errors
 environment:
   timeout: 60
-  replay_check_limit: 7
-  replay_submission_check_limit: 1
-  replay_compile_check_limit: 7
-  replay_source_inspect_limit: 12
+  # Zero means time-governed/unbounded-by-count; every call remains audited.
+  replay_check_limit: 0
+  replay_submission_check_limit: 0
+  replay_compile_check_limit: 0
+  replay_source_inspect_limit: 0

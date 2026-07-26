@@ -457,9 +457,9 @@ Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/Can
 刷新或追认；v5-v7 同理保持原字段与 verdict。SCRC 后 π 停止，
 production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
-## 4.4 Lift 内的非认证 CandidateCheck
+## 4.4 持久 Lift owner 内的非认证 CandidateCheck
 
-同一个 source-aware Lift agent 可以对自己已经产生的完整 candidate 调用有界、只读的：
+同一个 branch-local source-aware Lift owner 可以对自己已经产生的完整 candidate 调用只读的：
 
 ```text
 ctx = (anonymous_compiler_view, schema_version, v_D, v_TC)
@@ -481,16 +481,17 @@ receipt/provenance，并在提交后重新运行该 core。禁止维护第二套
 若当前完整 candidate 的精确 bytes 在本 session 尚无 `PASS`，提交动作先自动调用同一
 CandidateCheck。FAIL 只把 closed diagnostics 返回 worker，不提交、修补或 canonicalize；只有与
 某次 `PASS` 对应的精确 bytes 完全相同时才可复用，任何不同 bytes 都必须重检。该前置调用与显式
-调用共享有界预算，PASS 仍不进入证书，正式 Runner 仍
+调用共享同一 diagnostics path，PASS 仍不进入证书，正式 Runner 仍
 重跑 Decode/TypeCheck。
 
-当前 fresh worker 最多 24 个 model turns。CandidateCheck 最多实际执行 8 次：普通共享 allowance
-为 7，显式调用与提前 submission preflight 都消费该 allowance；额外 1 次 reserve 只能由
-submission 使用。receipt 分开记录 `shared_budget`、`submission_reserve` 以及
-`explicit`/`submission` trigger 的 calls/evaluations。若 worker 未提交候选，同一 branch 下一次 fresh
-Lift 最多只接收最后一次实际 source-free evaluation 的 20 条 `rule_code/path` 摘要；没有 observed
-value、patch、Source/Gate/hidden/sibling 信息。该摘要与 submission `PASS` 都不进入证书，也不授权
-固定代码修补 `(J,C,π)`。
+当前 active runtime 不设置低的 model-turn 或 CandidateCheck count capability cutoff：`step_limit=0`
+与 check limit 0 表示 time-governed。一个 branch-local Lift owner 默认拥有 3600 秒累计 active wall
+time；每 action 的 CPU/output/workspace 限制、provider transport/cost safety 与外部 `K=3` formal
+round 预算仍然有效。receipt 记录每次 `explicit`/`submission` calls/evaluations、model/physical calls、
+active elapsed 与 terminal reason。若一次 pause 前未提交候选，同一 owner 的 continuation 最多接收
+最后一次实际 source-free evaluation 的 20 条 `rule_code/path` 摘要；它保留自己的 Source
+conversation，上一完整 draft 由 fresh workspace 原样 bootstrap，但没有 observed hidden value、fixed patch 或 sibling 信息。该摘要与
+submission `PASS` 都不进入证书，也不授权固定代码修补 `(J,C,π)`。
 
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：
 
@@ -1244,6 +1245,10 @@ A_{r+1}
 \operatorname{Relift}(S,A_r,D_r).
 \]
 
+当前实现中的 `Relift` 由同一 branch-local source-aware owner conversation 继续执行：上一完整
+candidate 与 closed diff 进入真实 user continuation，owner 继续修改并重新提交完整三元组。该
+conversation 是 proof-irrelevant search state，不跨 branch、不进入 Replay，也不改变上述数学映射。
+
 然后必须重新启动一份全新的 source-blind Replay：
 
 \[
@@ -1266,7 +1271,8 @@ R_{r+1}
 time-to-first-closure、logical/physical Lift、normal/masked Replay、transport retry、未完成 branch
 与 `NO_CLOSURE_(B,K)` 分类。Gate2 只报告预选 winner 的三边结果。
 
-一次 Lift agent session 内的 `CandidateCheck` 次数、agent model turns 与 diagnostics 另行报告；它们
+一次 branch-local Lift owner session 内的 `CandidateCheck` 次数、agent model turns、active wall time
+与 diagnostics 另行报告；它们
 不增加正式 Gate1 round。只有 agent 最终提交的完整 candidate 经外部 TypeCheck 通过后，才进入
 正式 witness search 计数。
 

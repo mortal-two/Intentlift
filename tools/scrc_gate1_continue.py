@@ -71,7 +71,15 @@ def _parser() -> argparse.ArgumentParser:
         default="miniswe",
     )
     parser.add_argument("--max-gate1-rounds", type=int, default=6)
-    parser.add_argument("--max-pre-replay-rejections", type=int, default=8)
+    parser.add_argument(
+        "--max-pre-replay-rejections",
+        type=int,
+        default=None,
+        help=(
+            "optional pre-Replay rejection cap; default 0 for single MiniSWE "
+            "owner continuations and 3 for legacy writers"
+        ),
+    )
     parser.add_argument(
         "--replay-width",
         type=int,
@@ -209,6 +217,12 @@ def _emit(value: Mapping[str, Any], *, json_mode: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.max_pre_replay_rejections is None:
+        args.max_pre_replay_rejections = (
+            0
+            if args.lift_backend == "miniswe"
+            else 3
+        )
     if args.max_gate1_rounds < 1:
         print("max-gate1-rounds must be positive", file=sys.stderr)
         return 2
@@ -242,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 "parent_evidence": str(args.parent_evidence.expanduser().resolve()),
                 "preserves_previous_artifact": True,
                 "initial_selection_rank": rank,
-                "failed_parent_policy": "gate1-rank-best-so-far-v1",
+                "failed_parent_policy": "branch-owner-latest-candidate-v1",
                 "replay_width": args.replay_width,
                 "replay_selection": "exact-pass-then-gate1-rank-v1",
                 "retry_parent_gate1": args.retry_parent_gate1,

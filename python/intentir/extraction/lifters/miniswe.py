@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import math
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -35,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v44"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v45"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -75,6 +78,50 @@ def _trajectory_bytes(trajectory: Mapping[str, Any]) -> bytes:
         ensure_ascii=False,
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _continued_lift_history(result: Any) -> list[dict[str, Any]]:
+    """Keep valid conversation context while dropping the local terminal record."""
+
+    messages = result.trajectory.get("messages", ())
+    if not isinstance(messages, list):
+        raise TypeError("Lift trajectory messages must be an array")
+    history = copy.deepcopy(messages)
+    while history and history[-1].get("role") == "exit":
+        history.pop()
+    if result.exit_status in {"Submitted", "InvalidSubmission"} and history:
+        # Submission is represented by a final tool call whose environment-side
+        # success interrupted the old worker before a tool result was appended.
+        # It cannot be replayed as an unmatched call in the continued Responses
+        # conversation. The exact candidate remains available through the next
+        # branch-local input bundle and output bootstrap.
+        terminal_response = history[-1]
+        extra = terminal_response.get("extra")
+        actions = extra.get("actions", ()) if isinstance(extra, Mapping) else ()
+        if not isinstance(actions, list) or not actions:
+            raise ValueError(
+                "submitted Lift history lacks its unmatched terminal tool call"
+            )
+        history.pop()
+    if not history or any(item.get("role") == "exit" for item in history):
+        raise ValueError("Lift continuation history is empty or contains exit state")
+    return history
+
+
+def _round_trajectory(
+    trajectory: Mapping[str, Any],
+    continued_from_messages: int,
+) -> dict[str, Any]:
+    """Return per-invocation evidence while the private owner keeps full context."""
+
+    value = copy.deepcopy(dict(trajectory))
+    messages = value.get("messages")
+    if not isinstance(messages, list):
+        raise TypeError("Lift trajectory messages must be an array")
+    if not 0 <= continued_from_messages <= len(messages):
+        raise ValueError("invalid Lift continuation prefix length")
+    value["messages"] = messages[continued_from_messages:]
+    return value
 
 
 def _sanitize_trajectory(value: Any, secret: str, *, key: str = "") -> Any:
@@ -220,7 +267,9 @@ def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
     ).read_text(encoding="utf-8")
     readme = """# IntentIR Lift input
 
-This directory is the complete allowlisted input for one fresh Lift round.
+This directory is the complete allowlisted input for one branch-owner
+invocation. The writable workspace is fresh; the source-aware model
+conversation may continue from the same branch's earlier invocation.
 
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
@@ -237,9 +286,9 @@ This directory is the complete allowlisted input for one fresh Lift round.
   refinement, and a local reduction axis; replace every case-specific semantic,
   handle, shape, value, topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
-- `intentir_candidate_check /output/candidate.json`: bounded, read-only
-  Decode/TypeCheck diagnostics for the complete candidate (an eleven-evaluation
-  ordinary allowance plus one separately reserved submission preflight);
+- `intentir_candidate_check /output/candidate.json`: read-only
+  Decode/TypeCheck diagnostics for the complete candidate; calls are audited
+  telemetry and are governed by the owner session's active wall time;
   it never repairs or certifies the artifact.
 - `intentir_candidate_commit /output/candidate.json`: record only exact bytes
   already returned PASS by CandidateCheck as the LLM owner's conditional
@@ -309,11 +358,11 @@ sections include `access`, `effect`, `result_relation`, `authorization`,
 `scope`, `c_slot`, `pi_instance`, `pi_route`, `pi_iteration`, and
 `pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
-On a fresh retry where `feedback.json.previous_artifact` is an object, copy
-that complete candidate first. Use `repair_progress`/`last_search_trial` when
-present and make the Source-justified coordinated J/C/pi changes needed by the
-external counterexample; do not blindly rebuild or mechanically resubmit the
-same artifact. Run `python /input/tools/context_query.py candidate-diff` before
+On a continuation where `feedback.json.previous_artifact` is an object, copy
+that complete candidate first. Use `repair_progress` when present and make the
+Source-justified coordinated J/C/pi changes needed by the external
+counterexample; do not blindly rebuild or mechanically resubmit the same
+artifact. Run `python /input/tools/context_query.py candidate-diff` before
 submission. This is only a read-only diff of two LLM-authored candidates, never
 a repair. The repaired full object is still a new Lift submission and will be
 checked externally again.
@@ -341,7 +390,7 @@ This host virtual command must be the entire shell action exactly as shown. Do
 not prepend `set`, an assignment, a pipe, or another shell command; such a
 prefixed action runs inside the sandbox, where it is not an executable.
 If it fails, edit the candidate yourself from the closed diagnostics and rerun
-within the bounded allowance. The formal Runner independently repeats Decode
+within the branch-owner active wall-time budget. The formal Runner independently repeats Decode
 and TypeCheck after submission; CandidateCheck is not an acceptance path.
 If the exact submitted bytes have no prior CandidateCheck PASS, submission
 automatically invokes the same read-only preflight and returns FAIL diagnostics
@@ -378,7 +427,7 @@ object, and a PASS still has no authority outside this worker.
 
 @dataclass
 class MiniSWELiftAdapter:
-    """One fresh bounded mini-swe worker per existing LiftAdapter call."""
+    """One branch-local source-aware owner across successive LiftAdapter calls."""
 
     provider: ProviderConfig | None = None
     compiler_view: Any = None
@@ -387,7 +436,15 @@ class MiniSWELiftAdapter:
     workflow: str = "single"
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
+    session_wall_time_limit_seconds: float = 3600.0
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
+    _session_id: str = field(default_factory=lambda: uuid.uuid4().hex, init=False)
+    _session_history: list[dict[str, Any]] | None = field(default=None, init=False)
+    _session_source_sha256: str | None = field(default=None, init=False)
+    _session_active_elapsed_ms: float = field(default=0.0, init=False)
+    _session_model_turns: int = field(default=0, init=False)
+    _session_physical_provider_calls: int = field(default=0, init=False)
+    _session_transport_retries: int = field(default=0, init=False)
 
     @property
     def records(self) -> tuple[SCRCReliftRecord, ...]:
@@ -515,6 +572,97 @@ class MiniSWELiftAdapter:
             previous_candidate,
         )
 
+    def _continued_worker_config(self) -> dict[str, Any]:
+        config = copy.deepcopy(dict(self.worker_config))
+        if self.workflow != "single":
+            return config
+        if self.session_wall_time_limit_seconds <= 0:
+            raise ValueError("Lift owner session wall-time limit must be positive")
+        remaining_seconds = self.session_wall_time_limit_seconds - (
+            self._session_active_elapsed_ms / 1000.0
+        )
+        if remaining_seconds <= 0:
+            from intentir.verify.scrc_runner import CandidateLiftError
+
+            raise CandidateLiftError(
+                {
+                    "diagnostic": "branch-local Lift owner wall-time exhausted",
+                    "failure_class": "lift_owner_time_exhausted",
+                    "session_id": self._session_id,
+                    "active_elapsed_ms": self._session_active_elapsed_ms,
+                },
+                physical_calls=0,
+                terminal=True,
+            )
+        agent = config.get("agent")
+        agent_config = dict(agent) if isinstance(agent, Mapping) else {}
+        # Tool/model/check counts remain telemetry. The branch owner is bounded by
+        # cumulative active wall time and the outer formal Gate1 budget instead.
+        agent_config["step_limit"] = 0
+        agent_config["wall_time_limit_seconds"] = max(
+            1,
+            math.ceil(remaining_seconds),
+        )
+        config["agent"] = agent_config
+        return config
+
+    def _continuation_message(self, feedback: Any, round_index: int) -> str:
+        kind = getattr(getattr(feedback, "kind", None), "value", None)
+        envelope = {
+            "protocol": "intentir.lift-owner-continuation.v1",
+            "owner_session": self._session_id,
+            "lift_invocation": round_index,
+            "failure_kind": kind,
+            "feedback_path": "/input/feedback.json",
+            "candidate_path": "/output/candidate.json",
+        }
+        return (
+            json.dumps(envelope, sort_keys=True)
+            + "\nThe same branch-local source-aware Lift task continues. "
+            "Read the new closed feedback from /input/feedback.json, run the "
+            "documented bootstrap so the previous complete candidate is present, "
+            "then modify and resubmit one complete (J,C,pi). This is not a new "
+            "writer and not a request for a patch-only artifact."
+        )
+
+    def _record_session_result(self, result: Any) -> None:
+        if self.workflow != "single":
+            return
+        self._session_active_elapsed_ms += float(result.elapsed_ms)
+        self._session_model_turns += int(result.model_calls)
+        self._session_physical_provider_calls += int(
+            result.physical_provider_calls
+        )
+        self._session_transport_retries += int(result.transport_retries)
+        self._session_history = _continued_lift_history(result)
+
+    def _session_evidence(
+        self,
+        evidence: Mapping[str, Any],
+        *,
+        fresh_session: bool,
+        result: Any,
+    ) -> dict[str, Any]:
+        value = dict(evidence)
+        value.update(
+            {
+                "fresh_session": fresh_session,
+                "persistent_owner": self.workflow == "single",
+                "owner_session_id": self._session_id,
+                "continued_from_messages": result.continued_from_messages,
+                "session_active_elapsed_ms": self._session_active_elapsed_ms,
+                "session_model_turns": self._session_model_turns,
+                "session_physical_provider_calls": (
+                    self._session_physical_provider_calls
+                ),
+                "session_transport_retries": self._session_transport_retries,
+                "session_wall_time_limit_seconds": (
+                    self.session_wall_time_limit_seconds
+                ),
+            }
+        )
+        return value
+
     def lift(self, request: Any, feedback: Any) -> Any:
         source_program = getattr(request, "source", None)
         source = getattr(source_program, "text", None)
@@ -522,6 +670,11 @@ class MiniSWELiftAdapter:
             raise TypeError("MiniSWE Lift requires SourceProgram.text")
         if self.workflow not in {"single", "staged"}:
             raise ValueError("MiniSWE Lift workflow must be 'single' or 'staged'")
+        source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        if self._session_source_sha256 is None:
+            self._session_source_sha256 = source_sha256
+        elif self._session_source_sha256 != source_sha256:
+            raise ValueError("one Lift owner session cannot cross Source programs")
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
@@ -538,6 +691,20 @@ class MiniSWELiftAdapter:
             source_symbol=self.source_symbol,
         )
         round_index = len(self._records) + 1
+        fresh_owner_session = (
+            self.workflow != "single" or self._session_history is None
+        )
+        effective_worker_config = self._continued_worker_config()
+        continuation_history = (
+            self._session_history
+            if self.workflow == "single" and not fresh_owner_session
+            else None
+        )
+        continuation_message = (
+            self._continuation_message(feedback, round_index)
+            if continuation_history is not None
+            else None
+        )
         candidate_check_context = scrc_candidate_check_context(prepared)
         try:
             from minisweagent.environments.intentir_lift import (
@@ -572,23 +739,40 @@ class MiniSWELiftAdapter:
                 if self.workflow == "staged"
                 else run_intentir_lift
             )
-            result = run_worker(
-                model=model,
-                workspace=workspace,
-                config_overrides=self.worker_config,
-                candidate_checker=lambda candidate_text: (
+            run_kwargs: dict[str, Any] = {
+                "model": model,
+                "workspace": workspace,
+                "config_overrides": effective_worker_config,
+                "candidate_checker": lambda candidate_text: (
                     check_scrc_lift_candidate(
                         candidate_text,
                         candidate_check_context,
                     )
                 ),
+            }
+            if self.workflow == "single":
+                run_kwargs.update(
+                    {
+                        "continuation_history": continuation_history,
+                        "continuation_message": continuation_message,
+                    }
+                )
+            result = run_worker(
+                **run_kwargs,
             )
+            self._record_session_result(result)
         except IntentIRLiftRunError as exc:
             result = exc.result
-            safe_trajectory = _sanitize_trajectory(
-                result.trajectory, provider.api_key
+            self._record_session_result(result)
+            safe_trajectory = _round_trajectory(
+                _sanitize_trajectory(result.trajectory, provider.api_key),
+                result.continued_from_messages,
             )
-            evidence = _worker_evidence(result, safe_trajectory)
+            evidence = self._session_evidence(
+                _worker_evidence(result, safe_trajectory),
+                fresh_session=fresh_owner_session,
+                result=result,
+            )
             continuation_candidate = self._read_continuation_candidate(
                 workspace
             )
@@ -651,6 +835,7 @@ class MiniSWELiftAdapter:
             raise CandidateLiftError(
                 rejected_diagnostics,
                 physical_calls=result.physical_provider_calls,
+                terminal=result.exit_status == "TimeExceeded",
             ) from exc
         except Exception as exc:
             self._records.append(
@@ -659,7 +844,9 @@ class MiniSWELiftAdapter:
                     diagnostic=f"{type(exc).__name__}: {exc}",
                     backend_evidence={
                         "backend": MINISWE_LIFT_BACKEND,
-                        "fresh_session": True,
+                        "fresh_session": fresh_owner_session,
+                        "persistent_owner": self.workflow == "single",
+                        "owner_session_id": self._session_id,
                     },
                 )
             )
@@ -675,14 +862,19 @@ class MiniSWELiftAdapter:
             workspace.cleanup()
 
         assert result is not None and result.candidate_text is not None
-        safe_trajectory = _sanitize_trajectory(
-            result.trajectory, provider.api_key
+        safe_trajectory = _round_trajectory(
+            _sanitize_trajectory(result.trajectory, provider.api_key),
+            result.continued_from_messages,
         )
         usage, response_id, response_model = _usage_and_response_identity(
             safe_trajectory
         )
         raw_trajectory = _trajectory_bytes(safe_trajectory)
-        worker_evidence = _worker_evidence(result, safe_trajectory)
+        worker_evidence = self._session_evidence(
+            _worker_evidence(result, safe_trajectory),
+            fresh_session=fresh_owner_session,
+            result=result,
+        )
         try:
             artifact = decode_scrc_lift_artifact(result.candidate_text, prepared)
         except Exception as exc:
@@ -769,7 +961,15 @@ class MiniSWELiftAdapter:
                 "agent_steps": result.model_calls,
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
-                "fresh_session": True,
+                "fresh_session": fresh_owner_session,
+                "persistent_owner": self.workflow == "single",
+                "owner_session_id": self._session_id,
+                "continued_from_messages": result.continued_from_messages,
+                "session_active_elapsed_ms": self._session_active_elapsed_ms,
+                "session_model_turns": self._session_model_turns,
+                "session_physical_provider_calls": (
+                    self._session_physical_provider_calls
+                ),
                 "workflow": self.workflow,
                 "artifact_schema": artifact.wire_schema,
                 "decode_protocol": candidate_check_context.decode_protocol,

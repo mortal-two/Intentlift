@@ -1,4 +1,4 @@
-# Task 12：Single-Owner Transactional Agent Runtime
+# Task 12：Persistent Single-Owner Transactional Agent Runtime
 
 > 状态：执行中
 >
@@ -9,10 +9,11 @@
 
 ## 目标
 
-把当前“每个小 shell 动作触发一次全历史 xhigh 请求、多个 fresh writer 轮流改同一 artifact”的
-MiniSWE episode，改造成接近 Codex 工作方式的单一 owner：在一个持续上下文中读取、编辑、检查、
-局部修正并提交一个完整结果。完成后将该 runtime 作为 Task 11 的执行引擎继续推进剩余 Kernel
-闭合。
+把当前“每个小 shell 动作触发一次全历史 xhigh 请求、多个 fresh writer/relift worker 轮流改同一
+artifact”的 MiniSWE 流程，改造成接近 Codex 工作方式的 branch-local 单一 owner：在一个持续
+source-aware 上下文中读取、编辑、检查并提交完整候选；外部 TypeCheck、fresh source-blind Replay
+与 Gate1 返回闭合诊断后，同一个 owner 继续修改当前完整 `(J,C,pi)`。完成后将该 runtime 作为
+Task 11 的执行引擎继续推进剩余 Kernel 闭合。
 
 本任务只改变 Agent 如何工作和如何保存其成果，不改变 SCRC 数学对象或判定：
 
@@ -54,6 +55,9 @@ v124 staged pilot 给出了三类互相独立的反例：
    Source、Harness、Gate、prior Replay、其他 candidate 或历史 runtime facts。
 5. 多 action、checkpoint、rollback 和 session-local semantic ledger 全部 proof-irrelevant，不进入
    `(J,C,pi)`、证书谓词或 production backend 输入。
+6. 一个 branch 的 Lift conversation 可以跨 TypeCheck-valid Gate1 round 持续存在；Replay
+   conversation、workspace 与 source 必须每个 formal round 全新，且仍只见当前
+   `J + MaskC(C) + pi + U_f`。持久化的是 Lift 的 source-aware 工作上下文，不是第四个 artifact。
 
 ## 对两份高级 AI 建议的裁决
 
@@ -71,7 +75,8 @@ v124 staged pilot 给出了三类互相独立的反例：
   exact rollback，预算耗尽时只允许回退到该显式 committed choice；
 - 用直接 submit action 替代 stdout marker；准确记录 time-to-first-valid、model/provider calls、
   check calls、commit retention、wall time 与 Gate1 frontier；
-- bounded Agentic Lift 与 formal Gate1 round 分离：一次 Lift episode 可多次调用有界 CandidateCheck，
+- time-governed Agentic Lift 与 formal Gate1 round 分离：一次 branch-owner session 可多次调用
+  CandidateCheck，
   但最终 artifact 和正式 Gate1 round 仍按现有 Runner 计数。
 
 拒绝或延后：
@@ -88,11 +93,14 @@ v124 staged pilot 给出了三类互相独立的反例：
 
 ### P0：Single owner
 
-- `single` Lift 保持一个 source-aware owner 的完整生命周期；`staged` 只保留为 v124 对照，不再作为
-  Task 11 默认推进路径；
+- `single` Lift 在同一 branch 的 pre-Replay 修正与最多 `K` 个 formal Gate1 round 中保持一个
+  source-aware conversation；`staged` 只保留为 v124 对照，不再作为 Task 11 默认推进路径；
 - owner 可在 `/work` 保存 proof-irrelevant semantic ledger，但最终唯一输出仍是完整
   `/output/candidate.json`；
-- Replay 对称保持一个 source-blind owner，最终唯一输出仍是 `/output/replay.source`。
+- 每次完整候选提交后，Runner 独立重跑 Decode/TypeCheck；只有通过者才令 formal round 加一并启动
+  一份全新的 source-blind Replay。Gate1 FAIL 的结构化 diff 只回到本 branch 的持久 Lift owner；
+- Replay 不跨 formal round 续接，不接收旧 Replay、Gate1 diff 或 Lift conversation，最终唯一输出仍是
+  `/output/replay.source`。
 
 ### P1：Exact-byte transaction
 
@@ -120,6 +128,13 @@ commit 必须绑定 checker PASS 的同一字节 digest。rollback 只能恢复�
   可同轮读取 packet overview、ABI、graph 与 realization；
 - provider 不支持 server-side conversation 时仍保持完整审计历史，但通过减少模型轮数控制累计
   context；不得用截断语义输入换速度；
+- 不用 `step_limit`、CandidateCheck 次数或普通 tool-call 数作为能力预算和停止条件。默认只以
+  branch/session 墙钟、provider cost/transport safety、sandbox 资源与正式 `K` 约束；调用和 check
+  次数全部记录为 telemetry。per-response 最多四个只读 call 只是工具 envelope/原子执行约束，不是
+  session 总调用上限；
+- 每次 Gate1 FAIL 后，Runner 将允许的 closed feedback 写入新的 branch-local Lift input view，并向
+  原 conversation 追加真实 user continuation event；不伪造 assistant message，不把旧 Replay 或
+  Gate2 信息带入上下文；
 - 后续只有在 current provider/relay 证明支持且 receipt 可闭合时，才实验 previous-response/session
   transport；不得把 provider 隐式状态变成认证输入。
 
@@ -136,8 +151,9 @@ checker、预算与 evidence contract，并证明 model tool process 无法读�
 - Flash forward：online recurrence 与 protocol-retention；
 - GroupNorm：reduction/consumer/effect 与 last-known-good retention。
 
-同模型 `gpt-5.6-sol/xhigh`、同 Source/Harness、单 candidate、单 formal Gate1 round。A 的 v124 evidence
-不回写；B/C 必须 fresh run。
+同模型 `gpt-5.6-sol/xhigh`、同 Source/Harness、`B=1`、每 branch 最多 `K=3` 个 TypeCheck-valid
+formal Gate1 round。内部 model/tool/check 次数不设低次数型能力上限，只受同一 session wall-time 与
+资源合同约束。A 的 v124 evidence 不回写；B/C 必须 fresh run。
 
 ## 验收
 
@@ -147,31 +163,45 @@ checker、预算与 evidence contract，并证明 model tool process 无法读�
    exact bytes 交付；receipt 能证明没有 fixed repair；
 3. Lift/Replay multi-action、transaction、limit fallback、exact-byte mismatch、额外 output、sandbox 与
    privacy 均有正反例；
-4. 三核 B 相比 v124 A 显著减少 model calls、累计 input 与 wall time；至少不降低 first-valid rate、
-   TypeCheck 结果或 Gate1 frontier。若不满足，Task 12 不完成，转入 engine C 而不是宣称成功；
+4. 三核 B 相比 v124 A 显著降低 time-to-first-valid、累计 input 与 wall time，且能在 Gate1 FAIL 后由
+   同一个 Lift owner 基于当前完整 candidate 与 closed diff 继续修订；内部 model calls 只报告，不以
+   越少越好替代最终 J/closure 质量。至少不降低 first-valid rate、TypeCheck 结果或 Gate1 frontier。
+   若不满足，Task 12 不完成，转入 engine C 而不是宣称成功；
 5. 正式 SCRC 谓词、artifact wire、TypeCheck、Replay visibility、Gate1/Gate2 均无 acceptance 漂移；
 6. Task 12 完成后提交并归档，Task 11 保持活动并立即恢复横向闭合。
 
 ## 2026-07-27 实施进度
 
-P0–P2 已形成可执行实现，P3 三核 fresh A/B 尚未开始，因此本任务仍是“执行中”，不能提前宣称
-完成：
+exact-byte transaction、direct submit、原子 multi-read 与 branch-local persistent conversation 已形成
+可执行实现；任务仍为“执行中”，因为三核 fresh B pilot 尚未给出能力证据：
 
-- Lift 与 Replay 均由一个 session 内的 sole owner 持续构造、自审、检查和交付；旧 staged
-  planner/builder/reviewer 仅保留为 v124 对照入口；
+- `single` Lift 现在在同一 adapter/branch 内保留一个 owner session id 与完整可审计 message history；
+  每次调用仍创建 fresh 受限 workspace，Runner 将 TypeCheck/Gate1 的 closed feedback 作为真实 user
+  continuation 追加给原 conversation。旧 staged planner/builder/reviewer 仅保留为 v124 对照入口；
+- `intentir.lift-knowledge.v45` 默认 `step_limit=0`、CandidateCheck count limit 0 与
+  `max_consecutive_format_errors=0`，由每 branch 3600 秒累计 active Lift wall time及 sandbox/provider
+  资源治理。普通 model/tool/check 次数只进 telemetry；
+- active single MiniSWE 路径的 pre-Replay rejection cap 默认 `0 = owner-time governed`。owner 时间耗尽
+  产生 terminal resource signal，Runner 收敛为可审计 `NO_CLOSURE`，不会无限续调；只有
+  TypeCheck-valid 候选进入 fresh Replay/Gate1 后才消耗 `K=3`；
+- Gate1 FAIL 始终把 owner 刚提交的最新完整 candidate 交回同一 conversation。固定 runner 不再以
+  comparator rank 强行替换为更早“最佳父 J”；rank 只保留为诊断/实验量；
 - 新增 direct submit、LLM 显式 exact-byte commit、rollback 与 bounded-terminal checkpoint；commit
   只有在同一字节已取得对应 Check PASS 时成立，checker PASS 不会自动替 LLM 选择版本；
 - 每个 provider response 最多四个独立只读调用；runtime 对整批 action 做执行前 allowlist 与数量
   检查，混入写/check/submit 或超过四个时整批零执行；
 - rollback 使用 host 创建的唯一排他临时文件并原子替换，sandbox 内预置同名 symlink 不能影响被
   保存字节或主机 canary；
-- Replay receipt 绑定 multi-action 配置、实际 termination status 与 transaction audit；所有
+- Replay 仍为每个 formal round 全新的 source-blind writer；`minisweagent.intentir-replay.v6` 默认按
+  1800 秒 wall time治理，check/inspect/model-call 次数不设低次数型 capability cutoff。Replay receipt
+  绑定 multi-action 配置、实际 termination status 与 transaction audit；所有
   checkpoint 仍须经过后续正式 ingress/TypeCheck/Gates；
-- 定向及相邻 Runner/Batch 回归共 `191 passed`；尚无三核 B 的 model-call、累计 input、wall-time、
-  first-valid、TypeCheck 或 Gate1-frontier 证据。
+- 本轮持久 owner、time-governed checks、terminal resource signal、latest-candidate continuation、fresh
+  Replay 及相邻 Runner/Batch/CLI 回归共 `196 passed`；上一底座回归为 `191 passed`。尚无三核 B 的
+  formal-round、累计 input、wall-time、first-valid、TypeCheck 或 Gate1-frontier 证据。
 
-下一动作固定为 Linear、Flash forward、GroupNorm 的 fresh B pilot；若 B 不满足验收 4，继续 P3
-实现隔离 engine C，而不是将 Task 12 标记完成。
+下一动作是完成相邻 Batch/CLI/spec 回归，然后运行 Linear、Flash forward、GroupNorm 的 fresh B
+pilot；若 B 不满足验收 4，继续 P3 实现隔离 engine C，而不是将 Task 12 标记完成。
 
 ## 非目标
 

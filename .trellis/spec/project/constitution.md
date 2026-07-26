@@ -35,8 +35,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - closed schema、引用、类型、授权和隔离检查；
 - `MaskC(C)`、`InterfaceView(J)` 等确定性投影；
 - build、bind、run、observe、compare 和结构化诊断；
-- 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以有界、
-  只读、非认证的 CandidateCheck 暴露给 source-aware Lift；Runner 另做 privacy/provenance 并重跑 core；
+- 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以时间治理、
+  只读、非认证的 CandidateCheck 暴露给持久 source-aware Lift owner；Runner 另做 privacy/provenance
+  并重跑 core；
 - 按外部比较政策 Q 从 B 的封闭类别构造确定性、对称的 Gate2 comparator；
 - 对不支持或不合法的输入 fail closed。
 
@@ -60,7 +61,8 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 ## 实验与系统改进
 
 实验期间规则、prompt、模型配置、TypeCheck、observer profile 和比较政策 Q 保持不变，只修改
-候选 artifact。Gate1 失败的 diff 只反馈给 source-aware Lift；relift 必须产生完整新三元组，
+候选 artifact。Gate1 失败的 diff 只反馈给同一 branch 的持久 source-aware Lift owner；owner 继续修改
+自己刚提交的完整 artifact，relift 必须产生完整新三元组，
 随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
 
 Gate2 失败结束本次实验。此后才允许根据跨样本失败修改系统，再从新的实验开始运行。

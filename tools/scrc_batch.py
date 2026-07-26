@@ -521,8 +521,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pre-replay-rejections",
         type=int,
-        default=3,
-        help="bounded rejected Lift workers before a branch stops",
+        default=None,
+        help=(
+            "optional pre-Replay rejection cap; default 0 (owner-time governed) "
+            "for single MiniSWE Lift and 3 for legacy writers"
+        ),
     )
     parser.add_argument("--skip-masked-j", action="store_true")
     parser.add_argument(
@@ -551,6 +554,12 @@ def _emit(value: dict, *, output: Path | None, json_mode: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     argument_vector = list(sys.argv[1:] if argv is None else argv)
     args = _parser().parse_args(argument_vector)
+    if args.pre_replay_rejections is None:
+        args.pre_replay_rejections = (
+            0
+            if args.lift_backend == "miniswe" and args.lift_workflow == "single"
+            else 3
+        )
     concurrency_options = (
         "--candidates",
         "--case-workers",

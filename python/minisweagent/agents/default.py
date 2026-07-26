@@ -2,6 +2,7 @@
 or https://minimal-agent.com for a tutorial on the basic building principles.
 """
 
+import copy
 import json
 import logging
 import time
@@ -93,6 +94,30 @@ class DefaultAgent:
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
+        return self._run_loop()
+
+    def run_from_messages(
+        self,
+        messages: list[dict],
+        *,
+        task: str = "",
+        **kwargs,
+    ) -> dict:
+        """Continue one audited conversation without recreating its initial prompt."""
+
+        if not messages:
+            raise ValueError("continued agent messages must be non-empty")
+        if any(not isinstance(message, dict) for message in messages):
+            raise TypeError("continued agent messages must be dictionaries")
+        if messages[0].get("role") != "system":
+            raise ValueError("continued agent history must retain its system message")
+        if any(message.get("role") == "exit" for message in messages):
+            raise ValueError("continued agent messages must not contain exit records")
+        self.extra_template_vars |= {"task": task, **kwargs}
+        self.messages = copy.deepcopy(messages)
+        return self._run_loop()
+
+    def _run_loop(self) -> dict:
         while True:
             try:
                 self.step()

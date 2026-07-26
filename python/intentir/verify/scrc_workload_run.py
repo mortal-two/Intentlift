@@ -754,6 +754,10 @@ def search_prepared_workload_gate1(
             request,
             max_pre_replay_rejections=max_pre_replay_rejections,
         )
+    elif lift_backend != "miniswe" or lift_workflow != "single":
+        # Legacy one-shot/staged writers do not expose a cumulative owner-time
+        # terminal signal, so retain their historical safety override.
+        request = replace(request, max_pre_replay_rejections=3)
     try:
         report = runner.search_gate1(
             request,

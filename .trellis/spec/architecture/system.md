@@ -11,8 +11,8 @@
 Source + Harness coordinates
         |
         v
-LLM_H(Source) -> complete candidate bytes
-        |  agent 可显式调用 bounded CandidateCheck
+branch-local persistent LLM_H(Source) -> complete candidate bytes
+        |  agent 可在 active wall time 内调用 CandidateCheck
         |  submission: exact bytes 若无本 session PASS，则自动 preflight
         |      FAIL -> closed diagnostics -> LLM 重写完整 candidate
         |      PASS -> 仅允许提交，不产生 artifact 或证书
@@ -32,10 +32,10 @@ Replay W_f(J,pi,MaskC(C);U_f) -> R
 Gate1(Source,R,C)
    | fail                         | pass
    v                              v
-structured diff -> relift      Gate2(Source,R,RefEval(J))
+structured diff -> same owner  Gate2(Source,R,RefEval(J))
    |                              | fail: end experiment
    +-- complete new artifact      | pass
-       + new blind Replay         v
+       + fresh blind Replay       v
                               SCRC_CERTIFIED
                                   |
                                   | orchestration 只交付 J+C
@@ -68,7 +68,7 @@ production search 在 `SCRC_CERTIFIED` 之后独立发生，不改变该状态�
 
 | 组件 | 可以读取 | 不得读取或产生 |
 |---|---|---|
-| Lift | Source、H 的最小匿名机械坐标、上一轮完整 artifact 与 Gate1 diff；对当前完整 candidate 的只读 CandidateCheck | 第四个 proof artifact；由工具补写语义或 patch |
+| Lift | 同一 branch 持久 conversation 中的 Source、H 的最小匿名机械坐标、自己刚提交的完整 artifact 与 Gate1 diff；对当前完整 candidate 的只读 CandidateCheck | sibling/Replay/Gate2 状态；第四个 proof artifact；由工具补写语义或 patch |
 | Decode/Elaborate | Lift response 的 closed J/C/π grammar | H/C values、Gate output、语义猜测或修复 |
 | Replay | J、π、`MaskC(C)`、版本化公共 `U_f` | Source、H、C values、source name/position、BindingMap、interface sidecar、compiler diff/fingerprint、旧 Replay/conversation、per-kernel RuleCard |
 | Harness | 调用坐标、inputs、C valuation、device/grid/toolchain | 语义分类、实现构造 |
@@ -99,7 +99,7 @@ j_necessity_status   = PROVED | NOT_PROVED | INCONCLUSIVE
 
 证书与报告必须索引到 frontend、observer profile/version、compiler/dump stage、schema/decode/
 typecheck/canonicalization version、Q、实际 c0 和测试域。搜索预算另行报告首轮 TypeCheck、
-`closure@1/2/3`、Lift/Replay/
-总 LLM 调用、CandidateCheck 次数、`NO_CLOSURE` 分类及 Gate2 条件通过率；这些记录不是新的 proof
+`closure@1/2/3`、Lift owner session/active wall time、Lift/Replay 总 LLM 调用、CandidateCheck
+次数、`NO_CLOSURE` 分类及 Gate2 条件通过率；调用次数是 telemetry 而非 capability cutoff。这些记录不是新的 proof
 artifact。backend 另行报告 implementation family、pass trace、candidate/compile/measure 数、
 time-to-best 与 performance，不把这些字段写回 SCRC 证书。

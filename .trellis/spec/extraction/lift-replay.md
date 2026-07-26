@@ -68,22 +68,25 @@ input 都不能补缺失 relation。该检查只覆盖这个可机械决定的 p
 logical predicate 因当前 RefEval 未实现而判成非法，也不删除合法 predicate/fill/effect。
 
 provider 已返回、但因 schema/匿名合同不合法而被拒绝的响应不进入 TypeCheck，也不计正式 Gate1
-round；Runner 对这类 pre-Replay rejection 使用有限调用上限并如实报告。拒绝响应、receipt、耗时
-和 token 作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或
-认证谓词。上限耗尽可以结束为 `NO_CLOSURE`，但报告必须显示正式 Gate1 round 为 0，而不是伪造
-一次 Gate1 失败。worker 连 candidate 都没有提交时同样属于 pre-TypeCheck Lift rejection；报告必须
+round；同一 branch-local Lift owner 在累计 active wall-time 与 sandbox/provider 资源合同内继续修正，
+默认不以 model/tool/check/pre-Replay rejection 次数作为能力截止。拒绝响应、receipt、耗时和 token
+作为 proof-irrelevant sidecar 保存，不能只留下一个错误字符串，也不得进入 Replay 或认证谓词。
+owner 的 terminal resource signal 可以结束为 `NO_CLOSURE`，但报告必须显示正式 Gate1 round 为 0，
+而不是伪造一次 Gate1 失败。worker 连 candidate 都没有提交时同样属于 pre-TypeCheck Lift rejection；报告必须
 显式显示 submitted candidate、canonical decode、TypeCheck、Replay 与 Gate 执行数均为 0，不能
 把 aggregate `NO_CLOSURE` 解读成一个已经进入 Gate1 的 artifact 未闭合。
 
-### 有界 agent 实现
+### 时间治理的持久 agent 实现
 
-Lift 可以由仓库内的有界 mini-swe agent 实现，但其 agent loop 只属于一次生成动作：
+Lift 可以由仓库内的 mini-swe agent 实现。一个 branch 只拥有一个 source-aware conversation，
+而每次候选交付使用独立受限 workspace：
 
 ```text
-一次 LiftAdapter 调用
-  = 一个全新 agent session
-  = 一个独立受限 workspace
-  = 最多提交一个完整 (J,C,pi)
+一个 branch
+  = 一个持久 source-aware Lift owner conversation
+  = 每次 LiftAdapter 调用一个全新受限 workspace
+  = 每次暂停点最多提交一个完整 (J,C,pi)
+  = Gate1 FAIL 后在原 conversation 中继续
 ```
 
 该 session 内可以多次调用模型，按需读取匿名 Source、最小 Harness compiler view、闭合 JSON
@@ -91,7 +94,7 @@ Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修
 语法/静态 Schema 检查。这是普通文件上的轻量 retrieval；不需要 vector database，也不能按
 当前 Kernel、历史失败或 sibling candidate 动态选择知识库。
 
-agent 还可以对自己已经写出的完整 candidate 调用有界、只读、非认证的 `CandidateCheck`。为避免
+agent 还可以对自己已经写出的完整 candidate 调用只读、非认证的 `CandidateCheck`。为避免
 已完整序列化的候选绕过这一机械诊断边界，若当前完整 candidate bytes 在本 session 内还没有
 `PASS`，提交动作必须先自动调用同一 `CandidateCheck`。该工具通过窄 host RPC 或同等隔离边界，
 共享正式 Runner 的同一 source-free strict parser、Decode/Elaborate、anonymous-view consistency 与
@@ -120,27 +123,29 @@ CandidateCheck_v(candidate_bytes, ctx) -> PASS | structured diagnostics
 未声明的 ambient host state。工具可以在私有内存中构造 ephemeral parsed/elaborated validation view，
 但不能将其作为 artifact 返回。diagnostics 只包含 closed
 `protocol/status/rule_code/path/observed_refs_or_types`。agent 根据 diagnostics 自行修改完整 object，
-最终仍最多提交一个完整
-`(J,C,pi)`。提交前置检查失败只把同样的 closed diagnostics 返回当前 worker，不会提交、
+每次交付仍只提交一个完整 `(J,C,pi)`。提交前置检查失败只把同样的 closed diagnostics 返回当前
+owner，不会提交、
 修补、canonicalize 或派生任何 artifact 字段；worker 必须自行重写完整 object。只有当前 candidate
 bytes 与本 session 内某次 `PASS` 对应的精确 bytes 完全相同时才能复用；任何不同 bytes 都必须
-重新检查。提交后 session 结束，Runner 必须重新运行全部权威 Decode/TypeCheck；工具 `PASS`
+重新检查。提交后 owner conversation 暂停而非销毁，Runner 必须重新运行全部权威
+Decode/TypeCheck；工具 `PASS`
 不进入 Replay packet、Gate verdict 或 certificate，且 CandidateCheck/Runner 必须使用相同
 `typecheck_version`。激活的 vNext SCRC adapter 必须安装 CandidateCheck；checker 缺失或不可用属于
 提交前 infrastructure failure。generic environment 可以在非认证测试中不安装 checker，但不得把
 该路径报告为 vNext SCRC run。
 
 agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
-Lift invocation、agent model turns、实际 provider calls、CandidateCheck 调用次数与诊断类别。
+Lift invocation、owner session id/累计 active wall time、agent model turns、实际 provider calls、
+CandidateCheck 调用次数与诊断类别。
 Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
-当前 fresh worker 最多 24 个 model turns。CandidateCheck 总 evaluation 上限为 8：7 次
-`shared_budget` 可由显式调用或提前 submission preflight 消费，另有 1 次
-`submission_reserve` 仅允许 submission 使用；任何顺序都不能超过 8。receipt 按
-`explicit`/`submission` trigger 分别记录 calls/evaluations，并分别报告 shared allowance 与 reserve。
-submission `PASS` 仍非认证，外部 Runner 必须重跑 TypeCheck。
+当前 active single-owner 路径默认每 branch 累计 3600 秒 active Lift wall time；`step_limit=0` 与
+CandidateCheck count limit 0 都表示不按次数截断，而不是无资源约束。model/tool/check 调用全部作为
+telemetry；每个响应最多四个独立只读 query 只是原子工具 envelope。只有 TypeCheck-valid 候选进入
+fresh Replay/Gate1 后才消耗正式 `K=3`。submission `PASS` 仍非认证，外部 Runner 必须重跑
+TypeCheck。
 
-当前 fresh worker 使用 `artifact.v3 / decode.v3 / typecheck.v7 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -169,16 +174,17 @@ diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck�
 原 wire 读取并禁止 `pi.iterations`，不能被静默升级到 v3。DYT 与 SwiGLU 的既有闭合 receipt 保留，
 不因 wire 升级重跑，也不冒充 fresh v3 evidence。
 
-若 worker 在预算内没有提交 candidate，只允许把其最后一次**实际执行**的 source-free checker
-诊断中最多 20 条 `rule_code/path` 摘要带入同一 branch 的下一 fresh Lift；没有 evaluation 就没有
-摘要。observed value、候选修复、Source/Gate/hidden input、conversation 与 sibling 信息不得跨越。
-新 worker 仍从完整对象构造开始，固定 runner 不把该摘要应用成 patch。
+若 owner 在一次 workspace invocation 中没有提交 candidate，Runner 可以把其最后一次**实际执行**
+的 source-free checker 诊断中最多 20 条 `rule_code/path` 写入同一 branch 的新 input view；没有
+evaluation 就没有摘要。该 view 与真实 user continuation 一起追加到原 conversation。observed value、
+候选修复、hidden input 与 sibling 信息不得跨越；Source 只因它本来就在该 source-aware owner 的
+同一 conversation 中而保留。固定 runner 不把摘要应用成 patch。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
-和与它精确对应的机械 diagnostic 交给同 branch 的紧邻下一次 fresh Lift invocation。新 worker 应
-在完整对象上做聚焦修正并重新提交完整 `(J,C,pi)`；它不能恢复旧 trajectory，也不能只交 patch。
+和与它精确对应的机械 diagnostic 交回同 branch 的持久 Lift owner。owner 在新的受限 workspace 中
+bootstrap 该完整对象并继续修正，再提交完整 `(J,C,pi)`；不能只交 patch。
 rejected candidate 不是第四 artifact，不进入 Replay 或 certificate。没有提交对象、对象不是有限
-JSON、feedback 不匹配或中间隔着其他 invocation 时不得复用更早候选。
+JSON、feedback 不匹配或跨 branch 时不得把其他候选混入当前 owner。
 
 agent shell 必须 fail closed 地隔离：`/input` 只读、`/output` 只允许唯一 candidate、私有 `/work`
 可写、网络 namespace 隔离、宿主环境清空，且不挂载仓库、历史 evidence、Gate executable 或
@@ -233,8 +239,9 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v7`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v17`。三个版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v10`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
+`intentir.lift-knowledge.v45`，source-blind MiniSWE Replay backend 为
+`minisweagent.intentir-replay.v6`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
 `U_f` 是版本化、source-neutral 的公共前端文档与工具上下文，不按当前 Kernel/op/pattern/失败
@@ -307,9 +314,9 @@ pointer add，且即使当前 grid extent 为 1 也不能用常量替换 program
 
 ## Gate1 失败与 relift
 
-Gate1 的结构化 diff 只返回 source-aware Lift。下一轮 Lift 可以读取 Source、上一轮完整
-`(J,C,π)` 与累计 Gate1 diff，但必须重新输出完整新三元组。随后使用新三元组发起全新的盲
-Replay。
+Gate1 的结构化 diff 只返回同一 branch 的持久 source-aware Lift owner。owner 保留自己的 Source
+上下文，并读取刚提交的完整 `(J,C,π)` 与本轮闭合 Gate1 diff，继续修改后重新输出完整新三元组。
+随后使用新三元组发起全新的盲 Replay；Replay conversation 不续接。
 
 runner 必须完整保存 observer comparison 作为审计 evidence；返回 Lift 的可以是该 comparison
 的确定性、有限、可行动诊断投影，例如 hard category、op-count 差异、关键 topology 差异与每类
@@ -329,8 +336,9 @@ artifact digest 精确等于输入 artifact；错 case、错 artifact、错 Sour
 fail closed。
 
 当前同一 case 使用 `1 <= B <= 5` 个独立并行 branch；每 branch 最多 `K=3` 个 TypeCheck-valid 正式
-Gate1 round，`K` 包含首次候选。每个 branch 的 previous artifact、Gate1 diff、Lift conversation、
-Replay writer 与调用预算完全隔离；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
+Gate1 round，`K` 包含首次候选。每个 branch 只有一个持久 Lift conversation；其 previous artifact、
+Gate1 diff 与活动时间状态同 sibling 完全隔离。Replay writer 则每个正式轮次全新，不能接收 Lift
+conversation、旧 Replay 或 Gate1 diff；sibling candidate 不能进入 Lift/Replay 输入，也不能拼接为一个
 artifact。Runner 等待当前 search wave 的所有 branch 到达 pre-Gate2 barrier，再仅依据完整
 TypeCheck/Gate1 evidence，按固定 `(branch_id, formal_round)` 顺序选择第一个 Gate1-closed 候选。
 未选但已闭合的 branch 记录为 `GATE1_CLOSED_NOT_SELECTED`；只有固定 winner 随后获得隐藏 Gate2

@@ -219,8 +219,8 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
-    candidate_check_limit: int = 7
-    candidate_submission_check_limit: int = 1
+    candidate_check_limit: int = 0
+    candidate_submission_check_limit: int = 0
     submission_kind: str = "candidate"
     executable: str = os.getenv("MSWEA_BUBBLEWRAP_EXECUTABLE", "bwrap")
     env: dict[str, str] = {
@@ -520,7 +520,8 @@ class IntentIRLiftEnvironment:
                 }
             else:
                 if (
-                    self._candidate_check_shared_evaluations
+                    self.config.candidate_check_limit == 0
+                    or self._candidate_check_shared_evaluations
                     < self.config.candidate_check_limit
                 ):
                     self._candidate_check_shared_evaluations += 1
@@ -1133,9 +1134,12 @@ class IntentIRLiftEnvironment:
                     "attempts": self._candidate_check_calls,
                     "evaluations": self._candidate_check_evaluations,
                     "limit": (
-                        self.config.candidate_check_limit
+                        0
+                        if self.config.candidate_check_limit == 0
+                        else self.config.candidate_check_limit
                         + self.config.candidate_submission_check_limit
                     ),
+                    "time_governed": self.config.candidate_check_limit == 0,
                     "explicit": {
                         "calls": self._candidate_check_calls_by_trigger[
                             "explicit"

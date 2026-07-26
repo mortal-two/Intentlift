@@ -136,8 +136,12 @@ def _validate_scheduling(
     normalized: dict[str, int] = {}
     for key in _SCHEDULING_KEYS:
         value = scheduling[key]
-        if type(value) is not int or value < 1:
-            raise ValueError(f"scheduling.{key} must be a positive integer")
+        minimum = 0 if key == "pre_replay_rejections" else 1
+        if type(value) is not int or value < minimum:
+            requirement = "non-negative" if minimum == 0 else "positive"
+            raise ValueError(
+                f"scheduling.{key} must be a {requirement} integer"
+            )
         normalized[key] = value
     if (
         normalized["case_workers"] * normalized["candidates"]

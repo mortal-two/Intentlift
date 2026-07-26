@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -131,6 +132,51 @@ def _workspace() -> IntentIRLiftWorkspace:
     )
 
 
+def _fake_agent_trajectory(
+    *,
+    exit_status: str,
+    continuation_history: list[dict] | None = None,
+    continuation_message: str | None = None,
+    response: dict | None = None,
+    info: dict | None = None,
+) -> dict:
+    messages = (
+        copy.deepcopy(continuation_history)
+        if continuation_history is not None
+        else [
+            {"role": "system", "content": "persistent Lift owner"},
+            {"role": "user", "content": "initial Lift task"},
+        ]
+    )
+    if continuation_message is not None:
+        messages.append({"role": "user", "content": continuation_message})
+    messages.append(
+        {"role": "assistant", "content": "retained semantic working context"}
+    )
+    if exit_status in {"Submitted", "InvalidSubmission"}:
+        response = copy.deepcopy(response) if response is not None else {
+            "role": "assistant",
+            "content": "",
+        }
+        extra = response.get("extra")
+        response["extra"] = {
+            **(dict(extra) if isinstance(extra, dict) else {}),
+            "actions": [
+                {"command": "intentir_lift_submit /output/candidate.json"}
+            ],
+        }
+    if response is not None:
+        messages.append(response)
+    messages.append(
+        {
+            "role": "exit",
+            "content": exit_status,
+            "extra": {"exit_status": exit_status, "submission": ""},
+        }
+    )
+    return {"messages": messages, "info": dict(info or {})}
+
+
 def _real_lift_input_files() -> dict[str, str]:
     prepared = prepare_scrc_lift(
         """@triton.jit
@@ -148,7 +194,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v44"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v45"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -174,8 +220,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "intentir_candidate_commit /output/candidate.json" in files["README.md"]
     assert "intentir_lift_submit /output/candidate.json" in files["README.md"]
     readme = " ".join(files["README.md"].split())
-    assert "eleven-evaluation ordinary allowance" in readme
-    assert "separately reserved submission preflight" in readme
+    assert "calls are audited telemetry" in readme
+    assert "active wall time" in readme
     assert "bounded source-free CandidateCheck diagnostic summary" in readme
     assert "must be the entire shell action exactly as shown" in readme
     assert "Do not prepend `set`" in readme
@@ -870,10 +916,10 @@ def test_value_dimension_equality_is_explicitly_authored_not_inferred(
     assert "Do not infer equality from a current Harness value" in preflight
 
 
-def test_intentir_observation_exposes_remaining_turn_budget() -> None:
+def test_intentir_observation_exposes_wall_time_budget_and_call_telemetry() -> None:
     config = load_intentir_lift_config()
-    assert config["agent"]["step_limit"] == 80
-    assert config["environment"]["candidate_check_limit"] == 15
+    assert config["agent"]["step_limit"] == 0
+    assert config["environment"]["candidate_check_limit"] == 0
     model = create_intentir_lift_model(
         model_name="test",
         api_base="http://provider.invalid/v1",
@@ -891,16 +937,23 @@ def test_intentir_observation_exposes_remaining_turn_budget() -> None:
     observation = model.format_observation_messages(
         message,
         [{"returncode": 0, "output": "ok", "exception_info": ""}],
-        {"n_model_calls": 60, "step_limit": 80},
+        {
+            "n_model_calls": 60,
+            "step_limit": 0,
+            "elapsed_seconds": 3300,
+            "wall_time_limit_seconds": 3600,
+        },
     )[0]
     rendered = json.loads(observation["output"])
 
-    assert rendered["turn_budget"] == {
-        "used": 60,
-        "limit": 80,
-        "remaining": 20,
+    assert rendered["session_budget"] == {
+        "kind": "wall_time",
+        "elapsed_seconds": 3300,
+        "limit_seconds": 3600,
+        "remaining_seconds": 300,
     }
-    assert rendered["directive"].startswith("Stop browsing")
+    assert rendered["model_calls_telemetry"] == 60
+    assert rendered["directive"].startswith("The branch-owner wall-time")
 
 
 def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
@@ -922,6 +975,43 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     assert result.model_calls == 2
     assert len(model.query_inputs) == 2
     assert len(model.query_inputs[0]) == 2
+
+
+def test_lift_continuation_reuses_prior_context_without_exit_records() -> None:
+    workspace = _workspace()
+    candidate = '{"j": {}, "c": {}, "pi": {}}'
+    history = [
+        {"role": "system", "content": "same source-aware owner"},
+        {"role": "user", "content": "original Source task"},
+        {"role": "assistant", "content": "retained semantic ledger"},
+    ]
+    continuation = (
+        '{"protocol":"intentir.lift-owner-continuation.v1"}\n'
+        "Read branch-local Gate1 feedback and revise the complete candidate."
+    )
+    model = _ScriptedModel(
+        [
+            f"printf '%s\\n' '{candidate}' > /output/candidate.json",
+            f"{INTENTIR_LIFT_SUBMIT_COMMAND} /output/candidate.json",
+        ]
+    )
+    try:
+        result = run_intentir_lift(
+            model=model,
+            workspace=workspace,
+            continuation_history=history,
+            continuation_message=continuation,
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.exit_status == "Submitted"
+    assert result.continued_from_messages == len(history)
+    assert model.query_inputs[0] == [
+        *history,
+        {"role": "user", "content": continuation},
+    ]
+    assert all(message.get("role") != "exit" for message in model.query_inputs[0])
 
 
 def test_lift_multi_action_write_batch_is_rejected_before_any_execution() -> None:
@@ -1064,6 +1154,7 @@ def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
         scratch_dir=workspace.scratch_dir,
         candidate_checker=checker,
         candidate_check_limit=2,
+        candidate_submission_check_limit=1,
     )
     original = workspace.candidate_path.read_bytes()
     try:
@@ -1139,11 +1230,12 @@ def test_agent_can_use_candidate_check_before_independent_submission() -> None:
     assert check_evidence["calls"] == 1
     assert check_evidence["attempts"] == 1
     assert check_evidence["evaluations"] == 1
-    assert check_evidence["limit"] == 16
-    assert check_evidence["shared_budget"] == {"used": 1, "limit": 15}
+    assert check_evidence["limit"] == 0
+    assert check_evidence["time_governed"] is True
+    assert check_evidence["shared_budget"] == {"used": 1, "limit": 0}
     assert check_evidence["submission_reserve"] == {
         "used": 0,
-        "limit": 1,
+        "limit": 0,
     }
     assert check_evidence["results"][0]["status"] == "pass"
     assert check_evidence["results"][0]["trigger"] == "explicit"
@@ -2452,7 +2544,7 @@ def test_decode_ignores_json_object_key_order_for_domain_map() -> None:
     ]
 
 
-def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> None:
+def test_adapter_keeps_one_owner_context_across_fresh_workspaces(monkeypatch) -> None:
     artifact = make_copy_artifact()
     captured: list[tuple[Path, dict]] = []
 
@@ -2460,7 +2552,15 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
         assert kwargs["reasoning_effort"] == "xhigh"
         return object()
 
-    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+    def fake_run(
+        *,
+        model,
+        workspace,
+        config_overrides,
+        candidate_checker,
+        continuation_history=None,
+        continuation_message=None,
+    ):
         del model, config_overrides
         feedback = json.loads(
             (workspace.input_dir / "feedback.json").read_text()
@@ -2479,13 +2579,17 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
         }
         return IntentIRLiftRunResult(
             json.dumps(artifact.to_json()),
-            {
-                "messages": [response],
-                "info": {"config": {"authorization": "secret"}},
-            },
+            _fake_agent_trajectory(
+                exit_status="Submitted",
+                continuation_history=continuation_history,
+                continuation_message=continuation_message,
+                response=response,
+                info={"config": {"authorization": "secret"}},
+            ),
             "Submitted",
             3,
             25.0,
+            continued_from_messages=len(continuation_history or []),
         )
 
     monkeypatch.setattr(
@@ -2513,6 +2617,12 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.artifact.to_json() == second.artifact.to_json()
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
+    assert second.metadata["fresh_session"] is False
+    assert first.metadata["owner_session_id"] == second.metadata[
+        "owner_session_id"
+    ]
+    assert second.metadata["continued_from_messages"] > 0
+    assert second.metadata["session_model_turns"] == 6
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v11"
     assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v18"
@@ -2532,7 +2642,21 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     )
 
 
-def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
+def test_owner_active_wall_time_is_a_terminal_resource_signal() -> None:
+    adapter = MiniSWELiftAdapter(session_wall_time_limit_seconds=0.001)
+    adapter._session_active_elapsed_ms = 2.0
+
+    with pytest.raises(CandidateLiftError) as exhausted:
+        adapter._continued_worker_config()
+
+    assert exhausted.value.terminal is True
+    assert exhausted.value.physical_calls == 0
+    assert exhausted.value.diagnostics["failure_class"] == (
+        "lift_owner_time_exhausted"
+    )
+
+
+def test_finite_override_pause_carries_diagnostics_to_same_owner_continuation(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -2543,7 +2667,15 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
         del kwargs
         return object()
 
-    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+    def fake_run(
+        *,
+        model,
+        workspace,
+        config_overrides,
+        candidate_checker,
+        continuation_history=None,
+        continuation_message=None,
+    ):
         nonlocal runs
         del model, config_overrides, candidate_checker
         runs += 1
@@ -2551,9 +2683,11 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
             json.loads((workspace.input_dir / "feedback.json").read_text())
         )
         if runs == 1:
-            trajectory = {
-                "messages": [],
-                "info": {
+            trajectory = _fake_agent_trajectory(
+                exit_status="LimitsExceeded",
+                continuation_history=continuation_history,
+                continuation_message=continuation_message,
+                info={
                     "candidate_check": {
                         "calls": 8,
                         "evaluations": 7,
@@ -2599,15 +2733,16 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
                                 ],
                             },
                         ],
-                    }
+                    },
                 },
-            }
+            )
             result = IntentIRLiftRunResult(
                 None,
                 trajectory,
                 "LimitsExceeded",
                 24,
                 20.0,
+                continued_from_messages=len(continuation_history or []),
             )
             raise IntentIRLiftRunError(
                 "worker exhausted its bounded episode",
@@ -2615,10 +2750,16 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
             )
         return IntentIRLiftRunResult(
             json.dumps(artifact.to_json()),
-            {"messages": []},
+            _fake_agent_trajectory(
+                exit_status="Submitted",
+                continuation_history=continuation_history,
+                continuation_message=continuation_message,
+                response={"object": "response", "id": "submitted-repair"},
+            ),
             "Submitted",
             2,
             10.0,
+            continued_from_messages=len(continuation_history or []),
         )
 
     monkeypatch.setattr(
@@ -2640,6 +2781,7 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
 
     with pytest.raises(CandidateLiftError) as rejected:
         adapter.lift(request, None)
+    assert rejected.value.terminal is False
     diagnostics = rejected.value.diagnostics
     repaired = adapter.lift(
         request,
@@ -2675,7 +2817,7 @@ def test_worker_limit_carries_last_bounded_diagnostics_to_next_fresh_lift(
     }
 
 
-def test_worker_limit_continues_adjacent_complete_llm_draft(
+def test_owner_continuation_keeps_adjacent_complete_llm_draft(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -2688,7 +2830,15 @@ def test_worker_limit_continues_adjacent_complete_llm_draft(
         del kwargs
         return object()
 
-    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+    def fake_run(
+        *,
+        model,
+        workspace,
+        config_overrides,
+        candidate_checker,
+        continuation_history=None,
+        continuation_message=None,
+    ):
         del model, config_overrides, candidate_checker
         roots.append(workspace.root)
         captured_feedback.append(
@@ -2698,10 +2848,16 @@ def test_worker_limit_continues_adjacent_complete_llm_draft(
             workspace.candidate_path.write_text(json.dumps(draft))
             result = IntentIRLiftRunResult(
                 None,
-                {"messages": [], "info": {"candidate_check": {}}},
+                _fake_agent_trajectory(
+                    exit_status="LimitsExceeded",
+                    continuation_history=continuation_history,
+                    continuation_message=continuation_message,
+                    info={"candidate_check": {}},
+                ),
                 "LimitsExceeded",
                 32,
                 20.0,
+                continued_from_messages=len(continuation_history or []),
             )
             raise IntentIRLiftRunError(
                 "worker exhausted after writing a complete draft",
@@ -2709,10 +2865,16 @@ def test_worker_limit_continues_adjacent_complete_llm_draft(
             )
         return IntentIRLiftRunResult(
             json.dumps(artifact.to_json()),
-            {"messages": []},
+            _fake_agent_trajectory(
+                exit_status="Submitted",
+                continuation_history=continuation_history,
+                continuation_message=continuation_message,
+                response={"object": "response", "id": "submitted-draft-repair"},
+            ),
             "Submitted",
             2,
             10.0,
+            continued_from_messages=len(continuation_history or []),
         )
 
     monkeypatch.setattr(
@@ -2754,7 +2916,7 @@ def test_worker_limit_continues_adjacent_complete_llm_draft(
     assert all(not root.exists() for root in roots)
 
 
-def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
+def test_parser_rejection_returns_candidate_to_same_owner_in_fresh_workspace(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -2768,7 +2930,15 @@ def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
         del kwargs
         return object()
 
-    def fake_run(*, model, workspace, config_overrides, candidate_checker):
+    def fake_run(
+        *,
+        model,
+        workspace,
+        config_overrides,
+        candidate_checker,
+        continuation_history=None,
+        continuation_message=None,
+    ):
         del model, config_overrides, candidate_checker
         feedback = json.loads(
             (workspace.input_dir / "feedback.json").read_text()
@@ -2777,10 +2947,16 @@ def test_parser_rejection_enters_only_next_fresh_worker_with_candidate(
         candidate = invalid if len(captured) == 1 else artifact.to_json()
         return IntentIRLiftRunResult(
             json.dumps(candidate),
-            {"messages": []},
+            _fake_agent_trajectory(
+                exit_status="Submitted",
+                continuation_history=continuation_history,
+                continuation_message=continuation_message,
+                response={"object": "response", "id": f"submitted-{len(captured)}"},
+            ),
             "Submitted",
             2,
             10.0,
+            continued_from_messages=len(continuation_history or []),
         )
 
     monkeypatch.setattr(
