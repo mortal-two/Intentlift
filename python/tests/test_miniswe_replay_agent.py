@@ -25,6 +25,7 @@ from minisweagent.environments.intentir_replay import (
     INTENTIR_PACKET_QUERY,
     INTENTIR_REPLAY_CHECK,
     INTENTIR_REPLAY_COMPILE_CHECK,
+    INTENTIR_REPLAY_INSPECT,
     INTENTIR_REPLAY_SUBMIT,
     REPLAY_CHECK_PROTOCOL,
     REPLAY_INPUT_FILES,
@@ -175,6 +176,15 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         order = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} order 0 24"}
         )
+        obligations = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligations 0 12"}
+        )
+        obligation = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligation i1"}
+        )
+        semantic_obligation = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} obligation n0"}
+        )
         j_view = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} section j"}
         )
@@ -224,11 +234,118 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert resolved_order["items"][0]["required_direction"] == (
         "i0 MUST execute before i1"
     )
+    assert obligations["returncode"] == 0
+    obligation_page = json.loads(obligations["output"])
+    assert obligation_page["protocol"] == (
+        "intentir.replay-instance-obligations.v2"
+    )
+    assert "infers no edge" in obligation_page["meaning"]
+    assert obligation_page["columns"][0:4] == [
+        "id",
+        "semantic_ref",
+        "mechanism",
+        "region[id,parent,placement]",
+    ]
+    i0 = obligation_page["items"][0]
+    assert i0[0:3] == ["i0", "a0", "realize"]
+    assert i0[6][0] == ["i1", [0, 1]]
+    assert {row[0] for row in obligation_page["items"]} <= {
+        item["id"] for item in packet["pi"]["instances"]
+    }
+    for forbidden in (
+        "source_code",
+        "harness",
+        "compiler_diff",
+        "gate1_diff",
+        "prior_replay",
+        "trajectory",
+    ):
+        assert forbidden not in obligations["output"]
+    assert obligation["returncode"] == 0
+    i1 = json.loads(obligation["output"])["items"][0]
+    assert i1["id"] == "i1"
+    assert i1["incoming_routes"][0]["source"]["id"] == "i0"
+    assert semantic_obligation["returncode"] == 0
+    assert json.loads(semantic_obligation["output"])["items"][0][
+        "semantic_ref"
+    ] == "n0"
     assert j_view["returncode"] == 0
     assert '"intent_function"' in j_view["output"]
     assert references["returncode"] == 0
     assert handle in references["output"]
     assert rejected_compound["returncode"] == 1
+
+
+def test_own_replay_source_inspect_is_syntax_only_and_diagnostic() -> None:
+    workspace = _workspace()
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        written = environment.execute({"command": _write_source(VALID_REPLAY)})
+        overview = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_INSPECT} /output/replay.source overview"
+                )
+            }
+        )
+        statements = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_INSPECT} /output/replay.source "
+                    "statements 0 16"
+                )
+            }
+        )
+        found = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_INSPECT} /output/replay.source find v1"
+                )
+            }
+        )
+        rejected_compound = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_INSPECT} /output/replay.source overview; "
+                    "cat /input/packet.json"
+                )
+            }
+        )
+        audit = environment.serialize()["info"]
+    finally:
+        workspace.cleanup()
+
+    assert written["returncode"] == 0
+    assert overview["returncode"] == 0
+    summary = json.loads(overview["output"])
+    assert summary["protocol"] == "intentir.replay-own-source-inventory.v1"
+    assert "current replay.source" in summary["authority"]
+    assert "performs no comparison, repair, or generation" in summary["authority"]
+    assert summary["functions"][0]["name"] == "scrc_k0"
+    assert summary["call_counts"] == {
+        "tl.arange": 1,
+        "tl.load": 1,
+        "tl.store": 1,
+    }
+    assert summary["control_counts"] == {}
+    assert "a0" not in overview["output"]
+    assert statements["returncode"] == 0
+    statement_items = json.loads(statements["output"])["items"]
+    assert any(item["defines"] == ["v1"] for item in statement_items)
+    assert any("tl.store" in item["calls"] for item in statement_items)
+    assert found["returncode"] == 0
+    assert json.loads(found["output"])["match_total"] >= 2
+    assert rejected_compound["returncode"] == 1
+    inspect_audit = audit["replay_source_inspect"]
+    assert inspect_audit["authority"] == (
+        "diagnostic_syntax_only_own_replay_source"
+    )
+    assert inspect_audit["calls"] == 4
+    assert inspect_audit["limit"] == 12
 
 
 def test_synthetic_compile_profile_never_reads_c0_or_harness_values() -> None:
@@ -336,11 +453,14 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["agent"].get("output_path") is None
     assert default_config["agent"]["step_limit"] == 40
     assert default_config["environment"]["replay_compile_check_limit"] == 7
+    assert default_config["environment"]["replay_source_inspect_limit"] == 12
     assert default_config["model"]["retry_attempts"] == 3
     assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v4"
     instance = default_config["agent"]["instance_template"]
     assert "typed rank and axis structure" in instance
     assert "algebraically equivalent flattened reduction" in instance
+    assert "obligation ledger" in instance
+    assert "own-source inspect overview" in instance
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:

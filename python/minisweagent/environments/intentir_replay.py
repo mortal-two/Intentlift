@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shlex
@@ -10,6 +11,7 @@ import struct
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -23,6 +25,7 @@ INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
+INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
@@ -90,6 +93,7 @@ MAX_CHECK_FIELD_CHARS = 4096
 MAX_CHECK_HANDLES = 32
 MAX_CHECK_RESULT_BYTES = 128 * 1024
 MAX_PACKET_QUERY_OUTPUT_BYTES = 10_000
+MAX_REPLAY_INSPECT_OUTPUT_BYTES = 10_000
 _SANDBOX_START_MARKER = b"__INTENTIR_REPLAY_SANDBOX_STARTED__\n"
 
 
@@ -288,11 +292,17 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
             "fields, Intent I/O, U_f entry metadata, and MaskC slots.",
             f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
             "page only if `next_start` is non-null.",
-            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then "
-            f"`{INTENTIR_PACKET_QUERY} routes 0 16` for resolved authored "
-            f"flows, `{INTENTIR_PACKET_QUERY} order 0 12` for resolved "
-            "before->after obligations, and `intentir_packet_query edges 0 24` "
-            "for the unchanged raw relations.",
+            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then page "
+            f"`{INTENTIR_PACKET_QUERY} obligations 0 12` across every instance. "
+            "It is the primary per-instance join of authored routes, order, "
+            "sharing, temporal roles, and refinements. Use "
+            f"`{INTENTIR_PACKET_QUERY} obligation HANDLE` to inspect one i* "
+            "instance or all instances anchored to one anonymous J/C handle.",
+            f"Use `{INTENTIR_PACKET_QUERY} routes 0 16`, "
+            f"`{INTENTIR_PACKET_QUERY} order 0 12`, or "
+            f"`{INTENTIR_PACKET_QUERY} edges 0 24` only to cross-check a named "
+            "relation; do not redundantly page all three after the obligation "
+            "ledger.",
             "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
@@ -751,6 +761,349 @@ def _packet_order_obligations(
     }
 
 
+def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join already-authored pi facts around each declared instance.
+
+    This is deliberately a projection, not a realization planner: it neither
+    invents an edge nor interprets Replay source.  The compact per-instance
+    ledger merely saves the source-blind writer from manually joining several
+    long, independently paged pi arrays.
+    """
+
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    list_names = (
+        "regions",
+        "instances",
+        "routes",
+        "order",
+        "sharing",
+        "refinements",
+        "iterations",
+        "loop_carriers",
+    )
+    values: dict[str, list[Any]] = {}
+    for name in list_names:
+        value = pi.get(name, [])
+        if not isinstance(value, list):
+            raise TypeError(f"packet pi {name} must be an array")
+        values[name] = value
+
+    instance_index = {
+        item.get("id"): item
+        for item in values["instances"]
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    region_index = {
+        item.get("id"): item
+        for item in values["regions"]
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    semantic_index = _packet_semantic_index(packet)
+
+    def endpoint(instance_id: Any) -> dict[str, Any]:
+        instance = instance_index.get(instance_id)
+        if not isinstance(instance, Mapping):
+            return {"id": instance_id, "unresolved": True}
+        return {
+            "id": instance_id,
+            "semantic_ref": instance.get("semantic_ref"),
+        }
+
+    incoming: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    outgoing: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for route in values["routes"]:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(target, str) and target in incoming:
+            incoming[target].append(
+                {
+                    "source": endpoint(source),
+                    "target_local_slots": route.get("slots"),
+                }
+            )
+        if isinstance(source, str) and source in outgoing:
+            outgoing[source].append(
+                {
+                    "target": endpoint(target),
+                    "target_local_slots": route.get("slots"),
+                }
+            )
+
+    must_run_after: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    must_run_before: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["order"]:
+        if not isinstance(relation, Mapping):
+            continue
+        before = relation.get("before")
+        after = relation.get("after")
+        if isinstance(after, str) and after in must_run_after:
+            must_run_after[after].append(
+                {"before": endpoint(before)}
+            )
+        if isinstance(before, str) and before in must_run_before:
+            must_run_before[before].append(
+                {"after": endpoint(after)}
+            )
+
+    sharing_roles: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["sharing"]:
+        if not isinstance(relation, Mapping):
+            continue
+        source = relation.get("source")
+        consumers = relation.get("consumers", [])
+        if isinstance(source, str) and source in sharing_roles:
+            sharing_roles[source].append(
+                {
+                    "role": "source",
+                    "consumers": [endpoint(item) for item in consumers]
+                    if isinstance(consumers, list)
+                    else consumers,
+                }
+            )
+        if isinstance(consumers, list):
+            for consumer in consumers:
+                if isinstance(consumer, str) and consumer in sharing_roles:
+                    sharing_roles[consumer].append(
+                        {
+                            "role": "consumer",
+                            "source": endpoint(source),
+                        }
+                    )
+
+    temporal_roles: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation_name, role_names in (
+        ("iterations", ("loop_instance", "tile_instance")),
+        (
+            "loop_carriers",
+            ("loop_instance", "init", "state", "next", "result"),
+        ),
+    ):
+        for index, relation in enumerate(values[relation_name]):
+            if not isinstance(relation, Mapping):
+                continue
+            for role in role_names:
+                instance_id = relation.get(role)
+                if isinstance(instance_id, str) and instance_id in temporal_roles:
+                    temporal_roles[instance_id].append(
+                        {
+                            "relation": relation_name,
+                            "original_index": index,
+                            "role": role,
+                            "authored_relation": dict(relation),
+                        }
+                    )
+
+    refinements: dict[str, list[dict[str, Any]]] = {
+        instance_id: [] for instance_id in instance_index
+    }
+    for relation in values["refinements"]:
+        if not isinstance(relation, Mapping):
+            continue
+        instance_id = relation.get("instance")
+        if isinstance(instance_id, str) and instance_id in refinements:
+            refinements[instance_id].append(dict(relation))
+
+    records: list[dict[str, Any]] = []
+    for instance in values["instances"]:
+        if not isinstance(instance, Mapping):
+            continue
+        instance_id = instance.get("id")
+        if not isinstance(instance_id, str):
+            continue
+        semantic_ref = instance.get("semantic_ref")
+        region_id = instance.get("region")
+        region = region_index.get(region_id)
+        records.append(
+            {
+                "id": instance_id,
+                "semantic_ref": semantic_ref,
+                "semantic": semantic_index.get(
+                    semantic_ref,
+                    {"semantic_kind": "unclassified_handle"},
+                ),
+                "mechanism": instance.get("mechanism"),
+                "region": (
+                    dict(region)
+                    if isinstance(region, Mapping)
+                    else {"id": region_id, "unresolved": True}
+                ),
+                "incoming_routes": incoming.get(instance_id, []),
+                "outgoing_routes": outgoing.get(instance_id, []),
+                "must_run_after": must_run_after.get(instance_id, []),
+                "must_run_before": must_run_before.get(instance_id, []),
+                "sharing_roles": sharing_roles.get(instance_id, []),
+                "temporal_roles": temporal_roles.get(instance_id, []),
+                "refinements": refinements.get(instance_id, []),
+            }
+        )
+    return records
+
+
+def _packet_obligations(
+    packet: Mapping[str, Any], start: int, count: int
+) -> dict[str, Any]:
+    records = _packet_obligation_records(packet)
+    items, next_start = _bounded_page(records, start=start, count=count)
+    compact_items: list[list[Any]] = []
+    for item in items:
+        semantic = item["semantic"]
+        semantic_kind = semantic.get("semantic_kind")
+        if semantic_kind == "intent_op":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("op"),
+                semantic.get("scope_id"),
+            ]
+        elif semantic_kind == "boundary_access":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("access_kind"),
+                semantic.get("tensor"),
+                semantic.get("node_ref"),
+            ]
+        elif semantic_kind == "boundary_effect":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("effect_kind"),
+                semantic.get("target"),
+                semantic.get("node_ref"),
+                semantic.get("access_ref"),
+            ]
+        elif semantic_kind == "signature_parameter":
+            semantic_view = [
+                semantic_kind,
+                semantic.get("kind"),
+                semantic.get("mode"),
+                semantic.get("logical_ref"),
+            ]
+        else:
+            semantic_view = [semantic_kind]
+        region = item["region"]
+        compact_items.append(
+            [
+                item["id"],
+                item["semantic_ref"],
+                item["mechanism"],
+                [
+                    region.get("id"),
+                    region.get("parent"),
+                    region.get("placement"),
+                ],
+                semantic_view,
+                [
+                    [route["source"]["id"], route["target_local_slots"]]
+                    for route in item["incoming_routes"]
+                ],
+                [
+                    [route["target"]["id"], route["target_local_slots"]]
+                    for route in item["outgoing_routes"]
+                ],
+                [relation["before"]["id"] for relation in item["must_run_after"]],
+                [relation["after"]["id"] for relation in item["must_run_before"]],
+                [
+                    [
+                        relation["role"],
+                        (
+                            [peer["id"] for peer in relation["consumers"]]
+                            if relation["role"] == "source"
+                            else relation["source"]["id"]
+                        ),
+                    ]
+                    for relation in item["sharing_roles"]
+                ],
+                [
+                    [
+                        relation["relation"],
+                        relation["original_index"],
+                        relation["role"],
+                        relation["authored_relation"],
+                    ]
+                    for relation in item["temporal_roles"]
+                ],
+                [
+                    [relation.get("kind"), relation.get("auth_ref")]
+                    for relation in item["refinements"]
+                ],
+            ]
+        )
+    return {
+        "protocol": "intentir.replay-instance-obligations.v2",
+        "meaning": (
+            "Rows are a compact declaration-order index over this packet's own "
+            "already-authored J/pi facts. Columns name every row position. The "
+            "view infers no edge, value, operation, source construct, or "
+            "realization choice; use obligation HANDLE to expand one current "
+            "instance or semantic anchor."
+        ),
+        "total": len(records),
+        "start": start,
+        "columns": [
+            "id",
+            "semantic_ref",
+            "mechanism",
+            "region[id,parent,placement]",
+            "semantic",
+            "incoming_routes[source,slots]",
+            "outgoing_routes[target,slots]",
+            "order_predecessors",
+            "order_successors",
+            "sharing[role,peers]",
+            "temporal[relation,index,role,authored_relation]",
+            "refinements[kind,auth_ref]",
+        ],
+        "items": compact_items,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} obligations {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
+def _packet_obligation(packet: Mapping[str, Any], handle: str) -> dict[str, Any]:
+    records = _packet_obligation_records(packet)
+    matches = [
+        item
+        for item in records
+        if item["id"] == handle or item["semantic_ref"] == handle
+    ]
+    if not matches:
+        raise KeyError(f"no pi instance or semantic anchor matches {handle!r}")
+    shown = matches[:4]
+    omitted = matches[4:]
+    return {
+        "protocol": "intentir.replay-instance-obligation.v1",
+        "meaning": (
+            "This is a bounded local join of authored facts only; it infers no "
+            "edge, value, operation, source construct, or realization choice."
+        ),
+        "query": handle,
+        "match_total": len(matches),
+        "items": shown,
+        "omitted_instance_ids": [item["id"] for item in omitted],
+        "omitted_queries": [
+            f"{INTENTIR_PACKET_QUERY} obligation {item['id']}" for item in omitted
+        ],
+    }
+
+
 def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
 
@@ -811,6 +1164,18 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_order_obligations(
             packet, int(arguments[2]), int(arguments[3])
         )
+    if len(arguments) == 4 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "obligations",
+    ]:
+        return _packet_obligations(
+            packet, int(arguments[2]), int(arguments[3])
+        )
+    if len(arguments) == 3 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "obligation",
+    ]:
+        return _packet_obligation(packet, arguments[2])
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "section",
@@ -835,8 +1200,311 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "realization | routes START COUNT | order START COUNT | edges START COUNT | section PATH | "
-        "find HANDLE"
+        "realization | routes START COUNT | order START COUNT | obligations START COUNT | "
+        "obligation HANDLE | edges START COUNT | section PATH | find HANDLE"
+    )
+
+
+def _ast_qualified_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _ast_qualified_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    try:
+        return ast.unparse(node)
+    except (TypeError, ValueError):
+        return type(node).__name__
+
+
+def _ast_text(nodes: list[ast.AST], *, limit: int = 320) -> str:
+    parts: list[str] = []
+    for node in nodes:
+        try:
+            parts.append(ast.unparse(node))
+        except (TypeError, ValueError):
+            parts.append(type(node).__name__)
+    value = " | ".join(parts)
+    return value if len(value) <= limit else value[:limit] + "...[truncated]"
+
+
+def _statement_header_nodes(statement: ast.stmt) -> list[ast.AST]:
+    if isinstance(statement, ast.Assign):
+        return [*statement.targets, statement.value]
+    if isinstance(statement, ast.AnnAssign):
+        return [
+            statement.target,
+            statement.annotation,
+            *([statement.value] if statement.value is not None else []),
+        ]
+    if isinstance(statement, ast.AugAssign):
+        return [statement.target, statement.value]
+    if isinstance(statement, ast.Expr):
+        return [statement.value]
+    if isinstance(statement, ast.Return):
+        return [statement.value] if statement.value is not None else []
+    if isinstance(statement, (ast.For, ast.AsyncFor)):
+        return [statement.target, statement.iter]
+    if isinstance(statement, (ast.If, ast.While)):
+        return [statement.test]
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        result: list[ast.AST] = []
+        for item in statement.items:
+            result.append(item.context_expr)
+            if item.optional_vars is not None:
+                result.append(item.optional_vars)
+        return result
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments: list[ast.AST] = [
+            *statement.decorator_list,
+            *statement.args.defaults,
+            *statement.args.kw_defaults,
+        ]
+        if statement.returns is not None:
+            arguments.append(statement.returns)
+        return [item for item in arguments if item is not None]
+    if isinstance(statement, ast.Raise):
+        return [
+            item
+            for item in (statement.exc, statement.cause)
+            if item is not None
+        ]
+    if isinstance(statement, ast.Assert):
+        return [
+            item for item in (statement.test, statement.msg) if item is not None
+        ]
+    return []
+
+
+def _statement_defined_names(statement: ast.stmt) -> list[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return [statement.name]
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return sorted(
+            alias.asname or alias.name.split(".")[0] for alias in statement.names
+        )
+    names = {
+        node.id
+        for header in _statement_header_nodes(statement)
+        for node in ast.walk(header)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return sorted(names)
+
+
+def _replay_source_statement_records(source: str) -> tuple[ast.Module, list[dict[str, Any]]]:
+    """Return syntax-only records over the Replay writer's own source bytes."""
+
+    tree = ast.parse(source, filename="replay.source")
+    records: list[dict[str, Any]] = []
+
+    def visit_block(
+        statements: list[ast.stmt],
+        *,
+        prefix: str,
+        depth: int,
+        region: str,
+    ) -> None:
+        for index, statement in enumerate(statements):
+            path = f"{prefix}.{index}"
+            header_nodes = _statement_header_nodes(statement)
+            used_names = sorted(
+                {
+                    node.id
+                    for header in header_nodes
+                    for node in ast.walk(header)
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                }
+            )
+            calls = sorted(
+                {
+                    _ast_qualified_name(node.func)
+                    for header in header_nodes
+                    for node in ast.walk(header)
+                    if isinstance(node, ast.Call)
+                }
+            )
+            records.append(
+                {
+                    "path": path,
+                    "kind": type(statement).__name__,
+                    "line": getattr(statement, "lineno", None),
+                    "end_line": getattr(statement, "end_lineno", None),
+                    "depth": depth,
+                    "region": region,
+                    "defines": _statement_defined_names(statement),
+                    "uses": used_names,
+                    "calls": calls,
+                    "header": _ast_text(header_nodes),
+                    "body_count": len(getattr(statement, "body", [])),
+                    "orelse_count": len(getattr(statement, "orelse", [])),
+                }
+            )
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"function:{statement.name}",
+                )
+            elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While, ast.If)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+                visit_block(
+                    statement.orelse,
+                    prefix=f"{path}.orelse",
+                    depth=depth + 1,
+                    region=f"{path}:orelse",
+                )
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+            elif isinstance(statement, ast.Try):
+                visit_block(
+                    statement.body,
+                    prefix=f"{path}.body",
+                    depth=depth + 1,
+                    region=f"{path}:body",
+                )
+                for handler_index, handler in enumerate(statement.handlers):
+                    visit_block(
+                        handler.body,
+                        prefix=f"{path}.handlers.{handler_index}.body",
+                        depth=depth + 1,
+                        region=f"{path}:handler:{handler_index}",
+                    )
+                visit_block(
+                    statement.orelse,
+                    prefix=f"{path}.orelse",
+                    depth=depth + 1,
+                    region=f"{path}:orelse",
+                )
+                visit_block(
+                    statement.finalbody,
+                    prefix=f"{path}.finalbody",
+                    depth=depth + 1,
+                    region=f"{path}:finalbody",
+                )
+            elif isinstance(statement, ast.Match):
+                for case_index, case in enumerate(statement.cases):
+                    visit_block(
+                        case.body,
+                        prefix=f"{path}.cases.{case_index}.body",
+                        depth=depth + 1,
+                        region=f"{path}:case:{case_index}",
+                    )
+
+    visit_block(tree.body, prefix="module", depth=0, region="module")
+    return tree, records
+
+
+def _inspect_replay_source(source: str, arguments: list[str]) -> dict[str, Any]:
+    tree, records = _replay_source_statement_records(source)
+    authority = (
+        "syntax-only inventory of the Replay writer's current replay.source; "
+        "reads no packet, Source, Harness, Gate, compiler result, prior Replay, "
+        "or other candidate and performs no comparison, repair, or generation"
+    )
+    if arguments == ["overview"]:
+        call_counts = Counter(
+            _ast_qualified_name(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        )
+        control_kinds = {
+            "For",
+            "AsyncFor",
+            "While",
+            "If",
+            "Return",
+            "Break",
+            "Continue",
+        }
+        controls = [item for item in records if item["kind"] in control_kinds]
+        functions = [
+            {
+                "name": node.name,
+                "line": node.lineno,
+                "parameters": [
+                    argument.arg
+                    for argument in (
+                        *node.args.posonlyargs,
+                        *node.args.args,
+                        *node.args.kwonlyargs,
+                    )
+                ],
+                "decorators": [
+                    _ast_qualified_name(decorator.func)
+                    if isinstance(decorator, ast.Call)
+                    else _ast_qualified_name(decorator)
+                    for decorator in node.decorator_list
+                ],
+            }
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        return {
+            "protocol": "intentir.replay-own-source-inventory.v1",
+            "authority": authority,
+            "functions": functions,
+            "statement_count": len(records),
+            "call_counts": dict(sorted(call_counts.items())),
+            "control_counts": dict(
+                sorted(Counter(item["kind"] for item in controls).items())
+            ),
+            "controls": controls[:32],
+            "controls_omitted": max(0, len(controls) - 32),
+            "next": (
+                f"{INTENTIR_REPLAY_INSPECT} /output/replay.source statements 0 16"
+            ),
+        }
+    if len(arguments) == 3 and arguments[0] == "statements":
+        start = int(arguments[1])
+        count = int(arguments[2])
+        items, next_start = _bounded_page(records, start=start, count=count)
+        return {
+            "protocol": "intentir.replay-own-source-statements.v1",
+            "authority": authority,
+            "total": len(records),
+            "start": start,
+            "items": items,
+            "next_start": next_start,
+            "next": (
+                f"{INTENTIR_REPLAY_INSPECT} /output/replay.source statements "
+                f"{next_start} {count}"
+                if next_start is not None
+                else None
+            ),
+        }
+    if len(arguments) == 2 and arguments[0] == "find" and arguments[1]:
+        needle = arguments[1]
+        matches = [
+            item
+            for item in records
+            if needle in item["defines"]
+            or needle in item["uses"]
+            or needle in item["calls"]
+            or needle in item["header"]
+        ]
+        return {
+            "protocol": "intentir.replay-own-source-find.v1",
+            "authority": authority,
+            "query": needle,
+            "match_total": len(matches),
+            "items": matches[:32],
+            "omitted": max(0, len(matches) - 32),
+        }
+    raise ValueError(
+        "usage: intentir_replay_inspect /output/replay.source overview | "
+        "statements START COUNT | find NAME"
     )
 
 
@@ -1010,6 +1678,7 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     replay_check_limit: int = 7
     replay_submission_check_limit: int = 1
     replay_compile_check_limit: int = 7
+    replay_source_inspect_limit: int = 12
 
 
 class IntentIRReplayEnvironment:
@@ -1030,6 +1699,8 @@ class IntentIRReplayEnvironment:
             raise ValueError("replay_submission_check_limit must be non-negative")
         if self.config.replay_compile_check_limit < 0:
             raise ValueError("replay_compile_check_limit must be non-negative")
+        if self.config.replay_source_inspect_limit < 0:
+            raise ValueError("replay_source_inspect_limit must be non-negative")
         self._replay_checker = replay_checker
         self._replay_compile_checker = replay_compile_checker
         self._check_calls = 0
@@ -1042,6 +1713,8 @@ class IntentIRReplayEnvironment:
         self._compile_check_calls = 0
         self._compile_check_evaluations = 0
         self._compile_check_audit: list[dict[str, Any]] = []
+        self._source_inspect_calls = 0
+        self._source_inspect_audit: list[str] = []
         self._passed_bytes: bytes | None = None
         self._validate_paths()
         self._probe()
@@ -1461,6 +2134,42 @@ class IntentIRReplayEnvironment:
             "exception_info": "",
         }
 
+    def _execute_replay_inspect(self, arguments: list[str]) -> dict[str, Any]:
+        self._source_inspect_calls += 1
+        mode = arguments[2] if len(arguments) > 2 else "invalid"
+        self._source_inspect_audit.append(mode)
+        try:
+            if self._source_inspect_calls > self.config.replay_source_inspect_limit:
+                raise ValueError("Replay source inspect budget exhausted")
+            if len(arguments) < 3 or arguments[1] not in {
+                "/work/replay.source",
+                "/output/replay.source",
+            }:
+                raise ValueError("Replay source inspect requires the private source path")
+            _source_bytes, source_text = self._read_check_target(arguments[1])
+            value = _inspect_replay_source(source_text, arguments[2:])
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_REPLAY_INSPECT_OUTPUT_BYTES:
+                raise ValueError(
+                    "Replay source inspect result is too large; use statements paging or find"
+                )
+        except Exception as exc:
+            return {
+                "output": (
+                    "Replay source inspect rejected: "
+                    f"{type(exc).__name__}: {exc}\n"
+                ),
+                "returncode": 1,
+                "exception_info": "",
+            }
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
     def _writable_usage(self) -> tuple[int, int, int]:
         entries = 0
         size = 0
@@ -1506,6 +2215,8 @@ class IntentIRReplayEnvironment:
             check_arguments = []
         if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
             return self._execute_packet_query(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
+            return self._execute_replay_inspect(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
         if (
@@ -1673,6 +2384,9 @@ class IntentIRReplayEnvironment:
                         "replay_compile_check_limit": (
                             self.config.replay_compile_check_limit
                         ),
+                        "replay_source_inspect_limit": (
+                            self.config.replay_source_inspect_limit
+                        ),
                     },
                     "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
                 },
@@ -1710,6 +2424,13 @@ class IntentIRReplayEnvironment:
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
                 },
+                "replay_source_inspect": {
+                    "protocol": "intentir.replay-own-source-inventory.v1",
+                    "authority": "diagnostic_syntax_only_own_replay_source",
+                    "calls": self._source_inspect_calls,
+                    "limit": self.config.replay_source_inspect_limit,
+                    "modes": list(self._source_inspect_audit),
+                },
             }
         }
 
@@ -1718,6 +2439,7 @@ __all__ = [
     "INTENTIR_PACKET_QUERY",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",
+    "INTENTIR_REPLAY_INSPECT",
     "INTENTIR_REPLAY_SUBMIT",
     "REPLAY_CHECK_PROTOCOL",
     "REPLAY_INPUT_FILES",
