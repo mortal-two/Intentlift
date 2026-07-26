@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Sequence
 
@@ -67,18 +68,19 @@ def _logical_full_axis_step_function(
     j: SemanticArchive,
     dims: Mapping[str, int],
 ) -> IntentFunction | None:
-    """Inline the closed one-step denotation of a no-scan logical loop.
+    """Inline the closed full-axis-step denotation of one logical loop.
 
-    Canonical structured-reference semantics evaluates an unscanned logical
-    loop once over the complete logical tensor domain when its trip extent is
-    positive.  A null-initialized carry is valid in that case only when the body
-    defines its next value without reading the unavailable carry.  The current
-    Intent dialect loop op requires physical ``init`` operands, so this generic
-    registered materialization form encodes exactly that one logical step as a
-    flat body.  It is source-neutral and does not consult C.
+    Canonical structured-reference semantics evaluates a logical loop once over
+    the complete logical tensor domain when its trip extent is positive.  Scan
+    names therefore denote their complete source tensors in this registered
+    representation; they are not implementation tiles.  Explicit carry
+    initializers become either aliases of dominating J values or typed tensor
+    constants, while a null-initialized carry remains legal only when the body
+    does not read it.  This deterministic projection uses J alone: it does not
+    consult C, a kernel name, or source realization details.
 
-    Other loop forms remain structured/unsupported until the dialect can encode
-    their complete J contract without inventing an initializer or schedule.
+    Other loop forms remain unsupported until their complete J denotation can be
+    represented without inventing an initializer or schedule.
     """
 
     if len(j.intent.body) != 1 or j.intent.body[0].op != "loop":
@@ -91,28 +93,107 @@ def _logical_full_axis_step_function(
         raise ValueError(
             "null-initialized logical full-axis loop requires a positive extent"
         )
-    if loop.scan or not loop.carry:
+    if not loop.carry:
         return None
-    if any(item.init_value is not None for item in loop.carry):
+    if any(operation.op == "loop" for operation in _walk(loop.body)):
         return None
-    carry_arguments = {item.body_argument for item in loop.carry}
+
+    inputs = {item.name: item for item in j.intent.inputs}
+    aliases: dict[str, str] = {}
+    for scan in loop.scan:
+        source = inputs.get(scan.source)
+        if source is None:
+            # A top-level single-loop form has no other dominating producer.
+            return None
+        source_shape = [
+            dims[item] if isinstance(item, str) and item in dims else item
+            for item in source.shape
+        ]
+        if (
+            scan.axis < 0
+            or scan.axis >= len(source_shape)
+            or source_shape[scan.axis] != extent
+        ):
+            raise ValueError(
+                "logical loop scan extent differs from its semantic trip axis"
+            )
+        aliases[scan.name] = scan.source
+
     body_references = {
         operand
         for operation in _walk(loop.body)
         for operand in operation.operands
     }
-    if carry_arguments & body_references:
+    prefix: list[IntentOp] = []
+    for state in loop.carry:
+        if state.type is None:
+            return None
+        init = state.init_value
+        if init is None:
+            if state.body_argument in body_references:
+                return None
+            continue
+        if isinstance(init, str) and init in inputs:
+            init_tensor = inputs[init]
+            if (
+                init_tensor.dtype != state.type.dtype
+                or init_tensor.shape != state.type.shape
+            ):
+                raise ValueError(
+                    "logical loop carry initializer type differs from its state type"
+                )
+            aliases[state.body_argument] = init
+            continue
+        if isinstance(init, bool) or isinstance(init, (int, float)):
+            prefix.append(
+                IntentOp(
+                    op="const",
+                    result=state.body_argument,
+                    attrs={
+                        "value": init,
+                        "dtype": state.type.dtype,
+                        "shape": list(state.type.shape),
+                    },
+                    type=state.type.to_json(),
+                )
+            )
+            continue
         return None
-    if any(operation.op == "loop" for operation in _walk(loop.body)):
-        return None
+
+    def resolve(name: str) -> str:
+        visited: set[str] = set()
+        while name in aliases:
+            if name in visited:
+                raise ValueError("logical loop alias cycle")
+            visited.add(name)
+            name = aliases[name]
+        return name
+
+    def substitute_body(body: Sequence[IntentOp]) -> list[IntentOp]:
+        result: list[IntentOp] = []
+        for original in body:
+            operation = copy.deepcopy(original)
+            operation.operands = [resolve(name) for name in operation.operands]
+            if operation.predicate is not None:
+                operation.predicate = resolve(operation.predicate)
+            operation.body = substitute_body(operation.body)
+            for arm in (operation.positive, operation.negative):
+                if arm is not None:
+                    arm.body = substitute_body(arm.body)
+                    if hasattr(arm, "yield_value"):
+                        arm.yield_value = resolve(arm.yield_value)
+            result.append(operation)
+        return result
+
+    body = [*prefix, *substitute_body(loop.body)]
     result_to_next = {
-        item.result_value: item.next_value for item in loop.carry
+        item.result_value: resolve(item.next_value) for item in loop.carry
     }
     if not isinstance(loop.result, list) or set(loop.result) != set(result_to_next):
         raise ValueError("logical loop results differ from its carry bindings")
     produced = {
         name
-        for operation in _walk(loop.body)
+        for operation in _walk(body)
         for name in (
             operation.result
             if isinstance(operation.result, list)
@@ -139,7 +220,7 @@ def _logical_full_axis_step_function(
         name=j.intent.name,
         inputs=list(j.intent.inputs),
         outputs=list(j.intent.outputs),
-        body=list(loop.body),
+        body=body,
         returns=returns,
     )
 

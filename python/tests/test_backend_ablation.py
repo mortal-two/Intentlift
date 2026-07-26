@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from intentir.backend.ablation import (
     ExperimentArm,
+    ablation_spec_digest,
     assert_fair_pair,
+    load_ablation_spec,
     standard_ablation_plan,
 )
 
@@ -23,6 +28,21 @@ def test_standard_plan_freezes_equal_search_budgets() -> None:
         for arm, item in arms.items()
         if arm not in {ExperimentArm.E0_SOURCE, ExperimentArm.E1_CANONICAL}
     )
+
+
+def test_machine_spec_is_the_consumed_qd_experiment_contract() -> None:
+    spec = load_ablation_spec()
+
+    assert len(ablation_spec_digest()) == 64
+    assert spec["correctness"]["search_domain_edge"] == "target_ref_j"
+    assert spec["correctness"]["certification_domain_edges"] == [
+        "target_source",
+        "target_replay",
+        "target_ref_j",
+    ]
+    assert {item["arm"] for item in spec["arms"]} == {
+        item.value for item in ExperimentArm
+    }
 
 
 def test_e3_e4_differ_only_by_erasable_c_prior() -> None:
@@ -75,3 +95,33 @@ def test_fair_pair_rejects_hidden_budget_changes() -> None:
             changed,
             varying="use_c_prior",
         )
+
+
+def test_machine_spec_rejects_non_boolean_axis(tmp_path: Path) -> None:
+    spec = load_ablation_spec()
+    spec["arms"][2]["search_fma"] = 0
+    path = tmp_path / "non-boolean.json"
+    path.write_text(json.dumps(spec), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be boolean"):
+        standard_ablation_plan(8, spec_path=path)
+
+
+def test_machine_spec_rejects_qd_protocol_drift(tmp_path: Path) -> None:
+    spec = load_ablation_spec()
+    spec["correctness"]["search_domain_edge"] = "target_source"
+    path = tmp_path / "bad-qd.json"
+    path.write_text(json.dumps(spec), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Q/D implementation"):
+        standard_ablation_plan(8, spec_path=path)
+
+
+def test_machine_spec_rejects_unknown_root_field(tmp_path: Path) -> None:
+    spec = load_ablation_spec()
+    spec["posthoc_override"] = True
+    path = tmp_path / "unknown-root.json"
+    path.write_text(json.dumps(spec), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="root fields"):
+        standard_ablation_plan(8, spec_path=path)

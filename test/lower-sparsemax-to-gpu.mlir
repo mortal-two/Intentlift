@@ -74,12 +74,15 @@ func.func @live_provider_scan_graph(%x: tensor<2x8xf32>, %sx: tensor<2x8xf32>)
   %cm1 = intent.map_binary %cssv, %one {fn = "sub"} : (tensor<2x8xf32>, tensor<f32>) -> tensor<2x8xf32>
   %t = intent.map_binary %cm1, %rank {fn = "div"} : (tensor<2x8xf32>, tensor<8xf32>) -> tensor<2x8xf32>
   %support = intent.map_binary %sx, %t {fn = "gt"} : (tensor<2x8xf32>, tensor<2x8xf32>) -> tensor<2x8xi1>
-  %support_i32 = intent.cast %support {to_dtype = "i32"} : (tensor<2x8xi1>) -> tensor<2x8xi32>
+  // Canonical J may spell the closed logical alias as `and`; it has the same
+  // typed i1 semantics as `logical_and` throughout dialect and target lowering.
+  %guarded_support = intent.map_binary %support, %support {fn = "and"} : (tensor<2x8xi1>, tensor<2x8xi1>) -> tensor<2x8xi1>
+  %support_i32 = intent.cast %guarded_support {to_dtype = "i32"} : (tensor<2x8xi1>) -> tensor<2x8xi32>
   %k_i32 = intent.reduce %support_i32 {fn = "sum", axes = [1], assoc = "associative"} : (tensor<2x8xi32>) -> tensor<2x1xi32>
   %kc_i32 = intent.map_binary %k_i32, %one_i32 {fn = "max"} : (tensor<2x1xi32>, tensor<i32>) -> tensor<2x1xi32>
   %kc = intent.cast %kc_i32 {to_dtype = "f32"} : (tensor<2x1xi32>) -> tensor<2x1xf32>
   %zero = arith.constant dense<0.0> : tensor<f32>
-  %supported = intent.select %support, %sx, %zero : (tensor<2x8xi1>, tensor<2x8xf32>, tensor<f32>) -> tensor<2x8xf32>
+  %supported = intent.select %guarded_support, %sx, %zero : (tensor<2x8xi1>, tensor<2x8xf32>, tensor<f32>) -> tensor<2x8xf32>
   %s = intent.reduce %supported {fn = "sum", axes = [1], assoc = "float_nondeterministic"} : (tensor<2x8xf32>) -> tensor<2x1xf32>
   %sm1 = intent.map_binary %s, %one {fn = "sub"} : (tensor<2x1xf32>, tensor<f32>) -> tensor<2x1xf32>
   %tau = intent.map_binary %sm1, %kc {fn = "div"} : (tensor<2x1xf32>, tensor<2x1xf32>) -> tensor<2x1xf32>

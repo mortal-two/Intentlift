@@ -77,6 +77,12 @@ def ConvertIntentRowReductionToGPU
            "Set false to force the general scan/reduction implementation for "
            "the same Intent graph, providing an independently executable "
            "generic correctness fallback.">,
+    Option<"predicatePureValueIf", "predicate-pure-value-if", "bool", "true",
+           "Convert a runtime rank-0 pure tensor scf.if into eager arm "
+           "dataflow plus intent.select before row-graph admission. The "
+           "transformation is restricted to typed side-effect-free MLIR arms, "
+           "does not specialize the predicate, and records its actual count "
+           "in the concrete-state receipt.">,
   ];
 }
 

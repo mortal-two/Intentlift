@@ -47,6 +47,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -235,12 +236,126 @@ static Value combineScalar(OpBuilder &b, Location loc, gpu::AllReduceOperation o
   }
 }
 
+/// Predicate a pure tensor value conditional into ordinary dataflow.
+///
+/// Canonical J materializes `value_if` as an `scf.if` whose condition is a
+/// rank-0 tensor extraction.  The structured control itself is part of M0, but
+/// the row lowering consumes a straight-line tensor graph.  When both arms
+/// contain only closed, side-effect-free tensor arithmetic, clone both arms and
+/// select their yielded tensors with the original rank-0 condition.  This is a
+/// general compiler transformation over typed MLIR; it neither consults a
+/// kernel name nor specializes the runtime predicate in Python.
+static unsigned predicatePureTensorValueIfs(func::FuncOp fn) {
+  SmallVector<scf::IfOp> candidates;
+  fn.walk([&](scf::IfOp ifOp) { candidates.push_back(ifOp); });
+
+  unsigned transformed = 0;
+  for (scf::IfOp ifOp : candidates) {
+    if (ifOp->getParentOfType<func::FuncOp>() != fn ||
+        ifOp.getNumResults() != 1 || ifOp.getElseRegion().empty() ||
+        !ifOp.getThenRegion().hasOneBlock() ||
+        !ifOp.getElseRegion().hasOneBlock())
+      continue;
+    auto extract = ifOp.getCondition().getDefiningOp<tensor::ExtractOp>();
+    auto conditionType =
+        extract ? dyn_cast<RankedTensorType>(extract.getTensor().getType())
+                : RankedTensorType();
+    if (!extract || !extract.getIndices().empty() || !conditionType ||
+        conditionType.getRank() != 0 ||
+        !conditionType.getElementType().isInteger(1))
+      continue;
+
+    auto armIsPure = [](Block &block) {
+      for (Operation &operation : block.without_terminator()) {
+        if (!isa<arith::ConstantOp, MapUnaryOp, MapBinaryOp, SelectOp, CastOp,
+                 TransposeOp, tensor::ExpandShapeOp>(&operation))
+          return false;
+      }
+      auto yield = dyn_cast<scf::YieldOp>(block.getTerminator());
+      return yield && yield.getNumOperands() == 1;
+    };
+    Block &positiveBlock = ifOp.getThenRegion().front();
+    Block &negativeBlock = ifOp.getElseRegion().front();
+    if (!armIsPure(positiveBlock) || !armIsPure(negativeBlock))
+      continue;
+
+    OpBuilder builder(ifOp);
+    auto cloneArm = [&](Block &block) {
+      IRMapping mapping;
+      for (Operation &operation : block.without_terminator())
+        builder.clone(operation, mapping);
+      auto yield = cast<scf::YieldOp>(block.getTerminator());
+      return mapping.lookupOrDefault(yield.getOperand(0));
+    };
+    Value positive = cloneArm(positiveBlock);
+    Value negative = cloneArm(negativeBlock);
+    Value selected = builder.create<SelectOp>(
+        ifOp.getLoc(), ifOp.getResult(0).getType(), extract.getTensor(),
+        positive, negative);
+    ifOp.getResult(0).replaceAllUsesWith(selected);
+    ifOp.erase();
+    if (extract->use_empty())
+      extract.erase();
+    ++transformed;
+  }
+  return transformed;
+}
+
+/// Fold rank-0 constant tensor selects and erase the newly dead pure chain.
+/// These constants are emitted from J-authored constexpr bindings, so this is
+/// ordinary typed constant propagation rather than a backend permission or a
+/// source/kernel-name rule.
+static unsigned foldRankZeroConstantSelects(func::FuncOp fn) {
+  SmallVector<SelectOp> candidates;
+  fn.walk([&](SelectOp select) { candidates.push_back(select); });
+  unsigned folded = 0;
+  for (SelectOp select : candidates) {
+    auto constant = select.getCond().getDefiningOp<arith::ConstantOp>();
+    auto dense = constant ? dyn_cast<DenseElementsAttr>(constant.getValue())
+                          : DenseElementsAttr();
+    auto conditionType =
+        dense ? dyn_cast<RankedTensorType>(dense.getType()) : RankedTensorType();
+    if (!dense || !dense.isSplat() || !conditionType ||
+        conditionType.getRank() != 0 ||
+        !conditionType.getElementType().isInteger(1))
+      continue;
+    bool condition = dense.getSplatValue<APInt>().isOne();
+    select.getResult().replaceAllUsesWith(condition ? select.getX()
+                                                    : select.getY());
+    select.erase();
+    ++folded;
+  }
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<Operation *> dead;
+    for (Operation &operation :
+         llvm::reverse(fn.getBody().front().without_terminator())) {
+      if (operation.getNumResults() == 0 ||
+          llvm::any_of(operation.getResults(),
+                       [](Value result) { return !result.use_empty(); }))
+        continue;
+      if (isa<arith::ConstantOp, MapUnaryOp, MapBinaryOp, SelectOp, CastOp,
+              TransposeOp, tensor::ExpandShapeOp>(&operation))
+        dead.push_back(&operation);
+    }
+    for (Operation *operation : dead) {
+      operation->erase();
+      changed = true;
+    }
+  }
+  return folded;
+}
+
 /// Attach a machine-readable receipt to the concrete MLIR state produced by
 /// this C++ lowering.  The outer search controller reads only these facts and
 /// the resulting IR digest; it never infers a mechanism from a kernel name or
 /// from the requested pass option.  In particular, an FMA request that matched
 /// no concrete mul+add is recorded with fma_count=0.
-static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads) {
+static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
+                                       unsigned predicatedValueIfCount,
+                                       unsigned foldedConstexprSelectCount) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -261,6 +376,12 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads) {
   SmallVector<Attribute> trace{
       StringAttr::get(ctx, "cuda.row_reduction.read_once.v1"),
       StringAttr::get(ctx, ("cuda.reduction." + topology + ".v1").str())};
+  if (predicatedValueIfCount != 0)
+    trace.push_back(
+        StringAttr::get(ctx, "cuda.control.value_if_to_select.v1"));
+  if (foldedConstexprSelectCount != 0)
+    trace.push_back(
+        StringAttr::get(ctx, "cuda.control.constexpr_select_fold.v1"));
   if (fmaCount != 0)
     trace.push_back(StringAttr::get(ctx, "cuda.numeric.fma.f32.v1"));
 
@@ -280,6 +401,12 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads) {
                    IntegerAttr::get(IntegerType::get(ctx, 64), allReduceCount));
   lowered->setAttr("intent.backend.block_threads",
                    IntegerAttr::get(IntegerType::get(ctx, 64), threads));
+  lowered->setAttr(
+      "intent.backend.predicated_value_if_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64), predicatedValueIfCount));
+  lowered->setAttr(
+      "intent.backend.folded_constexpr_select_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64), foldedConstexprSelectCount));
 }
 
 /// Match the common normalization scalar fast path `recip(sqrt(x))`.  The
@@ -452,6 +579,12 @@ static Value emitRowScalarBinary(OpBuilder &b, Location loc, StringRef fn,
       return b.create<arith::MaxSIOp>(loc, a, c);
     if (fn == "min")
       return b.create<arith::MinSIOp>(loc, a, c);
+    if (fn == "and" || fn == "logical_and")
+      return b.create<arith::AndIOp>(loc, a, c);
+    if (fn == "or" || fn == "logical_or")
+      return b.create<arith::OrIOp>(loc, a, c);
+    if (fn == "xor" || fn == "logical_xor")
+      return b.create<arith::XOrIOp>(loc, a, c);
     return nullptr;
   }
   (void)f32;
@@ -678,6 +811,8 @@ struct RowReductionLowering {
   bool deferEpilogueColumnLoads;
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
+  unsigned predicatedValueIfCount;
+  unsigned foldedConstexprSelectCount;
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
@@ -756,13 +891,17 @@ struct RowReductionLowering {
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
                        unsigned vw, bool fuseFma, bool deferColLoads,
-                       bool promoteScalars, bool enablePrefix)
+                       bool promoteScalars, bool enablePrefix,
+                       unsigned predicatedValueIfs,
+                       unsigned foldedConstexprSelects)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
         deferEpilogueColumnLoads(deferColLoads),
         promoteRank0ScalarInputs(promoteScalars),
-        enableSortedPrefix(enablePrefix) {}
+        enableSortedPrefix(enablePrefix),
+        predicatedValueIfCount(predicatedValueIfs),
+        foldedConstexprSelectCount(foldedConstexprSelects) {}
 
   /// A live LayerNorm extraction may express row reductions by transposing
   /// [M,N] to [N,M], reducing axis 0, and transposing the normalized value
@@ -1193,6 +1332,13 @@ struct RowReductionLowering {
       if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
+      // Preserve required-but-unread ABI carriers exactly.  Their lack of uses
+      // is compiler-visible after J constexpr control has been specialized;
+      // they remain function arguments but generate no target loads.
+      if (fn.getArgument(ai).use_empty()) {
+        argRoles.push_back(Role::Unused);
+        continue;
+      }
       bool explicitHalfArgument = explicitlyPromotesHalfArgument(fn, ai);
       explicitHalfStorage |= explicitHalfArgument;
       // ColSeg (group_norm W/B): a 1-D f32 arg carrying an affine column-index
@@ -2267,6 +2413,8 @@ struct RowReductionLowering {
     Role role = argRoles[argIdx];
     auto tensorTy =
         cast<RankedTensorType>(fn.getFunctionType().getInput(argIdx));
+    if (role == Role::Unused)
+      return MemRefType::get(tensorTy.getShape(), tensorTy.getElementType());
     if (role == Role::Row)
       return MemRefType::get({M, N}, tensorTy.getElementType());
     if (role == Role::Col)
@@ -2614,7 +2762,8 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
-    attachConcreteStateReceipt(gpuFn, T);
+    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+                               foldedConstexprSelectCount);
     fn.erase();
     return success();
   }
@@ -2993,7 +3142,8 @@ struct RowReductionLowering {
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
-    attachConcreteStateReceipt(gpuFn, T);
+    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+                               foldedConstexprSelectCount);
     fn.erase();
     return success();
   }
@@ -3747,7 +3897,8 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
-    attachConcreteStateReceipt(gpuFn, T);
+    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+                               foldedConstexprSelectCount);
     fn.erase();
     return success();
   }
@@ -4602,7 +4753,8 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
-    attachConcreteStateReceipt(gpuFn, T);
+    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+                               foldedConstexprSelectCount);
     fn.erase();
     return success();
   }
@@ -4616,22 +4768,34 @@ struct ConvertIntentRowReductionToGPUPass
 
   void runOnOperation() override {
     ModuleOp mod = getOperation();
-    SmallVector<func::FuncOp> targets;
+    struct Target {
+      func::FuncOp fn;
+      unsigned predicatedValueIfs;
+      unsigned foldedConstexprSelects;
+    };
+    SmallVector<Target> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
+      unsigned predicatedValueIfs =
+          predicatePureValueIf ? predicatePureTensorValueIfs(fn) : 0;
+      unsigned foldedConstexprSelects = foldRankZeroConstantSelects(fn);
       RowReductionLowering probe(fn, blockThreads, tileCols, vectorWidth,
                                  fuseFma, deferEpilogueColLoads,
                                  promoteRank0Scalars,
-                                 enableSortedPrefix);
+                                 enableSortedPrefix, predicatedValueIfs,
+                                 foldedConstexprSelects);
       if (succeeded(probe.match()))
-        targets.push_back(fn);
+        targets.push_back(
+            {fn, predicatedValueIfs, foldedConstexprSelects});
     }
-    for (func::FuncOp fn : targets) {
-      RowReductionLowering low(fn, blockThreads, tileCols, vectorWidth,
+    for (Target &target : targets) {
+      RowReductionLowering low(target.fn, blockThreads, tileCols, vectorWidth,
                                fuseFma, deferEpilogueColLoads,
                                promoteRank0Scalars,
-                               enableSortedPrefix);
+                               enableSortedPrefix,
+                               target.predicatedValueIfs,
+                               target.foldedConstexprSelects);
       if (failed(low.match()) || failed(low.rewrite())) {
-        fn.emitError("row-reduction lowering failed after match");
+        target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();
       }
     }

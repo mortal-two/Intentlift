@@ -68,6 +68,7 @@ class RowSchedule:
             f"fuse-fma={'true' if self.fuse_fma else 'false'} "
             "promote-rank0-scalars="
             f"{'true' if self.promote_rank0_scalars else 'false'} "
+            "predicate-pure-value-if=true "
             "defer-epilogue-col-loads="
             f"{'true' if self.defer_epilogue_col_loads else 'false'}"
         )
@@ -133,7 +134,7 @@ class ElementwiseSchedule:
 
 @dataclass(frozen=True)
 class PaddedRowSchedule:
-    """Launch geometry for the structural masked-short-dot/pad family."""
+    """Launch geometry for the structural masked-short-dot/pad path."""
 
     block_threads: int
     vectorize_full_features: bool = True

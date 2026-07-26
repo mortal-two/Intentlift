@@ -100,6 +100,8 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
           intent.backend.barrier_count = 2 : i64,
           intent.backend.block_threads = 64 : i64,
           intent.backend.fma_count = 4 : i64,
+          intent.backend.folded_constexpr_select_count = 0 : i64,
+          intent.backend.predicated_value_if_count = 0 : i64,
           intent.backend.lowering_path_kind = "row_reduction",
           intent.backend.reduction_topology = "workgroup_hierarchical",
           intent.backend.shuffle_count = 20 : i64,
@@ -114,6 +116,8 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
 
     assert receipt is not None
     assert receipt.fma_count == 4
+    assert receipt.predicated_value_if_count == 0
+    assert receipt.folded_constexpr_select_count == 0
     assert receipt.observation_changing
     assert receipt.reduction_topology == "workgroup_hierarchical"
     assert len(receipt.topology_digest) == 64

@@ -44,6 +44,8 @@ class MLIRTransformationReceipt:
     barrier_count: int
     all_reduce_count: int
     block_threads: int
+    predicated_value_if_count: int
+    folded_constexpr_select_count: int
 
     @property
     def observation_changing(self) -> bool:
@@ -73,6 +75,8 @@ class MLIRTransformationReceipt:
             "barrier_count": self.barrier_count,
             "all_reduce_count": self.all_reduce_count,
             "block_threads": self.block_threads,
+            "predicated_value_if_count": self.predicated_value_if_count,
+            "folded_constexpr_select_count": self.folded_constexpr_select_count,
             "observation_changing": self.observation_changing,
             "topology_digest": self.topology_digest,
         }
@@ -114,6 +118,8 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
             "barrier_count",
             "all_reduce_count",
             "block_threads",
+            "predicated_value_if_count",
+            "folded_constexpr_select_count",
         )
     }
     if not trace or any(value is None or value < 0 for value in counts.values()):
@@ -128,6 +134,10 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         barrier_count=int(counts["barrier_count"]),
         all_reduce_count=int(counts["all_reduce_count"]),
         block_threads=int(counts["block_threads"]),
+        predicated_value_if_count=int(counts["predicated_value_if_count"]),
+        folded_constexpr_select_count=int(
+            counts["folded_constexpr_select_count"]
+        ),
     )
 
 

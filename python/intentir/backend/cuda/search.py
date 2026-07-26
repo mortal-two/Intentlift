@@ -226,12 +226,6 @@ class CudaSearchCandidate:
     )
 
     @property
-    def family(self) -> str:
-        """Compatibility accessor for pre-v3 callers; not a compiler object."""
-
-        return self.lowering_path_kind
-
-    @property
     def generic(self) -> bool:
         return self.fast_path_id is None
 

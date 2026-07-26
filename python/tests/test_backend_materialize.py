@@ -29,8 +29,7 @@ from intentir.verify.workload_adapters import (
 _ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("name", sorted(PRODUCTION_CASE_IDS))
-def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
+def _materialize_closed_case(name: str):
     snapshot, _path = load_production_snapshot(
         _ROOT / "corpus" / "production-jc-v1", name
     )
@@ -44,15 +43,44 @@ def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -
         case.refeval.input_binding_map,
         case.values,
     )
-
-    materialized = materialize_j(
+    return snapshot, case, materialize_j(
         snapshot.j,
         case.refeval.dims_map,
         constexpr_bindings=constexpr,
     )
 
+
+@pytest.mark.parametrize("name", sorted(PRODUCTION_CASE_IDS))
+def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
+    snapshot, _case, materialized = _materialize_closed_case(name)
+
     assert materialized.j_digest == snapshot.j_digest
     assert "\nmodule {\n" in materialized.intent_mlir
+
+
+def test_kl_div_scan_and_explicit_carry_become_full_axis_intent_graph() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case("kl_div")
+
+    assert materialized.form == "intentir.materialize.logical-full-axis-step.v1"
+    assert materialized.consumed_structures == (
+        "loop:n0:logical_full_axis_step",
+    )
+    assert "intent.loop" not in materialized.intent_mlir
+    assert "intent.scan" not in materialized.intent_mlir
+    assert "dense<0.0> : tensor<2xf32>" in materialized.intent_mlir
+
+
+def test_flash_layer_norm_runtime_value_if_remains_real_mlir_control() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "flash_layer_norm_1pass"
+    )
+
+    assert "t14" in materialized.runtime_input_names
+    assert materialized.intent_mlir.count("tensor.extract %t14[]") == 2
+    assert materialized.intent_mlir.count(" = scf.if ") == 2
+    assert all(
+        "value_if" not in item for item in materialized.consumed_structures
+    )
 
 
 def test_materialization_is_deterministic_and_does_not_read_c() -> None:

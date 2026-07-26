@@ -86,7 +86,8 @@ static Value emitScalarCmp(OpBuilder &b, Location loc, StringRef fn, Value a,
 static bool isI1BinaryFn(StringRef fn) {
   return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
          fn == "ne" || fn == "logical_and" || fn == "logical_or" ||
-         fn == "logical_xor" || fn == "isclose";
+         fn == "logical_xor" || fn == "and" || fn == "or" || fn == "xor" ||
+         fn == "isclose";
 }
 
 /// True iff `emitScalarBinary` can lower `fn` for the operand element type.
@@ -95,7 +96,8 @@ static bool hasScalarBinary(StringRef fn, Type elementType) {
     return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
            fn == "max" || fn == "min" || fn == "gt" || fn == "ge" ||
            fn == "lt" || fn == "le" || fn == "eq" || fn == "ne" ||
-           fn == "logical_and" || fn == "logical_or" || fn == "logical_xor";
+           fn == "logical_and" || fn == "logical_or" || fn == "logical_xor" ||
+           fn == "and" || fn == "or" || fn == "xor";
   return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
          fn == "max" || fn == "min" || fn == "pow" || fn == "atan2" ||
          isI1BinaryFn(fn);
@@ -121,11 +123,11 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     if (fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" ||
         fn == "eq" || fn == "ne")
       return emitScalarCmp(b, loc, fn, a, c);
-    if (fn == "logical_and")
+    if (fn == "logical_and" || fn == "and")
       return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-    if (fn == "logical_or")
+    if (fn == "logical_or" || fn == "or")
       return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-    if (fn == "logical_xor")
+    if (fn == "logical_xor" || fn == "xor")
       return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
     return nullptr;
   }
@@ -151,11 +153,11 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
       fn == "ne")
     return emitScalarCmp(b, loc, fn, a, c);
   // Logical family: truthy-cast each operand to i1, then the bitwise i1 op.
-  if (fn == "logical_and")
+  if (fn == "logical_and" || fn == "and")
     return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-  if (fn == "logical_or")
+  if (fn == "logical_or" || fn == "or")
     return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-  if (fn == "logical_xor")
+  if (fn == "logical_xor" || fn == "xor")
     return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
   if (fn == "isclose") {
     // |a-c| <= atol + rtol*|c|  (torch defaults rtol=1e-5, atol=1e-8).
@@ -857,6 +859,74 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
   }
 };
 
+/// Lower a static rank-2 last-axis inclusive scan to nested scf.for loops with
+/// one scalar accumulator per row.  This is the conservative generic baseline
+/// used when no target scan path is selected; target-specific row lowering
+/// still owns the cooperative/vector scan states.
+struct ScanLowering : OpRewritePattern<ScanOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ScanOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType || !inputType.hasStaticShape() ||
+        inputType != resultType || inputType.getRank() != 2 ||
+        op.getAxis() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "generic scan requires one static rank-2 last axis");
+    StringRef fn = op.getFn();
+    Type elementType = inputType.getElementType();
+    bool supported =
+        (isa<FloatType>(elementType) && isNumericReduce(fn) && fn != "mean") ||
+        (isa<IntegerType>(elementType) && !elementType.isInteger(1) &&
+         isNumericReduce(fn) && fn != "mean") ||
+        (elementType.isInteger(1) && isBoolReduce(fn));
+    if (!supported)
+      return rewriter.notifyMatchFailure(op, "unsupported scan combiner/type");
+
+    Location location = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantIndexOp>(location, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(location, 1);
+    Value rows = rewriter.create<arith::ConstantIndexOp>(
+        location, inputType.getDimSize(0));
+    Value columns = rewriter.create<arith::ConstantIndexOp>(
+        location, inputType.getDimSize(1));
+    Value empty = rewriter.create<tensor::EmptyOp>(
+        location, resultType.getShape(), elementType);
+    auto outer = rewriter.create<scf::ForOp>(
+        location, zero, rows, one, ValueRange{empty},
+        [&](OpBuilder &outerBuilder, Location outerLocation, Value row,
+            ValueRange outerArgs) {
+          Value identity = reduceIdentityConst(
+              outerBuilder, outerLocation, fn, elementType);
+          auto inner = outerBuilder.create<scf::ForOp>(
+              outerLocation, zero, columns, one,
+              ValueRange{identity, outerArgs[0]},
+              [&](OpBuilder &innerBuilder, Location innerLocation, Value column,
+                  ValueRange innerArgs) {
+                Value current = innerBuilder.create<tensor::ExtractOp>(
+                    innerLocation, op.getInput(), ValueRange{row, column});
+                Value combined = emitReduceCombine(
+                    innerBuilder, innerLocation, fn, innerArgs[0], current);
+                Value first = innerBuilder.create<arith::CmpIOp>(
+                    innerLocation, arith::CmpIPredicate::eq, column, zero);
+                Value inclusive = innerBuilder.create<arith::SelectOp>(
+                    innerLocation, first, current, combined);
+                Value updated = innerBuilder.create<tensor::InsertOp>(
+                    innerLocation, inclusive, innerArgs[1],
+                    ValueRange{row, column});
+                innerBuilder.create<scf::YieldOp>(
+                    innerLocation, ValueRange{inclusive, updated});
+              });
+          outerBuilder.create<scf::YieldOp>(outerLocation,
+                                             inner.getResult(1));
+        });
+    rewriter.replaceOp(op, outer.getResult(0));
+    return success();
+  }
+};
+
 /// Lower an einsum-style contraction to a linalg.generic over the union of
 /// index labels: output labels are parallel iterators, contracted labels
 /// (present in inputs but not the output) are reduction iterators. Body is a
@@ -1258,7 +1328,7 @@ struct ConvertIntentToLinalgPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
-                 GatherLowering, ReduceLowering, ContractionLowering,
+                 GatherLowering, ReduceLowering, ScanLowering, ContractionLowering,
                  LoopLowering, CastLowering, TransposeLowering, ConcatLowering,
                  PadLowering>(
         &getContext());

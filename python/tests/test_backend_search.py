@@ -38,12 +38,12 @@ def test_c_changes_only_candidate_order() -> None:
     ordered = enumerate_cuda_candidates(with_c)
     unseeded = enumerate_cuda_candidates(without_c)
 
-    assert ordered[0].family == "generic"
-    assert unseeded[0].family == "generic"
+    assert ordered[0].lowering_path_kind == "generic"
+    assert unseeded[0].lowering_path_kind == "generic"
     assert {item.candidate_id for item in ordered} == {
         item.candidate_id for item in unseeded
     }
-    assert [item.family for item in ordered[1:4]] == [
+    assert [item.lowering_path_kind for item in ordered[1:4]] == [
         "elementwise",
         "row_reduction",
         "padded_row_reduction",
@@ -51,7 +51,7 @@ def test_c_changes_only_candidate_order() -> None:
     assert all(
         "fuse-fma=false" in item.pass_argument
         for item in ordered
-        if item.family == "row_reduction"
+        if item.lowering_path_kind == "row_reduction"
     )
 
 
@@ -111,6 +111,24 @@ def test_b_conditioned_search_is_a_strict_extension_of_schedule_only() -> None:
         set(item.required_b_capabilities) <= set(view.capabilities)
         for item in full
     )
+
+
+def test_sparsemax_contract_view_reuses_guard_projection_and_scan_relation() -> None:
+    corpus = Path(__file__).parents[2] / "corpus" / "production-jc-v1"
+    snapshot, _path = load_production_snapshot(corpus, "sparsemax")
+    base = materialize_j(snapshot.j, {"x0": 2, "x1": 127})
+    state = attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+    view = derive_cuda_contract_view(state)
+
+    assert view.supported
+    assert "reduction:n4" in view.consumed
+    assert any(item.startswith("access_guard:a0:") for item in view.consumed)
+    assert any(item.startswith("access_guard:a1:") for item in view.consumed)
 
 
 def test_performance_cache_identity_does_not_depend_on_c(tmp_path: Path) -> None:

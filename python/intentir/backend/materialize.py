@@ -202,7 +202,7 @@ def _specialize_constexpr_inputs(
                 if arm is not None:
                     arm.body = specialize_body(arm.body)
             if (
-                operation.op == "effect_if"
+                operation.op in {"effect_if", "value_if"}
                 and operation.predicate in bindings
             ):
                 condition = bindings[operation.predicate]
@@ -216,11 +216,33 @@ def _specialize_constexpr_inputs(
                         "effect_if constexpr specialization requires both arms"
                     )
                 consumed_control.append(
-                    "effect_if:"
+                    f"{operation.op}:"
                     f"{operation.node_id or 'anonymous'}:"
                     f"constexpr_{str(condition).lower()}"
                 )
                 specialized.extend(arm.body)
+                if operation.op == "value_if":
+                    if (
+                        not isinstance(operation.result, str)
+                        or not isinstance(arm.yield_value, str)
+                        or not isinstance(operation.type, dict)
+                        or not isinstance(operation.type.get("dtype"), str)
+                    ):
+                        raise MaterializationError(
+                            "value_if specialization requires one typed yield"
+                        )
+                    if arm.yield_value != operation.result:
+                        specialized.append(
+                            IntentOp(
+                                op="cast",
+                                result=operation.result,
+                                operands=[arm.yield_value],
+                                attrs={
+                                    "to_dtype": operation.type["dtype"],
+                                },
+                                type=copy.deepcopy(operation.type),
+                            )
+                        )
                 continue
             specialized.append(operation)
         return specialized

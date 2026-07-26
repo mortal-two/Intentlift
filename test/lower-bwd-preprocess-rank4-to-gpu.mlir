@@ -8,7 +8,10 @@
 // loading only a safe in-bounds address.
 // CHECK-LABEL: func.func @bwd_preprocess_rank4(
 // CHECK-SAME:    %[[OUT:[^:]+]]: memref<128x64xf16>, %[[DO:[^:]+]]: memref<128x64xf16>, %[[DELTA:[^:]+]]: memref<128xf32>)
-// CHECK-SAME: attributes {intent.launch_plan = {block = [128, 1, 1]
+// CHECK-SAME: attributes {
+// CHECK-SAME: intent.backend.folded_constexpr_select_count = 0 : i64
+// CHECK-SAME: intent.backend.predicated_value_if_count = 0 : i64
+// CHECK-SAME: intent.launch_plan = {block = [128, 1, 1]
 // CHECK-SAME: smem = 16
 // CHECK:       gpu.launch
 // CHECK:       gpu.dynamic_shared_memory

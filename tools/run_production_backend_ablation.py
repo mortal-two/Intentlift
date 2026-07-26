@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import intentir.backend.cuda.compile as backend_compile
-from intentir.backend.ablation import ExperimentArm, standard_ablation_plan
+from intentir.backend.ablation import (
+    ExperimentArm,
+    ablation_spec_digest,
+    standard_ablation_plan,
+)
 from intentir.backend.cuda.production_cases import PRODUCTION_CASE_IDS
 from intentir.backend.cuda.search import PerformanceCache
 from intentir.verify.gate1.compiler import KernelSource
@@ -187,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         "elapsed_seconds": (time.time_ns() - started) / 1_000_000_000.0,
         "device": _device_record(torch),
         "target_chip": backend_compile.CHIP,
+        "experiment_spec_digest": ablation_spec_digest(),
         "candidate_budget": args.candidate_budget,
         "qd": {
             "search_seeds": list(args.qd_search_seeds),

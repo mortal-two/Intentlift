@@ -275,7 +275,23 @@ def _one_kernel(
         require_backend_closure=require_backend_closure,
     )
     if search.winner is None or search.winner_program is None:
-        raise RuntimeError("measured search produced no executable winner")
+        diagnostics = [
+            {
+                "candidate_id": attempt.candidate.candidate_id,
+                "status": attempt.status,
+                "reason": attempt.reason,
+                "qd_search": (
+                    attempt.qd_search.to_dict()
+                    if attempt.qd_search is not None
+                    else None
+                ),
+            }
+            for attempt in search.attempts
+        ]
+        raise RuntimeError(
+            "measured search produced no executable winner: "
+            + json.dumps(diagnostics, sort_keys=True)
+        )
     winner = search.winner_program
     mlir_prepared = PreparedSingleLaunch(winner, materialized.intent_mlir)
     mlir_thunk = mlir_prepared.thunk(tensors)

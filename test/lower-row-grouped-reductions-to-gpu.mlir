@@ -5,7 +5,10 @@
 // publish barrier nor a standalone gpu.all_reduce buffer is required.
 
 // CHECK-LABEL: func.func @independent_pair(
-// CHECK-SAME: attributes {intent.launch_plan = {{.*}}smem = 16 : i64
+// CHECK-SAME: attributes {
+// CHECK-SAME: intent.backend.folded_constexpr_select_count = 0 : i64
+// CHECK-SAME: intent.backend.predicated_value_if_count = 0 : i64
+// CHECK-SAME: intent.launch_plan = {{.*}}smem = 16 : i64
 // CHECK: gpu.launch
 // CHECK-SAME: dynamic_shared_memory_size
 // CHECK: gpu.dynamic_shared_memory

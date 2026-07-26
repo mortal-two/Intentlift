@@ -128,11 +128,22 @@ def analyze_j_for_cuda(
         consumed.extend(projection.consumed)
     projected_consumed = set(projection.consumed) if projection is not None else set()
     if j.boundary.access_guard_relations:
-        # The backend may inspect the shared J-only receipt, but its current
-        # target path has no general access-local guard materializer.  An
-        # explicit Layer-A select is sufficient for RefEval value semantics;
-        # it is not permission to erase the authored boundary relation here.
-        unsupported.append("access_guard_materialization_not_implemented")
+        guards_consumed = all(
+            any(
+                ref.startswith(
+                    f"access_guard:{item.access_ref}:{item.value_ref}:"
+                )
+                and ref.endswith(f":{item.polarity.value}")
+                for ref in projected_consumed
+            )
+            for item in j.boundary.access_guard_relations
+        )
+        if not guards_consumed:
+            # Fail closed unless the shared J-only functional projection has
+            # consumed every authored access-local guard.  The projection is
+            # the existing generic consumer; CUDA does not invent a second
+            # access recipe or infer permission from the surrounding select.
+            unsupported.append("access_guard_materialization_not_implemented")
     if j.boundary.aliases:
         unsupported.append("alias_relation")
     for item in j.storage:
@@ -145,7 +156,7 @@ def analyze_j_for_cuda(
             and storage_ref in projected_consumed
         ):
             # The registered full-axis-step materialization consumes the exact
-            # structured carry/storage relation before the flat CUDA family is
+            # structured carry/storage relation before the flat CUDA path is
             # considered.  Arbitrary mutable storage remains unsupported.
             consumed.append(storage_ref)
         else:
@@ -233,7 +244,7 @@ def analyze_j_for_cuda(
 
     for item in j.boundary.reductions:
         op = nodes.get(item.node_ref)
-        if op is None or op.op != "reduce":
+        if op is None or op.op not in {"reduce", "scan"}:
             unsupported.append(f"invalid_reduction:{item.node_ref}")
             continue
         reduction_ref = f"reduction:{item.node_ref}"

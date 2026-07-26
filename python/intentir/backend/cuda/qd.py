@@ -83,6 +83,17 @@ def _torch_dtype(torch: Any, dtype: str) -> Any:
     return getattr(torch, key)
 
 
+def _logical_runtime_array(value: Any, *, rank: int, name: str) -> np.ndarray:
+    raw = np.asarray(value)
+    if rank:
+        return np.ascontiguousarray(raw)
+    if raw.size != 1:
+        raise ValueError(f"rank-0 logical input {name!r} has {raw.size} values")
+    # np.ascontiguousarray promotes a zero-dimensional array to shape (1,),
+    # which violates the materialized tensor ABI.  Preserve logical rank.
+    return raw.reshape(())
+
+
 class CudaOpaqueExecution:
     """Bind opaque Source/Replay/RefJ plus an already-compiled CUDA state."""
 
@@ -179,7 +190,11 @@ class CudaOpaqueExecution:
                 if logical_name not in runtime_names:
                     continue
                 tensor = self._tensors[logical_name]
-                raw = np.ascontiguousarray(np.asarray(values[runtime_key]))
+                raw = _logical_runtime_array(
+                    values[runtime_key],
+                    rank=len(tensor.shape),
+                    name=logical_name,
+                )
                 inputs[logical_name] = torch.as_tensor(
                     raw,
                     dtype=_torch_dtype(torch, tensor.dtype),

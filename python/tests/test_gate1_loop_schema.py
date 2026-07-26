@@ -289,7 +289,7 @@ def test_structured_refeval_executes_one_full_logical_axis_step() -> None:
     assert result.metadata["boundary_profile"] == "structured_value_v1"
     assert "storage:storage0" in result.metadata["boundary_projection"]["consumed"]
     assert set(inspect.signature(execute_structured_reference).parameters) == {
-        "j", "dims", "inputs", "broadcast_axes",
+        "j", "dims", "inputs", "broadcast_axes", "access_guard_relations",
     }
 
 
