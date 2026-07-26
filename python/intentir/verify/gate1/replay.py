@@ -40,7 +40,7 @@ from .tilelang_codegen import extract_tilelang_module
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v2"
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v2"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -187,6 +187,12 @@ def _check_triton_exact_abi(
         for item in j_parameters
         if item.get("kind") == "constexpr"
     }
+    specialization_carriers = {
+        str(item["name"])
+        for item in j_parameters
+        if item.get("kind") == "constexpr"
+        and item.get("logical_ref") is None
+    }
     expected_constexpr = j_constexpr | {str(item["name"]) for item in c_slots}
     violations: list[_ReplayABIViolation] = []
     for argument in function.args.args:
@@ -214,6 +220,27 @@ def _check_triton_exact_abi(
                     line=argument.lineno,
                 )
             )
+    first_carrier_load: dict[str, ast.Name] = {}
+    for statement in function.body:
+        for node in ast.walk(statement):
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in specialization_carriers
+            ):
+                first_carrier_load.setdefault(node.id, node)
+    for name, node in sorted(
+        first_carrier_load.items(),
+        key=lambda item: (item[1].lineno, item[1].col_offset, item[0]),
+    ):
+        violations.append(
+            _ReplayABIViolation(
+                "specialization_carrier_use_forbidden",
+                path=f"<parameter:{name}>",
+                handles=(name,),
+                line=node.lineno,
+            )
+        )
     return tuple(violations[:20])
 
 
@@ -1148,6 +1175,13 @@ local; and every pi `rounded_extent_step` must use its declared J trip extent
 and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
 `value_if`, and select are hard-distinct. Never substitute select/predicated
 unconditional execution, current-shape guesses, or a second rounding formula.
+
+A J.signature constexpr p* with no logical_ref is only the callable carrier for
+the fixed Harness JIT specialization. Keep it in the exact constexpr ABI, but
+never read it or create a dummy use, Python branch, runtime conditional, or
+inactive graph. The packet deliberately omits its concrete value; emit the
+complete active J graph already authored by Lift. A null-ref runtime scalar is
+different and may be used only through its packet-declared pi realization.
 """
     tool = """# Replay tool contract
 

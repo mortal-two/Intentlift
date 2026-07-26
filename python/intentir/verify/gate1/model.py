@@ -3299,9 +3299,9 @@ class SignatureParameter(StrictJSONMixin):
 
     ``name`` is a canonical J handle, never a source parameter spelling.
     ``logical_ref`` links the handle to a J tensor/value/dimension when one
-    exists.  Runtime plumbing that has no denotational value (for example a
-    public DSL opaque object) may omit the link, but it still lives in the J
-    signature namespace rather than a fourth interface namespace.
+    exists. Runtime representation plumbing and Harness-owned compile-time
+    specialization carriers may omit the link; neither becomes an operand of
+    Layer A or a fourth production interface.
     """
 
     name: str
@@ -3367,18 +3367,17 @@ class SignatureParameter(StrictJSONMixin):
                     )
                 )
             if self.logical_ref is None and not (
-                self.kind is ParameterKind.SCALAR
-                and self.mode is ParameterMode.VALUE
+                self.mode is ParameterMode.VALUE
                 and self.rank == 0
                 and self.alias_of is None
             ):
                 issues.append(
                     _SchemaIssue(
                         "SignatureParameter.logical_ref",
-                        "a scalar without J logical_ref is legal only as an "
-                        "explicit rank-0, mode=value, non-alias "
-                        "representation-only ABI carrier; logical data must "
-                        "bind J and implementation-selection values belong to C",
+                        "a scalar/constexpr without J logical_ref must be an "
+                        "explicit rank-0, mode=value, non-alias carrier; a "
+                        "constexpr carrier is bound only by the fixed Harness "
+                        "specialization and never becomes Layer-A data",
                     )
                 )
         if issues:

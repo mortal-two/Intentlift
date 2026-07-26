@@ -134,7 +134,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v37"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v38"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -162,9 +162,9 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "bounded source-free CandidateCheck diagnostic summary" in readme
     assert "must be the entire shell action exactly as shown" in readme
     assert "Do not prepend `set`" in readme
-    assert "never names a source/local or J-body v*" in (
-        files["knowledge/lift_contract.md"]
-    )
+    lift_contract = " ".join(files["knowledge/lift_contract.md"].split())
+    assert "never names a p* parameter, source/local, or J-body v*" in lift_contract
+    assert "Harness-owned, non-C JIT specialization bindings" in lift_contract
     preflight = " ".join(files["knowledge/preflight.md"].split())
     assert "Every semantic `reduce` and inclusive `scan`" in preflight
     assert "one `consumer_extensions` relation for each affected" in preflight
@@ -1607,7 +1607,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v16"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v17"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -2185,8 +2185,8 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v10"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v16"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v11"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v17"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0

@@ -127,7 +127,7 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 
 - \(f\)：当前 Source/Replay 前端；
 - \(p\)：observer profile，包括 observer 版本、compiler/dump stage 与 canonicalization 版本；
-- \(H\)：Harness，持有实际输入、C 值和调用坐标；
+- \(H\)：Harness，持有实际输入、C 值、semantic-constexpr 调用绑定和调用坐标；
 - \(U_f\)：公共、与当前 Source 无关的前端知识；
 - \(\Phi_{f,p}\)：Gate1 在 profile \(p\) 下的 frontend observer；
 - \(Q\)：由实验协议或 benchmark correctness policy 预先确定的比较政策；
@@ -144,7 +144,15 @@ Harness 对 C 的本次实际绑定写作：
 c_0=\operatorname{Bind}_H(C).
 \]
 
-该证书是 **instance-wise** 的：它认证本次实际绑定的 \(c_0\)，不自动证明所有可能的 C 取值都保持语义。
+Harness 中已经存在的 compile-time semantic specialization 子绑定记作：
+
+\[
+\rho_H^{\mathrm{static}}:P_{\mathrm{static}}\to\mathrm{ClosedScalar}.
+\]
+
+它就是 Harness/编译调用已有的 `bound_constexpr_values` 子映射，不是新增 artifact、J relation 或
+production 输入。证书是 **instance-wise** 的：它限定本次 \(\rho_H^{\mathrm{static}}\) 与 \(c_0\)，
+不自动证明同一 Source 的其他 JIT specialization 或其他 C 取值。
 
 ---
 
@@ -431,13 +439,15 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v5 / decode.v6 / typecheck.v14 / candidate-check.v1`；Replay packet envelope
-仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v7`，Lift knowledge 为 v17。
+当前合并协议为 `artifact.v7 / decode.v11 / typecheck.v17 / candidate-check.v1 / replay-check.v3`；
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v10`，
+Lift knowledge 为 v38。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
-`consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`。每个当前字段都由
+`consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
+typed `effect_if/value_if`。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v4 保持各自 wire bytes/digest 与字段集合，不得静默升级、
-刷新或追认。SCRC 后 π 停止，
+刷新或追认；v5-v7 同理保持原字段与 verdict。SCRC 后 π 停止，
 production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
 ## 4.4 Lift 内的非认证 CandidateCheck
@@ -508,9 +518,16 @@ boundary/shape semantics 使用；identity/direct-output 与 boundary-only 合�
 
 这个 null-carrier 例外仅限 runtime scalar。`bound_constexpr_values` 必须已有逻辑语义归属：logical
 data/predicate/result 使用 dtype-compatible rank-0 J input，integral extent-only 使用 declared `x*`；
+若固定 compile-time 值只在 JIT 前选择了当前 monomorphic active graph，则 Lift 保留对应
+`kind=constexpr,mode=value,rank=0` 的匿名 p* callable carrier 与 compatible public dtype，但省略
+`logical_ref`；concrete value 只留在 \(\rho_H^{\mathrm{static}}\)，不写入 J/C/π。Lift 必须自己作者化
+完整 active Layer-A graph，不生成 dummy/identity dataflow、inactive op 或 runtime `effect_if/value_if`。
+string semantic constexpr 必须走该路径。fixed code 只校验作者化分类与 Harness type，不根据值选图、
+补图、清空 `logical_ref` 或伪造 liveness；Replay 保留 exact constexpr ABI，source-blind
+ReplayCheck.v3 拒绝 kernel body 对这种 carrier 的任何读取。Gate1 由 Harness 绑定本次值，RefEval 与
+production backend 均不消费该值。
 只影响 implementation selection 的 constexpr 必须进入 C。representation-only bound constexpr
-不能以 `logical_ref=null` 留成 π-only carrier；既不属于 J、也不能合法归入 C 时应在 Harness
-准备阶段判 case invalid，而不是交给 Lift 猜分类。
+不能伪装成 π-only realization carrier；上述 static specialization carrier 也不得进入 π topology。
 
 v7 还独立检查 `padded_mean_count_unproven`，但只在一个窄 closed profile 内：predicated direct load
 不含 logical guard；index/domain 是完整零起点矩形；predicate upper bound 与对应 typed tensor extent

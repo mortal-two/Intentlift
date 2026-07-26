@@ -270,9 +270,14 @@ representation-only ABI carrier：它不创建 J input，不得参与 J output/b
 
 该 wire form 只允许 runtime scalar；`bound_constexpr_values` 不是另一种 representation-only carrier。
 bound constexpr 必须具有 J logical denotation：logical data/predicate/result 绑定 dtype-compatible
-rank-0 J input，integral extent-only 绑定 declared `x*`。只影响 layout/tile/stage 等 implementation
-selection 的 constexpr 应由 Harness 分类为 C slot；既无 J denotation、又不能合法归入 C 的 case
-是 Harness invalid，不能把 constexpr 以 `logical_ref=null` 留在 π-only topology 中。
+rank-0 J input，integral extent-only 绑定 declared `x*`。固定 compile-time 值若只选择当前
+monomorphic active graph，则保留 `kind=constexpr,mode=value,rank=0`、compatible dtype、无
+`logical_ref` 的 p* callable carrier；值只属于 Harness `bound_constexpr_values`，不写入 J/C/π。
+Lift 作者化完整 active graph，fixed Decode/CandidateCheck 只检查分类与类型，不根据值剪枝、补图或
+修改 artifact。Replay 保留 constexpr ABI，RefEval 与 production 不消费该值；string semantic
+constexpr 必须使用这一 Harness specialization 形式。
+只影响 layout/tile/stage 等 implementation
+selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 
 Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v14`，shared functional projection 使用
 `intentir.j-functional-boundary.v13`。它们完整继承 v12/v11、v10/v3 的唯一 node-less logical-input load 与严格

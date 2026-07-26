@@ -15,7 +15,8 @@
 
 IntentIR 的 production backend 不是把 J 当作一段等待唯一 lower 的普通 IR，也不是在 JSON J 中
 进行程序搜索。它把一次已接受 artifact 中的 J 作为不变语义接口，将其确定性编码为 Intent MLIR，
-再在通用 compiler pass contracts 对 J 保持闭合的实现空间中搜索。
+再在通用 compiler pass contracts 筛选的实现空间中搜索，并以预先声明的 execution domain/comparator
+完成候选语义闭合；本文不声称对所有未知输入已经取得无需运行验证的静态保持证明。
 
 完整后端主线是：
 
@@ -126,6 +127,11 @@ A 是可执行、可组合的结构化计算，至少包括：
 - structured loop 与 recurrence；
 - observable value/state transition。
 
+Source 的 JIT semantic specialization 已在 Lift 前由 Harness 固定；J 只含对应 monomorphic instance
+的完整 active graph。concrete selector value、inactive Source branch 与 Harness binding 均不进入 J/C
+或 production backend。materializer 不恢复 variant family，也不把 callable constexpr carrier 当作
+backend search knob。
+
 实际 value dtype 属于 A 的 typed graph。例如：
 
 ```text
@@ -152,8 +158,7 @@ B 补全所有合法实现必须保持的边界事实：
 - logical access 与 output mapping；
 - alias、effect 与 observable destination；
 - conflict、duplicate 与 update order；
-- reduction ordering/reassociation；
-- rounding、overflow、tie、NaN/Inf 与 determinism 等已声明数值合同；
+- 已显式声明的 rounding、overflow、tie、NaN/Inf 与 determinism 等边界合同；
 - closed result-relation class；
 - SCRC/π 所需的 typed realization authorization。
 
@@ -162,8 +167,8 @@ B 中只保存语义事实，不保存某个 backend transformation 的名字。
 ```text
 no observable intermediate effect
 no alias
-reduction order is tree-permitted
 duplicate updates are forbidden
+logical access is confined to the declared domain
 ```
 
 而不是：
@@ -380,19 +385,20 @@ structured recurrence
 non-serialized compiler analysis。它没有独立语义所有权，不成为 backend 输入或 receipt truth，不
 进入 SCRC，也不能反向改写 J。
 
-定义实现 judgement：
+定义静态候选准入 judgement：
 
 \[
-\Gamma_{J,t}\vdash M:\operatorname{Impl}_t(J).
+\Gamma_{J,t}\vdash M:\operatorname{Admissible}_t(J).
 \]
 
-其含义是：M 是 target t 上满足 J 全部可观察合同的一个 compiler state。它覆盖：
+其含义是：M 是 target t 上由通用 pass contracts 判定为 well-typed、memory-safe、边界关系可消费的
+compiler state。它覆盖可静态检查的：
 
 - value/state behavior；
 - bounds 与 memory safety；
 - alias/effect；
 - update/conflict；
-- order/numeric/result relation；
+- 显式 ordered loop/scan、dtype 与 result-relation plumbing；
 - target ABI。
 
 每个 transformation \(\rho\) 必须声明：
@@ -412,21 +418,21 @@ searchable parameters
 
 \[
 \frac{
-\Gamma_{J,t}\vdash M:\operatorname{Impl}_t(J)
+\Gamma_{J,t}\vdash M:\operatorname{Admissible}_t(J)
 \qquad
 \operatorname{Pre}_{\rho}(J,M,t)
 }{
-\Gamma_{J,t}\vdash\rho(M):\operatorname{Impl}_t(J)
+\Gamma_{J,t}\vdash\rho(M):\operatorname{Admissible}_t(J)
 }.
 \]
 
-这是版本化 compiler contract 的规范级 judgement 与条件组合义务，不是已经完成的机器检查形式
-证明。某个实现或 release 只能对当时实际实现、登记并经过准入检查的 `Emit_v`、transformation
-`rho` 与 `Lower_t` 作支持 claim；第 7 节列出的尚未实现 family 以及第 20 节 roadmap 不能被计入
-当前 `Reach_t(J)`。
+这个 judgement 只做静态准入与安全剪枝，不声称数值候选已在未知输入上普遍保持 J。某个实现或
+release 只能对当时实际实现、登记并经过准入检查的 `Emit_v`、transformation `rho` 与 `Lower_t`
+作支持 claim；第 7 节列出的尚未实现 family 以及第 20 节 roadmap 不能被计入当前 `Reach_t(J)`。
 
-若当前 B 没有足够事实证明某个 precondition，该 pass 对该 J 不适用；系统选择保守实现或显式
-unsupported，不能从 tolerance、Source 惯例或运行结果补足前提。
+若 bounds、alias、effect、update safety 等 safety-critical precondition 缺失，该 pass 对该 J 不适用。
+FMA、TF32、reassociation、accumulation realization 等数值候选不要求 Lift 预先给出 backend permission；
+它们可以进入通用候选空间，但必须通过第 15--17 节的 execution-domain closure 才能被选择。
 
 ## 9. Reachable implementation space
 
@@ -457,7 +463,7 @@ C 不改变该空间的语义边界，只定义搜索顺序：
 \operatorname{Reach}_t(J).
 \]
 
-C 可以改变 `Visited` 的顺序和有限预算下覆盖到的候选，但不改变 `Reach` 中哪些状态合法。
+C 可以改变 `Visited` 的顺序和有限预算下覆盖到的静态 admissible 候选，但不改变安全准入边界。
 
 实际搜索可以是：
 
@@ -470,8 +476,8 @@ C 可以改变 `Visited` 的顺序和有限预算下覆盖到的候选，但不�
 - evolutionary search；
 - profiling-guided autotuning。
 
-搜索器可以是确定性的，也可以是启发式的。正确性不依赖候选顺序，而依赖所有生成 transition 都
-保持 `Impl_t(J)`。
+搜索器可以是确定性的，也可以是启发式的。候选顺序不改变静态安全边界；语义接受最终由第 15 节
+预先声明的 execution-domain closure 决定。
 
 ## 10. Algorithmic multi-lowering 与 schedule tuning
 
@@ -501,16 +507,16 @@ C 可以改变 `Visited` 的顺序和有限预算下覆盖到的候选，但不�
 - layout/data-movement decomposition；
 - registered algorithmic equivalence transformation。
 
-“算法结构改变”不是任意重写。每种非平凡算法等价都必须作为通用 compiler transformation 存在，
-并具有明确的 B preconditions。
+“算法结构改变”不是任意 kernel patch。每种非平凡候选都必须作为通用 compiler transformation
+存在，并具有明确的 safety-critical A/B preconditions、target contract 与可审计 lowering trace。
 
-例如 online recurrence 与 ordinary two-pass reduction 不能因为输出在 tolerance 下接近，就被视为
-普通 schedule 变化。只有一条单独的、已定义保持合同的 transformation 才能把前者带入后者的
-implementation family。
+例如 online recurrence 与 ordinary two-pass reduction 不是普通 schedule 变化；必须由单独登记的
+通用 transformation 产生。它不需要 Lift 预先写 `allow_two_pass`，但只有在目标 execution domain
+上通过冻结 comparator 后才能成为 accepted candidate。
 
 ## 11. Numeric correctness boundary
 
-backend 必须分清三类信息：
+backend 必须分清四类信息：
 
 ```text
 A typed graph:
@@ -519,23 +525,31 @@ A typed graph:
 B numeric/result contract:
   order、reassociation、rounding、exception policy、允许观察关系
 
-Q:
-  SCRC/实验比较时使用的具体 comparator policy
+Q_SCRC:
+  SCRC Gate2 的冻结比较政策
+
+(D_exec,Q_exec):
+  backend search/部署声明的执行域与独立 comparator
 ```
 
-production backend 不读取 Q。Gate2 的 `tolerance` 不能授权：
+materializer/pass pipeline 不读取 `Q_SCRC`，backend search 也不能把 Gate2 evidence 当成 permission。
+同时，J 不新增以下 backend permission 字段：
 
-- 改变 reduction tree；
-- 使用 approximate transcendental；
-- 启用 FMA/contraction；
-- 改变 accumulator dtype；
-- 放宽 NaN/Inf、signed zero 或 overflow 行为。
+```text
+allow_fma
+reduction_order
+allow_tf32
+accumulator_precision_permission
+```
 
-这些 transformation 必须分别由 A/B 与 pass contract 支撑。
+实际 operand/result/cast/accumulation dtype 仍属于 A；Source 真正要求的 ordered loop/scan、effect、
+NaN/Inf 或 overflow behavior 仍由现有 A/B/result relation 表达。FMA、TF32、tree realization、近似
+transcendental与 mixed-precision accumulation 是 backend 候选选择，选中的实际配置写入 backend
+receipt，而不是反向写进 J。
 
-第一版 backend 只开放现有 A/B 足以证明前提的 transformation。某类通用 transformation 确实缺少
-必要 numeric fact 时，才增加最小、closed、版本化的 B relation，并同时定义其 materializer、
-RefEval/Q、TypeCheck 与 backend consumer；不能先添加无人消费的字段。
+若 `D_exec` 是完整有限部署域，可以声称对该域闭合；若它只是采样集合，结论必须明确限定为该样本
+政策，不能外推为所有未知输入上的形式证明。bounds、alias、effect、update safety 等不能通过有限
+数值测试豁免。
 
 ## 12. IntentOp 清理与归属规则
 
@@ -569,11 +583,14 @@ IntentOps.td 中的 summary/description 应保留：
 B 仍由 canonical J enclosing boundary 单一拥有。MLIR op 上只允许由 J/B 确定性投影的 closed attrs，
 不得重新接受任意字典或 consumer-private semantics。
 
-### 12.3 reduce.assoc
+### 12.3 reduction realization 不反向升级为 J permission
 
-`reduce.assoc` 是 B-like numeric fact 在 reduce op 上的物理投影，不是 schedule。现有词汇若无法区分
-fixed order、tree-permitted、浮点 reassociation 与 observation relation，应通过最小 closed relation
-演进，而不能把 Gate2 `tolerance` 当成同一个 permission。
+若 J/A 已用 structured loop、scan 或 recurrence 显式给出顺序，materializer 与 pass 必须保持该
+结构；这不是 backend 可重调的 `reduction_order`。若 J 只是 extensional reduce，并由既有 closed
+result relation 指定观察方式，那么 sequential/tree/reassociation 是 backend 候选 realization，实际
+选择进入 backend receipt，并由声明的 `(D_exec,Q_exec)` 闭合。backend 不能因为希望搜索这些候选，
+反向要求 J 新增 `reduce.assoc`、`reduction_order` 或 `allow_reassociation` permission；也不能把
+Gate2 tolerance 解释成静态授权。
 
 ### 12.4 loop.tile_hint
 
@@ -646,84 +663,70 @@ TianchenForge/历史 backend 中的内容可以按以下类别迁入当前工程
 
 ## 15. Target lowering 与性能选择
 
-若：
+先要求静态准入：
 
 \[
-\Gamma_{J,t}\vdash M:\operatorname{Impl}_t(J),
+\Gamma_{J,t}\vdash M:\operatorname{Admissible}_t(J).
 \]
 
-则 target lowerer 的合同是：
+对预先冻结的 backend execution domain/comparator \((D_{exec},Q_{exec})\)，定义：
 
 \[
-\operatorname{Lower}_t(M)\models J.
+\operatorname{ExecClosed}_{D_{exec},Q_{exec}}(M,J)
+\iff
+\bigwedge_{x\in D_{exec}}
+Q_{exec}\!\left(
+\operatorname{Exec}(\operatorname{Lower}_t(M),x),
+\operatorname{RefEval}(J,x)
+\right).
 \]
 
-给定有限预算 b，最终候选选择为：
+候选只有同时满足静态准入、compile/run 成功和上述闭合时才可参加性能选择。给定有限预算 b：
 
 \[
-M^*_{b,C}=\arg\min_{M\in\operatorname{Visited}_{t,b}(J;C)}
+\operatorname{Eligible}_{t,b,D,Q}(J;C)=
+\left\{M\in\operatorname{Visited}_{t,b}(J;C)\mid
+\Gamma_{J,t}\vdash M:\operatorname{Admissible}_t(J)
+\land\operatorname{ExecClosed}_{D,Q}(M,J)
+\right\},
+\]
+
+\[
+M^*_{b,C}=\arg\min_{M\in\operatorname{Eligible}_{t,b,D,Q}(J;C)}
 \operatorname{Cost}_t\bigl(\operatorname{Lower}_t(M)\bigr).
 \]
 
-Cost 可以来自静态模型、profiling、benchmark 或混合策略。候选选择只比较性能；运行结果不参与
-候选是否合法的判定。
+Cost 可以来自静态模型、profiling、benchmark 或混合策略。correctness executions 与 performance
+measurements 必须在 receipt 中分开记录；前者决定当前声明域内的 semantic acceptance，后者只在
+accepted candidates 之间选择。
 
-## 16. 条件组合保持命题
+## 16. 作用域化闭合命题
 
-假设：
-
-1. materializer 正确编码 J：
-
-\[
-\Gamma_{J,t}\vdash M_0:\operatorname{Impl}_t(J);
-\]
-
-2. 每个启用 transformation 保持实现 judgement：
+假设 materializer、pass 与 target lowering 均通过静态安全准入，且候选 M 通过完整声明域
+\((D_{exec},Q_{exec})\) 的执行闭合，则按定义：
 
 \[
-\Gamma_{J,t}\vdash M:\operatorname{Impl}_t(J)
-\land \operatorname{Pre}_{\rho}(J,M,t)
-\Rightarrow
-\Gamma_{J,t}\vdash\rho(M):\operatorname{Impl}_t(J);
+\forall x\in D_{exec},\quad
+Q_{exec}\!\left(
+\operatorname{Exec}(\operatorname{Lower}_t(M^*_{b,C}),x),
+\operatorname{RefEval}(J,x)
+\right).
 \]
 
-3. target lowerer 保持合同：
-
-\[
-\Gamma_{J,t}\vdash M:\operatorname{Impl}_t(J)
-\Rightarrow
-\operatorname{Lower}_t(M)\models J.
-\]
-
-则：
-
-\[
-M\in\operatorname{Reach}_t(J)
-\Rightarrow
-\operatorname{Lower}_t(M)\models J.
-\]
-
-因此性能选择不会改变 correctness 边界：
-
-\[
-\operatorname{Lower}_t(M^*_{b,C})\models J.
-\]
-
-该命题的 compiler TCB 至少包括：`Emit_v` 及其 B projection、`ContractView`/target-capability
-query、每个实际启用 transformation 的实现及其 `Pre`/preservation/admission 检查、transition
-admission，以及 target lowerer。search/cost model 只有在不能绕过 admission、不能直接构造未登记
-candidate 时才不承担语义裁决。该命题不声称 SCRC 已经证明 production compiler 的每个 pass，
-也不把测试通过冒充上述条件的形式证明。
+该命题只覆盖明确列出的 \(D_{exec}\) 与 \(Q_{exec}\)。若 D 是采样集，结论就是 sampled closure；若
+D 是完整有限部署域，才是该域上的 exhaustive closure。它不外推到未知输入，也不把 pass contracts
+夸写成静态语义证明。compiler TCB 仍至少包括 `Emit_v`、B projection、静态 safety admission、每个
+启用 transformation、target lowerer 与 execution comparator implementation。
 
 ## 17. Backend conformance 的位置
 
-可以独立运行：
+backend search 对每个静态 admissible candidate 独立运行：
 
 ```text
 Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 ```
 
-但它只用于：
+它用于：
 
 - compiler regression；
 - CI；
@@ -731,12 +734,17 @@ Close_Q(Exec(Lower_t(M),x), RefEval(J,x))
 - debug；
 - 实验审计；
 - 新 implementation family 的工程验证。
+- 当前声明 execution domain 内的候选 semantic acceptance。
 
 它不是：
 
 - SCRC 的第四条 Gate2 边；
-- production search 的 legality oracle；
-- 一个候选先猜语义、再通过有限测试获得合法性的机制。
+- Lift/J/C/π artifact 的 membership oracle；
+- 把 failed candidate 反馈给 Lift 后补写 J 的机制；
+- 未声明输入域上的静态证明。
+
+所有候选必须来自已登记、source-neutral、kernel-name-independent 的 compiler transformations；execution
+closure 不能为任意生成代码、Source 特化 patch 或绕过 safety admission 的 candidate 洗白。
 
 ## 18. 实验与消融设计
 
@@ -837,8 +845,8 @@ E4  multi-lowering without C prior
 
 ## 21. 最终系统表述
 
-> **IntentIR production backend consumes only J and optional C from an SCRC-accepted artifact. It deterministically materializes the immutable semantic program and boundary into Intent MLIR, recognizes generic implementation families from A, admits transformations only under B- and target-conditioned compiler contracts, and uses C solely to prioritize schedule exploration. Search ranges over contract-preserving MLIR derivations rather than JSON J or arbitrary generated programs; performance measurement selects among already legal candidates and never serves as a semantic oracle.**
+> **IntentIR production backend consumes only J and optional C from an SCRC-accepted artifact. It deterministically materializes the immutable monomorphic semantic program into Intent MLIR, generates candidates only through registered source-neutral transformations under static safety contracts, and uses C solely to prioritize exploration. Candidate semantics are accepted only within a declared execution domain and comparator; performance selects among those accepted candidates. The claim is scoped to that domain and is not a static proof for unknown inputs.**
 
 中文：
 
-> **IntentIR production backend 只消费 SCRC 已接受 artifact 中的 J 与可选 C。它将不变的语义程序和边界确定性编码为 Intent MLIR，根据 A 识别通用实现族，根据 B、当前编译状态与 target capability 判断 transformation 是否适用，并只用 C 提高调度搜索效率。搜索对象是保持合同的 MLIR 编译推导，不是 JSON J 或任意生成程序；性能测量只在已经合法的候选之间选择，不承担语义裁决。**
+> **IntentIR production backend 只消费 SCRC 已接受 artifact 中的 J 与可选 C。它将固定的 monomorphic 语义程序确定性编码为 Intent MLIR，只通过登记的 source-neutral transformations 和静态 safety contracts 生成候选，并只用 C 提高搜索效率。候选语义由预先声明的 execution domain/comparator 闭合，性能只在已闭合候选间选择；结论严格限定于该执行域，不声称未知输入上的静态形式证明。**

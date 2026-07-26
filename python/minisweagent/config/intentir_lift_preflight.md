@@ -13,7 +13,7 @@ the artifact schema or external TypeCheck.
    logical index/domain expressions, but it is not an SSA operand or a scope
    capture/value.
 4. Every `J.signature.logical_ref` names only a declared J input/output `t*`
-   or symbolic dimension `x*`, never a body/local `v*`. A scalar or semantic
+   or symbolic dimension `x*`, never a `p*` or body/local `v*`. A scalar or semantic
    constexpr used as logical data gets a dtype-matching rank-0 J input with
    shape `[]`; only an integral extent-only handle binds an `x*`. Never bind a
    value parameter to a J output just to reuse an existing handle. A Harness
@@ -39,11 +39,17 @@ the artifact schema or external TypeCheck.
    including `[]`; fixed code, Replay, C, and pi never add or repair its members.
    Bind `x*` only when every use is extent/index/domain-only.
    This null-carrier form is runtime-scalar-only. Every
-   `bound_constexpr_values` entry is logical: bind logical data to a
-   dtype-matching rank-0 J input or an integral extent-only value to `x*`.
+   `bound_constexpr_values` entry is Harness-fixed and non-C. Bind runtime-like
+   logical data to a dtype-matching rank-0 J input and an integral logical extent
+   to `x*`. If the constexpr only selected the monomorphic active graph before J
+   runtime, keep its p* as `kind=constexpr,mode=value,rank=0` with compatible
+   public dtype and no `logical_ref`; its concrete value stays out of J/C/pi.
+   Author the complete active graph without identity selects, dummy dataflow,
+   inactive operations, or runtime `effect_if`/`value_if`. String semantic
+   constexprs necessarily use this specialization-carrier form. Fixed code
+   validates but never selects the graph or repairs the classification.
    A pure schedule constexpr belongs to C; never leave a bound constexpr as a
-   representation-only pi carrier. If it is neither logical nor pure schedule,
-   the Harness case is invalid rather than something the artifact can repair.
+   representation-only pi carrier.
    Every rank-0 tensor bound by `logical_ref` must contribute to an observable
    J output dependency or an explicit boundary/shape semantic relation;
    CandidateCheck rejects rather than auto-unbinding a dead logical input.

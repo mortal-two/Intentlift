@@ -1197,9 +1197,12 @@ elaborator 增加 artifact 构造权。
 
 上述 null-carrier 只允许 runtime scalar。`bound_constexpr_values` 必须是逻辑语义 constexpr：logical
 data/predicate/result 绑定 dtype-compatible rank-0 J input，integral extent-only 绑定 declared `x*`；
+固定 compile-time 值若只选择当前 monomorphic active graph，则对应 constexpr p* 只保留 callable
+carrier/type，省略 `logical_ref`，其值留在 Harness；π 不复制值、不选择 branch、不增加 realization
+instance/route/refinement。Lift 自己作者化完整 active J，fixed checker 只检查分类与 type。
 只影响 layout/tile/stage 的 constexpr 归入 C。representation-only bound constexpr 不允许以
-`logical_ref=null` 留成 π-only carrier；无法归入 J 或 C 的 case 是 Harness invalid，而不是由 π
-补语义。
+`logical_ref=null` 伪装成 π-only carrier；static specialization carrier 是独立的 Harness-bound callable
+情形，但同样不由 π 补语义。
 
 v7 同时把 `padded_mean_count_unproven` 作为与 π 无关的 J-only necessary condition，但只在以下
 closed profile 触发：direct load predicate 不含 logical guard；index/domain 是完整零起点矩形；每个

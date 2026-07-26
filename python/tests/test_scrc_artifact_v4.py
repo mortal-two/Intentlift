@@ -1193,8 +1193,8 @@ def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> 
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v10"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v16"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v11"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v17"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

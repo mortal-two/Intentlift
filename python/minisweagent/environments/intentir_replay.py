@@ -23,7 +23,7 @@ INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v2"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
 )

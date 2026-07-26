@@ -566,10 +566,16 @@ Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应�
 
 该 null-carrier 例外只适用于 runtime scalar，不适用于 `bound_constexpr_values`。后者按 Harness
 合同必须已经是逻辑语义 constexpr：若作为 logical value/predicate/result，绑定 dtype-compatible
-rank-0 J input；若只表示 integral logical extent，绑定 declared `x*`。只影响 layout/tile/stage 等
+rank-0 J input；若只表示 integral logical extent，绑定 declared `x*`；若固定 compile-time 值只选择
+本次 JIT specialization 的 active graph，Lift 保留 `kind=constexpr,mode=value,rank=0`、compatible
+dtype、无 `logical_ref` 的匿名 p* carrier，值只留在 Harness。Lift 自己作者化完整 active graph，不把
+inactive branch、dummy identity 或该 concrete value写入 J/C/π。string semantic constexpr 必须走
+这一形式。fixed Decode/CandidateCheck 只检查作者化分类与 Harness type，不生成 relation、不折叠
+Source、不替 Lift 选图。Replay 保留 exact constexpr ABI 并直接实现 active J；source-blind
+ReplayCheck.v3 会拒绝 body 对该 carrier 的读取，不需要也看不到 selector value。Gate2 RefEval 与
+production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
-留在 π-only 形态；既不具有 J denotation、又不能合法归入 C 的 constexpr 使 Harness/case invalid，
-不得交给 Lift 用 `logical_ref=null` 猜测兜底。
+留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
 当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v14`，shared functional projection 为
 `intentir.j-functional-boundary.v13`。它们完整继承 v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less

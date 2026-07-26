@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v10"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v11"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -725,19 +725,21 @@ must be identical to the supplied anonymous values. For each compiler slot,
 use exactly the public role in compiler_roles. Do not rename c* slots to p* and
 do not turn compiler roles into inferred strategy names.
 
-bound_constexpr_values are non-C invocation bindings. Their p* parameters
-remain semantic constexpr handles in J.signature and never become C slots or
-values. They already have logical semantic ownership: bind logical
-value/predicate/result use to a dtype-compatible rank-0 J input, or bind an
-integral extent-only use to a declared x* dimension. Never serialize a bound
-constexpr as a representation-only pi carrier or give it the runtime-scalar
-logical_ref=null form. A source constexpr not listed there is pure scheduling,
-remains a c* parameter, and must have a matching pure-C constexpr slot. A
-constexpr that fits neither logical J nor pure C is a Harness-invalid case, not
-an ambiguity for Lift to repair.
+bound_constexpr_values are Harness-owned, non-C JIT specialization bindings.
+Their p* stays kind=constexpr. Author one Source-defined form: logical
+data/predicate/result -> compatible rank-0 t*; integral extent -> x*; a graph
+selector eliminated from this monomorphic kernel -> mode=value/rank=0,
+compatible public dtype, and no logical_ref. For the last form, preserve the ABI
+but author only the complete active Layer-A graph: no dummy dataflow, inactive
+operation, or runtime control. The concrete selector value stays only in Harness
+and never enters J/C/pi. Fixed code checks the classification but never selects
+or edits the graph. String constexprs require this form. An unlisted Source
+constexpr is pure implementation selection, remains c*, and has a pure-C slot.
 
-Every J.signature logical_ref names only a declared J input/output t* handle or
-a symbolic dimension x*; it never names a source/local or J-body v* SSA value.
+Every J.signature logical_ref names only a declared J input/output t* handle,
+a symbolic dimension x*; it never names a p* parameter, source/local, or J-body
+v* SSA value. An absent logical_ref on a constexpr denotes only the fixed
+Harness specialization carrier above, not Layer-A data.
 When a runtime scalar or bound semantic constexpr is logical data used in an
 arithmetic/boolean operator or result, declare one dtype-matching rank-0 J input
 tensor and bind its p* to t*. If it also controls an active-domain predicate,
@@ -1622,6 +1624,33 @@ def _validate_compiler_view(
         elif slot is None or slot.kind is not ScheduleSlotKind.CONSTEXPR:
             raise ValueError("Lift omitted a pure-C constexpr slot")
     signature = {item.name: item for item in artifact.j.signature.parameters}
+    def carrier_dtype_matches(value: Any, dtype: str | None) -> bool:
+        canonical = _canonical_dtype(dtype)
+        if isinstance(value, bool):
+            return canonical == "i1"
+        if isinstance(value, int):
+            return canonical in {"int", "index"} or bool(
+                canonical and re.fullmatch(r"[iu][1-9][0-9]*", canonical)
+            )
+        if isinstance(value, float):
+            return canonical in {"bf16", "f16", "f32", "f64", "float", "double"}
+        return isinstance(value, str) and canonical in {"str", "string"}
+
+    for name, value in anonymous_view["bound_constexpr_values"].items():
+        parameter = signature.get(name)
+        if parameter is None:
+            raise ValueError("Lift omitted a bound semantic constexpr")
+        if isinstance(value, str) and parameter.logical_ref is not None:
+            raise ValueError(
+                "A string specialization carrier cannot name a J logical value"
+            )
+        if parameter.logical_ref is None and not carrier_dtype_matches(
+            value, parameter.dtype
+        ):
+            raise ValueError(
+                "Harness specialization value type differs from its constexpr "
+                "carrier dtype"
+            )
     j_tensors = {
         item.name: item
         for item in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]

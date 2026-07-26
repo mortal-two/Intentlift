@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v16"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v17"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})

@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v9",
+        "context_policy": "public_frontend_context_v10",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -116,7 +116,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "shares a dtype or address expression. Signature dtypes are otherwise "
             "authoritative: do not guess a stride/index widening or emit `.to` for "
             "a p* carrier without its own routed refinement or an explicit J cast."
-            " A J.signature p* with logical_ref=null has no logical denotation. It "
+            " A J.signature constexpr p* with logical_ref=null is only a "
+            "Harness-fixed JIT-specialization carrier: preserve its constexpr "
+            "ABI, emit the already-authored active graph, and never read it, "
+            "reconstruct inactive control, or invent a dummy use. Its concrete "
+            "value is absent from the Replay packet."
+            " A scalar J.signature p* with logical_ref=null has no logical denotation. It "
             "may affect the body only through an instance anchored to that p* and "
             "a declared route to its realization consumer; if no such route exists, "
             "keep the ABI parameter but do not read it in the kernel body."
@@ -176,7 +181,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v9",
+        "triton": "public_frontend_context_v10",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -197,6 +202,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v9": (
                     "f83c5b223fd0b8edbc7b55d7fd626fa54b8d1e26db59f0e7ccdc489dcd30b7a8"
+                ),
+                "public_frontend_context_v10": (
+                    "56d496604506f8e5dafa823cdae8f46e67e0f3e88f87fa5bf576d0334ed95d46"
                 ),
             }
         ),
@@ -256,6 +264,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "9becf7924f26d695fc4390c6709a81fc729e12244c241482525ca44e5156d67b"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v10": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "1e3143be1a4e0e4e293b63bd0a4a8cfd264abcd557c09b50b3d611fd2e8a993e"
                         ),
                     }
                 ),

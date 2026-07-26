@@ -22,6 +22,9 @@ agent:
     `order 0 12` before paging raw `edges 0 24`. The resolved order view states
     the mandatory before -> after direction and prioritizes cross-region and
     observable-effect obligations; obey every item, including later pages.
+    A constexpr p* with no logical_ref is only a fixed-Harness-specialization
+    ABI carrier. Retain it but never read it, invent a dummy use, or reconstruct
+    inactive control; emit the authored active J graph.
     Use `section PATH`
     only for a named omitted field and `find HANDLE` only when following one
     reference. Read REPLAY_CONTRACT.md once in one bounded action; TOOL.md is

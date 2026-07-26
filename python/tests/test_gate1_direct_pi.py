@@ -721,6 +721,14 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " A J.signature constexpr p* with logical_ref=null is only a "
+        "Harness-fixed JIT-specialization carrier: preserve its constexpr "
+        "ABI, emit the already-authored active graph, and never read it, "
+        "reconstruct inactive control, or invent a dummy use. Its concrete "
+        "value is absent from the Replay packet.",
+        "",
+    )
+    contract = contract.replace(
         " Every J value_if is mandatory pure value control. Emit one real "
         "runtime `if` with explicit positive and negative arms in authored "
         "polarity and lexical order. Each arm may compute pure local "
@@ -759,7 +767,7 @@ def _historical_triton_v6_payload() -> dict[str, object]:
         "shares a dtype or address expression. Signature dtypes are otherwise "
         "authoritative: do not guess a stride/index widening or emit `.to` for "
         "a p* carrier without its own routed refinement or an explicit J cast."
-        " A J.signature p* with logical_ref=null has no logical denotation. It "
+        " A scalar J.signature p* with logical_ref=null has no logical denotation. It "
         "may affect the body only through an instance anchored to that p* and "
         "a declared route to its realization consumer; if no such route exists, "
         "keep the ABI parameter but do not read it in the kernel body.",
@@ -777,13 +785,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v9"]
+    assert current_digest == history["public_frontend_context_v10"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v9"]["context_sha256"]
+    ]["public_frontend_context_v10"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v9",
+        context_policy="public_frontend_context_v10",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -881,7 +889,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v9"
+    ] == "public_frontend_context_v10"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -909,7 +917,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "9becf7924f26d695fc4390c6709a81fc729e12244c241482525ca44e5156d67b",
+            "1e3143be1a4e0e4e293b63bd0a4a8cfd264abcd557c09b50b3d611fd2e8a993e",
         ),
         (
             Frontend.CUTE,
@@ -1004,9 +1012,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v16"
+    assert report.protocol == "intentir.scrc.typecheck.v17"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v9"
+        "public_frontend_context_v10"
     )
 
 
@@ -1025,7 +1033,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v16"
+    assert report.protocol == "intentir.scrc.typecheck.v17"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1038,7 +1046,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v9"
+    assert context["context_policy"] == "public_frontend_context_v10"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1368,23 +1376,20 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "fixed code and Replay never add or repair it" in instructions
 
 
-def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:
+def test_lift_prompt_and_schema_admit_harness_specialization_constexpr() -> None:
     instructions = " ".join(scrc.build_scrc_lift_instructions().split())
 
-    assert "They already have logical semantic ownership" in instructions
-    assert (
-        "Never serialize a bound constexpr as a representation-only pi carrier"
-        in instructions
-    )
-    assert "runtime-scalar logical_ref=null form" in instructions
-    assert "matching pure-C constexpr slot" in instructions
+    assert "Harness-owned, non-C JIT specialization bindings" in instructions
+    assert "concrete selector value stays only in Harness" in instructions
+    assert "never selects or edits the graph" in instructions
+    assert "unlisted Source constexpr is pure implementation selection" in instructions
 
     payload = make_reduce_artifact().to_json()
     parameter = payload["j"]["signature"]["parameters"][2]
     parameter["kind"] = "constexpr"
-    parameter["logical_ref"] = None
-    with pytest.raises(SchemaError, match="logical_ref"):
-        Gate1Artifact.from_json(payload)
+    parameter["rank"] = 0
+    parameter.pop("logical_ref")
+    assert Gate1Artifact.from_json(payload).to_json() == payload
 
 
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
