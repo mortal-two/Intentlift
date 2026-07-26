@@ -165,6 +165,20 @@ Source、Harness concrete value、C、π、Gate diff/output 或模型历史，�
 - closed op signature 与 J value graph 唯一确定的 result dtype/shape 被物化；显式类型必须一致；
 - 可机械证明的 direct same-handle output identity mapping 归一为唯一省略形式。
 
+`ContractExpr v1` 的 integer/index sort 使用目标无关的数学整数语义，而不是隐含的 host
+`int64`、target `index` 宽度或 Triton/C 整数回绕语义。`a // b` 是 floor division，
+`a % b = a - (a // b) * b`，`ceil_div(a,b)` 是数学 ceiling division；这些除法只在
+`b != 0` 时有定义。若 Source 的 observable relation 确实依赖某一有限宽度、signedness 或
+overflow 行为，Lift 必须通过 typed J value/op relation 表达，不能借 access formula 的实现细节
+补入。
+
+因此，把 ContractExpr 发射为有限宽度 MLIR integer/index 运算本身不构成合法性证明。target
+lowerer 必须对 J 已声明的完整 logical domain 逐项消解至少以下 compiler obligations：所有引用、
+常量与中间/最终整数结果在所选机器类型中可表示，所有 divisor 非零。不能消解时必须
+unsupported/fail closed；不得读取 Source、π、C concrete value 或 Gate sample 猜测，也不得把
+目标宽度、overflow 假设自动写回 J。这些 obligations 是 `J -> M0` 的派生检查结果，不是新的
+artifact、B relation、证书或 membership oracle。
+
 canonicalizer 不得猜 operator、缺失 predicate/effect/alias/authorization，不得从 Source 修复 J，也
 不得把 general affine expression 偷换成 direct axes。语法无唯一解释、类型冲突或需要语义选择时
 fail closed。响应 schema 目前仍以 `index_expression` 文本保存，但 J 的 canonical dump 只写 bracketed vector；
