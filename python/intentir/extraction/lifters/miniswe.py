@@ -35,7 +35,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v42"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v43"
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -124,6 +124,10 @@ def _worker_evidence(
         "transport_retries": result.transport_retries,
         "elapsed_ms": result.elapsed_ms,
         "fresh_session": True,
+        "workflow": (
+            "staged" if bool(getattr(result, "stage_metrics", {})) else "single"
+        ),
+        "stage_metrics": dict(getattr(result, "stage_metrics", {})),
         "candidate_check": (
             dict(candidate_check)
             if isinstance(candidate_check, Mapping)
@@ -369,6 +373,7 @@ class MiniSWELiftAdapter:
     compiler_view: Any = None
     effort: str | None = None
     source_symbol: str | None = None
+    workflow: str = "single"
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
@@ -504,6 +509,8 @@ class MiniSWELiftAdapter:
         source = getattr(source_program, "text", None)
         if not isinstance(source, str) or not source:
             raise TypeError("MiniSWE Lift requires SourceProgram.text")
+        if self.workflow not in {"single", "staged"}:
+            raise ValueError("MiniSWE Lift workflow must be 'single' or 'staged'")
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
@@ -529,6 +536,7 @@ class MiniSWELiftAdapter:
                 IntentIRLiftRunError,
                 create_intentir_lift_model,
                 run_intentir_lift,
+                run_intentir_staged_lift,
             )
         except ImportError as exc:
             from intentir.verify.scrc_runner import SCRCInfrastructureError
@@ -548,7 +556,12 @@ class MiniSWELiftAdapter:
                 reasoning_effort=effective_effort,
                 timeout_seconds=timeout,
             )
-            result = run_intentir_lift(
+            run_worker = (
+                run_intentir_staged_lift
+                if self.workflow == "staged"
+                else run_intentir_lift
+            )
+            result = run_worker(
                 model=model,
                 workspace=workspace,
                 config_overrides=self.worker_config,
@@ -746,10 +759,12 @@ class MiniSWELiftAdapter:
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
                 "fresh_session": True,
+                "workflow": self.workflow,
                 "artifact_schema": artifact.wire_schema,
                 "decode_protocol": candidate_check_context.decode_protocol,
                 "typecheck_protocol": candidate_check_context.typecheck_protocol,
                 "candidate_check": worker_evidence["candidate_check"],
+                "stage_metrics": worker_evidence["stage_metrics"],
             },
         )
 

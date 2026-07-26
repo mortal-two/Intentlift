@@ -463,6 +463,15 @@ def _parser() -> argparse.ArgumentParser:
         help="candidate Lift implementation; independent from Replay backend",
     )
     parser.add_argument(
+        "--lift-workflow",
+        choices=("single", "staged"),
+        default="single",
+        help=(
+            "MiniSWE Lift context workflow: one long worker or bounded "
+            "LLM planner/builder/reviewer stages"
+        ),
+    )
+    parser.add_argument(
         "--replay-backend",
         choices=("responses", "miniswe"),
         default="responses",
@@ -848,6 +857,7 @@ def main(argv: list[str] | None = None) -> int:
                 effort=args.effort,
                 run_masked_j=not args.skip_masked_j,
                 lift_backend=args.lift_backend,
+                lift_workflow=args.lift_workflow,
                 replay_backend=args.replay_backend,
             )
             callback = progress.callback(entry.case_id, entry.ordinal, 1)
@@ -858,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
+                    lift_workflow=args.lift_workflow,
                     replay_backend=args.replay_backend,
                     replay_width=args.replay_width,
                     max_gate1_rounds=args.gate1_rounds,
@@ -1002,6 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
                     effort=args.effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
+                    lift_workflow=args.lift_workflow,
                     replay_backend=args.replay_backend,
                     search_metadata={
                         "protocol": CANDIDATE_FANOUT_PROTOCOL,
@@ -1029,6 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
                         effort=args.effort,
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
+                        lift_workflow=args.lift_workflow,
                         replay_backend=args.replay_backend,
                         replay_width=args.replay_width,
                         max_gate1_rounds=args.gate1_rounds,
