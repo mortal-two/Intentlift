@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Barrier
 
 import pytest
 
@@ -191,6 +192,44 @@ def test_cuda_gate1_uses_source_blind_replay_and_native_profile() -> None:
     assert result.normal.hard_closed
     assert result.observer_profile.frontend is Frontend.CUDA
     assert result.to_json()["observer_profile"]["compiler_stage"] == "ptx"
+
+
+def test_cuda_gate1_runs_independent_replay_workers_and_selects_the_closure() -> None:
+    barrier = Barrier(2, timeout=2.0)
+
+    class Writer:
+        def __init__(self, *, fails: bool) -> None:
+            self.fails = fails
+            self.delegate = StaticReplayWriter(_CUDA_REPLAY, frontend=Frontend.CUDA)
+
+        def generate(self, artifact, *, masked=False):
+            barrier.wait()
+            if self.fails:
+                raise RuntimeError("independent candidate rejected")
+            return self.delegate.generate(artifact, masked=masked)
+
+    result = CudaGate1Runner(
+        compiler=_Compiler(),  # type: ignore[arg-type]
+        writer=(Writer(fails=True), Writer(fails=False)),  # type: ignore[arg-type]
+        config=Gate1Config(run_masked_j=False),
+    ).run(
+        make_copy_artifact(),
+        source=CudaKernelSource.from_code(
+            'extern "C" __global__ void source(const float* x, float* y, int n) {}',
+            "source",
+            trusted=True,
+        ),
+        source_case=_case(),
+    )
+
+    assert result.status is Gate1Status.REPLAY_CLOSED
+    assert result.normal_calls == 2
+    assert result.selected_normal_index == 1
+    assert len(result.normal_candidates) == 2
+    assert "independent candidate rejected" in (
+        result.normal_candidates[0].diagnostic or ""
+    )
+    assert result.normal_candidates[1].hard_closed
 
 
 @pytest.mark.skipif(find_nvcc() is None, reason="nvcc unavailable")

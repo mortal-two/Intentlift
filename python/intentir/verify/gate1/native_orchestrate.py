@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping
 
 from .cuda_compiler import (
@@ -97,17 +98,71 @@ def _validate_schedule(artifact: Gate1Artifact, schedule: Mapping[str, Any]) -> 
         raise ValueError("frontend Harness schedule differs from the accepted C")
 
 
+def _replay_writers(
+    writer: ReplayWriter | tuple[ReplayWriter, ...],
+) -> tuple[ReplayWriter, ...]:
+    writers = writer if isinstance(writer, tuple) else (writer,)
+    if not writers:
+        raise ValueError("Gate1 requires at least one Replay writer")
+    if len({id(item) for item in writers}) != len(writers):
+        raise ValueError("Gate1 Replay fan-out requires fresh independent writers")
+    return writers
+
+
+def _normal_arms(
+    runner: Any,
+    artifact: Gate1Artifact,
+    source_fingerprint: PTXFingerprint | TileLangFingerprint,
+    case: CudaCompileCase | TileLangCompileCase,
+) -> tuple[Gate1ArmEvidence, ...]:
+    if len(runner.writers) == 1:
+        return (
+            runner._arm(
+                runner.writers[0],
+                artifact,
+                source_fingerprint,
+                case,
+                masked=False,
+            ),
+        )
+    with ThreadPoolExecutor(max_workers=len(runner.writers)) as executor:
+        futures = [
+            executor.submit(
+                runner._arm,
+                writer,
+                artifact,
+                source_fingerprint,
+                case,
+                masked=False,
+            )
+            for writer in runner.writers
+        ]
+        return tuple(future.result() for future in futures)
+
+
+def _selected_normal_index(candidates: tuple[Gate1ArmEvidence, ...]) -> int:
+    return next(
+        (
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.hard_closed
+        ),
+        0,
+    )
+
+
 class CudaGate1Runner:
     def __init__(
         self,
         *,
         compiler: CudaCompiler,
-        writer: ReplayWriter,
+        writer: ReplayWriter | tuple[ReplayWriter, ...],
         comparator: PTXComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writer = writer
+        self.writers = _replay_writers(writer)
+        self.writer = self.writers[0]
         self.comparator = comparator or PTXComparator()
         self.config = config or Gate1Config()
 
@@ -130,6 +185,7 @@ class CudaGate1Runner:
 
     def _arm(
         self,
+        writer: ReplayWriter,
         artifact: Gate1Artifact,
         source_fingerprint: PTXFingerprint,
         case: CudaCompileCase,
@@ -138,7 +194,7 @@ class CudaGate1Runner:
     ) -> Gate1ArmEvidence:
         mode = "masked_j" if masked else "normal"
         try:
-            generation = self.writer.generate(artifact, masked=masked)
+            generation = writer.generate(artifact, masked=masked)
         except Exception as exc:
             attempt = getattr(exc, "attempt", None)
             return Gate1ArmEvidence(
@@ -238,7 +294,11 @@ class CudaGate1Runner:
                 0,
                 observer_profile=CUDA_OBSERVER_PROFILE,
             )
-        normal = self._arm(artifact, source_fingerprint, source_case, masked=False)
+        normal_candidates = _normal_arms(
+            self, artifact, source_fingerprint, source_case
+        )
+        selected_normal_index = _selected_normal_index(normal_candidates)
+        normal = normal_candidates[selected_normal_index]
         if not normal.hard_closed:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
@@ -247,16 +307,22 @@ class CudaGate1Runner:
                 source_fingerprint,  # type: ignore[arg-type]
                 normal,
                 None,
-                1,
+                len(normal_candidates),
                 0,
                 observer_profile=CUDA_OBSERVER_PROFILE,
+                normal_candidates=normal_candidates,
+                selected_normal_index=selected_normal_index,
             )
         masked_evidence = None
         masked_calls = 0
         if self.config.run_masked_j:
             masked_calls = 1
             masked_evidence = self._arm(
-                artifact, source_fingerprint, source_case, masked=True
+                self.writers[selected_normal_index],
+                artifact,
+                source_fingerprint,
+                source_case,
+                masked=True,
             )
         return Gate1ExecutionResult(
             Gate1Status.REPLAY_CLOSED,
@@ -265,9 +331,11 @@ class CudaGate1Runner:
             source_fingerprint,  # type: ignore[arg-type]
             normal,
             masked_evidence,
-            1,
+            len(normal_candidates),
             masked_calls,
             observer_profile=CUDA_OBSERVER_PROFILE,
+            normal_candidates=normal_candidates,
+            selected_normal_index=selected_normal_index,
         )
 
 
@@ -276,12 +344,13 @@ class TileLangGate1Runner:
         self,
         *,
         compiler: TileLangCompiler,
-        writer: ReplayWriter,
+        writer: ReplayWriter | tuple[ReplayWriter, ...],
         comparator: TileLangComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writer = writer
+        self.writers = _replay_writers(writer)
+        self.writer = self.writers[0]
         self.comparator = comparator or TileLangComparator()
         self.config = config or Gate1Config()
 
@@ -304,6 +373,7 @@ class TileLangGate1Runner:
 
     def _arm(
         self,
+        writer: ReplayWriter,
         artifact: Gate1Artifact,
         source_fingerprint: TileLangFingerprint,
         case: TileLangCompileCase,
@@ -312,7 +382,7 @@ class TileLangGate1Runner:
     ) -> Gate1ArmEvidence:
         mode = "masked_j" if masked else "normal"
         try:
-            generation = self.writer.generate(artifact, masked=masked)
+            generation = writer.generate(artifact, masked=masked)
         except Exception as exc:
             attempt = getattr(exc, "attempt", None)
             return Gate1ArmEvidence(
@@ -396,7 +466,11 @@ class TileLangGate1Runner:
                 0,
                 observer_profile=TILELANG_OBSERVER_PROFILE,
             )
-        normal = self._arm(artifact, source_fingerprint, source_case, masked=False)
+        normal_candidates = _normal_arms(
+            self, artifact, source_fingerprint, source_case
+        )
+        selected_normal_index = _selected_normal_index(normal_candidates)
+        normal = normal_candidates[selected_normal_index]
         if not normal.hard_closed:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
@@ -405,16 +479,22 @@ class TileLangGate1Runner:
                 source_fingerprint,  # type: ignore[arg-type]
                 normal,
                 None,
-                1,
+                len(normal_candidates),
                 0,
                 observer_profile=TILELANG_OBSERVER_PROFILE,
+                normal_candidates=normal_candidates,
+                selected_normal_index=selected_normal_index,
             )
         masked_evidence = None
         masked_calls = 0
         if self.config.run_masked_j:
             masked_calls = 1
             masked_evidence = self._arm(
-                artifact, source_fingerprint, source_case, masked=True
+                self.writers[selected_normal_index],
+                artifact,
+                source_fingerprint,
+                source_case,
+                masked=True,
             )
         return Gate1ExecutionResult(
             Gate1Status.REPLAY_CLOSED,
@@ -423,9 +503,11 @@ class TileLangGate1Runner:
             source_fingerprint,  # type: ignore[arg-type]
             normal,
             masked_evidence,
-            1,
+            len(normal_candidates),
             masked_calls,
             observer_profile=TILELANG_OBSERVER_PROFILE,
+            normal_candidates=normal_candidates,
+            selected_normal_index=selected_normal_index,
         )
 
 

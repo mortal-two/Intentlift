@@ -717,8 +717,6 @@ def _build_workload_runtime(
     if not 1 <= replay_width <= 4:
         raise ValueError("replay_width must be in [1, 4]")
     frontend = _prepared_frontend(prepared)
-    if frontend in {Frontend.CUDA, Frontend.TILELANG} and replay_width != 1:
-        raise ValueError("native Dataset frontends currently require replay_width=1")
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
         lift_class = ResponsesSCRCLiftAdapter

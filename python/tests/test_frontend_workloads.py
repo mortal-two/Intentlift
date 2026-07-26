@@ -329,14 +329,23 @@ def test_frontend_neutral_registry_and_runtime_dispatch_native_cases() -> None:
             prepared,
             provider=provider,
             run_masked_j=False,
+            lift_backend="miniswe",
+            replay_backend="miniswe",
+            replay_width=2,
         )
         gate1 = runner.dependencies.gate1_factory(1)
 
         assert isinstance(gate1.runner, runner_type)
-        assert gate1.runner.writer.frontend.value == prepared.request.frontend
+        assert len(gate1.runner.writers) == 2
+        assert len({id(writer) for writer in gate1.runner.writers}) == 2
+        assert all(
+            writer.frontend.value == prepared.request.frontend
+            for writer in gate1.runner.writers
+        )
         assert lift.frontend == prepared.request.frontend
         assert isinstance(runner.dependencies.gate2, NativeGate2ExecutionAdapter)
-        assert writers == [gate1.runner.writer]
+        assert len(writers) == 1
+        assert writers[0].writers == gate1.runner.writers
 
 
 @pytest.mark.skipif(
