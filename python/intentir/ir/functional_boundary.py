@@ -624,7 +624,7 @@ def explicit_inout_poststate_reload_value(
 
 
 _PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
-    {"map_unary", "map_binary", "select", "cast"}
+    {"map_unary", "map_binary", "select", "cast", "value_if"}
 )
 
 
@@ -697,9 +697,13 @@ def predicate_dominated_pointwise_load(
             reachable_values.update(results)
             changed = True
 
+    # Canonical elaboration owns output binding, including the identity form
+    # where an operation directly produces an output-named value and the wire
+    # mapping is deliberately omitted.  Mask observability must not depend on
+    # whether Lift redundantly serialized that same destination fact.
     mappings = [
         item
-        for item in j.boundary.output_mappings
+        for item in j_elaboration(j).output_bindings
         if item.value in reachable_values
     ]
     if not mappings:
@@ -3839,12 +3843,29 @@ def _project_functional_boundary(
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")
+    canonical_output_input_refs = {
+        item.value
+        for item in j_elaboration(j).output_bindings
+        if item.value in input_names
+    }
+    # An ABI may retain tensor parameters that are semantically unused by J.
+    # Requiring physical accesses for those values would make RefEval depend on
+    # dead Source interface entries.  Conversely, every tensor that is live in
+    # Layer A, directly returned, or named by a J access-guard relation remains
+    # mandatory here.
+    live_tensor_inputs = (
+        input_names
+        - set(logical_scalar_inputs)
+    ).intersection(
+        graph_operands
+        | canonical_output_input_refs
+        | access_guard_input_refs
+    )
     if boundary.accesses and (
-        loaded | access_guard_input_refs
-        != input_names - set(logical_scalar_inputs)
+        loaded | access_guard_input_refs != live_tensor_inputs
     ):
         raise NotImplementedError(
-            "functional boundary must cover every logical tensor input"
+            "functional boundary must cover every live logical tensor input"
         )
     canonical_nodes = _canonical_nodes(j)
     for tensor, matched_edges in constant_gather_edges.items():

@@ -16,6 +16,10 @@ from intentir.extraction.lifters.scrc import (
     decode_scrc_lift_artifact,
 )
 from intentir.extraction.lifters.scrc_schema import scrc_lift_core_json_schema
+from intentir.ir.functional_boundary import (
+    predicate_dominated_pointwise_load,
+    project_functional_boundary,
+)
 from intentir.verify.gate1.model import Frontend, Gate1Artifact, SchemaError
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 from intentir.verify.gate1.prompt import (
@@ -199,6 +203,54 @@ def test_structured_refeval_executes_typed_value_if(flag: bool) -> None:
     evidence = result.metadata["execution_evidence"]
     assert evidence["value_if_count"] == 1
     assert evidence["effect_if_count"] == 0
+
+
+def test_value_if_pointwise_mask_dominance_uses_canonical_output_binding() -> None:
+    payload = _value_if_payload()
+    j = payload["j"]
+    j["boundary"]["domains"] = {"d0": "0 <= k0 and k0 < 128"}
+    j["boundary"]["accesses"] = [
+        {
+            "access_id": "a0",
+            "kind": "load",
+            "tensor": "t0",
+            "node_ref": "n0",
+            "predicate": "k0 < 128",
+            "index_expression": "k0",
+        },
+        {
+            "access_id": "a1",
+            "kind": "store",
+            "tensor": "t2",
+            "node_ref": "n2",
+            "predicate": "k0 < 128",
+            "index_expression": "k0",
+        },
+    ]
+    j["boundary"]["effects"] = [
+        {
+            "effect_id": "e0",
+            "kind": "read",
+            "target": "t0",
+            "node_ref": "n0",
+            "access_ref": "a0",
+        },
+        {
+            "effect_id": "e1",
+            "kind": "write",
+            "target": "t2",
+            "node_ref": "n2",
+            "access_ref": "a1",
+        },
+    ]
+    j["scopes"][0]["effects"] = ["e0", "e1"]
+
+    artifact = Gate1Artifact.from_json(payload)
+
+    assert artifact.j.boundary.output_mappings == []
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    projection = project_functional_boundary(artifact.j)
+    assert "predicate_dominated_load:a0:k0 < 128" in projection.consumed
 
 
 def test_value_if_normal_and_masked_views_preserve_control_and_yields() -> None:
