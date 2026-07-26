@@ -38,7 +38,8 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v45"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v46"
+MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -93,8 +94,8 @@ def _continued_lift_history(result: Any) -> list[dict[str, Any]]:
         # Submission is represented by a final tool call whose environment-side
         # success interrupted the old worker before a tool result was appended.
         # It cannot be replayed as an unmatched call in the continued Responses
-        # conversation. The exact candidate remains available through the next
-        # branch-local input bundle and output bootstrap.
+        # conversation. The exact candidate remains in the branch-local
+        # persistent Lift workspace.
         terminal_response = history[-1]
         extra = terminal_response.get("extra")
         actions = extra.get("actions", ()) if isinstance(extra, Mapping) else ()
@@ -162,6 +163,9 @@ def _worker_evidence(
     candidate_check = (
         info.get("candidate_check", {}) if isinstance(info, Mapping) else {}
     )
+    agent_runtime = (
+        info.get("agent_runtime", {}) if isinstance(info, Mapping) else {}
+    )
     return {
         "backend": MINISWE_LIFT_BACKEND,
         "knowledge_profile": MINISWE_LIFT_KNOWLEDGE,
@@ -179,6 +183,9 @@ def _worker_evidence(
             dict(candidate_check)
             if isinstance(candidate_check, Mapping)
             else {}
+        ),
+        "agent_runtime": (
+            dict(agent_runtime) if isinstance(agent_runtime, Mapping) else {}
         ),
         "trajectory": trajectory,
     }
@@ -267,9 +274,9 @@ def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
     ).read_text(encoding="utf-8")
     readme = """# IntentIR Lift input
 
-This directory is the complete allowlisted input for one branch-owner
-invocation. The writable workspace is fresh; the source-aware model
-conversation may continue from the same branch's earlier invocation.
+This directory is the complete allowlisted input for one branch-local Lift
+owner. Its conversation and persistent workspace survive across formal Gate1
+continuations for the same Source; Replay remains a separate fresh process.
 
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
@@ -297,7 +304,12 @@ conversation may continue from the same branch's earlier invocation.
   LLM-committed bytes.
 - `intentir_lift_submit /output/candidate.json` or
   `intentir_lift_submit --committed`: direct structured delivery without a
-  stdout marker; external Decode/TypeCheck still rerun independently.
+  stdout marker. Direct submit is the normal fast path: it runs CandidateCheck
+  on exact current bytes when needed and exits immediately on PASS; external
+  Decode/TypeCheck still rerun independently.
+- `apply_patch`: replace one exact, uniquely occurring text span in the existing
+  `/output/candidate.json`. The model supplies both strings; fixed code performs
+  no JSON parsing, handle allocation, reordering, inference, or semantic edit.
 - `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
   `section`) so raw 1400-line schema never needs to be paged end-to-end.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
@@ -309,8 +321,9 @@ conversation may continue from the same branch's earlier invocation.
   this worker; they never parse semantics, construct fields, or edit the draft.
   Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
   bounded read-only inspection over already-mounted data and the current draft.
-  `bootstrap` copies an explicitly supplied previous artifact without editing
-  it; no command constructs or repairs artifact fields.
+  `bootstrap` copies an explicitly supplied previous artifact only when no
+  candidate exists. In the persistent owner workspace it preserves the current
+  candidate unchanged; no command constructs or repairs artifact fields.
 
 Start with this single bounded command so long inputs cannot hide feedback:
 
@@ -323,7 +336,7 @@ that may share one model response:
 `python /input/tools/context_query.py source-outline --start 1 --count 32`.
 On repair rounds, inspect
 `python /input/tools/context_query.py feedback` before editing the candidate
-copied by bootstrap. Use its `feedback-category`, paged `source`, Harness-path,
+already retained in the workspace. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.
 For a long Source, run
 `python /input/tools/context_query.py source-outline --start 1 --count 32`
@@ -358,8 +371,9 @@ sections include `access`, `effect`, `result_relation`, `authorization`,
 `scope`, `c_slot`, `pi_instance`, `pi_route`, `pi_iteration`, and
 `pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
-On a continuation where `feedback.json.previous_artifact` is an object, copy
-that complete candidate first. Use `repair_progress` when present and make the
+On a continuation, keep editing the current complete candidate in the persistent
+workspace; `feedback.json.previous_artifact` is an external receipt and bootstrap
+fallback, not a command to overwrite newer working bytes. Use `repair_progress` when present and make the
 Source-justified coordinated J/C/pi changes needed by the external
 counterexample; do not blindly rebuild or mechanically resubmit the same
 artifact. Run `python /input/tools/context_query.py candidate-diff` before
@@ -377,12 +391,14 @@ not semantic extraction or repair.
 If bootstrap copied a `continuation_draft`, it is only the adjacent prior
 worker's complete LLM-written JSON draft, not a decoded or accepted artifact.
 Continue its focused repair and rerun validator/CandidateCheck yourself.
-Write it to `/output/candidate.json`; then run:
+Write it to `/output/candidate.json`. The normal next action is:
 
-`python /input/tools/validate_candidate.py /input/schema/artifact.schema.json /output/candidate.json`
+`intentir_lift_submit /output/candidate.json`
 
-The validator is not TypeCheck and does not certify the artifact.
-After it passes, run the source-free diagnostic check:
+Submission runs the source-free CandidateCheck preflight on unchecked exact
+bytes. It exits this Lift invocation on PASS and returns short diagnostics on
+failure. The static validator and explicit diagnostic command remain available
+when useful, but are not mandatory network turns:
 
 `intentir_candidate_check /output/candidate.json`
 
@@ -396,6 +412,9 @@ If the exact submitted bytes have no prior CandidateCheck PASS, submission
 automatically invokes the same read-only preflight and returns FAIL diagnostics
 to this session instead of delivering the candidate. It still never edits the
 object, and a PASS still has no authority outside this worker.
+Old tool calls and observations may appear as deterministic hash receipts in the
+model packet. Re-read the persistent files for exact content; the runtime never
+summarizes or interprets J/C/pi semantics during compaction.
 """
     return {
         "README.md": readme,
@@ -445,10 +464,23 @@ class MiniSWELiftAdapter:
     _session_model_turns: int = field(default=0, init=False)
     _session_physical_provider_calls: int = field(default=0, init=False)
     _session_transport_retries: int = field(default=0, init=False)
+    _session_workspace: Any = field(default=None, init=False, repr=False)
 
     @property
     def records(self) -> tuple[SCRCReliftRecord, ...]:
         return tuple(self._records)
+
+    def close(self) -> None:
+        workspace = self._session_workspace
+        self._session_workspace = None
+        if workspace is not None:
+            workspace.cleanup()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _latest_rejected_candidate(
         self,
@@ -620,8 +652,9 @@ class MiniSWELiftAdapter:
             json.dumps(envelope, sort_keys=True)
             + "\nThe same branch-local source-aware Lift task continues. "
             "Read the new closed feedback from /input/feedback.json, run the "
-            "documented bootstrap so the previous complete candidate is present, "
-            "then modify and resubmit one complete (J,C,pi). This is not a new "
+            "documented bootstrap inventory; the latest complete candidate remains "
+            "in the same persistent workspace. Modify that file and resubmit one "
+            "complete (J,C,pi). This is not a new "
             "writer and not a request for a patch-only artifact."
         )
 
@@ -679,11 +712,12 @@ class MiniSWELiftAdapter:
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
         if timeout is None:
-            timeout = (
+            provider_timeout = (
                 XHIGH_RESPONSES_TIMEOUT_SECONDS
                 if effective_effort.casefold() == "xhigh"
                 else DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
+            timeout = min(provider_timeout, MINISWE_LIFT_TURN_TIMEOUT_SECONDS)
         prepared = prepare_scrc_lift(
             source,
             compiler_view=self.compiler_view,
@@ -695,6 +729,15 @@ class MiniSWELiftAdapter:
             self.workflow != "single" or self._session_history is None
         )
         effective_worker_config = self._continued_worker_config()
+        configured_owner_remaining = effective_worker_config.get("agent", {}).get(
+            "wall_time_limit_seconds"
+        )
+        if (
+            isinstance(configured_owner_remaining, (int, float))
+            and not isinstance(configured_owner_remaining, bool)
+            and configured_owner_remaining > 0
+        ):
+            timeout = min(timeout, float(configured_owner_remaining))
         continuation_history = (
             self._session_history
             if self.workflow == "single" and not fresh_owner_session
@@ -724,7 +767,16 @@ class MiniSWELiftAdapter:
                 evidence={"backend": MINISWE_LIFT_BACKEND},
             ) from exc
 
-        workspace = IntentIRLiftWorkspace.create(_input_files(prepared))
+        input_files = _input_files(prepared)
+        fresh_workspace = self.workflow != "single" or self._session_workspace is None
+        if self.workflow == "single":
+            if self._session_workspace is None:
+                self._session_workspace = IntentIRLiftWorkspace.create(input_files)
+            else:
+                self._session_workspace.refresh_inputs(input_files)
+            workspace = self._session_workspace
+        else:
+            workspace = IntentIRLiftWorkspace.create(input_files)
         result = None
         try:
             model = create_intentir_lift_model(
@@ -859,7 +911,8 @@ class MiniSWELiftAdapter:
                 evidence={"backend": MINISWE_LIFT_BACKEND},
             ) from exc
         finally:
-            workspace.cleanup()
+            if self.workflow != "single":
+                workspace.cleanup()
 
         assert result is not None and result.candidate_text is not None
         safe_trajectory = _round_trajectory(
@@ -962,6 +1015,8 @@ class MiniSWELiftAdapter:
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
                 "fresh_session": fresh_owner_session,
+                "fresh_workspace": fresh_workspace,
+                "persistent_workspace": self.workflow == "single",
                 "persistent_owner": self.workflow == "single",
                 "owner_session_id": self._session_id,
                 "continued_from_messages": result.continued_from_messages,
@@ -975,6 +1030,7 @@ class MiniSWELiftAdapter:
                 "decode_protocol": candidate_check_context.decode_protocol,
                 "typecheck_protocol": candidate_check_context.typecheck_protocol,
                 "candidate_check": worker_evidence["candidate_check"],
+                "agent_runtime": worker_evidence["agent_runtime"],
                 "stage_metrics": worker_evidence["stage_metrics"],
             },
         )

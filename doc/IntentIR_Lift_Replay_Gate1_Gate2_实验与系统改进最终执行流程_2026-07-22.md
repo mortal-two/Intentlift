@@ -502,14 +502,24 @@ action 仍有独立 CPU/output/workspace limit，provider transport retry 仍有
 turns、physical calls、CandidateCheck calls/evaluations、active elapsed 与 terminal reason；这些都是
 可报告的工程成本，不进入 certificate predicate。
 
+active Lift 的单次 provider request 另有 900 秒上限，不能借 3600 秒 owner 总预算让一个请求独占
+整个 session；transient transport failure 可在固定上限内重试，但 timeout 本身不连续重烧。正常快
+路径是 owner 写完完整 candidate 后直接 submit：submission 在同一 action 内执行 preflight，PASS
+立即暂停 owner 并交给外部 Runner，FAIL 才返回短 diagnostics。显式 validate/check/commit 仍可按需
+调用，但不再是每份候选都必须经历的四个 provider round-trip。
+
 若一次 pause 前没有提交候选，runner 只可把最后一次**实际执行**的 source-free checker 返回的
 最多 20 条 `rule_code/path` 摘要带入同一 branch owner 的下一次 continuation。没有实际 evaluation
-就没有摘要；不得携带 observed value、候选修复、hidden input 或 sibling 信息。owner 可保留自己
-原有的 Source conversation 与完整 working draft，但仍必须提交完整 `(J,C,π)`；固定代码不应用
-patch。submission preflight `PASS` 也不认证 candidate，外部 Runner 必须照常重跑权威 TypeCheck。
+就没有摘要；不得携带 observed value、候选修复、hidden input 或 sibling 信息。owner 保留原有
+Source conversation 与同一受限 workspace 中的完整 working draft，host 仅原子刷新 closed
+feedback；仍必须提交完整 `(J,C,π)`。LLM 可通过通用 exact-text `apply_patch` 明示唯一旧/新字符串，
+fixed runtime 只原子替换这些字节，不解析 JSON 语义、不选择修改内容，也不接受 checker 返回的
+patch。旧大型工具输入/输出可在 API packet 中变为 hash/长度 receipt，精确文件与完整审计
+trajectory 均保留。submission preflight `PASS` 也不认证 candidate，外部 Runner 必须照常重跑权威
+TypeCheck。
 
 该能力把原本发生在相邻 fresh Lift invocation 之间的机械反馈和 Gate1 relift 工作保留在一个
-branch-local owner conversation 内，不增加 Agent、proof artifact 或 Replay 信息通道，也不改变正式
+branch-local owner conversation 与 workspace 内，不增加 Agent、proof artifact 或 Replay 信息通道，也不改变正式
 Gate round 的定义。
 
 ### 6.5 格式修正和正式实验轮次
@@ -578,8 +588,10 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v17 继承。
 
-当前 Lift knowledge v45 继承 v44/v43/v42；v45 只改变 branch-local 持久 owner、time-governed
-runtime 与 receipt 合同，不改变 artifact wire 或 TypeCheck 接受集合。v40 的只读 `source-outline` 对长 Source 分页显示
+当前 Lift knowledge v46 继承 v45/v44/v43/v42；v46 只增加 branch-local 持久 workspace、
+deterministic transport compaction、LLM-authored exact-text patch、direct-submit fast path 与独立
+provider-turn time limit；v45 已引入持久 owner conversation、time-governed runtime 与 receipt 合同。
+二者都不改变 artifact wire 或 TypeCheck 接受集合。v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
 哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
@@ -1191,7 +1203,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，当前 MiniSWE Lift knowledge 已由后续通用能力升级到
-`intentir.lift-knowledge.v45`。v45 继承 v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
+`intentir.lift-knowledge.v46`。v46 继承 v45/v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
 CandidateCheck diagnostics，以及 rank-0 logical-data/representation-only scalar
 分类合同；并加入 value/dimension equality、consumer extension 与 access guard 的完整 authored
 合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；

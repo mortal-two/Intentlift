@@ -78,13 +78,13 @@ owner 的 terminal resource signal 可以结束为 `NO_CLOSURE`，但报告必�
 
 ### 时间治理的持久 agent 实现
 
-Lift 可以由仓库内的 mini-swe agent 实现。一个 branch 只拥有一个 source-aware conversation，
-而每次候选交付使用独立受限 workspace：
+Lift 可以由仓库内的 mini-swe agent 实现。一个 branch 只拥有一个 source-aware conversation 与
+一个受限 persistent workspace：
 
 ```text
 一个 branch
   = 一个持久 source-aware Lift owner conversation
-  = 每次 LiftAdapter 调用一个全新受限 workspace
+  = 同一 Source 的 Gate1 continuation 复用同一受限 workspace
   = 每次暂停点最多提交一个完整 (J,C,pi)
   = Gate1 FAIL 后在原 conversation 中继续
 ```
@@ -125,7 +125,9 @@ CandidateCheck_v(candidate_bytes, ctx) -> PASS | structured diagnostics
 `protocol/status/rule_code/path/observed_refs_or_types`。agent 根据 diagnostics 自行修改完整 object，
 每次交付仍只提交一个完整 `(J,C,pi)`。提交前置检查失败只把同样的 closed diagnostics 返回当前
 owner，不会提交、
-修补、canonicalize 或派生任何 artifact 字段；worker 必须自行重写完整 object。只有当前 candidate
+修补、canonicalize 或派生任何 artifact 字段；worker 必须自行修改并提交完整 object。generic
+`apply_patch` 只把 LLM 明示的唯一 `old_text` 原子替换成其 `new_text`，不解析 JSON、不返回建议值、
+不分配 handle，也不构造字段。只有当前 candidate
 bytes 与本 session 内某次 `PASS` 对应的精确 bytes 完全相同时才能复用；任何不同 bytes 都必须
 重新检查。提交后 owner conversation 暂停而非销毁，Runner 必须重新运行全部权威
 Decode/TypeCheck；工具 `PASS`
@@ -144,6 +146,13 @@ CandidateCheck count limit 0 都表示不按次数截断，而不是无资源约
 telemetry；每个响应最多四个独立只读 query 只是原子工具 envelope。只有 TypeCheck-valid 候选进入
 fresh Replay/Gate1 后才消耗正式 `K=3`。submission `PASS` 仍非认证，外部 Runner 必须重跑
 TypeCheck。
+
+单次 provider request 与 owner 总时间分离，active Lift 当前上限为 900 秒；timeout 不再次重烧，
+transient transport failure 仍按有界 retry 恢复。正常路径是完整 candidate 直接 submit，由同一
+action 自动 preflight，PASS 立即交付、FAIL 返回短 diagnostics。模型 API packet 可把旧的大型 tool
+arguments/outputs 替换为 deterministic hash/length receipt；原始审计 trajectory 与 persistent
+workspace 文件不被修改，agent 需要精确内容时重新读取。该 transport compaction 不解释 Source 或
+J/C/π，也不进入 correctness predicate。
 
 当前持久 owner 使用 `artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
@@ -174,15 +183,16 @@ diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck�
 原 wire 读取并禁止 `pi.iterations`，不能被静默升级到 v3。DYT 与 SwiGLU 的既有闭合 receipt 保留，
 不因 wire 升级重跑，也不冒充 fresh v3 evidence。
 
-若 owner 在一次 workspace invocation 中没有提交 candidate，Runner 可以把其最后一次**实际执行**
-的 source-free checker 诊断中最多 20 条 `rule_code/path` 写入同一 branch 的新 input view；没有
-evaluation 就没有摘要。该 view 与真实 user continuation 一起追加到原 conversation。observed value、
+若 owner 在一次 active episode 中没有提交 candidate，Runner 可以把其最后一次**实际执行**
+的 source-free checker 诊断中最多 20 条 `rule_code/path` 写入同一 branch workspace 的 closed
+feedback view；没有 evaluation 就没有摘要。该 view 与真实 user continuation 一起追加到原 conversation。observed value、
 候选修复、hidden input 与 sibling 信息不得跨越；Source 只因它本来就在该 source-aware owner 的
 同一 conversation 中而保留。固定 runner 不把摘要应用成 patch。
 
 若完整 JSON object 已提交但被外部 canonical parser 拒绝，Runner 可以把该完整 rejected candidate
-和与它精确对应的机械 diagnostic 交回同 branch 的持久 Lift owner。owner 在新的受限 workspace 中
-bootstrap 该完整对象并继续修正，再提交完整 `(J,C,pi)`；不能只交 patch。
+和与它精确对应的机械 diagnostic 交回同 branch 的持久 Lift owner。owner 在原受限 workspace 中
+继续修改当前完整对象，再提交完整 `(J,C,pi)`；feedback 中的历史对象只作 receipt/fallback，不得
+覆盖更新的 working bytes，也不能只交 patch-only artifact。
 rejected candidate 不是第四 artifact，不进入 Replay 或 certificate。没有提交对象、对象不是有限
 JSON、feedback 不匹配或跨 branch 时不得把其他候选混入当前 owner。
 
@@ -240,7 +250,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v10`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v45`，source-blind MiniSWE Replay backend 为
+`intentir.lift-knowledge.v46`，source-blind MiniSWE Replay backend 为
 `minisweagent.intentir-replay.v6`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 

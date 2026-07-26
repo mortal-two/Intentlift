@@ -57,6 +57,15 @@ def _write_previous(input_root: Path, output_root: Path) -> bool:
         return False
     output_root.mkdir(parents=True, exist_ok=True)
     target = output_root / "candidate.json"
+    if target.is_symlink():
+        raise ValueError("existing candidate.json must not be a symlink")
+    if target.exists():
+        if not target.is_file():
+            raise ValueError("existing candidate.json must be a regular file")
+        current = _load_json(target)
+        if not isinstance(current, dict):
+            raise TypeError("existing candidate.json must contain one object")
+        return False
     target.write_text(
         json.dumps(
             candidate,
@@ -119,6 +128,7 @@ def _emit_json(value: Any) -> None:
 
 def _bootstrap(input_root: Path, output_root: Path) -> None:
     feedback = _feedback_without_candidate(input_root)
+    candidate_already_present = (output_root / "candidate.json").is_file()
     copied = _write_previous(input_root, output_root)
     files = {}
     for relative in ("source.py", "harness_view.json", "feedback.json"):
@@ -133,6 +143,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
         }
     overview = {
         "candidate_copied_to_output": copied,
+        "candidate_already_present": candidate_already_present,
         "files": files,
         "feedback_kind": (
             feedback.get("failure_kind")

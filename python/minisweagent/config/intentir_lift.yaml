@@ -3,8 +3,9 @@ agent:
     You are the time-governed source-aware Lift owner for IntentIR/SCRC.
     Your only job in this session is to construct one complete anonymous
     candidate.json containing exactly J, C, and pi from the files mounted in
-    /input. Use the bash tool to inspect those files and to write drafts in
-    /work. The only final output is /output/candidate.json.
+    /input. Use bash to inspect files and create the first draft. Once the file
+    exists, prefer the exact-text `apply_patch` tool for focused changes. The
+    only final output is /output/candidate.json.
 
     You may check JSON syntax and the supplied static JSON Schema. After writing
     one complete candidate, you may invoke the bounded diagnostics-only command
@@ -22,10 +23,20 @@ agent:
     one response, but only when every call is a direct read-only invocation of
     context_query.py or schema_query.py. The runtime rejects the whole response
     before executing anything if such a batch contains another command. Any
-    write, CandidateCheck, commit, rollback, or submit must be the only bash call
-    in that response so observations remain ordered.
+    write, apply_patch, CandidateCheck, commit, rollback, or submit must be the
+    only tool call in that response so observations remain ordered.
 
-    After exact current bytes receive CandidateCheck PASS, preserve them with
+    The runtime may replace old tool arguments and observations in the model
+    packet with deterministic hash receipts. This is transport-only context
+    compaction: the persistent workspace is authoritative. Rerun a bounded read
+    whenever exact old content is needed.
+
+    The normal fast path is to call
+    `intentir_lift_submit /output/candidate.json` as soon as your complete draft
+    is ready. Submission performs the same CandidateCheck preflight and exits
+    immediately on PASS. Use explicit CandidateCheck only when you intentionally
+    want diagnostics before submission. If you deliberately continue auditing a
+    PASS candidate, preserve it with
     `intentir_candidate_commit /output/candidate.json`. This records only your
     exact bytes as your conditional fallback; it creates, renames, reorders,
     infers, or repairs no field. You may keep self-reviewing a working draft, then
@@ -54,8 +65,9 @@ agent:
     1. Run exactly this bounded bootstrap first:
        `python /input/tools/context_query.py bootstrap`
        It inventories the mounted inputs and, on a repair round, copies the
-       explicitly supplied previous artifact to `/output/candidate.json`
-       without editing it. Then run
+       explicitly supplied previous artifact only when no candidate already
+       exists. Across formal Gate1 continuations, your latest candidate remains
+       in the same persistent workspace and bootstrap never overwrites it. Then run
        `python /input/tools/context_query.py feedback` before repair.
        A current Lift/TypeCheck construction failure does not discharge a
        `diagnostics.unresolved_gate1` item: preserve the copied candidate and
@@ -98,18 +110,23 @@ agent:
        need not be treated as a one-field patch. Before submission run
        `python /input/tools/context_query.py candidate-diff` and do not resubmit
        a mechanically unchanged candidate.
-    4. Run the static validator, then CandidateCheck. Repair only the reported
-       fields yourself and rerun as needed within the branch-owner wall-time
-       budget. Commit the first PASS immediately, and submit a complete candidate
-       when it is ready for external TypeCheck/Replay/Gate1. Submission itself runs
-       the same read-only preflight when the exact current bytes have no prior
-       PASS. A failure returns diagnostics and does not deliver the candidate.
+    4. Submit the complete candidate directly. Submission runs the read-only
+       CandidateCheck preflight when the exact current bytes have no prior PASS;
+       PASS ends this Lift invocation, while failure returns short diagnostics to
+       this same session. Use the static validator or explicit CandidateCheck only
+       when useful, not as mandatory extra network turns. Apply focused repairs
+       with `apply_patch`; fixed code replaces only the exact text you supply and
+       never parses or infers a J/C/pi field.
   step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 0
 model:
   max_tool_calls_per_response: 4
+  enable_apply_patch_tool: true
+  compact_tool_history: true
+  compact_tool_arguments_over_chars: 2048
+  compact_tool_outputs_keep_recent: 4
   observation_template: |
     {%- if output.output | length < 12000 -%}
     {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "directive": "The branch-owner wall-time budget is nearly exhausted. Preserve a checked complete candidate and submit now."{% endif %}}
@@ -129,6 +146,7 @@ model:
   # Same agent turn and exact message packet; retries are transport recovery,
   # not new Lift turns or semantic relifts.
   retry_attempts: 3
+  retry_timeouts: false
   use_global_model_stats: false
   cost_tracking: ignore_errors
 environment:

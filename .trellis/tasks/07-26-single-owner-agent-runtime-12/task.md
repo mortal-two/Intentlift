@@ -47,15 +47,15 @@ v124 staged pilot 给出了三类互相独立的反例：
 
 1. Lift LLM 仍完整 author 每个 J、C、pi 字段；Replay LLM 仍完整 author Replay source。
 2. 固定代码可以保存、hash、复制、回滚或提交 **exact LLM-authored bytes**，并运行既有 closed
-   checker；不能新增节点、分配/改写 handle、重排声明、更新引用、补类型、补 relation 或选择
-   operator。
+   checker；也可把 LLM 明示的唯一 `old_text` 原子替换为其 `new_text`。它不能解析该修改的 J/C/π
+   含义，不能新增节点、分配/改写 handle、重排声明、更新引用、补类型、补 relation 或选择 operator。
 3. CandidateCheck/ReplayCheck 仍只诊断，不生成 patch，不签发证书；正式 Runner 必须独立重跑
    Decode/TypeCheck/Replay ingress/Gates。
 4. Replay 可见性保持为当前 case 的 `J + MaskC(C) + pi + U_f` 与自己的当前 source；不得看到
    Source、Harness、Gate、prior Replay、其他 candidate 或历史 runtime facts。
 5. 多 action、checkpoint、rollback 和 session-local semantic ledger 全部 proof-irrelevant，不进入
    `(J,C,pi)`、证书谓词或 production backend 输入。
-6. 一个 branch 的 Lift conversation 可以跨 TypeCheck-valid Gate1 round 持续存在；Replay
+6. 一个 branch 的 Lift conversation 与隔离 workspace 可以跨 TypeCheck-valid Gate1 round 持续存在；Replay
    conversation、workspace 与 source 必须每个 formal round 全新，且仍只见当前
    `J + MaskC(C) + pi + U_f`。持久化的是 Lift 的 source-aware 工作上下文，不是第四个 artifact。
 
@@ -75,6 +75,8 @@ v124 staged pilot 给出了三类互相独立的反例：
   exact rollback，预算耗尽时只允许回退到该显式 committed choice；
 - 用直接 submit action 替代 stdout marker；准确记录 time-to-first-valid、model/provider calls、
   check calls、commit retention、wall time 与 Gate1 frontier；
+- 像 Codex 一样把 owner 的文件视为持续状态，允许 LLM-authored exact-text patch，并对旧的大型 tool
+  arguments/observations 做 deterministic hash-receipt transport compaction；
 - time-governed Agentic Lift 与 formal Gate1 round 分离：一次 branch-owner session 可多次调用
   CandidateCheck，
   但最终 artifact 和正式 Gate1 round 仍按现有 Runner 计数。
@@ -127,7 +129,8 @@ commit 必须绑定 checker PASS 的同一字节 digest。rollback 只能恢复�
 - Lift 首次 bootstrap 后可同轮读取 Source、Harness、syntax-only outline 与允许的 feedback；Replay
   可同轮读取 packet overview、ABI、graph 与 realization；
 - provider 不支持 server-side conversation 时仍保持完整审计历史，但通过减少模型轮数控制累计
-  context；不得用截断语义输入换速度；
+  context；API packet 可压缩已落盘、可重读的旧 tool payload，但不得总结或截断仍无其他权威副本的
+  语义输入；完整 trajectory 保留；
 - 不用 `step_limit`、CandidateCheck 次数或普通 tool-call 数作为能力预算和停止条件。默认只以
   branch/session 墙钟、provider cost/transport safety、sandbox 资源与正式 `K` 约束；调用和 check
   次数全部记录为 telemetry。per-response 最多四个只读 call 只是工具 envelope/原子执行约束，不是
@@ -137,6 +140,11 @@ commit 必须绑定 checker PASS 的同一字节 digest。rollback 只能恢复�
   Gate2 信息带入上下文；
 - 后续只有在 current provider/relay 证明支持且 receipt 可闭合时，才实验 previous-response/session
   transport；不得把 provider 隐式状态变成认证输入。
+- 正常候选交付不再强制 validate→CandidateCheck→commit→submit 四轮；owner 直接 submit，submission
+  在同一 action 内执行 preflight，FAIL 才返回短诊断。commit 只服务于 owner 明确要继续审查 PASS
+  candidate 的 conditional fallback。
+- owner 总 active wall time 与单 provider request timeout 分离；当前分别为 3600 秒与 900 秒。
+  transient transport failure 仍有有界 retry，timeout 自身不连续重烧。
 
 ### P3：Codex-level engine A/B
 
@@ -173,14 +181,27 @@ formal Gate1 round。内部 model/tool/check 次数不设低次数型能力上�
 ## 2026-07-27 实施进度
 
 exact-byte transaction、direct submit、原子 multi-read 与 branch-local persistent conversation 已形成
-可执行实现；任务仍为“执行中”，因为三核 fresh B pilot 尚未给出能力证据：
+第一版实现。首轮 B1 三核 pilot 随后给出反证：Linear、Flash forward、GroupNorm 都已分别写出约
+1567/3298/1979 行且 static-schema PASS 的 candidate，但 19 分钟后仍停在首次 Lift、formal Gate1=0。
+该运行被主动终止并保留在 `/tmp/intentir-scrc-task12-b-pilot-20260727-nafH3Q`，不计语义或 Gate1
+失败。它证明只保留 conversation 仍没有学到 Codex 的低摩擦文件/上下文循环。
 
-- `single` Lift 现在在同一 adapter/branch 内保留一个 owner session id 与完整可审计 message history；
-  每次调用仍创建 fresh 受限 workspace，Runner 将 TypeCheck/Gate1 的 closed feedback 作为真实 user
-  continuation 追加给原 conversation。旧 staged planner/builder/reviewer 仅保留为 v124 对照入口；
-- `intentir.lift-knowledge.v45` 默认 `step_limit=0`、CandidateCheck count limit 0 与
+基于该证据，B2 runtime 已实现，任务仍为“执行中”，等待 fresh 三核能力裁决：
+
+- `single` Lift 现在在同一 adapter/branch 内同时保留 owner session id、完整可审计 message history 与
+  同一个 bubblewrap workspace。Runner 只原子刷新 read-only `feedback.json`，当前 candidate 不被历史
+  `previous_artifact` 覆盖；旧 staged planner/builder/reviewer 仅保留为 v124 对照入口；
+- `intentir.lift-knowledge.v46` 默认 `step_limit=0`、CandidateCheck count limit 0 与
   `max_consecutive_format_errors=0`，由每 branch 3600 秒累计 active Lift wall time及 sandbox/provider
-  资源治理。普通 model/tool/check 次数只进 telemetry；
+  资源治理；单 provider request 上限 900 秒，timeout 不重复尝试，其他 transient transport failure
+  最多三次。普通 model/tool/check 次数只进 telemetry；
+- Responses API packet 对超长旧 tool argument 和除最近四项外的旧 tool output 做 deterministic
+  hash/length receipt compaction；原始 trajectory 与 workspace 文件不改，agent 可重新读取；
+- 新增标准 function tool `apply_patch(path,old_text,new_text)`：只允许当前 candidate，要求 old_text
+  唯一出现，原子写入并使旧 CandidateCheck PASS 失效。runtime 不解析 JSON、不分配 handle、不更新
+  引用、不生成或推荐任何字段；
+- 正常快路径改为直接 `intentir_lift_submit`，由 submission 在同一 action 内 preflight 并在 PASS 时
+  终止；显式 validator/check/commit 仍可用，但不再强制制造四个 xhigh provider round；
 - active single MiniSWE 路径的 pre-Replay rejection cap 默认 `0 = owner-time governed`。owner 时间耗尽
   产生 terminal resource signal，Runner 收敛为可审计 `NO_CLOSURE`，不会无限续调；只有
   TypeCheck-valid 候选进入 fresh Replay/Gate1 后才消耗 `K=3`；
@@ -196,12 +217,12 @@ exact-byte transaction、direct submit、原子 multi-read 与 branch-local pers
   1800 秒 wall time治理，check/inspect/model-call 次数不设低次数型 capability cutoff。Replay receipt
   绑定 multi-action 配置、实际 termination status 与 transaction audit；所有
   checkpoint 仍须经过后续正式 ingress/TypeCheck/Gates；
-- 本轮持久 owner、time-governed checks、terminal resource signal、latest-candidate continuation、fresh
-  Replay 及相邻 Runner/Batch/CLI 回归共 `196 passed`；上一底座回归为 `191 passed`。尚无三核 B 的
+- B2 的 persistent workspace、input immutability、exact-text patch、history compaction、direct submit、
+  timeout/retry 配置，以及相邻 Runner/Replay/Batch/CLI/provider 回归共 `209 passed`。尚无 B2 三核的
   formal-round、累计 input、wall-time、first-valid、TypeCheck 或 Gate1-frontier 证据。
 
-下一动作是完成相邻 Batch/CLI/spec 回归，然后运行 Linear、Flash forward、GroupNorm 的 fresh B
-pilot；若 B 不满足验收 4，继续 P3 实现隔离 engine C，而不是将 Task 12 标记完成。
+下一动作是运行 Linear、Flash forward、GroupNorm 的 fresh B2 pilot；若 B2 不满足验收 4，继续 P3
+实现隔离 engine C，而不是将 Task 12 标记完成。
 
 ## 非目标
 

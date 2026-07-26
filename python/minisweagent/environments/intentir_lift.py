@@ -32,6 +32,7 @@ INTENTIR_CANDIDATE_CHECK = "intentir_candidate_check"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 LIFT_TRANSACTION_PROTOCOL = "intentir.lift-transaction.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
+APPLY_PATCH_PROTOCOL = "intentir.agent-apply-patch.v1"
 _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
     {
         "feedback",
@@ -131,6 +132,60 @@ class IntentIRLiftWorkspace:
             else:
                 destination.write_text(content, encoding="utf-8")
         return workspace
+
+    def refresh_inputs(
+        self,
+        files: Mapping[str, str | bytes],
+        *,
+        mutable_paths: frozenset[str] = frozenset({"feedback.json"}),
+    ) -> None:
+        """Refresh closed host feedback while preserving one owner's workspace.
+
+        Every non-mutable input must remain byte-identical.  The candidate and
+        scratch files are not inspected or edited here.
+        """
+
+        expected: dict[str, bytes] = {}
+        for relative, content in files.items():
+            path = Path(relative)
+            if path.is_absolute() or ".." in path.parts or not path.parts:
+                raise ValueError(f"unsafe Lift input path: {relative!r}")
+            expected[path.as_posix()] = (
+                content if isinstance(content, bytes) else content.encode("utf-8")
+            )
+        existing: dict[str, Path] = {}
+        for path in self.input_dir.rglob("*"):
+            if path.is_dir() and not path.is_symlink():
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Lift input tree contains a non-regular entry")
+            existing[path.relative_to(self.input_dir).as_posix()] = path
+        if set(existing) != set(expected):
+            raise ValueError("persistent Lift input file set changed")
+        for relative, expected_bytes in expected.items():
+            destination = existing[relative]
+            current = destination.read_bytes()
+            if relative not in mutable_paths:
+                if current != expected_bytes:
+                    raise ValueError(
+                        f"persistent Lift immutable input changed: {relative}"
+                    )
+                continue
+            if current == expected_bytes:
+                continue
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{destination.name}-refresh-",
+                dir=destination.parent,
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(expected_bytes)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     @property
     def candidate_path(self) -> Path:
@@ -271,6 +326,7 @@ class IntentIRLiftEnvironment:
         self._candidate_commit_audit: list[dict[str, Any]] = []
         self._candidate_rollback_count = 0
         self._candidate_fallback_audit: list[dict[str, Any]] = []
+        self._apply_patch_audit: list[dict[str, Any]] = []
         self._multi_action_rejections = 0
         self._validate_paths()
         self._probe()
@@ -431,6 +487,92 @@ class IntentIRLiftEnvironment:
         return self._transaction_output(
             action="rollback", status="pass", candidate_bytes=candidate_bytes
         )
+
+    def _execute_apply_patch(self, action: Mapping[str, Any]) -> dict[str, Any]:
+        """Apply one exact LLM-authored text replacement without parsing J/C/pi."""
+
+        path = action.get("path")
+        old_text = action.get("old_text")
+        new_text = action.get("new_text")
+        if (
+            path != "/output/candidate.json"
+            or not isinstance(old_text, str)
+            or not old_text
+            or not isinstance(new_text, str)
+        ):
+            result = {
+                "protocol": APPLY_PATCH_PROTOCOL,
+                "status": "fail",
+                "diagnostic": (
+                    "apply_patch requires /output/candidate.json, one non-empty "
+                    "old_text string, and one new_text string"
+                ),
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        candidate_path = self.config.output_dir / "candidate.json"
+        try:
+            if candidate_path.is_symlink() or not candidate_path.is_file():
+                raise ValueError("candidate.json must already be a regular file")
+            before = candidate_path.read_bytes()
+            if not 1 <= len(before) <= MAX_CANDIDATE_BYTES:
+                raise ValueError("candidate size is outside the allowed range")
+            before_text = before.decode("utf-8")
+            occurrences = before_text.count(old_text)
+            if occurrences != 1:
+                raise ValueError(
+                    f"old_text must occur exactly once; observed {occurrences}"
+                )
+            after_text = before_text.replace(old_text, new_text, 1)
+            after = after_text.encode("utf-8")
+            if not 1 <= len(after) <= MAX_CANDIDATE_BYTES:
+                raise ValueError("patched candidate size is outside the allowed range")
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".candidate-patch-",
+                dir=self.config.output_dir,
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(after)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, candidate_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except Exception as exc:
+            result = {
+                "protocol": APPLY_PATCH_PROTOCOL,
+                "status": "fail",
+                "diagnostic": f"{type(exc).__name__}: {exc}",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        before_sha256 = hashlib.sha256(before).hexdigest()
+        after_sha256 = hashlib.sha256(after).hexdigest()
+        self._candidate_check_passed_bytes = None
+        receipt = {
+            "protocol": APPLY_PATCH_PROTOCOL,
+            "status": "pass",
+            "path": path,
+            "before_sha256": before_sha256,
+            "after_sha256": after_sha256,
+            "before_bytes": len(before),
+            "after_bytes": len(after),
+            "authority": "exact LLM-authored text replacement; no semantic parsing",
+        }
+        self._apply_patch_audit.append(dict(receipt))
+        return {
+            "output": json.dumps(receipt, sort_keys=True) + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
 
     def activate_committed_fallback(self, terminal_status: str) -> str | None:
         """Restore only bytes the LLM explicitly committed as its fallback choice."""
@@ -811,6 +953,8 @@ class IntentIRLiftEnvironment:
         if cwd not in {"", "/work"}:
             raise ValueError("IntentIR Lift cwd is fixed at /work")
         command = action.get("command", "")
+        if action.get("tool_name") == "apply_patch":
+            return self._execute_apply_patch(action)
         if not isinstance(command, str):
             raise TypeError("Lift shell command must be a string")
         try:
@@ -1184,6 +1328,15 @@ class IntentIRLiftEnvironment:
                     "fallback_count": len(self._candidate_fallback_audit),
                     "fallbacks": list(self._candidate_fallback_audit),
                 },
+                "apply_patch": {
+                    "protocol": APPLY_PATCH_PROTOCOL,
+                    "authority": (
+                        "exact LLM-authored text replacement only; no J/C/pi "
+                        "field is parsed, generated, or inferred"
+                    ),
+                    "calls": len(self._apply_patch_audit),
+                    "receipts": list(self._apply_patch_audit),
+                },
                 "multi_action_policy": {
                     "protocol": MULTI_ACTION_PROTOCOL,
                     "max_actions": 4,
@@ -1199,6 +1352,7 @@ class IntentIRLiftEnvironment:
 
 
 __all__ = [
+    "APPLY_PATCH_PROTOCOL",
     "CANDIDATE_CHECK_PROTOCOL",
     "INTENTIR_CANDIDATE_COMMIT",
     "INTENTIR_LIFT_SUBMIT",

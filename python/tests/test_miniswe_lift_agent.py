@@ -53,6 +53,7 @@ from minisweagent.config.intentir_context_query import (
     _source_outline,
 )
 from minisweagent.environments.intentir_lift import (
+    APPLY_PATCH_PROTOCOL,
     CANDIDATE_CHECK_PROTOCOL,
     INTENTIR_CANDIDATE_COMMIT,
     INTENTIR_CANDIDATE_CHECK,
@@ -194,7 +195,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v45"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v46"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -219,6 +220,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     )
     assert "intentir_candidate_commit /output/candidate.json" in files["README.md"]
     assert "intentir_lift_submit /output/candidate.json" in files["README.md"]
+    assert "`apply_patch`" in files["README.md"]
+    assert "persistent workspace" in files["README.md"]
     readme = " ".join(files["README.md"].split())
     assert "calls are audited telemetry" in readme
     assert "active wall time" in readme
@@ -324,6 +327,30 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
     assert '"candidate_copied_to_output": true' in observation
     assert '"feedback_kind": "gate1"' in observation
     assert json.loads((output_root / "candidate.json").read_text()) == previous
+
+
+def test_context_bootstrap_never_overwrites_persistent_owner_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    output_root.mkdir()
+    retained = {"schema": "retained", "j": {}, "c": {}, "pi": {}}
+    previous = {"schema": "feedback", "j": {}, "c": {}, "pi": {}}
+    (output_root / "candidate.json").write_text(json.dumps(retained))
+    (input_root / "feedback.json").write_text(
+        json.dumps({"failure_kind": "gate1", "previous_artifact": previous})
+    )
+    (input_root / "source.py").write_text("def source():\n    pass\n")
+    (input_root / "harness_view.json").write_text("{}\n")
+
+    _bootstrap(input_root, output_root)
+
+    observation = capsys.readouterr().out
+    assert '"candidate_already_present": true' in observation
+    assert '"candidate_copied_to_output": false' in observation
+    assert json.loads((output_root / "candidate.json").read_text()) == retained
 
 
 def test_dataflow_region_feedback_routes_agent_to_lifetime_knowledge(
@@ -1135,6 +1162,66 @@ def test_staged_lift_uses_three_fresh_llm_contexts_and_opaque_plan() -> None:
     } == {"planner", "builder", "reviewer"}
 
 
+def test_apply_patch_is_exact_atomic_and_invalidates_prior_check() -> None:
+    workspace = _workspace()
+    workspace.candidate_path.write_text('{"value": "before"}\n', encoding="utf-8")
+
+    def checker(_candidate_text: str) -> dict:
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        checked = environment.execute(
+            {
+                "command": "intentir_candidate_check /output/candidate.json",
+            }
+        )
+        assert checked["returncode"] == 0
+        patched = environment.execute(
+            {
+                "tool_name": "apply_patch",
+                "path": "/output/candidate.json",
+                "old_text": '"before"',
+                "new_text": '"after"',
+            }
+        )
+        receipt = json.loads(patched["output"])
+        assert patched["returncode"] == 0
+        assert receipt["protocol"] == APPLY_PATCH_PROTOCOL
+        assert receipt["status"] == "pass"
+        assert json.loads(workspace.candidate_path.read_text()) == {"value": "after"}
+        commit = environment.execute(
+            {
+                "command": "intentir_candidate_commit /output/candidate.json",
+            }
+        )
+        assert commit["returncode"] == 1
+        duplicate = environment.execute(
+            {
+                "tool_name": "apply_patch",
+                "path": "/output/candidate.json",
+                "old_text": '"',
+                "new_text": "'",
+            }
+        )
+        assert duplicate["returncode"] == 1
+        assert "exactly once" in duplicate["output"]
+        audit = environment.serialize()["info"]["apply_patch"]
+        assert audit["calls"] == 1
+        assert "no J/C/pi field is parsed" in audit["authority"]
+    finally:
+        workspace.cleanup()
+
+
 def test_candidate_check_is_bounded_closed_and_diagnostics_only() -> None:
     workspace = _workspace()
     workspace.candidate_path.write_text('{"candidate": 1}\n', encoding="utf-8")
@@ -1726,6 +1813,31 @@ def test_five_candidate_workspaces_are_concurrently_isolated() -> None:
     assert all(not root.exists() for root, _value in outcomes)
 
 
+def test_persistent_workspace_refreshes_only_feedback_and_retains_candidate() -> None:
+    files = _real_lift_input_files()
+    workspace = IntentIRLiftWorkspace.create(files)
+    retained = b'{"schema":"owned","j":{},"c":{},"pi":{}}\n'
+    workspace.candidate_path.write_bytes(retained)
+    try:
+        refreshed = dict(files)
+        refreshed["feedback.json"] = json.dumps(
+            {"failure_kind": "gate1", "diagnostics": {"kind": "closed"}}
+        )
+        workspace.refresh_inputs(refreshed)
+
+        assert workspace.candidate_path.read_bytes() == retained
+        assert json.loads((workspace.input_dir / "feedback.json").read_text())[
+            "failure_kind"
+        ] == "gate1"
+
+        changed_source = dict(refreshed)
+        changed_source["source.py"] += "\n# drift\n"
+        with pytest.raises(ValueError, match="immutable input changed"):
+            workspace.refresh_inputs(changed_source)
+    finally:
+        workspace.cleanup()
+
+
 def test_step_limit_is_one_candidate_failure_not_an_internal_relift() -> None:
     workspace = _workspace()
     model = _ScriptedModel(["true"])
@@ -1859,6 +1971,88 @@ def test_parser_accepts_four_ordered_independent_tool_calls_when_enabled() -> No
     ]
 
 
+def test_parser_accepts_exact_text_apply_patch_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "apply_patch",
+        "call_id": "call-patch",
+        "arguments": json.dumps(
+            {
+                "path": "/output/candidate.json",
+                "old_text": '"n0"',
+                "new_text": '"n1"',
+            }
+        ),
+    }
+
+    with pytest.raises(FormatError) as rejected:
+        parse_toolcall_actions_response(
+            [call],
+            format_error_template="{{ error }}",
+        )
+    assert "Unknown tool" in rejected.value.messages[0]["content"][0]["text"]
+
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_apply_patch_tool=True,
+    ) == [
+        {
+            "tool_name": "apply_patch",
+            "path": "/output/candidate.json",
+            "old_text": '"n0"',
+            "new_text": '"n1"',
+            "tool_call_id": "call-patch",
+        }
+    ]
+
+
+def test_response_model_compacts_transport_history_without_mutating_trajectory() -> None:
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        compact_tool_history=True,
+        compact_tool_arguments_over_chars=256,
+        compact_tool_outputs_keep_recent=1,
+        enable_apply_patch_tool=True,
+        cost_tracking="ignore_errors",
+    )
+    messages = [
+        {"role": "system", "content": "system"},
+        {
+            "object": "response",
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "bash",
+                    "call_id": "write-call",
+                    "arguments": json.dumps({"command": "x" * 5000}),
+                }
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "write-call",
+            "output": "old output " * 1000,
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "recent-call",
+            "output": "latest closed diagnostic",
+        },
+    ]
+    original = copy.deepcopy(messages)
+
+    prepared = model._prepare_messages_for_api(messages)
+
+    compacted_command = json.loads(prepared[1]["arguments"])["command"]
+    assert "intentir.agent-history-compaction.v1" in compacted_command
+    assert "intentir.agent-history-compaction.v1" in prepared[2]["output"]
+    assert prepared[3]["output"] == "latest closed diagnostic"
+    assert messages == original
+    assert model.history_compaction["items"] == 2
+    assert model.history_compaction["chars"] > 0
+
+
 def test_model_serialization_redacts_provider_key() -> None:
     model = create_intentir_lift_model(
         model_name="test",
@@ -1871,8 +2065,11 @@ def test_model_serialization_redacts_provider_key() -> None:
     assert "not-for-evidence" not in serialized
     assert "<redacted>" in serialized
     assert model.config.retry_attempts == 3
+    assert model.config.retry_timeouts is False
     assert model.config.use_global_model_stats is False
     assert model.config.max_tool_calls_per_response == 4
+    assert model.config.enable_apply_patch_tool is True
+    assert model.config.compact_tool_history is True
     assert model.config.model_kwargs["num_retries"] == 0
 
 
@@ -1960,6 +2157,7 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
     assert request["body"]["reasoning"] == {"effort": "xhigh"}
     assert request["body"]["parallel_tool_calls"] is True
     assert request["body"]["tools"][0]["name"] == "bash"
+    assert request["body"]["tools"][1]["name"] == "apply_patch"
     assert GLOBAL_MODEL_STATS.n_calls == global_calls_before
 
 
@@ -2544,7 +2742,7 @@ def test_decode_ignores_json_object_key_order_for_domain_map() -> None:
     ]
 
 
-def test_adapter_keeps_one_owner_context_across_fresh_workspaces(monkeypatch) -> None:
+def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     artifact = make_copy_artifact()
     captured: list[tuple[Path, dict]] = []
 
@@ -2566,6 +2764,10 @@ def test_adapter_keeps_one_owner_context_across_fresh_workspaces(monkeypatch) ->
             (workspace.input_dir / "feedback.json").read_text()
         )
         captured.append((workspace.root, feedback))
+        if workspace.candidate_path.exists():
+            assert json.loads(workspace.candidate_path.read_text()) == artifact.to_json()
+        else:
+            workspace.candidate_path.write_text(json.dumps(artifact.to_json()))
         assert candidate_checker(json.dumps(artifact.to_json()))["status"] == "pass"
         response = {
             "object": "response",
@@ -2629,17 +2831,22 @@ def test_adapter_keeps_one_owner_context_across_fresh_workspaces(monkeypatch) ->
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0
-    assert captured[0][0] != captured[1][0]
+    assert first.metadata["fresh_workspace"] is True
+    assert second.metadata["fresh_workspace"] is False
+    assert first.metadata["persistent_workspace"] is True
+    assert captured[0][0] == captured[1][0]
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "gate1"
     assert captured[1][1]["previous_artifact"] == artifact.to_json()
-    assert all(not path.exists() for path, _feedback in captured)
+    assert captured[0][0].exists()
     assert len(adapter.records) == 2
     assert adapter.records[0].extraction is not None
     assert adapter.records[0].extraction.provenance.trajectory is not None
     assert "secret" not in json.dumps(
         adapter.records[0].extraction.provenance.trajectory
     )
+    adapter.close()
+    assert all(not path.exists() for path, _feedback in captured)
 
 
 def test_owner_active_wall_time_is_a_terminal_resource_signal() -> None:
@@ -2863,6 +3070,8 @@ def test_owner_continuation_keeps_adjacent_complete_llm_draft(
                 "worker exhausted after writing a complete draft",
                 result=result,
             )
+        assert json.loads(workspace.candidate_path.read_text()) == draft
+        workspace.candidate_path.write_text(json.dumps(artifact.to_json()))
         return IntentIRLiftRunResult(
             json.dumps(artifact.to_json()),
             _fake_agent_trajectory(
@@ -2913,10 +3122,13 @@ def test_owner_continuation_keeps_adjacent_complete_llm_draft(
         "sha256"
     ]
     assert adapter.records[0].continuation_candidate == draft
+    assert len(set(roots)) == 1
+    assert roots[0].exists()
+    adapter.close()
     assert all(not root.exists() for root in roots)
 
 
-def test_parser_rejection_returns_candidate_to_same_owner_in_fresh_workspace(
+def test_parser_rejection_returns_candidate_to_same_owner_workspace(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -2945,6 +3157,7 @@ def test_parser_rejection_returns_candidate_to_same_owner_in_fresh_workspace(
         )
         captured.append((workspace.root, feedback))
         candidate = invalid if len(captured) == 1 else artifact.to_json()
+        workspace.candidate_path.write_text(json.dumps(candidate))
         return IntentIRLiftRunResult(
             json.dumps(candidate),
             _fake_agent_trajectory(
@@ -2989,7 +3202,9 @@ def test_parser_rejection_returns_candidate_to_same_owner_in_fresh_workspace(
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "lift"
     assert captured[1][1]["previous_artifact"] == invalid
-    assert captured[0][0] != captured[1][0]
+    assert captured[0][0] == captured[1][0]
+    assert captured[0][0].exists()
+    adapter.close()
     assert all(not root.exists() for root, _feedback in captured)
 
 

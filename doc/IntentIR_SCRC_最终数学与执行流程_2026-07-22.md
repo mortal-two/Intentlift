@@ -490,7 +490,11 @@ time；每 action 的 CPU/output/workspace 限制、provider transport/cost safe
 round 预算仍然有效。receipt 记录每次 `explicit`/`submission` calls/evaluations、model/physical calls、
 active elapsed 与 terminal reason。若一次 pause 前未提交候选，同一 owner 的 continuation 最多接收
 最后一次实际 source-free evaluation 的 20 条 `rule_code/path` 摘要；它保留自己的 Source
-conversation，上一完整 draft 由 fresh workspace 原样 bootstrap，但没有 observed hidden value、fixed patch 或 sibling 信息。该摘要与
+conversation 与受限 workspace，host 原子刷新 feedback 而不覆盖当前完整 draft；没有 observed hidden
+value、fixed semantic patch 或 sibling 信息。单次 provider request 上限为 900 秒，timeout 不连续重试，
+但 transient transport failure 仍有有界恢复。旧大型 tool argument/observation 可在 API packet 中
+确定性替换为 hash/长度 receipt，完整 trajectory 与 workspace 文件保留。LLM 可用 exact-text patch
+原子应用自己明确给出的唯一旧/新字符串；runtime 不解析 JSON 语义、不推断字段。该摘要与
 submission `PASS` 都不进入证书，也不授权固定代码修补 `(J,C,π)`。
 
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：

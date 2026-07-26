@@ -199,8 +199,12 @@ receipt 仍按 `explicit`/`submission` trigger 记录 calls/evaluations，并记
 elapsed 与 terminal reason。submission preflight 的 `PASS` 仍非认证，正式 Runner 必须重跑
 TypeCheck。若一次 pause 前没有提交候选，只允许把最后一次**实际执行**的 source-free checker
 诊断中最多 20 条 `rule_code/path` 摘要追加给同一 branch owner continuation；owner 自己的 Source
-conversation 保留，上一完整 draft 由新 workspace 原样 bootstrap，但不得新增 observed hidden value、fixed patch 或 sibling
-信息。这个反馈只是延续已有机械拒绝，不给 Harness/runner 生成 J/C/π 的权限。Gate1 diff 也只回到
+conversation 与受限 workspace 均保留，host 只原子刷新 closed `feedback.json`，当前完整 draft 不被
+历史 artifact 覆盖；不得新增 observed hidden value、fixed semantic patch 或 sibling 信息。旧的大型
+tool argument/observation 可在下一 model packet 中替换为仅含 hash/长度的 deterministic receipt，精确
+内容仍从同一 workspace 重读。LLM 可以用通用 exact-text patch 修改自己明确给出的唯一字符串片段，
+但固定代码不得解析 J/C/π、分配 handle、推断字段或返回 corrected patch。这个反馈只是延续已有机械
+拒绝，不给 Harness/runner 生成 J/C/π 的权限。Gate1 diff 也只回到
 该 branch 的同一 Lift owner；Replay 每个 formal round 仍全新且不可见该 conversation。
 
 `ctx` 精确等于该 agent 原本已经获准读取的匿名机械 Harness compiler view 与公共协议版本；
@@ -342,7 +346,7 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
 或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的
 membership oracle。
-当前 Lift knowledge v45 继承 v42 对 `fill_value` 的要求：它是 Source 对应 load 的实际 `other`，
+当前 Lift knowledge v46 继承 v42 对 `fill_value` 的要求：它是 Source 对应 load 的实际 `other`，
 不是由 C tile/role 或 downstream neutral value 重写的量；MiniSWE Replay v6 继承 v4 的 typed rank/reshape fidelity
 同样不读取 C value 来选择 shape。两项只约束 LLM authoring，不转移任何语义所有权给 C 或 fixed code。
 Lift/schema/preflight 对应升为 `intentir.lift-knowledge.v21`：LLM 仍须完整选择至少一个 authored

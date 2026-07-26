@@ -24,6 +24,35 @@ BASH_TOOL_RESPONSE_API = {
     },
 }
 
+APPLY_PATCH_TOOL_RESPONSE_API = {
+    "type": "function",
+    "name": "apply_patch",
+    "description": (
+        "Atomically replace one exact text span in the existing candidate file. "
+        "The caller supplies both old and new text; the tool never infers content."
+    ),
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "path": {
+                "type": "string",
+                "enum": ["/output/candidate.json"],
+                "description": "The existing Lift candidate to patch",
+            },
+            "old_text": {
+                "type": "string",
+                "description": "A non-empty exact span that must occur once",
+            },
+            "new_text": {
+                "type": "string",
+                "description": "The exact replacement text authored by the model",
+            },
+        },
+        "required": ["path", "old_text", "new_text"],
+    },
+}
+
 
 def _format_error_message(error_text: str) -> dict:
     """Create a FormatError message in Responses API format."""
@@ -61,6 +90,7 @@ def parse_toolcall_actions_response(
     format_error_template: str,
     template_kwargs: dict | None = None,
     max_tool_calls: int = 1,
+    enable_apply_patch_tool: bool = False,
 ) -> list[dict]:
     """Parse tool calls from a Responses API response output.
 
@@ -113,20 +143,46 @@ def parse_toolcall_actions_response(
             args = json.loads(tool_call.get("arguments", "{}"))
         except Exception as e:
             error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.get("name") != "bash":
-            error_msg += f"Unknown tool '{tool_call.get('name')}'."
-        if (
-            not isinstance(args, dict)
-            or "command" not in args
-            or not isinstance(args.get("command"), str)
-        ):
-            error_msg += "Missing or non-string 'command' argument in bash tool call."
+        tool_name = tool_call.get("name")
+        if tool_name == "bash":
+            if (
+                not isinstance(args, dict)
+                or "command" not in args
+                or not isinstance(args.get("command"), str)
+            ):
+                error_msg += "Missing or non-string 'command' argument in bash tool call."
+        elif tool_name == "apply_patch" and enable_apply_patch_tool:
+            if (
+                not isinstance(args, dict)
+                or set(args) != {"path", "old_text", "new_text"}
+                or not all(
+                    isinstance(args.get(key), str)
+                    for key in ("path", "old_text", "new_text")
+                )
+            ):
+                error_msg += (
+                    "apply_patch requires exactly string path, old_text, and new_text."
+                )
+        else:
+            error_msg += f"Unknown tool '{tool_name}'."
         if error_msg:
             error_text = Template(format_error_template, undefined=StrictUndefined).render(
                 error=error_msg.strip(), actions=[], has_tool_calls=True, **template_kwargs
             )
             raise FormatError(_format_error_message(error_text))
-        actions.append({"command": args["command"], "tool_call_id": tool_call.get("call_id") or tool_call.get("id")})
+        tool_call_id = tool_call.get("call_id") or tool_call.get("id")
+        if tool_name == "bash":
+            actions.append({"command": args["command"], "tool_call_id": tool_call_id})
+        else:
+            actions.append(
+                {
+                    "tool_name": "apply_patch",
+                    "path": args["path"],
+                    "old_text": args["old_text"],
+                    "new_text": args["new_text"],
+                    "tool_call_id": tool_call_id,
+                }
+            )
     return actions
 
 
