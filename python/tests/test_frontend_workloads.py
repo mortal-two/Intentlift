@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
 
-from intentir.extraction.lifters.scrc import prepare_scrc_lift
+from intentir.extraction.lifters.scrc import (
+    check_scrc_lift_candidate,
+    decode_scrc_lift_artifact,
+    prepare_scrc_lift,
+    scrc_candidate_check_context,
+)
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.ir.model import IntentFunction
 from intentir.verify.frontend_workloads import (
@@ -26,6 +32,7 @@ from intentir.verify.gate1.model import (
     SignatureParameter,
 )
 from intentir.verify.gate1.pi import RealizationWitness
+from intentir.verify.gate1.prompt import build_rewriter_payload
 from intentir.verify.gate1.native_orchestrate import (
     CudaGate1Runner,
     TileLangGate1Runner,
@@ -145,6 +152,14 @@ def test_tilelang_dataset_workload_materializes_real_tir_for_lift() -> None:
     )
     assert request.anonymous_compiler_view is not None
     assert request.anonymous_compiler_view["parameter_order"] == ["p0", "p1", "p2"]
+    view = request.anonymous_compiler_view
+    source_extent = view["grid_contract"][0]
+    assert source_extent.startswith("v")
+    assert [item["shape"] for item in view["arguments"]] == [[4, 16]] * 3
+    assert [item["shape_contract"] for item in view["arguments"]] == [
+        [source_extent, 16]
+    ] * 3
+    assert "M" not in json.dumps(view, sort_keys=True)
 
 
 def test_tilelang_factory_execution_requires_the_pinned_dataset_source() -> None:
@@ -183,6 +198,81 @@ def test_cuda_dataset_workload_preserves_real_generated_source_and_abi() -> None
         "p0", "p1", "p2", "p3"
     ]
     assert request.anonymous_compiler_view["grid_contract"] == ["p3", "1", "1"]
+    assert [
+        item["shape_contract"]
+        for item in request.anonymous_compiler_view["arguments"][:3]
+    ] == [["p3", 16]] * 3
+
+
+def test_dataset_shape_contract_blocks_dynamic_to_static_specialization() -> None:
+    prepared = prepare_frontend_dataset_workload(
+        FRONTEND_DATASET_HARNESSES["tilelang:add2d"]
+    )
+    request = prepare_scrc_lift(
+        prepared.source_slice.code,
+        compiler_view=prepared.compiler_view,
+        source_symbol=prepared.source_slice.function,
+        frontend="tilelang",
+    )
+    dynamic = _add_artifact(cuda=False)
+
+    accepted = decode_scrc_lift_artifact(json.dumps(dynamic.to_json()), request)
+    assert accepted.j.intent.inputs[0].shape == ["x0", 16]
+
+    specialized = dynamic.to_json()
+    function = specialized["j"]["intent"]["intent_function"]
+    for tensor in [*function["inputs"], *function["outputs"]]:
+        tensor["shape"][0] = 4
+    checked = check_scrc_lift_candidate(
+        json.dumps(specialized), scrc_candidate_check_context(request)
+    )
+
+    assert checked["status"] == "fail"
+    assert any(
+        item["rule_code"] == "construction_shape_contract_mismatch"
+        for item in checked["diagnostics"]
+    )
+    replay_packet = build_rewriter_payload(dynamic)
+    assert "shape_contract" not in json.dumps(replay_packet, sort_keys=True)
+    assert request.anonymous_compiler_view is not None
+    anonymous_source_extent = request.anonymous_compiler_view["grid_contract"][0]
+    assert anonymous_source_extent not in json.dumps(replay_packet, sort_keys=True)
+
+
+def test_static_source_shape_contract_cannot_be_generalized_by_current_value() -> None:
+    prepared = prepare_frontend_dataset_workload(
+        FRONTEND_DATASET_HARNESSES["tilelang:add2d"]
+    )
+    static_view = replace(
+        prepared.compiler_view,
+        arguments=tuple(
+            replace(argument, shape_contract=(4, 16))
+            for argument in prepared.compiler_view.arguments
+        ),
+    )
+    request = prepare_scrc_lift(
+        prepared.source_slice.code,
+        compiler_view=static_view,
+        source_symbol=prepared.source_slice.function,
+        frontend="tilelang",
+    )
+    static_payload = _add_artifact(cuda=False).to_json()
+    function = static_payload["j"]["intent"]["intent_function"]
+    for tensor in [*function["inputs"], *function["outputs"]]:
+        tensor["shape"][0] = 4
+
+    accepted = decode_scrc_lift_artifact(json.dumps(static_payload), request)
+    assert accepted.j.intent.inputs[0].shape == [4, 16]
+
+    generalized = _add_artifact(cuda=False)
+    checked = check_scrc_lift_candidate(
+        json.dumps(generalized.to_json()), scrc_candidate_check_context(request)
+    )
+    assert checked["status"] == "fail"
+    assert any(
+        item["rule_code"] == "construction_shape_contract_mismatch"
+        for item in checked["diagnostics"]
+    )
 
 
 def test_native_gate2_suite_uses_one_dataset_binding_for_both_frontends() -> None:

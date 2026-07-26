@@ -214,6 +214,7 @@ class SCRCCompilerArgument:
     shape: tuple[int, ...] = ()
     value: bool | int | float | None = None
     mode: str | None = None
+    shape_contract: tuple[int | str, ...] | None = None
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
@@ -227,6 +228,25 @@ class SCRCCompilerArgument:
         shape = tuple(int(dim) for dim in self.shape)
         if any(dim < 0 for dim in shape):
             raise ValueError("compiler argument dimensions must be non-negative")
+        shape_contract: tuple[int | str, ...] | None = None
+        if self.shape_contract is not None:
+            normalized_contract: list[int | str] = []
+            for extent in self.shape_contract:
+                if isinstance(extent, bool):
+                    raise TypeError("compiler shape contract cannot contain booleans")
+                if isinstance(extent, int):
+                    if extent < 0:
+                        raise ValueError(
+                            "compiler shape contract dimensions must be non-negative"
+                        )
+                    normalized_contract.append(extent)
+                    continue
+                if not isinstance(extent, str) or not extent.isidentifier():
+                    raise ValueError(
+                        "compiler shape contract extents must be integers or identifiers"
+                    )
+                normalized_contract.append(extent)
+            shape_contract = tuple(normalized_contract)
         if self.kind == "tensor" and self.value is not None:
             raise ValueError("tensor compiler argument forbids scalar value")
         if self.kind == "scalar" and (shape or self.value is None):
@@ -235,6 +255,18 @@ class SCRCCompilerArgument:
             raise ValueError("none compiler argument forbids shape/value")
         if self.kind == "opaque" and (shape or self.value is not None):
             raise ValueError("opaque compiler argument exposes only its public type")
+        if self.kind != "tensor" and shape_contract is not None:
+            raise ValueError("only tensor compiler arguments admit a shape contract")
+        if self.kind == "tensor" and shape_contract is not None:
+            if len(shape_contract) != len(shape):
+                raise ValueError(
+                    "compiler tensor shape and source shape contract ranks differ"
+                )
+            for concrete, contract in zip(shape, shape_contract, strict=True):
+                if isinstance(contract, int) and concrete != contract:
+                    raise ValueError(
+                        "compiler tensor valuation contradicts a static shape contract"
+                    )
         if self.mode is not None:
             allowed_modes = {
                 "tensor": {"input", "output", "inout"},
@@ -248,6 +280,7 @@ class SCRCCompilerArgument:
                     + ", ".join(sorted(allowed_modes))
                 )
         object.__setattr__(self, "shape", shape)
+        object.__setattr__(self, "shape_contract", shape_contract)
 
     def to_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -257,6 +290,8 @@ class SCRCCompilerArgument:
         }
         if self.kind == "tensor":
             result["shape"] = list(self.shape)
+            if self.shape_contract is not None:
+                result["shape_contract"] = list(self.shape_contract)
         elif self.kind == "scalar":
             result["value"] = self.value
         if self.mode is not None:
@@ -994,6 +1029,25 @@ def _anonymous_compiler_view(
             next_c += 1
         mapping[name] = f"c{next_c}"
         used.add(mapping[name])
+    next_s = 0
+    for argument in view.arguments:
+        for extent in argument.shape_contract or ():
+            if not isinstance(extent, str) or extent in mapping:
+                continue
+            while f"s{next_s}" in used:
+                next_s += 1
+            mapping[extent] = f"s{next_s}"
+            used.add(mapping[extent])
+
+    def anonymous_argument(argument: SCRCCompilerArgument) -> dict[str, Any]:
+        result = {**argument.to_json(), "name": mapping[argument.name]}
+        if argument.shape_contract is not None:
+            result["shape_contract"] = [
+                mapping[extent] if isinstance(extent, str) else extent
+                for extent in argument.shape_contract
+            ]
+        return result
+
     return {
         "schedule_values": {
             mapping[name]: value for name, value in view.schedule_values.items()
@@ -1015,7 +1069,7 @@ def _anonymous_compiler_view(
             for item in view.aliases
         ],
         "arguments": [
-            {**item.to_json(), "name": mapping[item.name]}
+            anonymous_argument(item)
             for item in view.arguments
         ],
         "grid": list(view.grid),
@@ -1099,14 +1153,14 @@ carrier: declare that p* exactly once as kind `opaque`, mode `value`, dtype
 `none`, with null rank/alias_of/logical_ref. It contributes no J tensor, node,
 access, effect, or pi instance; never replace it with a pointer or scalar.
 
-A runtime scalar p* value in harness_compiler_view is only the current Harness
-binding, never permission to specialize J. If all Source uses of that scalar are
-strictly logical extent/index/domain uses, create a symbolic x* dimension, use it
-in every affected J tensor shape, and set the scalar parameter's logical_ref to
-that x*. A scalar that also enters logical arithmetic or boolean dataflow instead
-uses the single rank-0 t* rule above. Symbolic dimensions are type/signature
-handles, not SSA values: never list x* in portable scope definitions/captures or
-storage.
+A runtime scalar p* value is only the current Harness binding, never permission
+to specialize J. Map an extent-only scalar to x* and use it in every affected J
+tensor shape. Tensor `shape` is also only a valuation. In `shape_contract`, an
+integer is Source-static and each anonymous token maps bijectively to one authored
+x*, sharing repeats even when concrete values coincide. A p* token binds its
+carrier to that x* directly or by a Source-required rank-0 t* equality. Contract
+tokens never enter J; fixed code only checks. Symbolic dimensions are not SSA
+values: never list x* in portable scope definitions/captures or storage.
 
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
@@ -1609,6 +1663,11 @@ def _candidate_surface_diagnostics(
                     item for item in values if isinstance(item, Mapping)
                 )
     tensor_names = [item.get("name") for item in tensors]
+    tensors_by_name = {
+        item.get("name"): item
+        for item in tensors
+        if isinstance(item.get("name"), str)
+    }
     if tensor_names and all(isinstance(item, str) for item in tensor_names):
         actual_tensors = list(dict.fromkeys(tensor_names))
         expected_tensors = [f"t{index}" for index in range(len(actual_tensors))]
@@ -1813,6 +1872,40 @@ def _candidate_surface_diagnostics(
                             expected,
                             actual,
                         )
+                shape_contract = argument.get("shape_contract")
+                logical_ref = parameter.get("logical_ref")
+                logical_tensor = tensors_by_name.get(logical_ref)
+                authored_shape = (
+                    logical_tensor.get("shape")
+                    if isinstance(logical_tensor, Mapping)
+                    else None
+                )
+                if (
+                    source_kind == "tensor"
+                    and isinstance(shape_contract, list)
+                    and isinstance(authored_shape, list)
+                    and len(shape_contract) == len(authored_shape)
+                ):
+                    for axis, (contract, extent) in enumerate(
+                        zip(shape_contract, authored_shape, strict=True)
+                    ):
+                        if isinstance(contract, int) and extent != contract:
+                            mismatch(
+                                "construction_shape_contract_mismatch",
+                                f"j.intent.intent_function tensor {logical_ref}.shape[{axis}]",
+                                contract,
+                                extent,
+                            )
+                        elif isinstance(contract, str) and not (
+                            isinstance(extent, str)
+                            and re.fullmatch(r"x[0-9]+", extent)
+                        ):
+                            mismatch(
+                                "construction_shape_contract_mismatch",
+                                f"j.intent.intent_function tensor {logical_ref}.shape[{axis}]",
+                                f"symbolic x* for anonymous Source extent {contract}",
+                                extent,
+                            )
         c = payload.get("c")
         if isinstance(c, Mapping) and c.get("values") != view.get("schedule_values"):
             mismatch(
@@ -2002,6 +2095,8 @@ def _validate_compiler_view(
     }
     dimensions: dict[str, int] = {}
     logical_values: dict[str, Any] = {}
+    contract_dimensions: dict[str, str] = {}
+    dimension_contracts: dict[str, str] = {}
 
     def bind_dimension(name: str, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -2010,12 +2105,55 @@ def _validate_compiler_view(
         if previous != value:
             raise ValueError(f"J symbolic extent {name!r} is inconsistent")
 
-    def bind_shape(declared: list[int | str], actual: list[Any]) -> None:
+    def bind_shape(
+        declared: list[int | str],
+        actual: list[Any],
+        contract: list[int | str] | None,
+    ) -> None:
         if len(declared) != len(actual):
             raise ValueError("J tensor rank differs from trusted compiler view")
-        for expected, extent in zip(declared, actual, strict=True):
+        if contract is not None and len(contract) != len(actual):
+            raise ValueError(
+                "trusted Source shape contract rank differs from compiler valuation"
+            )
+        for axis, (expected, extent) in enumerate(
+            zip(declared, actual, strict=True)
+        ):
             if isinstance(extent, bool) or not isinstance(extent, int):
                 raise ValueError("trusted tensor extent must be an integer")
+            contract_extent = contract[axis] if contract is not None else None
+            if isinstance(contract_extent, int):
+                if extent != contract_extent:
+                    raise ValueError(
+                        "trusted concrete tensor extent differs from its "
+                        "source-static shape contract"
+                    )
+                if expected != contract_extent:
+                    raise ValueError(
+                        "Lift changed a source-static tensor extent"
+                    )
+            elif isinstance(contract_extent, str):
+                if not isinstance(expected, str):
+                    raise ValueError(
+                        "Lift specialized source-symbolic tensor extent "
+                        f"{contract_extent!r} to {expected!r}; author one x* dimension"
+                    )
+                prior_dimension = contract_dimensions.setdefault(
+                    contract_extent, expected
+                )
+                if prior_dimension != expected:
+                    raise ValueError(
+                        "Lift split one source-symbolic tensor extent across "
+                        "multiple J dimensions"
+                    )
+                prior_contract = dimension_contracts.setdefault(
+                    expected, contract_extent
+                )
+                if prior_contract != contract_extent:
+                    raise ValueError(
+                        "Lift merged distinct source-symbolic tensor extents "
+                        "into one J dimension"
+                    )
             if isinstance(expected, int):
                 if expected != extent:
                     raise ValueError(
@@ -2051,6 +2189,7 @@ def _validate_compiler_view(
             bind_shape(
                 j_tensors[parameter.logical_ref].shape,
                 argument["shape"],
+                argument.get("shape_contract"),
             )
         if (
             argument["kind"] == "scalar"
@@ -2068,6 +2207,25 @@ def _validate_compiler_view(
         expected_mode = argument.get("mode")
         if expected_mode is not None and parameter.mode.value != expected_mode:
             raise ValueError("Lift changed a trusted compiler argument mode")
+    value_dimension_pairs = {
+        (item.value_ref, item.dimension_ref)
+        for item in artifact.j.value_dimension_relations
+    }
+    for contract_name, dimension_ref in contract_dimensions.items():
+        parameter = signature.get(contract_name)
+        if parameter is None:
+            continue
+        if parameter.logical_ref == dimension_ref:
+            continue
+        if (
+            parameter.logical_ref in j_tensors
+            and (parameter.logical_ref, dimension_ref) in value_dimension_pairs
+        ):
+            continue
+        raise ValueError(
+            "Lift did not bind the Source shape carrier "
+            f"{contract_name!r} to its authored J dimension {dimension_ref!r}"
+        )
     for name, value in anonymous_view["bound_constexpr_values"].items():
         parameter = signature.get(name)
         if (

@@ -156,6 +156,7 @@ class DatasetRuntimeParameter:
     mode: str
     shape: tuple[int, ...] = ()
     value: bool | int | float | None = None
+    shape_contract: tuple[int | str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.source_name.isidentifier() or not self.semantic_name.isidentifier():
@@ -165,19 +166,49 @@ class DatasetRuntimeParameter:
         if not isinstance(self.dtype, str) or not self.dtype:
             raise ValueError("Dataset parameter dtype must be non-empty")
         shape = tuple(int(value) for value in self.shape)
+        shape_contract: tuple[int | str, ...] = tuple(self.shape_contract)
         if self.kind == "pointer":
             if self.rank != len(shape) or not shape or any(value <= 0 for value in shape):
                 raise ValueError("Dataset pointer shape must match its positive rank")
+            if len(shape_contract) != self.rank:
+                raise ValueError(
+                    "Dataset pointer source shape contract must match its rank"
+                )
+            for extent in shape_contract:
+                if isinstance(extent, bool):
+                    raise TypeError("Dataset source shape contract cannot be boolean")
+                if isinstance(extent, int):
+                    if extent <= 0:
+                        raise ValueError(
+                            "Dataset static source shape extents must be positive"
+                        )
+                elif not isinstance(extent, str) or not extent.isidentifier():
+                    raise ValueError(
+                        "Dataset symbolic source shape extents must be identifiers"
+                    )
             if self.mode not in {"input", "output", "inout"}:
                 raise ValueError("Dataset pointer requires an effect mode")
             if self.value is not None:
                 raise ValueError("Dataset pointer cannot carry a scalar value")
         elif self.kind == "scalar":
-            if self.rank != 0 or shape or self.mode != "value" or self.value is None:
+            if (
+                self.rank != 0
+                or shape
+                or shape_contract
+                or self.mode != "value"
+                or self.value is None
+            ):
                 raise ValueError("Dataset scalar requires one fixed runtime value")
-        elif self.rank != 0 or shape or self.mode != "value" or self.value is not None:
+        elif (
+            self.rank != 0
+            or shape
+            or shape_contract
+            or self.mode != "value"
+            or self.value is not None
+        ):
             raise ValueError("Dataset opaque exposes only its public type")
         object.__setattr__(self, "shape", shape)
+        object.__setattr__(self, "shape_contract", shape_contract)
 
     def frontend_parameter(self) -> FrontendParameter:
         return FrontendParameter(self.kind, self.dtype, self.rank, self.mode)
@@ -190,6 +221,7 @@ class DatasetRuntimeParameter:
                 self.dtype,
                 self.shape,
                 mode=self.mode,
+                shape_contract=self.shape_contract,
             )
         if self.kind == "scalar":
             return SCRCCompilerArgument(
@@ -212,6 +244,7 @@ class DatasetRuntimeParameter:
             "rank": self.rank,
             "mode": self.mode,
             "shape": list(self.shape),
+            "shape_contract": list(self.shape_contract),
             "value": self.value,
         }
 
@@ -339,6 +372,26 @@ def _resolve_shape(raw: Any, dimensions: Mapping[str, int]) -> tuple[int, ...]:
     return tuple(_safe_integer_expression(value, dimensions) for value in raw)
 
 
+def _source_shape_contract(raw: Any) -> tuple[int | str, ...]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise ValueError("Dataset pointer parameter requires shape metadata")
+    result: list[int | str] = []
+    for extent in raw:
+        if isinstance(extent, bool):
+            raise TypeError("Dataset source shape contract cannot contain booleans")
+        if isinstance(extent, int):
+            if extent <= 0:
+                raise ValueError("Dataset static source shape extent must be positive")
+            result.append(extent)
+            continue
+        if not isinstance(extent, str) or not extent.isidentifier():
+            raise ValueError(
+                "Dataset source shape contract supports integers and symbolic identifiers"
+            )
+        result.append(extent)
+    return tuple(result)
+
+
 def _metadata_parameters(
     metadata: Mapping[str, Any],
     *,
@@ -365,8 +418,10 @@ def _metadata_parameters(
         kind = str(row.get("kind") or "")
         value = None
         shape: tuple[int, ...] = ()
+        shape_contract: tuple[int | str, ...] = ()
         if kind == "pointer":
-            shape = _resolve_shape(row.get("shape"), dimensions)
+            shape_contract = _source_shape_contract(row.get("shape"))
+            shape = _resolve_shape(shape_contract, dimensions)
         elif kind == "scalar":
             if semantic_name in scalars:
                 value = scalars[semantic_name]
@@ -384,6 +439,7 @@ def _metadata_parameters(
                 mode=str(row.get("mode") or "value"),
                 shape=shape,
                 value=value,
+                shape_contract=shape_contract,
             )
         )
     return tuple(result)
