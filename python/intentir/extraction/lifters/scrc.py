@@ -699,31 +699,22 @@ The supplied Responses schema is authoritative for the closed envelope, field
 names, enums, optional fields, operation grammar, and structural descriptions.
 Do not duplicate, rename, or extend it with convenience fields.
 
-Naming is mandatory: kernel scrc_k0; tensors t0,t1,...; J nodes n0,n1,...;
-values v0,v1,...; dimensions x0,x1,...; domains d0,...; accesses a0,...;
-effects e0,...; scopes q0,...; storage b0,...; parameters p0,...; C slots
-c0,...; pi regions r0,... and instances i0,..., all by declaration order.
+Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
+values v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;
+storage b*; parameters p*; C slots c*; pi regions r* and instances i*.
+J t* numbering follows first declaration across inputs then outputs; inout
+reuses its input handle. Never derive t* from p* position: p0 input, p1 output,
+p2 extent bind t0, t1, x0 respectively.
 
-J tensor handles form their own gap-free sequence by first declaration over
-intent.inputs followed by intent.outputs. An inout tensor repeats its input
-handle verbatim in outputs and does not consume a new t* id. Never derive a t*
-suffix from a p* parameter position. For example, if p0 is an input pointer,
-p1 is an output pointer, and p2 is a runtime extent scalar, the J tensors are
-input t0 and output t1; p0.logical_ref is t0, p1.logical_ref is t1, and
-p2.logical_ref is the symbolic dimension x0.
+The semantic IntentFunction is scrc_j0. node_ids maps n* to body paths, never
+v* results. boundary.domains maps d* directly to portable boolean strings,
+never axes/members objects.
 
-The semantic IntentFunction name is exactly scrc_j0, never scrc_k0. The
-node_ids object maps n0,n1,... to structural paths body[0], body[1], or nested
-body[i].body[j], never to v* results. boundary.domains maps each d* key directly
-to one portable boolean expression string; it is never an axes/members object.
-
-The trusted harness_compiler_view is byte-authoritative plumbing. Move every
-logical p* handle into J.signature and every implementation-selection c*
-handle into the single C object. Their relative source positions stay private
-to Harness and are not serialized in the artifact. C values and compiler_slots
-must be identical to the supplied anonymous values. For each compiler slot,
-use exactly the public role in compiler_roles. Do not rename c* slots to p* and
-do not turn compiler roles into inferred strategy names.
+The trusted harness_compiler_view is byte-authoritative plumbing. Put logical
+p* in J.signature and implementation-selection c* in the single C; source
+positions stay private. C values/compiler_slots equal the anonymous inputs and
+each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
+strategy names from roles.
 
 bound_constexpr_values are Harness-owned, non-C JIT bindings. constexprness
 alone never makes one a graph selector. Classify across all Source uses:

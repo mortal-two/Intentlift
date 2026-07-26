@@ -722,9 +722,18 @@ def test_gate1_search_retains_best_failed_parent_without_accepting_by_score() ->
     assert first.feedback is not None and first.feedback.formal_round == 1
     assert second.feedback is not None and second.feedback.formal_round == 2
     assert lift.feedbacks[1] is first.feedback
-    assert lift.feedbacks[2] is first.feedback
-    assert lift.feedbacks[2].previous_artifact is first.artifact
-    assert lift.feedbacks[2].previous_artifact is not second.artifact
+    retained = lift.feedbacks[2]
+    assert retained is not None and retained is not first.feedback
+    assert retained.previous_artifact is first.artifact
+    assert retained.previous_artifact is not second.artifact
+    trial = retained.diagnostics["last_search_trial"]
+    assert trial["outcome"] == "regressed"
+    assert trial["trial_repair_progress"]["artifact_changed"] is False
+    assert trial["trial_repair_progress"]["component_changed"] == {
+        "j": False,
+        "c": False,
+        "pi": False,
+    }
 
 
 def test_gate1_search_advances_parent_only_when_failed_rank_improves() -> None:
@@ -775,8 +784,14 @@ def test_gate1_search_retains_ranked_seed_when_first_new_candidate_regresses() -
     )
 
     assert search.closed
-    assert lift.feedbacks == [seed, seed]
-    assert lift.feedbacks[1].previous_artifact is previous
+    assert lift.feedbacks[0] is seed
+    retained = lift.feedbacks[1]
+    assert retained is not None and retained is not seed
+    assert retained.previous_artifact is previous
+    assert retained.diagnostics["last_search_trial"]["outcome"] == "regressed"
+    progress = retained.diagnostics["last_search_trial"]["trial_repair_progress"]
+    assert progress["protocol"] == "intentir.gate1-relift-progress.v1"
+    assert isinstance(progress["artifact_changed"], bool)
     assert search.attempts[0].feedback is not seed
     assert search.attempts[0].feedback.selection_rank == (
         0,

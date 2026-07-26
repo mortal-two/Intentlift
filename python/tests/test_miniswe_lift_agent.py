@@ -41,6 +41,7 @@ from minisweagent.config.intentir_context_query import (
     _bootstrap,
     _candidate,
     _candidate_abi,
+    _candidate_diff,
     _candidate_find,
     _candidate_node,
     _candidate_nodes,
@@ -545,6 +546,45 @@ def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
         "pi.instances.0.semantic_ref",
     ]
     assert report["authority"].startswith("read-only")
+    assert candidate_path.read_bytes() == before
+
+
+def test_candidate_diff_reports_only_mechanical_llm_authored_changes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    input_root.mkdir()
+    output_root.mkdir()
+    previous = {
+        "schema": "v1",
+        "j": {"intent": {"body": [{"id": "n0", "op": "const"}]}},
+        "c": {"slots": []},
+        "pi": {"instances": []},
+    }
+    current = json.loads(json.dumps(previous))
+    current["j"]["intent"]["body"][0]["op"] = "map_unary"
+    current["pi"]["instances"].append(
+        {"id": "i0", "semantic_ref": "n0"}
+    )
+    (input_root / "feedback.json").write_text(
+        json.dumps({"previous_artifact": previous})
+    )
+    candidate_path = output_root / "candidate.json"
+    candidate_path.write_text(json.dumps(current))
+    before = candidate_path.read_bytes()
+
+    _candidate_diff(input_root, output_root)
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["protocol"] == "intentir.lift-candidate-diff.v1"
+    assert report["artifact_changed"] is True
+    assert report["component_changed"] == {"j": True, "c": False, "pi": True}
+    assert [item["path"] for item in report["differences"]] == [
+        "j.intent.body.0.op",
+        "pi.instances.0",
+    ]
+    assert report["authority"].startswith("read-only mechanical diff")
     assert candidate_path.read_bytes() == before
 
 
