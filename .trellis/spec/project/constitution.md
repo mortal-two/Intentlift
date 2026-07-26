@@ -27,8 +27,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 10. masked-J 只报告 J 的操作性必要性，不自动推翻主认证。
 11. 当前 Gate2 主线覆盖 deterministic / contract-deterministic Kernel，并直接检查 Source–Replay、
     Source–J 与 Replay–J 三条对称 `Close_Q` 边。
-12. production backend 对 accepted J 做 deterministic Intent MLIR materialization，并只在 generic
-    pass contracts 保持 `Impl(J)` 的 derivation 空间中搜索；C 只排序，性能不裁决合法性。
+12. production core 对 accepted J 做 deterministic Intent MLIR materialization，并只生成 generic
+    pass contracts 保持 hard boundary 的 concrete states；C 只排序。post-SCRC 通用 controller 用冻结
+    Q/D 裁决 observation-changing candidate，性能只在通过者中选择。
 
 ## 固定代码可以做什么
 

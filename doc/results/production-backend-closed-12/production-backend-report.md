@@ -1,6 +1,10 @@
 # 12 个闭合 Kernel 的 production backend、搜索与性能报告
 
 > 生成日期：2026-07-26；目标：RTX 5090 D (`sm_120a`) 与 H100 80GB HBM3 (`sm_90a`)。
+>
+> 解释更新：本文保留 frozen 12-kernel 的历史实测值。当前后端规范已采用 J-grounded、Q/D-certified
+> numeric-state search；下面关于未来 reduction-order B permission 的旧 roadmap 由该规范取代，不影响
+> 本文已经测得的 12-kernel 数字。
 
 ## 结论
 
@@ -49,7 +53,8 @@ RVV（VLEN=128）12/12 candidate 与 canonical J 一致；whole-graph fused arm 
 - 固定 J=A+B 与 ContractView，GPU L0 只搜索原 schedule space，L1 在同一候选集合上增加已注册的 B-conditioned local transformations。RTX 5090 的全体几何平均 L1/L0 为 **1.031x**，超过 1% 的 2 个 kernel 几何平均为 **1.194x**；H100 分别为 **1.019x** 与 **1.120x**。这些结果不作为 structural-path E3/E2 证据。
 - RVV fused/materialized 几何平均为 **1.157x**，11/12 winner 使用 whole-graph fusion；这是首个真实结构路径轴的内部消融，但当前 `fuse_elementwise` 尚混在 schedule record 中，因此不冒充完整 E3/E2 search，也不是与 Source/Triton 的比较。
 - budget=3 时，with-C 已覆盖 12/12；相同 candidate latency map 按 Erase_C 顺序重排后，几何平均 best 从 0.9502 增至 1.0161 μs，C 的有限预算效率收益为 **1.069x**。
-- 完整 budget=83 时，order-only 两臂均为 0.9043 μs，证明 C 只重排 Visited，不改变 Reach/legality。
+- 完整 budget=83 时，order-only 两臂均为 0.9043 μs，证明 C 只重排当时的 Visited，不改变候选集合；
+  按最新术语即不改变 `ReachHard` 或 Q/D policy。
 - H100 从 bounded 前缀扩到完整搜索后，最大额外收益为 1.159x；PolyNorm 与 JSD 分别为 1.159x、1.069x。
 - H100 注册默认 schedule → 全搜索 winner 的可测 kernel 几何平均加速为 1.130x。
 
@@ -57,7 +62,7 @@ B 语义不是可关闭的实验臂：J=A+B。L0/L1 都消费同一 B 并建立 
 
 ## 尚未达到 Triton 的项目
 
-当前不能声称 12/12 全部超越 Triton。主要剩余差距集中在小 shape 的 LayerNorm/RMSNorm/fused-add reduction；绝对差距约 0.1–0.27 μs。Flash preprocess 已通过 rank-0 scalar-by-value MLIR local transformation 从旧版 1.35x 缩到 RTX 1.07x / H100 1.06x。在不等待新 B 的阶段，后续先扩展 effect-safe fusion、materialization/copy elimination 和 RVV structural paths；会改变浮点 reduction tree 的路径在缺少 `fixed_order/ordered_tree/commutative_tree` 等明确 numeric contract 时必须 fail closed，而不是按 kernel 名添加 recipe。
+当前不能声称 12/12 全部超越 Triton。主要剩余差距集中在小 shape 的 LayerNorm/RMSNorm/fused-add reduction；绝对差距约 0.1–0.27 μs。Flash preprocess 已通过 rank-0 scalar-by-value MLIR local transformation 从旧版 1.35x 缩到 RTX 1.07x / H100 1.06x。后续先扩展 effect-safe fusion、materialization/copy elimination 和 RVV structural paths；reduction tree、FMA 与内部精度作为通用 hard-safe MLIR states 进入冻结 Q/D filter，而不是增加 per-kernel recipe 或等待新的 J permission 字段。
 
 ## 复现入口
 

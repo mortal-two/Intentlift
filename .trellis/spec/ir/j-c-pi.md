@@ -326,7 +326,8 @@ J-loop/slot pair 至少存在一条合法 relation；untiled J loop 不被迫制
 由 Gate1 对 Source observer 检出；不得把局部 missing-totality 夸写成“每 Source region 完整”。
 
 该 relation 只消除 Replay 的 source-realization 欠定，不给 production backend 增加输入：SCRC 后
-production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不得读取 π 来选择 loop basis。
+production core 仍只消费 J+C，自行确定性 materialize/search `HardImpl_t(J)`，不得读取 π 来选择 loop
+basis。外层 Q/D controller 同样不得用 π 生成 candidate。
 
 ## Authorization 与 parametricity
 

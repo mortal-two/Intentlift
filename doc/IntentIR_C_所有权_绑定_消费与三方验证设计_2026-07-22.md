@@ -478,8 +478,10 @@ typed relation 显式关联，不能从 shape、role、Source、π 或“唯一�
 `[0,Trip)`、step=Tile 的 extent loop，还是 `[0,ceil_div(Trip,Tile))`、step=1 的 ordinal loop。
 该 source-realization 差异由 `artifact.v3` 的 `pi.iterations` 以 closed
 `extent_step|tile_ordinal` relation 表达；C 不增加 basis、bound、formula 或 frontend 字段。
-production backend 仍只消费 J+C，并在 `Impl(J)` 内自行选择合法 lowering；它不得读取 π 来复刻
-Source basis。因而这次扩展没有污染 C，也没有把 SCRC fidelity constraint 变成 production strategy。
+production core lowerer 仍只消费 J+C，并在 hard-safe MLIR state 中选择 lowering；它不得读取 π 来
+复刻 Source basis。post-SCRC 通用 search/closure controller 可以取得冻结 Q/D 与 opaque execution
+harness 来裁决数值候选，但不把 π 变成生成输入。因而这次扩展没有污染 C，也没有把 SCRC fidelity
+constraint 变成 production strategy。
 
 当前 wire 示意（假设 `n3` 是显式 `axes=[3]` 的 reduce node）：
 
@@ -899,11 +901,15 @@ parent verdict。
 
 ### 11.1 当前唯一接口
 
-当前 production 接口只定义为：
+当前 pure core production 接口定义为：
 
 ```text
 K_t = Lower_t(J,C)
 ```
+
+该式现在专指 pure core lowerer。第五份后端设计另定义一个非 artifact、非 LLM 的通用
+`SearchAndClose_t(J,C,target,Q,D_search,D_cert,opaque_oracles)` controller；它调用 core lowerer、
+执行 Q/D filter 和 final-winner closure，不修改 J/C，也不把 Q/D 传进 MLIR pass。
 
 这里的 `Lower_t(J,C)` 只是 orchestration 层的抽象签名，不表示 materializer 可以同时读取
 `J` 与 `C` 来决定基准 IR。其内部因子分解必须满足 11.3：先由 `J` 独立得到
@@ -940,12 +946,13 @@ contraction reference 同样只是通用 RefEval 消费能力，不规定 CUDA �
 若当前阶段验证 backend：
 
 ```text
-M in Visited_(t,b)(J;C) subseteq Reach_t(J)
+M in VisitedHard_(t,b)(J;C) subseteq ReachHard_t(J)
 O_target = Exec(Lower_t(M), x)
-G_backend = Close_Q(O_target, RefEval(J,x))
+G_search = Close_Q(O_target, RefEval(J,x)) on D_search
 ```
 
-该 conformance 与 Gate2 主三角分开记录。
+该 search filter 与 Gate2 主三角分开记录；固定 winner 还须按第五份后端设计在独立 D_cert 上直接
+闭合 target--Source、target--Replay 与 target--J。
 
 ### 11.3 C 在 lower IR 中的生命周期
 
@@ -957,20 +964,21 @@ J
 C
   -> S_C = Attach_C(M0,C,t)
   -> BaseIR(S_C) = M0
-  -> M in Visited_(t,b)(J;C) subseteq Reach_t(J)
+  -> M in VisitedHard_(t,b)(J;C) subseteq ReachHard_t(J)
   -> target lowering
   -> tile/vector/thread/pipeline/memory decisions
   -> lower target IR
   -> erase consumed schedule annotations
   -> executable
+  -> Q/D filter
 ```
 
 这里不是把 `J+C` 合并成新的后端语义输入。`Emit_v` 只读取 `J` 并构造基准
 Intent MLIR；独立的 `Attach_C` 随后只初始化可擦除 annotation、搜索顺序、候选优先级和代价
 模型先验。若实现产生 decorated working MLIR `M_C`，必须满足 `Erase_C(M_C)=M0`；parser、
 `Emit_v` 与 pass default 都不得冒充 C 来源。搜索得到的
-`M` 必须属于由 `J` 定义的语义保持可达域，不能因 `C` 改写合法性、结果关系或
-可观察语义。
+`M` 必须属于由 `J` 定义的 hard-safe 可达域，不能因 `C` 改写 hard legality、Q/D、结果关系或
+candidate feasibility。
 
 production lowerer可以消费、部分消费或忽略 C；但不能读取 pi 或 source-specific hidden binding。
 若它忽略未知 C，必须仍能从完整 J 走 generic correctness fallback。
@@ -978,9 +986,9 @@ production lowerer可以消费、部分消费或忽略 C；但不能读取 pi �
 production execution 也不能重新接收一份 J 或独立 interface sidecar。已编译 lowering 持有唯一 J
 及由它生成的 target program；runtime input 必须以 J logical handles 精确绑定，底层顺序 output
 只能在 backend 内部确定性映射回 J outputs。缺失/额外/positional fallback 均 fail closed。该路径的
-正确性合同由 materializer、pass 与 target lowerer 支撑；
-`Close_Q(Exec(Lower_t(M),x),RefEval(J,x))` 只作为独立 CI/debug/evaluation conformance，不向
-Gate2 增加第四条边，也不成为 production legality oracle。
+hard correctness 由 materializer、pass 与 target lowerer 支撑；
+`Close_Q(Exec(Lower_t(M),x),RefEval(J,x))` 是通用 D_search feasibility filter，最终 winner 再产生
+独立 D_cert backend closure receipt。两者都不向 Gate2 增加第四条边，也不修改 J。
 
 ### 11.4 Retune 与 cost model 的 production 扩展
 
@@ -991,14 +999,16 @@ Gate2 增加第四条边，也不成为 production legality oracle。
 ```text
 M0 = Emit_v(J)
 S_C = Attach_C(M0,C,t) and BaseIR(S_C) = M0
-M in Visited_(t,b)(J;C) subseteq Reach_t(J)
-Lower_t(M) models J
+M in VisitedHard_(t,b)(J;C) subseteq ReachHard_t(J)
+M in Feasible_(t,Q,D_search)(J)
+BackendClose_(Q,D_cert)(Lower_t(M),J)
 ```
 
 若实现内部仍使用 `sigma_target`，它只表示某个 `M` 所携带的 schedule / layout /
 precision 配置分量，而不是脱离 MLIR 的完整实现候选，也不是由 `C` 授权的语义变体。
 `C` 可以决定先从哪些候选开始、先测试哪些 tile / vectorization / fusion 组合；
-但 `C` 不定义 `Reach_t(J)`，也不证明某个候选合法。合法性来自 `J` 与后端变换合同。
+但 `C` 不定义 `ReachHard_t(J)`、Q/D 或 `Feasible`。hard legality 来自 J 与后端变换合同；可能改变
+浮点观察值的 concrete state 由统一 Q/D controller 裁决。
 
 `sigma_target` 是 backend internal schedule state，不是新的 C artifact。该扩展不改变核心 artifact
 `(J,C,pi)`，也不产生新的系统角色。
@@ -1106,7 +1116,8 @@ Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正�
 4. 任意 binding/private provenance 是否在 Replay view 中被确定性擦除；
 5. Replay packet 是否严格只有 `J + pi + MaskC(C) + fixed U_f`；
 6. Gate2 RefEval 类型是否机械禁止 C；
-7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi；
+7. production core lowerer 是否仍保持直接 `Lower_t(J,C)` 且不读取 pi/Q/D，通用 closure controller
+   是否只通过 opaque harness 使用冻结 Q/D；
 8. production 对含混或未消费 C attachment 的 receipt 是否始终保持安全 ignore/fail-closed，而不由
    Harness/normalizer 猜测作用点。
 
@@ -1187,7 +1198,8 @@ Gate2(Source(C),Replay(C),RefEval(J))
 
 ### 17.5 Production boundary
 
-- 当前接口是直接 `Lower_t(J,C)`；
+- core lowering 接口是直接 `Lower_t(J,C)`；post-SCRC 通用 controller 另取得冻结 Q/D 与 opaque
+  oracles，不构成第四 artifact；
 - lowerer 不读取 pi；
 - `Emit_v(J)` 不读取 C，只有后置 `Attach_C(M0,C,t)` 可以产生可擦除 C-derived search state；
 - 未理解的 C 可被忽略而不破坏 generic correctness；

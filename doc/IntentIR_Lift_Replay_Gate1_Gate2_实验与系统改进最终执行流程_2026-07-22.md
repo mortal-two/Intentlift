@@ -336,7 +336,9 @@ TypeCheck 还必须检查 closed result relation 与对应 output 的 dtype、A 
 
 v1 没有“更强 exact contract”例外；未来若需要，必须新增版本化 closed vocabulary 与判定，而不能
 使用自由文本豁免。这里的 reassociation authorization 只触发 SCRC comparison-class 检查，不授权
-production backend 改变 reduction tree。具体 tolerance 阈值继续只由 Q 提供。
+target pass 静态宣称 reduction-tree permission。具体 tolerance 阈值继续只由 Q 提供；post-SCRC
+通用 search/closure controller 可以在不修改 J 的前提下，用冻结 Q 和独立 D_search/D_cert 执行并
+筛选具体 reduction tree。该 backend receipt 不进入本 SCRC verdict。
 
 `artifact.v4` 引入、当前 v5 保留由 Lift 显式作者的 `J.value_dimension_relations` 与
 `J.boundary.consumer_extensions`：前者只表达 integral rank-0 J input 与 declared `x*` 的 closed
@@ -919,7 +921,9 @@ reduction extent、reassociation 权限等构造 comparator，并检查 toleranc
 
 comparison class 在进入 Replay 前已经由 TypeCheck 做结构相容性检查；Q 只实例化一个已接受的
 class，不负责把错误的 `exact` 自动改成 `tolerance`。同样，Gate2 的 tolerance 不能反向授权 J 或
-production backend 改变 reduction order、accumulation dtype、FMA 或 transcendental 实现。
+target pass 静态宣称 reduction order、accumulation dtype、FMA 或 transcendental permission；但它
+可以由 post-SCRC 通用 controller 按后端设计作为冻结 Q 的 comparison class，对 hard-safe target
+candidate 做独立执行域闭合。两者不能混写。
 
 Lift 不能自由写入任意 Python comparator，也不能通过任意大的 `rtol/atol` 或“所有输出均可接受”
 来放宽自己的 Gate2。B 保留对语义比较类别与必要合同的所有权，但候选不能自己决定及格线。

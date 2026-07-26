@@ -59,9 +59,12 @@ Lift 仍显式声明 relation，Q 仍独占具体阈值。
 检查。第三条 Replay–J 边不增加执行，只比较已经产生的三个输出；两条 Source-centered 近似边
 不能依靠传递性推出它。
 
-Gate2 relation 只服务 Source/Replay/J 的观察闭合。production backend 不读取 Q；`tolerance` 不能
-作为改变 reduction tree、accumulation dtype、FMA、rounding 或 approximate transcendental 的
-lowering permission。
+Gate2 relation 本身只服务 Source/Replay/J 的观察闭合，不增加第四条 target edge。production core
+lowerer 与 target transformations 不读取 Q；`tolerance` 也不是某个 pass 的静态 `allow_*` permission。
+但 post-SCRC 的通用 search/closure controller 可以在不修改 J 的前提下，使用预先冻结的同类 Q 与
+独立 `D_search/D_cert` 执行 target candidate，并把 reduction tree、accumulation dtype、FMA、rounding
+或 approximate transcendental 的具体 executable 裁决为当前执行域内通过或拒绝。该 backend receipt
+不回写本 Gate2 verdict，也不声称 D 外的 contract proof。
 
 当前主认证域只覆盖 deterministic / contract-deterministic Kernel，即内部调度可变化，但 J/B
 在协议可观察层面给出唯一合同结果。真正集合值的 Kernel 留给未来 `Accept_{J,Q}(x,o)` 的
@@ -108,6 +111,10 @@ for every x in T:
 
 每份 Gate2 记录必须包含 Q/protocol version、测试模式、D 或有限 T 的标识、实际 c0、三条边各自
 结果与失败原因；这些是审计 metadata，不是新的 proof artifact 或 Replay 输入。
+
+post-SCRC backend 可以复用记录的 Q protocol 与 D 定义，但不得读取本次 Gate2 hidden sample 后再
+搜索。backend search 使用预先声明的 `D_search`，固定 winner 后使用独立 hidden `D_cert`；若只使用
+有限 T，则 backend claim 同样只能覆盖该 T。详细接口见 lowering contract。
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 

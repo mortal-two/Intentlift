@@ -376,7 +376,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 解析、transcendental 集、floating reduction 与 source-realization reassociation authorization 规则
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
-不是 production backend permission。
+不是 target pass 的静态 permission。post-SCRC 通用 search/closure controller 可以复用冻结 Q 的
+comparison class，并在独立 D_search/D_cert 上筛选 hard-safe target candidate；这不修改 J，也不进入
+本 SCRC 证书。具体边界由第五份后端设计定义。
 
 v14 还检查 v4/v5 authored relations。`value_dimension_relations` 只允许 integral rank-0 J input 与
 declared symbolic dimension 的 `eq`；`consumer_extensions` 必须闭合 predicate-bearing load 到
@@ -400,7 +402,7 @@ pre-state/return/output mapping 都必须精确闭合；同 dtype/shape 的另�
 - 不包含 predicate、formula、logical result 等 J 语义。
 
 这些 attachment 由 Lift 显式声明，固定代码只验证、不推导；它们只定位 prior，不构成
-transformation permission，也不改变 `Reach_t(J)`。
+transformation permission，也不改变 `ReachHard_t(J)`、Q/D 或 candidate feasibility。
 
 ## 4.3 π 检查
 
@@ -438,7 +440,8 @@ v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relation
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v4 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认。SCRC 后 π 停止，
-production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
+production core lowerer 仍只消费 J+C；iteration witness 不进入 lowering-state search。第五份后端设计
+中的通用 Q/D controller 只做 post-SCRC executable feasibility/closure，不把 π 变成 compiler 输入。
 
 ## 4.4 Lift 内的非认证 CandidateCheck
 

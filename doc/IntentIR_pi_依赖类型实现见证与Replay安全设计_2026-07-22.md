@@ -123,6 +123,9 @@ K_t = Lower_t(J,C)
 该式是 production orchestration 的抽象签名；其内部必须先执行 J-only 的
 `M0 = Emit_v(J)`，再让 C 仅初始化搜索，具体合同由第五份后端权威文档定义。
 
+该式只描述 pure core lowerer。第五份后端设计中的通用 Q/D search-and-closure controller 位于其外，
+不把 π、Q 或 hidden inputs 交给 MLIR pass，也不改变本节所有权结论。
+
 π 只证明 source realization 与 Replay closure。production lowerer 读取 π 会使 backend 退化为
 模仿 source frontend，违反 J/C 与 π 的所有权边界。
 
@@ -418,8 +421,9 @@ region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 han
 由 Lift 的完整性责任与 Gate1 的 Source/Replay topology comparison 检出，不能把局部 totality 写成
 对所有 Source physical regions 的形式证明。
 
-该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
-`pi.iterations` 限制或选择自己的 `Impl(J)` lowering/search。
+该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production core lowerer 仍只读 J+C；它
+不得用 `pi.iterations` 限制或选择自己的 `HardImpl_t(J)` lowering/search。外层 Q/D controller 同样
+不得读取 π 来生成 candidate。
 
 后续落地的 wire 仍遵守这条版本纪律：artifact.v4 增加 J-owned
 `value_dimension_relations`、`boundary.consumer_extensions` 等 typed relations，artifact.v5 增加
