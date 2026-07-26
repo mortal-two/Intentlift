@@ -633,7 +633,7 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
 
     assert initial.physical_calls == relifted.physical_calls == 2
     assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v9"
+    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v10"
     assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v16"
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"

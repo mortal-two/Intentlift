@@ -2185,7 +2185,7 @@ def test_adapter_uses_fresh_workspaces_and_canonical_decoder(monkeypatch) -> Non
     assert first.physical_calls == second.physical_calls == 3
     assert first.metadata["fresh_session"] is True
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v9"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v10"
     assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v16"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
