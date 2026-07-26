@@ -97,10 +97,20 @@ def test_batch_cli_has_independent_replay_backend_switch() -> None:
     assert defaults.replay_backend == "responses"
 
 
+def test_batch_cli_accepts_an_explicit_provider_config_path(tmp_path) -> None:
+    path = tmp_path / "providers.json"
+    selected = scrc_batch._parser().parse_args(
+        ["--list", "--provider-config", str(path)]
+    )
+
+    assert selected.provider_config == path
+
+
 def _install_live_batch_fakes(monkeypatch, *, search, complete):
     import intentir.extraction.providers.provider as provider_module
     import intentir.verify.scrc_workload_run as workload_module
     import intentir.verify.workload_adapters as adapters_module
+    import intentir.verify.workload_registry as registry_module
 
     provider = ProviderConfig(
         "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
@@ -113,13 +123,17 @@ def _install_live_batch_fakes(monkeypatch, *, search, complete):
             entry.case_id,
         )
 
-    monkeypatch.setattr(provider_module, "get_provider", lambda _name: provider)
     monkeypatch.setattr(
-        adapters_module,
-        "prepare_triton_workload",
-        lambda adapter, **_kwargs: SimpleNamespace(
-            case_id=adapter,
-            source_location=f"module://{adapter}",
+        provider_module,
+        "get_provider",
+        lambda _name, _path=None: provider,
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "prepare_registered_scrc_workload",
+        lambda case_id, **_kwargs: SimpleNamespace(
+            case_id=case_id,
+            source_location=f"module://{case_id}",
         ),
     )
     monkeypatch.setattr(
@@ -192,6 +206,39 @@ def test_batch_cli_repeated_cases_form_registry_ordered_explicit_set(
     assert [entry["case_id"] for entry in payload["entries"]] == [
         entries[0].case_id,
         entries[1].case_id,
+    ]
+
+
+def test_batch_cli_lists_frontend_cases_from_the_neutral_registry(capsys) -> None:
+    assert scrc_batch.main(
+        ["--list", "--case", "tilelang:add2d", "--json"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["protocol"] == "intentir.scrc.registered-workloads.v1"
+    assert payload["total"] == 1
+    assert payload["entries"][0]["case_id"] == "tilelang:add2d"
+    assert payload["entries"][0]["frontend"] == "tilelang"
+    assert payload["entries"][0]["representative_tier"] == "frontend.tilelang"
+    assert payload["entries"][0]["ordinal"] > 28
+
+
+def test_batch_cli_frontend_tiers_select_registered_native_cases(capsys) -> None:
+    assert scrc_batch.main(
+        ["--list", "--tier", "frontend", "--json"]
+    ) == 0
+    both = json.loads(capsys.readouterr().out)
+    assert {entry["frontend"] for entry in both["entries"]} == {
+        "tilelang",
+        "cuda",
+    }
+
+    assert scrc_batch.main(
+        ["--list", "--tier", "frontend.cuda", "--json"]
+    ) == 0
+    cuda = json.loads(capsys.readouterr().out)
+    assert [entry["case_id"] for entry in cuda["entries"]] == [
+        "cuda:tilelang_add2d"
     ]
 
 
@@ -407,7 +454,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 ) -> None:
     import intentir.extraction.providers.provider as provider_module
     import intentir.verify.scrc_workload_run as workload_module
-    import intentir.verify.workload_adapters as adapters_module
+    import intentir.verify.workload_registry as registry_module
 
     provider = ProviderConfig(
         "test-provider", "https://provider.invalid/v1", "test-key", "test-model"
@@ -496,8 +543,16 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         path.mkdir(parents=True)
         return path
 
-    monkeypatch.setattr(provider_module, "get_provider", lambda _name: provider)
-    monkeypatch.setattr(adapters_module, "prepare_triton_workload", lambda *_a, **_k: prepared)
+    monkeypatch.setattr(
+        provider_module,
+        "get_provider",
+        lambda _name, _path=None: provider,
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "prepare_registered_scrc_workload",
+        lambda *_a, **_k: prepared,
+    )
     monkeypatch.setattr(workload_module, "next_candidate_fanout_dir", fake_next_fanout_dir)
     monkeypatch.setattr(workload_module, "initialize_workload_evidence", fake_initialize)
     monkeypatch.setattr(workload_module, "search_prepared_workload_gate1", fake_search)
@@ -598,6 +653,54 @@ def test_batch_cli_single_branch_threads_replay_backend(
     assert result == 0
     capsys.readouterr()
     assert seen == [("responses", "miniswe")]
+
+
+def test_batch_cli_runs_tilelang_through_the_same_candidate_search(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[str, int, int]] = []
+
+    def search(prepared, **kwargs):
+        seen.append(
+            (
+                prepared.case_id,
+                kwargs["replay_width"],
+                kwargs["max_pre_replay_rejections"],
+            )
+        )
+        return _closed_search()
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=search,
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "tilelang:add2d",
+            "--lift-backend",
+            "miniswe",
+            "--replay-backend",
+            "miniswe",
+            "--replay-width",
+            "2",
+            "--max-branch-workers",
+            "2",
+            "--pre-replay-rejections",
+            "5",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cases"][0]["classification"] == "scrc_certified"
+    assert payload["cases"][0]["ordinal"] > 28
+    assert seen == [("tilelang:add2d", 2, 5)]
 
 
 def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(

@@ -22,10 +22,15 @@ from intentir.verify.scrc_batch import (
     SequentialSCRCBatchRunner,
     dry_run_executor,
 )
-from intentir.verify.workload_manifest import build_workload_manifest
+from intentir.verify.gate1.model import Frontend
+from intentir.verify.gate1.profile import observer_profile_for
+from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
+from intentir.verify.workload_manifest import SCRCWorkloadEntry, build_workload_manifest
+from intentir.verify.workload_registry import registered_scrc_workloads
 
 
 SCRC_PROGRESS_PROTOCOL = "intentir.scrc.progress.v1"
+SCRC_REGISTERED_WORKLOAD_LIST_PROTOCOL = "intentir.scrc.registered-workloads.v1"
 _PROGRESS_FIELDS = frozenset(
     {
         "protocol",
@@ -62,6 +67,73 @@ _PROGRESS_STAGES = frozenset(
         "gate2",
     }
 )
+_FRONTEND_TIERS = frozenset({"frontend", "frontend.tilelang", "frontend.cuda"})
+
+
+def _registered_frontend_entries(manifest) -> tuple[SCRCWorkloadEntry, ...]:
+    """Project non-Triton Harnesses into the batch scheduler, not a new manifest."""
+
+    manifest_ids = set(manifest.by_id)
+    adapters = registered_scrc_workloads()
+    native = [
+        (case_id, adapter)
+        for case_id, adapter in adapters.items()
+        if case_id not in manifest_ids
+    ]
+    entries: list[SCRCWorkloadEntry] = []
+    for index, (case_id, adapter) in enumerate(sorted(native), start=1):
+        frontend = str(getattr(adapter, "frontend", ""))
+        if frontend not in {"tilelang", "cuda"}:
+            raise ValueError(
+                f"registered non-manifest case {case_id!r} has unsupported "
+                f"frontend {frontend!r}"
+            )
+        profile = observer_profile_for(Frontend(frontend))
+        entries.append(
+            SCRCWorkloadEntry(
+                ordinal=len(manifest.entries) + index,
+                case_id=case_id,
+                suite="multifrontend_dataset",
+                symbol=case_id.partition(":")[2],
+                mechanisms=(),
+                source_module="TianchenIR-MultiFrontend",
+                source_alignment="external_dataset",
+                lowering_status="frontend_closure",
+                evidence_refs=(str(getattr(adapter, "protocol", "")),),
+                representative_tier=f"frontend.{frontend}",
+                adapter_readiness="declared",
+                frontend=frontend,
+                observer_profile=(
+                    f"{profile.profile_id}@{profile.profile_version}"
+                ),
+                q_policy=DEFAULT_GATE2_POLICY.policy_id,
+            )
+        )
+    return tuple(entries)
+
+
+def _select_entries(manifest, *, cases, tier) -> tuple[SCRCWorkloadEntry, ...]:
+    if cases is None and tier not in _FRONTEND_TIERS:
+        return manifest.select(tier=tier)
+    frontend_entries = _registered_frontend_entries(manifest)
+    if cases is not None:
+        by_id = {entry.case_id: entry for entry in (*manifest.entries, *frontend_entries)}
+        selected: list[SCRCWorkloadEntry] = []
+        for case_id in cases:
+            entry = by_id.get(case_id)
+            if entry is None:
+                raise KeyError(f"unknown registered SCRC case {case_id!r}")
+            selected.append(entry)
+        return tuple(sorted(selected, key=lambda entry: entry.ordinal))
+    assert tier in _FRONTEND_TIERS
+    selected = tuple(
+        entry
+        for entry in frontend_entries
+        if tier == "frontend" or entry.representative_tier == tier
+    )
+    if not selected:
+        raise KeyError(f"no registered SCRC workloads match tier {tier!r}")
+    return selected
 
 
 @dataclass(frozen=True)
@@ -455,6 +527,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--provider", default=None)
+    parser.add_argument("--provider-config", type=Path, default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--lift-backend",
@@ -624,25 +697,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     try:
-        if args.case is None:
-            entries = manifest.select(tier=args.tier)
-        else:
-            entries = tuple(
-                sorted(
-                    (
-                        manifest.select(case_id=case_id)[0]
-                        for case_id in args.case
-                    ),
-                    key=lambda entry: entry.ordinal,
-                )
-            )
-    except KeyError as exc:
+        entries = _select_entries(
+            manifest,
+            cases=args.case,
+            tier=args.tier,
+        )
+    except (KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
     if args.list:
         value = {
-            "protocol": manifest.to_json()["protocol"],
+            "protocol": (
+                manifest.to_json()["protocol"]
+                if all(entry.frontend == "triton" for entry in entries)
+                else SCRC_REGISTERED_WORKLOAD_LIST_PROTOCOL
+            ),
             "total": len(entries),
             "entries": [entry.to_json() for entry in entries],
         }
@@ -705,12 +775,12 @@ def main(argv: list[str] | None = None) -> int:
             WorkloadExecutionError,
         )
         from intentir.verify.scrc_runner import MainStatus, SCRCRunReport
-        from intentir.verify.workload_adapters import (
-            TRITON_WORKLOAD_ADAPTERS,
-            prepare_triton_workload,
+        from intentir.verify.workload_registry import (
+            prepare_registered_scrc_workload,
+            registered_scrc_workloads,
         )
 
-        provider = get_provider(args.provider)
+        provider = get_provider(args.provider, args.provider_config)
         run_root = args.run_root.expanduser().resolve()
         gate2_slots = BoundedSemaphore(args.gate2_workers)
         scheduling = {
@@ -1185,7 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
             result = None
             progress.case_started(entry.case_id, entry.ordinal)
             try:
-                adapter = TRITON_WORKLOAD_ADAPTERS.get(entry.case_id)
+                adapter = registered_scrc_workloads().get(entry.case_id)
                 if adapter is None:
                     result = BatchCaseResult(
                         entry.case_id,
@@ -1196,8 +1266,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return result
                 try:
-                    prepared = prepare_triton_workload(
-                        adapter, dataset_root=args.dataset_root
+                    prepared = prepare_registered_scrc_workload(
+                        entry.case_id, dataset_root=args.dataset_root
                     )
                 except Exception as exc:
                     result = BatchCaseResult(
