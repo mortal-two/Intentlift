@@ -12,6 +12,7 @@ Source + Harness coordinates
         |
         v
 branch-local persistent LLM_H(Source) + isolated workspace
+        |  first packet may carry <=64 KiB exact allowlisted input bytes
         |  generic exact-text patch only applies LLM-authored old/new bytes
         |  old tool payloads may become deterministic transport receipts
         v

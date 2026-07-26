@@ -126,7 +126,9 @@ commit 必须绑定 checker PASS 的同一字节 digest。rollback 只能恢复�
 - runtime 在执行前原子检查整个 multi-action response；Lift 仅允许直接调用只读
   `context_query.py/schema_query.py`，Replay 仅允许 `intentir_packet_query`。只要混入一个其他命令，
   整批零执行并返回闭合诊断，不能只靠 prompt 约束；
-- Lift 首次 bootstrap 后可同轮读取 Source、Harness、syntax-only outline 与允许的 feedback；Replay
+- Lift 首次 user packet 直接携带总计不超过 64 KiB 的 exact Source/Harness/feedback 及
+  source-neutral contract/preflight/minimal-example bytes；超限时才用
+  bootstrap/定向 query。Replay
   可同轮读取 packet overview、ABI、graph 与 realization；
 - provider 不支持 server-side conversation 时仍保持完整审计历史，但通过减少模型轮数控制累计
   context；API packet 可压缩已落盘、可重读的旧 tool payload，但不得总结或截断仍无其他权威副本的
@@ -186,17 +188,23 @@ exact-byte transaction、direct submit、原子 multi-read 与 branch-local pers
 该运行被主动终止并保留在 `/tmp/intentir-scrc-task12-b-pilot-20260727-nafH3Q`，不计语义或 Gate1
 失败。它证明只保留 conversation 仍没有学到 Codex 的低摩擦文件/上下文循环。
 
-基于该证据，B2 runtime 已实现，任务仍为“执行中”，等待 fresh 三核能力裁决：
+基于该证据，B2 runtime 已实现。但 B2 fresh pilot 又在 7–9 分钟内显示三个 workspace 的 `/work`
+和 `/output` 均为空：首个 xhigh 回合尚未执行 bootstrap，昂贵推理仍浪费在确定下一条读取命令。
+该轮同样主动终止且 formal Gate1=0。B3 因而进一步把已经授权、总计仅约 4–9 KiB 的 exact
+Source/Harness 与 source-neutral construction contract 直接放入初始 user packet；任务仍为“执行中”，等待 fresh B3 裁决：
 
 - `single` Lift 现在在同一 adapter/branch 内同时保留 owner session id、完整可审计 message history 与
   同一个 bubblewrap workspace。Runner 只原子刷新 read-only `feedback.json`，当前 candidate 不被历史
   `previous_artifact` 覆盖；旧 staged planner/builder/reviewer 仅保留为 v124 对照入口；
-- `intentir.lift-knowledge.v46` 默认 `step_limit=0`、CandidateCheck count limit 0 与
+- `intentir.lift-knowledge.v47` 默认 `step_limit=0`、CandidateCheck count limit 0 与
   `max_consecutive_format_errors=0`，由每 branch 3600 秒累计 active Lift wall time及 sandbox/provider
   资源治理；单 provider request 上限 900 秒，timeout 不重复尝试，其他 transient transport failure
   最多三次。普通 model/tool/check 次数只进 telemetry；
 - Responses API packet 对超长旧 tool argument 和除最近四项外的旧 tool output 做 deterministic
   hash/length receipt compaction；原始 trajectory 与 workspace 文件不改，agent 可重新读取；
+- 初始 user packet 在总量不超过 64 KiB 时精确内嵌 `source.py/harness_view.json/feedback.json` 以及
+  `lift_contract.md/preflight.md/minimal_example.json` 原始文本；超过阈值只给 bytes/hash/read command。Gate1 continuation 同样在 diagnostics 不超过 64 KiB
+  时直接携带 exact closed feedback。两者都只是允许数据搬运，不做 outline/语义摘要；
 - 新增标准 function tool `apply_patch(path,old_text,new_text)`：只允许当前 candidate，要求 old_text
   唯一出现，原子写入并使旧 CandidateCheck PASS 失效。runtime 不解析 JSON、不分配 handle、不更新
   引用、不生成或推荐任何字段；
@@ -218,10 +226,10 @@ exact-byte transaction、direct submit、原子 multi-read 与 branch-local pers
   绑定 multi-action 配置、实际 termination status 与 transaction audit；所有
   checkpoint 仍须经过后续正式 ingress/TypeCheck/Gates；
 - B2 的 persistent workspace、input immutability、exact-text patch、history compaction、direct submit、
-  timeout/retry 配置，以及相邻 Runner/Replay/Batch/CLI/provider 回归共 `209 passed`。尚无 B2 三核的
-  formal-round、累计 input、wall-time、first-valid、TypeCheck 或 Gate1-frontier 证据。
+  timeout/retry/startup packet 配置，以及相邻 Runner/Replay/Batch/CLI/provider 回归共 `210 passed`。
+  尚无 B3 三核的 formal-round、累计 input、wall-time、first-valid、TypeCheck 或 Gate1-frontier 证据。
 
-下一动作是运行 Linear、Flash forward、GroupNorm 的 fresh B2 pilot；若 B2 不满足验收 4，继续 P3
+下一动作是运行 Linear、Flash forward、GroupNorm 的 fresh B3 pilot；若 B3 不满足验收 4，继续 P3
 实现隔离 engine C，而不是将 Task 12 标记完成。
 
 ## 非目标

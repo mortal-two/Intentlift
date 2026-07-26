@@ -154,6 +154,13 @@ arguments/outputs 替换为 deterministic hash/length receipt；原始审计 tra
 workspace 文件不被修改，agent 需要精确内容时重新读取。该 transport compaction 不解释 Source 或
 J/C/π，也不进入 correctness predicate。
 
+若 `source.py + harness_view.json + feedback.json + lift_contract.md + preflight.md + minimal_example.json`
+总量不超过 64 KiB，初始 user packet 直接携带六者的 exact raw text；否则只携带逐文件
+bytes/hash/read command。Gate1 continuation 的 closed
+diagnostics 采用相同 64 KiB 规则。该 prefetch 只搬运 Lift 原本获准读取的输入，不生成 outline、
+摘要、operator、binding、π 或修改建议；目的是让首个高 effort 回合直接做语义工作，而不是决定
+下一条读取命令。
+
 当前持久 owner 使用 `artifact.v7 / decode.v11 / typecheck.v18 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
@@ -250,7 +257,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v10`；source-aware MiniSWE Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v46`，source-blind MiniSWE Replay backend 为
+`intentir.lift-knowledge.v47`，source-blind MiniSWE Replay backend 为
 `minisweagent.intentir-replay.v6`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 

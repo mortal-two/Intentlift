@@ -38,8 +38,9 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v46"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v47"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 900.0
+MAX_CONTINUATION_FEEDBACK_BYTES = 64 * 1024
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 
@@ -325,7 +326,10 @@ continuations for the same Source; Replay remains a separate fresh process.
   candidate exists. In the persistent owner workspace it preserves the current
   candidate unchanged; no command constructs or repairs artifact fields.
 
-Start with this single bounded command so long inputs cannot hide feedback:
+When the initial user packet says `exact_inputs_embedded=false`, start with this
+single bounded command so long inputs cannot hide feedback. Otherwise the exact
+Source/Harness/contract/preflight/example bytes are already present and this
+inventory call is optional:
 
 `python /input/tools/context_query.py bootstrap`
 
@@ -640,6 +644,14 @@ class MiniSWELiftAdapter:
 
     def _continuation_message(self, feedback: Any, round_index: int) -> str:
         kind = getattr(getattr(feedback, "kind", None), "value", None)
+        diagnostics = getattr(feedback, "diagnostics", None)
+        closed_diagnostics = dict(diagnostics) if isinstance(diagnostics, Mapping) else {}
+        diagnostic_bytes = json.dumps(
+            closed_diagnostics,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
         envelope = {
             "protocol": "intentir.lift-owner-continuation.v1",
             "owner_session": self._session_id,
@@ -647,12 +659,23 @@ class MiniSWELiftAdapter:
             "failure_kind": kind,
             "feedback_path": "/input/feedback.json",
             "candidate_path": "/output/candidate.json",
+            "exact_feedback_embedded": (
+                len(diagnostic_bytes) <= MAX_CONTINUATION_FEEDBACK_BYTES
+            ),
         }
+        if len(diagnostic_bytes) <= MAX_CONTINUATION_FEEDBACK_BYTES:
+            envelope["closed_feedback"] = closed_diagnostics
+        else:
+            envelope["closed_feedback_receipt"] = {
+                "bytes": len(diagnostic_bytes),
+                "sha256": hashlib.sha256(diagnostic_bytes).hexdigest(),
+            }
         return (
-            json.dumps(envelope, sort_keys=True)
+            json.dumps(envelope, sort_keys=True, ensure_ascii=False)
             + "\nThe same branch-local source-aware Lift task continues. "
-            "Read the new closed feedback from /input/feedback.json, run the "
-            "documented bootstrap inventory; the latest complete candidate remains "
+            "When exact_feedback_embedded is true, use it directly instead of "
+            "spending a turn rediscovering feedback; otherwise read the bounded "
+            "feedback path. The latest complete candidate remains "
             "in the same persistent workspace. Modify that file and resubmit one "
             "complete (J,C,pi). This is not a new "
             "writer and not a request for a patch-only artifact."

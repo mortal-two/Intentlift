@@ -494,7 +494,9 @@ conversation 与受限 workspace，host 原子刷新 feedback 而不覆盖当前
 value、fixed semantic patch 或 sibling 信息。单次 provider request 上限为 900 秒，timeout 不连续重试，
 但 transient transport failure 仍有有界恢复。旧大型 tool argument/observation 可在 API packet 中
 确定性替换为 hash/长度 receipt，完整 trajectory 与 workspace 文件保留。LLM 可用 exact-text patch
-原子应用自己明确给出的唯一旧/新字符串；runtime 不解析 JSON 语义、不推断字段。该摘要与
+原子应用自己明确给出的唯一旧/新字符串；runtime 不解析 JSON 语义、不推断字段。首个 user packet
+及 Gate1 continuation 可直接携带不超过 64 KiB 的已授权 exact raw input/closed feedback；超限只给
+receipt/path，fixed code 不摘要或分类 Source。该摘要与
 submission `PASS` 都不进入证书，也不授权固定代码修补 `(J,C,π)`。
 
 因此它改变的是 finding a well-typed witness 的工程效率，不改变：

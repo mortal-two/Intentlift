@@ -58,6 +58,10 @@ runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推�
 旧 tool 回包的 deterministic hash receipt 只用于 model transport compaction，完整文件与审计记录仍
 留在 owner workspace/trajectory 中。
 
+Harness 可以把 Lift 已获准读取且总量不超过 64 KiB 的 exact Source/compiler-view/closed feedback raw
+text 直接放入初始或 continuation user packet；超限时只能给逐文件 receipt 与读取命令。该搬运不得
+生成 semantic outline、摘要、binding 或 artifact 字段，也不得把额外 hidden state 混入 packet。
+
 ## Logical signature 与绑定
 
 input、output、runtime scalar、destination、dtype、rank、shape、alias/inout/effect 属于 J logical

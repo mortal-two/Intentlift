@@ -59,6 +59,7 @@ MAX_WORKSPACE_DEPTH = 64
 MAX_CANDIDATE_CHECK_FIELD_CHARS = 4096
 MAX_CANDIDATE_CHECK_OBSERVED_ITEMS = 20
 MAX_CANDIDATE_CHECK_RESULT_BYTES = 128 * 1024
+MAX_STARTUP_CONTEXT_BYTES = 64 * 1024
 _SANDBOX_START_MARKER = b"__INTENTIR_LIFT_SANDBOX_STARTED__\n"
 
 
@@ -329,7 +330,69 @@ class IntentIRLiftEnvironment:
         self._apply_patch_audit: list[dict[str, Any]] = []
         self._multi_action_rejections = 0
         self._validate_paths()
+        self._startup_context, self._startup_context_receipt = (
+            self._build_startup_context()
+        )
         self._probe()
+
+    def _build_startup_context(self) -> tuple[str, dict[str, Any]]:
+        """Embed small already-authorized inputs without interpreting them."""
+
+        raw_files: dict[str, str] = {}
+        receipts: dict[str, dict[str, Any]] = {}
+        total_bytes = 0
+        startup_files = (
+            "source.py",
+            "harness_view.json",
+            "feedback.json",
+            "knowledge/lift_contract.md",
+            "knowledge/preflight.md",
+            "knowledge/minimal_example.json",
+        )
+        for relative in startup_files:
+            path = self.config.input_dir / relative
+            if path.is_symlink():
+                raise ValueError(f"Lift startup input must not be a symlink: {relative}")
+            if not path.is_file():
+                receipts[relative] = {"missing": True}
+                continue
+            raw = path.read_bytes()
+            total_bytes += len(raw)
+            receipts[relative] = {
+                "bytes": len(raw),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+            raw_files[relative] = raw.decode("utf-8")
+        embedded = (
+            all(relative in raw_files for relative in receipts)
+            and total_bytes <= MAX_STARTUP_CONTEXT_BYTES
+        )
+        candidate_path = self.config.output_dir / "candidate.json"
+        candidate_present = candidate_path.is_file() and not candidate_path.is_symlink()
+        payload: dict[str, Any] = {
+            "protocol": "intentir.lift-startup-context.v1",
+            "exact_inputs_embedded": embedded,
+            "candidate_present": candidate_present,
+            "files": receipts,
+            "authority": (
+                "exact allowlisted bytes only; no Source/Harness/feedback semantic "
+                "interpretation"
+            ),
+        }
+        if embedded:
+            payload["exact_text"] = raw_files
+        else:
+            payload["read_command"] = (
+                "python /input/tools/context_query.py bootstrap"
+            )
+        receipt = {
+            "protocol": payload["protocol"],
+            "exact_inputs_embedded": embedded,
+            "total_bytes": total_bytes,
+            "candidate_present": candidate_present,
+            "files": receipts,
+        }
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False), receipt
 
     @staticmethod
     def _is_batched_read_only_command(command: Any) -> bool:
@@ -1245,7 +1308,11 @@ class IntentIRLiftEnvironment:
         )
 
     def get_template_vars(self, **kwargs: Any) -> dict[str, Any]:
-        return {"system": "Linux", **kwargs}
+        return {
+            "system": "Linux",
+            "startup_context": self._startup_context,
+            **kwargs,
+        }
 
     def serialize(self) -> dict[str, Any]:
         return {
@@ -1273,6 +1340,7 @@ class IntentIRLiftEnvironment:
                         f"{self.__class__.__module__}.{self.__class__.__name__}"
                     ),
                 },
+                "startup_context": dict(self._startup_context_receipt),
                 "candidate_check": {
                     "calls": self._candidate_check_calls,
                     "attempts": self._candidate_check_calls,
@@ -1370,6 +1438,7 @@ __all__ = [
     "MAX_ACTION_OUTPUT_BYTES",
     "MAX_CANDIDATE_BYTES",
     "MAX_LIFT_PLAN_BYTES",
+    "MAX_STARTUP_CONTEXT_BYTES",
     "MAX_WORKSPACE_BYTES",
     "MAX_WORKSPACE_DEPTH",
     "MAX_WORKSPACE_ENTRIES",

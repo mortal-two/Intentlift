@@ -53,31 +53,35 @@ agent:
     validation, focused fixes, formal-feedback repair, and submission. Model/tool
     call counts are telemetry, not a capability cutoff.
   instance_template: |
-    Read /input/README.md first. It indexes the anonymous Source, trusted
-    Harness compiler view, current artifact schema, Lift contract, and any
-    feedback explicitly allowed for this branch-owner invocation.
+    The runtime has already placed the exact allowlisted startup inputs below.
+    When `exact_inputs_embedded=true`, do not spend a model turn on README,
+    bootstrap, Source, or Harness discovery: start semantic construction from
+    these exact bytes. Files and bounded query tools remain available for focused
+    rereads. When false, use the supplied read command and bounded queries.
+
+    {{ startup_context }}
 
     Work incrementally if useful, but submit exactly one complete
     /output/candidate.json. The submission command only delivers the candidate;
     it does not certify it. Do not create any other file under /output.
 
     Time-governed workflow:
-    1. Run exactly this bounded bootstrap first:
-       `python /input/tools/context_query.py bootstrap`
-       It inventories the mounted inputs and, on a repair round, copies the
-       explicitly supplied previous artifact only when no candidate already
-       exists. Across formal Gate1 continuations, your latest candidate remains
-       in the same persistent workspace and bootstrap never overwrites it. Then run
-       `python /input/tools/context_query.py feedback` before repair.
+    1. If the startup packet embeds exact inputs, use it directly. Otherwise run
+       exactly its bounded bootstrap command. Bootstrap inventories the mounted
+       inputs and, only in a fresh-workspace fallback, copies the explicitly
+       supplied previous artifact when no candidate already exists. Across formal
+       Gate1 continuations, your latest candidate remains in the same persistent
+       workspace and bootstrap never overwrites it. Use embedded exact feedback
+       directly; query feedback only when the packet says it was not embedded.
        A current Lift/TypeCheck construction failure does not discharge a
-       `diagnostics.unresolved_gate1` item: preserve the copied candidate and
+       `diagnostics.unresolved_gate1` item: preserve the current candidate and
        repair both the current mechanical diagnostic and that retained Gate1
        counterexample before submission.
        Gate1 feedback may also contain `repair_progress`. It compares only
        adjacent LLM-authored candidates and external diagnostics. Use it to
        avoid repeating an unchanged repair; it does not prescribe any semantic
        field.
-       A copied `continuation_draft` is merely the adjacent prior worker's
+       A fallback-copied `continuation_draft` is merely the adjacent prior worker's
        complete LLM-written JSON, never an accepted artifact; continue its
        repair and rerun validator/CandidateCheck yourself.
        Never concatenate README, Source, Harness, feedback, contract, and
@@ -85,8 +89,8 @@ agent:
        If no previous artifact exists but `candidate_check_feedback` is present,
        use only its bounded rule/path list to focus the new construction; it is
        not a patch and you must still construct the complete candidate yourself.
-    2. Read Source, Harness, and the syntax-only Source outline with independent
-       bounded calls. They may be issued together in one model response using
+    2. Use bounded Source/Harness/outline calls only for focused rereads or when
+       startup inputs were not embedded. Independent calls may share one response using
        `python /input/tools/context_query.py source` and
        `python /input/tools/context_query.py harness` plus
        `python /input/tools/context_query.py source-outline --start 1 --count 32`.
@@ -105,11 +109,11 @@ agent:
        before concluding that no loop, branch, or early return exists. It only
        locates Source; you still interpret it and author every artifact field.
     3. Write the complete first candidate early. On a Gate1 repair continuation,
-       start from the copied parent but make every coordinated J/C/pi change
+       start from the current persistent candidate but make every coordinated J/C/pi change
        justified by Source and the counterexample; a broad structural mismatch
-       need not be treated as a one-field patch. Before submission run
-       `python /input/tools/context_query.py candidate-diff` and do not resubmit
-       a mechanically unchanged candidate.
+       need not be treated as a one-field patch. Use `candidate-diff` only when
+       you need to inspect whether your edit changed the file; it is not a
+       mandatory pre-submit network turn. Do not resubmit an unchanged candidate.
     4. Submit the complete candidate directly. Submission runs the read-only
        CandidateCheck preflight when the exact current bytes have no prior PASS;
        PASS ends this Lift invocation, while failure returns short diagnostics to

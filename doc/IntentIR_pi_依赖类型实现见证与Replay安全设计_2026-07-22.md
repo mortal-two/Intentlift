@@ -1173,7 +1173,10 @@ owner continuation 最多新增最后一次实际 source-free evaluation 的 20 
 自己的 Source conversation 与受限 workspace，host 只刷新 closed feedback，当前完整 draft 不被旧
 artifact 覆盖；observed hidden value、fixed semantic patch 与 sibling 信息均不得进入。LLM 可使用
 generic exact-text patch 修改自己明示的唯一字符串片段；runtime 不解析或推断 π/J/C，旧工具内容的
-hash receipt 也只是 transport compaction。该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。Gate1
+hash receipt 也只是 transport compaction。初始 packet/continuation 可直接携带不超过 64 KiB 的已授权
+exact Source/Harness/closed-feedback 与 source-neutral contract/preflight/example raw text；超限时只给
+receipt/path，不由 fixed code 摘要或生成 π。
+该摘要不能生成或修补 π，submission `PASS` 也不能替代外部 TypeCheck。Gate1
 失败后同一 Lift owner 可继续修改完整 `(J,C,π)`；Replay 仍每个 formal round 全新且看不到该
 conversation 或 diff。
 
@@ -1197,7 +1200,7 @@ v7 又只对 rank-0 signature logical input 增加 source-free liveness：绑定
 和合法 boundary-only 路径保留，dead node 或 π route 不冒充 logical contribution。仅用于
 representation/address 的 runtime scalar 必须显式取 `logical_ref=null`，不创建 J input、不进入 J
 semantics，但其 p* carrier 可以由 π realization 引用。checker 不从名称/位置推断，不自动解绑或
-修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v46 继承 v17。上述拒绝不会给 π、CandidateCheck 或
+修补；一般 tensor liveness 也不在 v7 中臆测。对应能力由当前 Lift knowledge v47 继承 v17。上述拒绝不会给 π、CandidateCheck 或
 elaborator 增加 artifact 构造权。
 
 上述 representation-only null-carrier 只允许 runtime scalar。`bound_constexpr_values` 由 Lift 查看每个
@@ -1267,7 +1270,7 @@ store coordinates 与 load coordinates 的 permutation 完全一致并由同 pre
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
-当前 Lift knowledge v46 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
+当前 Lift knowledge v47 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
 flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。

@@ -195,7 +195,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v46"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v47"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -981,6 +981,36 @@ def test_intentir_observation_exposes_wall_time_budget_and_call_telemetry() -> N
     }
     assert rendered["model_calls_telemetry"] == 60
     assert rendered["directive"].startswith("The branch-owner wall-time")
+
+
+def test_small_allowlisted_inputs_are_embedded_exactly_in_startup_packet() -> None:
+    files = _real_lift_input_files()
+    workspace = IntentIRLiftWorkspace.create(files)
+    try:
+        environment = IntentIRLiftEnvironment(
+            input_dir=workspace.input_dir,
+            output_dir=workspace.output_dir,
+            scratch_dir=workspace.scratch_dir,
+        )
+        startup = json.loads(environment.get_template_vars()["startup_context"])
+        assert startup["protocol"] == "intentir.lift-startup-context.v1"
+        assert startup["exact_inputs_embedded"] is True
+        assert startup["candidate_present"] is False
+        assert startup["exact_text"]["source.py"] == files["source.py"]
+        assert startup["exact_text"]["harness_view.json"] == files[
+            "harness_view.json"
+        ]
+        assert startup["exact_text"]["knowledge/minimal_example.json"] == files[
+            "knowledge/minimal_example.json"
+        ]
+        assert startup["exact_text"]["knowledge/lift_contract.md"] == files[
+            "knowledge/lift_contract.md"
+        ]
+        receipt = environment.serialize()["info"]["startup_context"]
+        assert receipt["exact_inputs_embedded"] is True
+        assert "exact_text" not in receipt
+    finally:
+        workspace.cleanup()
 
 
 def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
@@ -2814,6 +2844,11 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
         1,
         artifact,
     )
+    continuation_header = json.loads(
+        adapter._continuation_message(feedback, 2).splitlines()[0]
+    )
+    assert continuation_header["exact_feedback_embedded"] is True
+    assert continuation_header["closed_feedback"] == feedback.diagnostics
     second = adapter.lift(request, feedback)
 
     assert first.artifact.to_json() == second.artifact.to_json()
