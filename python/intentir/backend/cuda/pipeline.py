@@ -19,6 +19,10 @@ from typing import Any, Mapping
 
 import intentir.backend.cuda.compile as backend_compile
 import intentir.backend.cuda.orchestrate as backend_orchestrate
+from intentir.backend.cuda.launch_config import (
+    KernelLaunchConfig,
+    parse_launch_configs,
+)
 from intentir.backend.cuda.selection import (
     LoweringTarget,
     VariantSelection,
@@ -55,6 +59,7 @@ class MLIRTransformationReceipt:
     host_value_capture_count: int
     epilogue_load_motion_count: int
     approximation_mode: str
+    launch_plans: tuple[KernelLaunchConfig, ...] = ()
 
     @property
     def observation_changing(self) -> bool:
@@ -78,6 +83,7 @@ class MLIRTransformationReceipt:
                 "reduction_parts": self.reduction_parts,
                 "transformation_trace": list(self.transformation_trace),
                 "approximation_mode": self.approximation_mode,
+                "launch_plans": [item.to_dict() for item in self.launch_plans],
             }
         )
 
@@ -102,6 +108,7 @@ class MLIRTransformationReceipt:
             "host_value_capture_count": self.host_value_capture_count,
             "epilogue_load_motion_count": self.epilogue_load_motion_count,
             "approximation_mode": self.approximation_mode,
+            "launch_plans": [item.to_dict() for item in self.launch_plans],
             "observation_changing": self.observation_changing,
             "topology_digest": self.topology_digest,
         }
@@ -215,6 +222,7 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         host_value_capture_count=host_value_capture_count,
         epilogue_load_motion_count=epilogue_load_motion_count,
         approximation_mode=approximation_mode,
+        launch_plans=tuple(parse_launch_configs(mlir)),
     )
 
 

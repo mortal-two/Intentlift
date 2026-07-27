@@ -301,6 +301,26 @@ class CudaSearchCandidate:
                 "executable_digest": program.executable_digest,
             }
         )[:20]
+        actual_schedule = dict(self.schedule)
+        if receipt is not None and receipt.launch_plans:
+            # The candidate records the requested pass options.  The concrete
+            # state records what C++ actually emitted: in particular row
+            # vector-width=0 is an auto request that may become native vec4.
+            # Keeping these two layers distinct prevents an auto-vectorized
+            # winner from being reported as a scalar implementation.
+            primary = receipt.launch_plans[0]
+            actual_schedule.update(
+                {
+                    "block_threads": primary.block[0],
+                    "actual_grid_blocks": primary.grid[0],
+                    "actual_smem_bytes": primary.smem,
+                    "actual_per_thread_tile": primary.per_thread_tile,
+                    "vector_width": primary.vector_width,
+                    "actual_pipeline_depth": primary.pipeline_depth,
+                    "actual_split_factor": primary.split_factor,
+                    "actual_launch_plan_count": len(receipt.launch_plans),
+                }
+            )
         return ConcreteLoweringState(
             state_id=state_id,
             lowering_path_kind=(
@@ -309,7 +329,7 @@ class CudaSearchCandidate:
                 else self.lowering_path_kind
             ),
             transformation_trace=tuple(trace),
-            schedule=self.schedule,
+            schedule=actual_schedule,
             observation_class=observation_class,
             mlir_digest=mlir_digest,
             topology_digest=topology_digest,
@@ -1113,6 +1133,11 @@ def enumerate_cuda_candidates(
             )
         )
 
+    # Row vector-width=0 is the C++ auto state: it emits vec4 exactly when the
+    # structural gate proves a contiguous full register tile, otherwise scalar.
+    # An explicit width=4 request therefore either duplicates that exact MLIR or
+    # fails admission; it is not a distinct concrete state and must not consume
+    # finite search budget.  Width=1 remains the deliberate scalar ablation.
     row_schedule_bases = [
         *(RowSchedule(threads, 32, vector_width=0, fuse_fma=False)
           for threads in (32, 64, 128, 256, 512, 1024)),
@@ -1120,8 +1145,6 @@ def enumerate_cuda_candidates(
           for threads in (64, 128, 256)),
         *(RowSchedule(threads, 32, vector_width=1, fuse_fma=False)
           for threads in (64, 128, 256)),
-        *(RowSchedule(threads, 32, vector_width=4, fuse_fma=False)
-          for threads in (32, 64, 128)),
     ]
     if axes is None or axes.search_reduction_topology:
         row_schedule_bases.extend(

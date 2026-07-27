@@ -292,6 +292,14 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         not item.schedule.get("approximate_div", False) for item in e2
     )
     assert all(not item.b_transformations for item in e2)
+    row_vector_requests = {
+        item.schedule.get("vector_width")
+        for item in n1
+        if item.lowering_path_kind == "row_reduction"
+    }
+    assert 0 in row_vector_requests  # compiler-resolved auto vectorization
+    assert 1 in row_vector_requests  # forced-scalar ablation
+    assert 4 not in row_vector_requests  # auto already owns the same concrete state
     assert any(
         item.schedule.get("block_threads") == 32
         for item in n1

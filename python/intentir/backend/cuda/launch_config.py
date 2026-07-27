@@ -41,7 +41,7 @@ _ARR_RE = re.compile(r"(\w+)\s*=\s*\[\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\]
 _INT_RE = re.compile(r"(\w+)\s*=\s*(-?\d+)\s*:\s*i\d+")
 
 
-@dataclass
+@dataclass(frozen=True)
 class KernelLaunchConfig:
     """A pass-emitted structured launch plan (one gpu.launch's geometry)."""
 
@@ -52,6 +52,17 @@ class KernelLaunchConfig:
     vector_width: int = 1
     pipeline_depth: int = 1
     split_factor: int = 1
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "grid": list(self.grid),
+            "block": list(self.block),
+            "smem_bytes": self.smem,
+            "per_thread_tile": self.per_thread_tile,
+            "vector_width": self.vector_width,
+            "pipeline_depth": self.pipeline_depth,
+            "split_factor": self.split_factor,
+        }
 
     def assert_matches(self, grid, block, shared: int, where: str = "") -> None:
         """Assert the regex-recovered (grid, block, shared) equals this plan.

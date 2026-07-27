@@ -115,7 +115,11 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
             "cuda.reduction.workgroup_hierarchical.v1",
             "cuda.numeric.fma.f32.v1",
             "cuda.numeric.div_reciprocal_approx.f32.v1"
-          ]
+          ],
+          intent.launch_plan = {block = [64, 1, 1], grid = [7, 1, 1],
+            per_thread_tile = 8 : i64, pipeline_depth = 1 : i64,
+            smem = 32 : i64, split_factor = 1 : i64,
+            vector_width = 4 : i64}
         } { return }
         """
     )
@@ -131,6 +135,17 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
     assert receipt.reduction_parts == 16
     assert receipt.observation_changing
     assert receipt.reduction_topology == "workgroup_hierarchical"
+    assert [item.to_dict() for item in receipt.launch_plans] == [
+        {
+            "grid": [7, 1, 1],
+            "block": [64, 1, 1],
+            "smem_bytes": 32,
+            "per_thread_tile": 8,
+            "vector_width": 4,
+            "pipeline_depth": 1,
+            "split_factor": 1,
+        }
+    ]
     assert len(receipt.topology_digest) == 64
     assert replace(receipt, rows_per_block=1).topology_digest != receipt.topology_digest
     assert replace(receipt, reduction_parts=8).topology_digest != receipt.topology_digest
